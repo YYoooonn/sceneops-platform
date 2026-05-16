@@ -1,0 +1,158 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Environment
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# =========================
+# Node / Frontend
+# =========================
+node_modules/
+.pnpm-store/
+.yarn/
+.next/
+out/
+dist/
+build/
+.turbo/
+.vercel/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Docker / Local Infra
+# =========================
+docker-data/
+postgres-data/
+minio-data/
+pgdata/
+*.pid
+
+# =========================
+# Dataset / Large Files
+# =========================
+data/
+datasets/
+nuscenes/
+v1.0-mini/
+samples/
+sweeps/
+maps/
+
+# nuScenes / sensor files
+*.pcd
+*.pcd.bin
+*.bin
+*.las
+*.laz
+*.ply
+*.npy
+*.npz
+
+# Large media
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# =========================
+# Generated Artifacts
+# =========================
+outputs/
+artifacts/
+reports/
+quality_reports/
+projection_outputs/
+bev_outputs/
+
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Keep sample images if explicitly placed here
+!docs/images/
+!docs/images/**/*.png
+!docs/images/**/*.jpg
+!docs/images/**/*.jpeg
+!docs/images/**/*.webp
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Database / Local Cache
+# =========================
+*.sqlite
+*.sqlite3
+*.db
+.cache/
+
+# =========================
+# Secrets / Credentials
+# =========================
+*.pem
+*.key
+*.crt
+*.p12
+*.credentials
+service-account*.json
+
+# =========================
+# Infrastructure
+# =========================
+infra/helm/charts/sceneops-db/templates/*
+!infra/helm/charts/sceneops-db/templates/_helper.tpl
+
+infra/values/local/*
+!infra/values/local/*.example.yaml
