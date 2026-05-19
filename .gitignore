@@ -80,11 +80,11 @@ pgdata/
 # =========================
 data/
 datasets/
-nuscenes/
-v1.0-mini/
-samples/
-sweeps/
-maps/
+# nuscenes/
+# v1.0-mini/
+# samples/
+# sweeps/
+# maps/
 
 # nuScenes / sensor files
 *.pcd
