@@ -1,10 +1,10 @@
 IMAGE_NAME=sceneops-platform
 IMAGE_TAG=local
 
-DATASET_ID := nuscenes-mini
+DATASET_ID := nuscenes
 DATASET_VERSION := v1.0-mini
 
-NUSCENES_ROOT := /data/nuscenes
+RAW_DATA_ROOT := /data/raw
 MANIFEST_ROOT := /data/manifests
 ARTIFACT_ROOT := /data/artifacts
 
@@ -41,33 +41,39 @@ build-worker:
 .PHONY: run-worker
 run-worker: build-worker
 	docker run --rm \
-		-e DATASET_ID=$(DATASET_ID) \
-		-e DATASET_VERSION=$(DATASET_VERSION) \
-		-e NUSCENES_ROOT=$(NUSCENES_ROOT) \
+		-e DEFAULT_DATASET_ID=$(DATASET_ID) \
+		-e DEFAULT_DATASET_VERSION=$(DATASET_VERSION) \
+		-e RAW_DATA_ROOT=$(RAW_DATA_ROOT) \
 		-e MANIFEST_ROOT=$(MANIFEST_ROOT) \
 		-e ARTIFACT_ROOT=$(ARTIFACT_ROOT) \
-		-v $(PWD)/data/nuscenes:/data/nuscenes:ro \
+		-v $(PWD)/data/raw:/data/raw:ro \
 		-v $(PWD)/data/manifests:/data/manifests \
 		-v $(PWD)/data/artifacts:/data/artifacts \
 		$(IMAGE_NAME)/worker:$(IMAGE_TAG) \
-		sceneops-worker ingest-nuscenes-mini --max-scenes $(MAX_SCENES)
+		sceneops-worker ingest-nuscenes \
+			--dataset-id $(DATASET_ID) \
+			--dataset-version $(DATASET_VERSION) \
+			--max-scenes $(MAX_SCENES)
 
 .PHONY: ingest
 ingest:
 	@echo "INGESTING scene"
 	docker run --rm \
-		-e DATASET_ID=$(DATASET_ID) \
-		-e DATASET_VERSION=$(DATASET_VERSION) \
-		-e NUSCENES_ROOT=$(NUSCENES_ROOT) \
+		-e DEFAULT_DATASET_ID=$(DATASET_ID) \
+		-e DEFAULT_DATASET_VERSION=$(DATASET_VERSION) \
+		-e RAW_DATA_ROOT=$(RAW_DATA_ROOT) \
 		-e MANIFEST_ROOT=$(MANIFEST_ROOT) \
 		-e ARTIFACT_ROOT=$(ARTIFACT_ROOT) \
-		-v $(PWD)/data/nuscenes:/data/nuscenes:ro \
+		-v $(PWD)/data/raw:/data/raw:ro \
 		-v $(PWD)/data/manifests:/data/manifests \
 		-v $(PWD)/data/artifacts:/data/artifacts \
 		$(IMAGE_NAME)/worker:$(IMAGE_TAG) \
-		sceneops-worker ingest-nuscenes-mini --max-scenes $(MAX_SCENES)
+		sceneops-worker ingest-nuscenes \
+			--dataset-id $(DATASET_ID) \
+			--dataset-version $(DATASET_VERSION) \
+			--max-scenes $(MAX_SCENES)
 
 .PHONY: clean-manifests
 clean-manifests:
 	rm -rf data/manifests/*
-	mkdir -p data/manifests/scenes data/manifests/samples data/manifests/artifacts
+	mkdir -p data/manifests/datasets

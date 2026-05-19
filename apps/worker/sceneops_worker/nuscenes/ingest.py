@@ -2,43 +2,71 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from enum import StrEnum
 
 from nuscenes.nuscenes import NuScenes
 
 from sceneops_worker.io.json_writer import write_json
+from sceneops_worker.io.manifest_store import ManifestStore
 
 
 TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
 
 
-def ingest_nuscenes_mini(
+class IngestMode(StrEnum):
+    REPLACE = "replace"
+    APPEND = "append"
+    UPSERT = "upsert"
+
+
+def ingest_nuscenes(
     *,
     dataroot: Path,
-    version: str,
+    dataset_id: str,
+    dataset_version: str,
     manifest_root: Path,
     max_scenes: int | None = None,
+    mode: IngestMode = IngestMode.UPSERT,
 ) -> None:
     nusc = NuScenes(
-        version=version,
-        dataroot=str(dataroot),
+        version=dataset_version,
+        dataroot=str(dataroot / dataset_id),
         verbose=True,
     )
+
+    version_root = _get_dataset_version_root(
+        manifest_root=manifest_root,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+    )
+
+    store = ManifestStore(version_root)
+    existing_scene_ids = {scene["sceneId"] for scene in store.read_scene_index()}
+
+    if mode == IngestMode.REPLACE:
+        store.reset()
 
     scenes = nusc.scene[:max_scenes] if max_scenes else nusc.scene
 
     scene_index: list[dict[str, Any]] = []
+    total_sample_count = 0
+    total_annotation_count = 0
 
     for scene in scenes:
         scene_token = scene["token"]
         scene_name = scene["name"]
 
+        if mode == IngestMode.APPEND and scene_name in existing_scene_ids:
+            continue
+
         sample_tokens = _collect_sample_tokens(nusc, scene["first_sample_token"])
+        total_sample_count += len(sample_tokens)
 
         scene_manifest = {
             "sceneId": scene_name,
             "sceneToken": scene_token,
-            "datasetId": "nuscenes-mini",
-            "datasetVersion": version,
+            "datasetId": dataset_id,
+            "datasetVersion": dataset_version,
             "description": scene.get("description", ""),
             "sampleCount": len(sample_tokens),
             "firstSampleToken": scene["first_sample_token"],
@@ -59,15 +87,17 @@ def ingest_nuscenes_mini(
                 index=index,
             )
 
+            total_annotation_count += len(sample_manifest["annotations"])
+
             scene_manifest["sampleIds"].append(sample_id)
 
             write_json(
-                manifest_root / "samples" / f"{sample_id}.json",
+                version_root / "samples" / f"{sample_id}.json",
                 sample_manifest,
             )
 
         write_json(
-            manifest_root / "scenes" / f"{scene_name}.json",
+            version_root / "scenes" / f"{scene_name}.json",
             scene_manifest,
         )
 
@@ -75,15 +105,75 @@ def ingest_nuscenes_mini(
             {
                 "sceneId": scene_name,
                 "sceneToken": scene_token,
-                "datasetId": "nuscenes-mini",
-                "datasetVersion": version,
+                "datasetId": dataset_id,
+                "datasetVersion": dataset_version,
                 "description": scene.get("description", ""),
                 "sampleCount": len(sample_tokens),
                 "status": "READY",
             }
         )
 
-    write_json(manifest_root / "scenes.json", scene_index)
+    if mode == IngestMode.REPLACE:
+        merged_scene_index = scene_index
+        store.write_json("scenes.json", merged_scene_index)
+    else:
+        merged_scene_index = store.upsert_scene_index(scene_index)
+
+    dataset_manifest = _build_dataset_manifest_from_store(
+        store=store,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+    )
+
+    store.write_json("dataset.json", dataset_manifest)
+
+
+def _get_dataset_version_root(
+    *,
+    manifest_root: Path,
+    dataset_id: str,
+    dataset_version: str,
+) -> Path:
+    return manifest_root / "datasets" / dataset_id / "versions" / dataset_version
+
+
+def _build_dataset_manifest_from_store(
+    *,
+    store: ManifestStore,
+    dataset_id: str,
+    dataset_version: str,
+) -> dict[str, Any]:
+    scenes = store.read_scene_index()
+
+    total_sample_count = 0
+    total_annotation_count = 0
+
+    for scene_index_item in scenes:
+        scene_id = scene_index_item["sceneId"]
+        scene_manifest = store.read_json(f"scenes/{scene_id}.json")
+
+        if scene_manifest is None:
+            continue
+
+        total_sample_count += int(scene_manifest.get("sampleCount", 0))
+
+        for sample_id in scene_manifest.get("sampleIds", []):
+            sample_manifest = store.read_json(f"samples/{sample_id}.json")
+            if sample_manifest is None:
+                continue
+
+            total_annotation_count += len(sample_manifest.get("annotations", []))
+
+    return {
+        "datasetId": dataset_id,
+        "datasetVersion": dataset_version,
+        "source": "nuScenes",
+        "status": "READY",
+        "sceneCount": len(scenes),
+        "sampleCount": total_sample_count,
+        "annotationCount": total_annotation_count,
+        "targetChannels": sorted(TARGET_CHANNELS),
+    }
 
 
 def _collect_sample_tokens(nusc: NuScenes, first_sample_token: str) -> list[str]:
