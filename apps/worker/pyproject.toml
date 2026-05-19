@@ -1,0 +1,14 @@
+[project]
+name = "sceneops-worker"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "nuscenes-devkit",
+  "pydantic",
+  "pydantic-settings",
+  "typer",
+  "rich"
+]
+
+[project.scripts]
+sceneops-worker = "sceneops_worker.main:app"
