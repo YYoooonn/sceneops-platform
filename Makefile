@@ -1,12 +1,7 @@
 IMAGE_NAME=sceneops-platform
 IMAGE_TAG=local
 
-DATASET_ID := nuscenes
-DATASET_VERSION := v1.0-mini
-
-RAW_DATA_ROOT := /data/raw
-MANIFEST_ROOT := /data/manifests
-ARTIFACT_ROOT := /data/artifacts
+ENV_FILE=.env
 
 MAX_SCENES ?= 2
 
@@ -31,6 +26,10 @@ check:
 uninstall-hooks:
 	pre-commit uninstall
 
+# --------------------
+# -------WORKER-------
+# --------------------
+
 .PHONY: build-worker
 build-worker:
 	docker build \
@@ -41,11 +40,7 @@ build-worker:
 .PHONY: run-worker
 run-worker: build-worker
 	docker run --rm \
-		-e DEFAULT_DATASET_ID=$(DATASET_ID) \
-		-e DEFAULT_DATASET_VERSION=$(DATASET_VERSION) \
-		-e RAW_DATA_ROOT=$(RAW_DATA_ROOT) \
-		-e MANIFEST_ROOT=$(MANIFEST_ROOT) \
-		-e ARTIFACT_ROOT=$(ARTIFACT_ROOT) \
+		--env-file $(ENV_FILE) \
 		-v $(PWD)/data/raw:/data/raw:ro \
 		-v $(PWD)/data/manifests:/data/manifests \
 		-v $(PWD)/data/artifacts:/data/artifacts \
@@ -59,11 +54,7 @@ run-worker: build-worker
 ingest:
 	@echo "INGESTING scene"
 	docker run --rm \
-		-e DEFAULT_DATASET_ID=$(DATASET_ID) \
-		-e DEFAULT_DATASET_VERSION=$(DATASET_VERSION) \
-		-e RAW_DATA_ROOT=$(RAW_DATA_ROOT) \
-		-e MANIFEST_ROOT=$(MANIFEST_ROOT) \
-		-e ARTIFACT_ROOT=$(ARTIFACT_ROOT) \
+		--env-file $(ENV_FILE) \
 		-v $(PWD)/data/raw:/data/raw:ro \
 		-v $(PWD)/data/manifests:/data/manifests \
 		-v $(PWD)/data/artifacts:/data/artifacts \
@@ -77,3 +68,26 @@ ingest:
 clean-manifests:
 	rm -rf data/manifests/*
 	mkdir -p data/manifests/datasets
+
+
+# --------------------
+# --------API---------
+# --------------------
+API_FULL_IMAGE := $(IMAGE_NAME)/api:$(IMAGE_TAG)
+
+.PHONY: build-api
+build-api:
+	docker build \
+		-f apps/api/Dockerfile \
+		-t $(API_FULL_IMAGE) \
+		.
+
+.PHONY: run-api
+run-api: build-api
+	docker run --rm \
+		--env-file $(ENV_FILE) \
+		-p 8000:8000 \
+		-v $(PWD)/data/raw:/data/raw:ro \
+		-v $(PWD)/data/manifests:/data/manifests:ro \
+		-v $(PWD)/data/artifacts:/data/artifacts:ro \
+		$(API_FULL_IMAGE)

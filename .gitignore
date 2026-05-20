@@ -79,7 +79,7 @@ pgdata/
 # Dataset / Large Files
 # =========================
 data/
-datasets/
+# datasets/
 # nuscenes/
 # v1.0-mini/
 # samples/
@@ -106,7 +106,7 @@ datasets/
 # Generated Artifacts
 # =========================
 outputs/
-artifacts/
+# artifacts/
 reports/
 quality_reports/
 projection_outputs/
