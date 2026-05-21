@@ -3,7 +3,24 @@ IMAGE_TAG=local
 
 ENV_FILE=.env
 
+DOCKER_VOLUMES = \
+	-v $(PWD)/data/raw:/data/raw:ro \
+	-v $(PWD)/data/manifests:/data/manifests \
+	-v $(PWD)/data/artifacts:/data/artifacts \
+	-v $(PWD)/data/runs:/data/runs \
+
+DATASET_ID ?= nuscenes
+DATASET_VERSION ?= v1.0-mini
+
 MAX_SCENES ?= 2
+INGEST_MODE ?= upsert
+
+MODEL_ID ?= centerpoint-mock
+MODEL_VERSION ?= v0
+RUN_ID ?= run-centerpoint-mock-001
+EVALUATION_RUN_ID ?= eval-centerpoint-mock-001
+MAX_SAMPLES ?= 20
+MATCH_DISTANCE_M ?= 2.0
 
 .DEFAULT_GOAL := help
 
@@ -37,37 +54,58 @@ build-worker:
 		-t $(IMAGE_NAME)/worker:$(IMAGE_TAG) \
 		.
 
-.PHONY: run-worker
-run-worker: build-worker
-	docker run --rm \
-		--env-file $(ENV_FILE) \
-		-v $(PWD)/data/raw:/data/raw:ro \
-		-v $(PWD)/data/manifests:/data/manifests \
-		-v $(PWD)/data/artifacts:/data/artifacts \
-		$(IMAGE_NAME)/worker:$(IMAGE_TAG) \
-		sceneops-worker ingest-nuscenes \
-			--dataset-id $(DATASET_ID) \
-			--dataset-version $(DATASET_VERSION) \
-			--max-scenes $(MAX_SCENES)
-
-.PHONY: ingest
-ingest:
+.PHONY: worker-ingest
+worker-ingest:
 	@echo "INGESTING scene"
 	docker run --rm \
 		--env-file $(ENV_FILE) \
-		-v $(PWD)/data/raw:/data/raw:ro \
-		-v $(PWD)/data/manifests:/data/manifests \
-		-v $(PWD)/data/artifacts:/data/artifacts \
+		$(DOCKER_VOLUMES) \
 		$(IMAGE_NAME)/worker:$(IMAGE_TAG) \
-		sceneops-worker ingest-nuscenes \
+		sceneops-worker ingest nuscenes \
 			--dataset-id $(DATASET_ID) \
 			--dataset-version $(DATASET_VERSION) \
-			--max-scenes $(MAX_SCENES)
+			--max-scenes $(MAX_SCENES) \
+			--mode $(INGEST_MODE)
 
-.PHONY: clean-manifests
-clean-manifests:
-	rm -rf data/manifests/*
-	mkdir -p data/manifests/datasets
+.PHONY: worker-predict-mock-detection
+worker-predict-mock-detection:
+	@echo "mock detection"
+	docker run --rm \
+		--env-file $(ENV_FILE) \
+		$(DOCKER_VOLUMES) \
+		$(IMAGE_NAME)/worker:$(IMAGE_TAG) \
+		sceneops-worker predict mock-detection \
+			--dataset-id $(DATASET_ID) \
+			--dataset-version $(DATASET_VERSION) \
+			--model-id $(MODEL_ID) \
+			--model-version $(MODEL_VERSION) \
+			--run-id $(RUN_ID) \
+			--max-samples $(MAX_SAMPLES)
+
+.PHONY: worker-evaluate-detection
+worker-evaluate-detection:
+	@echo "evaluate detection"
+	docker run --rm \
+		--env-file $(ENV_FILE) \
+		$(DOCKER_VOLUMES) \
+		$(IMAGE_NAME)/worker:$(IMAGE_TAG) \
+		sceneops-worker evaluate detection \
+			--dataset-id $(DATASET_ID) \
+			--dataset-version $(DATASET_VERSION) \
+			--inference-run-id $(RUN_ID) \
+			--evaluation-run-id $(EVALUATION_RUN_ID) \
+			--match-distance-m $(MATCH_DISTANCE_M)
+
+
+.PHONY: prepare-data
+prepare-data:
+	mkdir -p data/manifests data/artifacts data/runs
+
+.PHONY: clean-all
+clean-all: rm -rf data/manifests/* \
+	rm -rf data/artifacts \
+	rm -rf data/runs \
+	prepare-data
 
 
 # --------------------

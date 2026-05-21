@@ -12,6 +12,8 @@ from sceneops_worker.io.manifest_store import ManifestStore
 
 TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
 
+DATA_SOURCE = "nuScenes"
+
 
 class IngestMode(StrEnum):
     REPLACE = "replace"
@@ -67,6 +69,7 @@ def ingest_nuscenes(
             "sceneToken": scene_token,
             "datasetId": dataset_id,
             "datasetVersion": dataset_version,
+            "source": DATA_SOURCE,
             "description": scene.get("description", ""),
             "sampleCount": len(sample_tokens),
             "firstSampleToken": scene["first_sample_token"],
@@ -85,6 +88,8 @@ def ingest_nuscenes(
                 sample_id=sample_id,
                 sample=sample,
                 index=index,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
             )
 
             total_annotation_count += len(sample_manifest["annotations"])
@@ -107,6 +112,7 @@ def ingest_nuscenes(
                 "sceneToken": scene_token,
                 "datasetId": dataset_id,
                 "datasetVersion": dataset_version,
+                "source": DATA_SOURCE,
                 "description": scene.get("description", ""),
                 "sampleCount": len(sample_tokens),
                 "status": "READY",
@@ -167,7 +173,7 @@ def _build_dataset_manifest_from_store(
     return {
         "datasetId": dataset_id,
         "datasetVersion": dataset_version,
-        "source": "nuScenes",
+        "source": DATA_SOURCE,
         "status": "READY",
         "sceneCount": len(scenes),
         "sampleCount": total_sample_count,
@@ -196,6 +202,8 @@ def _build_sample_manifest(
     sample_id: str,
     sample: dict[str, Any],
     index: int,
+    dataset_id: str,
+    dataset_version: str,
 ) -> dict[str, Any]:
     sensors: dict[str, Any] = {}
 
@@ -249,6 +257,8 @@ def _build_sample_manifest(
         )
 
     return {
+        "datasetId": dataset_id,
+        "datasetVersion": dataset_version,
         "sampleId": sample_id,
         "sampleToken": sample["token"],
         "sceneId": scene_id,
