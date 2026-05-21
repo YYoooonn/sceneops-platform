@@ -36,6 +36,7 @@ class ApiSettings(BaseSettings):
     manifest_root: Path = Field(alias="MANIFEST_ROOT")
     raw_data_root: Path = Field(alias="RAW_DATA_ROOT")
     artifact_root: Path = Field(alias="ARTIFACT_ROOT")
+    runs_root: Path = Field(alias="RUNS_ROOT")
 
     api_base_url: str = Field(
         default="http://localhost:8000",

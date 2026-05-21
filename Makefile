@@ -125,7 +125,5 @@ run-api: build-api
 	docker run --rm \
 		--env-file $(ENV_FILE) \
 		-p 8000:8000 \
-		-v $(PWD)/data/raw:/data/raw:ro \
-		-v $(PWD)/data/manifests:/data/manifests:ro \
-		-v $(PWD)/data/artifacts:/data/artifacts:ro \
+		$(DOCKER_VOLUMES) \
 		$(API_FULL_IMAGE)

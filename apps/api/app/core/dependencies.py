@@ -17,6 +17,10 @@ from app.modules.datasets.local_repository import LocalManifestDatasetRepository
 from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.service import DatasetService
 
+from app.modules.runs.local_repository import LocalInferenceRunRepository
+from app.modules.runs.repository import InferenceRunRepository
+from app.modules.runs.service import InferenceRunService
+
 
 def get_dataset_repository(
     settings: ApiSettings = Depends(get_settings),
@@ -64,3 +68,15 @@ def get_artifact_service(
         dataset_repository=dataset_repository,
         artifact_storage=artifact_storage,
     )
+
+
+def get_inference_run_repository(
+    settings: ApiSettings = Depends(get_settings),
+) -> InferenceRunRepository:
+    return LocalInferenceRunRepository(settings.runs_root)
+
+
+def get_inference_run_service(
+    repository: InferenceRunRepository = Depends(get_inference_run_repository),
+) -> InferenceRunService:
+    return InferenceRunService(repository)
