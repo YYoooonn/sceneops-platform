@@ -21,6 +21,14 @@ from app.modules.runs.local_repository import LocalInferenceRunRepository
 from app.modules.runs.repository import InferenceRunRepository
 from app.modules.runs.service import InferenceRunService
 
+from app.modules.evaluations.local_repository import LocalEvaluationRunRepository
+from app.modules.evaluations.repository import EvaluationRunRepository
+from app.modules.evaluations.service import EvaluationRunService
+
+from app.modules.jobs.local_repository import LocalJobRepository
+from app.modules.jobs.repository import JobRepository
+from app.modules.jobs.service import JobService
+
 
 def get_dataset_repository(
     settings: ApiSettings = Depends(get_settings),
@@ -80,3 +88,32 @@ def get_inference_run_service(
     repository: InferenceRunRepository = Depends(get_inference_run_repository),
 ) -> InferenceRunService:
     return InferenceRunService(repository)
+
+
+def get_evaluation_run_repository(
+    settings: ApiSettings = Depends(get_settings),
+) -> EvaluationRunRepository:
+    return LocalEvaluationRunRepository(settings.runs_root)
+
+
+def get_evaluation_run_service(
+    repository: EvaluationRunRepository = Depends(get_evaluation_run_repository),
+) -> EvaluationRunService:
+    return EvaluationRunService(repository)
+
+
+def get_job_repository(
+    settings: ApiSettings = Depends(get_settings),
+) -> JobRepository:
+    return LocalJobRepository(settings.runs_root)
+
+
+def get_job_service(
+    settings: ApiSettings = Depends(get_settings),
+    repository: JobRepository = Depends(get_job_repository),
+) -> JobService:
+    return JobService(
+        repository=repository,
+        default_dataset_id=settings.default_dataset_id,
+        default_dataset_version=settings.default_dataset_version,
+    )
