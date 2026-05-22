@@ -5,12 +5,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sceneops_core.paths.datasets import dataset_version_root
+from sceneops_core.paths.runs import inference_run_root, evaluation_run_root
+
 from sceneops_worker.runs.manifest_store import JsonStore
-from sceneops_worker.runs.paths import (
-    dataset_version_root,
-    evaluation_run_root,
-    inference_run_root,
-)
+# from sceneops_worker.runs.paths import (
+#     dataset_version_root,
+#     evaluation_run_root,
+#     inference_run_root,
+# )
 
 
 DEFAULT_MATCH_DISTANCE_M = 2.0

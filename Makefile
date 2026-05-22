@@ -96,6 +96,16 @@ worker-evaluate-detection:
 			--evaluation-run-id $(EVALUATION_RUN_ID) \
 			--match-distance-m $(MATCH_DISTANCE_M)
 
+JOB_ID ?=
+
+.PHONY: worker-run-job
+worker-run-job: build-worker
+	docker run --rm \
+		--env-file $(ENV_FILE) \
+		$(DOCKER_VOLUMES) \
+		$(IMAGE_NAME)/worker:$(IMAGE_TAG) \
+		sceneops-worker jobs run \
+			--job-id $(JOB_ID)
 
 .PHONY: prepare-data
 prepare-data:

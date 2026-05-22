@@ -2,6 +2,7 @@ import typer
 
 from sceneops_worker.commands.evaluate import app as evaluate_app
 from sceneops_worker.commands.ingest import app as ingest_app
+from sceneops_worker.commands.jobs import app as jobs_app
 from sceneops_worker.commands.predict import app as predict_app
 
 app = typer.Typer(
@@ -13,6 +14,7 @@ app = typer.Typer(
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(predict_app, name="predict")
 app.add_typer(evaluate_app, name="evaluate")
+app.add_typer(jobs_app, name="jobs")
 
 
 if __name__ == "__main__":
