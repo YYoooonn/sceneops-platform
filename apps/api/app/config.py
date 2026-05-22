@@ -46,6 +46,9 @@ class ApiSettings(BaseSettings):
     gcs_bucket: str | None = Field(default=None, alias="GCS_BUCKET")
     s3_bucket: str | None = Field(default=None, alias="S3_BUCKET")
 
+    default_dataset_id: str = Field(alias="DEFAULT_DATASET_ID")
+    default_dataset_version: str = Field(alias="DEFAULT_DATASET_VERSION")
+
 
 @lru_cache
 def get_settings() -> ApiSettings:

@@ -6,6 +6,7 @@ from app.modules.datasets.router import router as datasets_router
 from app.modules.files.router import router as files_router
 from app.modules.runs.router import router as runs_router
 from app.modules.evaluations.router import router as evaluations_router
+from app.modules.jobs.router import router as jobs_router
 
 
 app = FastAPI(title="SceneOps Drive API")
@@ -25,6 +26,7 @@ app.include_router(artifacts_router, prefix="/api/v1")
 app.include_router(files_router, prefix="/api/v1")
 app.include_router(evaluations_router, prefix="/api/v1")
 app.include_router(runs_router, prefix="/api/v1")
+app.include_router(jobs_router, prefix="/api/v1")
 
 
 @app.get("/health")
