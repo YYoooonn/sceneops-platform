@@ -1,14 +1,14 @@
-from uuid import uuid4
-
-from app.modules.jobs.repository import JobRepository
-from app.modules.jobs.schemas import (
+from sceneops_core.time import utc_now_iso
+from sceneops_core.ids.jobs import generate_job_id
+from sceneops_core.schemas.jobs import (
     CreateJobRequest,
     JobListResponse,
     JobManifest,
     JobStatus,
-    utc_now_iso,
+    build_default_steps,
 )
-from app.modules.jobs.template import build_default_steps
+
+from app.modules.jobs.repository import JobRepository
 
 
 class JobService:
@@ -29,7 +29,7 @@ class JobService:
         dataset_version = request.datasetVersion or self.default_dataset_version
 
         job = JobManifest(
-            jobId=self._generate_job_id(),
+            jobId=generate_job_id(),
             type=request.type,
             status=JobStatus.PENDING,
             datasetId=dataset_id,
@@ -64,6 +64,3 @@ class JobService:
 
     def get_job(self, job_id: str) -> JobManifest | None:
         return self.repository.get_job(job_id)
-
-    def _generate_job_id(self) -> str:
-        return f"job-{uuid4().hex[:12]}"

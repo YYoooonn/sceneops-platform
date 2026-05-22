@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends
 
-from app.core.dependencies import get_dataset_service
-from app.modules.datasets.schemas import (
+from sceneops_core.schemas.datasets import (
     DatasetIndexItem,
     DatasetVersionManifest,
     SampleManifest,
     SceneIndexItem,
     SceneManifest,
 )
+
+from app.core.dependencies import get_dataset_service
 from app.modules.datasets.service import DatasetService
 from app.shared.errors import not_found
 

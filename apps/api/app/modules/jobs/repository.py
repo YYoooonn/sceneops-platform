@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from app.modules.jobs.schemas import JobManifest, JobStatus
+from sceneops_core.schemas.jobs import JobManifest, JobStatus
 
 
 class JobRepository(Protocol):

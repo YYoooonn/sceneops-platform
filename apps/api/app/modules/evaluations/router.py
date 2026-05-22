@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 
-from app.core.dependencies import get_evaluation_run_service
-from app.modules.evaluations.schemas import (
+from sceneops_core.schemas.evaluations import (
     DetectionEvaluationRunManifest,
     DetectionSampleEvaluation,
     EvaluationRunListResponse,
     SampleEvaluationListResponse,
 )
+
+from app.core.dependencies import get_evaluation_run_service
 from app.modules.evaluations.service import EvaluationRunService
 from app.shared.errors import not_found
 

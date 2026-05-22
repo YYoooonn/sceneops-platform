@@ -2,12 +2,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.modules.jobs.schemas import JobManifest, JobStatus
+from sceneops_core.schemas.jobs import JobManifest, JobStatus
+from sceneops_core.paths.runs import job_manifest_path, jobs_root
 
 
 class LocalJobRepository:
     def __init__(self, runs_root: Path) -> None:
-        self.jobs_root = runs_root / "jobs"
+        self.runs_root = runs_root
+        self.jobs_root = jobs_root(runs_root=runs_root)
 
     def create_job(self, job: JobManifest) -> JobManifest:
         self.jobs_root.mkdir(parents=True, exist_ok=True)
@@ -66,7 +68,7 @@ class LocalJobRepository:
         return job
 
     def _job_path(self, job_id: str) -> Path:
-        return self.jobs_root / f"{job_id}.json"
+        return job_manifest_path(runs_root=self.runs_root, job_id=job_id)
 
     def _write_job(self, job: JobManifest) -> None:
         path = self._job_path(job.jobId)

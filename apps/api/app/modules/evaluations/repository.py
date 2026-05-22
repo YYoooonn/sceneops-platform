@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from app.modules.evaluations.schemas import (
+from sceneops_core.schemas.evaluations import (
     DetectionEvaluationRunManifest,
     DetectionSampleEvaluation,
 )

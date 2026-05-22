@@ -2,7 +2,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.modules.evaluations.schemas import (
+from sceneops_core.paths.runs import (
+    evaluation_run_manifest_path,
+    evaluation_run_root,
+    sample_evaluation_manifest_path,
+)
+from sceneops_core.schemas.evaluations import (
     DetectionEvaluationRunManifest,
     DetectionSampleEvaluation,
 )
@@ -56,7 +61,10 @@ class LocalEvaluationRunRepository:
         self,
         evaluation_run_id: str,
     ) -> DetectionEvaluationRunManifest | None:
-        path = self._evaluation_root(evaluation_run_id) / "evaluation.json"
+        path = evaluation_run_manifest_path(
+            runs_root=self.runs_root,
+            evaluation_run_id=evaluation_run_id,
+        )
 
         data = self._read_json_or_none(path)
         if data is None:
@@ -68,7 +76,13 @@ class LocalEvaluationRunRepository:
         self,
         evaluation_run_id: str,
     ) -> list[DetectionSampleEvaluation]:
-        samples_root = self._evaluation_root(evaluation_run_id) / "samples"
+        samples_root = (
+            evaluation_run_root(
+                runs_root=self.runs_root,
+                evaluation_run_id=evaluation_run_id,
+            )
+            / "samples"
+        )
 
         if not samples_root.exists():
             return []
@@ -89,8 +103,10 @@ class LocalEvaluationRunRepository:
         evaluation_run_id: str,
         sample_id: str,
     ) -> DetectionSampleEvaluation | None:
-        path = (
-            self._evaluation_root(evaluation_run_id) / "samples" / f"{sample_id}.json"
+        path = sample_evaluation_manifest_path(
+            runs_root=self.runs_root,
+            evaluation_run_id=evaluation_run_id,
+            sample_id=sample_id,
         )
 
         data = self._read_json_or_none(path)

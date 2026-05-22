@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.dependencies import get_job_service
-from app.modules.jobs.schemas import (
+from sceneops_core.schemas.jobs import (
     CreateJobRequest,
     JobListResponse,
     JobManifest,
     JobStatus,
     JobType,
 )
+
+from app.core.dependencies import get_job_service
 from app.modules.jobs.service import JobService
 from app.shared.errors import not_found
 

@@ -1,0 +1,28 @@
+{
+    "include": [
+      "apps/api",
+      "apps/worker",
+      "packages/sceneops-core"
+    ],
+    "exclude": [
+      ".venv",
+      "**/__pycache__"
+    ],
+    "venvPath": ".",
+    "venv": ".venv",
+    "extraPaths": [
+      "packages/sceneops-core",
+      "apps/api",
+      "apps/worker"
+    ],
+    "executionEnvironments": [
+      {
+        "root": ".",
+        "extraPaths": [
+          "packages/sceneops-core",
+          "apps/api",
+          "apps/worker"
+        ]
+      }
+    ]
+  }

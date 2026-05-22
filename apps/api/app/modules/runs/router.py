@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 
-from app.core.dependencies import get_inference_run_service
-from app.modules.runs.schemas import (
+from sceneops_core.schemas.runs import (
     InferenceRunListResponse,
     InferenceRunManifest,
     PredictionListResponse,
     PredictionManifest,
 )
+
+from app.core.dependencies import get_inference_run_service
 from app.modules.runs.service import InferenceRunService
 from app.shared.errors import not_found
 

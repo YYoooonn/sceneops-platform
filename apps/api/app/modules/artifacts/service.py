@@ -1,6 +1,9 @@
 from app.modules.artifacts.storage import ArtifactStorage
 from app.modules.datasets.repository import DatasetRepository
 
+from sceneops_core.ids.artifacts import sample_sensor_artifact_id
+from sceneops_core.schemas.artifacts import ArtifactType
+
 
 class ArtifactService:
     def __init__(
@@ -36,7 +39,10 @@ class ArtifactService:
 
             artifacts.append(
                 {
-                    "artifactId": f"{sample_id}-{channel}",
+                    "artifactId": sample_sensor_artifact_id(
+                        sample_id=sample_id,
+                        channel=channel,
+                    ),
                     "datasetId": dataset_id,
                     "datasetVersion": dataset_version,
                     "sceneId": sample["sceneId"],
@@ -52,12 +58,12 @@ class ArtifactService:
 
     def _infer_artifact_type(self, channel: str) -> str:
         if channel.startswith("CAM_"):
-            return "CAMERA_IMAGE"
+            return ArtifactType.CAMERA_IMAGE
 
         if channel.startswith("LIDAR_"):
-            return "LIDAR_POINTCLOUD"
+            return ArtifactType.LIDAR_POINTCLOUD
 
         if channel.startswith("RADAR_"):
-            return "RADAR_POINTCLOUD"
+            return ArtifactType.RADAR_POINTCLOUD
 
-        return "UNKNOWN"
+        return ArtifactType.UNKNOWN

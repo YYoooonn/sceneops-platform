@@ -5,9 +5,12 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+COPY packages/sceneops-core ./packages/sceneops-core
+
 COPY apps/api/requirements.txt ./apps/api/requirements.txt
 
-RUN pip install --no-cache-dir -r ./apps/api/requirements.txt
+RUN pip install --no-cache-dir -e ./packages/sceneops-core \
+    && pip install --no-cache-dir -r ./apps/api/requirements.txt
 
 COPY apps/api/app ./apps/api/app
 

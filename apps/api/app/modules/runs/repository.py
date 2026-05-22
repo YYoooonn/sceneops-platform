@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from app.modules.runs.schemas import InferenceRunManifest, PredictionManifest
+from sceneops_core.schemas.runs import InferenceRunManifest, PredictionManifest
 
 
 class InferenceRunRepository(Protocol):

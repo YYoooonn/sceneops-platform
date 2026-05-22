@@ -2,6 +2,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from sceneops_core.paths.datasets import (
+    dataset_manifest_path,
+    sample_manifest_path,
+    scene_manifest_path,
+    scenes_index_path,
+)
+
 
 class LocalManifestDatasetRepository:
     def __init__(self, manifest_root: Path) -> None:
@@ -35,7 +42,11 @@ class LocalManifestDatasetRepository:
         dataset_id: str,
         dataset_version: str,
     ) -> dict[str, Any] | None:
-        path = self._version_root(dataset_id, dataset_version) / "dataset.json"
+        path = dataset_manifest_path(
+            manifest_root=self.manifest_root,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
         return self._read_json_or_none(path)
 
     def list_scenes(
@@ -43,7 +54,11 @@ class LocalManifestDatasetRepository:
         dataset_id: str,
         dataset_version: str,
     ) -> list[dict[str, Any]]:
-        path = self._version_root(dataset_id, dataset_version) / "scenes.json"
+        path = scenes_index_path(
+            manifest_root=self.manifest_root,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
         data = self._read_json_or_none(path)
 
         if data is None:
@@ -60,10 +75,11 @@ class LocalManifestDatasetRepository:
         dataset_version: str,
         scene_id: str,
     ) -> dict[str, Any] | None:
-        path = (
-            self._version_root(dataset_id, dataset_version)
-            / "scenes"
-            / f"{scene_id}.json"
+        path = scene_manifest_path(
+            manifest_root=self.manifest_root,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            scene_id=scene_id,
         )
         return self._read_json_or_none(path)
 
@@ -93,10 +109,11 @@ class LocalManifestDatasetRepository:
         dataset_version: str,
         sample_id: str,
     ) -> dict[str, Any] | None:
-        path = (
-            self._version_root(dataset_id, dataset_version)
-            / "samples"
-            / f"{sample_id}.json"
+        path = sample_manifest_path(
+            manifest_root=self.manifest_root,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            sample_id=sample_id,
         )
         return self._read_json_or_none(path)
 

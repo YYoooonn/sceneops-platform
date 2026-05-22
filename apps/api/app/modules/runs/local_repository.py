@@ -2,7 +2,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.modules.runs.schemas import InferenceRunManifest, PredictionManifest
+from sceneops_core.paths.runs import (
+    inference_run_manifest_path,
+    inference_run_root,
+    prediction_manifest_path,
+)
+from sceneops_core.schemas.runs import InferenceRunManifest, PredictionManifest
 
 
 class LocalInferenceRunRepository:
@@ -48,7 +53,7 @@ class LocalInferenceRunRepository:
         return runs
 
     def get_inference_run(self, run_id: str) -> InferenceRunManifest | None:
-        path = self._run_root(run_id) / "run.json"
+        path = inference_run_manifest_path(runs_root=self.runs_root, run_id=run_id)
 
         data = self._read_json_or_none(path)
         if data is None:
@@ -57,7 +62,13 @@ class LocalInferenceRunRepository:
         return InferenceRunManifest.model_validate(data)
 
     def list_predictions(self, run_id: str) -> list[PredictionManifest]:
-        predictions_root = self._run_root(run_id) / "predictions"
+        predictions_root = (
+            inference_run_root(
+                runs_root=self.runs_root,
+                run_id=run_id,
+            )
+            / "predictions"
+        )
 
         if not predictions_root.exists():
             return []
@@ -78,16 +89,17 @@ class LocalInferenceRunRepository:
         run_id: str,
         sample_id: str,
     ) -> PredictionManifest | None:
-        path = self._run_root(run_id) / "predictions" / f"{sample_id}.json"
+        path = prediction_manifest_path(
+            runs_root=self.runs_root,
+            run_id=run_id,
+            sample_id=sample_id,
+        )
 
         data = self._read_json_or_none(path)
         if data is None:
             return None
 
         return PredictionManifest.model_validate(data)
-
-    def _run_root(self, run_id: str) -> Path:
-        return self.runs_root / "inference" / run_id
 
     def _read_json_or_none(self, path: Path) -> Any | None:
         if not path.exists():
