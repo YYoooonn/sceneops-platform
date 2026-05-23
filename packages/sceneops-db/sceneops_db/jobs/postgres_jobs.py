@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sceneops_core.schemas.jobs import JobManifest, JobStatus
 from sceneops_core.time import utc_now_iso
 from sceneops_db.jobs import JobModel
+from sceneops_db.utils import to_error_json
 
 
 class PostgresJobRepository:
@@ -73,6 +74,9 @@ class PostgresJobRepository:
         model.status = updated.status
         model.dataset_id = updated.dataset_id
         model.dataset_version = updated.dataset_version
+        model.pipeline_run_id = updated.pipeline_run_id
+        model.pipeline_step_run_id = updated.pipeline_step_run_id
+        model.pipeline_step_name = updated.pipeline_step_name
         model.run_id = updated.run_id
         model.evaluation_id = updated.evaluation_id
         model.params = updated.params
@@ -132,6 +136,9 @@ class PostgresJobRepository:
             status=self._enum_to_str(data["status"]),
             dataset_id=data.get("datasetId"),
             dataset_version=data.get("datasetVersion"),
+            pipeline_run_id=data.get("pipelineRunId"),
+            pipeline_step_run_id=data.get("pipelineStepRunId"),
+            pipeline_step_name=data.get("pipelineStepName"),
             run_id=self._extract_run_id(result),
             evaluation_id=self._extract_evaluation_id(result),
             params=params if isinstance(params, dict) else {},
@@ -149,6 +156,9 @@ class PostgresJobRepository:
         )
 
     def _to_schema(self, model: JobModel) -> JobManifest:
+        data = dict(model.manifest)
+
+        data["error"] = to_error_json(model.error)
         return JobManifest.model_validate(model.manifest)
 
     def _extract_run_id(self, result: Any) -> str | None:

@@ -14,12 +14,15 @@ class JobModel(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-
     type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
     dataset_id: Mapped[str] = mapped_column(String(128), nullable=False)
     dataset_version: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    pipeline_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pipeline_step_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pipeline_step_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     evaluation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -91,6 +94,14 @@ Index("ix_jobs_created_at", JobModel.created_at)
 Index("ix_jobs_dataset", JobModel.dataset_id, JobModel.dataset_version)
 Index("ix_jobs_worker_id", JobModel.worker_id)
 Index("ix_jobs_queued_at", JobModel.queued_at)
+
+Index("ix_jobs_pipeline_run_id", JobModel.pipeline_run_id)
+Index("ix_jobs_pipeline_step_run_id", JobModel.pipeline_step_run_id)
+Index(
+    "ix_jobs_pipeline_run_step",
+    JobModel.pipeline_run_id,
+    JobModel.pipeline_step_name,
+)
 
 Index("ix_job_events_job_id", JobEventModel.job_id)
 Index("ix_job_events_created_at", JobEventModel.created_at)
