@@ -61,6 +61,14 @@ class JobManifest(BaseModel):
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
 
+    retryCount: int = 0
+    maxRetries: int = 0
+
+    workerId: str | None = None
+    queuedAt: str | None = None
+    lockedAt: str | None = None
+    heartbeatAt: str | None = None
+
     createdAt: str
     updatedAt: str
     startedAt: str | None = None

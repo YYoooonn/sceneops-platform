@@ -105,11 +105,12 @@ db-revision:
 		echo "MSG is required. Usage: make db-revision MSG='create jobs table'"; \
 		exit 1; \
 	fi
+	$(MAKE) api-build
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
 		alembic -c packages/sceneops-db/alembic.ini revision --autogenerate -m "$(MSG)"
 
 .PHONY: db-migrate
-db-migrate:
+db-migrate: api-build
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate
 
 .PHONY: db-current

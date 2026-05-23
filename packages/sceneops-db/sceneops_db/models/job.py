@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Index, String, Text, text
+from sqlalchemy import DateTime, Integer, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,35 @@ class JobModel(Base):
     params: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    max_retries: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+    )
+
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    queued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
@@ -53,5 +82,7 @@ class JobModel(Base):
 
 Index("ix_jobs_type", JobModel.type)
 Index("ix_jobs_status", JobModel.status)
+Index("ix_jobs_worker_id", JobModel.worker_id)
+Index("ix_jobs_queued_at", JobModel.queued_at)
 Index("ix_jobs_created_at", JobModel.created_at)
 Index("ix_jobs_dataset", JobModel.dataset_id, JobModel.dataset_version)

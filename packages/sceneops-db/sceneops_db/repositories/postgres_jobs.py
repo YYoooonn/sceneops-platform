@@ -78,6 +78,12 @@ class PostgresJobRepository:
         model.params = updated.params
         model.result = updated.result
         model.error = updated.error
+        model.retry_count = updated.retry_count
+        model.max_retries = updated.max_retries
+        model.worker_id = updated.worker_id
+        model.queued_at = updated.queued_at
+        model.locked_at = updated.locked_at
+        model.heartbeat_at = updated.heartbeat_at
         model.manifest = updated.manifest
         model.started_at = updated.started_at
         model.finished_at = updated.finished_at
@@ -131,6 +137,12 @@ class PostgresJobRepository:
             params=params if isinstance(params, dict) else {},
             result=result if isinstance(result, dict) else None,
             error=error,
+            retry_count=int(data.get("retryCount") or 0),
+            max_retries=int(data.get("maxRetries") or 0),
+            worker_id=data.get("workerId"),
+            queued_at=self._extract_datetime(data.get("queuedAt")),
+            locked_at=self._extract_datetime(data.get("lockedAt")),
+            heartbeat_at=self._extract_datetime(data.get("heartbeatAt")),
             manifest=data,
             started_at=self._extract_datetime(data.get("startedAt")),
             finished_at=self._extract_datetime(data.get("finishedAt")),

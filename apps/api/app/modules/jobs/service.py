@@ -35,6 +35,9 @@ class JobService:
             datasetVersion=dataset_version,
             params=request.params,
             steps=build_default_steps(request.type),
+            retryCount=0,
+            maxRetries=0,  # XXX for now
+            queuedAt=now,
             createdAt=now,
             updatedAt=now,
         )
