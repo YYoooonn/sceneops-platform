@@ -1,4 +1,3 @@
-from sceneops_core.time import utc_now_iso
 from sceneops_core.ids.jobs import generate_job_id
 from sceneops_core.schemas.jobs import (
     CreateJobRequest,
@@ -7,8 +6,8 @@ from sceneops_core.schemas.jobs import (
     JobStatus,
     build_default_steps,
 )
-
-from app.modules.jobs.repository import JobRepository
+from sceneops_core.time import utc_now_iso
+from sceneops_db.repositories import JobRepository
 
 
 class JobService:
@@ -22,7 +21,7 @@ class JobService:
         self.default_dataset_id = default_dataset_id
         self.default_dataset_version = default_dataset_version
 
-    def create_job(self, request: CreateJobRequest) -> JobManifest:
+    async def create_job(self, request: CreateJobRequest) -> JobManifest:
         now = utc_now_iso()
 
         dataset_id = request.datasetId or self.default_dataset_id
@@ -40,9 +39,9 @@ class JobService:
             updatedAt=now,
         )
 
-        return self.repository.create_job(job)
+        return await self.repository.create(job)
 
-    def list_jobs(
+    async def list_jobs(
         self,
         *,
         status: JobStatus | None = None,
@@ -50,7 +49,7 @@ class JobService:
         dataset_id: str | None = None,
         dataset_version: str | None = None,
     ) -> JobListResponse:
-        jobs = self.repository.list_jobs(
+        jobs = await self.repository.list(
             status=status,
             job_type=job_type,
             dataset_id=dataset_id,
@@ -62,5 +61,8 @@ class JobService:
             count=len(jobs),
         )
 
-    def get_job(self, job_id: str) -> JobManifest | None:
-        return self.repository.get_job(job_id)
+    async def get_job(self, job_id: str) -> JobManifest | None:
+        try:
+            return await self.repository.get(job_id)
+        except FileNotFoundError:
+            return None

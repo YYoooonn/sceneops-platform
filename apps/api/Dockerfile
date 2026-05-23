@@ -4,16 +4,15 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PIP_NO_CACHE_DIR=1
 
 COPY packages/sceneops-core ./packages/sceneops-core
+COPY packages/sceneops-db ./packages/sceneops-db
+COPY apps/api ./apps/api
 
-COPY apps/api/requirements.txt ./apps/api/requirements.txt
-
-RUN pip install --no-cache-dir -e ./packages/sceneops-core \
-    && pip install --no-cache-dir -r ./apps/api/requirements.txt
-
-COPY apps/api/app ./apps/api/app
-
-WORKDIR /app/apps/api
+RUN pip install --upgrade pip \
+    && pip install ./packages/sceneops-core \
+    && pip install ./packages/sceneops-db \
+    && pip install ./apps/api
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

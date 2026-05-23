@@ -1,4 +1,10 @@
+from typing import Annotated
+
 from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from sceneops_db.repositories import JobRepository, PostgresJobRepository
+from sceneops_db.session import get_db_session
 
 from app.config import (
     ApiSettings,
@@ -11,23 +17,16 @@ from app.modules.artifacts.local_storage import LocalArtifactStorage
 from app.modules.artifacts.s3_storage import S3ArtifactStorage
 from app.modules.artifacts.service import ArtifactService
 from app.modules.artifacts.storage import ArtifactStorage
-
-# from app.modules.datasets.firestore_repository import FirestoreDatasetRepository
 from app.modules.datasets.local_repository import LocalManifestDatasetRepository
 from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.service import DatasetService
-
-from app.modules.runs.local_repository import LocalInferenceRunRepository
-from app.modules.runs.repository import InferenceRunRepository
-from app.modules.runs.service import InferenceRunService
-
 from app.modules.evaluations.local_repository import LocalEvaluationRunRepository
 from app.modules.evaluations.repository import EvaluationRunRepository
 from app.modules.evaluations.service import EvaluationRunService
-
-from app.modules.jobs.local_repository import LocalJobRepository
-from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.service import JobService
+from app.modules.runs.local_repository import LocalInferenceRunRepository
+from app.modules.runs.repository import InferenceRunRepository
+from app.modules.runs.service import InferenceRunService
 
 
 def get_dataset_repository(
@@ -38,7 +37,6 @@ def get_dataset_repository(
 
     if settings.metadata_backend == MetadataBackend.FIRESTORE:
         raise NotImplementedError("FireStore not implemented yet")
-        # return FirestoreDatasetRepository()
 
     raise ValueError(f"Unsupported metadata backend: {settings.metadata_backend}")
 
@@ -102,10 +100,10 @@ def get_evaluation_run_service(
     return EvaluationRunService(repository)
 
 
-def get_job_repository(
-    settings: ApiSettings = Depends(get_settings),
+async def get_job_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> JobRepository:
-    return LocalJobRepository(settings.runs_root)
+    return PostgresJobRepository(session)
 
 
 def get_job_service(
