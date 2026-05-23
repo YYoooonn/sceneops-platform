@@ -3,6 +3,7 @@ from sceneops_core.schemas.datasets import *
 from sceneops_core.schemas.evaluations import *
 from sceneops_core.schemas.jobs import *
 from sceneops_core.schemas.runs import *
+from sceneops_core.schemas.pipelines import *
 
 __all__ = [
     "Annotation",

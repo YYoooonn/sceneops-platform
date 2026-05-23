@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sceneops_core.schemas.common import ErrorInfo
 from sceneops_core.schemas.jobs import (
     JobEventLevel,
     JobEventType,
@@ -100,10 +101,7 @@ class JobRunner:
 
             await self._mark_job_failed(
                 job,
-                error={
-                    "type": error.__class__.__name__,
-                    "message": str(error),
-                },
+                error=ErrorInfo(type=error.__class__.__name__, message=str(error)),
             )
 
             await self.job_event_store.append(
@@ -172,7 +170,7 @@ class JobRunner:
         self,
         job: JobManifest,
         *,
-        error: dict[str, Any],
+        error: ErrorInfo,
     ) -> JobManifest:
         now = utc_now_iso()
 
