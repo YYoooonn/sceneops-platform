@@ -73,7 +73,7 @@ clean-all:
 
 .PHONY: compose-build
 compose-build:
-	docker compose -f $(COMPOSE_FILE) build
+	docker compose -f $(COMPOSE_FILE) build api worker
 
 .PHONY: compose-up
 compose-up: prepare-data
