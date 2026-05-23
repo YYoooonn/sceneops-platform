@@ -15,13 +15,11 @@ from sceneops_worker.jobs.store import JobStore
 
 class JobRunner:
     def __init__(
-        self,
-        *,
-        job_store: JobStore,
-        job_executor: JobExecutor,
+        self, *, job_store: JobStore, job_executor: JobExecutor, worker_id: str
     ) -> None:
         self.job_store = job_store
         self.job_executor = job_executor
+        self.worker_id = worker_id
 
     async def run(self, job_id: str) -> JobManifest:
         job = await self.job_store.get_job(job_id)
@@ -62,6 +60,9 @@ class JobRunner:
         now = utc_now_iso()
 
         job.status = JobStatus.RUNNING
+        job.workerId = self.worker_id
+        job.lockedAt = now
+        job.heartbeatAt = now
         job.startedAt = job.startedAt or now
         job.updatedAt = now
         job.finishedAt = None
@@ -88,6 +89,7 @@ class JobRunner:
         job.status = JobStatus.SUCCEEDED
         job.result = result
         job.error = None
+        job.heartbeatAt = now
         job.finishedAt = now
         job.updatedAt = now
 
@@ -108,6 +110,7 @@ class JobRunner:
 
         job.status = JobStatus.FAILED
         job.error = error
+        job.heartbeatAt = now
         job.finishedAt = now
         job.updatedAt = now
 

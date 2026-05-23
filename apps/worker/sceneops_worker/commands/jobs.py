@@ -40,6 +40,7 @@ def run_job_command(
     job_runner = JobRunner(
         job_store=job_store,
         job_executor=job_executor,
+        worker_id=settings.worker_id,
     )
 
     job = asyncio.run(job_runner.run(job_id))

@@ -19,6 +19,8 @@ class WorkerSettings(BaseSettings):
     artifact_root: Path = Field(alias="ARTIFACT_ROOT")
     runs_root: Path = Field(alias="RUNS_ROOT")
 
+    worker_id: str = Field(default="local-worker", alias="WORKER_ID")
+
     default_dataset_id: str = Field(default="nuscenes", alias="DEFAULT_DATASET_ID")
     default_dataset_version: str = Field(
         default="v1.0-mini",
