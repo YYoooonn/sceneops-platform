@@ -37,6 +37,9 @@ class JobService:
             status=JobStatus.PENDING,
             datasetId=dataset_id,
             datasetVersion=dataset_version,
+            pipelineRunId=request.pipelineRunId,
+            pipelineStepRunId=request.pipelineStepRunId,
+            pipelineStepName=request.pipelineStepName,
             params=request.params,
             steps=build_default_steps(request.type),
             retryCount=0,
@@ -53,11 +56,12 @@ class JobService:
             event_type=JobEventType.JOB_CREATED,
             message="Job created",
             payload={
-                "jobType": created.type.value
-                if hasattr(created.type, "value")
-                else str(created.type),
+                "jobType": str(created.type),
                 "datasetId": created.datasetId,
                 "datasetVersion": created.datasetVersion,
+                "pipelineRunId": created.pipelineRunId,
+                "pipelineStepRunId": created.pipelineStepRunId,
+                "pipelineStepName": created.pipelineStepName,
             },
         )
 

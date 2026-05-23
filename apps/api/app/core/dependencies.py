@@ -9,6 +9,12 @@ from sceneops_db.jobs import (
     JobEventRepository,
     PostgresJobEventRepository,
 )
+from sceneops_db.pipelines import (
+    PipelineRunRepository,
+    PipelineStepRunRepository,
+    PostgresPipelineRunRepository,
+    PostgresPipelineStepRunRepository,
+)
 from sceneops_db.session import get_db_session
 
 from app.config import (
@@ -32,6 +38,7 @@ from app.modules.jobs.service import JobService
 from app.modules.runs.local_repository import LocalInferenceRunRepository
 from app.modules.runs.repository import InferenceRunRepository
 from app.modules.runs.service import InferenceRunService
+from app.modules.pipelines.service import PipelineService
 
 
 def get_dataset_repository(
@@ -125,6 +132,33 @@ def get_job_service(
     return JobService(
         repository=repository,
         event_repository=event_repository,
+        default_dataset_id=settings.default_dataset_id,
+        default_dataset_version=settings.default_dataset_version,
+    )
+
+
+async def get_pipeline_run_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PipelineRunRepository:
+    return PostgresPipelineRunRepository(session)
+
+
+async def get_pipeline_step_run_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PipelineStepRunRepository:
+    return PostgresPipelineStepRunRepository(session)
+
+
+def get_pipeline_service(
+    settings: ApiSettings = Depends(get_settings),
+    pipeline_repository: PipelineRunRepository = Depends(get_pipeline_run_repository),
+    step_repository: PipelineStepRunRepository = Depends(
+        get_pipeline_step_run_repository
+    ),
+) -> PipelineService:
+    return PipelineService(
+        pipeline_repository=pipeline_repository,
+        step_repository=step_repository,
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,
     )
