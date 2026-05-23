@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from sceneops_db.base import Base
 from sceneops_db.config import get_db_settings
-from sceneops_db.models import JobModel  # noqa: F401
+from sceneops_db.jobs import JobModel, JobEventModel  # noqa: F401
 
 
 config = context.config

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from sceneops_core.schemas.jobs import JobManifest, JobStatus
+from sceneops_core.schemas.jobs import (
+    JobEventLevel,
+    JobEventManifest,
+    JobEventType,
+    JobManifest,
+    JobStatus,
+)
 
 
 class JobRepository(Protocol):
@@ -25,12 +31,18 @@ class JobRepository(Protocol):
     async def update(self, manifest: JobManifest) -> JobManifest:
         ...
 
-    async def update_status(
+
+class JobEventRepository(Protocol):
+    async def append(
         self,
-        job_id: str,
-        status: JobStatus,
         *,
-        error: str | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> JobManifest:
+        job_id: str,
+        event_type: JobEventType,
+        level: JobEventLevel = JobEventLevel.INFO,
+        message: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> JobEventManifest:
+        ...
+
+    async def list_by_job(self, job_id: str) -> list[JobEventManifest]:
         ...

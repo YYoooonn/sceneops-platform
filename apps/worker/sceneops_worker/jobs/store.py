@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from sceneops_core.schemas.jobs import JobManifest
-from sceneops_db.repositories import PostgresJobRepository
+from sceneops_db.jobs import PostgresJobRepository
 from sceneops_db.session import async_session_scope
 
 

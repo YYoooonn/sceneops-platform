@@ -80,6 +80,41 @@ class JobListResponse(BaseModel):
     count: int
 
 
+class JobEventType(str, Enum):
+    JOB_CREATED = "job_created"
+    JOB_STARTED = "job_started"
+    JOB_SUCCEEDED = "job_succeeded"
+    JOB_FAILED = "job_failed"
+
+    STEP_STARTED = "step_started"
+    STEP_SUCCEEDED = "step_succeeded"
+    STEP_FAILED = "step_failed"
+
+    JOB_RETRYING = "job_retrying"
+    JOB_CANCELED = "job_canceled"
+
+
+class JobEventLevel(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class JobEventManifest(BaseModel):
+    eventId: str
+    jobId: str
+    eventType: JobEventType
+    level: JobEventLevel = JobEventLevel.INFO
+    message: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    createdAt: str
+
+
+class JobEventListResponse(BaseModel):
+    events: list[JobEventManifest]
+    count: int
+
+
 def build_default_steps(job_type: JobType) -> list[JobStep]:
     if job_type == JobType.INGEST_NUSCENES:
         return [JobStep(name=name) for name in INGEST_NUSCENES_STEPS]

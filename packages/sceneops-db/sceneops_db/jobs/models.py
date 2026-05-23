@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, Index, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,14 +26,13 @@ class JobModel(Base):
 
     params: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     retry_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         server_default="0",
     )
-
     max_retries: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -42,20 +41,9 @@ class JobModel(Base):
 
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    queued_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
-    locked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
-    heartbeat_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     manifest: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
@@ -70,19 +58,41 @@ class JobModel(Base):
         nullable=False,
     )
 
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class JobEventModel(Base):
+    __tablename__ = "job_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    job_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    finished_at: Mapped[datetime | None] = mapped_column(
+
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=True,
+        server_default=text("now()"),
+        nullable=False,
     )
 
 
 Index("ix_jobs_type", JobModel.type)
 Index("ix_jobs_status", JobModel.status)
-Index("ix_jobs_worker_id", JobModel.worker_id)
-Index("ix_jobs_queued_at", JobModel.queued_at)
 Index("ix_jobs_created_at", JobModel.created_at)
 Index("ix_jobs_dataset", JobModel.dataset_id, JobModel.dataset_version)
+Index("ix_jobs_worker_id", JobModel.worker_id)
+Index("ix_jobs_queued_at", JobModel.queued_at)
+
+Index("ix_job_events_job_id", JobEventModel.job_id)
+Index("ix_job_events_created_at", JobEventModel.created_at)
+Index("ix_job_events_job_id_created_at", JobEventModel.job_id, JobEventModel.created_at)
+Index("ix_job_events_event_type", JobEventModel.event_type)

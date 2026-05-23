@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.schemas.jobs import JobManifest, JobStatus
 from sceneops_core.time import utc_now_iso
-from sceneops_db.models.job import JobModel
+from sceneops_db.jobs import JobModel
 
 
 class PostgresJobRepository:

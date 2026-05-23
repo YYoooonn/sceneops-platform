@@ -7,7 +7,7 @@ from sceneops_core.schemas.jobs import (
     build_default_steps,
 )
 from sceneops_core.time import utc_now_iso
-from sceneops_db.repositories import JobRepository
+from sceneops_db.jobs import JobRepository
 
 
 class JobService:
