@@ -1,0 +1,20 @@
+[project]
+name = "sceneops-db"
+version = "0.1.0"
+description = "Shared persistence layer for SceneOps Platform"
+requires-python = ">=3.11"
+dependencies = [
+    "sceneops-core",
+    "sqlalchemy>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pydantic-settings>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sceneops_db*"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
