@@ -9,6 +9,7 @@ from sceneops_worker.config import get_settings
 from sceneops_worker.jobs.executors import JobExecutionContext, JobExecutor
 from sceneops_worker.jobs.runner import JobRunner
 from sceneops_worker.jobs.store import PostgresJobStore
+from sceneops_worker.jobs.event_store import PostgresJobEventStore
 
 app = typer.Typer(
     help="Job execution commands.",
@@ -26,6 +27,7 @@ def run_job_command(
     print(f"job: {job_id}")
 
     job_store = PostgresJobStore()
+    job_event_store = PostgresJobEventStore()
 
     context = JobExecutionContext(
         raw_data_root=settings.raw_data_root,
@@ -40,6 +42,7 @@ def run_job_command(
     job_runner = JobRunner(
         job_store=job_store,
         job_executor=job_executor,
+        job_event_store=job_event_store,
         worker_id=settings.worker_id,
     )
 

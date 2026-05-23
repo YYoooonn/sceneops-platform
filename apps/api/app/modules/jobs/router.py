@@ -7,6 +7,7 @@ from sceneops_core.schemas.jobs import (
     JobListResponse,
     JobManifest,
     JobStatus,
+    JobEventListResponse,
 )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -34,6 +35,19 @@ async def list_jobs(
         dataset_id=dataset_id,
         dataset_version=dataset_version,
     )
+
+
+@router.get("/{job_id}/events", response_model=JobEventListResponse)
+async def list_job_events(
+    job_id: str,
+    service: JobService = Depends(get_job_service),
+) -> JobEventListResponse:
+    response = await service.list_job_events(job_id)
+
+    if response is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return response
 
 
 @router.get("/{job_id}", response_model=JobManifest)

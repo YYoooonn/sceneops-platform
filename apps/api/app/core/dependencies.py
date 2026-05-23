@@ -3,7 +3,12 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_db.jobs import JobRepository, PostgresJobRepository
+from sceneops_db.jobs import (
+    JobRepository,
+    PostgresJobRepository,
+    JobEventRepository,
+    PostgresJobEventRepository,
+)
 from sceneops_db.session import get_db_session
 
 from app.config import (
@@ -106,12 +111,20 @@ async def get_job_repository(
     return PostgresJobRepository(session)
 
 
+async def get_job_event_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> JobEventRepository:
+    return PostgresJobEventRepository(session)
+
+
 def get_job_service(
     settings: ApiSettings = Depends(get_settings),
     repository: JobRepository = Depends(get_job_repository),
+    event_repository: JobEventRepository = Depends(get_job_event_repository),
 ) -> JobService:
     return JobService(
         repository=repository,
+        event_repository=event_repository,
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,
     )

@@ -4,20 +4,24 @@ from sceneops_core.schemas.jobs import (
     JobListResponse,
     JobManifest,
     JobStatus,
+    JobEventType,
+    JobEventListResponse,
     build_default_steps,
 )
 from sceneops_core.time import utc_now_iso
-from sceneops_db.jobs import JobRepository
+from sceneops_db.jobs import JobEventRepository, JobRepository
 
 
 class JobService:
     def __init__(
         self,
         repository: JobRepository,
+        event_repository: JobEventRepository,
         default_dataset_id: str,
         default_dataset_version: str,
     ) -> None:
         self.repository = repository
+        self.event_repository = event_repository
         self.default_dataset_id = default_dataset_id
         self.default_dataset_version = default_dataset_version
 
@@ -42,7 +46,22 @@ class JobService:
             updatedAt=now,
         )
 
-        return await self.repository.create(job)
+        created = await self.repository.create(job)
+
+        await self.event_repository.append(
+            job_id=created.jobId,
+            event_type=JobEventType.JOB_CREATED,
+            message="Job created",
+            payload={
+                "jobType": created.type.value
+                if hasattr(created.type, "value")
+                else str(created.type),
+                "datasetId": created.datasetId,
+                "datasetVersion": created.datasetVersion,
+            },
+        )
+
+        return created
 
     async def list_jobs(
         self,
@@ -69,3 +88,16 @@ class JobService:
             return await self.repository.get(job_id)
         except FileNotFoundError:
             return None
+
+    async def list_job_events(self, job_id: str) -> JobEventListResponse | None:
+        job = await self.get_job(job_id)
+
+        if job is None:
+            return None
+
+        events = await self.event_repository.list_by_job(job_id)
+
+        return JobEventListResponse(
+            events=events,
+            count=len(events),
+        )

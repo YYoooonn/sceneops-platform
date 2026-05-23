@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from sceneops_core.schemas.jobs import (
+    JobEventLevel,
+    JobEventType,
     JobManifest,
     JobStatus,
     JobStepStatus,
@@ -11,13 +13,20 @@ from sceneops_core.time import utc_now_iso
 
 from sceneops_worker.jobs.executors import JobExecutor
 from sceneops_worker.jobs.store import JobStore
+from sceneops_worker.jobs.event_store import JobEventStore
 
 
 class JobRunner:
     def __init__(
-        self, *, job_store: JobStore, job_executor: JobExecutor, worker_id: str
+        self,
+        *,
+        job_store: JobStore,
+        job_executor: JobExecutor,
+        job_event_store: JobEventStore,
+        worker_id: str,
     ) -> None:
         self.job_store = job_store
+        self.job_event_store = job_event_store
         self.job_executor = job_executor
         self.worker_id = worker_id
 
@@ -31,12 +40,64 @@ class JobRunner:
 
         job = await self._mark_job_running(job)
 
+        await self.job_event_store.append(
+            job_id=job.jobId,
+            event_type=JobEventType.JOB_STARTED,
+            message="Job started",
+            payload={
+                "workerId": self.worker_id,
+                "jobType": job.type.value
+                if hasattr(job.type, "value")
+                else str(job.type),
+            },
+        )
+
+        running_step_name = self._get_running_step_name(job)
+
         try:
+            if running_step_name is not None:
+                await self.job_event_store.append(
+                    job_id=job.jobId,
+                    event_type=JobEventType.STEP_STARTED,
+                    message=f"Step started: {running_step_name}",
+                    payload={"step": running_step_name},
+                )
+
             result = self.job_executor.execute(job)
+
+            if running_step_name is not None:
+                await self.job_event_store.append(
+                    job_id=job.jobId,
+                    event_type=JobEventType.STEP_SUCCEEDED,
+                    message=f"Step succeeded: {running_step_name}",
+                    payload={"step": running_step_name},
+                )
+
             job = await self._mark_job_succeeded(job, result=result)
+
+            await self.job_event_store.append(
+                job_id=job.jobId,
+                event_type=JobEventType.JOB_SUCCEEDED,
+                message="Job succeeded",
+                payload={"result": result},
+            )
+
             return job
 
         except Exception as error:
+            if running_step_name is not None:
+                await self.job_event_store.append(
+                    job_id=job.jobId,
+                    event_type=JobEventType.STEP_FAILED,
+                    level=JobEventLevel.ERROR,
+                    message=f"Step failed: {running_step_name}",
+                    payload={
+                        "step": running_step_name,
+                        "errorType": error.__class__.__name__,
+                        "errorMessage": str(error),
+                    },
+                )
+
             await self._mark_job_failed(
                 job,
                 error={
@@ -44,6 +105,18 @@ class JobRunner:
                     "message": str(error),
                 },
             )
+
+            await self.job_event_store.append(
+                job_id=job.jobId,
+                event_type=JobEventType.JOB_FAILED,
+                level=JobEventLevel.ERROR,
+                message="Job failed",
+                payload={
+                    "errorType": error.__class__.__name__,
+                    "errorMessage": str(error),
+                },
+            )
+
             raise
 
     def _validate_runnable(self, job: JobManifest) -> None:
@@ -124,3 +197,11 @@ class JobRunner:
                 step.status = JobStepStatus.RUNNING
                 step.startedAt = step.startedAt or now
                 return
+
+    def _get_running_step_name(self, job: JobManifest) -> str | None:
+        for step in job.steps:
+            if step.status == JobStepStatus.RUNNING:
+                if hasattr(step, "name"):
+                    return step.name
+                return "unknown"
+        return None
