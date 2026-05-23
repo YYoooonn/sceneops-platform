@@ -2,7 +2,8 @@
     "include": [
       "apps/api",
       "apps/worker",
-      "packages/sceneops-core"
+      "packages/sceneops-core",
+      "packages/sceneops-db"
     ],
     "exclude": [
       ".venv",
@@ -12,6 +13,7 @@
     "venv": ".venv",
     "extraPaths": [
       "packages/sceneops-core",
+      "packages/sceneops-db",
       "apps/api",
       "apps/worker"
     ],
@@ -20,6 +22,7 @@
         "root": ".",
         "extraPaths": [
           "packages/sceneops-core",
+          "packages/sceneops-db",
           "apps/api",
           "apps/worker"
         ]

@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: sceneops-postgres
+    environment:
+      POSTGRES_USER: sceneops
+      POSTGRES_PASSWORD: sceneops
+      POSTGRES_DB: sceneops
+    ports:
+      - "5432:5432"
+    volumes:
+      - sceneops_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sceneops -d sceneops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: sceneops-platform/api:local
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./packages/sceneops-db/alembic:/app/packages/sceneops-db/alembic
+    working_dir: /app
+    command:
+      [
+        "alembic",
+        "-c",
+        "packages/sceneops-db/alembic.ini",
+        "upgrade",
+        "head"
+      ]
+    profiles:
+      - tools
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: sceneops-platform/api:local
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/raw:/data/raw:ro
+      - ./data/manifests:/data/manifests
+      - ./data/artifacts:/data/artifacts
+      - ./data/runs:/data/runs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: sceneops-platform/worker:local
+    env_file:
+      - .env
+    volumes:
+      - ./data/raw:/data/raw:ro
+      - ./data/manifests:/data/manifests
+      - ./data/artifacts:/data/artifacts
+      - ./data/runs:/data/runs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - worker
+    command: ["sceneops-worker", "--help"]
+
+volumes:
+  sceneops_postgres_data:
