@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from sceneops_core.schemas.jobs import (
@@ -21,23 +23,23 @@ class JobRunner:
         self.job_store = job_store
         self.job_executor = job_executor
 
-    def run(self, job_id: str) -> JobManifest:
-        job = self.job_store.get_job(job_id)
+    async def run(self, job_id: str) -> JobManifest:
+        job = await self.job_store.get_job(job_id)
 
         if job is None:
             raise FileNotFoundError(f"Job not found: {job_id}")
 
         self._validate_runnable(job)
 
-        job = self._mark_job_running(job)
+        job = await self._mark_job_running(job)
 
         try:
             result = self.job_executor.execute(job)
-            job = self._mark_job_succeeded(job, result=result)
+            job = await self._mark_job_succeeded(job, result=result)
             return job
 
         except Exception as error:
-            self._mark_job_failed(
+            await self._mark_job_failed(
                 job,
                 error={
                     "type": error.__class__.__name__,
@@ -56,19 +58,20 @@ class JobRunner:
         if job.status == JobStatus.CANCELED:
             raise RuntimeError(f"Job is canceled: {job.jobId}")
 
-    def _mark_job_running(self, job: JobManifest) -> JobManifest:
+    async def _mark_job_running(self, job: JobManifest) -> JobManifest:
         now = utc_now_iso()
 
         job.status = JobStatus.RUNNING
         job.startedAt = job.startedAt or now
         job.updatedAt = now
+        job.finishedAt = None
         job.error = None
 
-        self._mark_pending_steps(job, JobStepStatus.PENDING)
+        self._mark_first_pending_step_running(job)
 
-        return self.job_store.save_job(job)
+        return await self.job_store.save_job(job)
 
-    def _mark_job_succeeded(
+    async def _mark_job_succeeded(
         self,
         job: JobManifest,
         *,
@@ -79,6 +82,7 @@ class JobRunner:
         for step in job.steps:
             if step.status in {JobStepStatus.PENDING, JobStepStatus.RUNNING}:
                 step.status = JobStepStatus.SUCCEEDED
+                step.startedAt = step.startedAt or job.startedAt or now
                 step.finishedAt = step.finishedAt or now
 
         job.status = JobStatus.SUCCEEDED
@@ -87,9 +91,9 @@ class JobRunner:
         job.finishedAt = now
         job.updatedAt = now
 
-        return self.job_store.save_job(job)
+        return await self.job_store.save_job(job)
 
-    def _mark_job_failed(
+    async def _mark_job_failed(
         self,
         job: JobManifest,
         *,
@@ -107,16 +111,13 @@ class JobRunner:
         job.finishedAt = now
         job.updatedAt = now
 
-        return self.job_store.save_job(job)
+        return await self.job_store.save_job(job)
 
-    def _mark_pending_steps(
-        self,
-        job: JobManifest,
-        status: JobStepStatus,
-    ) -> None:
+    def _mark_first_pending_step_running(self, job: JobManifest) -> None:
         now = utc_now_iso()
 
         for step in job.steps:
             if step.status == JobStepStatus.PENDING:
-                step.status = status
+                step.status = JobStepStatus.RUNNING
                 step.startedAt = step.startedAt or now
+                return

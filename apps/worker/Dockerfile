@@ -4,17 +4,15 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PIP_NO_CACHE_DIR=1
 
 COPY packages/sceneops-core ./packages/sceneops-core
+COPY packages/sceneops-db ./packages/sceneops-db
+COPY apps/worker ./apps/worker
 
-COPY apps/worker/pyproject.toml ./apps/worker/pyproject.toml
-COPY apps/worker/sceneops_worker ./apps/worker/sceneops_worker
-
-RUN pip install --no-cache-dir -e ./packages/sceneops-core \
-    && pip install --no-cache-dir -e ./apps/worker
-
-WORKDIR /app/apps/worker
-
-RUN pip install --no-cache-dir -e .
+RUN pip install --upgrade pip \
+    && pip install ./packages/sceneops-core \
+    && pip install ./packages/sceneops-db \
+    && pip install ./apps/worker
 
 CMD ["sceneops-worker", "--help"]

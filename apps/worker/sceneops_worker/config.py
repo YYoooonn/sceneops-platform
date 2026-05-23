@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from functools import lru_cache
+
 from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -5,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class WorkerSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=None,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -22,5 +26,6 @@ class WorkerSettings(BaseSettings):
     )
 
 
+@lru_cache
 def get_settings() -> WorkerSettings:
     return WorkerSettings()

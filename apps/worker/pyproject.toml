@@ -1,14 +1,24 @@
 [project]
 name = "sceneops-worker"
 version = "0.1.0"
-requires-python = ">=3.10"
+description = "SceneOps worker"
+requires-python = ">=3.11"
 dependencies = [
-  "nuscenes-devkit",
-  "pydantic",
-  "pydantic-settings",
-  "typer",
-  "rich"
+    "sceneops-core",
+    "sceneops-db",
+    "nuscenes-devkit",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "typer>=0.12",
 ]
 
 [project.scripts]
 sceneops-worker = "sceneops_worker.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sceneops_worker*"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
