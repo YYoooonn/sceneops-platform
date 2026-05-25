@@ -10,10 +10,17 @@ from sceneops_db.session import async_session_scope
 class JobStore(Protocol):
     async def get_job(self, job_id: str) -> JobManifest | None: ...
 
+    async def create_job(self, job: JobManifest) -> JobManifest: ...
+
     async def save_job(self, job: JobManifest) -> JobManifest: ...
 
 
 class PostgresJobStore:
+    async def create_job(self, job: JobManifest) -> JobManifest:
+        async with async_session_scope() as session:
+            repository = PostgresJobRepository(session)
+            return await repository.create(job)
+
     async def get_job(self, job_id: str) -> JobManifest | None:
         async with async_session_scope() as session:
             repository = PostgresJobRepository(session)

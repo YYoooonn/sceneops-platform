@@ -5,11 +5,7 @@ import asyncio
 import typer
 from rich import print
 
-from sceneops_worker.config import get_settings
-from sceneops_worker.jobs.executors import JobExecutionContext, JobExecutor
-from sceneops_worker.jobs.runner import JobRunner
-from sceneops_worker.jobs.store import PostgresJobStore
-from sceneops_worker.jobs.event_store import PostgresJobEventStore
+from sceneops_worker.jobs.factory import create_job_runner
 
 app = typer.Typer(
     help="Job execution commands.",
@@ -21,31 +17,10 @@ app = typer.Typer(
 def run_job_command(
     job_id: str = typer.Option(..., "--job-id", help="Job ID to execute."),
 ) -> None:
-    settings = get_settings()
-
     print("[bold cyan]SceneOps Worker - Run job[/bold cyan]")
     print(f"job: {job_id}")
 
-    job_store = PostgresJobStore()
-    job_event_store = PostgresJobEventStore()
-
-    context = JobExecutionContext(
-        raw_data_root=settings.raw_data_root,
-        manifest_root=settings.manifest_root,
-        artifact_root=settings.artifact_root,
-        runs_root=settings.runs_root,
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
-    )
-
-    job_executor = JobExecutor(context)
-    job_runner = JobRunner(
-        job_store=job_store,
-        job_executor=job_executor,
-        job_event_store=job_event_store,
-        worker_id=settings.worker_id,
-    )
-
+    job_runner = create_job_runner()
     job = asyncio.run(job_runner.run(job_id))
 
     print(f"[bold green]Done.[/bold green] status={job.status.value}")

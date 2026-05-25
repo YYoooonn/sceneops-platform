@@ -30,7 +30,7 @@ def generate_mock_predictions(
     run_id: str,
     max_samples: int | None = None,
     seed: int = 42,
-) -> None:
+) -> dict[str, Any]:
     random.seed(seed)
 
     store = JsonStore()
@@ -93,10 +93,14 @@ def generate_mock_predictions(
         "status": "SUCCEEDED",
         "sampleCount": len(sample_ids),
         "predictionCount": prediction_count,
+        "predictionManifestUri": str(run_root / "run.json"),
+        "predictionsRootUri": str(run_root / "predictions"),
         "createdAt": datetime.now(UTC).isoformat(),
     }
 
     store.write_json(run_root / "run.json", run_manifest)
+
+    return run_manifest
 
 
 def _collect_sample_ids(

@@ -1,9 +1,6 @@
 import typer
 
-from sceneops_worker.commands.evaluate import app as evaluate_app
-from sceneops_worker.commands.ingest import app as ingest_app
-from sceneops_worker.commands.jobs import app as jobs_app
-from sceneops_worker.commands.predict import app as predict_app
+from sceneops_worker.commands import evaluate, ingest, jobs, pipelines, predict
 
 app = typer.Typer(
     name="sceneops-worker",
@@ -11,11 +8,11 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-app.add_typer(ingest_app, name="ingest")
-app.add_typer(predict_app, name="predict")
-app.add_typer(evaluate_app, name="evaluate")
-app.add_typer(jobs_app, name="jobs")
-
+app.add_typer(ingest.app, name="ingest")
+app.add_typer(predict.app, name="predict")
+app.add_typer(evaluate.app, name="evaluate")
+app.add_typer(jobs.app, name="jobs")
+app.add_typer(pipelines.app, name="pipelines")
 
 if __name__ == "__main__":
     app()

@@ -12,7 +12,7 @@ from sceneops_core.schemas.jobs import (
 )
 from sceneops_core.time import utc_now_iso
 
-from sceneops_worker.jobs.executors import JobExecutor
+from sceneops_worker.jobs.executor import JobExecutor
 from sceneops_worker.jobs.store import JobStore
 from sceneops_worker.jobs.event_store import JobEventStore
 

@@ -28,7 +28,7 @@ def evaluate_detection_run(
     inference_run_id: str,
     evaluation_run_id: str,
     match_distance_m: float = DEFAULT_MATCH_DISTANCE_M,
-) -> None:
+) -> dict[str, Any]:
     store = JsonStore()
 
     version_root = dataset_version_root(
@@ -107,6 +107,8 @@ def evaluate_detection_run(
         "status": "SUCCEEDED",
         "matchDistanceM": match_distance_m,
         "sampleCount": len(prediction_files),
+        "evaluationManifestUri": str(eval_root / "evaluation.json"),
+        "samplesRootUri": str(eval_root / "samples"),
         "metrics": {
             "tp": total_tp,
             "fp": total_fp,
@@ -120,6 +122,8 @@ def evaluate_detection_run(
     }
 
     store.write_json(eval_root / "evaluation.json", evaluation_manifest)
+
+    return evaluation_manifest
 
 
 def _evaluate_sample(
