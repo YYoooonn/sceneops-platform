@@ -1,7 +1,16 @@
+from __future__ import annotations
+
 from typing import Any
+from enum import Enum
 
 from pydantic import BaseModel
 
+
+class DatasetType(str, Enum):
+    NUSCENES = "nuscenes"
+    WAYMO = "waymo"
+    KITTI = "kitti"
+    CUSTOM = "custom"
 
 class DatasetIndexItem(BaseModel):
     datasetId: str

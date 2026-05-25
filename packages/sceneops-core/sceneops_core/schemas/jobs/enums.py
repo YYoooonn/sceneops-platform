@@ -4,8 +4,8 @@ from enum import Enum
 
 
 class JobType(str, Enum):
-    INGEST_NUSCENES = "ingest_nuscenes"
-    PREDICT_MOCK_DETECTION = "predict_mock_detection"
+    INGEST_DATASET = "ingest_dataset"
+    PREDICT_DETECTION = "predict_detection"
     EVALUATE_DETECTION = "evaluate_detection"
 
 

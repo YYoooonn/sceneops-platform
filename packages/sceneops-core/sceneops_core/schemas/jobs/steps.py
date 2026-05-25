@@ -17,10 +17,10 @@ class JobStep(BaseModel):
 
 
 def build_default_steps(job_type: JobType) -> list[JobStep]:
-    if job_type == JobType.INGEST_NUSCENES:
+    if job_type == JobType.INGEST_DATASET:
         return [JobStep(name=name) for name in INGEST_NUSCENES_STEPS]
 
-    if job_type == JobType.PREDICT_MOCK_DETECTION:
+    if job_type == JobType.PREDICT_DETECTION:
         return [JobStep(name=name) for name in PREDICT_MOCK_DETECTION_STEPS]
 
     if job_type == JobType.EVALUATE_DETECTION:
