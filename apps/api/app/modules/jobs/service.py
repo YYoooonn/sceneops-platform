@@ -1,12 +1,13 @@
 from sceneops_core.ids.jobs import generate_job_id
 from sceneops_core.schemas.jobs import (
     CreateJobRequest,
+    JobEventListResponse,
+    JobEventType,
     JobListResponse,
     JobManifest,
     JobStatus,
-    JobEventType,
-    JobEventListResponse,
     build_default_steps,
+    parse_job_params,
 )
 from sceneops_core.time import utc_now_iso
 from sceneops_db.jobs import JobEventRepository, JobRepository
@@ -30,6 +31,13 @@ class JobService:
 
         dataset_id = request.datasetId or self.default_dataset_id
         dataset_version = request.datasetVersion or self.default_dataset_version
+        raw_params = {
+            **request.params,
+            "datasetId": dataset_id,
+            "datasetVersion": dataset_version,
+        }
+
+        validated_params = parse_job_params(request.type, raw_params)
 
         job = JobManifest(
             jobId=generate_job_id(),
@@ -40,10 +48,10 @@ class JobService:
             pipelineRunId=request.pipelineRunId,
             pipelineStepRunId=request.pipelineStepRunId,
             pipelineStepName=request.pipelineStepName,
-            params=request.params,
+            params=validated_params.model_dump(mode="json"),
             steps=build_default_steps(request.type),
             retryCount=0,
-            maxRetries=0,  # XXX for now
+            maxRetries=request.maxRetries,
             queuedAt=now,
             createdAt=now,
             updatedAt=now,

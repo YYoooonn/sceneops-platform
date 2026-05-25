@@ -19,18 +19,21 @@ DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
         PipelineStepDefinition(
             name="ingest",
             order=1,
-            jobType=JobType.INGEST_NUSCENES.value,
+            jobType=JobType.INGEST_DATASET.value,
             dependsOn=[],
             defaultParams={
+                "datasetType": "nuscenes",
                 "mode": "upsert",
             },
         ),
         PipelineStepDefinition(
             name="predict",
             order=2,
-            jobType=JobType.PREDICT_MOCK_DETECTION.value,
+            jobType=JobType.PREDICT_DETECTION.value,
             dependsOn=["ingest"],
-            defaultParams={},
+            defaultParams={
+                "inferenceBackend": "mock",
+            },
         ),
         PipelineStepDefinition(
             name="evaluate",
@@ -38,6 +41,7 @@ DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
             jobType=JobType.EVALUATE_DETECTION.value,
             dependsOn=["predict"],
             defaultParams={
+                "evaluatorId": "center-distance",
                 "matchDistanceM": 2.0,
             },
         ),

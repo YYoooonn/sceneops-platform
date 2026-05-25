@@ -171,6 +171,18 @@ worker-run-job: prepare-data
 worker-shell:
 	docker compose -f $(COMPOSE_FILE) run --rm worker sh
 
+PIPELINE_RUN_ID ?=
+
+.PHONY: worker-run-pipeline
+worker-run-pipeline:
+	@if [ -z "$(PIPELINE_RUN_ID)" ]; then \
+		echo "PIPELINE_RUN_ID is required. Usage: make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"; \
+		exit 1; \
+	fi
+	docker compose -f $(COMPOSE_FILE) --profile worker run --rm worker \
+		sceneops-worker pipelines run \
+			--pipeline-run-id $(PIPELINE_RUN_ID)
+
 # --------------------
 # -------DEBUG--------
 # --------------------
