@@ -1,5 +1,11 @@
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import date, datetime
+from enum import Enum
+from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel
 
 from sceneops_core.schemas.common import ErrorInfo
 
@@ -42,6 +48,46 @@ def to_error_info(value: Any) -> ErrorInfo | None:
         type=value.__class__.__name__,
         message=str(value),
     )
+
+
+def to_jsonable(value: Any) -> Any:
+    if value is None:
+        return None
+
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+
+    if isinstance(value, Enum):
+        return value.value
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if isinstance(value, dict):
+        return {
+            str(key): to_jsonable(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [to_jsonable(item) for item in value]
+
+    if isinstance(value, tuple):
+        return [to_jsonable(item) for item in value]
+
+    if isinstance(value, set):
+        return [to_jsonable(item) for item in sorted(value, key=str)]
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    return str(value)
 
 
 def to_error_json(value: Any) -> dict[str, Any] | None:
