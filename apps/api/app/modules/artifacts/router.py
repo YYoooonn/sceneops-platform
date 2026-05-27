@@ -1,31 +1,61 @@
-from fastapi import APIRouter, Depends
+from __future__ import annotations
 
-from sceneops_core.schemas.artifacts import SampleArtifact
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.dependencies import get_artifact_service
 from app.modules.artifacts.service import ArtifactService
-from app.shared.errors import not_found
+from sceneops_core.schemas.common import JsonDict
 
-router = APIRouter(prefix="/artifacts", tags=["artifacts"])
+router = APIRouter(
+    prefix="/artifacts",
+    tags=["artifacts"],
+)
 
 
 @router.get(
-    "/datasets/{dataset_id}/versions/{dataset_version}/samples/{sample_id}",
-    response_model=list[SampleArtifact],
+    "/datasets/{dataset_id}/versions/{dataset_version}/manifest",
+    response_model=dict,
+    response_model_by_alias=True,
 )
-def list_sample_artifacts(
+async def get_dataset_manifest_artifact(
     dataset_id: str,
     dataset_version: str,
-    sample_id: str,
     service: ArtifactService = Depends(get_artifact_service),
-):
-    artifacts = service.list_sample_artifacts(
-        dataset_id,
-        dataset_version,
-        sample_id,
-    )
+) -> JsonDict:
+    try:
+        return await service.get_dataset_manifest(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
-    if not artifacts:
-        raise not_found("Sample artifacts not found")
 
-    return artifacts
+@router.get(
+    "/runs/inference/{run_id}",
+    response_model=dict,
+    response_model_by_alias=True,
+)
+async def get_inference_run_artifact(
+    run_id: str,
+    service: ArtifactService = Depends(get_artifact_service),
+) -> JsonDict:
+    try:
+        return await service.get_inference_run_manifest(run_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get(
+    "/runs/evaluations/{evaluation_run_id}",
+    response_model=dict,
+    response_model_by_alias=True,
+)
+async def get_evaluation_run_artifact(
+    evaluation_run_id: str,
+    service: ArtifactService = Depends(get_artifact_service),
+) -> JsonDict:
+    try:
+        return await service.get_evaluation_run_manifest(evaluation_run_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error

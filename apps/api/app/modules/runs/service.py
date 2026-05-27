@@ -1,32 +1,78 @@
-from app.modules.runs.repository import InferenceRunRepository
+from __future__ import annotations
+
+from sceneops_core.schemas.runs import (
+    EvaluationRunDetailResponse,
+    EvaluationRunListResponse,
+    InferenceRunDetailResponse,
+    InferenceRunListResponse,
+    RunStatus,
+)
+from sceneops_db.runs import EvaluationRunRepository, InferenceRunRepository
 
 
-class InferenceRunService:
-    def __init__(self, repository: InferenceRunRepository) -> None:
-        self.repository = repository
+class RunService:
+    def __init__(
+        self,
+        inference_repository: InferenceRunRepository,
+        evaluation_repository: EvaluationRunRepository,
+    ) -> None:
+        self.inference_repository = inference_repository
+        self.evaluation_repository = evaluation_repository
 
-    def list_inference_runs(
+    async def list_inference_runs(
         self,
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         model_id: str | None = None,
         model_version: str | None = None,
-        status: str | None = None,
-    ):
-        return self.repository.list_inference_runs(
+        status: RunStatus | None = None,
+    ) -> InferenceRunListResponse:
+        runs = await self.inference_repository.list(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             model_id=model_id,
             model_version=model_version,
             status=status,
         )
+        return InferenceRunListResponse(runs=runs, count=len(runs))
 
-    def get_inference_run(self, run_id: str):
-        return self.repository.get_inference_run(run_id)
+    async def get_inference_run(
+        self,
+        run_id: str,
+    ) -> InferenceRunDetailResponse | None:
+        try:
+            run = await self.inference_repository.get(run_id)
+        except FileNotFoundError:
+            return None
+        return InferenceRunDetailResponse(run=run)
 
-    def list_predictions(self, run_id: str):
-        return self.repository.list_predictions(run_id)
+    async def list_evaluation_runs(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        model_id: str | None = None,
+        model_version: str | None = None,
+        inference_run_id: str | None = None,
+        status: RunStatus | None = None,
+    ) -> EvaluationRunListResponse:
+        runs = await self.evaluation_repository.list(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            model_id=model_id,
+            model_version=model_version,
+            inference_run_id=inference_run_id,
+            status=status,
+        )
+        return EvaluationRunListResponse(runs=runs, count=len(runs))
 
-    def get_prediction(self, run_id: str, sample_id: str):
-        return self.repository.get_prediction(run_id, sample_id)
+    async def get_evaluation_run(
+        self,
+        evaluation_run_id: str,
+    ) -> EvaluationRunDetailResponse | None:
+        try:
+            run = await self.evaluation_repository.get(evaluation_run_id)
+        except FileNotFoundError:
+            return None
+        return EvaluationRunDetailResponse(run=run)

@@ -1,13 +1,36 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import ApiSettings, get_settings
+from app.modules.artifacts import ArtifactService, ArtifactStorage, LocalArtifactStorage
+from app.modules.datasets.service import DatasetService
+from app.modules.jobs.service import JobService
+from app.modules.models.service import ModelService
+from app.modules.pipelines.service import PipelineService
+from app.modules.runs.service import RunService
+
+from sceneops_db.datasets import (
+    DatasetRepository,
+    DatasetVersionRepository,
+    PostgresDatasetRepository,
+    PostgresDatasetVersionRepository,
+)
 from sceneops_db.jobs import (
-    JobRepository,
-    PostgresJobRepository,
     JobEventRepository,
+    JobRepository,
     PostgresJobEventRepository,
+    PostgresJobRepository,
+)
+from sceneops_db.model_registry import (
+    ModelRepository,
+    ModelVersionRepository,
+    PostgresModelRepository,
+    PostgresModelVersionRepository,
 )
 from sceneops_db.pipelines import (
     PipelineRunRepository,
@@ -15,34 +38,22 @@ from sceneops_db.pipelines import (
     PostgresPipelineRunRepository,
     PostgresPipelineStepRunRepository,
 )
-from sceneops_db.datasets import (
-    DatasetRepository,
-    DatasetVersionRepository,
-    PostgresDatasetRepository,
-    PostgresDatasetVersionRepository,
+from sceneops_db.runs import (
+    EvaluationRunRepository,
+    InferenceRunRepository,
+    PostgresEvaluationRunRepository,
+    PostgresInferenceRunRepository,
 )
-from sceneops_db.session import get_db_session
+from sceneops_db.session import async_session_scope
 
-from app.config import (
-    ApiSettings,
-    # MetadataBackend,
-    StorageBackend,
-    get_settings,
-)
-from app.modules.artifacts.gcs_storage import GcsArtifactStorage
-from app.modules.artifacts.local_storage import LocalArtifactStorage
-from app.modules.artifacts.s3_storage import S3ArtifactStorage
-from app.modules.artifacts.service import ArtifactService
-from app.modules.artifacts.storage import ArtifactStorage
-from app.modules.datasets.service import DatasetService
-from app.modules.evaluations.local_repository import LocalEvaluationRunRepository
-from app.modules.evaluations.repository import EvaluationRunRepository
-from app.modules.evaluations.service import EvaluationRunService
-from app.modules.jobs.service import JobService
-from app.modules.runs.local_repository import LocalInferenceRunRepository
-from app.modules.runs.repository import InferenceRunRepository
-from app.modules.runs.service import InferenceRunService
-from app.modules.pipelines.service import PipelineService
+
+def get_api_settings() -> ApiSettings:
+    return get_settings()
+
+
+async def get_db_session() -> AsyncIterator[AsyncSession]:
+    async with async_session_scope() as session:
+        yield session
 
 
 async def get_dataset_repository(
@@ -57,75 +68,6 @@ async def get_dataset_version_repository(
     return PostgresDatasetVersionRepository(session)
 
 
-def get_dataset_service(
-    repository: DatasetRepository = Depends(get_dataset_repository),
-    version_repository: DatasetVersionRepository = Depends(
-        get_dataset_version_repository
-    ),
-) -> DatasetService:
-    return DatasetService(
-        repository=repository,
-        version_repository=version_repository,
-    )
-
-
-def get_artifact_storage(
-    settings: ApiSettings = Depends(get_settings),
-) -> ArtifactStorage:
-    if settings.storage_backend == StorageBackend.LOCAL:
-        return LocalArtifactStorage(settings.api_base_url)
-
-    if settings.storage_backend == StorageBackend.GCS:
-        if settings.gcs_bucket is None:
-            raise ValueError("GCS_BUCKET is required when STORAGE_BACKEND=gcs")
-        return GcsArtifactStorage(settings.gcs_bucket)
-
-    if settings.storage_backend == StorageBackend.S3:
-        if settings.s3_bucket is None:
-            raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")
-        return S3ArtifactStorage(settings.s3_bucket)
-
-    raise ValueError(f"Unsupported storage backend: {settings.storage_backend}")
-
-
-def get_artifact_service(
-    dataset_repository: DatasetRepository = Depends(get_dataset_repository),
-    version_repository: DatasetVersionRepository = Depends(
-        get_dataset_version_repository
-    ),
-    artifact_storage: ArtifactStorage = Depends(get_artifact_storage),
-) -> ArtifactService:
-    return ArtifactService(
-        dataset_repository=dataset_repository,
-        version_repository=version_repository,
-        artifact_storage=artifact_storage,
-    )
-
-
-def get_inference_run_repository(
-    settings: ApiSettings = Depends(get_settings),
-) -> InferenceRunRepository:
-    return LocalInferenceRunRepository(settings.runs_root)
-
-
-def get_inference_run_service(
-    repository: InferenceRunRepository = Depends(get_inference_run_repository),
-) -> InferenceRunService:
-    return InferenceRunService(repository)
-
-
-def get_evaluation_run_repository(
-    settings: ApiSettings = Depends(get_settings),
-) -> EvaluationRunRepository:
-    return LocalEvaluationRunRepository(settings.runs_root)
-
-
-def get_evaluation_run_service(
-    repository: EvaluationRunRepository = Depends(get_evaluation_run_repository),
-) -> EvaluationRunService:
-    return EvaluationRunService(repository)
-
-
 async def get_job_repository(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> JobRepository:
@@ -136,19 +78,6 @@ async def get_job_event_repository(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> JobEventRepository:
     return PostgresJobEventRepository(session)
-
-
-def get_job_service(
-    settings: ApiSettings = Depends(get_settings),
-    repository: JobRepository = Depends(get_job_repository),
-    event_repository: JobEventRepository = Depends(get_job_event_repository),
-) -> JobService:
-    return JobService(
-        repository=repository,
-        event_repository=event_repository,
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
-    )
 
 
 async def get_pipeline_run_repository(
@@ -163,16 +92,136 @@ async def get_pipeline_step_run_repository(
     return PostgresPipelineStepRunRepository(session)
 
 
+async def get_inference_run_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> InferenceRunRepository:
+    return PostgresInferenceRunRepository(session)
+
+
+async def get_evaluation_run_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> EvaluationRunRepository:
+    return PostgresEvaluationRunRepository(session)
+
+
+async def get_model_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ModelRepository:
+    return PostgresModelRepository(session)
+
+
+async def get_model_version_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> ModelVersionRepository:
+    return PostgresModelVersionRepository(session)
+
+
+def get_artifact_storage(
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+) -> ArtifactStorage:
+    return LocalArtifactStorage(
+        root=str(settings.artifact_root),
+    )
+
+
+def get_dataset_service(
+    repository: Annotated[DatasetRepository, Depends(get_dataset_repository)],
+    version_repository: Annotated[
+        DatasetVersionRepository,
+        Depends(get_dataset_version_repository),
+    ],
+) -> DatasetService:
+    return DatasetService(
+        repository=repository,
+        version_repository=version_repository,
+    )
+
+
+def get_job_service(
+    repository: Annotated[JobRepository, Depends(get_job_repository)],
+    event_repository: Annotated[
+        JobEventRepository,
+        Depends(get_job_event_repository),
+    ],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+) -> JobService:
+    return JobService(
+        repository=repository,
+        event_repository=event_repository,
+        default_dataset_id=settings.default_dataset_id,
+        default_dataset_version=settings.default_dataset_version,
+    )
+
+
 def get_pipeline_service(
-    settings: ApiSettings = Depends(get_settings),
-    pipeline_repository: PipelineRunRepository = Depends(get_pipeline_run_repository),
-    step_repository: PipelineStepRunRepository = Depends(
-        get_pipeline_step_run_repository
-    ),
+    pipeline_repository: Annotated[
+        PipelineRunRepository,
+        Depends(get_pipeline_run_repository),
+    ],
+    step_repository: Annotated[
+        PipelineStepRunRepository,
+        Depends(get_pipeline_step_run_repository),
+    ],
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
 ) -> PipelineService:
     return PipelineService(
         pipeline_repository=pipeline_repository,
         step_repository=step_repository,
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,
+    )
+
+
+def get_run_service(
+    inference_repository: Annotated[
+        InferenceRunRepository,
+        Depends(get_inference_run_repository),
+    ],
+    evaluation_repository: Annotated[
+        EvaluationRunRepository,
+        Depends(get_evaluation_run_repository),
+    ],
+) -> RunService:
+    return RunService(
+        inference_repository=inference_repository,
+        evaluation_repository=evaluation_repository,
+    )
+
+
+def get_model_service(
+    repository: Annotated[ModelRepository, Depends(get_model_repository)],
+    version_repository: Annotated[
+        ModelVersionRepository,
+        Depends(get_model_version_repository),
+    ],
+) -> ModelService:
+    return ModelService(
+        repository=repository,
+        version_repository=version_repository,
+    )
+
+
+def get_artifact_service(
+    dataset_version_repository: Annotated[
+        DatasetVersionRepository,
+        Depends(get_dataset_version_repository),
+    ],
+    inference_run_repository: Annotated[
+        InferenceRunRepository,
+        Depends(get_inference_run_repository),
+    ],
+    evaluation_run_repository: Annotated[
+        EvaluationRunRepository,
+        Depends(get_evaluation_run_repository),
+    ],
+    artifact_storage: Annotated[
+        ArtifactStorage,
+        Depends(get_artifact_storage),
+    ],
+) -> ArtifactService:
+    return ArtifactService(
+        dataset_version_repository=dataset_version_repository,
+        inference_run_repository=inference_run_repository,
+        evaluation_run_repository=evaluation_run_repository,
+        artifact_storage=artifact_storage,
     )

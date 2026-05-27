@@ -1,73 +1,75 @@
-from app.modules.artifacts.storage import ArtifactStorage
+from __future__ import annotations
 
-from sceneops_core.ids.artifacts import sample_sensor_artifact_id
-from sceneops_core.schemas.artifacts import ArtifactType
-from sceneops_db.datasets import DatasetRepository, DatasetVersionRepository
+from sceneops_core.schemas.common import JsonDict
+from sceneops_db.datasets import DatasetVersionRepository
+from sceneops_db.runs import EvaluationRunRepository, InferenceRunRepository
+
+from app.modules.artifacts.storage import ArtifactStorage
 
 
 class ArtifactService:
     def __init__(
         self,
-        dataset_repository: DatasetRepository,
-        version_repository: DatasetVersionRepository,
+        *,
+        dataset_version_repository: DatasetVersionRepository,
+        inference_run_repository: InferenceRunRepository,
+        evaluation_run_repository: EvaluationRunRepository,
         artifact_storage: ArtifactStorage,
     ) -> None:
-        self.dataset_repository = dataset_repository
-        self.version_repository = version_repository
+        self.dataset_version_repository = dataset_version_repository
+        self.inference_run_repository = inference_run_repository
+        self.evaluation_run_repository = evaluation_run_repository
         self.artifact_storage = artifact_storage
 
-    def list_sample_artifacts(
+    async def get_dataset_manifest(
         self,
+        *,
         dataset_id: str,
         dataset_version: str,
-        sample_id: str,
-    ) -> list[dict]:
-        raise NotImplementedError("not implemented yet")
-
-        sample = self.dataset_version_repository.get_sample(
-            dataset_id,
-            dataset_version,
-            sample_id,
+    ) -> JsonDict:
+        version = await self.dataset_version_repository.get(
+            dataset_id=dataset_id,
+            version=dataset_version,
         )
 
-        if sample is None:
-            return []
-
-        artifacts = []
-
-        for channel, sensor in sample.get("sensors", {}).items():
-            filename = sensor.get("filename")
-
-            if filename is None:
-                continue
-
-            artifacts.append(
-                {
-                    "artifactId": sample_sensor_artifact_id(
-                        sample_id=sample_id,
-                        channel=channel,
-                    ),
-                    "datasetId": dataset_id,
-                    "datasetVersion": dataset_version,
-                    "sceneId": sample["sceneId"],
-                    "sampleId": sample_id,
-                    "type": self._infer_artifact_type(channel),
-                    "channel": channel,
-                    "uri": filename,
-                    "downloadUrl": self.artifact_storage.get_download_url(filename),
-                }
+        if version.manifest_uri is None:
+            raise FileNotFoundError(
+                f"Dataset manifest not found: {dataset_id}:{dataset_version}"
             )
 
-        return artifacts
+        artifact = await self.artifact_storage.read_json(version.manifest_uri)
+        if not isinstance(artifact, dict):
+            raise ValueError(f"Invalid dataset manifest: {version.manifest_uri}")
 
-    def _infer_artifact_type(self, channel: str) -> str:
-        if channel.startswith("CAM_"):
-            return ArtifactType.CAMERA_IMAGE
+        return artifact
 
-        if channel.startswith("LIDAR_"):
-            return ArtifactType.LIDAR_POINTCLOUD
+    async def get_inference_run_manifest(self, run_id: str) -> JsonDict:
+        run = await self.inference_run_repository.get(run_id)
 
-        if channel.startswith("RADAR_"):
-            return ArtifactType.RADAR_POINTCLOUD
+        if run.run_manifest_uri is None:
+            raise FileNotFoundError(f"Inference run manifest not found: {run_id}")
 
-        return ArtifactType.UNKNOWN
+        artifact = await self.artifact_storage.read_json(run.run_manifest_uri)
+        if not isinstance(artifact, dict):
+            raise ValueError(f"Invalid inference run manifest: {run.run_manifest_uri}")
+
+        return artifact
+
+    async def get_evaluation_run_manifest(
+        self,
+        evaluation_run_id: str,
+    ) -> JsonDict:
+        run = await self.evaluation_run_repository.get(evaluation_run_id)
+
+        if run.evaluation_manifest_uri is None:
+            raise FileNotFoundError(
+                f"Evaluation run manifest not found: {evaluation_run_id}"
+            )
+
+        artifact = await self.artifact_storage.read_json(run.evaluation_manifest_uri)
+        if not isinstance(artifact, dict):
+            raise ValueError(
+                f"Invalid evaluation run manifest: {run.evaluation_manifest_uri}"
+            )
+
+        return artifact

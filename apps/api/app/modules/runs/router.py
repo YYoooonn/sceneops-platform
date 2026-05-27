@@ -1,32 +1,37 @@
-from fastapi import APIRouter, Depends, Query
+from __future__ import annotations
 
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.core.dependencies import get_run_service
+from app.modules.runs.service import RunService
 from sceneops_core.schemas.runs import (
+    EvaluationRunDetailResponse,
+    EvaluationRunListResponse,
+    InferenceRunDetailResponse,
     InferenceRunListResponse,
-    InferenceRunManifest,
-    PredictionListResponse,
-    PredictionManifest,
+    RunStatus,
 )
 
-from app.core.dependencies import get_inference_run_service
-from app.modules.runs.service import InferenceRunService
-from app.shared.errors import not_found
-
-router = APIRouter(prefix="/runs", tags=["runs"])
+router = APIRouter(
+    prefix="/runs",
+    tags=["runs"],
+)
 
 
 @router.get(
     "/inference",
     response_model=InferenceRunListResponse,
+    response_model_by_alias=True,
 )
-def list_inference_runs(
-    dataset_id: str | None = Query(default=None, alias="datasetId"),
-    dataset_version: str | None = Query(default=None, alias="datasetVersion"),
-    model_id: str | None = Query(default=None, alias="modelId"),
-    model_version: str | None = Query(default=None, alias="modelVersion"),
-    status: str | None = Query(default=None),
-    service: InferenceRunService = Depends(get_inference_run_service),
-):
-    runs = service.list_inference_runs(
+async def list_inference_runs(
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
+    model_id: str | None = None,
+    model_version: str | None = None,
+    status: RunStatus | None = None,
+    service: RunService = Depends(get_run_service),
+) -> InferenceRunListResponse:
+    return await service.list_inference_runs(
         dataset_id=dataset_id,
         dataset_version=dataset_version,
         model_id=model_id,
@@ -34,66 +39,61 @@ def list_inference_runs(
         status=status,
     )
 
-    return {
-        "runs": runs,
-        "count": len(runs),
-    }
-
 
 @router.get(
     "/inference/{run_id}",
-    response_model=InferenceRunManifest,
+    response_model=InferenceRunDetailResponse,
+    response_model_by_alias=True,
 )
-def get_inference_run(
+async def get_inference_run(
     run_id: str,
-    service: InferenceRunService = Depends(get_inference_run_service),
-):
-    run = service.get_inference_run(run_id)
-
-    if run is None:
-        raise not_found("Inference run not found")
-
-    return run
+    service: RunService = Depends(get_run_service),
+) -> InferenceRunDetailResponse:
+    response = await service.get_inference_run(run_id)
+    if response is None:
+        raise HTTPException(
+            status_code=404, detail=f"Inference run not found: {run_id}"
+        )
+    return response
 
 
 @router.get(
-    "/inference/{run_id}/predictions",
-    response_model=PredictionListResponse,
+    "/evaluations",
+    response_model=EvaluationRunListResponse,
+    response_model_by_alias=True,
 )
-def list_predictions(
-    run_id: str,
-    service: InferenceRunService = Depends(get_inference_run_service),
-):
-    run = service.get_inference_run(run_id)
-
-    if run is None:
-        raise not_found("Inference run not found")
-
-    predictions = service.list_predictions(run_id)
-
-    return {
-        "predictions": predictions,
-        "count": len(predictions),
-    }
+async def list_evaluation_runs(
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
+    model_id: str | None = None,
+    model_version: str | None = None,
+    inference_run_id: str | None = None,
+    status: RunStatus | None = None,
+    service: RunService = Depends(get_run_service),
+) -> EvaluationRunListResponse:
+    return await service.list_evaluation_runs(
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        model_id=model_id,
+        model_version=model_version,
+        inference_run_id=inference_run_id,
+        status=status,
+    )
 
 
 @router.get(
-    "/inference/{run_id}/predictions/{sample_id}",
-    response_model=PredictionManifest,
+    "/evaluations/{evaluation_run_id}",
+    response_model=EvaluationRunDetailResponse,
+    response_model_by_alias=True,
 )
-def get_prediction(
-    run_id: str,
-    sample_id: str,
-    service: InferenceRunService = Depends(get_inference_run_service),
-):
-    run = service.get_inference_run(run_id)
-
-    if run is None:
-        raise not_found("Inference run not found")
-
-    prediction = service.get_prediction(run_id, sample_id)
-
-    if prediction is None:
-        raise not_found("Prediction not found")
-
-    return prediction
+async def get_evaluation_run(
+    evaluation_run_id: str,
+    service: RunService = Depends(get_run_service),
+) -> EvaluationRunDetailResponse:
+    response = await service.get_evaluation_run(evaluation_run_id)
+    if response is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Evaluation run not found: {evaluation_run_id}",
+        )
+    return response

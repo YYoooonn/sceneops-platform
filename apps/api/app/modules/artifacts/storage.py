@@ -1,5 +1,9 @@
-from typing import Protocol
+from __future__ import annotations
+
+from typing import Any, Protocol
 
 
 class ArtifactStorage(Protocol):
-    def get_download_url(self, path: str) -> str: ...
+    async def read_json(self, uri: str) -> Any: ...
+
+    def public_url(self, uri: str) -> str: ...
