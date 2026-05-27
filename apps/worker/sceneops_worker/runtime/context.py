@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sceneops_worker.datasets import DatasetArtifactStore
-from sceneops_worker.registry import DatasetRegistryStore
+from sceneops_worker.registry import (
+    DatasetRegistryStore,
+    ModelRegistryStore,
+    RunRegistryStore,
+)
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.storage import ArtifactStore
 
@@ -14,6 +18,8 @@ class JobContext:
     artifact_store: ArtifactStore
     dataset_artifact_store: DatasetArtifactStore
     dataset_registry_store: DatasetRegistryStore
+    model_registry_store: ModelRegistryStore
+    run_registry_store: RunRegistryStore
     run_artifact_store: RunArtifactStore
 
     raw_data_root: Path

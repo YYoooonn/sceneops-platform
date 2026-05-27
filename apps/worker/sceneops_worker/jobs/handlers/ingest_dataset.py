@@ -45,7 +45,7 @@ class IngestDatasetJobHandler(
             dataset_version=params.dataset_version,
         )
 
-        raw_data_uri = params.raw_data_root or version.raw_data_uri
+        raw_data_uri = version.raw_data_uri
         if raw_data_uri is None:
             raise ValueError(
                 f"raw_data_uri is required for "

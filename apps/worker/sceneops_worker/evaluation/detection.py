@@ -45,13 +45,15 @@ async def evaluate_detection_run(
         )
 
         sample_id = prediction_manifest["sampleId"]
+
         sample_uri = dataset_artifact_store.artifact_store.join_uri(
             dataset_manifest.uris.sample_root,
             f"{sample_id}.json",
         )
         sample_manifest = await dataset_artifact_store.load_sample_manifest(sample_uri)
+
         if sample_manifest is None:
-            continue
+            raise FileNotFoundError(f"Sample manifest not found: {sample_uri}")
 
         sample_eval = _evaluate_sample(
             sample=sample_manifest,
@@ -124,7 +126,7 @@ def _evaluate_sample(
 
     matched_gt_indices: set[int] = set()
     matched_prediction_indices: set[int] = set()
-    matches = []
+    matches: list[dict[str, Any]] = []
 
     for pred_index, prediction in enumerate(predictions):
         best_gt_index = None
@@ -199,6 +201,7 @@ def _filter_supported_gt(
         "human.pedestrian",
         "movable_object.barrier",
     )
+
     return [
         annotation
         for annotation in annotations
@@ -275,4 +278,5 @@ def _finalize_class_metrics(
 def _safe_div(numerator: float, denominator: float) -> float:
     if denominator == 0:
         return 0.0
+
     return numerator / denominator

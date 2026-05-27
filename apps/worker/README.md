@@ -1,5 +1,6 @@
 ```
 sceneops_worker/
+  commands/     # local run command
   runtime/      # wiring, context, factory
   pipelines/    # pipeline orchestration
   jobs/         # job orchestration
