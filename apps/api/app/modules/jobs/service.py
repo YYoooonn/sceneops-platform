@@ -29,47 +29,47 @@ class JobService:
     async def create_job(self, request: CreateJobRequest) -> JobManifest:
         now = utc_now_iso()
 
-        dataset_id = request.datasetId or self.default_dataset_id
-        dataset_version = request.datasetVersion or self.default_dataset_version
+        dataset_id = request.dataset_id or self.default_dataset_id
+        dataset_version = request.dataset_version or self.default_dataset_version
         raw_params = {
             **request.params,
-            "datasetId": dataset_id,
-            "datasetVersion": dataset_version,
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
         }
 
         validated_params = parse_job_params(request.type, raw_params)
 
         job = JobManifest(
-            jobId=generate_job_id(),
+            job_id=generate_job_id(),
             type=request.type,
             status=JobStatus.PENDING,
-            datasetId=dataset_id,
-            datasetVersion=dataset_version,
-            pipelineRunId=request.pipelineRunId,
-            pipelineStepRunId=request.pipelineStepRunId,
-            pipelineStepName=request.pipelineStepName,
-            params=validated_params.model_dump(mode="json"),
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            pipeline_run_id=request.pipeline_run_id,
+            pipeline_step_run_id=request.pipeline_step_run_id,
+            pipeline_step_name=request.pipeline_step_name,
+            params=validated_params.to_db_dict(),
             steps=build_default_steps(request.type),
-            retryCount=0,
-            maxRetries=request.maxRetries,
-            queuedAt=now,
-            createdAt=now,
-            updatedAt=now,
+            retry_count=0,
+            max_retries=request.max_retries,
+            queued_at=now,
+            created_at=now,
+            updated_at=now,
         )
 
         created = await self.repository.create(job)
 
         await self.event_repository.append(
-            job_id=created.jobId,
+            job_id=created.job_id,
             event_type=JobEventType.JOB_CREATED,
             message="Job created",
             payload={
-                "jobType": str(created.type),
-                "datasetId": created.datasetId,
-                "datasetVersion": created.datasetVersion,
-                "pipelineRunId": created.pipelineRunId,
-                "pipelineStepRunId": created.pipelineStepRunId,
-                "pipelineStepName": created.pipelineStepName,
+                "job_type": str(created.type),
+                "dataset_id": created.dataset_id,
+                "dataset_version": created.dataset_version,
+                "pipeline_run_id": created.pipeline_run_id,
+                "pipeline_step_run_id": created.pipeline_step_run_id,
+                "pipeline_step_name": created.pipeline_step_name,
             },
         )
 

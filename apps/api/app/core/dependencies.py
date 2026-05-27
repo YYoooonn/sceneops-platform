@@ -15,11 +15,17 @@ from sceneops_db.pipelines import (
     PostgresPipelineRunRepository,
     PostgresPipelineStepRunRepository,
 )
+from sceneops_db.datasets import (
+    DatasetRepository,
+    DatasetVersionRepository,
+    PostgresDatasetRepository,
+    PostgresDatasetVersionRepository,
+)
 from sceneops_db.session import get_db_session
 
 from app.config import (
     ApiSettings,
-    MetadataBackend,
+    # MetadataBackend,
     StorageBackend,
     get_settings,
 )
@@ -28,8 +34,6 @@ from app.modules.artifacts.local_storage import LocalArtifactStorage
 from app.modules.artifacts.s3_storage import S3ArtifactStorage
 from app.modules.artifacts.service import ArtifactService
 from app.modules.artifacts.storage import ArtifactStorage
-from app.modules.datasets.local_repository import LocalManifestDatasetRepository
-from app.modules.datasets.repository import DatasetRepository
 from app.modules.datasets.service import DatasetService
 from app.modules.evaluations.local_repository import LocalEvaluationRunRepository
 from app.modules.evaluations.repository import EvaluationRunRepository
@@ -41,16 +45,28 @@ from app.modules.runs.service import InferenceRunService
 from app.modules.pipelines.service import PipelineService
 
 
-def get_dataset_repository(
-    settings: ApiSettings = Depends(get_settings),
+async def get_dataset_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> DatasetRepository:
-    if settings.metadata_backend == MetadataBackend.LOCAL_MANIFEST:
-        return LocalManifestDatasetRepository(settings.manifest_root)
+    return PostgresDatasetRepository(session)
 
-    if settings.metadata_backend == MetadataBackend.FIRESTORE:
-        raise NotImplementedError("FireStore not implemented yet")
 
-    raise ValueError(f"Unsupported metadata backend: {settings.metadata_backend}")
+async def get_dataset_version_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> DatasetVersionRepository:
+    return PostgresDatasetVersionRepository(session)
+
+
+def get_dataset_service(
+    repository: DatasetRepository = Depends(get_dataset_repository),
+    version_repository: DatasetVersionRepository = Depends(
+        get_dataset_version_repository
+    ),
+) -> DatasetService:
+    return DatasetService(
+        repository=repository,
+        version_repository=version_repository,
+    )
 
 
 def get_artifact_storage(
@@ -72,18 +88,16 @@ def get_artifact_storage(
     raise ValueError(f"Unsupported storage backend: {settings.storage_backend}")
 
 
-def get_dataset_service(
-    repository: DatasetRepository = Depends(get_dataset_repository),
-) -> DatasetService:
-    return DatasetService(repository)
-
-
 def get_artifact_service(
     dataset_repository: DatasetRepository = Depends(get_dataset_repository),
+    version_repository: DatasetVersionRepository = Depends(
+        get_dataset_version_repository
+    ),
     artifact_storage: ArtifactStorage = Depends(get_artifact_storage),
 ) -> ArtifactService:
     return ArtifactService(
         dataset_repository=dataset_repository,
+        version_repository=version_repository,
         artifact_storage=artifact_storage,
     )
 

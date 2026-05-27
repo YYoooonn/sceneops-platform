@@ -1,110 +1,167 @@
-from fastapi import APIRouter, Depends
+from __future__ import annotations
 
-from sceneops_core.schemas.datasets import (
-    DatasetIndexItem,
-    DatasetVersionManifest,
-    SampleManifest,
-    SceneIndexItem,
-    SceneManifest,
-)
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.dependencies import get_dataset_service
 from app.modules.datasets.service import DatasetService
-from app.shared.errors import not_found
+from sceneops_core.schemas.datasets import (
+    CreateDatasetRequest,
+    CreateDatasetVersionRequest,
+    DatasetDetailResponse,
+    DatasetListResponse,
+    DatasetVersionDetailResponse,
+    DatasetVersionListResponse,
+    UpsertDatasetRequest,
+    UpsertDatasetVersionRequest,
+)
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
-@router.get("", response_model=list[DatasetIndexItem])
-def list_datasets(
+@router.get(
+    "",
+    response_model=DatasetListResponse,
+    response_model_by_alias=True,
+)
+async def list_datasets(
     service: DatasetService = Depends(get_dataset_service),
-):
-    return service.list_datasets()
+) -> DatasetListResponse:
+    return await service.list_datasets()
+
+
+@router.post(
+    "",
+    response_model=DatasetDetailResponse,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_dataset(
+    request: CreateDatasetRequest,
+    service: DatasetService = Depends(get_dataset_service),
+) -> DatasetDetailResponse:
+    return await service.create_dataset(request)
 
 
 @router.get(
-    "/{dataset_id}/versions/{dataset_version}",
-    response_model=DatasetVersionManifest,
+    "/{dataset_id}",
+    response_model=DatasetDetailResponse,
+    response_model_by_alias=True,
 )
-def get_dataset_version(
+async def get_dataset(
     dataset_id: str,
-    dataset_version: str,
     service: DatasetService = Depends(get_dataset_service),
-):
-    dataset = service.get_dataset_version(dataset_id, dataset_version)
+) -> DatasetDetailResponse:
+    response = await service.get_dataset(dataset_id)
 
-    if dataset is None:
-        raise not_found("Dataset version not found")
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset not found: {dataset_id}",
+        )
 
-    return dataset
+    return response
+
+
+@router.put(
+    "/{dataset_id}",
+    response_model=DatasetDetailResponse,
+    response_model_by_alias=True,
+)
+async def upsert_dataset(
+    dataset_id: str,
+    request: UpsertDatasetRequest,
+    service: DatasetService = Depends(get_dataset_service),
+) -> DatasetDetailResponse:
+    return await service.upsert_dataset(dataset_id, request)
 
 
 @router.get(
-    "/{dataset_id}/versions/{dataset_version}/scenes",
-    response_model=list[SceneIndexItem],
+    "/{dataset_id}/versions",
+    response_model=DatasetVersionListResponse,
+    response_model_by_alias=True,
 )
-def list_scenes(
+async def list_dataset_versions(
     dataset_id: str,
-    dataset_version: str,
     service: DatasetService = Depends(get_dataset_service),
-):
-    dataset = service.get_dataset_version(dataset_id, dataset_version)
+) -> DatasetVersionListResponse:
+    response = await service.list_dataset_versions(dataset_id)
 
-    if dataset is None:
-        raise not_found("Dataset version not found")
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset not found: {dataset_id}",
+        )
 
-    return service.list_scenes(dataset_id, dataset_version)
+    return response
+
+
+@router.post(
+    "/{dataset_id}/versions",
+    response_model=DatasetVersionDetailResponse,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_dataset_version(
+    dataset_id: str,
+    request: CreateDatasetVersionRequest,
+    service: DatasetService = Depends(get_dataset_service),
+) -> DatasetVersionDetailResponse:
+    response = await service.create_dataset_version(dataset_id, request)
+
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset not found: {dataset_id}",
+        )
+
+    return response
 
 
 @router.get(
-    "/{dataset_id}/versions/{dataset_version}/scenes/{scene_id}",
-    response_model=SceneManifest,
+    "/{dataset_id}/versions/{version}",
+    response_model=DatasetVersionDetailResponse,
+    response_model_by_alias=True,
 )
-def get_scene(
+async def get_dataset_version(
     dataset_id: str,
-    dataset_version: str,
-    scene_id: str,
+    version: str,
     service: DatasetService = Depends(get_dataset_service),
-):
-    scene = service.get_scene(dataset_id, dataset_version, scene_id)
+) -> DatasetVersionDetailResponse:
+    response = await service.get_dataset_version(
+        dataset_id=dataset_id,
+        version=version,
+    )
 
-    if scene is None:
-        raise not_found("Scene not found")
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset version not found: {dataset_id}:{version}",
+        )
 
-    return scene
+    return response
 
 
-@router.get(
-    "/{dataset_id}/versions/{dataset_version}/scenes/{scene_id}/samples",
-    response_model=list[SampleManifest],
+@router.put(
+    "/{dataset_id}/versions/{version}",
+    response_model=DatasetVersionDetailResponse,
+    response_model_by_alias=True,
 )
-def list_samples_by_scene(
+async def upsert_dataset_version(
     dataset_id: str,
-    dataset_version: str,
-    scene_id: str,
+    version: str,
+    request: UpsertDatasetVersionRequest,
     service: DatasetService = Depends(get_dataset_service),
-):
-    scene = service.get_scene(dataset_id, dataset_version, scene_id)
+) -> DatasetVersionDetailResponse:
+    response = await service.upsert_dataset_version(
+        dataset_id=dataset_id,
+        version=version,
+        request=request,
+    )
 
-    if scene is None:
-        raise not_found("Scene not found")
+    if response is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset not found: {dataset_id}",
+        )
 
-    return service.list_samples_by_scene(dataset_id, dataset_version, scene_id)
-
-
-@router.get(
-    "/{dataset_id}/versions/{dataset_version}/samples/{sample_id}",
-    response_model=SampleManifest,
-)
-def get_sample(
-    dataset_id: str,
-    dataset_version: str,
-    sample_id: str,
-    service: DatasetService = Depends(get_dataset_service),
-):
-    sample = service.get_sample(dataset_id, dataset_version, sample_id)
-
-    if sample is None:
-        raise not_found("Sample not found")
-
-    return sample
+    return response

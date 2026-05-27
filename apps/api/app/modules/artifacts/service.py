@@ -1,17 +1,19 @@
 from app.modules.artifacts.storage import ArtifactStorage
-from app.modules.datasets.repository import DatasetRepository
 
 from sceneops_core.ids.artifacts import sample_sensor_artifact_id
 from sceneops_core.schemas.artifacts import ArtifactType
+from sceneops_db.datasets import DatasetRepository, DatasetVersionRepository
 
 
 class ArtifactService:
     def __init__(
         self,
         dataset_repository: DatasetRepository,
+        version_repository: DatasetVersionRepository,
         artifact_storage: ArtifactStorage,
     ) -> None:
         self.dataset_repository = dataset_repository
+        self.version_repository = version_repository
         self.artifact_storage = artifact_storage
 
     def list_sample_artifacts(
@@ -20,7 +22,9 @@ class ArtifactService:
         dataset_version: str,
         sample_id: str,
     ) -> list[dict]:
-        sample = self.dataset_repository.get_sample(
+        raise NotImplementedError("not implemented yet")
+
+        sample = self.dataset_version_repository.get_sample(
             dataset_id,
             dataset_version,
             sample_id,
