@@ -68,13 +68,13 @@ def generate_mock_predictions(
         prediction_count += len(predictions)
 
         prediction_manifest = {
-            "runId": run_id,
-            "datasetId": dataset_id,
-            "datasetVersion": dataset_version,
-            "modelId": model_id,
-            "modelVersion": model_version,
-            "sceneId": sample["sceneId"],
-            "sampleId": sample_id,
+            "run_id": run_id,
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "model_id": model_id,
+            "model_version": model_version,
+            "scene_id": sample["scene_id"],
+            "sample_id": sample_id,
             "predictions": predictions,
         }
 
@@ -84,18 +84,18 @@ def generate_mock_predictions(
         )
 
     run_manifest = {
-        "runId": run_id,
-        "runType": "INFERENCE",
-        "datasetId": dataset_id,
-        "datasetVersion": dataset_version,
-        "modelId": model_id,
-        "modelVersion": model_version,
-        "status": "SUCCEEDED",
-        "sampleCount": len(sample_ids),
-        "predictionCount": prediction_count,
-        "predictionManifestUri": str(run_root / "run.json"),
-        "predictionsRootUri": str(run_root / "predictions"),
-        "createdAt": datetime.now(UTC).isoformat(),
+        "run_id": run_id,
+        "run_type": "inference",
+        "dataset_id": dataset_id,
+        "dataset_version": dataset_version,
+        "model_id": model_id,
+        "model_version": model_version,
+        "status": "succeded",
+        "sample_count": len(sample_ids),
+        "prediction_count": prediction_count,
+        "prediction_manifest_uri": str(run_root / "run.json"),
+        "predictions_root_uri": str(run_root / "predictions"),
+        "created_at": datetime.now(UTC),
     }
 
     store.write_json(run_root / "run.json", run_manifest)

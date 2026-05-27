@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sceneops_worker.config import get_settings
-from sceneops_worker.jobs.context import JobExecutionContext
+from sceneops_worker.jobs.context import JobContext
 from sceneops_worker.jobs.event_store import PostgresJobEventStore
 from sceneops_worker.jobs.executor import JobExecutor
 from sceneops_worker.jobs.handlers import build_job_handler_registry
@@ -9,10 +9,10 @@ from sceneops_worker.jobs.runner import JobRunner
 from sceneops_worker.jobs.store import JobStore, PostgresJobStore
 
 
-def create_job_execution_context() -> JobExecutionContext:
+def create_job_execution_context() -> JobContext:
     settings = get_settings()
 
-    return JobExecutionContext(
+    return JobContext(
         raw_data_root=settings.raw_data_root,
         manifest_root=settings.manifest_root,
         artifact_root=settings.artifact_root,

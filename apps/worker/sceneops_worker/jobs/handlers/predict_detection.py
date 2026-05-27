@@ -26,50 +26,52 @@ class PredictDetectionJobHandler(
         params: PredictDetectionJobParams,
         job: JobManifest,
     ) -> PredictDetectionJobResult:
-        if params.inferenceBackend == InferenceBackend.MOCK:
+        if params.inference_backend == InferenceBackend.MOCK:
             return self._run_mock_detection(params=params, job=job)
 
-        # if params.inferenceBackend == InferenceBackend.ONNX_RUNTIME:
+        # if params.inference_backend == InferenceBackend.ONNX_RUNTIME:
         #     return self._run_onnx_runtime(params=params)
 
-        # if params.inferenceBackend == InferenceBackend.TRITON:
+        # if params.inference_backend == InferenceBackend.TRITON:
         #     return self._run_triton(params=params)
 
-        raise ValueError(f"Unsupported inference backend: {params.inferenceBackend}")
+        raise ValueError(f"Unsupported inference backend: {params.inference_backend}")
 
     def _run_mock_detection(
         self, *, params: PredictDetectionJobParams, job: JobManifest
     ) -> PredictDetectionJobResult:
-        inference_run_id = params.inferenceRunId or default_inference_run_id(job.jobId)
+        inference_run_id = params.inference_run_id or default_inference_run_id(
+            job.job_id
+        )
 
         run_manifest = generate_mock_predictions(
             manifest_root=self.context.manifest_root,
             runs_root=self.context.runs_root,
-            dataset_id=params.datasetId,
-            dataset_version=params.datasetVersion,
-            model_id=params.modelId,
-            model_version=params.modelVersion,
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
+            model_id=params.model_id,
+            model_version=params.model_version,
             run_id=inference_run_id,
-            max_samples=params.maxSamples,
+            max_samples=params.max_samples,
         )
 
-        prediction_manifest_uri = run_manifest.get("predictionManifestUri") or str(
+        prediction_manifest_uri = run_manifest.get("prediction_manifest_uri") or str(
             self.context.runs_root / "inference" / inference_run_id / "run.json"
         )
 
         return PredictDetectionJobResult(
-            datasetId=params.datasetId,
-            datasetVersion=params.datasetVersion,
-            modelId=params.modelId,
-            modelVersion=params.modelVersion,
-            inferenceRunId=inference_run_id,
-            predictionManifestUri=prediction_manifest_uri,
-            sampleCount=int(run_manifest.get("sampleCount", 0)),
-            resultSummary={
-                "predictionCount": run_manifest.get("predictionCount", 0),
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
+            model_id=params.model_id,
+            model_version=params.model_version,
+            inference_run_id=inference_run_id,
+            prediction_manifest_uri=prediction_manifest_uri,
+            sample_count=int(run_manifest.get("sample_count", 0)),
+            result_summary={
+                "predictionCount": run_manifest.get("prediction_count", 0),
                 "status": run_manifest.get("status"),
-                "predictionsRootUri": run_manifest.get("predictionsRootUri"),
-                "createdAt": run_manifest.get("createdAt"),
+                "predictions_root_uri": run_manifest.get("predictions_root_uri"),
+                "created_at": run_manifest.get("created_at"),
             },
         )
 

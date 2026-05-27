@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from sceneops_core.schemas.common import JsonDict
 from sceneops_core.schemas.jobs import JobManifest, JobType
-from sceneops_worker.jobs.context import JobExecutionContext
+from sceneops_worker.jobs.context import JobContext
 
 
 ParamsT = TypeVar("ParamsT", bound=BaseModel)
@@ -22,7 +22,7 @@ class JobHandler(Protocol):
 class TypedJobHandler(Generic[ParamsT, ResultT]):
     job_type: JobType
 
-    def __init__(self, context: JobExecutionContext) -> None:
+    def __init__(self, context: JobContext) -> None:
         self.context = context
 
     def execute(self, job: JobManifest) -> JsonDict:

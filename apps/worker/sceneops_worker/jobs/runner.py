@@ -10,7 +10,7 @@ from sceneops_core.schemas.jobs import (
     JobStatus,
     JobStepStatus,
 )
-from sceneops_core.time import utc_now_iso
+from sceneops_core.time import utc_now
 
 from sceneops_worker.jobs.executor import JobExecutor
 from sceneops_worker.jobs.store import JobStore
@@ -42,12 +42,12 @@ class JobRunner:
         job = await self._mark_job_running(job)
 
         await self.job_event_store.append(
-            job_id=job.jobId,
+            job_id=job.job_id,
             event_type=JobEventType.JOB_STARTED,
             message="Job started",
             payload={
-                "workerId": self.worker_id,
-                "jobType": job.type.value
+                "worker_id": self.worker_id,
+                "job_type": job.type.value
                 if hasattr(job.type, "value")
                 else str(job.type),
             },
@@ -58,7 +58,7 @@ class JobRunner:
         try:
             if running_step_name is not None:
                 await self.job_event_store.append(
-                    job_id=job.jobId,
+                    job_id=job.job_id,
                     event_type=JobEventType.STEP_STARTED,
                     message=f"Step started: {running_step_name}",
                     payload={"step": running_step_name},
@@ -68,7 +68,7 @@ class JobRunner:
 
             if running_step_name is not None:
                 await self.job_event_store.append(
-                    job_id=job.jobId,
+                    job_id=job.job_id,
                     event_type=JobEventType.STEP_SUCCEEDED,
                     message=f"Step succeeded: {running_step_name}",
                     payload={"step": running_step_name},
@@ -77,7 +77,7 @@ class JobRunner:
             job = await self._mark_job_succeeded(job, result=result)
 
             await self.job_event_store.append(
-                job_id=job.jobId,
+                job_id=job.job_id,
                 event_type=JobEventType.JOB_SUCCEEDED,
                 message="Job succeeded",
                 payload={"result": result},
@@ -88,7 +88,7 @@ class JobRunner:
         except Exception as error:
             if running_step_name is not None:
                 await self.job_event_store.append(
-                    job_id=job.jobId,
+                    job_id=job.job_id,
                     event_type=JobEventType.STEP_FAILED,
                     level=JobEventLevel.ERROR,
                     message=f"Step failed: {running_step_name}",
@@ -105,7 +105,7 @@ class JobRunner:
             )
 
             await self.job_event_store.append(
-                job_id=job.jobId,
+                job_id=job.job_id,
                 event_type=JobEventType.JOB_FAILED,
                 level=JobEventLevel.ERROR,
                 message="Job failed",
@@ -119,24 +119,24 @@ class JobRunner:
 
     def _validate_runnable(self, job: JobManifest) -> None:
         if job.status == JobStatus.SUCCEEDED:
-            raise RuntimeError(f"Job is already succeeded: {job.jobId}")
+            raise RuntimeError(f"Job is already succeeded: {job.job_id}")
 
         if job.status == JobStatus.RUNNING:
-            raise RuntimeError(f"Job is already running: {job.jobId}")
+            raise RuntimeError(f"Job is already running: {job.job_id}")
 
         if job.status == JobStatus.CANCELED:
-            raise RuntimeError(f"Job is canceled: {job.jobId}")
+            raise RuntimeError(f"Job is canceled: {job.job_id}")
 
     async def _mark_job_running(self, job: JobManifest) -> JobManifest:
-        now = utc_now_iso()
+        now = utc_now()
 
         job.status = JobStatus.RUNNING
-        job.workerId = self.worker_id
-        job.lockedAt = now
-        job.heartbeatAt = now
-        job.startedAt = job.startedAt or now
-        job.updatedAt = now
-        job.finishedAt = None
+        job.worker_id = self.worker_id
+        job.locked_at = now
+        job.heartbeat_at = now
+        job.started_at = job.started_at or now
+        job.updated_at = now
+        job.finished_at = None
         job.error = None
 
         self._mark_first_pending_step_running(job)
@@ -149,20 +149,20 @@ class JobRunner:
         *,
         result: dict[str, Any],
     ) -> JobManifest:
-        now = utc_now_iso()
+        now = utc_now()
 
         for step in job.steps:
             if step.status in {JobStepStatus.PENDING, JobStepStatus.RUNNING}:
                 step.status = JobStepStatus.SUCCEEDED
-                step.startedAt = step.startedAt or job.startedAt or now
-                step.finishedAt = step.finishedAt or now
+                step.started_at = step.started_at or job.started_at or now
+                step.finished_at = step.finished_at or now
 
         job.status = JobStatus.SUCCEEDED
         job.result = result
         job.error = None
-        job.heartbeatAt = now
-        job.finishedAt = now
-        job.updatedAt = now
+        job.heartbeat_at = now
+        job.finished_at = now
+        job.updated_at = now
 
         return await self.job_store.save_job(job)
 
@@ -172,28 +172,28 @@ class JobRunner:
         *,
         error: ErrorInfo,
     ) -> JobManifest:
-        now = utc_now_iso()
+        now = utc_now()
 
         for step in job.steps:
             if step.status == JobStepStatus.RUNNING:
                 step.status = JobStepStatus.FAILED
-                step.finishedAt = now
+                step.finished_at = now
 
         job.status = JobStatus.FAILED
         job.error = error
-        job.heartbeatAt = now
-        job.finishedAt = now
-        job.updatedAt = now
+        job.heartbeat_at = now
+        job.finished_at = now
+        job.updated_at = now
 
         return await self.job_store.save_job(job)
 
     def _mark_first_pending_step_running(self, job: JobManifest) -> None:
-        now = utc_now_iso()
+        now = utc_now()
 
         for step in job.steps:
             if step.status == JobStepStatus.PENDING:
                 step.status = JobStepStatus.RUNNING
-                step.startedAt = step.startedAt or now
+                step.started_at = step.started_at or now
                 return
 
     def _get_running_step_name(self, job: JobManifest) -> str | None:

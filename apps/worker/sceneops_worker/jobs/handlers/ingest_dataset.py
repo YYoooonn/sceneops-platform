@@ -27,10 +27,10 @@ class IngestDatasetJobHandler(
         params: IngestDatasetJobParams,
         job: JobManifest,
     ) -> IngestDatasetJobResult:
-        if params.datasetType == DatasetType.NUSCENES:
+        if params.dataset_type == DatasetType.NUSCENES:
             return self._run_nuscenes(params=params)
 
-        raise ValueError(f"Unsupported dataset type: {params.datasetType}")
+        raise ValueError(f"Unsupported dataset type: {params.dataset_type}")
 
     def _run_nuscenes(
         self,
@@ -38,40 +38,40 @@ class IngestDatasetJobHandler(
         params: IngestDatasetJobParams,
     ) -> IngestDatasetJobResult:
         dataroot = (
-            Path(params.rawDataRoot)
-            if params.rawDataRoot is not None
+            Path(params.raw_data_root)
+            if params.raw_data_root is not None
             else self.context.raw_data_root
         )
 
         dataset_manifest = ingest_nuscenes(
             dataroot=dataroot,
-            dataset_id=params.datasetId,
-            dataset_version=params.datasetVersion,
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
             manifest_root=self.context.manifest_root,
-            max_scenes=params.maxScenes,
+            max_scenes=params.max_scenes,
             mode=params.mode.value,
         )
 
-        manifest_uri = str(
+        dataset_manifest_uri = str(
             self.context.manifest_root
             / "datasets"
-            / params.datasetId
+            / params.dataset_id
             / "versions"
-            / params.datasetVersion
+            / params.dataset_version
             / "dataset.json"
         )
 
         return IngestDatasetJobResult(
-            datasetId=params.datasetId,
-            datasetVersion=params.datasetVersion,
-            datasetType=params.datasetType,
-            manifestUri=manifest_uri,
-            sceneCount=int(dataset_manifest.get("sceneCount", 0)),
-            sampleCount=int(dataset_manifest.get("sampleCount", 0)),
-            resultSummary={
-                "source": dataset_manifest.get("source"),
-                "status": dataset_manifest.get("status"),
-                "annotationCount": dataset_manifest.get("annotationCount", 0),
-                "targetChannels": dataset_manifest.get("targetChannels", []),
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
+            dataset_type=params.dataset_type,
+            dataset_manifest_uri=dataset_manifest_uri,
+            scene_count=dataset_manifest.summary.scene_count,
+            sample_count=dataset_manifest.summary.sample_count,
+            result_summary={
+                "source": dataset_manifest.source,
+                "status": dataset_manifest.status.value,
+                "annotation_count": dataset_manifest.summary.annotation_count,
+                "target_channels": dataset_manifest.channels.target or [],
             },
         )
