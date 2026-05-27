@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 from sceneops_worker.config import get_settings
-from sceneops_worker.jobs.context import JobContext
+from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.jobs.event_store import PostgresJobEventStore
 from sceneops_worker.jobs.executor import JobExecutor
 from sceneops_worker.jobs.handlers import build_job_handler_registry
 from sceneops_worker.jobs.runner import JobRunner
 from sceneops_worker.jobs.store import JobStore, PostgresJobStore
+from sceneops_worker.registry import DatasetRegistryStore
+from sceneops_worker.runs import RunArtifactStore
+from sceneops_worker.runtime.context import JobContext
+from sceneops_worker.storage import LocalArtifactStore
 
 
 def create_job_execution_context() -> JobContext:
     settings = get_settings()
 
+    artifact_store = LocalArtifactStore()
+    dataset_artifact_store = DatasetArtifactStore(artifact_store)
+    run_artifact_store = RunArtifactStore(
+        artifact_store=artifact_store,
+        runs_root=settings.runs_root,
+    )
+
     return JobContext(
+        artifact_store=artifact_store,
+        dataset_artifact_store=dataset_artifact_store,
+        dataset_registry_store=DatasetRegistryStore(),
+        run_artifact_store=run_artifact_store,
         raw_data_root=settings.raw_data_root,
         manifest_root=settings.manifest_root,
         artifact_root=settings.artifact_root,

@@ -13,10 +13,10 @@ class JobExecutor:
     ) -> None:
         self.handlers = handlers
 
-    def execute(self, job: JobManifest) -> JsonDict:
+    async def execute(self, job: JobManifest) -> JsonDict:
         handler = self.handlers.get(job.type)
 
         if handler is None:
             raise ValueError(f"Unsupported job type: {job.type}")
 
-        return handler.execute(job)
+        return await handler.execute(job)

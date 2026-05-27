@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class PipelineType(StrEnum):
+    DATASET_INGESTION = "dataset_ingestion"
     DETECTION_VALIDATION = "detection_validation"
 
 

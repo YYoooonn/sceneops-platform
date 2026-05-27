@@ -4,6 +4,7 @@ from sceneops_core.ids.pipelines import (
     generate_pipeline_run_id,
     generate_pipeline_step_run_id,
 )
+from sceneops_core.pipelines.builtin import get_pipeline_definition
 from sceneops_core.schemas.pipelines import (
     CreatePipelineRunRequest,
     PipelineRunDetailResponse,
@@ -13,13 +14,11 @@ from sceneops_core.schemas.pipelines import (
     PipelineStepRunManifest,
     PipelineStepRunStatus,
 )
-from sceneops_core.time import utc_now_iso
+from sceneops_core.time import utc_now
 from sceneops_db.pipelines import (
     PipelineRunRepository,
     PipelineStepRunRepository,
 )
-
-from app.modules.pipelines.definitions import get_pipeline_definition
 
 
 class PipelineService:
@@ -40,48 +39,55 @@ class PipelineService:
         self,
         request: CreatePipelineRunRequest,
     ) -> PipelineRunDetailResponse:
-        now = utc_now_iso()
+        now = utc_now()
         definition = get_pipeline_definition(request.type)
 
         pipeline_run = PipelineRunManifest(
-            pipelineRunId=generate_pipeline_run_id(),
+            pipeline_run_id=generate_pipeline_run_id(),
             type=request.type,
             status=PipelineRunStatus.PENDING,
-            datasetId=request.datasetId or self.default_dataset_id,
-            datasetVersion=request.datasetVersion or self.default_dataset_version,
-            modelId=request.modelId,
-            modelVersion=request.modelVersion,
+            dataset_id=request.dataset_id or self.default_dataset_id,
+            dataset_version=request.dataset_version or self.default_dataset_version,
+            model_id=request.model_id,
+            model_version=request.model_version,
             params=request.params,
-            createdAt=now,
-            updatedAt=now,
+            result=None,
+            error=None,
+            created_at=now,
+            updated_at=now,
         )
 
         created_pipeline = await self.pipeline_repository.create(pipeline_run)
 
-        steps = [
-            PipelineStepRunManifest(
-                pipelineStepRunId=generate_pipeline_step_run_id(),
-                pipelineRunId=created_pipeline.pipelineRunId,
-                stepName=step.name,
-                stepOrder=step.order,
-                status=PipelineStepRunStatus.PENDING,
-                jobType=step.jobType,
-                jobId=None,
-                dependsOnStepNames=step.dependsOn,
-                params={
-                    **step.defaultParams,
-                    **request.params.get(step.name, {}),
-                },
-                createdAt=now,
-                updatedAt=now,
+        steps = []
+        for step_def in sorted(definition.steps, key=lambda item: item.order):
+            step_params = {
+                **step_def.default_params,
+                **request.params.get(step_def.name, {}),
+            }
+
+            steps.append(
+                PipelineStepRunManifest(
+                    pipeline_step_run_id=generate_pipeline_step_run_id(),
+                    pipeline_run_id=pipeline_run.pipeline_run_id,
+                    step_name=step_def.name,
+                    step_order=step_def.order,
+                    status=PipelineStepRunStatus.PENDING,
+                    job_type=step_def.job_type,
+                    job_id=None,
+                    depends_on_step_names=step_def.depends_on,
+                    params=step_params,
+                    result=None,
+                    error=None,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
-            for step in sorted(definition.steps, key=lambda item: item.order)
-        ]
 
         created_steps = await self.step_repository.create_many(steps)
 
         return PipelineRunDetailResponse(
-            pipelineRun=created_pipeline,
+            pipeline_run=created_pipeline,
             steps=created_steps,
         )
 
@@ -97,7 +103,7 @@ class PipelineService:
         steps = await self.step_repository.list_by_pipeline_run(pipeline_run_id)
 
         return PipelineRunDetailResponse(
-            pipelineRun=pipeline_run,
+            pipeline_run=pipeline_run,
             steps=steps,
         )
 
@@ -117,6 +123,6 @@ class PipelineService:
         )
 
         return PipelineRunListResponse(
-            pipelineRuns=pipeline_runs,
+            pipeline_runs=pipeline_runs,
             count=len(pipeline_runs),
         )

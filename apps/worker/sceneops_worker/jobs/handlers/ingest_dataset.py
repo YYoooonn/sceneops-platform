@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sceneops_core.schemas.datasets import DatasetType
+from sceneops_core.schemas.datasets import DatasetType, DatasetVersionStatus
 from sceneops_core.schemas.jobs import (
     IngestDatasetJobParams,
     IngestDatasetJobResult,
     JobManifest,
     JobType,
 )
-from sceneops_worker.ingest.nuscenes import ingest_nuscenes
+from sceneops_worker.datasets.nuscenes import ingest_nuscenes
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 
 
@@ -21,57 +21,108 @@ class IngestDatasetJobHandler(
     def parse_params(self, job: JobManifest) -> IngestDatasetJobParams:
         return IngestDatasetJobParams.model_validate(job.params)
 
-    def run(
+    async def run(
         self,
         *,
         params: IngestDatasetJobParams,
         job: JobManifest,
     ) -> IngestDatasetJobResult:
         if params.dataset_type == DatasetType.NUSCENES:
-            return self._run_nuscenes(params=params)
+            return await self._run_nuscenes(params=params, job=job)
 
         raise ValueError(f"Unsupported dataset type: {params.dataset_type}")
 
-    def _run_nuscenes(
+    async def _run_nuscenes(
         self,
         *,
         params: IngestDatasetJobParams,
+        job: JobManifest,
     ) -> IngestDatasetJobResult:
-        dataroot = (
-            Path(params.raw_data_root)
-            if params.raw_data_root is not None
-            else self.context.raw_data_root
-        )
+        registry = self.context.dataset_registry_store
 
-        dataset_manifest = ingest_nuscenes(
-            dataroot=dataroot,
+        version = await registry.get_version(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
-            manifest_root=self.context.manifest_root,
-            max_scenes=params.max_scenes,
-            mode=params.mode.value,
         )
 
-        dataset_manifest_uri = str(
-            self.context.manifest_root
-            / "datasets"
-            / params.dataset_id
-            / "versions"
-            / params.dataset_version
-            / "dataset.json"
-        )
+        raw_data_uri = params.raw_data_root or version.raw_data_uri
+        if raw_data_uri is None:
+            raise ValueError(
+                f"raw_data_uri is required for "
+                f"{params.dataset_id}:{params.dataset_version}"
+            )
 
-        return IngestDatasetJobResult(
+        await registry.upsert_version(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
-            dataset_type=params.dataset_type,
-            dataset_manifest_uri=dataset_manifest_uri,
-            scene_count=dataset_manifest.summary.scene_count,
-            sample_count=dataset_manifest.summary.sample_count,
-            result_summary={
-                "source": dataset_manifest.source,
-                "status": dataset_manifest.status.value,
-                "annotation_count": dataset_manifest.summary.annotation_count,
-                "target_channels": dataset_manifest.channels.target or [],
-            },
+            dataset_type=version.dataset_type,
+            raw_data_uri=raw_data_uri,
+            manifest_uri=version.manifest_uri,
+            scene_count=version.scene_count,
+            sample_count=version.sample_count,
+            annotation_count=version.annotation_count,
+            status=DatasetVersionStatus.INGESTING,
+            metadata=version.metadata,
         )
+
+        try:
+            dataset_manifest = await ingest_nuscenes(
+                raw_data_root=Path(raw_data_uri),
+                dataset_id=params.dataset_id,
+                dataset_version=params.dataset_version,
+                manifest_root_uri=str(self.context.manifest_root),
+                dataset_artifact_store=self.context.dataset_artifact_store,
+                max_scenes=params.max_scenes,
+                mode=params.mode.value,
+            )
+
+            await registry.upsert_version(
+                dataset_id=params.dataset_id,
+                dataset_version=params.dataset_version,
+                dataset_type=dataset_manifest.dataset_type,
+                raw_data_uri=dataset_manifest.uris.raw_root,
+                manifest_uri=dataset_manifest.uris.dataset_manifest,
+                scene_count=dataset_manifest.summary.scene_count,
+                sample_count=dataset_manifest.summary.sample_count,
+                annotation_count=dataset_manifest.summary.annotation_count,
+                status=DatasetVersionStatus.INGESTED,
+                metadata={
+                    **(version.metadata or {}),
+                    "last_ingest_job_id": job.job_id,
+                    "source": dataset_manifest.source,
+                    "target_channels": dataset_manifest.channels.target,
+                },
+            )
+
+            return IngestDatasetJobResult(
+                dataset_id=params.dataset_id,
+                dataset_version=params.dataset_version,
+                dataset_type=params.dataset_type,
+                dataset_manifest_uri=dataset_manifest.uris.dataset_manifest,
+                scene_count=dataset_manifest.summary.scene_count,
+                sample_count=dataset_manifest.summary.sample_count,
+                result_summary={
+                    "source": dataset_manifest.source,
+                    "status": dataset_manifest.status.value,
+                    "annotation_count": dataset_manifest.summary.annotation_count,
+                    "target_channels": dataset_manifest.channels.target,
+                },
+            )
+
+        except Exception:
+            await registry.upsert_version(
+                dataset_id=params.dataset_id,
+                dataset_version=params.dataset_version,
+                dataset_type=version.dataset_type,
+                raw_data_uri=raw_data_uri,
+                manifest_uri=version.manifest_uri,
+                scene_count=version.scene_count,
+                sample_count=version.sample_count,
+                annotation_count=version.annotation_count,
+                status=DatasetVersionStatus.FAILED,
+                metadata={
+                    **(version.metadata or {}),
+                    "last_failed_ingest_job_id": job.job_id,
+                },
+            )
+            raise

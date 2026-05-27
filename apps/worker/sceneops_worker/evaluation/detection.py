@@ -2,75 +2,54 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
-from sceneops_core.paths.datasets import dataset_version_root
-from sceneops_core.paths.runs import inference_run_root, evaluation_run_root
-
-from sceneops_worker.runs.manifest_store import JsonStore
-# from sceneops_worker.runs.paths import (
-#     dataset_version_root,
-#     evaluation_run_root,
-#     inference_run_root,
-# )
-
+from sceneops_core.schemas.datasets import (
+    DatasetManifest,
+    DatasetSampleManifest,
+    SampleAnnotationManifest,
+)
+from sceneops_worker.datasets import DatasetArtifactStore
+from sceneops_worker.runs import RunArtifactStore
 
 DEFAULT_MATCH_DISTANCE_M = 2.0
 
 
-def evaluate_detection_run(
+async def evaluate_detection_run(
     *,
-    manifest_root: Path,
-    runs_root: Path,
-    dataset_id: str,
-    dataset_version: str,
+    dataset_manifest: DatasetManifest,
+    dataset_artifact_store: DatasetArtifactStore,
+    run_artifact_store: RunArtifactStore,
     inference_run_id: str,
     evaluation_run_id: str,
     match_distance_m: float = DEFAULT_MATCH_DISTANCE_M,
 ) -> dict[str, Any]:
-    store = JsonStore()
-
-    version_root = dataset_version_root(
-        manifest_root=manifest_root,
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-    )
-    inference_root = inference_run_root(
-        runs_root=runs_root,
-        run_id=inference_run_id,
-    )
-    eval_root = evaluation_run_root(
-        runs_root=runs_root,
-        evaluation_run_id=evaluation_run_id,
+    inference_run = await run_artifact_store.load_inference_run_manifest(
+        run_id=inference_run_id
     )
 
-    inference_run = store.read_json(inference_root / "run.json")
-    if inference_run is None:
-        raise FileNotFoundError(
-            f"Inference run not found: {inference_root / 'run.json'}"
-        )
-
-    prediction_files = sorted((inference_root / "predictions").glob("*.json"))
+    prediction_uris = await run_artifact_store.list_prediction_manifest_uris(
+        run_id=inference_run_id
+    )
 
     total_tp = 0
     total_fp = 0
     total_fn = 0
     total_distance_error = 0.0
     matched_count = 0
-
     class_stats: dict[str, dict[str, float]] = {}
 
-    for prediction_file in prediction_files:
-        prediction_manifest = store.read_json(prediction_file)
-        if prediction_manifest is None:
-            continue
+    for prediction_uri in prediction_uris:
+        prediction_manifest = await run_artifact_store.load_prediction_manifest(
+            uri=prediction_uri
+        )
 
         sample_id = prediction_manifest["sampleId"]
-
-        sample_manifest = store.read_json(
-            version_root / "samples" / f"{sample_id}.json"
+        sample_uri = dataset_artifact_store.artifact_store.join_uri(
+            dataset_manifest.uris.sample_root,
+            f"{sample_id}.json",
         )
+        sample_manifest = await dataset_artifact_store.load_sample_manifest(sample_uri)
         if sample_manifest is None:
             continue
 
@@ -88,27 +67,33 @@ def evaluate_detection_run(
 
         _merge_class_stats(class_stats, sample_eval["classMetrics"])
 
-        store.write_json(
-            eval_root / "samples" / f"{sample_id}.json",
-            sample_eval,
+        await run_artifact_store.write_sample_evaluation_manifest(
+            evaluation_run_id=evaluation_run_id,
+            sample_id=sample_id,
+            manifest=sample_eval,
         )
 
     precision = _safe_div(total_tp, total_tp + total_fp)
     recall = _safe_div(total_tp, total_tp + total_fn)
     mean_center_distance_error = _safe_div(total_distance_error, matched_count)
 
+    evaluation_manifest_uri = run_artifact_store.evaluation_run_manifest_uri(
+        evaluation_run_id
+    )
+    samples_root_uri = run_artifact_store.evaluation_samples_root_uri(evaluation_run_id)
+
     evaluation_manifest = {
         "evaluationRunId": evaluation_run_id,
         "inferenceRunId": inference_run_id,
-        "datasetId": dataset_id,
-        "datasetVersion": dataset_version,
+        "datasetId": dataset_manifest.dataset_id,
+        "datasetVersion": dataset_manifest.dataset_version,
         "modelId": inference_run["modelId"],
         "modelVersion": inference_run["modelVersion"],
-        "status": "SUCCEEDED",
+        "status": "succeeded",
         "matchDistanceM": match_distance_m,
-        "sampleCount": len(prediction_files),
-        "evaluationManifestUri": str(eval_root / "evaluation.json"),
-        "samplesRootUri": str(eval_root / "samples"),
+        "sampleCount": len(prediction_uris),
+        "evaluationManifestUri": evaluation_manifest_uri,
+        "samplesRootUri": samples_root_uri,
         "metrics": {
             "tp": total_tp,
             "fp": total_fp,
@@ -121,18 +106,21 @@ def evaluate_detection_run(
         "createdAt": datetime.now(UTC).isoformat(),
     }
 
-    store.write_json(eval_root / "evaluation.json", evaluation_manifest)
+    await run_artifact_store.write_evaluation_run_manifest(
+        evaluation_run_id=evaluation_run_id,
+        manifest=evaluation_manifest,
+    )
 
     return evaluation_manifest
 
 
 def _evaluate_sample(
     *,
-    sample: dict[str, Any],
+    sample: DatasetSampleManifest,
     predictions: list[dict[str, Any]],
     match_distance_m: float,
 ) -> dict[str, Any]:
-    gt_annotations = _filter_supported_gt(sample.get("annotations", []))
+    gt_annotations = _filter_supported_gt(sample.annotations)
 
     matched_gt_indices: set[int] = set()
     matched_prediction_indices: set[int] = set()
@@ -146,10 +134,10 @@ def _evaluate_sample(
             if gt_index in matched_gt_indices:
                 continue
 
-            if gt["categoryName"] != prediction["categoryName"]:
+            if gt.category_name != prediction["categoryName"]:
                 continue
 
-            distance = _center_distance(gt["translation"], prediction["translation"])
+            distance = _center_distance(gt.translation, prediction["translation"])
 
             if distance < best_distance:
                 best_distance = distance
@@ -160,10 +148,9 @@ def _evaluate_sample(
             matched_prediction_indices.add(pred_index)
 
             gt = gt_annotations[best_gt_index]
-
             matches.append(
                 {
-                    "annotationToken": gt["annotationToken"],
+                    "annotationToken": gt.annotation_token,
                     "predictionId": prediction["predictionId"],
                     "categoryName": prediction["categoryName"],
                     "centerDistance": round(best_distance, 6),
@@ -173,7 +160,6 @@ def _evaluate_sample(
     tp = len(matches)
     fp = len(predictions) - len(matched_prediction_indices)
     fn = len(gt_annotations) - len(matched_gt_indices)
-
     total_center_distance_error = sum(match["centerDistance"] for match in matches)
 
     class_metrics = _build_sample_class_metrics(
@@ -185,10 +171,10 @@ def _evaluate_sample(
     )
 
     return {
-        "datasetId": sample["datasetId"],
-        "datasetVersion": sample["datasetVersion"],
-        "sceneId": sample["sceneId"],
-        "sampleId": sample["sampleId"],
+        "datasetId": sample.dataset_id,
+        "datasetVersion": sample.dataset_version,
+        "sceneId": sample.scene_id,
+        "sampleId": sample.sample_id,
         "tp": tp,
         "fp": fp,
         "fn": fn,
@@ -205,17 +191,18 @@ def _evaluate_sample(
     }
 
 
-def _filter_supported_gt(annotations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _filter_supported_gt(
+    annotations: list[SampleAnnotationManifest],
+) -> list[SampleAnnotationManifest]:
     supported_prefixes = (
         "vehicle.car",
         "human.pedestrian",
         "movable_object.barrier",
     )
-
     return [
         annotation
         for annotation in annotations
-        if annotation["categoryName"].startswith(supported_prefixes)
+        if annotation.category_name.startswith(supported_prefixes)
     ]
 
 
@@ -225,13 +212,13 @@ def _center_distance(a: list[float], b: list[float]) -> float:
 
 def _build_sample_class_metrics(
     *,
-    gt_annotations: list[dict[str, Any]],
+    gt_annotations: list[SampleAnnotationManifest],
     predictions: list[dict[str, Any]],
     matches: list[dict[str, Any]],
     matched_gt_indices: set[int],
     matched_prediction_indices: set[int],
 ) -> dict[str, dict[str, int]]:
-    categories = {gt["categoryName"] for gt in gt_annotations} | {
+    categories = {gt.category_name for gt in gt_annotations} | {
         pred["categoryName"] for pred in predictions
     }
 
@@ -246,7 +233,7 @@ def _build_sample_class_metrics(
 
     for index, gt in enumerate(gt_annotations):
         if index not in matched_gt_indices:
-            class_metrics[gt["categoryName"]]["fn"] += 1
+            class_metrics[gt.category_name]["fn"] += 1
 
     return class_metrics
 

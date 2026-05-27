@@ -64,7 +64,7 @@ class JobRunner:
                     payload={"step": running_step_name},
                 )
 
-            result = self.job_executor.execute(job)
+            result = await self.job_executor.execute(job)
 
             if running_step_name is not None:
                 await self.job_event_store.append(

@@ -5,7 +5,7 @@ import asyncio
 import typer
 from rich import print
 
-from sceneops_worker.jobs.factory import create_job_runner
+from sceneops_worker.runtime.factory import create_job_runner
 
 app = typer.Typer(
     help="Job execution commands.",

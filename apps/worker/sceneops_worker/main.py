@@ -1,6 +1,6 @@
 import typer
 
-from sceneops_worker.commands import evaluate, ingest, jobs, pipelines, predict
+from sceneops_worker.commands import jobs, pipelines
 
 app = typer.Typer(
     name="sceneops-worker",
@@ -8,9 +8,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-app.add_typer(ingest.app, name="ingest")
-app.add_typer(predict.app, name="predict")
-app.add_typer(evaluate.app, name="evaluate")
+# app.add_typer(ingest.app, name="ingest")
+# app.add_typer(predict.app, name="predict")
+# app.add_typer(evaluate.app, name="evaluate")
 app.add_typer(jobs.app, name="jobs")
 app.add_typer(pipelines.app, name="pipelines")
 

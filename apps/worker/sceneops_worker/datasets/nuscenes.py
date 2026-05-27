@@ -24,8 +24,7 @@ from sceneops_core.schemas.datasets import (
     SampleSensorManifest,
     SensorModality,
 )
-from sceneops_worker.io.json_writer import write_json
-from sceneops_worker.io.manifest_store import ManifestStore
+from sceneops_worker.datasets import DatasetArtifactStore
 
 TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
 
@@ -39,41 +38,42 @@ class IngestMode(StrEnum):
     UPSERT = "upsert"
 
 
-def ingest_nuscenes(
+async def ingest_nuscenes(
     *,
-    dataroot: Path,
+    raw_data_root: Path,
     dataset_id: str,
     dataset_version: str,
-    manifest_root: Path,
+    manifest_root_uri: str,
+    dataset_artifact_store: DatasetArtifactStore,
     max_scenes: int | None = None,
     mode: str = "upsert",
 ) -> DatasetManifest:
-    raw_root = dataroot / dataset_id
-
     nusc = NuScenes(
         version=dataset_version,
-        dataroot=str(raw_root),
+        dataroot=str(raw_data_root),
         verbose=True,
     )
 
-    version_root = _get_dataset_version_root(
-        manifest_root=manifest_root,
+    version_root_uri = dataset_artifact_store.dataset_version_root_uri(
+        manifest_root_uri=manifest_root_uri,
         dataset_id=dataset_id,
         dataset_version=dataset_version,
     )
 
-    store = ManifestStore(version_root)
     ingest_mode = IngestMode(mode)
 
     if ingest_mode == IngestMode.OVERWRITE:
-        store.reset()
+        await dataset_artifact_store.reset_dataset_version(version_root_uri)
 
     existing_scene_ids = {
-        scene["scene_id"] for scene in _read_existing_scene_index_items(store)
+        item.scene_id
+        for item in await _read_existing_scene_index_items(
+            dataset_artifact_store=dataset_artifact_store,
+            version_root_uri=version_root_uri,
+        )
     }
 
     scenes = nusc.scene[:max_scenes] if max_scenes else nusc.scene
-
     scene_index_items: list[DatasetSceneIndexItem] = []
 
     for scene in scenes:
@@ -84,7 +84,6 @@ def ingest_nuscenes(
             continue
 
         sample_tokens = _collect_sample_tokens(nusc, scene["first_sample_token"])
-
         sample_ids: list[str] = []
 
         for index, sample_token in enumerate(sample_tokens):
@@ -103,9 +102,12 @@ def ingest_nuscenes(
 
             sample_ids.append(sample_id)
 
-            write_json(
-                version_root / "samples" / f"{sample_id}.json",
-                sample_manifest.model_dump(by_alias=True, mode="json"),
+            await dataset_artifact_store.save_sample_manifest(
+                uri=dataset_artifact_store.sample_manifest_uri(
+                    version_root_uri=version_root_uri,
+                    sample_id=sample_id,
+                ),
+                manifest=sample_manifest,
             )
 
         scene_manifest = DatasetSceneManifest(
@@ -122,11 +124,14 @@ def ingest_nuscenes(
             sample_ids=sample_ids,
         )
 
-        scene_manifest_uri = version_root / "scenes" / f"{scene_name}.json"
+        scene_manifest_uri = dataset_artifact_store.scene_manifest_uri(
+            version_root_uri=version_root_uri,
+            scene_id=scene_name,
+        )
 
-        write_json(
-            scene_manifest_uri,
-            scene_manifest.model_dump(by_alias=True, mode="json"),
+        await dataset_artifact_store.save_scene_manifest(
+            uri=scene_manifest_uri,
+            manifest=scene_manifest,
         )
 
         scene_index_items.append(
@@ -137,83 +142,79 @@ def ingest_nuscenes(
                 dataset_version=dataset_version,
                 source=DATA_SOURCE,
                 description=scene.get("description", ""),
-                sample_count=len(sample_tokens),
+                sample_count=len(sample_ids),
                 status=DatasetManifestStatus.READY,
-                manifest_uri=str(scene_manifest_uri),
+                manifest_uri=scene_manifest_uri,
             )
         )
 
-    scene_index = DatasetSceneIndex(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        source=DATA_SOURCE,
-        scenes=scene_index_items,
-    )
-
     if ingest_mode == IngestMode.OVERWRITE:
-        store.write_json(
-            "scenes.json",
-            scene_index.model_dump(by_alias=True, mode="json"),
+        scene_index = DatasetSceneIndex(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            source=DATA_SOURCE,
+            scenes=scene_index_items,
+        )
+
+        await dataset_artifact_store.save_scene_index(
+            uri=dataset_artifact_store.scene_index_uri(version_root_uri),
+            scene_index=scene_index,
         )
     else:
-        _upsert_scene_index(
-            store=store,
+        await _upsert_scene_index(
+            dataset_artifact_store=dataset_artifact_store,
+            version_root_uri=version_root_uri,
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             source=DATA_SOURCE,
             new_items=scene_index_items,
         )
 
-    dataset_manifest = _build_dataset_manifest_from_store(
-        store=store,
+    dataset_manifest = await _build_dataset_manifest_from_store(
+        dataset_artifact_store=dataset_artifact_store,
         dataset_id=dataset_id,
         dataset_version=dataset_version,
         dataset_type=DATASET_TYPE,
         source=DATA_SOURCE,
-        version_root=version_root,
-        raw_root=raw_root,
+        version_root_uri=version_root_uri,
+        raw_root=raw_data_root,
         mode=ingest_mode.value,
         max_scenes=max_scenes,
     )
 
-    store.write_json(
-        "dataset.json",
-        dataset_manifest.to_artifact_dict(),
+    await dataset_artifact_store.save_dataset_manifest(
+        uri=dataset_manifest.uris.dataset_manifest,
+        manifest=dataset_manifest,
     )
 
     return dataset_manifest
 
 
-def _get_dataset_version_root(
+async def _build_dataset_manifest_from_store(
     *,
-    manifest_root: Path,
-    dataset_id: str,
-    dataset_version: str,
-) -> Path:
-    return manifest_root / "datasets" / dataset_id / "versions" / dataset_version
-
-
-def _build_dataset_manifest_from_store(
-    *,
-    store: ManifestStore,
+    dataset_artifact_store: DatasetArtifactStore,
     dataset_id: str,
     dataset_version: str,
     dataset_type: str,
     source: str,
-    version_root: Path,
+    version_root_uri: str,
     raw_root: Path,
     mode: str,
     max_scenes: int | None,
 ) -> DatasetManifest:
-    scene_index = _read_scene_index(store)
+    scene_index = await _read_scene_index(
+        dataset_artifact_store=dataset_artifact_store,
+        version_root_uri=version_root_uri,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+    )
 
     total_sample_count = 0
     total_annotation_count = 0
 
     for scene_index_item in scene_index.scenes:
-        scene_manifest = _read_scene_manifest(
-            store=store,
-            scene_id=scene_index_item.scene_id,
+        scene_manifest = await dataset_artifact_store.load_scene_manifest(
+            scene_index_item.manifest_uri
         )
 
         if scene_manifest is None:
@@ -222,9 +223,11 @@ def _build_dataset_manifest_from_store(
         total_sample_count += scene_manifest.sample_count
 
         for sample_id in scene_manifest.sample_ids:
-            sample_manifest = _read_sample_manifest(
-                store=store,
-                sample_id=sample_id,
+            sample_manifest = await dataset_artifact_store.load_sample_manifest(
+                dataset_artifact_store.sample_manifest_uri(
+                    version_root_uri=version_root_uri,
+                    sample_id=sample_id,
+                )
             )
 
             if sample_manifest is None:
@@ -257,11 +260,13 @@ def _build_dataset_manifest_from_store(
             ),
         ),
         uris=DatasetManifestUris(
-            manifest_root=str(version_root),
-            dataset_manifest=str(version_root / "dataset.json"),
-            scene_index=str(version_root / "scenes.json"),
-            scene_root=str(version_root / "scenes"),
-            sample_root=str(version_root / "samples"),
+            manifest_root=version_root_uri,
+            dataset_manifest=dataset_artifact_store.dataset_manifest_uri(
+                version_root_uri
+            ),
+            scene_index=dataset_artifact_store.scene_index_uri(version_root_uri),
+            scene_root=dataset_artifact_store.scene_root_uri(version_root_uri),
+            sample_root=dataset_artifact_store.sample_root_uri(version_root_uri),
             raw_root=str(raw_root),
         ),
         ingest=DatasetIngestMetadata(
@@ -269,6 +274,80 @@ def _build_dataset_manifest_from_store(
             max_scenes=max_scenes,
         ),
         metadata={},
+    )
+
+
+async def _read_scene_index(
+    *,
+    dataset_artifact_store: DatasetArtifactStore,
+    version_root_uri: str,
+    dataset_id: str,
+    dataset_version: str,
+) -> DatasetSceneIndex:
+    scene_index = await dataset_artifact_store.load_scene_index(
+        dataset_artifact_store.scene_index_uri(version_root_uri)
+    )
+
+    if scene_index is None:
+        return DatasetSceneIndex(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            source=DATA_SOURCE,
+            scenes=[],
+        )
+
+    return scene_index
+
+
+async def _read_existing_scene_index_items(
+    *,
+    dataset_artifact_store: DatasetArtifactStore,
+    version_root_uri: str,
+) -> list[DatasetSceneIndexItem]:
+    scene_index = await dataset_artifact_store.load_scene_index(
+        dataset_artifact_store.scene_index_uri(version_root_uri)
+    )
+
+    if scene_index is None:
+        return []
+
+    return scene_index.scenes
+
+
+async def _upsert_scene_index(
+    *,
+    dataset_artifact_store: DatasetArtifactStore,
+    version_root_uri: str,
+    dataset_id: str,
+    dataset_version: str,
+    source: str,
+    new_items: list[DatasetSceneIndexItem],
+) -> None:
+    current = await _read_scene_index(
+        dataset_artifact_store=dataset_artifact_store,
+        version_root_uri=version_root_uri,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+    )
+
+    item_by_scene_id = {item.scene_id: item for item in current.scenes}
+
+    for item in new_items:
+        item_by_scene_id[item.scene_id] = item
+
+    merged = DatasetSceneIndex(
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        source=source,
+        scenes=sorted(
+            item_by_scene_id.values(),
+            key=lambda item: item.scene_id,
+        ),
+    )
+
+    await dataset_artifact_store.save_scene_index(
+        uri=dataset_artifact_store.scene_index_uri(version_root_uri),
+        scene_index=merged,
     )
 
 
@@ -378,91 +457,3 @@ def _infer_sensor_modality(channel: str) -> SensorModality:
 
 def _sample_id(scene_name: str, index: int) -> str:
     return f"{scene_name}-sample-{index:04d}"
-
-
-def _read_scene_index(store: ManifestStore) -> DatasetSceneIndex:
-    raw = store.read_json("scenes.json")
-
-    if raw is None:
-        return DatasetSceneIndex(
-            dataset_id="",
-            dataset_version="",
-            source=DATA_SOURCE,
-            scenes=[],
-        )
-
-    if isinstance(raw, list):
-        items = [DatasetSceneIndexItem.model_validate(item) for item in raw]
-        dataset_id = items[0].dataset_id if items else ""
-        dataset_version = items[0].dataset_version if items else ""
-
-        return DatasetSceneIndex(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            source=DATA_SOURCE,
-            scenes=items,
-        )
-
-    return DatasetSceneIndex.model_validate(raw)
-
-
-def _read_existing_scene_index_items(store: ManifestStore) -> list[dict]:
-    scene_index = _read_scene_index(store)
-    return [item.model_dump(by_alias=True, mode="json") for item in scene_index.scenes]
-
-
-def _upsert_scene_index(
-    *,
-    store: ManifestStore,
-    dataset_id: str,
-    dataset_version: str,
-    source: str,
-    new_items: list[DatasetSceneIndexItem],
-) -> None:
-    current = _read_scene_index(store)
-
-    item_by_scene_id = {item.scene_id: item for item in current.scenes}
-
-    for item in new_items:
-        item_by_scene_id[item.scene_id] = item
-
-    merged = DatasetSceneIndex(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        source=source,
-        scenes=sorted(
-            item_by_scene_id.values(),
-            key=lambda item: item.scene_id,
-        ),
-    )
-
-    store.write_json(
-        "scenes.json",
-        merged.model_dump(by_alias=True, mode="json"),
-    )
-
-
-def _read_scene_manifest(
-    *,
-    store: ManifestStore,
-    scene_id: str,
-) -> DatasetSceneManifest | None:
-    raw = store.read_json(f"scenes/{scene_id}.json")
-
-    if raw is None:
-        return None
-
-    return DatasetSceneManifest.model_validate(raw)
-
-
-def _read_sample_manifest(
-    *,
-    store: ManifestStore,
-    sample_id: str,
-) -> DatasetSampleManifest | None:
-    raw = store.read_json(f"samples/{sample_id}.json")
-
-    if raw is None:
-        return None
-
-    return DatasetSampleManifest.model_validate(raw)

@@ -9,7 +9,7 @@ from sceneops_core.schemas.jobs import (
     build_default_steps,
     parse_job_params,
 )
-from sceneops_core.time import utc_now_iso
+from sceneops_core.time import utc_now
 from sceneops_db.jobs import JobEventRepository, JobRepository
 
 
@@ -27,7 +27,7 @@ class JobService:
         self.default_dataset_version = default_dataset_version
 
     async def create_job(self, request: CreateJobRequest) -> JobManifest:
-        now = utc_now_iso()
+        now = utc_now()
 
         dataset_id = request.dataset_id or self.default_dataset_id
         dataset_version = request.dataset_version or self.default_dataset_version
