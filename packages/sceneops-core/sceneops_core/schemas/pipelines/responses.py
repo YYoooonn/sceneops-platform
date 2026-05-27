@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
-
+from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.pipelines.manifests import (
     PipelineRunManifest,
     PipelineStepRunManifest,
 )
 
 
-class PipelineRunListResponse(BaseModel):
-    pipelineRuns: list[PipelineRunManifest]
+class PipelineRunListResponse(SceneOpsBaseModel):
+    pipeline_runs: list[PipelineRunManifest]
     count: int
 
 
-class PipelineStepRunListResponse(BaseModel):
+class PipelineStepRunListResponse(SceneOpsBaseModel):
     steps: list[PipelineStepRunManifest]
     count: int
 
 
-class PipelineRunDetailResponse(BaseModel):
-    pipelineRun: PipelineRunManifest
+class PipelineRunDetailResponse(SceneOpsBaseModel):
+    pipeline_run: PipelineRunManifest
     steps: list[PipelineStepRunManifest]

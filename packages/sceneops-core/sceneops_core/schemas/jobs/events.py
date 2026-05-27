@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from enum import Enum
+from datetime import datetime
+from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.common import JsonDict
 
 
-class JobEventType(str, Enum):
+class JobEventType(StrEnum):
     JOB_CREATED = "job_created"
     JOB_STARTED = "job_started"
     JOB_SUCCEEDED = "job_succeeded"
@@ -21,17 +23,17 @@ class JobEventType(str, Enum):
     JOB_RETRYING = "job_retrying"
 
 
-class JobEventLevel(str, Enum):
+class JobEventLevel(StrEnum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
 
 
-class JobEventManifest(BaseModel):
-    eventId: str
-    jobId: str
-    eventType: JobEventType
+class JobEventManifest(SceneOpsBaseModel):
+    event_id: str
+    job_id: str
+    event_type: JobEventType
     level: JobEventLevel = JobEventLevel.INFO
     message: str | None = None
     payload: JsonDict = Field(default_factory=dict)
-    createdAt: str
+    created_at: datetime | None = None

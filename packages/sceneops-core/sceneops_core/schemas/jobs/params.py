@@ -1,62 +1,63 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.common import JsonDict
 from sceneops_core.schemas.datasets import DatasetType
 from sceneops_core.schemas.jobs.enums import JobType
 
 
-class IngestMode(str, Enum):
+class IngestMode(StrEnum):
     UPSERT = "upsert"
     OVERWRITE = "overwrite"
 
 
-class InferenceBackend(str, Enum):
+class InferenceBackend(StrEnum):
     MOCK = "mock"
     # ONNX_RUNTIME = "onnx_runtime"
     # TRITON = "triton"
 
 
-class IngestDatasetJobParams(BaseModel):
-    datasetId: str
-    datasetVersion: str
-    datasetType: DatasetType = DatasetType.NUSCENES
+class IngestDatasetJobParams(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
+    dataset_type: DatasetType = DatasetType.NUSCENES
 
-    rawDataRoot: str | None = None
-    maxScenes: int | None = None
+    raw_data_root: str | None = None
+    max_scenes: int | None = None
     mode: IngestMode = IngestMode.UPSERT
 
     extra: JsonDict = Field(default_factory=dict)
 
 
-class PredictDetectionJobParams(BaseModel):
-    datasetId: str
-    datasetVersion: str
+class PredictDetectionJobParams(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
 
-    modelId: str
-    modelVersion: str
-    inferenceBackend: InferenceBackend = InferenceBackend.MOCK
+    model_id: str
+    model_version: str
+    inference_backend: InferenceBackend = InferenceBackend.MOCK
 
-    inferenceRunId: str | None = None
-    maxSamples: int | None = None
+    inference_run_id: str | None = None
+    max_samples: int | None = None
 
-    modelUri: str | None = None
-    endpointUrl: str | None = None
+    model_uri: str | None = None
+    endpoint_url: str | None = None
     extra: JsonDict = Field(default_factory=dict)
 
 
-class EvaluateDetectionJobParams(BaseModel):
-    datasetId: str
-    datasetVersion: str
+class EvaluateDetectionJobParams(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
 
-    inferenceRunId: str
-    evaluationRunId: str | None = None
+    inference_run_id: str
+    evaluation_run_id: str | None = None
 
-    evaluatorId: str = "center-distance"
-    matchDistanceM: float = 2.0
+    evaluator_id: str = "center-distance"
+    match_distance_m: float = 2.0
     extra: JsonDict = Field(default_factory=dict)
 
 

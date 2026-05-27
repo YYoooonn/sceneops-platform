@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from datetime import datetime
+from pydantic import Field
 
+from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.common import JsonDict, ErrorInfo
 from sceneops_core.schemas.jobs.enums import JobStatus, JobType
 from sceneops_core.schemas.jobs.steps import JobStep
 
 
-class JobManifest(BaseModel):
-    jobId: str
+class JobManifest(SceneOpsBaseModel):
+    job_id: str
     type: JobType
     status: JobStatus
 
-    datasetId: str
-    datasetVersion: str
+    dataset_id: str
+    dataset_version: str
 
     params: JsonDict = Field(default_factory=dict)
     steps: list[JobStep] = Field(default_factory=list)
@@ -22,20 +24,20 @@ class JobManifest(BaseModel):
     error: ErrorInfo | None = None
 
     # Pipeline linkage
-    pipelineRunId: str | None = None
-    pipelineStepRunId: str | None = None
-    pipelineStepName: str | None = None
+    pipeline_run_id: str | None = None
+    pipeline_step_run_id: str | None = None
+    pipeline_step_name: str | None = None
 
     # Orchestration fields
-    retryCount: int = 0
-    maxRetries: int = 0
+    retry_count: int = 0
+    max_retries: int = 0
 
-    workerId: str | None = None
-    queuedAt: str | None = None
-    lockedAt: str | None = None
-    heartbeatAt: str | None = None
+    worker_id: str | None = None
+    queued_at: datetime | None = None
+    locked_at: datetime | None = None
+    heartbeat_at: datetime | None = None
 
-    createdAt: str
-    updatedAt: str
-    startedAt: str | None = None
-    finishedAt: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

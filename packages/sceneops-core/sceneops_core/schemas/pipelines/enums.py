@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class PipelineType(str, Enum):
+class PipelineType(StrEnum):
     DETECTION_VALIDATION = "detection_validation"
 
 
-class PipelineRunStatus(str, Enum):
+class PipelineRunStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -15,7 +15,7 @@ class PipelineRunStatus(str, Enum):
     CANCELED = "canceled"
 
 
-class PipelineStepRunStatus(str, Enum):
+class PipelineStepRunStatus(StrEnum):
     PENDING = "pending"
     WAITING = "waiting"
     RUNNING = "running"

@@ -1,49 +1,50 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.common import JsonDict
 from sceneops_core.schemas.datasets import DatasetType
 from sceneops_core.schemas.jobs.enums import JobType
 
 
-class IngestDatasetJobResult(BaseModel):
-    datasetId: str
-    datasetVersion: str
-    datasetType: DatasetType
+class IngestDatasetJobResult(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
+    dataset_type: DatasetType
 
-    manifestUri: str
-    sceneCount: int | None = None
-    sampleCount: int
+    dataset_manifest_uri: str
+    scene_count: int | None = None
+    sample_count: int
 
-    resultSummary: JsonDict = Field(default_factory=dict)
-
-
-class PredictDetectionJobResult(BaseModel):
-    datasetId: str
-    datasetVersion: str
-
-    modelId: str
-    modelVersion: str
-
-    inferenceRunId: str
-    predictionManifestUri: str
-
-    sampleCount: int
-    resultSummary: JsonDict = Field(default_factory=dict)
+    result_summary: JsonDict = Field(default_factory=dict)
 
 
-class EvaluateDetectionJobResult(BaseModel):
-    datasetId: str
-    datasetVersion: str
+class PredictDetectionJobResult(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
 
-    inferenceRunId: str
-    evaluationRunId: str
-    evaluationManifestUri: str
+    model_id: str
+    model_version: str
+
+    inference_run_id: str
+    prediction_manifest_uri: str
+
+    sample_count: int
+    result_summary: JsonDict = Field(default_factory=dict)
+
+
+class EvaluateDetectionJobResult(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
+
+    inference_run_id: str
+    evaluation_run_id: str
+    evaluation_manifest_uri: str
 
     metrics: JsonDict = Field(default_factory=dict)
-    sampleCount: int | None = None
-    resultSummary: JsonDict = Field(default_factory=dict)
+    sample_count: int | None = None
+    result_summary: JsonDict = Field(default_factory=dict)
 
 
 JobResult = (

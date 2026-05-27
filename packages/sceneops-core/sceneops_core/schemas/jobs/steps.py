@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from datetime import datetime
 
+from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.jobs.enums import JobStepStatus, JobType
 from sceneops_core.constants.jobs import (
     EVALUATE_DETECTION_STEPS,
@@ -9,11 +10,11 @@ from sceneops_core.constants.jobs import (
     PREDICT_MOCK_DETECTION_STEPS,
 )
 
-class JobStep(BaseModel):
+class JobStep(SceneOpsBaseModel):
     name: str
     status: JobStepStatus = JobStepStatus.PENDING
-    startedAt: str | None = None
-    finishedAt: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 def build_default_steps(job_type: JobType) -> list[JobStep]:

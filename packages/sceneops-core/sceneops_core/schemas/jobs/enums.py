@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class JobType(str, Enum):
+class JobType(StrEnum):
     INGEST_DATASET = "ingest_dataset"
     PREDICT_DETECTION = "predict_detection"
     EVALUATE_DETECTION = "evaluate_detection"
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -17,7 +17,7 @@ class JobStatus(str, Enum):
     CANCELED = "canceled"
 
 
-class JobStepStatus(str, Enum):
+class JobStepStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
