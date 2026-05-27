@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sceneops_core.schemas.common import JsonDict
 from sceneops_core.schemas.jobs import JobManifest, JobStatus
-from sceneops_core.time import utc_now_iso
+
+from sceneops_core.time import utc_now, utc_now_iso
 from sceneops_db.jobs import JobModel
-from sceneops_db.utils import to_error_json
+from sceneops_db.utils import extract_datetime, to_error_json, enum_to_str
 
 
 class PostgresJobRepository:
@@ -44,7 +45,7 @@ class PostgresJobRepository:
         stmt = select(JobModel)
 
         if status is not None:
-            stmt = stmt.where(JobModel.status == self._enum_to_str(status))
+            stmt = stmt.where(JobModel.status == enum_to_str(status))
 
         if job_type is not None:
             stmt = stmt.where(JobModel.type == job_type)
@@ -63,10 +64,10 @@ class PostgresJobRepository:
         return [self._to_schema(model) for model in models]
 
     async def update(self, manifest: JobManifest) -> JobManifest:
-        model = await self.session.get(JobModel, manifest.jobId)
+        model = await self.session.get(JobModel, manifest.job_id)
 
         if model is None:
-            raise FileNotFoundError(f"Job not found: {manifest.jobId}")
+            raise FileNotFoundError(f"Job not found: {manifest.job_id}")
 
         updated = self._to_model(manifest)
 
@@ -111,11 +112,11 @@ class PostgresJobRepository:
             raise FileNotFoundError(f"Job not found: {job_id}")
 
         manifest_data = dict(model.manifest)
-        manifest_data["status"] = self._enum_to_str(status)
-        manifest_data["updatedAt"] = utc_now_iso()
+        manifest_data["status"] = enum_to_str(status)
+        manifest_data["updated_at"] = utc_now()
 
         if error is not None:
-            manifest_data["error"] = error
+            manifest_data["error"] = to_error_json(error)
 
         if result is not None:
             manifest_data["result"] = result
@@ -124,70 +125,73 @@ class PostgresJobRepository:
         return await self.update(updated_manifest)
 
     def _to_model(self, manifest: JobManifest) -> JobModel:
-        data = manifest.model_dump(mode="json")
+        manifest_data = manifest.to_db_dict()
 
-        params = data.get("params") or {}
-        result = data.get("result")
-        error = data.get("error")
+        result = manifest.result if isinstance(manifest.result, dict) else None
+        params = manifest.params if isinstance(manifest.params, dict) else {}
 
         return JobModel(
-            id=data["jobId"],
-            type=self._enum_to_str(data["type"]),
-            status=self._enum_to_str(data["status"]),
-            dataset_id=data.get("datasetId"),
-            dataset_version=data.get("datasetVersion"),
-            pipeline_run_id=data.get("pipelineRunId"),
-            pipeline_step_run_id=data.get("pipelineStepRunId"),
-            pipeline_step_name=data.get("pipelineStepName"),
+            id=manifest.job_id,
+            type=enum_to_str(manifest.type),
+            status=enum_to_str(manifest.status),
+            dataset_id=manifest.dataset_id,
+            dataset_version=manifest.dataset_version,
+            pipeline_run_id=manifest.pipeline_run_id,
+            pipeline_step_run_id=manifest.pipeline_step_run_id,
+            pipeline_step_name=manifest.pipeline_step_name,
             run_id=self._extract_run_id(result),
             evaluation_id=self._extract_evaluation_id(result),
-            params=params if isinstance(params, dict) else {},
-            result=result if isinstance(result, dict) else None,
-            error=error,
-            retry_count=int(data.get("retryCount") or 0),
-            max_retries=int(data.get("maxRetries") or 0),
-            worker_id=data.get("workerId"),
-            queued_at=self._extract_datetime(data.get("queuedAt")),
-            locked_at=self._extract_datetime(data.get("lockedAt")),
-            heartbeat_at=self._extract_datetime(data.get("heartbeatAt")),
-            manifest=data,
-            started_at=self._extract_datetime(data.get("startedAt")),
-            finished_at=self._extract_datetime(data.get("finishedAt")),
+            params=params,
+            result=result,
+            error=to_error_json(manifest.error),
+            retry_count=manifest.retry_count,
+            max_retries=manifest.max_retries,
+            worker_id=manifest.worker_id,
+            queued_at=extract_datetime(manifest.queued_at),
+            locked_at=extract_datetime(manifest.locked_at),
+            heartbeat_at=extract_datetime(manifest.heartbeat_at),
+            manifest=manifest_data,
+            started_at=extract_datetime(manifest.started_at),
+            finished_at=extract_datetime(manifest.finished_at),
         )
 
     def _to_schema(self, model: JobModel) -> JobManifest:
-        data = dict(model.manifest)
+        return JobManifest.model_validate({
+            "job_id": model.id,
+            "type": model.type,
+            "status": model.status,
+            "dataset_id": model.dataset_id,
+            "dataset_version": model.dataset_version,
+            "pipeline_run_id": model.pipeline_run_id,
+            "pipeline_step_run_id": model.pipeline_step_run_id,
+            "pipeline_step_name": model.pipeline_step_name,
+            "params": model.params or {},
+            "result": model.result,
+            "error": to_error_json(model.error),
+            "retry_count": model.retry_count,
+            "max_retries": model.max_retries,
+            "worker_id": model.worker_id,
+            "queued_at": model.queued_at,
+            "locked_at": model.locked_at,
+            "heartbeat_at": model.heartbeat_at,
+            "started_at": model.started_at,
+            "finished_at": model.finished_at,
+            "created_at": model.created_at,
+            "updated_at": model.updated_at,
+            "steps": (model.manifest or {}).get("steps", []),
+        })
 
-        data["error"] = to_error_json(model.error)
-        return JobManifest.model_validate(model.manifest)
-
-    def _extract_run_id(self, result: Any) -> str | None:
-        if not isinstance(result, dict):
+    def _extract_run_id(self, result: JsonDict | None) -> str | None:
+        if not result:
             return None
 
-        value = result.get("runId") or result.get("run_id") or result.get("inferenceRunId")
-        return str(value) if value is not None else None
+        value = result.get("inference_run_id") or result.get("run_id")
+        return str(value) if value else None
 
-    def _extract_evaluation_id(self, result: Any) -> str | None:
-        if not isinstance(result, dict):
+
+    def _extract_evaluation_id(self, result: JsonDict | None) -> str | None:
+        if not result:
             return None
 
-        value = (
-            result.get("evaluationId")
-            or result.get("evaluation_id")
-            or result.get("evaluationRunId")
-        )
-        return str(value) if value is not None else None
-
-    def _extract_datetime(self, value: Any) -> datetime | None:
-        if value is None or isinstance(value, datetime):
-            return value
-
-        if isinstance(value, str):
-            normalized = value.replace("Z", "+00:00")
-            return datetime.fromisoformat(normalized)
-
-        return None
-
-    def _enum_to_str(self, value: Any) -> str:
-        return value.value if hasattr(value, "value") else str(value)
+        value = result.get("evaluation_run_id") or result.get("evaluation_id")
+        return str(value) if value else None

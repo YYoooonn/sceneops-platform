@@ -4,7 +4,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.schemas.pipelines import (
-    PipelineRunStatus,
     PipelineStepRunManifest,
     PipelineStepRunStatus,
 )
@@ -68,11 +67,11 @@ class PostgresPipelineStepRunRepository:
         self,
         manifest: PipelineStepRunManifest,
     ) -> PipelineStepRunManifest:
-        model = await self.session.get(PipelineStepRunModel, manifest.pipelineStepRunId)
+        model = await self.session.get(PipelineStepRunModel, manifest.pipeline_step_run_id)
 
         if model is None:
             raise FileNotFoundError(
-                f"Pipeline step run not found: {manifest.pipelineStepRunId}"
+                f"Pipeline step run not found: {manifest.pipeline_step_run_id}"
             )
 
         updated = self._to_model(manifest)
@@ -115,39 +114,41 @@ class PostgresPipelineStepRunRepository:
         return self._to_schema(model)
 
     def _to_model(self, manifest: PipelineStepRunManifest) -> PipelineStepRunModel:
-        data = manifest.model_dump(mode="json")
+        result = manifest.result if isinstance(manifest.result, dict) else None
+        params = manifest.params if isinstance(manifest.params, dict) else {}
+        error = manifest.error if isinstance(manifest.error, dict) else None
 
         return PipelineStepRunModel(
-            id=data["pipelineStepRunId"],
-            pipeline_run_id=data["pipelineRunId"],
-            step_name=data["stepName"],
-            step_order=data["stepOrder"],
-            status=enum_to_str(data["status"]),
-            job_type=enum_to_str(data["jobType"]),
-            job_id=data.get("jobId"),
-            depends_on_step_names=data.get("dependsOnStepNames") or [],
-            params=data.get("params") or {},
-            result=data.get("result"),
-            error=data.get("error"),
-            started_at=extract_datetime(data.get("startedAt")),
-            finished_at=extract_datetime(data.get("finishedAt")),
+            id=manifest.pipeline_step_run_id,
+            pipeline_run_id=manifest.pipeline_run_id,
+            step_name=manifest.step_name,
+            step_order=manifest.step_order,
+            status=enum_to_str(manifest.status),
+            job_type=enum_to_str(manifest.job_type),
+            job_id=manifest.job_id,
+            depends_on_step_names=manifest.depends_on_step_names or [],
+            params=params,
+            result=result,
+            error=error,
+            started_at=extract_datetime(manifest.started_at),
+            finished_at=extract_datetime(manifest.finished_at),
         )
 
     def _to_schema(self, model: PipelineStepRunModel) -> PipelineStepRunManifest:
-        return PipelineStepRunManifest(
-            pipelineStepRunId=model.id,
-            pipelineRunId=model.pipeline_run_id,
-            stepName=model.step_name,
-            stepOrder=model.step_order,
-            status=PipelineStepRunStatus(model.status),
-            jobType=model.job_type,
-            jobId=model.job_id,
-            dependsOnStepNames=model.depends_on_step_names or [],
-            params=model.params or {},
-            result=model.result,
-            error=to_error_info(model.error),
-            createdAt=model.created_at.isoformat(),
-            updatedAt=model.updated_at.isoformat(),
-            startedAt=model.started_at.isoformat() if model.started_at else None,
-            finishedAt=model.finished_at.isoformat() if model.finished_at else None,
-        )
+        return PipelineStepRunManifest.model_validate({
+            "pipeline_step_run_id": model.id,
+            "pipeline_run_id": model.pipeline_run_id,
+            "step_name": model.step_name,
+            "step_order": model.step_order,
+            "status": model.status,
+            "job_type": model.job_type,
+            "job_id": model.job_id,
+            "depends_on_step_names": model.depends_on_step_names or [],
+            "params": model.params or {},
+            "result": model.result,
+            "error": to_error_info(model.error),
+            "created_at": model.created_at.isoformat(),
+            "updated_at": model.updated_at.isoformat(),
+            "started_at": model.started_at.isoformat() if model.started_at else None,
+            "finished_at": model.finished_at.isoformat() if model.finished_at else None,
+        })

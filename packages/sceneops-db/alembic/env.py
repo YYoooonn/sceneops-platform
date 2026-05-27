@@ -15,6 +15,7 @@ from sceneops_db.config import get_db_settings
 
 from sceneops_db.jobs import JobModel, JobEventModel  # noqa: F401
 from sceneops_db.pipelines import PipelineRunModel, PipelineStepRunModel  # noqa: F401
+from sceneops_db.datasets.models import DatasetModel, DatasetVersionModel # noqa: F401
 
 config = context.config
 

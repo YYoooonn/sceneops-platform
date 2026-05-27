@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -12,8 +11,8 @@ from sceneops_core.schemas.jobs import (
     JobEventManifest,
     JobEventType,
 )
-from sceneops_core.time import utc_now_iso
 from sceneops_db.jobs import JobEventModel
+from sceneops_db.utils import enum_to_str
 
 
 class PostgresJobEventRepository:
@@ -29,16 +28,13 @@ class PostgresJobEventRepository:
         message: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> JobEventManifest:
-        now = utc_now_iso()
-
         event = JobEventManifest(
-            eventId=generate_job_event_id(),
-            jobId=job_id,
-            eventType=event_type,
+            event_id=generate_job_event_id(),
+            job_id=job_id,
+            event_type=event_type,
             level=level,
             message=message,
             payload=payload or {},
-            createdAt=now,
         )
 
         model = self._to_model(event)
@@ -62,39 +58,25 @@ class PostgresJobEventRepository:
         return [self._to_schema(model) for model in models]
 
     def _to_model(self, event: JobEventManifest) -> JobEventModel:
-        data = event.model_dump(mode="json")
+
+        payload = event.payload if isinstance(event.payload, dict) else {}
 
         return JobEventModel(
-            id=data["eventId"],
-            job_id=data["jobId"],
-            event_type=self._enum_to_str(data["eventType"]),
-            level=self._enum_to_str(data["level"]),
-            message=data.get("message"),
-            payload=data.get("payload") or {},
-            created_at=self._extract_datetime(data.get("createdAt")),
+            id=event.event_id,
+            job_id=event.job_id,
+            event_type=enum_to_str(event.event_type),
+            level=enum_to_str(event.level),
+            message=event.message,
+            payload=payload,
         )
 
     def _to_schema(self, model: JobEventModel) -> JobEventManifest:
-        created_at = model.created_at
-
-        return JobEventManifest(
-            eventId=model.id,
-            jobId=model.job_id,
-            eventType=JobEventType(model.event_type),
-            level=JobEventLevel(model.level),
-            message=model.message,
-            payload=model.payload or {},
-            createdAt=created_at.isoformat() if created_at else utc_now_iso(),
-        )
-
-    def _extract_datetime(self, value: Any) -> datetime | None:
-        if value is None or isinstance(value, datetime):
-            return value
-
-        if isinstance(value, str):
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-        return None
-
-    def _enum_to_str(self, value: Any) -> str:
-        return value.value if hasattr(value, "value") else str(value)
+        return JobEventManifest.model_validate({
+            "event_id": model.id,
+            "job_id": model.job_id,
+            "event_type": model.event_type,
+            "level": model.level,
+            "message":model.message,
+            "payload": model.payload or {},
+            "created_at": model.created_at,
+        })

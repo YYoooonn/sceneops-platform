@@ -8,7 +8,7 @@ from sceneops_core.schemas.pipelines import (
     PipelineRunStatus,
     PipelineType,
 )
-from sceneops_db.utils import extract_datetime, enum_to_str, to_error_info
+from sceneops_db.utils import enum_to_str, extract_datetime, to_error_info
 from sceneops_db.pipelines.models import PipelineRunModel
 
 
@@ -63,11 +63,11 @@ class PostgresPipelineRunRepository:
         return [self._to_schema(model) for model in models]
 
     async def update(self, manifest: PipelineRunManifest) -> PipelineRunManifest:
-        model = await self.session.get(PipelineRunModel, manifest.pipelineRunId)
+        model = await self.session.get(PipelineRunModel, manifest.pipeline_run_id)
 
         if model is None:
             raise FileNotFoundError(
-                f"Pipeline run not found: {manifest.pipelineRunId}"
+                f"Pipeline run not found: {manifest.pipeline_run_id}"
             )
 
         updated = self._to_model(manifest)
@@ -90,37 +90,40 @@ class PostgresPipelineRunRepository:
         return self._to_schema(model)
 
     def _to_model(self, manifest: PipelineRunManifest) -> PipelineRunModel:
-        data = manifest.model_dump(mode="json")
+
+        result = manifest.result if isinstance(manifest.result, dict) else None
+        params = manifest.params if isinstance(manifest.params, dict) else {}
+        error = manifest.error if isinstance(manifest.error, dict) else None
 
         return PipelineRunModel(
-            id=data["pipelineRunId"],
-            type=enum_to_str(data["type"]),
-            status=enum_to_str(data["status"]),
-            dataset_id=data["datasetId"],
-            dataset_version=data["datasetVersion"],
-            model_id=data.get("modelId"),
-            model_version=data.get("modelVersion"),
-            params=data.get("params") or {},
-            result=data.get("result"),
-            error=data.get("error"),
-            started_at=extract_datetime(data.get("startedAt")),
-            finished_at=extract_datetime(data.get("finishedAt")),
+            id=manifest.pipeline_run_id,
+            type=enum_to_str(manifest.type),
+            status=enum_to_str(manifest.status),
+            dataset_id=manifest.dataset_id,
+            dataset_version=manifest.dataset_version,
+            model_id=manifest.model_id,
+            model_version=manifest.model_version,
+            params=params,
+            result=result,
+            error=error,
+            started_at=extract_datetime(manifest.started_at),
+            finished_at=extract_datetime(manifest.finished_at),
         )
 
     def _to_schema(self, model: PipelineRunModel) -> PipelineRunManifest:
-        return PipelineRunManifest(
-            pipelineRunId=model.id,
-            type=PipelineType(model.type),
-            status=PipelineRunStatus(model.status),
-            datasetId=model.dataset_id,
-            datasetVersion=model.dataset_version,
-            modelId=model.model_id,
-            modelVersion=model.model_version,
-            params=model.params or {},
-            result=model.result,
-            error=to_error_info(model.error),
-            createdAt=model.created_at.isoformat(),
-            updatedAt=model.updated_at.isoformat(),
-            startedAt=model.started_at.isoformat() if model.started_at else None,
-            finishedAt=model.finished_at.isoformat() if model.finished_at else None,
-        )
+        return PipelineRunManifest.model_validate({
+            "pipeline_run_id": model.id,
+            "type": model.type,
+            "status": model.status,
+            "dataset_id": model.dataset_id,
+            "dataset_version": model.dataset_version,
+            "model_id": model.model_id,
+            "model_version": model.model_version,
+            "params": model.params or {},
+            "result": model.result,
+            "error": to_error_info(model.error),
+            "created_at": model.created_at,
+            "updated_at": model.updated_at,
+            "started_at": model.started_at,
+            "finished_at": model.finished_at,
+        })
