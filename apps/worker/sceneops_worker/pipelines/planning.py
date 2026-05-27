@@ -68,6 +68,16 @@ class PipelineJobPlanner:
                 **base,
             }
 
+        if job_type == JobType.VALIDATE_DATASET_MANIFEST:
+            return {
+                **base,
+                "require_target_channels": base.get(
+                    "require_target_channels",
+                    ["CAM_FRONT", "LIDAR_TOP"],
+                ),
+                "validate_samples": base.get("validate_samples", True),
+            }
+
         if job_type == JobType.PREDICT_DETECTION:
             model_id = (
                 pipeline_run.model_id or base.get("model_id") or "centerpoint-mock"

@@ -20,6 +20,8 @@ class DatasetVersionStatus(StrEnum):
     REGISTERED = "registered"
     INGESTING = "ingesting"
     INGESTED = "ingested"
+    VALIDATING = "validating"
+    READY = "ready"
     FAILED = "failed"
     DEPRECATED = "deprecated"
 

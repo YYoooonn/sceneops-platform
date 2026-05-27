@@ -8,7 +8,7 @@ from sceneops_core.schemas.pipelines.enums import PipelineType
 
 
 class CreatePipelineRunRequest(SceneOpsBaseModel):
-    type: PipelineType = PipelineType.DETECTION_VALIDATION
+    type: PipelineType = PipelineType.DATASET_INGESTION
 
     dataset_id: str | None = None
     dataset_version: str | None = None

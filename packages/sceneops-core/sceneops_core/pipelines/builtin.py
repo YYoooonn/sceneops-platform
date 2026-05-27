@@ -8,10 +8,10 @@ from sceneops_core.schemas.pipelines import (
 )
 
 
-DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
-    type=PipelineType.DETECTION_VALIDATION,
-    name="Detection Validation",
-    description="Ingest dataset, generate predictions, and evaluate detection metrics.",
+DATASET_INGESTION_PIPELINE = PipelineDefinition(
+    type=PipelineType.DATASET_INGESTION,
+    name="Dataset Ingestion",
+    description="Ingest and validate a dataset version.",
     steps=[
         PipelineStepDefinition(
             name="ingest",
@@ -24,17 +24,36 @@ DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
             },
         ),
         PipelineStepDefinition(
-            name="predict",
+            name="validate",
             order=1,
-            job_type=JobType.PREDICT_DETECTION.value,
+            job_type=JobType.VALIDATE_DATASET_MANIFEST.value,
             depends_on=["ingest"],
+            default_params={
+                "validate_samples": True,
+                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
+            },
+        ),
+    ],
+)
+
+
+DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
+    type=PipelineType.DETECTION_VALIDATION,
+    name="Detection Validation",
+    description="Run prediction and evaluate detection metrics on a ready dataset.",
+    steps=[
+        PipelineStepDefinition(
+            name="predict",
+            order=0,
+            job_type=JobType.PREDICT_DETECTION.value,
+            depends_on=[],
             default_params={
                 "inference_backend": "mock",
             },
         ),
         PipelineStepDefinition(
             name="evaluate",
-            order=2,
+            order=1,
             job_type=JobType.EVALUATE_DETECTION.value,
             depends_on=["predict"],
             default_params={
@@ -47,7 +66,8 @@ DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
 
 
 BUILTIN_PIPELINE_DEFINITIONS = {
-    DETECTION_VALIDATION_PIPELINE.type: DETECTION_VALIDATION_PIPELINE,
+    PipelineType.DATASET_INGESTION: DATASET_INGESTION_PIPELINE,
+    PipelineType.DETECTION_VALIDATION: DETECTION_VALIDATION_PIPELINE,
 }
 
 

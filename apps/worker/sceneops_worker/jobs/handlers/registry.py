@@ -6,6 +6,9 @@ from sceneops_worker.jobs.handlers.base import JobHandler
 from sceneops_worker.jobs.handlers.evaluate_detection import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.handlers.ingest_dataset import IngestDatasetJobHandler
 from sceneops_worker.jobs.handlers.predict_detection import PredictDetectionJobHandler
+from sceneops_worker.jobs.handlers.validate_dataset_manifest import (
+    ValidateDatasetManifestJobHandler,
+)
 
 
 def build_job_handler_registry(
@@ -13,6 +16,7 @@ def build_job_handler_registry(
 ) -> dict[JobType, JobHandler]:
     handlers: list[JobHandler] = [
         IngestDatasetJobHandler(context),
+        ValidateDatasetManifestJobHandler(context),
         PredictDetectionJobHandler(context),
         EvaluateDetectionJobHandler(context),
     ]

@@ -44,8 +44,8 @@ class PredictDetectionJobHandler(
         )
 
         if version.status not in {
-            DatasetVersionStatus.INGESTED,
-            # DatasetVersionStatus.READY,
+            DatasetVersionStatus.INGESTED,  # XXX to be removed
+            DatasetVersionStatus.READY,
         }:
             raise ValueError(
                 f"Dataset version is not usable for prediction: "

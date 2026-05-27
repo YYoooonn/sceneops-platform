@@ -4,7 +4,7 @@ from sceneops_core.ids.pipelines import (
     generate_pipeline_run_id,
     generate_pipeline_step_run_id,
 )
-from sceneops_core.pipelines.builtin import get_pipeline_definition
+from sceneops_core.pipelines import get_pipeline_definition
 from sceneops_core.schemas.pipelines import (
     CreatePipelineRunRequest,
     PipelineRunDetailResponse,

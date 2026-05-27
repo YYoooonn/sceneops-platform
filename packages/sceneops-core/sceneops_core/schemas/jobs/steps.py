@@ -6,8 +6,9 @@ from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.jobs.enums import JobStepStatus, JobType
 from sceneops_core.constants.jobs import (
     EVALUATE_DETECTION_STEPS,
-    INGEST_NUSCENES_STEPS,
+    INGEST_DATASET_STEPS,
     PREDICT_MOCK_DETECTION_STEPS,
+    VALIDATE_DATASET_STEPS,
 )
 
 class JobStep(SceneOpsBaseModel):
@@ -19,7 +20,10 @@ class JobStep(SceneOpsBaseModel):
 
 def build_default_steps(job_type: JobType) -> list[JobStep]:
     if job_type == JobType.INGEST_DATASET:
-        return [JobStep(name=name) for name in INGEST_NUSCENES_STEPS]
+        return [JobStep(name=name) for name in INGEST_DATASET_STEPS]
+
+    if job_type == JobType.VALIDATE_DATASET_MANIFEST:
+        return [JobStep(name=name) for name in VALIDATE_DATASET_STEPS]
 
     if job_type == JobType.PREDICT_DETECTION:
         return [JobStep(name=name) for name in PREDICT_MOCK_DETECTION_STEPS]

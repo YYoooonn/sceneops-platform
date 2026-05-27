@@ -1,24 +1,31 @@
-INGEST_NUSCENES_STEPS = [
-    "LOAD_NUSCENES_METADATA",
-    "BUILD_DATASET_MANIFEST",
-    "BUILD_SCENE_MANIFESTS",
-    "BUILD_SAMPLE_MANIFESTS",
-    "SAVE_MANIFESTS",
+INGEST_DATASET_STEPS = [
+    "load_dataset_metadata",
+    "build_dataset_manifest",
+    "build_scene_manifests",
+    "build_sample_manifests",
+    "save_manifests"
+]
+
+VALIDATE_DATASET_STEPS = [
+    "load_dataset_manifest",
+    "validate_scene_index",
+    "validate_samples",
+    "update_dataset_version_status"
 ]
 
 PREDICT_MOCK_DETECTION_STEPS = [
-    "LOAD_DATASET_MANIFEST",
-    "LOAD_SAMPLE_MANIFESTS",
-    "GENERATE_MOCK_PREDICTIONS",
-    "SAVE_INFERENCE_RUN",
-    "SAVE_PREDICTION_ARTIFACTS",
+    "load_dataset_manifest",
+    "load_sample_manifests"
+    "generate_mock_predictions",
+    "save_inference_run",
+    "save_prediction_artifacts"
 ]
 
 EVALUATE_DETECTION_STEPS = [
-    "LOAD_INFERENCE_RUN",
-    "LOAD_GT_ANNOTATIONS",
-    "LOAD_PREDICTIONS",
-    "MATCH_BOXES",
-    "COMPUTE_METRICS",
-    "SAVE_EVALUATION_RUN",
+    "load_inference_run",
+    "load_gt_annotations",
+    "load_predictions",
+    "match_boxes",
+    "compute_metrics",
+    "save_evaluation_run"
 ]

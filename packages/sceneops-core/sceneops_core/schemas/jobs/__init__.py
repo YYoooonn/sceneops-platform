@@ -7,6 +7,7 @@ from sceneops_core.schemas.jobs.events import (
 from sceneops_core.schemas.jobs.manifests import JobManifest
 from sceneops_core.schemas.jobs.params import (
     EvaluateDetectionJobParams,
+    ValidateDatasetManifestJobParams,
     InferenceBackend,
     IngestDatasetJobParams,
     IngestMode,
@@ -18,6 +19,7 @@ from sceneops_core.schemas.jobs.requests import CreateJobRequest
 from sceneops_core.schemas.jobs.responses import JobEventListResponse, JobListResponse
 from sceneops_core.schemas.jobs.results import (
     EvaluateDetectionJobResult,
+    ValidateDatasetManifestJobResult,
     IngestDatasetJobResult,
     JobResult,
     PredictDetectionJobResult,
@@ -41,6 +43,8 @@ __all__ = [
     "IngestMode",
     "InferenceBackend",
     "IngestDatasetJobParams",
+    "ValidateDatasetManifestJobParams",
+    "ValidateDatasetManifestJobResult",
     "PredictDetectionJobParams",
     "EvaluateDetectionJobParams",
     "JobParams",

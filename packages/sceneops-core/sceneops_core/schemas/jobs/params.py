@@ -33,6 +33,16 @@ class IngestDatasetJobParams(SceneOpsBaseModel):
     extra: JsonDict = Field(default_factory=dict)
 
 
+class ValidateDatasetManifestJobParams(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
+
+    require_target_channels: list[str] = Field(default_factory=list)
+    validate_samples: bool = True
+    max_samples: int | None = None
+
+    extra: JsonDict = Field(default_factory=dict)
+
 class PredictDetectionJobParams(SceneOpsBaseModel):
     dataset_id: str
     dataset_version: str
@@ -63,6 +73,7 @@ class EvaluateDetectionJobParams(SceneOpsBaseModel):
 
 JobParams = (
     IngestDatasetJobParams
+    | ValidateDatasetManifestJobParams
     | PredictDetectionJobParams
     | EvaluateDetectionJobParams
 )
@@ -71,6 +82,9 @@ JobParams = (
 def parse_job_params(job_type: JobType, params: JsonDict) -> JobParams:
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobParams.model_validate(params)
+
+    if job_type == JobType.VALIDATE_DATASET_MANIFEST:
+        return ValidateDatasetManifestJobParams.model_validate(params)
 
     if job_type == JobType.PREDICT_DETECTION:
         return PredictDetectionJobParams.model_validate(params)

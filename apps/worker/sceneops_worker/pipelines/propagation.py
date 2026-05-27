@@ -6,6 +6,7 @@ from sceneops_core.schemas.jobs import (
     IngestDatasetJobResult,
     JobType,
     PredictDetectionJobResult,
+    ValidateDatasetManifestJobResult,
 )
 from sceneops_core.schemas.pipelines import PipelineStepRunManifest
 from sceneops_worker.pipelines.context import PipelineExecutionContext
@@ -26,6 +27,14 @@ class PipelineResultPropagator:
             context.set("dataset_manifest_uri", parsed.dataset_manifest_uri)
             context.set("scene_count", parsed.scene_count)
             context.set("sample_count", parsed.sample_count)
+            return
+
+        if job_type == JobType.VALIDATE_DATASET_MANIFEST:
+            parsed = ValidateDatasetManifestJobResult.model_validate(result)
+            context.set("dataset_manifest_uri", parsed.dataset_manifest_uri)
+            context.set("validated_scene_count", parsed.validated_scene_count)
+            context.set("validated_sample_count", parsed.validated_sample_count)
+            context.set("dataset_status", parsed.status)
             return
 
         if job_type == JobType.PREDICT_DETECTION:

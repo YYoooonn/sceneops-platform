@@ -20,6 +20,24 @@ class IngestDatasetJobResult(SceneOpsBaseModel):
     result_summary: JsonDict = Field(default_factory=dict)
 
 
+class ValidateDatasetManifestJobResult(SceneOpsBaseModel):
+    dataset_id: str
+    dataset_version: str
+
+    dataset_manifest_uri: str
+
+    scene_count: int
+    sample_count: int
+    annotation_count: int = 0
+
+    validated_scene_count: int = 0
+    validated_sample_count: int = 0
+    missing_sample_count: int = 0
+
+    status: str = "ready"
+    result_summary: JsonDict = Field(default_factory=dict)
+
+
 class PredictDetectionJobResult(SceneOpsBaseModel):
     dataset_id: str
     dataset_version: str
@@ -49,6 +67,7 @@ class EvaluateDetectionJobResult(SceneOpsBaseModel):
 
 JobResult = (
     IngestDatasetJobResult
+    | ValidateDatasetManifestJobResult
     | PredictDetectionJobResult
     | EvaluateDetectionJobResult
 )
@@ -57,6 +76,9 @@ JobResult = (
 def parse_job_result(job_type: JobType, result: JsonDict) -> JobResult:
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobResult.model_validate(result)
+
+    if job_type == JobType.VALIDATE_DATASET_MANIFEST:
+        return ValidateDatasetManifestJobResult.model_validate(result)
 
     if job_type == JobType.PREDICT_DETECTION:
         return PredictDetectionJobResult.model_validate(result)
