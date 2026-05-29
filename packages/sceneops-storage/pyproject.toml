@@ -1,0 +1,17 @@
+[project]
+name = "sceneops-storage"
+version = "0.1.0"
+description = "Storage adapters for SceneOps artifacts"
+requires-python = ">=3.11"
+dependencies = [
+  "sceneops-core",
+  "pydantic>=2.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sceneops_storage*"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

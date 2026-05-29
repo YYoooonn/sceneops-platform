@@ -7,13 +7,13 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import ApiSettings, get_settings
-from app.modules.artifacts import ArtifactService, ArtifactStorage, LocalArtifactStorage
+from app.modules.artifacts import ArtifactService
 from app.modules.datasets.service import DatasetService
 from app.modules.jobs.service import JobService
 from app.modules.models.service import ModelService
 from app.modules.pipelines.service import PipelineService
 from app.modules.runs.service import RunService
-from sceneops_core.config import ArtifactBackend
+
 from sceneops_db.datasets import (
     DatasetRepository,
     DatasetVersionRepository,
@@ -45,6 +45,8 @@ from sceneops_db.runs import (
     PostgresInferenceRunRepository,
 )
 from sceneops_db.session import async_session_scope
+
+from sceneops_storage import ArtifactStore, create_artifact_store
 
 
 def get_api_settings() -> ApiSettings:
@@ -116,15 +118,10 @@ async def get_model_version_repository(
     return PostgresModelVersionRepository(session)
 
 
-def get_artifact_storage(
+def get_artifact_store(
     settings: Annotated[ApiSettings, Depends(get_api_settings)],
-) -> ArtifactStorage:
-    if settings.artifact_backend == ArtifactBackend.LOCAL:
-        return LocalArtifactStorage(
-            root_uri=settings.artifact_root_uri,
-        )
-
-    raise ValueError(f"Unsupported artifact backend: {settings.artifact_backend}")
+) -> ArtifactStore:
+    return create_artifact_store(settings.artifact)
 
 
 def get_dataset_service(
@@ -217,14 +214,14 @@ def get_artifact_service(
         EvaluationRunRepository,
         Depends(get_evaluation_run_repository),
     ],
-    artifact_storage: Annotated[
-        ArtifactStorage,
-        Depends(get_artifact_storage),
+    artifact_store: Annotated[
+        ArtifactStore,
+        Depends(get_artifact_store),
     ],
 ) -> ArtifactService:
     return ArtifactService(
         dataset_version_repository=dataset_version_repository,
         inference_run_repository=inference_run_repository,
         evaluation_run_repository=evaluation_run_repository,
-        artifact_storage=artifact_storage,
+        artifact_store=artifact_store,
     )

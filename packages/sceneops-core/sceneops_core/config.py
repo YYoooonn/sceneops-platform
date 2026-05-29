@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ArtifactBackend(StrEnum):
@@ -15,10 +15,15 @@ class ArtifactBackend(StrEnum):
 class ArtifactSettings(BaseModel):
     backend: ArtifactBackend = ArtifactBackend.LOCAL
 
-    # local이면 /data, S3면 s3://bucket/prefix 같은 기준 root
+    # Local: /data or file:///data
+    # Object storage: s3://bucket/prefix, gs://bucket/prefix
     root_uri: str = "/data"
 
-    # object storage 확장용
+    dataset_prefix: str = "datasets"
+    run_prefix: str = "runs"
+    model_prefix: str = "models"
+
+    # Object storage extension fields.
     bucket: str | None = None
     prefix: str | None = None
     endpoint_url: str | None = None
@@ -26,17 +31,17 @@ class ArtifactSettings(BaseModel):
     access_key_id: str | None = None
     secret_access_key: str | None = None
 
+    @property
+    def dataset_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.dataset_prefix)
 
-class DatasetArtifactSettings(BaseModel):
-    # raw data는 dataset_versions.raw_data_uri가 source of truth.
-    # 이 값은 개발 편의용 fallback으로만 사용.
-    raw_data_root_uri: str | None = "/data/raw"
+    @property
+    def run_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.run_prefix)
 
-    manifest_root_uri: str = "/data/manifests"
-
-
-class RunArtifactSettings(BaseModel):
-    runs_root_uri: str = "/data/runs"
+    @property
+    def model_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.model_prefix)
 
 
 class DefaultDatasetSettings(BaseModel):
@@ -48,3 +53,11 @@ class WorkerRuntimeSettings(BaseModel):
     worker_id: str = "local-worker"
     poll_interval_seconds: float = 2.0
     heartbeat_interval_seconds: float = 10.0
+
+
+def join_uri(root: str, *parts: str) -> str:
+    normalized_root = root.rstrip("/")
+    normalized_parts = [part.strip("/") for part in parts if part.strip("/")]
+    if not normalized_parts:
+        return normalized_root
+    return "/".join([normalized_root, *normalized_parts])

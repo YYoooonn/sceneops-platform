@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sceneops_worker.storage import ArtifactStore
+from sceneops_storage import ArtifactStore
 
 
 class RunArtifactStore:

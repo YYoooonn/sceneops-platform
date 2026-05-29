@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "sceneops-core",
     "sceneops-db",
+    "sceneops-storage",
     "nuscenes-devkit",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",

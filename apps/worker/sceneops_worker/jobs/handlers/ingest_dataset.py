@@ -69,7 +69,6 @@ class IngestDatasetJobHandler(
                 raw_data_uri=raw_data_uri,
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
-                manifest_root_uri=self.context.manifest_root_uri,
                 dataset_artifact_store=self.context.dataset_artifact_store,
                 max_scenes=params.max_scenes,
                 mode=params.mode.value,

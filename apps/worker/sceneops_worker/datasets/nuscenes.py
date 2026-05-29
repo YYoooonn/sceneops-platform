@@ -42,7 +42,6 @@ async def ingest_nuscenes(
     raw_data_uri: str,
     dataset_id: str,
     dataset_version: str,
-    manifest_root_uri: str,
     dataset_artifact_store: DatasetArtifactStore,
     max_scenes: int | None = None,
     mode: str = "upsert",
@@ -54,7 +53,6 @@ async def ingest_nuscenes(
     )
 
     version_root_uri = dataset_artifact_store.dataset_version_root_uri(
-        manifest_root_uri=manifest_root_uri,
         dataset_id=dataset_id,
         dataset_version=dataset_version,
     )

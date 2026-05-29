@@ -4,7 +4,7 @@ from sceneops_core.schemas.common import JsonDict
 from sceneops_db.datasets import DatasetVersionRepository
 from sceneops_db.runs import EvaluationRunRepository, InferenceRunRepository
 
-from app.modules.artifacts.storage import ArtifactStorage
+from sceneops_storage import ArtifactStore
 
 
 class ArtifactService:
@@ -14,12 +14,12 @@ class ArtifactService:
         dataset_version_repository: DatasetVersionRepository,
         inference_run_repository: InferenceRunRepository,
         evaluation_run_repository: EvaluationRunRepository,
-        artifact_storage: ArtifactStorage,
+        artifact_store: ArtifactStore,
     ) -> None:
         self.dataset_version_repository = dataset_version_repository
         self.inference_run_repository = inference_run_repository
         self.evaluation_run_repository = evaluation_run_repository
-        self.artifact_storage = artifact_storage
+        self.artifact_store = artifact_store
 
     async def get_dataset_manifest(
         self,
@@ -37,7 +37,7 @@ class ArtifactService:
                 f"Dataset manifest not found: {dataset_id}:{dataset_version}"
             )
 
-        artifact = await self.artifact_storage.read_json(version.manifest_uri)
+        artifact = await self.artifact_store.read_json(version.manifest_uri)
         if not isinstance(artifact, dict):
             raise ValueError(f"Invalid dataset manifest: {version.manifest_uri}")
 
@@ -49,7 +49,7 @@ class ArtifactService:
         if run.run_manifest_uri is None:
             raise FileNotFoundError(f"Inference run manifest not found: {run_id}")
 
-        artifact = await self.artifact_storage.read_json(run.run_manifest_uri)
+        artifact = await self.artifact_store.read_json(run.run_manifest_uri)
         if not isinstance(artifact, dict):
             raise ValueError(f"Invalid inference run manifest: {run.run_manifest_uri}")
 
@@ -66,7 +66,7 @@ class ArtifactService:
                 f"Evaluation run manifest not found: {evaluation_run_id}"
             )
 
-        artifact = await self.artifact_storage.read_json(run.evaluation_manifest_uri)
+        artifact = await self.artifact_store.read_json(run.evaluation_manifest_uri)
         if not isinstance(artifact, dict):
             raise ValueError(
                 f"Invalid evaluation run manifest: {run.evaluation_manifest_uri}"

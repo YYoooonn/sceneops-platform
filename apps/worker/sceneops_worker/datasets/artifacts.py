@@ -8,23 +8,27 @@ from sceneops_core.schemas.datasets import (
     DatasetSceneIndex,
     DatasetSceneManifest,
 )
-from sceneops_worker.storage import ArtifactStore
+from sceneops_storage import ArtifactStore
 
 
 class DatasetArtifactStore:
-    def __init__(self, artifact_store: ArtifactStore) -> None:
+    def __init__(
+        self,
+        *,
+        artifact_store: ArtifactStore,
+        dataset_root_uri: str,
+    ) -> None:
         self.artifact_store = artifact_store
+        self.dataset_root_uri = dataset_root_uri
 
     def dataset_version_root_uri(
         self,
         *,
-        manifest_root_uri: str,
         dataset_id: str,
         dataset_version: str,
     ) -> str:
         return self.artifact_store.join_uri(
-            manifest_root_uri,
-            "datasets",
+            self.dataset_root_uri,
             dataset_id,
             "versions",
             dataset_version,
@@ -82,7 +86,6 @@ class DatasetArtifactStore:
     async def load_scene_index(self, uri: str) -> DatasetSceneIndex | None:
         if not await self.artifact_store.exists(uri):
             return None
-
         raw = await self.artifact_store.read_json(uri)
         return DatasetSceneIndex.model_validate(raw)
 
@@ -97,7 +100,6 @@ class DatasetArtifactStore:
     async def load_scene_manifest(self, uri: str) -> DatasetSceneManifest | None:
         if not await self.artifact_store.exists(uri):
             return None
-
         raw = await self.artifact_store.read_json(uri)
         return DatasetSceneManifest.model_validate(raw)
 
@@ -112,7 +114,6 @@ class DatasetArtifactStore:
     async def load_sample_manifest(self, uri: str) -> DatasetSampleManifest | None:
         if not await self.artifact_store.exists(uri):
             return None
-
         raw = await self.artifact_store.read_json(uri)
         return DatasetSampleManifest.model_validate(raw)
 
@@ -131,7 +132,6 @@ class DatasetArtifactStore:
         max_samples: int | None = None,
     ) -> AsyncIterator[DatasetSampleManifest]:
         scene_index = await self.load_scene_index(dataset_manifest.uris.scene_index)
-
         if scene_index is None:
             return
 
@@ -139,7 +139,6 @@ class DatasetArtifactStore:
 
         for scene_item in scene_index.scenes:
             scene_manifest = await self.load_scene_manifest(scene_item.manifest_uri)
-
             if scene_manifest is None:
                 continue
 
@@ -149,12 +148,11 @@ class DatasetArtifactStore:
                     f"{sample_id}.json",
                 )
                 sample_manifest = await self.load_sample_manifest(sample_uri)
-
                 if sample_manifest is None:
                     continue
 
                 yield sample_manifest
-
                 yielded += 1
+
                 if max_samples is not None and yielded >= max_samples:
                     return

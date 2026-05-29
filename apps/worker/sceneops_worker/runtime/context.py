@@ -9,7 +9,7 @@ from sceneops_worker.registry import (
     RunRegistryStore,
 )
 from sceneops_worker.runs import RunArtifactStore
-from sceneops_worker.storage import ArtifactStore
+from sceneops_storage import ArtifactStore
 
 
 @dataclass(frozen=True)
@@ -20,10 +20,6 @@ class JobContext:
     model_registry_store: ModelRegistryStore
     run_registry_store: RunRegistryStore
     run_artifact_store: RunArtifactStore
-
-    raw_data_root_uri: str | None  # XXX to be removed
-    manifest_root_uri: str
-    runs_root_uri: str
 
     default_dataset_id: str
     default_dataset_version: str
