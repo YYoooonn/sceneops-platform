@@ -7,8 +7,8 @@ from pathlib import Path
 
 
 class LocalArtifactStorage:
-    def __init__(self, root: str) -> None:
-        self.api_base_url = root.rstrip("/")
+    def __init__(self, root_uri: str) -> None:
+        self.root_uri = root_uri.rstrip("/")
 
     def public_url(self, uri: str) -> str:
         raise NotImplementedError("Artifact storage public url NOT IMPLEMENTED YET")
@@ -24,4 +24,4 @@ class LocalArtifactStorage:
 
     def get_download_url(self, path: str) -> str:
         encoded_path = quote(path, safe="")
-        return f"{self.api_base_url}/api/v1/files/nuscenes?path={encoded_path}"
+        return f"{self.root_uri}/api/v1/files/nuscenes?path={encoded_path}"

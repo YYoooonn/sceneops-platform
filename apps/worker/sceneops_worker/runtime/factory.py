@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sceneops_core.config import ArtifactBackend
 from sceneops_worker.config import get_settings
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.jobs.event_store import PostgresJobEventStore
@@ -14,17 +15,28 @@ from sceneops_worker.registry import (
 )
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.runtime.context import JobContext
-from sceneops_worker.storage import LocalArtifactStore
+from sceneops_worker.storage import ArtifactStore, LocalArtifactStore
+
+
+def create_artifact_store() -> ArtifactStore:
+    settings = get_settings()
+
+    if settings.artifact_backend == ArtifactBackend.LOCAL:
+        return LocalArtifactStore(
+            root_uri=settings.artifact_root_uri,
+        )
+
+    raise ValueError(f"Unsupported artifact backend: {settings.artifact_backend}")
 
 
 def create_job_execution_context() -> JobContext:
     settings = get_settings()
 
-    artifact_store = LocalArtifactStore()
+    artifact_store = create_artifact_store()
     dataset_artifact_store = DatasetArtifactStore(artifact_store)
     run_artifact_store = RunArtifactStore(
         artifact_store=artifact_store,
-        runs_root=settings.runs_root,
+        runs_root_uri=settings.runs_root_uri,
     )
 
     return JobContext(
@@ -34,10 +46,9 @@ def create_job_execution_context() -> JobContext:
         model_registry_store=ModelRegistryStore(),
         run_registry_store=RunRegistryStore(),
         run_artifact_store=run_artifact_store,
-        raw_data_root=settings.raw_data_root,
-        manifest_root=settings.manifest_root,
-        artifact_root=settings.artifact_root,
-        runs_root=settings.runs_root,
+        raw_data_root_uri=settings.raw_data_root_uri,
+        manifest_root_uri=settings.manifest_root_uri,
+        runs_root_uri=settings.runs_root_uri,
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,
     )

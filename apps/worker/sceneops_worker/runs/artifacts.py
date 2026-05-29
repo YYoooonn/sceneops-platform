@@ -1,16 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from sceneops_core.paths.runs import (
-    evaluation_run_manifest_path,
-    evaluation_run_root,
-    inference_run_manifest_path,
-    inference_run_root,
-    prediction_manifest_path,
-    sample_evaluation_manifest_path,
-)
 from sceneops_worker.storage import ArtifactStore
 
 
@@ -19,26 +10,28 @@ class RunArtifactStore:
         self,
         *,
         artifact_store: ArtifactStore,
-        runs_root: Path,
+        runs_root_uri: str,
     ) -> None:
         self.artifact_store = artifact_store
-        self.runs_root = runs_root
+        self.runs_root_uri = runs_root_uri
+
+    def inference_run_root_uri(self, run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.runs_root_uri,
+            "inference",
+            run_id,
+        )
 
     def inference_run_manifest_uri(self, run_id: str) -> str:
-        return str(
-            inference_run_manifest_path(
-                runs_root=self.runs_root,
-                run_id=run_id,
-            )
+        return self.artifact_store.join_uri(
+            self.inference_run_root_uri(run_id),
+            "run.json",
         )
 
     def inference_predictions_root_uri(self, run_id: str) -> str:
-        return str(
-            inference_run_root(
-                runs_root=self.runs_root,
-                run_id=run_id,
-            )
-            / "predictions"
+        return self.artifact_store.join_uri(
+            self.inference_run_root_uri(run_id),
+            "predictions",
         )
 
     def prediction_manifest_uri(
@@ -47,12 +40,9 @@ class RunArtifactStore:
         run_id: str,
         sample_id: str,
     ) -> str:
-        return str(
-            prediction_manifest_path(
-                runs_root=self.runs_root,
-                run_id=run_id,
-                sample_id=sample_id,
-            )
+        return self.artifact_store.join_uri(
+            self.inference_predictions_root_uri(run_id),
+            f"{sample_id}.json",
         )
 
     async def write_inference_run_manifest(
@@ -113,21 +103,23 @@ class RunArtifactStore:
 
         return raw
 
+    def evaluation_run_root_uri(self, evaluation_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.runs_root_uri,
+            "evaluations",
+            evaluation_run_id,
+        )
+
     def evaluation_run_manifest_uri(self, evaluation_run_id: str) -> str:
-        return str(
-            evaluation_run_manifest_path(
-                runs_root=self.runs_root,
-                evaluation_run_id=evaluation_run_id,
-            )
+        return self.artifact_store.join_uri(
+            self.evaluation_run_root_uri(evaluation_run_id),
+            "evaluation.json",
         )
 
     def evaluation_samples_root_uri(self, evaluation_run_id: str) -> str:
-        return str(
-            evaluation_run_root(
-                runs_root=self.runs_root,
-                evaluation_run_id=evaluation_run_id,
-            )
-            / "samples"
+        return self.artifact_store.join_uri(
+            self.evaluation_run_root_uri(evaluation_run_id),
+            "samples",
         )
 
     def sample_evaluation_manifest_uri(
@@ -136,12 +128,9 @@ class RunArtifactStore:
         evaluation_run_id: str,
         sample_id: str,
     ) -> str:
-        return str(
-            sample_evaluation_manifest_path(
-                runs_root=self.runs_root,
-                evaluation_run_id=evaluation_run_id,
-                sample_id=sample_id,
-            )
+        return self.artifact_store.join_uri(
+            self.evaluation_samples_root_uri(evaluation_run_id),
+            f"{sample_id}.json",
         )
 
     async def write_sample_evaluation_manifest(

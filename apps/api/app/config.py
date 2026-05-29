@@ -1,53 +1,52 @@
-from enum import Enum
+from __future__ import annotations
+
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-class MetadataBackend(str, Enum):
-    LOCAL_MANIFEST = "local_manifest"
-    FIRESTORE = "firestore"
-
-
-class StorageBackend(str, Enum):
-    LOCAL = "local"
-    GCS = "gcs"
-    S3 = "s3"
+from sceneops_core.config import (
+    ArtifactBackend,
+    ArtifactSettings,
+    DefaultDatasetSettings,
+)
 
 
 class ApiSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=None,
-        env_file_encoding="utf-8",
+        env_file=".env",
+        env_prefix="SCENEOPS_API_",
+        env_nested_delimiter="__",
         extra="ignore",
     )
 
-    metadata_backend: MetadataBackend = Field(
-        default=MetadataBackend.LOCAL_MANIFEST,
-        alias="METADATA_BACKEND",
-    )
-    storage_backend: StorageBackend = Field(
-        default=StorageBackend.LOCAL,
-        alias="STORAGE_BACKEND",
+    database_url: str = Field(
+        default="postgresql+asyncpg://sceneops:sceneops@postgres:5432/sceneops"
     )
 
-    manifest_root: Path = Field(alias="MANIFEST_ROOT")
-    raw_data_root: Path = Field(alias="RAW_DATA_ROOT")
-    artifact_root: Path = Field(alias="ARTIFACT_ROOT")
-    runs_root: Path = Field(alias="RUNS_ROOT")
-
-    api_base_url: str = Field(
-        default="http://localhost:8000",
-        alias="API_BASE_URL",
+    artifact: ArtifactSettings = Field(
+        default_factory=ArtifactSettings,
     )
 
-    gcs_bucket: str | None = Field(default=None, alias="GCS_BUCKET")
-    s3_bucket: str | None = Field(default=None, alias="S3_BUCKET")
+    default_dataset: DefaultDatasetSettings = Field(
+        default_factory=DefaultDatasetSettings,
+    )
 
-    default_dataset_id: str = Field(alias="DEFAULT_DATASET_ID")
-    default_dataset_version: str = Field(alias="DEFAULT_DATASET_VERSION")
+    @property
+    def artifact_backend(self) -> ArtifactBackend:
+        return self.artifact.backend
+
+    @property
+    def artifact_root_uri(self) -> str:
+        return self.artifact.root_uri
+
+    @property
+    def default_dataset_id(self) -> str:
+        return self.default_dataset.dataset_id
+
+    @property
+    def default_dataset_version(self) -> str:
+        return self.default_dataset.dataset_version
 
 
 @lru_cache

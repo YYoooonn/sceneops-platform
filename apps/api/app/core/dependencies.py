@@ -13,7 +13,7 @@ from app.modules.jobs.service import JobService
 from app.modules.models.service import ModelService
 from app.modules.pipelines.service import PipelineService
 from app.modules.runs.service import RunService
-
+from sceneops_core.config import ArtifactBackend
 from sceneops_db.datasets import (
     DatasetRepository,
     DatasetVersionRepository,
@@ -119,9 +119,12 @@ async def get_model_version_repository(
 def get_artifact_storage(
     settings: Annotated[ApiSettings, Depends(get_api_settings)],
 ) -> ArtifactStorage:
-    return LocalArtifactStorage(
-        root=str(settings.artifact_root),
-    )
+    if settings.artifact_backend == ArtifactBackend.LOCAL:
+        return LocalArtifactStorage(
+            root_uri=settings.artifact_root_uri,
+        )
+
+    raise ValueError(f"Unsupported artifact backend: {settings.artifact_backend}")
 
 
 def get_dataset_service(

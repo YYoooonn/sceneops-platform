@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
 
 from nuscenes.nuscenes import NuScenes
 
@@ -40,7 +39,7 @@ class IngestMode(StrEnum):
 
 async def ingest_nuscenes(
     *,
-    raw_data_root: Path,
+    raw_data_uri: str,
     dataset_id: str,
     dataset_version: str,
     manifest_root_uri: str,
@@ -50,7 +49,7 @@ async def ingest_nuscenes(
 ) -> DatasetManifest:
     nusc = NuScenes(
         version=dataset_version,
-        dataroot=str(raw_data_root),
+        dataroot=str(raw_data_uri),
         verbose=True,
     )
 
@@ -177,7 +176,7 @@ async def ingest_nuscenes(
         dataset_type=DATASET_TYPE,
         source=DATA_SOURCE,
         version_root_uri=version_root_uri,
-        raw_root=raw_data_root,
+        raw_data_uri=raw_data_uri,
         mode=ingest_mode.value,
         max_scenes=max_scenes,
     )
@@ -198,7 +197,7 @@ async def _build_dataset_manifest_from_store(
     dataset_type: str,
     source: str,
     version_root_uri: str,
-    raw_root: Path,
+    raw_data_uri: str,
     mode: str,
     max_scenes: int | None,
 ) -> DatasetManifest:
@@ -267,7 +266,7 @@ async def _build_dataset_manifest_from_store(
             scene_index=dataset_artifact_store.scene_index_uri(version_root_uri),
             scene_root=dataset_artifact_store.scene_root_uri(version_root_uri),
             sample_root=dataset_artifact_store.sample_root_uri(version_root_uri),
-            raw_root=str(raw_root),
+            raw_root=str(raw_data_uri),
         ),
         ingest=DatasetIngestMetadata(
             mode=mode,

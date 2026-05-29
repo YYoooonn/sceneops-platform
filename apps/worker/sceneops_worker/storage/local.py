@@ -9,8 +9,8 @@ from sceneops_worker.storage.artifacts import ArtifactStore
 
 
 class LocalArtifactStore(ArtifactStore):
-    def __init__(self, *, root: Path | None = None) -> None:
-        self.root = root
+    def __init__(self, *, root_uri: str | None = None) -> None:
+        self.root_uri = root_uri
 
     async def read_json(self, uri: str) -> Any:
         path = self._to_path(uri)
@@ -61,7 +61,7 @@ class LocalArtifactStore(ArtifactStore):
 
         path = Path(uri)
 
-        if path.is_absolute() or self.root is None:
+        if path.is_absolute() or self.root_uri is None:
             return path
 
-        return self.root / path
+        return self.root_uri / path

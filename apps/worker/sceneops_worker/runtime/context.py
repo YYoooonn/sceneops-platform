@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.registry import (
@@ -22,10 +21,9 @@ class JobContext:
     run_registry_store: RunRegistryStore
     run_artifact_store: RunArtifactStore
 
-    raw_data_root: Path
-    manifest_root: Path
-    artifact_root: Path
-    runs_root: Path
+    raw_data_root_uri: str | None  # XXX to be removed
+    manifest_root_uri: str
+    runs_root_uri: str
 
     default_dataset_id: str
     default_dataset_version: str

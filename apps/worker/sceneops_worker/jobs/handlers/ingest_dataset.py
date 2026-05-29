@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 from sceneops_core.schemas.datasets import DatasetType, DatasetVersionStatus
 from sceneops_core.schemas.jobs import (
@@ -45,7 +44,7 @@ class IngestDatasetJobHandler(
             dataset_version=params.dataset_version,
         )
 
-        raw_data_uri = version.raw_data_uri
+        raw_data_uri = params.raw_data_uri or version.raw_data_uri
         if raw_data_uri is None:
             raise ValueError(
                 f"raw_data_uri is required for "
@@ -67,10 +66,10 @@ class IngestDatasetJobHandler(
 
         try:
             dataset_manifest = await ingest_nuscenes(
-                raw_data_root=Path(raw_data_uri),
+                raw_data_uri=raw_data_uri,
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
-                manifest_root_uri=str(self.context.manifest_root),
+                manifest_root_uri=self.context.manifest_root_uri,
                 dataset_artifact_store=self.context.dataset_artifact_store,
                 max_scenes=params.max_scenes,
                 mode=params.mode.value,
