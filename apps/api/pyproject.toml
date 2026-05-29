@@ -11,6 +11,8 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
+    "celery",
+    "httpx",
 ]
 
 [project.optional-dependencies]

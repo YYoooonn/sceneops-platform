@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from pydantic import BaseModel, Field
 
-from pydantic import BaseModel
-
-
-class ArtifactBackend(StrEnum):
-    LOCAL = "local"
-    MINIO = "minio"
-    S3 = "s3"
-    GCS = "gcs"
-
+from sceneops_core.schemas.executions import ExecutionBackend
+from sceneops_core.schemas.artifacts import ArtifactBackend
+from sceneops_core.constants.tasks import PIPELINE_QUEUE, JOB_QUEUE
 
 class ArtifactSettings(BaseModel):
     backend: ArtifactBackend = ArtifactBackend.LOCAL
@@ -53,6 +47,34 @@ class WorkerRuntimeSettings(BaseModel):
     worker_id: str = "local-worker"
     poll_interval_seconds: float = 2.0
     heartbeat_interval_seconds: float = 10.0
+
+
+class CelerySettings(BaseModel):
+    broker_url: str = "redis://redis:6379/0"
+    result_backend: str = "redis://redis:6379/1"
+
+    pipeline_queue: str = PIPELINE_QUEUE
+    job_queue: str = JOB_QUEUE
+    task_default_queue: str = "sceneops.default"
+
+    worker_prefetch_multiplier: int = 1
+    task_acks_late: bool = True
+    task_reject_on_worker_lost: bool = True
+
+
+class AirflowSettings(BaseModel):
+    base_url: str = "http://airflow-webserver:8080"
+    username: str | None = None
+    password: str | None = None
+
+    pipeline_dag_id: str = "sceneops_pipeline_run"
+    job_dag_id: str = "sceneops_job_run"
+
+
+class ExecutionSettings(BaseModel):
+    backend: ExecutionBackend = ExecutionBackend.CELERY
+    celery: CelerySettings = Field(default_factory=CelerySettings)
+    airflow: AirflowSettings = Field(default_factory=AirflowSettings)
 
 
 def join_uri(root: str, *parts: str) -> str:

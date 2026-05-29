@@ -113,3 +113,20 @@ class JobService:
             events=events,
             count=len(events),
         )
+
+    async def validate_executable(
+        self,
+        job_id: str,
+    ) -> JobManifest:
+        job = await self.repository.get(job_id)
+
+        if job.status == JobStatus.RUNNING:
+            raise RuntimeError(f"Job is already running: {job_id}")
+
+        if job.status == JobStatus.SUCCEEDED:
+            raise RuntimeError(f"Job is already succeeded: {job_id}")
+
+        if job.status == JobStatus.CANCELED:
+            raise RuntimeError(f"Job is canceled: {job_id}")
+
+        return job

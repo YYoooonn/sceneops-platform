@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+from celery import Celery
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +14,13 @@ from app.modules.jobs.service import JobService
 from app.modules.models.service import ModelService
 from app.modules.pipelines.service import PipelineService
 from app.modules.runs.service import RunService
-
+from app.modules.executions import create_celery_app
+from app.modules.executions.dispatchers import (
+    AirflowExecutionDispatcher,
+    CeleryExecutionDispatcher,
+    ExecutionDispatcher,
+)
+from sceneops_core.schemas.executions import ExecutionBackend
 from sceneops_db.datasets import (
     DatasetRepository,
     DatasetVersionRepository,
@@ -122,6 +129,43 @@ def get_artifact_store(
     settings: Annotated[ApiSettings, Depends(get_api_settings)],
 ) -> ArtifactStore:
     return create_artifact_store(settings.artifact)
+
+
+def get_celery_app(
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+) -> Celery:
+    celery_settings = settings.execution.celery
+    return create_celery_app(
+        broker_url=celery_settings.broker_url,
+        result_backend=celery_settings.result_backend,
+    )
+
+
+def get_execution_dispatcher(
+    settings: Annotated[ApiSettings, Depends(get_api_settings)],
+    celery_app: Annotated[Celery, Depends(get_celery_app)],
+) -> ExecutionDispatcher:
+    execution = settings.execution
+
+    if execution.backend == ExecutionBackend.CELERY:
+        return CeleryExecutionDispatcher(
+            app=celery_app,
+            pipeline_queue=execution.celery.pipeline_queue,
+            job_queue=execution.celery.job_queue,
+        )
+
+    if execution.backend == ExecutionBackend.AIRFLOW:
+        return AirflowExecutionDispatcher(
+            base_url=execution.airflow.base_url,
+            username=execution.airflow.username,
+            password=execution.airflow.password,
+            pipeline_dag_id=execution.airflow.pipeline_dag_id,
+            job_dag_id=execution.airflow.job_dag_id,
+        )
+
+    raise ValueError(
+        f"Unsupported execution backend for API dispatch: {execution.backend}"
+    )
 
 
 def get_dataset_service(

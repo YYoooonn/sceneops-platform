@@ -9,6 +9,8 @@ from sceneops_core.config import (
     ArtifactBackend,
     ArtifactSettings,
     DefaultDatasetSettings,
+    ExecutionSettings,
+    ExecutionBackend,
 )
 
 
@@ -25,6 +27,7 @@ class ApiSettings(BaseSettings):
     )
 
     artifact: ArtifactSettings = Field(default_factory=ArtifactSettings)
+    execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     default_dataset: DefaultDatasetSettings = Field(
         default_factory=DefaultDatasetSettings,
     )
@@ -32,6 +35,10 @@ class ApiSettings(BaseSettings):
     @property
     def artifact_backend(self) -> ArtifactBackend:
         return self.artifact.backend
+
+    @property
+    def execution_backend(self) -> ExecutionBackend:
+        return self.execution.backend
 
     @property
     def artifact_root_uri(self) -> str:

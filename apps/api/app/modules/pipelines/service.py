@@ -126,3 +126,24 @@ class PipelineService:
             pipeline_runs=pipeline_runs,
             count=len(pipeline_runs),
         )
+
+    async def validate_executable(
+        self,
+        pipeline_run_id: str,
+    ) -> PipelineRunManifest:
+        pipeline_run = await self.pipeline_repository.get(pipeline_run_id)
+
+        blocked_statuses = {
+            PipelineRunStatus.RUNNING,
+            PipelineRunStatus.SUCCEEDED,
+            PipelineRunStatus.CANCELED,
+        }
+
+        if pipeline_run.status in blocked_statuses:
+            raise RuntimeError(
+                f"Pipeline run is not executable. "
+                f"pipeline_run_id={pipeline_run_id}, "
+                f"status={pipeline_run.status.value}"
+            )
+
+        return pipeline_run
