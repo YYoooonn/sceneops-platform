@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sceneops_core.ids.runs import default_inference_run_id
 from sceneops_core.schemas.datasets import DatasetVersionStatus
+from sceneops_core.schemas.inference import DetectionInferenceInput
 from sceneops_core.schemas.jobs import (
     InferenceBackend,
     JobManifest,
@@ -9,10 +10,13 @@ from sceneops_core.schemas.jobs import (
     PredictDetectionJobParams,
     PredictDetectionJobResult,
 )
-from sceneops_core.schemas.models import ModelBackend, ModelVersionStatus
+from sceneops_core.schemas.models import ModelBackend
 from sceneops_core.schemas.runs import InferenceRunRecord, RunStatus
 from sceneops_core.time import utc_now
-from sceneops_worker.inference.mock_detection import generate_mock_predictions
+from sceneops_worker.inference.detection import (
+    create_detection_inference_backend,
+)
+from sceneops_worker.inference.detection.base import DetectionInferenceRequest
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 
 
@@ -35,39 +39,16 @@ class PredictDetectionJobHandler(
             model_version=params.model_version,
         )
 
-        if model_version.status != ModelVersionStatus.READY:
-            raise ValueError(
-                f"Model version is not ready: "
-                f"{params.model_id}:{params.model_version}, "
-                f"status={model_version.status}"
-            )
-
         inference_backend = params.inference_backend
 
-        if inference_backend == InferenceBackend.MOCK:
-            if model_version.backend != ModelBackend.MOCK:
-                raise ValueError(
-                    f"Model backend mismatch: params={inference_backend}, "
-                    f"registry={model_version.backend}"
-                )
+        _validate_model_backend(
+            requested_backend=inference_backend,
+            registered_backend=model_version.backend,
+        )
 
-            return await self._run_mock_detection(
-                params=params,
-                job=job,
-                model_uri=model_version.model_uri,
-                endpoint_url=model_version.endpoint_url,
-            )
+        model_uri = params.model_uri or model_version.model_uri
+        endpoint_url = params.endpoint_url or model_version.endpoint_url
 
-        raise ValueError(f"Unsupported inference backend: {inference_backend}")
-
-    async def _run_mock_detection(
-        self,
-        *,
-        params: PredictDetectionJobParams,
-        job: JobManifest,
-        model_uri: str | None,
-        endpoint_url: str | None,
-    ) -> PredictDetectionJobResult:
         version = await self.context.dataset_registry_store.get_version(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
@@ -95,8 +76,13 @@ class PredictDetectionJobHandler(
         inference_run_id = params.inference_run_id or default_inference_run_id(
             job.job_id
         )
-
         started_at = utc_now()
+
+        metadata = {
+            "backend": inference_backend.value,
+            "model_uri": model_uri,
+            "endpoint_url": endpoint_url,
+        }
 
         await self.context.run_registry_store.upsert_inference_run(
             InferenceRunRecord(
@@ -110,29 +96,26 @@ class PredictDetectionJobHandler(
                 pipeline_step_run_id=job.pipeline_step_run_id,
                 job_id=job.job_id,
                 started_at=started_at,
-                metadata={
-                    "backend": params.inference_backend.value,
-                    "model_uri": params.model_uri or model_uri,
-                    "endpoint_url": params.endpoint_url or endpoint_url,
-                },
+                metadata=metadata,
             )
         )
 
         try:
-            run_manifest = await generate_mock_predictions(
-                dataset_manifest=dataset_manifest,
-                dataset_artifact_store=self.context.dataset_artifact_store,
-                run_artifact_store=self.context.run_artifact_store,
-                model_id=params.model_id,
-                model_version=params.model_version,
-                run_id=inference_run_id,
-                max_samples=params.max_samples,
-            )
+            backend = create_detection_inference_backend(inference_backend)
 
-            run_manifest_uri = run_manifest["predictionManifestUri"]
-            predictions_root_uri = run_manifest["predictionsRootUri"]
-            sample_count = int(run_manifest.get("sampleCount", 0))
-            prediction_count = int(run_manifest.get("predictionCount", 0))
+            inference_result = await backend.run(
+                DetectionInferenceRequest(
+                    input=DetectionInferenceInput(
+                        params=params,
+                        dataset_manifest=dataset_manifest,
+                        model_uri=model_uri,
+                        endpoint_url=endpoint_url,
+                        run_id=inference_run_id,
+                    ),
+                    dataset_artifact_store=self.context.dataset_artifact_store,
+                    run_artifact_store=self.context.run_artifact_store,
+                )
+            )
 
             await self.context.run_registry_store.upsert_inference_run(
                 InferenceRunRecord(
@@ -142,17 +125,17 @@ class PredictDetectionJobHandler(
                     model_id=params.model_id,
                     model_version=params.model_version,
                     status=RunStatus.SUCCEEDED,
-                    sample_count=sample_count,
-                    prediction_count=prediction_count,
-                    run_manifest_uri=run_manifest_uri,
-                    predictions_root_uri=predictions_root_uri,
+                    sample_count=inference_result.sample_count,
+                    prediction_count=inference_result.prediction_count,
+                    run_manifest_uri=inference_result.run_manifest_uri,
+                    predictions_root_uri=inference_result.predictions_root_uri,
                     pipeline_run_id=job.pipeline_run_id,
                     pipeline_step_run_id=job.pipeline_step_run_id,
                     job_id=job.job_id,
                     metadata={
-                        "backend": params.inference_backend.value,
-                        "model_uri": params.model_uri or model_uri,
-                        "endpoint_url": params.endpoint_url or endpoint_url,
+                        **metadata,
+                        "metrics": inference_result.metrics,
+                        **inference_result.metadata,
                     },
                     started_at=started_at,
                     finished_at=utc_now(),
@@ -165,13 +148,14 @@ class PredictDetectionJobHandler(
                 model_id=params.model_id,
                 model_version=params.model_version,
                 inference_run_id=inference_run_id,
-                prediction_manifest_uri=run_manifest_uri,
-                sample_count=sample_count,
+                prediction_manifest_uri=inference_result.run_manifest_uri,
+                sample_count=inference_result.sample_count,
                 result_summary={
-                    "prediction_count": prediction_count,
-                    "status": run_manifest.get("status"),
-                    "predictions_root_uri": predictions_root_uri,
-                    "created_at": run_manifest.get("createdAt"),
+                    "prediction_count": inference_result.prediction_count,
+                    "status": inference_result.status,
+                    "predictions_root_uri": inference_result.predictions_root_uri,
+                    "backend": inference_backend.value,
+                    "metrics": inference_result.metrics,
                 },
             )
 
@@ -187,11 +171,7 @@ class PredictDetectionJobHandler(
                     pipeline_run_id=job.pipeline_run_id,
                     pipeline_step_run_id=job.pipeline_step_run_id,
                     job_id=job.job_id,
-                    metadata={
-                        "backend": params.inference_backend.value,
-                        "model_uri": params.model_uri or model_uri,
-                        "endpoint_url": params.endpoint_url or endpoint_url,
-                    },
+                    metadata=metadata,
                     error={
                         "type": error.__class__.__name__,
                         "message": str(error),
@@ -202,3 +182,15 @@ class PredictDetectionJobHandler(
                 )
             )
             raise
+
+
+def _validate_model_backend(
+    *,
+    requested_backend: InferenceBackend,
+    registered_backend: ModelBackend,
+) -> None:
+    if requested_backend.value != registered_backend.value:
+        raise ValueError(
+            f"Model backend mismatch: params={requested_backend.value}, "
+            f"registry={registered_backend.value}"
+        )

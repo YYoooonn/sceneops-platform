@@ -2,3 +2,8 @@ pre-commit
 ruff
 black
 mypy
+-e ./packages/sceneops-core
+-e ./packages/sceneops-db
+-e ./packages/sceneops-storage
+-e ./apps/api
+-e ./apps/worker

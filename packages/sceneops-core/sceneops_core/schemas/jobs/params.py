@@ -17,7 +17,7 @@ class IngestMode(StrEnum):
 
 class InferenceBackend(StrEnum):
     MOCK = "mock"
-    # ONNX_RUNTIME = "onnx_runtime"
+    ONNX_RUNTIME = "onnx_runtime"
     # TRITON = "triton"
 
 
