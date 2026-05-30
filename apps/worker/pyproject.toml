@@ -11,6 +11,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "typer>=0.12",
+    "celery[redis]>=5.4",
 ]
 
 [project.scripts]

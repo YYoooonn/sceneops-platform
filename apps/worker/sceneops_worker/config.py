@@ -9,6 +9,7 @@ from sceneops_core.config import (
     ArtifactBackend,
     ArtifactSettings,
     DefaultDatasetSettings,
+    ExecutionSettings,
     WorkerRuntimeSettings,
 )
 
@@ -31,6 +32,9 @@ class WorkerSettings(BaseSettings):
     )
     runtime: WorkerRuntimeSettings = Field(
         default_factory=WorkerRuntimeSettings,
+    )
+    execution: ExecutionSettings = Field(
+        default_factory=ExecutionSettings,
     )
 
     @property

@@ -73,11 +73,11 @@ clean-all:
 
 .PHONY: compose-build
 compose-build:
-	docker compose -f $(COMPOSE_FILE) build api worker
+	docker compose -f $(COMPOSE_FILE) build
 
 .PHONY: compose-up
 compose-up: prepare-data
-	docker compose -f $(COMPOSE_FILE) up -d postgres api
+	docker compose -f $(COMPOSE_FILE) up -d
 
 .PHONY: compose-down
 compose-down:
@@ -155,7 +155,11 @@ api-shell:
 
 .PHONY: worker-build
 worker-build:
-	docker compose -f $(COMPOSE_FILE) build worker
+	docker compose -f $(COMPOSE_FILE) build worker-celery
+
+.PHONY: worker-up
+worker-up:
+	docker compose -f $(COMPOSE_FILE) up -d worker-celery
 
 .PHONY: worker-run-job
 worker-run-job: prepare-data

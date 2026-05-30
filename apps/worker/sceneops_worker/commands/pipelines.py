@@ -6,7 +6,7 @@ import typer
 from rich import print
 
 from sceneops_worker.jobs.store import PostgresJobStore
-from sceneops_worker.runtime.factory import create_job_runner
+from sceneops_worker.jobs.factory import create_job_runner
 from sceneops_worker.pipelines.runner import PipelineRunner
 from sceneops_worker.pipelines.store import PostgresPipelineStore
 

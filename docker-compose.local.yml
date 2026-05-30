@@ -16,6 +16,80 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: sceneops-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: sceneops-platform/api:local
+    container_name: sceneops-api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-cli:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: sceneops-platform/worker:local
+    container_name: sceneops-worker-cli
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    entrypoint: ["sceneops-worker"]
+    command: ["--help"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    profiles:
+      - debug
+
+  worker-celery:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: sceneops-platform/worker:local
+    container_name: sceneops-worker-celery
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    command:
+      [
+        "celery",
+        "-A",
+        "sceneops_worker.celery_app:celery_app",
+        "worker",
+        "--loglevel=info",
+        "-Q",
+        "sceneops.pipeline_runs,sceneops.jobs",
+        "--concurrency=1"
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   migrate:
     build:
       context: .
@@ -40,42 +114,6 @@ services:
     profiles:
       - tools
 
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    image: sceneops-platform/api:local
-    env_file:
-      - .env
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data/raw:/data/raw:ro
-      - ./data/manifests:/data/manifests
-      - ./data/artifacts:/data/artifacts
-      - ./data/runs:/data/runs
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  worker:
-    build:
-      context: .
-      dockerfile: apps/worker/Dockerfile
-    image: sceneops-platform/worker:local
-    env_file:
-      - .env
-    volumes:
-      - ./data/raw:/data/raw:ro
-      - ./data/manifests:/data/manifests
-      - ./data/artifacts:/data/artifacts
-      - ./data/runs:/data/runs
-    depends_on:
-      postgres:
-        condition: service_healthy
-    profiles:
-      - worker
-    command: ["sceneops-worker", "--help"]
-
 volumes:
   sceneops_postgres_data:
+  redis-data:

@@ -53,14 +53,14 @@ def create_job_executor() -> JobExecutor:
 
 
 def create_job_runner(
-    *,
-    job_store: JobStore | None = None,
+    *, job_store: JobStore | None = None, worker_id: str | None = None
 ) -> JobRunner:
     settings = get_settings()
+    base_worker_id = worker_id or settings.worker_id
 
     return JobRunner(
         job_store=job_store or PostgresJobStore(),
         job_executor=create_job_executor(),
         job_event_store=PostgresJobEventStore(),
-        worker_id=settings.worker_id,
+        worker_id=base_worker_id,
     )
