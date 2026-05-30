@@ -73,6 +73,7 @@ clean-all:
 
 .PHONY: compose-build
 compose-build:
+	uv lock
 	docker compose -f $(COMPOSE_FILE) build
 
 .PHONY: compose-up
@@ -135,6 +136,7 @@ db-reset:
 
 .PHONY: api-build
 api-build:
+	uv lock
 	docker compose -f $(COMPOSE_FILE) build api
 
 .PHONY: api-up
@@ -155,6 +157,7 @@ api-shell:
 
 .PHONY: worker-build
 worker-build:
+	uv lock
 	docker compose -f $(COMPOSE_FILE) build worker-celery
 
 .PHONY: worker-up

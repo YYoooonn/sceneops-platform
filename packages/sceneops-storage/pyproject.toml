@@ -2,16 +2,18 @@
 name = "sceneops-storage"
 version = "0.1.0"
 description = "Storage adapters for SceneOps artifacts"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "sceneops-core",
   "pydantic>=2.0.0"
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["sceneops_storage*"]
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_storage"]
 
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

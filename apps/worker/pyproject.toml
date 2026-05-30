@@ -14,16 +14,24 @@ dependencies = [
     "celery[redis]>=5.4",
     "onnx>=1.16",
     "onnxruntime>=1.18",
-    "numpy"
+]
+
+[project.optional-dependencies]
+dev = [
+  "onnx>=1.16",
 ]
 
 [project.scripts]
 sceneops-worker = "sceneops_worker.main:app"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["sceneops_worker*"]
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-db = { workspace = true }
+sceneops-storage = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_worker"]
 
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

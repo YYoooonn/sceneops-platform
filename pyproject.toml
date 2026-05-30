@@ -1,0 +1,32 @@
+[project]
+name = "sceneops-platform"
+version = "0.1.0"
+requires-python = ">=3.11,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pre-commit",
+  "ruff>=0.8",
+  "black",
+  "mypy>=1.10",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+  "packages/sceneops-core",
+  "packages/sceneops-db",
+  "packages/sceneops-storage",
+  "apps/api",
+  "apps/worker",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-db = { workspace = true }
+sceneops-storage = { workspace = true }
+sceneops-api = { workspace = true }
+sceneops-worker = { workspace = true }

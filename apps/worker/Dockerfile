@@ -1,20 +1,27 @@
 FROM python:3.11-slim
 
-WORKDIR /app
+WORKDIR /workspace
 
-ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1
+ENV UV_PROJECT_ENVIRONMENT=/workspace/.venv
+ENV PATH="/workspace/.venv/bin:$PATH"
 
-COPY packages/sceneops-core ./packages/sceneops-core
-COPY packages/sceneops-db ./packages/sceneops-db
-COPY packages/sceneops-storage ./packages/sceneops-storage
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        build-essential \
+        libgeos-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+COPY packages ./packages
 COPY apps/worker ./apps/worker
 
-RUN pip install --upgrade pip \
-    && pip install ./packages/sceneops-core \
-    && pip install ./packages/sceneops-db \
-    && pip install ./packages/sceneops-storage \
-    && pip install ./apps/worker
+RUN uv sync --package sceneops-worker --frozen --no-dev
+
+WORKDIR /workspace/apps/worker
 
 CMD ["sceneops-worker", "--help"]
