@@ -104,12 +104,8 @@ class DatasetService:
             dataset_id=dataset_id,
             version=request.version,
             dataset_type=dataset_type,
-            manifest_uri=request.manifest_uri,
-            raw_data_uri=request.raw_data_uri,
-            scene_count=request.scene_count,
-            sample_count=request.sample_count,
-            annotation_count=request.annotation_count,
-            status=request.status,
+            source_uri=request.source_uri,
+            # status=request.status,
             metadata=request.metadata,
         )
 
@@ -148,7 +144,7 @@ class DatasetService:
             version=version,
             dataset_type=dataset_type,
             manifest_uri=request.manifest_uri,
-            raw_data_uri=request.raw_data_uri,
+            source_uri=request.source_uri,
             scene_count=request.scene_count,
             sample_count=request.sample_count,
             annotation_count=request.annotation_count,

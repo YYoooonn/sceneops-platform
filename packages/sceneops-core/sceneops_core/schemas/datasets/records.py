@@ -27,15 +27,15 @@ class DatasetVersionRecord(SceneOpsBaseModel):
     version: str
 
     dataset_type: DatasetType | str = DatasetType.CUSTOM
+    status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
 
+    source_uri: str | None = None
     manifest_uri: str | None = None
-    raw_data_uri: str | None = None
 
     scene_count: int | None = None
     sample_count: int | None = None
     annotation_count: int | None = None
 
-    status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
     metadata: JsonDict = Field(default_factory=dict)
 
     created_at: datetime | None = None

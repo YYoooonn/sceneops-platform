@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import StrEnum
 
 from nuscenes.nuscenes import NuScenes
 
@@ -22,6 +21,7 @@ from sceneops_core.schemas.datasets import (
     SampleAnnotationManifest,
     SampleSensorManifest,
     SensorModality,
+    DatasetIngestMode,
 )
 from sceneops_worker.datasets import DatasetArtifactStore
 
@@ -31,15 +31,9 @@ DATA_SOURCE = "nuScenes"
 DATASET_TYPE = DatasetType.NUSCENES.value
 
 
-class IngestMode(StrEnum):
-    APPEND = "append"
-    OVERWRITE = "overwrite"
-    UPSERT = "upsert"
-
-
 async def ingest_nuscenes(
     *,
-    raw_data_uri: str,
+    source_uri: str,
     dataset_id: str,
     dataset_version: str,
     dataset_artifact_store: DatasetArtifactStore,
@@ -48,7 +42,7 @@ async def ingest_nuscenes(
 ) -> DatasetManifest:
     nusc = NuScenes(
         version=dataset_version,
-        dataroot=str(raw_data_uri),
+        dataroot=str(source_uri),
         verbose=True,
     )
 
@@ -57,9 +51,9 @@ async def ingest_nuscenes(
         dataset_version=dataset_version,
     )
 
-    ingest_mode = IngestMode(mode)
+    ingest_mode = DatasetIngestMode(mode)
 
-    if ingest_mode == IngestMode.OVERWRITE:
+    if ingest_mode == DatasetIngestMode.OVERWRITE:
         await dataset_artifact_store.reset_dataset_version(version_root_uri)
 
     existing_scene_ids = {
@@ -77,7 +71,7 @@ async def ingest_nuscenes(
         scene_token = scene["token"]
         scene_name = scene["name"]
 
-        if ingest_mode == IngestMode.APPEND and scene_name in existing_scene_ids:
+        if ingest_mode == DatasetIngestMode.APPEND and scene_name in existing_scene_ids:
             continue
 
         sample_tokens = _collect_sample_tokens(nusc, scene["first_sample_token"])
@@ -145,7 +139,7 @@ async def ingest_nuscenes(
             )
         )
 
-    if ingest_mode == IngestMode.OVERWRITE:
+    if ingest_mode == DatasetIngestMode.OVERWRITE:
         scene_index = DatasetSceneIndex(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
@@ -174,7 +168,7 @@ async def ingest_nuscenes(
         dataset_type=DATASET_TYPE,
         source=DATA_SOURCE,
         version_root_uri=version_root_uri,
-        raw_data_uri=raw_data_uri,
+        source_uri=source_uri,
         mode=ingest_mode.value,
         max_scenes=max_scenes,
     )
@@ -195,7 +189,7 @@ async def _build_dataset_manifest_from_store(
     dataset_type: str,
     source: str,
     version_root_uri: str,
-    raw_data_uri: str,
+    source_uri: str,
     mode: str,
     max_scenes: int | None,
 ) -> DatasetManifest:
@@ -264,7 +258,7 @@ async def _build_dataset_manifest_from_store(
             scene_index=dataset_artifact_store.scene_index_uri(version_root_uri),
             scene_root=dataset_artifact_store.scene_root_uri(version_root_uri),
             sample_root=dataset_artifact_store.sample_root_uri(version_root_uri),
-            raw_root=str(raw_data_uri),
+            raw_root=str(source_uri),
         ),
         ingest=DatasetIngestMetadata(
             mode=mode,

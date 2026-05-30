@@ -98,6 +98,8 @@ services:
       dockerfile: migrations/Dockerfile.migrate
     env_file:
       - .env.local
+    volumes:
+      - ./migrations/versions:/workspace/migrations/versions
     profiles:
       - tools
     depends_on:

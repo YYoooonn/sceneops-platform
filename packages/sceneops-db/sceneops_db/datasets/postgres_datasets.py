@@ -192,7 +192,7 @@ class PostgresDatasetVersionRepository:
         model.version = updated.version
         model.dataset_type = updated.dataset_type
         model.manifest_uri = updated.manifest_uri
-        model.raw_data_uri = updated.raw_data_uri
+        model.source_uri = updated.source_uri
         model.scene_count = updated.scene_count
         model.sample_count = updated.sample_count
         model.annotation_count = updated.annotation_count
@@ -211,7 +211,7 @@ class PostgresDatasetVersionRepository:
         version: str,
         dataset_type: str,
         manifest_uri: str | None = None,
-        raw_data_uri: str | None = None,
+        source_uri: str | None = None,
         scene_count: int | None = None,
         sample_count: int | None = None,
         annotation_count: int | None = None,
@@ -230,7 +230,7 @@ class PostgresDatasetVersionRepository:
                 version=version,
                 dataset_type=dataset_type_value,
                 manifest_uri=manifest_uri,
-                raw_data_uri=raw_data_uri,
+                source_uri=source_uri,
                 scene_count=scene_count,
                 sample_count=sample_count,
                 annotation_count=annotation_count,
@@ -242,7 +242,7 @@ class PostgresDatasetVersionRepository:
                 set_={
                     "dataset_type": dataset_type_value,
                     "manifest_uri": manifest_uri,
-                    "raw_data_uri": raw_data_uri,
+                    "source_uri": source_uri,
                     "scene_count": scene_count,
                     "sample_count": sample_count,
                     "annotation_count": annotation_count,
@@ -268,7 +268,7 @@ class PostgresDatasetVersionRepository:
             version=record.version,
             dataset_type=enum_to_str(record.dataset_type),
             manifest_uri=record.manifest_uri,
-            raw_data_uri=record.raw_data_uri,
+            source_uri=record.source_uri,
             scene_count=record.scene_count,
             sample_count=record.sample_count,
             annotation_count=record.annotation_count,
@@ -283,7 +283,7 @@ class PostgresDatasetVersionRepository:
             "version": model.version,
             "dataset_type": model.dataset_type,
             "manifest_uri": model.manifest_uri,
-            "raw_data_uri": model.raw_data_uri,
+            "source_uri": model.source_uri,
             "scene_count": model.scene_count,
             "sample_count": model.sample_count,
             "annotation_count": model.annotation_count,

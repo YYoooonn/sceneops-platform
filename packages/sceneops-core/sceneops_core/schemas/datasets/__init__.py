@@ -3,6 +3,7 @@ from sceneops_core.schemas.datasets.enums import (
     DatasetType,
     DatasetVersionStatus,
     SensorModality,
+    DatasetIngestMode,
 )
 from sceneops_core.schemas.datasets.manifests import (
     CalibratedSensorManifest,
@@ -40,6 +41,7 @@ __all__ = [
     "DatasetType",
     "DatasetManifestStatus",
     "DatasetVersionStatus",
+    "DatasetIngestMode",
     "SensorModality",
     "DatasetManifest",
     "DatasetManifestSummary",

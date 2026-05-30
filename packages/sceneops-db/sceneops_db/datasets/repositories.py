@@ -64,7 +64,7 @@ class DatasetVersionRepository(Protocol):
         version: str,
         dataset_type: str,
         manifest_uri: str | None = None,
-        raw_data_uri: str | None = None,
+        source_uri: str | None = None,
         scene_count: int | None = None,
         sample_count: int | None = None,
         annotation_count: int | None = None,

@@ -57,7 +57,7 @@ class DatasetVersionModel(Base):
     dataset_type: Mapped[str] = mapped_column(String(64), nullable=False)
 
     manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-    raw_data_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scene_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

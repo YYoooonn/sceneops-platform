@@ -31,3 +31,9 @@ class SensorModality(StrEnum):
     LIDAR = "lidar"
     RADAR = "radar"
     UNKNOWN = "unknown"
+
+
+class DatasetIngestMode(StrEnum):
+    UPSERT = "upsert"
+    OVERWRITE = "overwrite"
+    APPEND = "append"

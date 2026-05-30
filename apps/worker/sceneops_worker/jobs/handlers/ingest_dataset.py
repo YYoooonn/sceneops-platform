@@ -44,10 +44,10 @@ class IngestDatasetJobHandler(
             dataset_version=params.dataset_version,
         )
 
-        raw_data_uri = params.raw_data_uri or version.raw_data_uri
-        if raw_data_uri is None:
+        source_uri = params.source_uri or version.source_uri
+        if source_uri is None:
             raise ValueError(
-                f"raw_data_uri is required for "
+                f"source_uri is required for "
                 f"{params.dataset_id}:{params.dataset_version}"
             )
 
@@ -55,7 +55,7 @@ class IngestDatasetJobHandler(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
             dataset_type=version.dataset_type,
-            raw_data_uri=raw_data_uri,
+            source_uri=source_uri,
             manifest_uri=version.manifest_uri,
             scene_count=version.scene_count,
             sample_count=version.sample_count,
@@ -66,7 +66,7 @@ class IngestDatasetJobHandler(
 
         try:
             dataset_manifest = await ingest_nuscenes(
-                raw_data_uri=raw_data_uri,
+                source_uri=source_uri,
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
                 dataset_artifact_store=self.context.dataset_artifact_store,
@@ -78,7 +78,7 @@ class IngestDatasetJobHandler(
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
                 dataset_type=dataset_manifest.dataset_type,
-                raw_data_uri=dataset_manifest.uris.raw_root,
+                source_uri=dataset_manifest.uris.raw_root,
                 manifest_uri=dataset_manifest.uris.dataset_manifest,
                 scene_count=dataset_manifest.summary.scene_count,
                 sample_count=dataset_manifest.summary.sample_count,
@@ -112,7 +112,7 @@ class IngestDatasetJobHandler(
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
                 dataset_type=version.dataset_type,
-                raw_data_uri=raw_data_uri,
+                source_uri=source_uri,
                 manifest_uri=version.manifest_uri,
                 scene_count=version.scene_count,
                 sample_count=version.sample_count,

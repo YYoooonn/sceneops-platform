@@ -26,7 +26,7 @@ class IngestDatasetJobParams(SceneOpsBaseModel):
     dataset_version: str
     dataset_type: DatasetType = DatasetType.NUSCENES
 
-    raw_data_uri: str | None = None
+    source_uri: str | None = None
     max_scenes: int | None = None
     mode: IngestMode = IngestMode.UPSERT
 

@@ -168,7 +168,7 @@ db-history:
 .PHONY: db-reset
 db-reset:
 	docker compose -f $(COMPOSE_FILE) down -v
-	$(MAKE) compose-up
+	docker compose -f $(COMPOSE_FILE) up -d postgres
 	$(MAKE) db-migrate
 
 # --------------------
@@ -234,8 +234,21 @@ check-celery:
 	scripts/checks/check_celery_broker.sh
 
 # --------------------
+# Prepare
+# --------------------
+
+.PHONY: register-nuscenes-dataset
+register-nuscenes-dataset:
+	chmod +x scripts/fixtures/register_nuscenes_dataset.sh
+	API_PREFIX=$(API_PREFIX) scripts/fixtures/register_nuscenes_dataset.sh
+
+# --------------------
 # E2E
 # --------------------
+
+.PHONY: e2e-dataset-ingest
+e2e-dataset-ingest:
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_ingestion_pipeline_celery.sh
 
 .PHONY: e2e-mock-celery
 e2e-mock-celery:
