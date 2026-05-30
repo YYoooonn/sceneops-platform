@@ -1,11 +1,9 @@
-IMAGE_NAME=sceneops-platform
-IMAGE_TAG=local
-
-COMPOSE_FILE=docker-compose.local.yml
-DB_ENV_FILE=.env
-DB_ALEMBIC_CONFIG=packages/sceneops-db/alembic.ini
+COMPOSE_FILE ?= docker-compose.local.yml
+API_PREFIX ?= /api/v1
 
 JOB_ID ?=
+PIPELINE_RUN_ID ?=
+MSG ?=
 
 .DEFAULT_GOAL := help
 
@@ -14,71 +12,110 @@ help:
 	@echo "SceneOps Platform"
 	@echo ""
 	@echo "Setup:"
-	@echo "  make prepare-data"
-	@echo "  make install-dev"
+	@echo "  make uv-sync"
+	@echo "  make uv-lock"
+	@echo "  make install-hooks"
+	@echo "  make check"
 	@echo ""
 	@echo "Docker Compose:"
 	@echo "  make compose-build"
+	@echo "  make compose-build-no-cache"
 	@echo "  make compose-up"
 	@echo "  make compose-down"
+	@echo "  make compose-down-volumes"
 	@echo "  make compose-logs"
+	@echo "  make compose-ps"
 	@echo ""
 	@echo "Database:"
-	@echo "  make db-up"
 	@echo "  make db-migrate"
 	@echo "  make db-revision MSG='create jobs table'"
 	@echo "  make db-current"
+	@echo "  make db-history"
+	@echo "  make db-reset"
 	@echo ""
 	@echo "API:"
-	@echo "  make api-up"
 	@echo "  make api-logs"
+	@echo "  make api-shell"
 	@echo ""
 	@echo "Worker:"
-	@echo "  make worker-ingest"
-	@echo "  make worker-predict-mock-detection"
-	@echo "  make worker-evaluate-detection"
+	@echo "  make worker-logs"
+	@echo "  make worker-shell"
+	@echo "  make worker-cli"
 	@echo "  make worker-run-job JOB_ID=job-xxx"
+	@echo "  make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"
+	@echo ""
+	@echo "Checks:"
+	@echo "  make check-env"
+	@echo "  make check-imports"
+	@echo "  make check-celery"
+	@echo ""
+	@echo "E2E:"
+	@echo "  make e2e-mock-celery"
+	@echo "  make e2e-onnx-celery"
+	@echo ""
+	@echo "Debug:"
+	@echo "  make show-runs"
+	@echo "  make show-pipeline PIPELINE_RUN_ID=pipe-xxx"
+	@echo "  make show-job-events JOB_ID=job-xxx"
+	@echo "  make reset-local"
 
 # --------------------
-# ------SETUP---------
+# Setup / Quality
 # --------------------
 
-.PHONY: install-dev
-install-dev:
-	python -m pip install -r requirements-dev.txt
-	pre-commit install
+.PHONY: uv-sync
+uv-sync:
+	uv sync --all-packages --group dev
 
-.PHONY: check
-check:
-	pre-commit run --all-files
+.PHONY: uv-lock
+uv-lock:
+	uv lock
+
+.PHONY: install-hooks
+install-hooks:
+	uv run pre-commit install
 
 .PHONY: uninstall-hooks
 uninstall-hooks:
-	pre-commit uninstall
+	uv run pre-commit uninstall
+
+.PHONY: check
+check:
+	uv run pre-commit run --all-files
+
+.PHONY: lint
+lint:
+	uv run ruff check .
+	uv run basedpyright
 
 .PHONY: prepare-data
 prepare-data:
-	mkdir -p data/raw data/manifests data/artifacts data/runs
+	mkdir -p data/raw data/datasets data/runs data/models
 
-.PHONY: clean-all
-clean-all:
-	rm -rf data/manifests/*
-	rm -rf data/artifacts/*
+.PHONY: clean-artifacts
+clean-artifacts:
+	rm -rf data/datasets/*
 	rm -rf data/runs/*
+	rm -rf data/models/*
 	$(MAKE) prepare-data
 
 # --------------------
-# -----COMPOSE--------
+# Docker Compose
 # --------------------
 
 .PHONY: compose-build
 compose-build:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build
+	docker compose -f $(COMPOSE_FILE) build api worker-celery worker-cli
+
+.PHONY: compose-build-no-cache
+compose-build-no-cache:
+	uv lock
+	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-celery worker-cli
 
 .PHONY: compose-up
 compose-up: prepare-data
-	docker compose -f $(COMPOSE_FILE) up -d
+	docker compose -f $(COMPOSE_FILE) up -d postgres redis api worker-celery
 
 .PHONY: compose-down
 compose-down:
@@ -92,13 +129,17 @@ compose-down-volumes:
 compose-logs:
 	docker compose -f $(COMPOSE_FILE) logs -f
 
+.PHONY: compose-ps
+compose-ps:
+	docker compose -f $(COMPOSE_FILE) ps
+
 # --------------------
-# -------DB-----------
+# Database
 # --------------------
 
-.PHONY: db-up
-db-up:
-	docker compose -f $(COMPOSE_FILE) up -d postgres
+.PHONY: db-migrate
+db-migrate:
+	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate
 
 .PHONY: db-revision
 db-revision:
@@ -106,13 +147,8 @@ db-revision:
 		echo "MSG is required. Usage: make db-revision MSG='create jobs table'"; \
 		exit 1; \
 	fi
-	$(MAKE) api-build
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
 		alembic -c packages/sceneops-db/alembic.ini revision --autogenerate -m "$(MSG)"
-
-.PHONY: db-migrate
-db-migrate: api-build
-	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate
 
 .PHONY: db-current
 db-current:
@@ -127,21 +163,12 @@ db-history:
 .PHONY: db-reset
 db-reset:
 	docker compose -f $(COMPOSE_FILE) down -v
-	$(MAKE) db-up
+	$(MAKE) compose-up
 	$(MAKE) db-migrate
 
 # --------------------
-# --------API---------
+# API
 # --------------------
-
-.PHONY: api-build
-api-build:
-	uv lock
-	docker compose -f $(COMPOSE_FILE) build api
-
-.PHONY: api-up
-api-up: prepare-data
-	docker compose -f $(COMPOSE_FILE) up -d postgres api
 
 .PHONY: api-logs
 api-logs:
@@ -149,36 +176,32 @@ api-logs:
 
 .PHONY: api-shell
 api-shell:
-	docker compose -f $(COMPOSE_FILE) run --rm api sh
+	docker compose -f $(COMPOSE_FILE) exec api sh
 
 # --------------------
-# -------WORKER-------
+# Worker
 # --------------------
 
-.PHONY: worker-build
-worker-build:
-	uv lock
-	docker compose -f $(COMPOSE_FILE) build worker-celery
+.PHONY: worker-logs
+worker-logs:
+	docker compose -f $(COMPOSE_FILE) logs -f worker-celery
 
-.PHONY: worker-up
-worker-up:
-	docker compose -f $(COMPOSE_FILE) up -d worker-celery
+.PHONY: worker-shell
+worker-shell:
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli sh
+
+.PHONY: worker-cli
+worker-cli:
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli
 
 .PHONY: worker-run-job
-worker-run-job: prepare-data
+worker-run-job:
 	@if [ -z "$(JOB_ID)" ]; then \
 		echo "JOB_ID is required. Usage: make worker-run-job JOB_ID=job-xxx"; \
 		exit 1; \
 	fi
-	docker compose -f $(COMPOSE_FILE) run --rm worker \
-		sceneops-worker jobs run \
-			--job-id $(JOB_ID)
-
-.PHONY: worker-shell
-worker-shell:
-	docker compose -f $(COMPOSE_FILE) run --rm worker sh
-
-PIPELINE_RUN_ID ?=
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli \
+		jobs run --job-id $(JOB_ID)
 
 .PHONY: worker-run-pipeline
 worker-run-pipeline:
@@ -186,56 +209,61 @@ worker-run-pipeline:
 		echo "PIPELINE_RUN_ID is required. Usage: make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"; \
 		exit 1; \
 	fi
-	docker compose -f $(COMPOSE_FILE) --profile worker run --rm worker \
-		sceneops-worker pipelines run \
-			--pipeline-run-id $(PIPELINE_RUN_ID)
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli \
+		pipelines run --pipeline-run-id $(PIPELINE_RUN_ID)
 
 # --------------------
-# -------DEBUG--------
+# Checks
 # --------------------
 
-MAX_SCENES ?= 2
-INGEST_MODE ?= upsert
+.PHONY: check-env
+check-env:
+	scripts/checks/check_env.sh
 
-MODEL_ID ?= centerpoint-mock
-MODEL_VERSION ?= v0
-RUN_ID ?= run-centerpoint-mock-001
-EVALUATION_RUN_ID ?= eval-centerpoint-mock-001
-MAX_SAMPLES ?= 20
-MATCH_DISTANCE_M ?= 2.0
+.PHONY: check-imports
+check-imports:
+	scripts/checks/check_python_imports.sh
 
-DATASET_ID ?= nuscenes
-DATASET_VERSION ?= v1.0-mini
+.PHONY: check-celery
+check-celery:
+	scripts/checks/check_celery_broker.sh
 
-.PHONY: worker-ingest
-worker-ingest: prepare-data
-	@echo "INGESTING scene"
-	docker compose -f $(COMPOSE_FILE) run --rm worker \
-		sceneops-worker ingest nuscenes \
-			--dataset-id $(DATASET_ID) \
-			--dataset-version $(DATASET_VERSION) \
-			--max-scenes $(MAX_SCENES) \
-			--mode $(INGEST_MODE)
+# --------------------
+# E2E
+# --------------------
 
-.PHONY: worker-predict-mock-detection
-worker-predict-mock-detection: prepare-data
-	@echo "mock detection"
-	docker compose -f $(COMPOSE_FILE) run --rm worker \
-		sceneops-worker predict mock-detection \
-			--dataset-id $(DATASET_ID) \
-			--dataset-version $(DATASET_VERSION) \
-			--model-id $(MODEL_ID) \
-			--model-version $(MODEL_VERSION) \
-			--run-id $(RUN_ID) \
-			--max-samples $(MAX_SAMPLES)
+.PHONY: e2e-mock-celery
+e2e-mock-celery:
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_mock_pipeline_celery.sh
 
-.PHONY: worker-evaluate-detection
-worker-evaluate-detection: prepare-data
-	@echo "evaluate detection"
-	docker compose -f $(COMPOSE_FILE) run --rm worker \
-		sceneops-worker evaluate detection \
-			--dataset-id $(DATASET_ID) \
-			--dataset-version $(DATASET_VERSION) \
-			--inference-run-id $(RUN_ID) \
-			--evaluation-run-id $(EVALUATION_RUN_ID) \
-			--match-distance-m $(MATCH_DISTANCE_M)
+.PHONY: e2e-onnx-celery
+e2e-onnx-celery:
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_onnx_pipeline_celery.sh
+
+# --------------------
+# Debug
+# --------------------
+
+.PHONY: show-runs
+show-runs:
+	API_PREFIX=$(API_PREFIX) scripts/debug/show_runs.sh
+
+.PHONY: show-pipeline
+show-pipeline:
+	@if [ -z "$(PIPELINE_RUN_ID)" ]; then \
+		echo "PIPELINE_RUN_ID is required. Usage: make show-pipeline PIPELINE_RUN_ID=pipe-xxx"; \
+		exit 1; \
+	fi
+	API_PREFIX=$(API_PREFIX) PIPELINE_RUN_ID=$(PIPELINE_RUN_ID) scripts/debug/show_pipeline.sh
+
+.PHONY: show-job-events
+show-job-events:
+	@if [ -z "$(JOB_ID)" ]; then \
+		echo "JOB_ID is required. Usage: make show-job-events JOB_ID=job-xxx"; \
+		exit 1; \
+	fi
+	API_PREFIX=$(API_PREFIX) JOB_ID=$(JOB_ID) scripts/debug/show_job_events.sh
+
+.PHONY: reset-local
+reset-local:
+	scripts/dev/reset_local_state.sh

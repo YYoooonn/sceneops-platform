@@ -32,7 +32,7 @@ class ModelService:
     async def create_model(self, request: CreateModelRequest) -> ModelDetailResponse:
         model = await self.repository.upsert(
             ModelRecord(
-                id=request.id,
+                id=request.model_id,
                 name=request.name,
                 description=request.description,
                 metadata=request.metadata,

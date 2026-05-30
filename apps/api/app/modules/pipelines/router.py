@@ -57,7 +57,9 @@ async def get_pipeline_run(
     return result
 
 
-@router.get("/runs/{pipeline_run_id}/execute", response_model=PipelineExecutionResponse)
+@router.post(
+    "/runs/{pipeline_run_id}/execute", response_model=PipelineExecutionResponse
+)
 async def execute_pipeline_run(
     pipeline_run_id: str,
     service: PipelineService = Depends(get_pipeline_service),

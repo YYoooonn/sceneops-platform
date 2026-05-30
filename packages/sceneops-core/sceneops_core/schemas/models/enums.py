@@ -15,3 +15,10 @@ class ModelVersionStatus(StrEnum):
     READY = "ready"
     DEPRECATED = "deprecated"
     FAILED = "failed"
+
+
+class ModelTaskType(StrEnum):
+    DETECTION = "detection"
+    SEGMENTATION = "segmentation"
+    TRACKING = "tracking"
+    SCENE_UNDERSTANDING = "scene_understanding"

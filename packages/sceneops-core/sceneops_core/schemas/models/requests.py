@@ -8,7 +8,8 @@ from sceneops_core.schemas.models.enums import ModelBackend, ModelVersionStatus
 
 
 class CreateModelRequest(SceneOpsBaseModel):
-    id: str
+    model_id: str
+    # task_type: ModelTaskType = Field(default=ModelTaskType.DETECTION)
     name: str | None = None
     description: str | None = None
     metadata: JsonDict = Field(default_factory=dict)
