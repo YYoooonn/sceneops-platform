@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pylint: disable=no-member
+# pylint: disable=no-member,unused-import
 
 import asyncio
 from logging.config import fileConfig
@@ -13,11 +13,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from sceneops_db.base import Base
 from sceneops_db.config import get_db_settings
 
-from sceneops_db.jobs import JobModel, JobEventModel  # noqa: F401
+# Import models so SQLAlchemy registers them in Base.metadata.
+from sceneops_db.datasets import DatasetModel, DatasetVersionModel  # noqa: F401
+from sceneops_db.jobs import JobEventModel, JobModel  # noqa: F401
+from sceneops_db.model_registry import ModelModel, ModelVersionModel  # noqa: F401
 from sceneops_db.pipelines import PipelineRunModel, PipelineStepRunModel  # noqa: F401
-from sceneops_db.datasets import DatasetModel, DatasetVersionModel # noqa: F401
-from sceneops_db.runs import EvaluationRunModel, InferenceRunModel # noqa: F401
-from sceneops_db.model_registry import ModelModel, ModelVersionModel # noqa: F401
+from sceneops_db.runs import EvaluationRunModel, InferenceRunModel  # noqa: F401
 
 config = context.config
 
@@ -37,8 +38,11 @@ def run_migrations_offline() -> None:
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
+        dialect_opts={
+            "paramstyle": "named",
+        },
         compare_type=True,
+        compare_server_default=True,
     )
 
     with context.begin_transaction():
@@ -47,7 +51,10 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection: Connection) -> None:
     context.configure(
-        connection=connection, target_metadata=target_metadata, compare_type=True
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
     )
 
     with context.begin_transaction():
@@ -56,6 +63,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = db_settings.sceneops_database_url
 
     connectable = async_engine_from_config(
         configuration,

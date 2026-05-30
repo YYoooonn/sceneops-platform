@@ -95,26 +95,22 @@ services:
   migrate:
     build:
       context: .
-      dockerfile: apps/api/Dockerfile
-    image: sceneops-platform/api:local
+      dockerfile: migrations/Dockerfile.migrate
     env_file:
       - .env.local
+    profiles:
+      - tools
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./packages/sceneops-db/alembic:/app/packages/sceneops-db/alembic
-    working_dir: /app
     command:
       [
         "alembic",
         "-c",
-        "packages/sceneops-db/alembic.ini",
+        "migrations/alembic.ini",
         "upgrade",
         "head"
       ]
-    profiles:
-      - tools
 
 volumes:
   sceneops_postgres_data:

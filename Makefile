@@ -1,5 +1,6 @@
 COMPOSE_FILE ?= docker-compose.local.yml
 API_PREFIX ?= /api/v1
+ALEMBIC_CONFIG ?= migrations/alembic.ini
 
 JOB_ID ?=
 PIPELINE_RUN_ID ?=
@@ -136,29 +137,33 @@ compose-ps:
 # --------------------
 # Database
 # --------------------
+.PHONY: migrate-build
+migrate-build:
+	uv lock
+	docker compose -f $(COMPOSE_FILE) build migrate
 
 .PHONY: db-migrate
-db-migrate:
+db-migrate: migrate-build
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate
 
 .PHONY: db-revision
-db-revision:
+db-revision: migrate-build
 	@if [ -z "$(MSG)" ]; then \
-		echo "MSG is required. Usage: make db-revision MSG='create jobs table'"; \
+		echo "MSG is required. Usage: make db-revision MSG='create table'"; \
 		exit 1; \
 	fi
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
-		alembic -c packages/sceneops-db/alembic.ini revision --autogenerate -m "$(MSG)"
+		alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$(MSG)"
 
 .PHONY: db-current
 db-current:
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
-		alembic -c packages/sceneops-db/alembic.ini current
+		alembic -c $(ALEMBIC_CONFIG) current
 
 .PHONY: db-history
 db-history:
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
-		alembic -c packages/sceneops-db/alembic.ini history
+		alembic -c $(ALEMBIC_CONFIG) history
 
 .PHONY: db-reset
 db-reset:
