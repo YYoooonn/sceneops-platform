@@ -26,7 +26,7 @@ DATASET_INGESTION_PIPELINE = PipelineDefinition(
         PipelineStepDefinition(
             name="validate",
             order=1,
-            job_type=JobType.VALIDATE_DATASET_MANIFEST.value,
+            job_type=JobType.VALIDATE_DATASET.value,
             depends_on=["ingest"],
             default_params={
                 "validate_samples": True,

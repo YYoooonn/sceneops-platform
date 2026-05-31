@@ -14,3 +14,4 @@ class RunStatus(StrEnum):
 class RunType(StrEnum):
     INFERENCE = "inference"
     EVALUATION = "evaluation"
+    VALIDATION = "validation"

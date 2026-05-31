@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.pipelines import PipelineRunManifest
+from sceneops_core.schemas.pipelines import PipelineRunManifest, PipelineStepResult
 
 
 @dataclass
@@ -49,7 +49,7 @@ class PipelineExecutionContext:
         step_name: str,
         status: str,
         job_id: str | None,
-        result: JsonDict | None = None,
+        result: PipelineStepResult | None = None,
     ) -> None:
         self.steps[step_name] = {
             "status": status,

@@ -15,6 +15,10 @@ class RunArtifactStore:
         self.artifact_store = artifact_store
         self.runs_root_uri = runs_root_uri
 
+    # ---------------------------------------------------------------------
+    # Inference runs
+    # ---------------------------------------------------------------------
+
     def inference_run_root_uri(self, run_id: str) -> str:
         return self.artifact_store.join_uri(
             self.runs_root_uri,
@@ -102,6 +106,62 @@ class RunArtifactStore:
             raise ValueError(f"Invalid prediction manifest: {uri}")
 
         return raw
+
+    # ---------------------------------------------------------------------
+    # Dataset validation runs
+    # ---------------------------------------------------------------------
+
+    def validation_run_root_uri(self, validation_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.runs_root_uri,
+            "validations",
+            validation_run_id,
+        )
+
+    def validation_run_manifest_uri(self, validation_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.validation_run_root_uri(validation_run_id),
+            "validation.json",
+        )
+
+    async def write_validation_run_manifest(
+        self,
+        *,
+        validation_run_id: str,
+        manifest: dict[str, Any],
+    ) -> str:
+        uri = self.validation_run_manifest_uri(validation_run_id)
+        await self.artifact_store.write_json(uri, manifest)
+        return uri
+
+    async def load_validation_run_manifest(
+        self,
+        *,
+        validation_run_id: str,
+    ) -> dict[str, Any]:
+        uri = self.validation_run_manifest_uri(validation_run_id)
+        raw = await self.artifact_store.read_json(uri)
+
+        if not isinstance(raw, dict):
+            raise ValueError(f"Invalid validation run manifest: {uri}")
+
+        return raw
+
+    async def load_validation_run_manifest_by_uri(
+        self,
+        *,
+        uri: str,
+    ) -> dict[str, Any]:
+        raw = await self.artifact_store.read_json(uri)
+
+        if not isinstance(raw, dict):
+            raise ValueError(f"Invalid validation run manifest: {uri}")
+
+        return raw
+
+    # ---------------------------------------------------------------------
+    # Evaluation runs
+    # ---------------------------------------------------------------------
 
     def evaluation_run_root_uri(self, evaluation_run_id: str) -> str:
         return self.artifact_store.join_uri(

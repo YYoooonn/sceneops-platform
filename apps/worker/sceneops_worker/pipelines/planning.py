@@ -22,7 +22,6 @@ class PipelineJobPlanner:
         context: PipelineExecutionContext,
     ) -> JobManifest:
         now = utc_now()
-        job_type = JobType(step.job_type)
         params = self.build_step_job_params(
             pipeline_run=pipeline_run,
             step=step,
@@ -31,12 +30,12 @@ class PipelineJobPlanner:
 
         return JobManifest(
             job_id=generate_job_id(),
-            type=job_type,
+            type=step.job_type,
             status=JobStatus.PENDING,
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
             params=params,
-            steps=build_default_steps(job_type),
+            steps=build_default_steps(step.job_type),
             pipeline_run_id=pipeline_run.pipeline_run_id,
             pipeline_step_run_id=step.pipeline_step_run_id,
             pipeline_step_name=step.step_name,
@@ -60,15 +59,13 @@ class PipelineJobPlanner:
             **(step.params or {}),
         }
 
-        job_type = JobType(step.job_type)
-
-        if job_type == JobType.INGEST_DATASET:
+        if step.job_type == JobType.INGEST_DATASET:
             return {
                 "dataset_type": base.get("dataset_type", "nuscenes"),
                 **base,
             }
 
-        if job_type == JobType.VALIDATE_DATASET_MANIFEST:
+        if step.job_type == JobType.VALIDATE_DATASET:
             return {
                 **base,
                 "require_target_channels": base.get(
@@ -78,7 +75,7 @@ class PipelineJobPlanner:
                 "validate_samples": base.get("validate_samples", True),
             }
 
-        if job_type == JobType.PREDICT_DETECTION:
+        if step.job_type == JobType.PREDICT_DETECTION:
             model_id = (
                 pipeline_run.model_id or base.get("model_id") or "centerpoint-mock"
             )
@@ -92,7 +89,7 @@ class PipelineJobPlanner:
                 "model_version": model_version,
             }
 
-        if job_type == JobType.EVALUATE_DETECTION:
+        if step.job_type == JobType.EVALUATE_DETECTION:
             inference_run_id = base.get("inference_run_id") or context.get(
                 "inference_run_id"
             )
@@ -105,4 +102,4 @@ class PipelineJobPlanner:
                 "inference_run_id": inference_run_id,
             }
 
-        raise ValueError(f"Unsupported pipeline step job type: {job_type}")
+        raise ValueError(f"Unsupported pipeline step job type: {str(step.job_type)}")

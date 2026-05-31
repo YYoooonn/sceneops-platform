@@ -21,32 +21,40 @@ class InferenceBackend(StrEnum):
     # TRITON = "triton"
 
 
-class IngestDatasetJobParams(SceneOpsBaseModel):
+class BaseJobParams(SceneOpsBaseModel):
     dataset_id: str
     dataset_version: str
+
+    extra: JsonDict = Field(default_factory=dict)
+
+
+class IngestDatasetJobParams(BaseJobParams):
     dataset_type: DatasetType = DatasetType.NUSCENES
 
     source_uri: str | None = None
     max_scenes: int | None = None
     mode: IngestMode = IngestMode.UPSERT
 
-    extra: JsonDict = Field(default_factory=dict)
 
+class ValidateDatasetJobParams(BaseJobParams):
+    require_target_channels: list[str] = Field(
+        default_factory=lambda: ["CAM_FRONT", "LIDAR_TOP"]
+    )
 
-class ValidateDatasetManifestJobParams(SceneOpsBaseModel):
-    dataset_id: str
-    dataset_version: str
-
-    require_target_channels: list[str] = Field(default_factory=list)
     validate_samples: bool = True
+    validate_sensor_artifacts: bool = True
+    validate_annotations: bool = True
+    validate_calibration: bool = False
+    profile_dataset: bool = True
+
     max_samples: int | None = None
 
-    extra: JsonDict = Field(default_factory=dict)
+    fail_on_missing_required_channels: bool = True
+    fail_on_missing_samples: bool = True
+    fail_on_missing_sensor_artifacts: bool = False
 
-class PredictDetectionJobParams(SceneOpsBaseModel):
-    dataset_id: str
-    dataset_version: str
 
+class PredictDetectionJobParams(BaseJobParams):
     model_id: str
     model_version: str
     inference_backend: InferenceBackend = InferenceBackend.MOCK
@@ -56,24 +64,19 @@ class PredictDetectionJobParams(SceneOpsBaseModel):
 
     model_uri: str | None = None
     endpoint_url: str | None = None
-    extra: JsonDict = Field(default_factory=dict)
 
 
-class EvaluateDetectionJobParams(SceneOpsBaseModel):
-    dataset_id: str
-    dataset_version: str
-
+class EvaluateDetectionJobParams(BaseJobParams):
     inference_run_id: str
     evaluation_run_id: str | None = None
 
     evaluator_id: str = "center-distance"
     match_distance_m: float = 2.0
-    extra: JsonDict = Field(default_factory=dict)
 
 
 JobParams = (
     IngestDatasetJobParams
-    | ValidateDatasetManifestJobParams
+    | ValidateDatasetJobParams
     | PredictDetectionJobParams
     | EvaluateDetectionJobParams
 )
@@ -83,8 +86,8 @@ def parse_job_params(job_type: JobType, params: JsonDict) -> JobParams:
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobParams.model_validate(params)
 
-    if job_type == JobType.VALIDATE_DATASET_MANIFEST:
-        return ValidateDatasetManifestJobParams.model_validate(params)
+    if job_type == JobType.VALIDATE_DATASET:
+        return ValidateDatasetJobParams.model_validate(params)
 
     if job_type == JobType.PREDICT_DETECTION:
         return PredictDetectionJobParams.model_validate(params)

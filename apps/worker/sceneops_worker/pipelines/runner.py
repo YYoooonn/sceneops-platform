@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from sceneops_core.schemas.common import ErrorInfo
+from sceneops_core.schemas.jobs import JobType, ValidateDatasetJobResult
 from sceneops_core.schemas.pipelines import (
     PipelineRunManifest,
     PipelineRunStatus,
+    PipelineStepResult,
     PipelineStepRunManifest,
     PipelineStepRunStatus,
 )
@@ -15,7 +17,12 @@ from sceneops_worker.jobs.store import JobStore
 from sceneops_worker.pipelines.context import PipelineExecutionContext
 from sceneops_worker.pipelines.planning import PipelineJobPlanner
 from sceneops_worker.pipelines.propagation import PipelineResultPropagator
+from sceneops_worker.pipelines.results import (
+    build_pipeline_result,
+    build_pipeline_step_result,
+)
 from sceneops_worker.pipelines.store import PipelineStore
+from sceneops_worker.pipelines.errors import PipelineBlockedByValidationError
 
 
 class PipelineRunner:
@@ -44,26 +51,35 @@ class PipelineRunner:
 
         pipeline_run = await self._mark_pipeline_running(pipeline_run)
         context = PipelineExecutionContext.from_pipeline_run(pipeline_run)
+        step_results: list[PipelineStepResult] = []
 
         try:
             steps = await self.pipeline_store.list_steps(pipeline_run_id)
             steps = sorted(steps, key=lambda step: step.step_order)
 
             for step in steps:
-                await self._run_step(
+                saved_step = await self._run_step(
                     pipeline_run=pipeline_run,
                     step=step,
                     context=context,
                 )
 
+                if saved_step.result is not None:
+                    step_results.append(
+                        PipelineStepResult.model_validate(saved_step.result)
+                    )
+
             return await self._mark_pipeline_succeeded(
                 pipeline_run,
                 context=context,
+                step_results=step_results,
             )
 
         except Exception as error:
             await self._mark_pipeline_failed(
                 pipeline_run,
+                context=context,
+                step_results=step_results,
                 error=ErrorInfo(
                     type=error.__class__.__name__,
                     message=str(error),
@@ -94,6 +110,7 @@ class PipelineRunner:
         step: PipelineStepRunManifest,
         context: PipelineExecutionContext,
     ) -> PipelineStepRunManifest:
+        # before run
         self._validate_dependencies_succeeded(step=step, context=context)
 
         step = await self._mark_step_running(step)
@@ -121,15 +138,7 @@ class PipelineRunner:
                 )
 
             step.status = PipelineStepRunStatus.SUCCEEDED
-            step.result = {
-                "job_id": finished_job.job_id,
-                "job_status": (
-                    finished_job.status.value
-                    if hasattr(finished_job.status, "value")
-                    else str(finished_job.status)
-                ),
-                "job_result": finished_job.result,
-            }
+            step.result = build_pipeline_step_result(step=step, job=finished_job)
             step.error = None
             step.finished_at = utc_now()
             step.updated_at = step.finished_at
@@ -147,7 +156,16 @@ class PipelineRunner:
                 result=saved.result,
             )
 
+            # after run
+            self._raise_if_validation_blocked(
+                job_type=step.job_type,
+                result=finished_job.result,
+            )
+
             return saved
+
+        except PipelineBlockedByValidationError:
+            raise
 
         except Exception as error:
             step.status = PipelineStepRunStatus.FAILED
@@ -160,6 +178,28 @@ class PipelineRunner:
 
             await self.pipeline_store.save_step(step)
             raise
+
+    def _raise_if_validation_blocked(
+        self,
+        *,
+        job_type: JobType,
+        result: dict | None,
+    ) -> None:
+        if result is None:
+            return
+
+        if job_type != JobType.VALIDATE_DATASET:
+            return
+
+        parsed = ValidateDatasetJobResult.model_validate(result)
+
+        if parsed.should_block_pipeline:
+            raise RuntimeError(
+                "Dataset validation blocked pipeline: "
+                f"dataset={parsed.dataset_id}:{parsed.dataset_version}, "
+                f"status={parsed.status.value}, "
+                f"report={parsed.validation_report_uri}"
+            )
 
     def _validate_dependencies_succeeded(
         self,
@@ -212,35 +252,19 @@ class PipelineRunner:
         pipeline_run: PipelineRunManifest,
         *,
         context: PipelineExecutionContext,
+        step_results: list[PipelineStepResult],
     ) -> PipelineRunManifest:
         now = utc_now()
-        steps = await self.pipeline_store.list_steps(pipeline_run.pipeline_run_id)
-
         pipeline_run.status = PipelineRunStatus.SUCCEEDED
-        pipeline_run.result = {
-            "dataset_manifest_uri": context.get("dataset_manifest_uri"),
-            "inference_run_id": context.get("inference_run_id"),
-            "prediction_manifest_uri": context.get("prediction_manifest_uri"),
-            "evaluation_run_id": context.get("evaluation_run_id"),
-            "evaluation_manifest_uri": context.get("evaluation_manifest_uri"),
-            "metrics": context.get("metrics"),
-            "steps": [
-                {
-                    "step_name": step.step_name,
-                    "status": (
-                        step.status.value
-                        if hasattr(step.status, "value")
-                        else str(step.status)
-                    ),
-                    "job_id": step.job_id,
-                    "result": step.result,
-                }
-                for step in sorted(steps, key=lambda item: item.step_order)
-            ],
-        }
         pipeline_run.error = None
         pipeline_run.finished_at = now
         pipeline_run.updated_at = now
+        pipeline_run.result = build_pipeline_result(
+            pipeline_run=pipeline_run,
+            context=context,
+            steps=step_results,
+            status=PipelineRunStatus.SUCCEEDED,
+        )
 
         return await self.pipeline_store.save_pipeline_run(pipeline_run)
 
@@ -248,6 +272,8 @@ class PipelineRunner:
         self,
         pipeline_run: PipelineRunManifest,
         *,
+        context: PipelineExecutionContext,
+        step_results: list[PipelineStepResult],
         error: ErrorInfo,
     ) -> PipelineRunManifest:
         now = utc_now()
@@ -255,5 +281,10 @@ class PipelineRunner:
         pipeline_run.error = error
         pipeline_run.finished_at = now
         pipeline_run.updated_at = now
-
+        pipeline_run.result = build_pipeline_result(
+            pipeline_run=pipeline_run,
+            context=context,
+            steps=step_results,
+            status=PipelineRunStatus.FAILED,
+        )
         return await self.pipeline_store.save_pipeline_run(pipeline_run)

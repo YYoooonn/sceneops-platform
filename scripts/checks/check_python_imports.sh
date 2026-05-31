@@ -12,7 +12,7 @@ import celery
 print('api imports ok')
 "
 
-docker compose -f "$COMPOSE_FILE" --profile debug run --rm worker-cli python -c "
+docker compose -f "$COMPOSE_FILE" --profile debug run --rm --entrypoint python worker-cli -c "
 import sceneops_worker
 import sceneops_core
 import sceneops_db

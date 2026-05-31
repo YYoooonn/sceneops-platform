@@ -1,241 +1,139 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
-API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-API_PREFIX="${API_PREFIX:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
 
+API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 DATASET_ID="${DATASET_ID:-nuscenes}"
 DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-
 MODEL_ID="${MODEL_ID:-mock-detector}"
-MODEL_VERSION="${MODEL_VERSION:-v0}"
 MODEL_BACKEND="${MODEL_BACKEND:-mock}"
 MODEL_NAME="${MODEL_NAME:-Mock Detector}"
 MODEL_TASK_TYPE="${MODEL_TASK_TYPE:-detection}"
+MODEL_VERSION="${MODEL_VERSION:-v0}"
+MAX_SAMPLES="${MAX_SAMPLES:-2}"
 
-PIPELINE_TYPE="${PIPELINE_TYPE:-detection_validation}"
-MAX_SAMPLES="${MAX_SAMPLES:-3}"
-MATCH_DISTANCE_M="${MATCH_DISTANCE_M:-2.0}"
-
-PIPELINE_CREATE_PATH="${PIPELINE_CREATE_PATH:-/pipelines/runs}"
-PIPELINE_GET_PATH_TEMPLATE="${PIPELINE_GET_PATH_TEMPLATE:-/pipelines/runs/__PIPELINE_RUN_ID__}"
-PIPELINE_EXECUTE_PATH_TEMPLATE="${PIPELINE_EXECUTE_PATH_TEMPLATE:-/pipelines/runs/__PIPELINE_RUN_ID__/execute}"
-INFERENCE_RUNS_PATH="${INFERENCE_RUNS_PATH:-/runs/inference}"
-EVALUATION_RUNS_PATH="${EVALUATION_RUNS_PATH:-/runs/evaluations}"
-
-POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-3}"
-POLL_MAX_ATTEMPTS="${POLL_MAX_ATTEMPTS:-60}"
-
-url() {
-  local path="$1"
-  echo "${API_BASE_URL}${API_PREFIX}${path}"
-}
-
-pretty_json() {
-  python -m json.tool
-}
-
-request_json() {
-  local method="$1"
-  local path="$2"
-  local payload="${3:-}"
-
-  local tmp_body
-  tmp_body="$(mktemp)"
-
-  local status_code
-
-  if [ -n "${payload}" ]; then
-    status_code="$(
-      curl -sS -o "${tmp_body}" -w "%{http_code}" \
-        -X "${method}" "$(url "${path}")" \
-        -H "Content-Type: application/json" \
-        -d "${payload}"
-    )"
-  else
-    status_code="$(
-      curl -sS -o "${tmp_body}" -w "%{http_code}" \
-        -X "${method}" "$(url "${path}")" \
-        -H "Content-Type: application/json"
-    )"
-  fi
-
-  if [ "${status_code}" -lt 200 ] || [ "${status_code}" -ge 300 ]; then
-    echo "HTTP ${status_code} ${method} $(url "${path}")" >&2
-    cat "${tmp_body}" >&2
-    echo "" >&2
-    rm -f "${tmp_body}"
-    exit 1
-  fi
-
-  cat "${tmp_body}"
-  rm -f "${tmp_body}"
-}
-
-replace_pipeline_run_id() {
-  local template="$1"
-  local pipeline_run_id="$2"
-
-  echo "${template//__PIPELINE_RUN_ID__/${pipeline_run_id}}"
-}
-
-extract_pipeline_run_id() {
-  python -c '
-import json, sys
-data = json.load(sys.stdin)
-
-candidates = [
-    data.get("pipelineRunId"),
-    data.get("pipeline_run_id"),
-    data.get("id"),
-]
-
-if isinstance(data.get("pipelineRun"), dict):
-    candidates.extend([
-        data["pipelineRun"].get("pipelineRunId"),
-        data["pipelineRun"].get("pipeline_run_id"),
-        data["pipelineRun"].get("id"),
-    ])
-
-if isinstance(data.get("pipeline_run"), dict):
-    candidates.extend([
-        data["pipeline_run"].get("pipelineRunId"),
-        data["pipeline_run"].get("pipeline_run_id"),
-        data["pipeline_run"].get("id"),
-    ])
-
-for value in candidates:
-    if value:
-        print(value)
-        sys.exit(0)
-
-raise SystemExit(f"Could not extract pipeline run id from response: {data}")
-'
-}
-
-extract_status() {
-  python -c '
-import json, sys
-data = json.load(sys.stdin)
-
-candidates = [data.get("status")]
-
-if isinstance(data.get("pipelineRun"), dict):
-    candidates.append(data["pipelineRun"].get("status"))
-
-if isinstance(data.get("pipeline_run"), dict):
-    candidates.append(data["pipeline_run"].get("status"))
-
-for value in candidates:
-    if value:
-        print(value)
-        sys.exit(0)
-
-print("unknown")
-'
-}
+echo "🚀 Running mock detection validation pipeline E2E with Celery"
+echo "API_BASE_URL=$API_BASE_URL"
+echo "API_PREFIX=${API_PREFIX:-/api/v1}"
+echo "DATASET_ID=$DATASET_ID"
+echo "DATASET_VERSION=$DATASET_VERSION"
+echo "MODEL_ID=$MODEL_ID"
+echo "MODEL_VERSION=$MODEL_VERSION"
+echo "MAX_SAMPLES=$MAX_SAMPLES"
 
 echo ""
-echo "== 0. Check compose services =="
-docker compose -f "${COMPOSE_FILE}" ps
-
-echo ""
-echo "== 1. Register mock model fixture =="
-API_BASE_URL="${API_BASE_URL}" \
-API_PREFIX="${API_PREFIX}" \
-MODEL_ID="${MODEL_ID}" \
-MODEL_VERSION="${MODEL_VERSION}" \
-MODEL_BACKEND="${MODEL_BACKEND}" \
-MODEL_NAME="${MODEL_NAME}" \
-MODEL_TASK_TYPE="${MODEL_TASK_TYPE}" \
-scripts/fixtures/register_dummy_model.sh
-
-echo ""
-echo "== 2. Create mock pipeline run =="
-PIPELINE_CREATE_RESPONSE="$(
-  request_json POST "${PIPELINE_CREATE_PATH}" "{
-    \"type\": \"${PIPELINE_TYPE}\",
-    \"datasetId\": \"${DATASET_ID}\",
-    \"datasetVersion\": \"${DATASET_VERSION}\",
-    \"modelId\": \"${MODEL_ID}\",
-    \"modelVersion\": \"${MODEL_VERSION}\",
-    \"params\": {
-      \"predict\": {
-        \"inferenceBackend\": \"${MODEL_BACKEND}\",
-        \"maxSamples\": ${MAX_SAMPLES}
-      },
-      \"evaluate\": {
-        \"matchDistanceM\": ${MATCH_DISTANCE_M},
-        \"evaluatorId\": \"center-distance\"
+echo "📦 Registering mock model..."
+MODEL_RESPONSE="$(
+  curl -sS -X POST "$(api_url "$API_BASE_URL" "/models")" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"modelId\": \"$MODEL_ID\",
+      \"taskType\": \"$MODEL_TASK_TYPE\",
+      \"name\": \"$MODEL_NAME\",
+      \"description\": \"Mock detector model for SceneOps E2E tests\",
+      \"metadata\": {
+        \"e2e\": true,
+        \"runtime\": \"mock\"
       }
+    }"
+)"
+echo "$MODEL_RESPONSE" | jq .
+
+echo ""
+echo "📦 Registering ONNX model version..."
+MODEL_VERSION_RESPONSE="$(
+  curl -sS -X POST "$(api_url "$API_BASE_URL" "/models/$MODEL_ID/versions")" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"version\": \"${MODEL_VERSION}\",
+      \"backend\": \"${MODEL_BACKEND}\",
+      \"status\": \"ready\",
+      \"metadata\": {
+        \"e2e\": true,
+        \"runtime\": \"mock\"
+      }
+    }"
+)"
+echo "$MODEL_VERSION_RESPONSE" | jq .
+
+PAYLOAD="$(
+  cat <<JSON
+{
+  "type": "detection_validation",
+  "datasetId": "$DATASET_ID",
+  "datasetVersion": "$DATASET_VERSION",
+  "modelId": "$MODEL_ID",
+  "modelVersion": "$MODEL_VERSION",
+  "params": {
+    "validate": {
+      "validateSamples": true,
+      "requireTargetChannels": ["CAM_FRONT", "LIDAR_TOP"]
+    },
+    "predict": {
+      "inferenceBackend": "mock",
+      "maxSamples": $MAX_SAMPLES
+    },
+    "evaluate": {
+      "maxSamples": $MAX_SAMPLES,
+      "matchDistanceM": 2.0
     }
-  }"
+  }
+}
+JSON
 )"
 
-echo "${PIPELINE_CREATE_RESPONSE}" | pretty_json
-PIPELINE_RUN_ID="$(echo "${PIPELINE_CREATE_RESPONSE}" | extract_pipeline_run_id)"
-echo "Created pipeline run: ${PIPELINE_RUN_ID}"
+echo "📦 Creating detection validation pipeline run..."
+CREATE_RESPONSE="$(create_pipeline_run "$API_BASE_URL" "$PAYLOAD")"
+echo "$CREATE_RESPONSE" | jq .
 
-echo ""
-echo "== 3. Dispatch pipeline run through Celery =="
-EXECUTE_PATH="$(replace_pipeline_run_id "${PIPELINE_EXECUTE_PATH_TEMPLATE}" "${PIPELINE_RUN_ID}")"
-PIPELINE_EXECUTE_RESPONSE="$(
-  request_json POST "${EXECUTE_PATH}"
+PIPELINE_RUN_ID="$(extract_pipeline_run_id "$CREATE_RESPONSE")"
+echo "✅ pipeline_run_id=$PIPELINE_RUN_ID"
+
+echo "🚀 Dispatching pipeline run..."
+DISPATCH_RESPONSE="$(dispatch_pipeline_run "$API_BASE_URL" "$PIPELINE_RUN_ID")"
+echo "$DISPATCH_RESPONSE" | jq .
+
+echo "⏳ Waiting for pipeline terminal state..."
+PIPELINE_JSON="$(poll_pipeline_terminal "$API_BASE_URL" "$PIPELINE_RUN_ID")"
+echo "$PIPELINE_JSON" | jq .
+
+assert_pipeline_succeeded "$PIPELINE_JSON" \
+  'mock detection validation pipeline should succeed'
+
+# echo "🔎 Checking validation lineage..."
+# assert_validation_ready_from_pipeline "$PIPELINE_JSON"
+
+# VALIDATION_RUN_ID="$(
+#   require_json_field \
+#     "$PIPELINE_JSON" \
+#     "$(pipeline_validation_field_expr "validation_run_id")" \
+#     'validation_run_id'
+# )"
+
+INFERENCE_RUN_ID="$(
+  require_json_field \
+    "$PIPELINE_JSON" \
+    "$(pipeline_inference_field_expr "inference_run_id")" \
+    'inference_run_id'
 )"
-echo "${PIPELINE_EXECUTE_RESPONSE}" | pretty_json
 
-echo ""
-echo "== 4. Poll pipeline status =="
-GET_PATH="$(replace_pipeline_run_id "${PIPELINE_GET_PATH_TEMPLATE}" "${PIPELINE_RUN_ID}")"
+EVALUATION_RUN_ID="$(
+  require_json_field \
+    "$PIPELINE_JSON" \
+    "$(pipeline_evaluation_field_expr "evaluation_run_id")" \
+    'evaluation_run_id'
+)"
 
-for attempt in $(seq 1 "${POLL_MAX_ATTEMPTS}"); do
-  STATUS_RESPONSE="$(curl -sS "$(url "${GET_PATH}")")"
-  STATUS="$(echo "${STATUS_RESPONSE}" | extract_status)"
+# echo "✅ validation_run_id=$VALIDATION_RUN_ID"
+echo "✅ inference_run_id=$INFERENCE_RUN_ID"
+echo "✅ evaluation_run_id=$EVALUATION_RUN_ID"
 
-  echo "attempt=${attempt}/${POLL_MAX_ATTEMPTS} status=${STATUS}"
+# echo "🔎 Fetching validation run..."
+# VALIDATION_RUN_JSON="$(fetch_validation_run "$API_BASE_URL" "$VALIDATION_RUN_ID")"
+# echo "$VALIDATION_RUN_JSON" | jq .
 
-  if [ "${STATUS}" = "succeeded" ]; then
-    echo ""
-    echo "Pipeline succeeded."
-    echo "${STATUS_RESPONSE}" | pretty_json
-    break
-  fi
+# assert_validation_run_ready "$VALIDATION_RUN_JSON"
 
-  if [ "${STATUS}" = "failed" ] || [ "${STATUS}" = "canceled" ]; then
-    echo ""
-    echo "Pipeline finished with status=${STATUS}"
-    echo "${STATUS_RESPONSE}" | pretty_json
-    echo ""
-    echo "Recent worker logs:"
-    docker compose -f "${COMPOSE_FILE}" logs --tail=120 worker-celery
-    exit 1
-  fi
-
-  if [ "${attempt}" = "${POLL_MAX_ATTEMPTS}" ]; then
-    echo ""
-    echo "Polling timed out."
-    echo "${STATUS_RESPONSE}" | pretty_json
-    echo ""
-    echo "Recent worker logs:"
-    docker compose -f "${COMPOSE_FILE}" logs --tail=120 worker-celery
-    exit 1
-  fi
-
-  sleep "${POLL_INTERVAL_SECONDS}"
-done
-
-echo ""
-echo "== 5. List inference runs =="
-curl -sS "$(url "${INFERENCE_RUNS_PATH}")" | pretty_json || true
-
-echo ""
-echo "== 6. List evaluation runs =="
-curl -sS "$(url "${EVALUATION_RUNS_PATH}")" | pretty_json || true
-
-echo ""
-echo "== 7. Recent worker logs =="
-docker compose -f "${COMPOSE_FILE}" logs --tail=80 worker-celery
-
-echo ""
-echo "E2E mock + Celery pipeline test completed."
+echo "✅ Mock detection validation E2E passed"

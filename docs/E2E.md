@@ -32,6 +32,12 @@ If using nuScenes mini, place the dataset under:
 data/raw/nuscenes/
 ```
 
+Register nuscenes dataset:
+
+```bash
+make register-nuscenes-dataset
+```
+
 ## Services used by E2E tests
 
 The local compose stack runs:
@@ -50,7 +56,7 @@ sceneops.pipeline_runs
 sceneops.jobs
 ```
 
-## 1. Dataset ingestion E2E
+## 1. Dataset ingestion + validation E2E
 
 Command:
 

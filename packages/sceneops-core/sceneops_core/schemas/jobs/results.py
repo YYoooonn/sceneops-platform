@@ -4,27 +4,37 @@ from pydantic import Field
 
 from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.datasets import DatasetType
+from sceneops_core.schemas.datasets import (
+    DatasetType,
+    DatasetValidationScope,
+    DatasetValidationStatus
+)
 from sceneops_core.schemas.jobs.enums import JobType
 
-
-class IngestDatasetJobResult(SceneOpsBaseModel):
+class BaseJobResult(SceneOpsBaseModel):
     dataset_id: str
     dataset_version: str
+
+    result_summary: JsonDict = Field(default_factory=dict)
+
+
+class IngestDatasetJobResult(BaseJobResult):
     dataset_type: DatasetType
 
     dataset_manifest_uri: str
     scene_count: int | None = None
     sample_count: int
 
-    result_summary: JsonDict = Field(default_factory=dict)
 
-
-class ValidateDatasetManifestJobResult(SceneOpsBaseModel):
-    dataset_id: str
-    dataset_version: str
-
+class ValidateDatasetJobResult(BaseJobResult):
     dataset_manifest_uri: str
+
+    validation_run_id: str
+    validation_report_uri: str
+
+    status: DatasetValidationStatus
+    validation_scope: DatasetValidationScope
+    should_block_pipeline: bool
 
     scene_count: int
     sample_count: int
@@ -32,16 +42,18 @@ class ValidateDatasetManifestJobResult(SceneOpsBaseModel):
 
     validated_scene_count: int = 0
     validated_sample_count: int = 0
+
+    issue_count: int = 0
+    error_count: int = 0
+    warning_count: int = 0
+
+    missing_scene_count: int = 0
     missing_sample_count: int = 0
+    missing_channel_count: int = 0
+    missing_artifact_count: int = 0
 
-    status: str = "ready"
-    result_summary: JsonDict = Field(default_factory=dict)
 
-
-class PredictDetectionJobResult(SceneOpsBaseModel):
-    dataset_id: str
-    dataset_version: str
-
+class PredictDetectionJobResult(BaseJobResult):
     model_id: str
     model_version: str
 
@@ -49,25 +61,20 @@ class PredictDetectionJobResult(SceneOpsBaseModel):
     prediction_manifest_uri: str
 
     sample_count: int
-    result_summary: JsonDict = Field(default_factory=dict)
 
 
-class EvaluateDetectionJobResult(SceneOpsBaseModel):
-    dataset_id: str
-    dataset_version: str
-
+class EvaluateDetectionJobResult(BaseJobResult):
     inference_run_id: str
     evaluation_run_id: str
     evaluation_manifest_uri: str
 
     metrics: JsonDict = Field(default_factory=dict)
     sample_count: int | None = None
-    result_summary: JsonDict = Field(default_factory=dict)
 
 
 JobResult = (
     IngestDatasetJobResult
-    | ValidateDatasetManifestJobResult
+    | ValidateDatasetJobResult
     | PredictDetectionJobResult
     | EvaluateDetectionJobResult
 )
@@ -77,8 +84,8 @@ def parse_job_result(job_type: JobType, result: JsonDict) -> JobResult:
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobResult.model_validate(result)
 
-    if job_type == JobType.VALIDATE_DATASET_MANIFEST:
-        return ValidateDatasetManifestJobResult.model_validate(result)
+    if job_type == JobType.VALIDATE_DATASET:
+        return ValidateDatasetJobResult.model_validate(result)
 
     if job_type == JobType.PREDICT_DETECTION:
         return PredictDetectionJobResult.model_validate(result)

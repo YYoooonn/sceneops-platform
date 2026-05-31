@@ -22,7 +22,7 @@ def build_default_steps(job_type: JobType) -> list[JobStep]:
     if job_type == JobType.INGEST_DATASET:
         return [JobStep(name=name) for name in INGEST_DATASET_STEPS]
 
-    if job_type == JobType.VALIDATE_DATASET_MANIFEST:
+    if job_type == JobType.VALIDATE_DATASET:
         return [JobStep(name=name) for name in VALIDATE_DATASET_STEPS]
 
     if job_type == JobType.PREDICT_DETECTION:

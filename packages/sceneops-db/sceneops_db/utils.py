@@ -20,8 +20,14 @@ def extract_datetime(value: Any) -> datetime | None:
     return None
 
 
-def enum_to_str(value: Any) -> str:
-    return value.value if hasattr(value, "value") else str(value)
+def enum_to_str(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    if isinstance(value, Enum):
+        return value.value
+
+    return str(value)
 
 
 def to_error_info(value: Any) -> ErrorInfo | None:

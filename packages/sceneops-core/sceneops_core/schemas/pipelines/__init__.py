@@ -17,6 +17,17 @@ from sceneops_core.schemas.pipelines.responses import (
     PipelineRunListResponse,
     PipelineStepRunListResponse,
 )
+from sceneops_core.schemas.pipelines.results import (
+    PipelineResultSummary,
+    PipelineResultLineage,
+    PipelineResultOutputs,
+    PipelineRunResult,
+    PipelineDatasetOutput,
+    PipelineEvaluationOutput,
+    PipelineInferenceOutput,
+    PipelineStepResult,
+    PipelineValidationOutput,
+)
 
 __all__ = [
     "PipelineType",
@@ -30,4 +41,13 @@ __all__ = [
     "PipelineRunListResponse",
     "PipelineStepRunListResponse",
     "PipelineRunDetailResponse",
+    "PipelineResultSummary",
+    "PipelineResultLineage",
+    "PipelineResultOutputs",
+    "PipelineRunResult",
+    "PipelineDatasetOutput",
+    "PipelineEvaluationOutput",
+    "PipelineInferenceOutput",
+    "PipelineStepResult",
+    "PipelineValidationOutput",
 ]

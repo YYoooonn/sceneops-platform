@@ -5,7 +5,7 @@ from enum import StrEnum
 
 class JobType(StrEnum):
     INGEST_DATASET = "ingest_dataset"
-    VALIDATE_DATASET_MANIFEST = "validate_dataset_manifest"
+    VALIDATE_DATASET = "validate_dataset"
     PREDICT_DETECTION = "predict_detection"
     EVALUATE_DETECTION = "evaluate_detection"
 

@@ -223,14 +223,17 @@ worker-run-pipeline:
 
 .PHONY: check-env
 check-env:
+	chmod +x scripts/checks/check_env.sh
 	scripts/checks/check_env.sh
 
 .PHONY: check-imports
 check-imports:
+	chmod +x scripts/checks/check_python_imports.sh
 	scripts/checks/check_python_imports.sh
 
 .PHONY: check-celery
 check-celery:
+	chmod +x scripts/checks/check_celery_broker.sh
 	scripts/checks/check_celery_broker.sh
 
 # --------------------
@@ -248,14 +251,17 @@ register-nuscenes-dataset:
 
 .PHONY: e2e-dataset-ingest
 e2e-dataset-ingest:
+	chmod +x scripts/e2e/e2e_ingestion_pipeline_celery.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_ingestion_pipeline_celery.sh
 
 .PHONY: e2e-mock-celery
 e2e-mock-celery:
+	chmod +x scripts/e2e/e2e_mock_pipeline_celery.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_mock_pipeline_celery.sh
 
 .PHONY: e2e-onnx-celery
 e2e-onnx-celery:
+	chmod +x scripts/e2e/e2e_onnx_pipeline_celery.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_onnx_pipeline_celery.sh
 
 # --------------------
@@ -264,6 +270,7 @@ e2e-onnx-celery:
 
 .PHONY: show-runs
 show-runs:
+	chmod +x scripts/debug/show_runs.sh
 	API_PREFIX=$(API_PREFIX) scripts/debug/show_runs.sh
 
 .PHONY: show-pipeline
@@ -280,6 +287,7 @@ show-job-events:
 		echo "JOB_ID is required. Usage: make show-job-events JOB_ID=job-xxx"; \
 		exit 1; \
 	fi
+	chmod +x scripts/debug/show_job_events.sh
 	API_PREFIX=$(API_PREFIX) JOB_ID=$(JOB_ID) scripts/debug/show_job_events.sh
 
 .PHONY: reset-local

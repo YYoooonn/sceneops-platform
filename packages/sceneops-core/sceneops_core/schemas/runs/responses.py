@@ -3,6 +3,7 @@ from __future__ import annotations
 from sceneops_core.schemas.base import SceneOpsBaseModel
 from sceneops_core.schemas.common import JsonDict
 from sceneops_core.schemas.runs.records import (
+    DatasetValidationRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,
 )
@@ -24,6 +25,15 @@ class EvaluationRunListResponse(SceneOpsBaseModel):
 
 class EvaluationRunDetailResponse(SceneOpsBaseModel):
     run: EvaluationRunRecord
+
+
+class DatasetValidationRunListResponse(SceneOpsBaseModel):
+    runs: list[DatasetValidationRunRecord]
+    count: int
+
+
+class DatasetValidationRunDetailResponse(SceneOpsBaseModel):
+    run: DatasetValidationRunRecord
 
 
 class RunArtifactResponse(SceneOpsBaseModel):

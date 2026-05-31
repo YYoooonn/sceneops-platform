@@ -36,20 +36,18 @@ The current implementation includes:
 
 - FastAPI control plane
 - PostgreSQL metadata store
-- Redis/Celery asynchronous execution
-- Worker runtime for jobs and pipelines
-- Dataset registry
+- Redis / Celery asynchronous execution
+- Dataset registry and dataset version management
 - Model registry
-- Pipeline run and step run tracking
-- Job lifecycle and job event tracking
-- Inference run tracking
-- Evaluation run tracking
-- Local artifact storage under `/data`
-- Dataset ingestion pipeline E2E script
-- Mock detection validation pipeline E2E script
-- ONNX Runtime dummy detector pipeline E2E script
-- Debug scripts for pipeline/job/run inspection
-- Airflow execution dispatcher scaffold for future orchestration backend expansion
+- Job and pipeline orchestration
+- Dataset ingestion pipeline
+- Dataset validation as a first-class Dataset Quality Run
+- Validation report artifact generation
+- Validation-based pipeline gating
+- Mock detection inference pipeline
+- ONNX Runtime dummy inference pipeline
+- Detection evaluation run tracking
+- Structured pipeline result with summary, lineage, outputs, and step traces
 
 ## Target architecture
 
@@ -231,6 +229,8 @@ create dataset_ingestion pipeline run
   -> worker executes ingestion
   -> dataset/version metadata is updated
   -> dataset manifest artifact is generated
+  -> dataset/version validation check
+  -> dataset validation report is generated
   -> pipeline status is polled until terminal state
 ```
 
@@ -238,6 +238,7 @@ create dataset_ingestion pipeline run
 
 ```text
 register mock detector model
+  -> register mock model version
   -> create detection_validation pipeline run
   -> dispatch through Celery
   -> run prediction with mock backend
@@ -286,15 +287,15 @@ The final system should support:
 
 ## Roadmap
 
-### Phase 0. Documentation and repository clarity
+### ~~Phase 0. Documentation and repository clarity~~
 
-- Rewrite README with current status, target architecture, and roadmap
-- Add architecture documentation
-- Add E2E workflow documentation
-- Add dataset/artifact contract documentation
-- Add model/evaluation contract documentation
-- Add operations documentation
-- Align Makefile, docker-compose, scripts, and docs
+~~- Rewrite README with current status, target architecture, and roadmap~~
+~~- Add architecture documentation~~
+~~- Add E2E workflow documentation~~
+~~- Add dataset/artifact contract documentation~~
+~~- Add model/evaluation contract documentation~~
+~~- Add operations documentation~~
+~~- Align Makefile, docker-compose, scripts, and docs~~
 
 ### Phase 1. Sensor dataset pipeline
 

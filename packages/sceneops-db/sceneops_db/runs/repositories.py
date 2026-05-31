@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Protocol
 
 from sceneops_core.schemas.runs import (
+    DatasetValidationRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,
     RunStatus,
 )
-
+from sceneops_core.schemas.datasets.validation import DatasetValidationStatus
 
 class InferenceRunRepository(Protocol):
     async def upsert(self, record: InferenceRunRecord) -> InferenceRunRecord:
@@ -45,4 +46,27 @@ class EvaluationRunRepository(Protocol):
         inference_run_id: str | None = None,
         status: RunStatus | None = None,
     ) -> list[EvaluationRunRecord]:
+        ...
+
+class DatasetValidationRunRepository(Protocol):
+    async def upsert(
+        self,
+        record: DatasetValidationRunRecord,
+    ) -> DatasetValidationRunRecord:
+        ...
+
+    async def get(
+        self,
+        validation_run_id: str,
+    ) -> DatasetValidationRunRecord:
+        ...
+
+    async def list(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status: RunStatus | None = None,
+        validation_status: DatasetValidationStatus | None = None,
+    ) -> list[DatasetValidationRunRecord]:
         ...

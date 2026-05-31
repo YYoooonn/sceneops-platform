@@ -5,6 +5,7 @@ from sceneops_core.ids.pipelines import (
     generate_pipeline_step_run_id,
 )
 from sceneops_core.pipelines import get_pipeline_definition
+from sceneops_core.schemas.jobs import JobType
 from sceneops_core.schemas.pipelines import (
     CreatePipelineRunRequest,
     PipelineRunDetailResponse,
@@ -73,7 +74,7 @@ class PipelineService:
                     step_name=step_def.name,
                     step_order=step_def.order,
                     status=PipelineStepRunStatus.PENDING,
-                    job_type=step_def.job_type,
+                    job_type=JobType(step_def.job_type),
                     job_id=None,
                     depends_on_step_names=step_def.depends_on,
                     params=step_params,

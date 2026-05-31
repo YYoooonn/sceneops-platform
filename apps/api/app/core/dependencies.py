@@ -46,8 +46,10 @@ from sceneops_db.pipelines import (
     PostgresPipelineStepRunRepository,
 )
 from sceneops_db.runs import (
+    DatasetValidationRunRepository,
     EvaluationRunRepository,
     InferenceRunRepository,
+    PostgresDatasetValidationRunRepository,
     PostgresEvaluationRunRepository,
     PostgresInferenceRunRepository,
 )
@@ -111,6 +113,12 @@ async def get_evaluation_run_repository(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> EvaluationRunRepository:
     return PostgresEvaluationRunRepository(session)
+
+
+async def get_validation_run_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> DatasetValidationRunRepository:
+    return PostgresDatasetValidationRunRepository(session)
 
 
 async def get_model_repository(
@@ -225,10 +233,15 @@ def get_run_service(
         EvaluationRunRepository,
         Depends(get_evaluation_run_repository),
     ],
+    validation_repository: Annotated[
+        DatasetValidationRunRepository,
+        Depends(get_validation_run_repository),
+    ],
 ) -> RunService:
     return RunService(
         inference_repository=inference_repository,
         evaluation_repository=evaluation_repository,
+        validation_repository=validation_repository,
     )
 
 
@@ -258,6 +271,10 @@ def get_artifact_service(
         EvaluationRunRepository,
         Depends(get_evaluation_run_repository),
     ],
+    validation_run_repository: Annotated[
+        DatasetValidationRunRepository,
+        Depends(get_validation_run_repository),
+    ],
     artifact_store: Annotated[
         ArtifactStore,
         Depends(get_artifact_store),
@@ -267,5 +284,6 @@ def get_artifact_service(
         dataset_version_repository=dataset_version_repository,
         inference_run_repository=inference_run_repository,
         evaluation_run_repository=evaluation_run_repository,
+        validation_run_repository=validation_run_repository,
         artifact_store=artifact_store,
     )

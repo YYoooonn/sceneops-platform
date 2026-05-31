@@ -114,9 +114,9 @@ class PostgresPipelineStepRunRepository:
         return self._to_schema(model)
 
     def _to_model(self, manifest: PipelineStepRunManifest) -> PipelineStepRunModel:
-        result = manifest.result if isinstance(manifest.result, dict) else None
+        result = manifest.result.to_db_dict() if manifest.result else None
+        error = manifest.error.to_db_dict() if manifest.error else None
         params = manifest.params if isinstance(manifest.params, dict) else {}
-        error = manifest.error if isinstance(manifest.error, dict) else None
 
         return PipelineStepRunModel(
             id=manifest.pipeline_step_run_id,

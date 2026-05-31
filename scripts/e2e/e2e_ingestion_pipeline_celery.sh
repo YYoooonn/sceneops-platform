@@ -1,245 +1,100 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
-API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-API_PREFIX="${API_PREFIX:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
 
+API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 DATASET_ID="${DATASET_ID:-nuscenes}"
 DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-DATASET_TYPE="${DATASET_TYPE:-nuscenes}"
-
-PIPELINE_TYPE="${PIPELINE_TYPE:-dataset_ingestion}"
 MAX_SCENES="${MAX_SCENES:-2}"
-INGEST_MODE="${INGEST_MODE:-upsert}"
 
-VALIDATE_SAMPLES="${VALIDATE_SAMPLES:-true}"
-REQUIRE_TARGET_CHANNELS_JSON="${REQUIRE_TARGET_CHANNELS_JSON:-[\"CAM_FRONT\", \"LIDAR_TOP\"]}"
+echo "🚀 Running dataset ingestion pipeline E2E with Celery"
+echo "API_BASE_URL=$API_BASE_URL"
+echo "API_PREFIX=${API_PREFIX:-/api/v1}"
+echo "DATASET_ID=$DATASET_ID"
+echo "DATASET_VERSION=$DATASET_VERSION"
+echo "MAX_SCENES=$MAX_SCENES"
 
-PIPELINE_CREATE_PATH="${PIPELINE_CREATE_PATH:-/pipelines/runs}"
-PIPELINE_GET_PATH_TEMPLATE="${PIPELINE_GET_PATH_TEMPLATE:-/pipelines/runs/__PIPELINE_RUN_ID__}"
-PIPELINE_EXECUTE_PATH_TEMPLATE="${PIPELINE_EXECUTE_PATH_TEMPLATE:-/pipelines/runs/__PIPELINE_RUN_ID__/execute}"
-DATASET_VERSION_GET_PATH="${DATASET_VERSION_GET_PATH:-/datasets/${DATASET_ID}/versions/${DATASET_VERSION}}"
-
-POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-3}"
-POLL_MAX_ATTEMPTS="${POLL_MAX_ATTEMPTS:-60}"
-
-url() {
-  local path="$1"
-  echo "${API_BASE_URL}${API_PREFIX}${path}"
-}
-
-pretty_json() {
-  python -m json.tool
-}
-
-request_json() {
-  local method="$1"
-  local path="$2"
-  local payload="${3:-}"
-
-  local tmp_body
-  tmp_body="$(mktemp)"
-
-  local status_code
-
-  if [ -n "${payload}" ]; then
-    status_code="$(
-      curl -sS -o "${tmp_body}" -w "%{http_code}" \
-        -X "${method}" "$(url "${path}")" \
-        -H "Content-Type: application/json" \
-        -d "${payload}"
-    )"
-  else
-    status_code="$(
-      curl -sS -o "${tmp_body}" -w "%{http_code}" \
-        -X "${method}" "$(url "${path}")" \
-        -H "Content-Type: application/json"
-    )"
-  fi
-
-  if [ "${status_code}" -lt 200 ] || [ "${status_code}" -ge 300 ]; then
-    echo "HTTP ${status_code} ${method} $(url "${path}")" >&2
-    cat "${tmp_body}" >&2
-    echo "" >&2
-    rm -f "${tmp_body}"
-    exit 1
-  fi
-
-  cat "${tmp_body}"
-  rm -f "${tmp_body}"
-}
-
-replace_pipeline_run_id() {
-  local template="$1"
-  local pipeline_run_id="$2"
-
-  echo "${template//__PIPELINE_RUN_ID__/${pipeline_run_id}}"
-}
-
-extract_pipeline_run_id() {
-  python -c '
-import json, sys
-data = json.load(sys.stdin)
-
-candidates = [
-    data.get("pipelineRunId"),
-    data.get("pipeline_run_id"),
-    data.get("id"),
-]
-
-if isinstance(data.get("pipelineRun"), dict):
-    candidates.extend([
-        data["pipelineRun"].get("pipelineRunId"),
-        data["pipelineRun"].get("pipeline_run_id"),
-        data["pipelineRun"].get("id"),
-    ])
-
-if isinstance(data.get("pipeline_run"), dict):
-    candidates.extend([
-        data["pipeline_run"].get("pipelineRunId"),
-        data["pipeline_run"].get("pipeline_run_id"),
-        data["pipeline_run"].get("id"),
-    ])
-
-for value in candidates:
-    if value:
-        print(value)
-        sys.exit(0)
-
-raise SystemExit(f"Could not extract pipeline run id from response: {data}")
-'
-}
-
-extract_status() {
-  python -c '
-import json, sys
-data = json.load(sys.stdin)
-
-candidates = [data.get("status")]
-
-if isinstance(data.get("pipelineRun"), dict):
-    candidates.append(data["pipelineRun"].get("status"))
-
-if isinstance(data.get("pipeline_run"), dict):
-    candidates.append(data["pipeline_run"].get("status"))
-
-for value in candidates:
-    if value:
-        print(value)
-        sys.exit(0)
-
-print("unknown")
-'
-}
-
-echo ""
-echo "== 0. Check compose services =="
-docker compose -f "${COMPOSE_FILE}" ps
-
-echo ""
-echo "== 1. Create dataset_ingestion pipeline run =="
-
-PIPELINE_PAYLOAD="{
-  \"type\": \"${PIPELINE_TYPE}\",
-  \"datasetId\": \"${DATASET_ID}\",
-  \"datasetVersion\": \"${DATASET_VERSION}\",
-  \"params\": {
-    \"ingest\": {
-      \"datasetType\": \"${DATASET_TYPE}\",
-      \"maxScenes\": ${MAX_SCENES},
-      \"mode\": \"${INGEST_MODE}\"
+PAYLOAD="$(
+  cat <<JSON
+{
+  "type": "dataset_ingestion",
+  "datasetId": "$DATASET_ID",
+  "datasetVersion": "$DATASET_VERSION",
+  "params": {
+    "ingest": {
+      "datasetType": "nuscenes",
+      "maxScenes": $MAX_SCENES,
+      "mode": "upsert"
     },
-    \"validate\": {
-      \"validateSamples\": ${VALIDATE_SAMPLES},
-      \"requireTargetChannels\": ${REQUIRE_TARGET_CHANNELS_JSON}
+    "validate": {
+      "validateSamples": true,
+      "requireTargetChannels": ["CAM_FRONT", "LIDAR_TOP"]
     }
   }
-}"
-
-echo "${PIPELINE_PAYLOAD}" | pretty_json
-
-PIPELINE_CREATE_RESPONSE="$(
-  request_json POST "${PIPELINE_CREATE_PATH}" "${PIPELINE_PAYLOAD}"
+}
+JSON
 )"
 
-echo "${PIPELINE_CREATE_RESPONSE}" | pretty_json
+echo "📦 Creating pipeline run..."
+CREATE_RESPONSE="$(create_pipeline_run "$API_BASE_URL" "$PAYLOAD")"
+echo "$CREATE_RESPONSE" | jq .
 
-PIPELINE_RUN_ID="$(echo "${PIPELINE_CREATE_RESPONSE}" | extract_pipeline_run_id)"
-echo "Created pipeline run: ${PIPELINE_RUN_ID}"
+PIPELINE_RUN_ID="$(extract_pipeline_run_id "$CREATE_RESPONSE")"
+echo "✅ pipeline_run_id=$PIPELINE_RUN_ID"
 
-echo ""
-echo "== 2. Dispatch dataset_ingestion pipeline run through Celery =="
+echo "🚀 Dispatching pipeline run..."
+DISPATCH_RESPONSE="$(dispatch_pipeline_run "$API_BASE_URL" "$PIPELINE_RUN_ID")"
+echo "$DISPATCH_RESPONSE" | jq .
 
-EXECUTE_PATH="$(replace_pipeline_run_id "${PIPELINE_EXECUTE_PATH_TEMPLATE}" "${PIPELINE_RUN_ID}")"
+echo "⏳ Waiting for pipeline terminal state..."
+PIPELINE_JSON="$(poll_pipeline_terminal "$API_BASE_URL" "$PIPELINE_RUN_ID")"
+echo "$PIPELINE_JSON" | jq .
 
-echo "Execute path: ${EXECUTE_PATH}"
-echo "Execute URL: $(url "${EXECUTE_PATH}")"
+assert_pipeline_succeeded "$PIPELINE_JSON" \
+  'dataset ingestion pipeline should succeed'
 
-PIPELINE_EXECUTE_RESPONSE="$(
-  request_json POST "${EXECUTE_PATH}"
+echo "🔎 Checking validation lineage..."
+assert_validation_ready_from_pipeline "$PIPELINE_JSON"
+
+VALIDATION_RUN_ID="$(
+  require_json_field \
+    "$PIPELINE_JSON" \
+    "$(pipeline_validation_field_expr "validation_run_id")" \
+    'validation_run_id'
 )"
 
-echo "${PIPELINE_EXECUTE_RESPONSE}" | pretty_json
-
-echo ""
-echo "== 3. Poll pipeline status =="
-
-GET_PATH="$(replace_pipeline_run_id "${PIPELINE_GET_PATH_TEMPLATE}" "${PIPELINE_RUN_ID}")"
-
-echo "Get path: ${GET_PATH}"
-echo "Get URL: $(url "${GET_PATH}")"
-
-for attempt in $(seq 1 "${POLL_MAX_ATTEMPTS}"); do
-  STATUS_RESPONSE="$(curl -sS "$(url "${GET_PATH}")")"
-  STATUS="$(echo "${STATUS_RESPONSE}" | extract_status)"
-
-  echo "attempt=${attempt}/${POLL_MAX_ATTEMPTS} status=${STATUS}"
-
-  if [ "${STATUS}" = "succeeded" ]; then
-    echo ""
-    echo "Dataset ingestion pipeline succeeded."
-    echo "${STATUS_RESPONSE}" | pretty_json
-    break
-  fi
-
-  if [ "${STATUS}" = "failed" ] || [ "${STATUS}" = "canceled" ]; then
-    echo ""
-    echo "Dataset ingestion pipeline finished with status=${STATUS}"
-    echo "${STATUS_RESPONSE}" | pretty_json
-
-    echo ""
-    echo "Recent worker logs:"
-    docker compose -f "${COMPOSE_FILE}" logs --tail=180 worker-celery
-    exit 1
-  fi
-
-  if [ "${attempt}" = "${POLL_MAX_ATTEMPTS}" ]; then
-    echo ""
-    echo "Polling timed out."
-    echo "${STATUS_RESPONSE}" | pretty_json
-
-    echo ""
-    echo "Recent worker logs:"
-    docker compose -f "${COMPOSE_FILE}" logs --tail=180 worker-celery
-    exit 1
-  fi
-
-  sleep "${POLL_INTERVAL_SECONDS}"
-done
-
-echo ""
-echo "== 4. Check dataset version registry =="
-
-DATASET_VERSION_RESPONSE="$(
-  request_json GET "${DATASET_VERSION_GET_PATH}"
+VALIDATION_REPORT_URI="$(
+  require_json_field \
+    "$PIPELINE_JSON" \
+    "$(pipeline_validation_field_expr "validation_report_uri")" \
+    'validation_report_uri'
 )"
 
-echo "${DATASET_VERSION_RESPONSE}" | pretty_json
+echo "✅ validation_run_id=$VALIDATION_RUN_ID"
+echo "✅ validation_report_uri=$VALIDATION_REPORT_URI"
 
-echo ""
-echo "== 5. Recent worker logs =="
-docker compose -f "${COMPOSE_FILE}" logs --tail=120 worker-celery
+echo "🔎 Fetching validation run..."
+VALIDATION_RUN_JSON="$(fetch_validation_run "$API_BASE_URL" "$VALIDATION_RUN_ID")"
+echo "$VALIDATION_RUN_JSON" | jq .
 
-echo ""
-echo "E2E dataset_ingestion pipeline + Celery test completed."
+assert_validation_run_ready "$VALIDATION_RUN_JSON"
+
+echo "🔎 Fetching validation report..."
+VALIDATION_REPORT_JSON="$(fetch_validation_report "$API_BASE_URL" "$VALIDATION_RUN_ID")"
+echo "$VALIDATION_REPORT_JSON" | jq .
+
+assert_json_equals "$VALIDATION_REPORT_JSON" '.validation_run_id // .validationRunId' "$VALIDATION_RUN_ID" \
+  'validation report id should match'
+
+assert_json_equals "$VALIDATION_REPORT_JSON" '.status' 'ready' \
+  'validation report status should be ready'
+
+assert_json_not_empty "$VALIDATION_REPORT_JSON" '.summary.sample_count // .summary.sampleCount' \
+  'validation report summary.sample_count'
+
+assert_json_not_empty "$VALIDATION_REPORT_JSON" '.summary.validated_sample_count // .summary.validatedSampleCount' \
+  'validation report summary.validated_sample_count'
+
+echo "✅ Dataset ingestion + validation E2E passed"

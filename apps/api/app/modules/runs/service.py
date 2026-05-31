@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from sceneops_core.schemas.datasets import DatasetValidationStatus
 from sceneops_core.schemas.runs import (
+    DatasetValidationRunDetailResponse,
+    DatasetValidationRunListResponse,
     EvaluationRunDetailResponse,
     EvaluationRunListResponse,
     InferenceRunDetailResponse,
     InferenceRunListResponse,
     RunStatus,
 )
-from sceneops_db.runs import EvaluationRunRepository, InferenceRunRepository
+from sceneops_db.runs import (
+    EvaluationRunRepository,
+    InferenceRunRepository,
+    DatasetValidationRunRepository,
+)
 
 
 class RunService:
@@ -15,9 +22,11 @@ class RunService:
         self,
         inference_repository: InferenceRunRepository,
         evaluation_repository: EvaluationRunRepository,
+        validation_repository: DatasetValidationRunRepository,
     ) -> None:
         self.inference_repository = inference_repository
         self.evaluation_repository = evaluation_repository
+        self.validation_repository = validation_repository
 
     async def list_inference_runs(
         self,
@@ -76,3 +85,32 @@ class RunService:
         except FileNotFoundError:
             return None
         return EvaluationRunDetailResponse(run=run)
+
+    async def list_validation_run(
+        self,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status: RunStatus | None = None,
+        validation_status: DatasetValidationStatus | None = None,
+    ) -> DatasetValidationRunListResponse | None:
+        try:
+            runs = await self.validation_repository.list(
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                status=status,
+                validation_status=validation_status,
+            )
+        except FileNotFoundError:
+            return None
+        return DatasetValidationRunListResponse(runs=runs, count=len(runs))
+
+    async def get_validation_run(
+        self, validation_run_id: str
+    ) -> DatasetValidationRunDetailResponse:
+        try:
+            run = await self.validation_repository.get(
+                validation_run_id=validation_run_id
+            )
+        except FileNotFoundError:
+            return None
+        return DatasetValidationRunDetailResponse(run=run)

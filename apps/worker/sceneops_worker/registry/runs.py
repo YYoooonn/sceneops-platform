@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.runs import EvaluationRunRecord, InferenceRunRecord
+from sceneops_core.schemas.runs import (
+    EvaluationRunRecord,
+    InferenceRunRecord,
+    DatasetValidationRunRecord,
+)
 from sceneops_db.runs import (
     PostgresEvaluationRunRepository,
     PostgresInferenceRunRepository,
+    PostgresDatasetValidationRunRepository,
 )
 from sceneops_db.session import async_session_scope
 
@@ -40,3 +45,36 @@ class RunRegistryStore:
         async with async_session_scope() as session:
             repository = PostgresEvaluationRunRepository(session)
             return await repository.upsert(record)
+
+    async def get_validation_run(
+        self,
+        validation_run_id: str,
+    ) -> DatasetValidationRunRecord:
+        async with async_session_scope() as session:
+            repository = PostgresDatasetValidationRunRepository(session)
+            return await repository.get(validation_run_id)
+
+    async def upsert_validation_run(
+        self,
+        record: DatasetValidationRunRecord,
+    ) -> DatasetValidationRunRecord:
+        async with async_session_scope() as session:
+            repository = PostgresDatasetValidationRunRepository(session)
+            return await repository.upsert(record)
+
+    async def list_validation_runs(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status=None,
+        validation_status=None,
+    ) -> list[DatasetValidationRunRecord]:
+        async with async_session_scope() as session:
+            repository = PostgresDatasetValidationRunRepository(session)
+            return await repository.list(
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                status=status,
+                validation_status=validation_status,
+            )

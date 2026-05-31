@@ -36,6 +36,17 @@ from sceneops_core.schemas.datasets.responses import (
     DatasetVersionDetailResponse,
     DatasetVersionListResponse,
 )
+from sceneops_core.schemas.datasets.validation import (
+    DatasetValidationCheckType,
+    DatasetValidationDecision,
+    DatasetValidationIssue,
+    DatasetValidationProfile,
+    DatasetValidationReport,
+    DatasetValidationScope,
+    DatasetValidationSeverity,
+    DatasetValidationStatus,
+    DatasetValidationSummary,
+)
 
 __all__ = [
     "DatasetType",
@@ -66,4 +77,13 @@ __all__ = [
     "DatasetDetailResponse",
     "DatasetVersionListResponse",
     "DatasetVersionDetailResponse",
+    "DatasetValidationCheckType",
+    "DatasetValidationDecision",
+    "DatasetValidationIssue",
+    "DatasetValidationProfile",
+    "DatasetValidationReport",
+    "DatasetValidationScope",
+    "DatasetValidationSeverity",
+    "DatasetValidationStatus",
+    "DatasetValidationSummary",
 ]

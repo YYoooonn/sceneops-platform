@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from sceneops_core.schemas.common import JsonDict
 from sceneops_db.datasets import DatasetVersionRepository
-from sceneops_db.runs import EvaluationRunRepository, InferenceRunRepository
+from sceneops_db.runs import (
+    DatasetValidationRunRepository,
+    EvaluationRunRepository,
+    InferenceRunRepository,
+)
 
 from sceneops_storage import ArtifactStore
 
@@ -14,11 +18,13 @@ class ArtifactService:
         dataset_version_repository: DatasetVersionRepository,
         inference_run_repository: InferenceRunRepository,
         evaluation_run_repository: EvaluationRunRepository,
+        validation_run_repository: DatasetValidationRunRepository,
         artifact_store: ArtifactStore,
     ) -> None:
         self.dataset_version_repository = dataset_version_repository
         self.inference_run_repository = inference_run_repository
         self.evaluation_run_repository = evaluation_run_repository
+        self.validation_run_repository = validation_run_repository
         self.artifact_store = artifact_store
 
     async def get_dataset_manifest(
@@ -70,6 +76,25 @@ class ArtifactService:
         if not isinstance(artifact, dict):
             raise ValueError(
                 f"Invalid evaluation run manifest: {run.evaluation_manifest_uri}"
+            )
+
+        return artifact
+
+    async def get_validation_run_report(
+        self,
+        validation_run_id: str,
+    ) -> JsonDict:
+        run = await self.validation_run_repository.get(validation_run_id)
+
+        if run.validation_report_uri is None:
+            raise FileNotFoundError(
+                f"validation run manifest not found: {validation_run_id}"
+            )
+
+        artifact = await self.artifact_store.read_json(run.validation_report_uri)
+        if not isinstance(artifact, dict):
+            raise ValueError(
+                f"Invalid validation run report: {run.validation_report_uri}"
             )
 
         return artifact

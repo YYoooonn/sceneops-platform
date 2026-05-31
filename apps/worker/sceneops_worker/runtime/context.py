@@ -16,10 +16,11 @@ from sceneops_storage import ArtifactStore
 class JobContext:
     artifact_store: ArtifactStore
     dataset_artifact_store: DatasetArtifactStore
+    run_artifact_store: RunArtifactStore
+
     dataset_registry_store: DatasetRegistryStore
     model_registry_store: ModelRegistryStore
     run_registry_store: RunRegistryStore
-    run_artifact_store: RunArtifactStore
 
     default_dataset_id: str
     default_dataset_version: str

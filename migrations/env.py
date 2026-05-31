@@ -18,7 +18,11 @@ from sceneops_db.datasets import DatasetModel, DatasetVersionModel  # noqa: F401
 from sceneops_db.jobs import JobEventModel, JobModel  # noqa: F401
 from sceneops_db.model_registry import ModelModel, ModelVersionModel  # noqa: F401
 from sceneops_db.pipelines import PipelineRunModel, PipelineStepRunModel  # noqa: F401
-from sceneops_db.runs import EvaluationRunModel, InferenceRunModel  # noqa: F401
+from sceneops_db.runs import (
+    EvaluationRunModel,
+    InferenceRunModel,
+    DatasetValidationRunModel
+)  # noqa: F401
 
 config = context.config
 

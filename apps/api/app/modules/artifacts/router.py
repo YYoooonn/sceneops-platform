@@ -59,3 +59,18 @@ async def get_evaluation_run_artifact(
         return await service.get_evaluation_run_manifest(evaluation_run_id)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get(
+    "/runs/validations/{validation_run_id}/report",
+    response_model=dict,
+    response_model_by_alias=True,
+)
+async def get_validation_run_artifact(
+    validation_run_id: str,
+    service: ArtifactService = Depends(get_artifact_service),
+) -> JsonDict:
+    try:
+        return await service.get_validation_run_report(validation_run_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
