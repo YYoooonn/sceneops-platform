@@ -24,8 +24,6 @@ app.include_router(models_router, prefix="/api/v1")
 app.include_router(runs_router, prefix="/api/v1")
 app.include_router(artifacts_router, prefix="/api/v1")
 app.include_router(datasets_router, prefix="/api/v1")
-app.include_router(artifacts_router, prefix="/api/v1")
-app.include_router(runs_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(pipelines_router, prefix="/api/v1")
 
