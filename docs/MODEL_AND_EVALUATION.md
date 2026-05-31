@@ -1,223 +1,277 @@
 # Model and Evaluation Contracts
 
-This document defines the target contract for model registry, inference, prediction manifests, evaluation reports, and comparison.
+SceneOps treats model inference and evaluation as reproducible pipeline steps with versioned model metadata, prediction artifacts, and evaluation run records.
 
-## Model registry
+---
 
-A model is a logical model family.
+## Current model lifecycle
+
+Current model registry supports:
+
+- model registration
+- model version registration
+- backend metadata
+- model URI metadata
+- endpoint URL metadata for future external serving integration
+
+Current supported inference backends:
+
+| Backend | Status | Purpose |
+|---|---|---|
+| `mock` | implemented | Validate pipeline shape without real model dependency |
+| `onnx_runtime` | implemented | Validate model artifact loading and runtime execution |
+| `triton` | target | Production-like inference server backend |
+| `external_http` | target | Generic inference server adapter |
+
+---
+
+## Current prediction contract
+
+Current job type:
+
+```text
+predict_detection
+```
+
+Parameters:
 
 ```json
 {
-  "modelId": "dummy-detector",
-  "taskType": "detection",
-  "name": "Dummy Detector",
-  "description": "Detector model used for SceneOps E2E tests",
-  "metadata": {
-    "domain": "autonomous-driving"
-  }
+  "dataset_id": "nuscenes",
+  "dataset_version": "v1.0-mini",
+  "model_id": "dummy-detector",
+  "model_version": "v0",
+  "inference_backend": "onnx_runtime",
+  "model_uri": "/data/models/dummy-detector/versions/v0/model.onnx",
+  "max_samples": 2
 }
 ```
 
-## Model version
-
-A model version is a concrete executable model artifact or runtime configuration.
-
-```json
-{
-  "modelId": "dummy-detector",
-  "version": "v0",
-  "backend": "onnx_runtime",
-  "modelUri": "local://models/dummy-detector/versions/v0/model.onnx",
-  "status": "ready",
-  "metadata": {
-    "inputSchema": {
-      "type": "tensor",
-      "dtype": "float32",
-      "shape": [1, 10]
-    },
-    "outputSchema": {
-      "type": "detection_boxes"
-    }
-  }
-}
-```
-
-## Inference backend contract
-
-Target interface:
+Current behavior:
 
 ```text
-DetectionModelRunner
-  predict(sample_batch) -> DetectionPredictionBatch
-```
-
-Backends:
-
-```text
-mock
-onnx_runtime
-triton
-```
-
-Each backend should implement the same prediction contract.
-
-## Prediction workflow
-
-```text
-dataset sample
-  -> load sensor artifacts
-  -> preprocess
+load model version
+  -> validate requested backend matches registered backend
+  -> load ready dataset version
+  -> load dataset manifest
   -> run inference backend
-  -> postprocess
-  -> export prediction manifest
-  -> create inference run
+  -> write prediction manifests
+  -> upsert inference run record
 ```
 
-## Prediction manifest
-
-Target manifest shape:
+Current output:
 
 ```json
 {
-  "schemaVersion": "sceneops.prediction_manifest.v1",
-  "inferenceRunId": "infer_xxx",
-  "datasetId": "nuscenes",
-  "datasetVersion": "v1.0-mini",
-  "modelId": "dummy-detector",
-  "modelVersion": "v0",
-  "backend": "onnx_runtime",
-  "predictions": [
-    {
-      "sampleId": "sample-0001",
-      "objects": [
-        {
-          "category": "vehicle.car",
-          "score": 0.91,
-          "translation": [0.0, 0.0, 0.0],
-          "size": [1.0, 1.0, 1.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0]
-        }
-      ]
-    }
-  ],
-  "summary": {
-    "sampleCount": 1,
-    "predictionCount": 1
+  "dataset_id": "nuscenes",
+  "dataset_version": "v1.0-mini",
+  "model_id": "dummy-detector",
+  "model_version": "v0",
+  "inference_run_id": "run_xxx",
+  "prediction_manifest_uri": "...",
+  "sample_count": 2,
+  "result_summary": {
+    "prediction_count": 2,
+    "backend": "onnx_runtime"
   }
 }
 ```
 
-## Evaluation workflow
+---
+
+## Current evaluation contract
+
+Current job type:
 
 ```text
-prediction manifest
-  -> load ground truth from dataset manifest
-  -> match predictions to annotations
-  -> compute metrics
-  -> export evaluation report
-  -> create evaluation run
+evaluate_detection
 ```
 
-## Evaluation report
+Current evaluator:
 
-Target report shape:
+```text
+center-distance
+```
+
+Parameters:
 
 ```json
 {
-  "schemaVersion": "sceneops.evaluation_report.v1",
-  "evaluationRunId": "eval_xxx",
-  "inferenceRunId": "infer_xxx",
-  "datasetId": "nuscenes",
-  "datasetVersion": "v1.0-mini",
-  "modelId": "dummy-detector",
-  "modelVersion": "v0",
-  "evaluatorId": "center-distance",
-  "params": {
-    "matchDistanceM": 2.0
-  },
+  "dataset_id": "nuscenes",
+  "dataset_version": "v1.0-mini",
+  "inference_run_id": "run_xxx",
+  "evaluator_id": "center-distance",
+  "match_distance_m": 2.0
+}
+```
+
+Current behavior:
+
+```text
+load ready dataset version
+  -> load inference run
+  -> load prediction manifests
+  -> match predictions to ground truth by category and center distance
+  -> write per-sample evaluation manifests
+  -> write aggregate evaluation manifest
+  -> upsert evaluation run record
+```
+
+Current aggregate metrics:
+
+| Metric | Status |
+|---|---|
+| TP | implemented |
+| FP | implemented |
+| FN | implemented |
+| precision | implemented |
+| recall | implemented |
+| mean center distance error | implemented |
+| per-class TP/FP/FN | implemented |
+| per-class precision/recall | implemented |
+| official nuScenes mAP/NDS | target |
+
+Example output:
+
+```json
+{
+  "evaluation_run_id": "eval_xxx",
+  "inference_run_id": "run_xxx",
+  "evaluator_id": "center-distance",
+  "match_distance_m": 2.0,
   "metrics": {
-    "precision": 0.5,
-    "recall": 0.4,
-    "f1": 0.44,
-    "mAP": 0.3
+    "tp": 10,
+    "fp": 3,
+    "fn": 5,
+    "precision": 0.769231,
+    "recall": 0.666667,
+    "meanCenterDistanceError": 0.84
   },
-  "perClassMetrics": {
+  "classMetrics": {
     "vehicle.car": {
-      "precision": 0.6,
-      "recall": 0.5
+      "tp": 8,
+      "fp": 2,
+      "fn": 3,
+      "precision": 0.8,
+      "recall": 0.727273
     }
-  },
-  "summary": {
-    "sampleCount": 100,
-    "predictionCount": 320,
-    "groundTruthCount": 400
   }
 }
 ```
 
-## Model comparison
+---
 
-Target comparison output:
+## Important scope note
+
+The current evaluator is intentionally a simplified center-distance detection evaluator.
+
+It is not yet an official nuScenes detection benchmark implementation. Its purpose is to validate the MLOps workflow:
+
+```text
+model version
+  -> inference run
+  -> prediction artifact
+  -> evaluation run
+  -> metrics
+  -> future model comparison
+```
+
+This keeps the project honest while still demonstrating production-oriented model-evaluation infrastructure.
+
+---
+
+## Recommended next contract: Model comparison
+
+High-impact target endpoint:
+
+```text
+GET /api/v1/evaluations/compare?dataset_id=nuscenes&dataset_version=v1.0-mini
+```
+
+Target response:
 
 ```json
 {
-  "datasetId": "nuscenes",
-  "datasetVersion": "v1.0-mini",
-  "taskType": "detection",
-  "models": [
+  "dataset_id": "nuscenes",
+  "dataset_version": "v1.0-mini",
+  "task_type": "detection",
+  "evaluator_id": "center-distance",
+  "runs": [
     {
-      "modelId": "mock-detector",
-      "modelVersion": "v0",
+      "model_id": "mock-detector",
+      "model_version": "v0",
       "backend": "mock",
+      "evaluation_run_id": "eval_mock",
       "metrics": {
         "precision": 0.42,
         "recall": 0.31,
-        "mAP": 0.28
+        "meanCenterDistanceError": 1.92
       }
     },
     {
-      "modelId": "dummy-detector",
-      "modelVersion": "v0",
+      "model_id": "dummy-detector",
+      "model_version": "v0",
       "backend": "onnx_runtime",
+      "evaluation_run_id": "eval_onnx",
       "metrics": {
         "precision": 0.51,
         "recall": 0.37,
-        "mAP": 0.34
+        "meanCenterDistanceError": 1.48
       }
     }
   ]
 }
 ```
 
-## Target APIs
+---
+
+## Recommended next contract: Detection leaderboard
+
+High-impact target endpoint:
 
 ```text
-GET /api/v1/models/{model_id}/versions/{version}/evaluations
-GET /api/v1/evaluations/compare
-GET /api/v1/leaderboards/detection
+GET /api/v1/leaderboards/detection?dataset_id=nuscenes&dataset_version=v1.0-mini&sort=precision
 ```
 
-## Evaluation design goals
+Target response:
 
-Evaluation should be:
+```json
+{
+  "dataset_id": "nuscenes",
+  "dataset_version": "v1.0-mini",
+  "sort": "precision",
+  "items": [
+    {
+      "rank": 1,
+      "model_id": "dummy-detector",
+      "model_version": "v0",
+      "backend": "onnx_runtime",
+      "precision": 0.51,
+      "recall": 0.37,
+      "meanCenterDistanceError": 1.48
+    }
+  ]
+}
+```
+
+---
+
+## Future serving direction
+
+The next runtime abstraction should separate:
 
 ```text
-reproducible
-dataset-version aware
-model-version aware
-artifact-backed
-configurable
-comparable
-inspectable
+preprocess
+  -> inference backend
+  -> postprocess
+  -> prediction export
 ```
 
-## Future model lifecycle integration
+Target backends:
 
-Possible integrations:
+- `mock`
+- `onnx_runtime`
+- `external_http`
+- `triton`
 
-```text
-MLflow Tracking
-MLflow Model Registry
-Triton Model Repository
-Prometheus model-serving metrics
-```
+This allows SceneOps to evolve from local batch validation into production-style model serving and evaluation.

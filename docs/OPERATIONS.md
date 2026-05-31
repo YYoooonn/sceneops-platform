@@ -1,30 +1,24 @@
 # Operations
 
-This document describes local operations, debugging, and future monitoring goals.
+SceneOps is designed as a production-like local system. The current implementation already separates API, metadata, broker, and worker services.
 
-## Local services
+---
 
-The local compose stack contains:
+## Current local services
 
-```text
-postgres
-redis
-api
-worker-celery
-worker-cli
-migrate
-```
+| Service | Role |
+|---|---|
+| PostgreSQL | Metadata database |
+| Redis | Celery broker |
+| FastAPI API | Control plane |
+| Celery worker | Async execution runtime |
+| Worker CLI | Debug and manual execution |
+| Migration container | Alembic migration runner |
 
-Start core services:
+Start services:
 
 ```bash
 make compose-up
-```
-
-Build images:
-
-```bash
-make compose-build
 ```
 
 Stop services:
@@ -33,91 +27,15 @@ Stop services:
 make compose-down
 ```
 
-Reset volumes:
+Reset local state:
 
 ```bash
-make compose-down-volumes
+make reset-local
 ```
 
-## Database operations
+---
 
-Run migrations:
-
-```bash
-make db-migrate
-```
-
-Create migration:
-
-```bash
-make db-revision MSG="add table"
-```
-
-Show current migration:
-
-```bash
-make db-current
-```
-
-Show history:
-
-```bash
-make db-history
-```
-
-Reset database:
-
-```bash
-make db-reset
-```
-
-## Worker operations
-
-Run Celery worker through compose:
-
-```bash
-make compose-up
-```
-
-View worker logs:
-
-```bash
-make worker-logs
-```
-
-Open worker shell:
-
-```bash
-make worker-shell
-```
-
-Run a single job manually:
-
-```bash
-make worker-run-job JOB_ID=job-xxx
-```
-
-Run a single pipeline manually:
-
-```bash
-make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx
-```
-
-## API operations
-
-View API logs:
-
-```bash
-make api-logs
-```
-
-Open API shell:
-
-```bash
-make api-shell
-```
-
-## Health checks
+## Current checks
 
 ```bash
 make check-env
@@ -125,7 +43,15 @@ make check-imports
 make check-celery
 ```
 
-## Debugging
+These verify:
+
+- expected local environment variables/directories
+- Python package import health
+- Celery broker connectivity
+
+---
+
+## Current debug commands
 
 ```bash
 make show-runs
@@ -133,113 +59,130 @@ make show-pipeline PIPELINE_RUN_ID=pipe-xxx
 make show-job-events JOB_ID=job-xxx
 ```
 
-## Operational metrics target
+These commands are useful for debugging:
 
-The platform should eventually expose metrics for:
+- pipeline status
+- pipeline step status
+- job status
+- job event timeline
+- inference/evaluation outputs
+
+---
+
+## Current operational signals
+
+| Signal | Current status |
+|---|---|
+| API health endpoint | implemented |
+| job status | implemented |
+| job events | implemented |
+| pipeline status | implemented |
+| pipeline step status | implemented |
+| inference run status | implemented |
+| evaluation run status | implemented |
+| worker logs | available through Docker Compose |
+| queue latency metric | target |
+| pipeline duration metric | target |
+| Prometheus endpoint | target |
+| Grafana dashboard | target |
+
+---
+
+## Recommended next endpoint: pipeline timeline
+
+Target:
 
 ```text
-pipeline count
-pipeline duration
-pipeline failure count
-job count
-job duration
-job queue latency
-job retry count
-job failure count
-inference latency
-evaluation duration
-dataset validation failure count
-artifact write failure count
+GET /api/v1/pipelines/runs/{pipeline_run_id}/timeline
 ```
 
-Prometheus metric names:
+Target response:
 
-```text
-sceneops_pipeline_total
-sceneops_pipeline_duration_seconds
-sceneops_pipeline_failures_total
-sceneops_job_total
-sceneops_job_duration_seconds
-sceneops_job_queue_latency_seconds
-sceneops_job_retries_total
-sceneops_job_failures_total
-sceneops_inference_latency_seconds
-sceneops_evaluation_duration_seconds
-sceneops_dataset_validation_failures_total
+```json
+{
+  "pipeline_run_id": "pipe_xxx",
+  "status": "succeeded",
+  "events": [
+    {
+      "time": "2026-05-31T10:00:00Z",
+      "type": "pipeline_created"
+    },
+    {
+      "time": "2026-05-31T10:00:02Z",
+      "type": "step_started",
+      "step": "predict",
+      "job_id": "job_xxx"
+    },
+    {
+      "time": "2026-05-31T10:00:05Z",
+      "type": "step_succeeded",
+      "step": "predict",
+      "job_id": "job_xxx"
+    },
+    {
+      "time": "2026-05-31T10:00:07Z",
+      "type": "pipeline_succeeded"
+    }
+  ]
+}
 ```
 
-## Failure handling target
+Why this matters:
 
-The worker should support:
+- easier debugging of blocked/failed pipelines
+- clearer portfolio story around operational visibility
+- direct alignment with monitoring and failure-response requirements
 
-```text
-retryable errors
-non-retryable errors
-stale running job recovery
-heartbeat timeout detection
-worker id tracking
-failure reason persistence
-event timeline inspection
-```
+---
 
-## Monitoring roadmap
+## Recommended next metrics
 
-### Step 1. Structured logs
-
-Add consistent structured logs with:
+Target:
 
 ```text
-pipeline_run_id
-job_id
-worker_id
-step_name
-status
-duration_ms
-error_type
-error_message
-```
-
-### Step 2. Metrics endpoint
-
-Expose summary metrics from API:
-
-```text
-GET /api/v1/metrics/pipelines
 GET /api/v1/metrics/jobs
-GET /api/v1/metrics/datasets/{dataset_id}/versions/{version}
+GET /api/v1/metrics/pipelines
 ```
 
-### Step 3. Prometheus
+Initial metrics:
 
-Expose Prometheus metrics endpoint:
-
-```text
-GET /metrics
+```json
+{
+  "job_counts": {
+    "pending": 0,
+    "running": 1,
+    "succeeded": 12,
+    "failed": 2
+  },
+  "pipeline_counts": {
+    "pending": 0,
+    "running": 0,
+    "succeeded": 5,
+    "failed": 1
+  },
+  "recent_failures": [
+    {
+      "id": "job_xxx",
+      "type": "validate_dataset_manifest",
+      "error_type": "ValueError",
+      "message": "Dataset manifest validation failed"
+    }
+  ]
+}
 ```
 
-### Step 4. Grafana
+---
 
-Add local Grafana dashboard for:
+## Production direction
 
-```text
-pipeline health
-job health
-queue latency
-inference latency
-evaluation duration
-failure trends
-```
+Future production-like operations should add:
 
-## Production-oriented target
-
-The local-first system should be able to evolve into:
-
-```text
-FastAPI API
-PostgreSQL
-Redis/Celery or Kubernetes jobs
-MinIO/S3 artifact store
-Triton model serving
-Prometheus/Grafana monitoring
-MLflow model registry
-```
+- structured JSON logs
+- Prometheus metrics endpoint
+- Grafana dashboard
+- retry policy visualization
+- queue latency tracking
+- inference latency tracking
+- failed validation report inspection
+- worker heartbeat monitoring
+- storage backend health checks

@@ -1,312 +1,216 @@
 # E2E Workflows
 
-This document describes the end-to-end workflows used to validate SceneOps locally.
+This document describes the end-to-end workflows that are currently implemented and used to validate SceneOps locally.
+
+The E2E tests are designed to prove that the system works as a pipeline platform, not just as isolated scripts.
+
+```text
+API request
+  -> PostgreSQL pipeline/job records
+  -> Celery dispatch
+  -> Worker execution
+  -> artifact generation
+  -> metadata update
+  -> status polling
+```
+
+---
 
 ## Prerequisites
 
-Start local services:
-
 ```bash
+make prepare-data
 make compose-build
 make compose-up
 make db-migrate
-```
-
-Run environment checks:
-
-```bash
 make check-env
 make check-imports
 make check-celery
 ```
 
-Prepare data directories:
-
-```bash
-make prepare-data
-```
-
-If using nuScenes mini, place the dataset under:
-
-```text
-data/raw/nuscenes/
-```
-
-Register nuscenes dataset:
+Register the dataset fixture before running dataset or model validation workflows:
 
 ```bash
 make register-nuscenes-dataset
 ```
 
-## Services used by E2E tests
+---
 
-The local compose stack runs:
+## E2E 1. Dataset ingestion + validation
 
-```text
-postgres
-redis
-api
-worker-celery
-```
-
-The Celery worker listens to:
-
-```text
-sceneops.pipeline_runs
-sceneops.jobs
-```
-
-## 1. Dataset ingestion + validation E2E
-
-Command:
+Run:
 
 ```bash
 make e2e-dataset-ingest
 ```
 
-Script:
+Pipeline type:
 
 ```text
-scripts/e2e/e2e_ingestion_pipeline_celery.sh
+dataset_ingestion
 ```
 
-Purpose:
-
-Validate dataset ingestion through the full API -> Celery -> Worker -> DB -> artifact path.
-
-Flow:
+Current pipeline steps:
 
 ```text
-check compose services
-  -> create dataset_ingestion pipeline run
-  -> dispatch pipeline through Celery
-  -> poll pipeline status
-  -> check dataset version registry
-  -> print recent worker logs
+ingest
+  -> validate
 ```
 
-Default parameters:
+What this validates:
+
+- FastAPI can create a pipeline run.
+- Pipeline steps are generated from the built-in pipeline definition.
+- Celery dispatch can execute the pipeline asynchronously.
+- Worker can ingest a nuScenes dataset version.
+- Dataset manifests are written to local artifact storage.
+- Dataset version metadata is updated in PostgreSQL.
+- Validation checks scene/sample manifest availability.
+- Validation checks required sensor channels such as `CAM_FRONT` and `LIDAR_TOP`.
+- Dataset version is promoted to `ready` after successful validation.
+
+Expected output:
 
 ```text
-DATASET_ID=nuscenes
-DATASET_VERSION=v1.0-mini
-DATASET_TYPE=nuscenes
-PIPELINE_TYPE=dataset_ingestion
-MAX_SCENES=2
-INGEST_MODE=upsert
-VALIDATE_SAMPLES=true
-REQUIRE_TARGET_CHANNELS_JSON=["CAM_FRONT", "LIDAR_TOP"]
+pipeline status: succeeded
+dataset version status: ready
+dataset manifest URI: generated
+validated scene/sample counts: generated
+missing scenes/samples/channels: empty for passing runs
 ```
 
-Expected result:
+---
 
-```text
-pipeline status = succeeded
-dataset version registry exists
-dataset manifest is generated
-worker logs show successful execution
-```
+## E2E 2. Mock detection validation
 
-## 2. Mock detection validation E2E
-
-Command:
+Run:
 
 ```bash
 make e2e-mock-celery
 ```
 
-Script:
+Pipeline type:
 
 ```text
-scripts/e2e/e2e_mock_pipeline_celery.sh
+detection_validation
 ```
 
-Purpose:
-
-Validate detection workflow using a mock model backend.
-
-Flow:
+Current pipeline steps:
 
 ```text
-check compose services
-  -> register mock model fixture
-  -> create detection_validation pipeline run
-  -> dispatch pipeline through Celery
-  -> poll pipeline status
-  -> list inference runs
-  -> list evaluation runs
-  -> print recent worker logs
+predict
+  -> evaluate
 ```
 
-Default parameters:
+What this validates:
+
+- Mock detector model can be registered.
+- Model version can be registered with `mock` backend.
+- Detection validation pipeline can be created.
+- Prediction job can load a ready dataset version.
+- Prediction job can generate prediction manifests.
+- Evaluation job can consume prediction artifacts.
+- Evaluation metrics are stored in an evaluation run record.
+
+Expected output:
 
 ```text
-MODEL_ID=mock-detector
-MODEL_VERSION=v0
-MODEL_BACKEND=mock
-MODEL_TASK_TYPE=detection
-PIPELINE_TYPE=detection_validation
-MAX_SAMPLES=3
-MATCH_DISTANCE_M=2.0
+pipeline status: succeeded
+inference run status: succeeded
+evaluation run status: succeeded
+prediction manifest URI: generated
+evaluation manifest URI: generated
 ```
 
-Expected result:
+---
 
-```text
-pipeline status = succeeded
-inference run is created
-evaluation run is created
-prediction manifest is generated
-evaluation metrics are generated
-```
+## E2E 3. ONNX Runtime detection validation
 
-## 3. ONNX Runtime detection validation E2E
-
-Command:
+Run:
 
 ```bash
 make e2e-onnx-celery
 ```
 
-Script:
+Pipeline type:
 
 ```text
-scripts/e2e/e2e_onnx_pipeline_celery.sh
+detection_validation
 ```
 
-Purpose:
+What this validates:
 
-Validate detection workflow using an ONNX Runtime model backend.
+- Dummy ONNX model artifact can be created inside the worker environment.
+- Model version can be registered with `onnx_runtime` backend.
+- Prediction job can instantiate the ONNX Runtime backend.
+- Detection validation pipeline can run through Celery.
+- Evaluation can run on ONNX-generated prediction artifacts.
 
-Flow:
+Expected output:
 
 ```text
-check compose services
-  -> create dummy ONNX model artifact
-  -> register ONNX model fixture
-  -> create detection_validation pipeline run
-  -> dispatch pipeline through Celery
-  -> poll pipeline status
-  -> list inference runs
-  -> list evaluation runs
-  -> print recent worker logs
+pipeline status: succeeded
+model backend: onnx_runtime
+inference run status: succeeded
+evaluation run status: succeeded
 ```
 
-Default parameters:
-
-```text
-MODEL_ID=dummy-detector
-MODEL_VERSION=v0
-MODEL_BACKEND=onnx_runtime
-MODEL_URI=/data/models/dummy-detector/versions/v0/model.onnx
-MODEL_TASK_TYPE=detection
-PIPELINE_TYPE=detection_validation
-MAX_SAMPLES=3
-MATCH_DISTANCE_M=2.0
-```
-
-Expected result:
-
-```text
-dummy ONNX model file exists
-model version is registered
-pipeline status = succeeded
-inference run is created
-evaluation run is created
-```
+---
 
 ## Debug commands
 
-List inference/evaluation runs:
+Show all runs:
 
 ```bash
 make show-runs
 ```
 
-Inspect a pipeline:
+Show one pipeline:
 
 ```bash
 make show-pipeline PIPELINE_RUN_ID=pipe-xxx
 ```
 
-Inspect job events:
+Show job events:
 
 ```bash
 make show-job-events JOB_ID=job-xxx
 ```
 
-Inspect worker logs:
+---
 
-```bash
-make worker-logs
-```
+## What these E2Es prove
 
-Inspect API logs:
+The current E2E scripts prove the following platform properties:
 
-```bash
-make api-logs
-```
+1. API and worker are separated into control plane and execution plane.
+2. PostgreSQL is the source of truth for metadata.
+3. Redis/Celery handles asynchronous execution.
+4. Dataset, prediction, and evaluation outputs are represented as artifacts.
+5. Pipelines are reproducible and traceable through run IDs and job IDs.
+6. The model runtime is pluggable enough to support mock and ONNX Runtime backends.
 
-## Common failure cases
+---
 
-### API is not reachable
+## Next E2E targets
 
-Check compose state:
-
-```bash
-make compose-ps
-make api-logs
-```
-
-### Celery worker is not consuming jobs
-
-Check broker and worker:
-
-```bash
-make check-celery
-make worker-logs
-```
-
-### Pipeline polling times out
-
-Inspect pipeline and worker logs:
-
-```bash
-make show-pipeline PIPELINE_RUN_ID=pipe-xxx
-make worker-logs
-```
-
-### Dataset files are missing
-
-Check raw dataset location:
+High-impact E2E additions before portfolio submission:
 
 ```text
-data/raw/nuscenes/
-```
+1. dataset_profile E2E
+   ingest -> validate -> profile
 
-### Model artifact is missing
+2. model_compare E2E
+   run mock detector
+   run ONNX detector
+   compare evaluation metrics
 
-For ONNX E2E, the script should create:
+3. pipeline_timeline E2E
+   create pipeline
+   dispatch pipeline
+   query step/job timeline
 
-```text
-/data/models/dummy-detector/versions/v0/model.onnx
-```
-
-If missing, rerun:
-
-```bash
-make e2e-onnx-celery
-```
-
-## E2E success criteria
-
-The local system is considered healthy when all of the following pass:
-
-```bash
-make check-env
-make check-imports
-make check-celery
-make e2e-dataset-ingest
-make e2e-mock-celery
-make e2e-onnx-celery
+4. failed_validation E2E
+   run validation with missing required channel
+   assert pipeline is blocked with clear failure reason
 ```

@@ -1,255 +1,166 @@
 # Roadmap
 
-This roadmap is ordered by value for an AI Robotics Engineer / MLOps portfolio.
+This roadmap is organized around portfolio impact for an AI Robotics Engineer / MLOps Data Infrastructure role.
 
-## Final target
+---
 
-Build a production-like MLOps platform for robotics perception workflows.
+## Current baseline
 
-The platform should support:
+Implemented now:
+
+- FastAPI control plane
+- PostgreSQL metadata store
+- Redis/Celery async execution
+- Dataset registry and dataset version management
+- Model registry and model version management
+- Dataset ingestion pipeline
+- Dataset manifest validation pipeline
+- Mock detection inference
+- ONNX Runtime dummy inference
+- Center-distance detection evaluation
+- Inference/evaluation run tracking
+- Local artifact storage
+- E2E scripts for dataset ingestion, mock detection, and ONNX detection
+
+---
+
+## Phase 1. Dataset quality and profiling
+
+Goal:
 
 ```text
-sensor dataset ingestion
-  -> validation
-  -> profiling
-  -> model inference
-  -> evaluation
-  -> model comparison
-  -> artifact lineage
-  -> monitoring
-  -> serving
+Turn dataset ingestion into a robotics sensor-data quality workflow.
 ```
-
-## Phase 0. Documentation and repository clarity
-
-Goal: make the current implementation understandable from the repository alone.
 
 Tasks:
 
-- Rewrite `README.md`
-- Add `docs/ARCHITECTURE.md`
-- Add `docs/E2E.md`
-- Add `docs/DATASET_AND_ARTIFACTS.md`
-- Add `docs/MODEL_AND_EVALUATION.md`
-- Add `docs/OPERATIONS.md`
-- Ensure Makefile targets match documentation
-- Ensure docker-compose service names match documentation
-- Ensure E2E scripts match API route contracts
+- Add `profile_dataset` job type.
+- Generate `dataset_profile_report.json` artifact.
+- Track sensor completeness by channel.
+- Track class distribution.
+- Track empty annotation samples.
+- Track sample-level annotation statistics.
+- Add validation report artifact with pass/fail checks.
+- Add blocked-pipeline reason when validation fails.
 
-Done when:
+Why this is high impact:
 
-- A new reader can understand what the platform does in 5 minutes
-- A new reader can run the local E2E workflows from README
-- Current implementation and future roadmap are clearly separated
+- Directly matches robotics sensor data pipeline requirements.
+- Makes the project look like data infrastructure, not just job orchestration.
+- Creates a strong interview story around data quality gates.
 
-## Phase 1. Sensor dataset pipeline
+---
 
-Goal: make the dataset layer clearly aligned with robotics sensor data infrastructure.
+## Phase 2. Model comparison and leaderboard
+
+Goal:
+
+```text
+Turn inference/evaluation into a model iteration platform.
+```
 
 Tasks:
 
-- Improve sensor-centric dataset manifest
-- Include scene/sample/sensor channel structure
-- Track camera/LiDAR artifact URI
-- Track timestamp
-- Track ego pose
-- Track calibration references
-- Track annotation references
-- Add dataset validation job
-- Add dataset profiling job
+- Add evaluation comparison endpoint.
+- Add detection leaderboard endpoint.
+- Compare model versions on the same dataset version.
+- Sort by precision, recall, or mean center distance error.
+- Add model evaluation history view.
 
-Validation checks:
+Why this is high impact:
 
-```text
-required sensor channels exist
-sensor files exist
-timestamps are ordered
-camera/LiDAR calibration exists
-sample annotations are valid
-class distribution is computable
-```
+- Shows that the platform supports model development loops.
+- Connects data, model, and evaluation in a single workflow.
+- Makes mock and ONNX Runtime backends useful as comparable runtime examples.
 
-Artifacts:
+---
+
+## Phase 3. Operational visibility
+
+Goal:
 
 ```text
-dataset_manifest.json
-validation_report.json
-profile_report.json
+Make failed and slow pipelines easy to inspect.
 ```
-
-Done when:
-
-- `dataset_ingestion` pipeline produces a manifest, validation report, and profile report
-- dataset version metadata points to generated artifacts
-- invalid/missing sample cases are reported clearly
-
-## Phase 2. Model runtime and inference contract
-
-Goal: make model execution replaceable and production-like.
 
 Tasks:
 
-- Normalize model registry schema
-- Normalize model version schema
-- Define model artifact contract
-- Define inference backend interface
-- Split prediction into sample loading, preprocessing, inference, postprocessing, prediction manifest export
-- Keep mock backend
-- Strengthen ONNX Runtime backend
-- Add realistic detection output contract
+- Add pipeline timeline API.
+- Add job/pipeline metric summary API.
+- Track queue latency.
+- Track step duration.
+- Track inference/evaluation duration.
+- Add structured logs.
 
-Backends:
+Why this is high impact:
+
+- Directly supports monitoring and failure-response conversations.
+- Makes the project feel closer to a production system.
+
+---
+
+## Phase 4. Inference serving abstraction
+
+Goal:
 
 ```text
-mock
-onnx_runtime
-triton later
+Prepare the model runtime for production serving backends.
 ```
-
-Done when:
-
-- A model version can determine backend and artifact URI
-- Prediction code does not hardcode model behavior into the pipeline runner
-- ONNX Runtime path follows the same contract as mock path
-
-## Phase 3. Evaluation and comparison
-
-Goal: turn the project from pipeline execution into model development support tooling.
 
 Tasks:
 
-- Add model-version evaluation history endpoint
-- Add evaluation comparison endpoint
-- Add detection leaderboard endpoint
-- Add per-class metrics
-- Add threshold-based metrics
-- Add latency metrics
-- Add throughput metrics
+- Add `external_http` inference backend.
+- Add Triton backend contract.
+- Define model repository layout.
+- Separate preprocessing, inference, postprocessing, and export.
+- Add inference server health checks.
 
-Target APIs:
+Why this matters:
+
+- Shows understanding of model serving architecture.
+- Creates a bridge from batch validation to production inference.
+
+---
+
+## Phase 5. Object storage and artifact lineage
+
+Goal:
 
 ```text
-GET /api/v1/models/{model_id}/versions/{version}/evaluations
-GET /api/v1/evaluations/compare
-GET /api/v1/leaderboards/detection
+Make artifacts portable beyond local filesystem.
 ```
-
-Done when:
-
-- Two model versions can be compared on the same dataset version
-- Evaluation output is reproducible from stored metadata/artifacts
-- Metrics are visible without manually opening files
-
-## Phase 4. Artifact storage and lineage
-
-Goal: make artifacts portable across local and object-storage environments.
 
 Tasks:
 
-- Normalize artifact URI format
-- Add `local://` URI convention
-- Add artifact metadata model if needed
-- Add MinIO service to local compose
-- Add S3-compatible storage implementation
-- Store artifact size/checksum/content type
-- Connect dataset, prediction, evaluation, and model artifacts through lineage
+- Normalize artifact URI contract.
+- Add artifact metadata table if needed.
+- Add MinIO/S3-compatible storage backend.
+- Track dataset, prediction, evaluation, and model artifacts by lineage.
 
-Target URI examples:
+Why this matters:
+
+- Aligns with large-scale data infrastructure requirements.
+- Makes the local-first architecture easier to explain as cloud-ready.
+
+---
+
+## Phase 6. Simulation / counterfactual dataset extension
+
+Goal:
 
 ```text
-local://datasets/nuscenes/v1.0-mini/manifest.json
-local://runs/inference/{run_id}/predictions.json
-local://runs/evaluations/{evaluation_run_id}/report.json
-s3://sceneops/datasets/nuscenes/v1.0-mini/manifest.json
+Connect real2sim2real or counterfactual data generation outputs to the same validation/evaluation loop.
 ```
-
-Done when:
-
-- local and object storage can be swapped by config
-- pipeline result exposes artifact URIs consistently
-- artifacts are traceable back to pipeline/job/model/dataset metadata
-
-## Phase 5. Observability and operations
-
-Goal: show production-oriented system design.
 
 Tasks:
 
-- Add structured logs
-- Add job duration metrics
-- Add pipeline duration metrics
-- Add step duration metrics
-- Add queue latency metrics
-- Add retry/failure metrics
-- Add inference latency metrics
-- Add API metrics endpoint
-- Add Prometheus exporter
-- Add Grafana dashboard
+- Add `simulated` / `counterfactual` dataset type.
+- Define simulation output manifest.
+- Register synthetic/re-observed dataset versions.
+- Validate simulated sensor outputs.
+- Evaluate models on generated edge-case datasets.
 
-Initial metrics:
+Why this matters:
 
-```text
-sceneops_pipeline_total
-sceneops_pipeline_duration_seconds
-sceneops_job_total
-sceneops_job_duration_seconds
-sceneops_job_queue_latency_seconds
-sceneops_inference_latency_seconds
-sceneops_evaluation_duration_seconds
-sceneops_job_failures_total
-```
-
-Done when:
-
-- pipeline/job health can be inspected without reading raw logs
-- failures and slow stages are visible
-- local monitoring stack can be started from compose
-
-## Phase 6. Serving
-
-Goal: connect batch validation workflows with production inference serving.
-
-Tasks:
-
-- Add Triton service to compose
-- Define Triton model repository layout
-- Add Triton inference backend
-- Add model server health check
-- Add serving request path
-- Track serving metrics separately from batch metrics
-
-Done when:
-
-- the same model version concept can point to ONNX Runtime batch inference or Triton serving
-- serving health and latency are observable
-- detection_validation pipeline can optionally call serving backend
-
-## Phase 7. Robotics/simulation extension
-
-Goal: connect the platform to robotics simulation and counterfactual data generation.
-
-Tasks:
-
-- Add simulated dataset type
-- Add counterfactual dataset type
-- Define simulation output manifest
-- Define intervention metadata contract
-- Add calibration validation for camera/LiDAR
-- Add pseudo-label workflow placeholder
-- Add VLM/VLA annotation workflow concept
-
-Target flow:
-
-```text
-real dataset version
-  -> reconstructed/simulated/counterfactual dataset version
-  -> prediction
-  -> evaluation
-  -> comparison against real baseline
-```
-
-Done when:
-
-- simulated/counterfactual outputs can be registered as dataset versions
-- simulation artifacts can be evaluated through the same model pipeline
-- the project connects clearly to robotics digital twin workflows
+- Connects SceneOps with robotics simulation and data generation experience.
+- Differentiates the project from generic MLOps examples.
