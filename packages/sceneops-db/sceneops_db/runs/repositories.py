@@ -6,6 +6,7 @@ from sceneops_core.schemas.runs import (
     DatasetValidationRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,
+    DatasetProfileRunRecord,
     RunStatus,
 )
 from sceneops_core.schemas.datasets.validation import DatasetValidationStatus
@@ -69,4 +70,26 @@ class DatasetValidationRunRepository(Protocol):
         status: RunStatus | None = None,
         validation_status: DatasetValidationStatus | None = None,
     ) -> list[DatasetValidationRunRecord]:
+        ...
+
+class DatasetProfileRunRepository(Protocol):
+    async def upsert(
+        self,
+        record: DatasetProfileRunRecord,
+    ) -> DatasetProfileRunRecord:
+        ...
+
+    async def get(
+        self,
+        profile_run_id: str,
+    ) -> DatasetProfileRunRecord | None:
+        ...
+
+    async def list(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        limit: int = 50,
+    ) -> list[DatasetProfileRunRecord]:
         ...

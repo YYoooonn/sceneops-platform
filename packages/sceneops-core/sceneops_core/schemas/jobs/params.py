@@ -24,7 +24,6 @@ class InferenceBackend(StrEnum):
 class BaseJobParams(SceneOpsBaseModel):
     dataset_id: str
     dataset_version: str
-
     extra: JsonDict = Field(default_factory=dict)
 
 
@@ -45,13 +44,26 @@ class ValidateDatasetJobParams(BaseJobParams):
     validate_sensor_artifacts: bool = True
     validate_annotations: bool = True
     validate_calibration: bool = False
-    profile_dataset: bool = True
+    validate_timestamps: bool = False
 
     max_samples: int | None = None
 
     fail_on_missing_required_channels: bool = True
     fail_on_missing_samples: bool = True
     fail_on_missing_sensor_artifacts: bool = False
+
+
+class ProfileDatasetJobParams(BaseJobParams):
+    require_target_channels: list[str] = Field(
+        default_factory=lambda: ["CAM_FRONT", "LIDAR_TOP"]
+    )
+
+    profile_samples: bool = True
+    profile_annotations: bool = True
+    profile_sensor_coverage: bool = True
+    profile_scene_distribution: bool = True
+
+    max_samples: int | None = None
 
 
 class PredictDetectionJobParams(BaseJobParams):
@@ -77,6 +89,7 @@ class EvaluateDetectionJobParams(BaseJobParams):
 JobParams = (
     IngestDatasetJobParams
     | ValidateDatasetJobParams
+    | ProfileDatasetJobParams
     | PredictDetectionJobParams
     | EvaluateDetectionJobParams
 )
@@ -85,6 +98,9 @@ JobParams = (
 def parse_job_params(job_type: JobType, params: JsonDict) -> JobParams:
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobParams.model_validate(params)
+
+    if job_type == JobType.PROFILE_DATASET:
+        return ProfileDatasetJobParams.model_validate(params)
 
     if job_type == JobType.VALIDATE_DATASET:
         return ValidateDatasetJobParams.model_validate(params)

@@ -6,7 +6,8 @@ from typing import Any
 from pydantic import Field
 
 from sceneops_core.schemas.base import SceneOpsBaseModel
-from sceneops_core.schemas.datasets.enums import DatasetManifestStatus, SensorModality
+from sceneops_core.schemas.common import JsonDict
+from sceneops_core.schemas.datasets.enums import DatasetManifestStatus, DatasetType, SensorModality
 
 
 class DatasetManifestSummary(SceneOpsBaseModel):
@@ -37,14 +38,14 @@ class DatasetIngestMetadata(SceneOpsBaseModel):
 
 
 class DatasetManifest(SceneOpsBaseModel):
-    schema_version: str = Field(default="1.0")
+    schema_version: str = "1.0"
 
     dataset_id: str
     dataset_version: str
-    dataset_type: str
-
+    dataset_type: DatasetType | str
     source: str
-    status: DatasetManifestStatus = DatasetManifestStatus.READY
+
+    status: DatasetManifestStatus
     generated_at: datetime
 
     summary: DatasetManifestSummary
@@ -52,7 +53,7 @@ class DatasetManifest(SceneOpsBaseModel):
     uris: DatasetManifestUris
 
     ingest: DatasetIngestMetadata | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonDict = Field(default_factory=dict)
 
 
 class DatasetSceneIndexItem(SceneOpsBaseModel):

@@ -132,11 +132,6 @@ class ValidateDatasetJobHandler(
             )
 
             finished_at = datetime.now(UTC)
-            next_dataset_status = (
-                DatasetVersionStatus.FAILED
-                if report.should_block_pipeline
-                else DatasetVersionStatus.READY
-            )
 
             await run_registry.upsert_validation_run(
                 DatasetValidationRunRecord(
@@ -169,28 +164,12 @@ class ValidateDatasetJobHandler(
                 )
             )
 
-            await registry.upsert_version(
+            await registry.update_validation(
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
-                dataset_type=version.dataset_type,
-                source_uri=version.source_uri,
-                manifest_uri=version.manifest_uri,
-                scene_count=report.summary.scene_count,
-                sample_count=report.summary.sample_count,
-                annotation_count=report.summary.annotation_count,
-                status=next_dataset_status,
-                metadata={
-                    **base_metadata,
-                    "validation_status": report.status.value,
-                    "validation_run_id": validation_run_id,
-                    "validation_report_uri": validation_report_uri,
-                    "should_block_pipeline": report.should_block_pipeline,
-                    "validated_scene_count": report.summary.validated_scene_count,
-                    "validated_sample_count": report.summary.validated_sample_count,
-                    "issue_count": report.summary.issue_count,
-                    "error_count": report.summary.error_count,
-                    "warning_count": report.summary.warning_count,
-                },
+                validation_run_id=validation_run_id,
+                validation_report_uri=validation_report_uri,
+                report=report,
             )
 
             return ValidateDatasetJobResult(

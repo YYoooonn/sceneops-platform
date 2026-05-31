@@ -75,6 +75,21 @@ class PipelineJobPlanner:
                 "validate_samples": base.get("validate_samples", True),
             }
 
+        if step.job_type == JobType.PROFILE_DATASET:
+            return {
+                **base,
+                "require_target_channels": base.get(
+                    "require_target_channels",
+                    ["CAM_FRONT", "LIDAR_TOP"],
+                ),
+                "profile_samples": base.get("profile_samples", True),
+                "profile_annotations": base.get("profile_annotations", True),
+                "profile_sensor_coverage": base.get("profile_sensor_coverage", True),
+                "profile_scene_distribution": base.get(
+                    "profile_scene_distribution", True
+                ),
+            }
+
         if step.job_type == JobType.PREDICT_DETECTION:
             model_id = (
                 pipeline_run.model_id or base.get("model_id") or "centerpoint-mock"

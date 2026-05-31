@@ -6,6 +6,7 @@ from sceneops_worker.jobs.handlers.registry import build_job_handler_registry
 from sceneops_worker.jobs.handlers.validate_dataset import (
     ValidateDatasetJobHandler,
 )
+from sceneops_worker.jobs.handlers.profile_dataset import ProfileDatasetJobHandler
 
 __all__ = [
     "JobHandler",
@@ -13,5 +14,6 @@ __all__ = [
     "IngestDatasetJobHandler",
     "PredictDetectionJobHandler",
     "ValidateDatasetJobHandler",
+    "ProfileDatasetJobHandler",
     "build_job_handler_registry",
 ]

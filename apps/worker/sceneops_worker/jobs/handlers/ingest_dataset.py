@@ -8,7 +8,7 @@ from sceneops_core.schemas.jobs import (
     JobManifest,
     JobType,
 )
-from sceneops_worker.datasets.nuscenes import ingest_nuscenes
+from sceneops_worker.datasets.ingest import ingest_nuscenes
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 
 

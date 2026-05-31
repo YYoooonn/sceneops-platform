@@ -21,7 +21,8 @@ from sceneops_db.pipelines import PipelineRunModel, PipelineStepRunModel  # noqa
 from sceneops_db.runs import (
     EvaluationRunModel,
     InferenceRunModel,
-    DatasetValidationRunModel
+    DatasetValidationRunModel,
+    DatasetProfileRunModel
 )  # noqa: F401
 
 config = context.config

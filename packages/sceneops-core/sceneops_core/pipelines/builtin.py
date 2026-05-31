@@ -33,6 +33,17 @@ DATASET_INGESTION_PIPELINE = PipelineDefinition(
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
         ),
+        PipelineStepDefinition(
+            name="profile",
+            order=2,
+            job_type=JobType.PROFILE_DATASET.value,
+            depends_on=["validate"],
+            default_params={
+                "profile_samples": True,
+                "profile_annotations": True,
+                "profile_sensor_coverage": True,
+            },
+        ),
     ],
 )
 

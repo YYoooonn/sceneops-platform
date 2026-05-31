@@ -35,6 +35,7 @@ class ValidateDatasetJobResult(BaseJobResult):
     status: DatasetValidationStatus
     validation_scope: DatasetValidationScope
     should_block_pipeline: bool
+    decision_reason: str | None = None
 
     scene_count: int
     sample_count: int
@@ -51,6 +52,28 @@ class ValidateDatasetJobResult(BaseJobResult):
     missing_sample_count: int = 0
     missing_channel_count: int = 0
     missing_artifact_count: int = 0
+
+
+class ProfileDatasetJobResult(BaseJobResult):
+    dataset_manifest_uri: str
+
+    profile_run_id: str
+    profile_report_uri: str
+
+    scene_count: int
+    sample_count: int
+    annotation_count: int = 0
+
+    profiled_scene_count: int = 0
+    profiled_sample_count: int = 0
+
+    observed_channels: list[str] = Field(default_factory=list)
+
+    missing_required_channel_count: int = 0
+    sensor_coverage_ratio: float = 0.0
+
+    empty_annotation_sample_count: int = 0
+    empty_annotation_sample_ratio: float = 0.0
 
 
 class PredictDetectionJobResult(BaseJobResult):
@@ -75,6 +98,7 @@ class EvaluateDetectionJobResult(BaseJobResult):
 JobResult = (
     IngestDatasetJobResult
     | ValidateDatasetJobResult
+    | ProfileDatasetJobResult
     | PredictDetectionJobResult
     | EvaluateDetectionJobResult
 )
@@ -83,6 +107,9 @@ JobResult = (
 def parse_job_result(job_type: JobType, result: JsonDict) -> JobResult:
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobResult.model_validate(result)
+
+    if job_type == JobType.PROFILE_DATASET:
+        return ProfileDatasetJobResult.model_validate(result)
 
     if job_type == JobType.VALIDATE_DATASET:
         return ValidateDatasetJobResult.model_validate(result)

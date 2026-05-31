@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sceneops_core.schemas.datasets.validation import DatasetValidationStatus
 from sceneops_core.schemas.runs import DatasetValidationRunRecord, RunStatus
 from sceneops_db.runs.models import DatasetValidationRunModel
-from sceneops_db.utils import enum_to_str, to_error_json, to_jsonable
+from sceneops_db.utils import enum_to_str, to_error_info, to_error_json, to_jsonable
 
 
 class PostgresDatasetValidationRunRepository:
@@ -132,9 +132,9 @@ class PostgresDatasetValidationRunRepository:
         return DatasetValidationRunRecord.model_validate(
             {
                 "id": model.id,
+                "status": model.status,
                 "dataset_id": model.dataset_id,
                 "dataset_version": model.dataset_version,
-                "status": model.status,
                 "validation_status": model.validation_status,
                 "should_block_pipeline": model.should_block_pipeline,
                 "dataset_manifest_uri": model.dataset_manifest_uri,
@@ -157,7 +157,7 @@ class PostgresDatasetValidationRunRepository:
                 "pipeline_step_run_id": model.pipeline_step_run_id,
                 "job_id": model.job_id,
                 "metadata": model.metadata_ or {},
-                "error": model.error,
+                "error": to_error_info(model.error),
                 "created_at": model.created_at,
                 "updated_at": model.updated_at,
                 "started_at": model.started_at,

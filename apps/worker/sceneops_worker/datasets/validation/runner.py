@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from collections import Counter
 
-from sceneops_core.schemas.datasets import DatasetValidationSeverity
+from sceneops_core.schemas.datasets import DatasetManifest, DatasetValidationSeverity
 from sceneops_core.schemas.datasets.validation import (
-    DatasetValidationProfile,
     DatasetValidationReport,
     DatasetValidationScope,
     DatasetValidationStatus,
     DatasetValidationSummary,
 )
+from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.datasets.validation.checks import (
     missing_required_channel_issue,
     missing_sample_manifest_issue,
@@ -25,8 +24,8 @@ async def validate_dataset(
     dataset_id: str,
     dataset_version: str,
     dataset_manifest_uri: str,
-    dataset_manifest,
-    dataset_artifact_store,
+    dataset_manifest: DatasetManifest,
+    dataset_artifact_store: DatasetArtifactStore,
     require_target_channels: list[str],
     validate_samples: bool = True,
     max_samples: int | None = None,
@@ -42,13 +41,8 @@ async def validate_dataset(
         sample_count=dataset_manifest.summary.sample_count,
         annotation_count=dataset_manifest.summary.annotation_count,
     )
-    profile = DatasetValidationProfile(
-        required_channels=require_target_channels,
-    )
-    issues = []
 
-    channel_counts: Counter[str] = Counter()
-    scene_sample_counts: dict[str, int] = {}
+    issues = []
 
     scene_index = await dataset_artifact_store.load_scene_index(
         dataset_manifest.uris.scene_index
@@ -71,7 +65,6 @@ async def validate_dataset(
             continue
 
         summary.validated_scene_count += 1
-        scene_sample_counts[scene_item.scene_id] = len(scene_manifest.sample_ids)
 
         if not validate_samples:
             continue
@@ -98,8 +91,6 @@ async def validate_dataset(
             summary.validated_sample_count += 1
 
             sample_sensors = getattr(sample_manifest, "sensors", {}) or {}
-            for channel in sample_sensors:
-                channel_counts[channel] += 1
 
             for channel in require_target_channels:
                 if channel not in sample_sensors:
@@ -117,10 +108,6 @@ async def validate_dataset(
         if max_samples is not None and checked_samples >= max_samples:
             break
 
-    profile.channel_counts = dict(channel_counts)
-    profile.observed_channels = sorted(channel_counts.keys())
-    profile.scene_sample_counts = scene_sample_counts
-
     summary.issue_count = len(issues)
     summary.error_count = sum(
         1 for issue in issues if issue.severity == DatasetValidationSeverity.ERROR
@@ -137,7 +124,6 @@ async def validate_dataset(
     summary.missing_channel_count = sum(
         1 for issue in issues if issue.code == "missing_required_channel"
     )
-    summary.channel_counts = dict(channel_counts)
 
     report = DatasetValidationReport(
         validation_run_id=validation_run_id,
@@ -150,7 +136,6 @@ async def validate_dataset(
         max_samples=max_samples,
         should_block_pipeline=False,
         summary=summary,
-        profile=profile,
         issues=issues,
     )
 

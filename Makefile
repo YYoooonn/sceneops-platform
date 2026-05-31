@@ -107,7 +107,7 @@ clean-artifacts:
 .PHONY: compose-build
 compose-build:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build api worker-celery worker-cli
+	docker compose -f $(COMPOSE_FILE) build api worker-celery
 
 .PHONY: compose-build-no-cache
 compose-build-no-cache:

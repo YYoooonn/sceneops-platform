@@ -36,7 +36,6 @@ class DatasetValidationCheckType(StrEnum):
     ANNOTATION = "annotation"
     CALIBRATION = "calibration"
     TIMESTAMP = "timestamp"
-    PROFILE = "profile"
 
 
 class DatasetValidationIssue(SceneOpsBaseModel):
@@ -70,17 +69,6 @@ class DatasetValidationSummary(SceneOpsBaseModel):
     missing_channel_count: int = 0
     missing_artifact_count: int = 0
 
-    channel_counts: dict[str, int] = Field(default_factory=dict)
-    annotation_counts: dict[str, int] = Field(default_factory=dict)
-
-
-class DatasetValidationProfile(SceneOpsBaseModel):
-    required_channels: list[str] = Field(default_factory=list)
-    observed_channels: list[str] = Field(default_factory=list)
-    channel_counts: dict[str, int] = Field(default_factory=dict)
-    annotation_counts: dict[str, int] = Field(default_factory=dict)
-    scene_sample_counts: dict[str, int] = Field(default_factory=dict)
-
 
 class DatasetValidationDecision(SceneOpsBaseModel):
     status: DatasetValidationStatus
@@ -89,6 +77,8 @@ class DatasetValidationDecision(SceneOpsBaseModel):
 
 
 class DatasetValidationReport(SceneOpsBaseModel):
+    schema_version: str = "1.0"
+
     validation_run_id: str
     job_id: str | None = None
 
@@ -101,9 +91,9 @@ class DatasetValidationReport(SceneOpsBaseModel):
     max_samples: int | None = None
 
     should_block_pipeline: bool = False
+    decision_reason: str | None = None
 
     summary: DatasetValidationSummary
-    profile: DatasetValidationProfile = Field(default_factory=DatasetValidationProfile)
     issues: list[DatasetValidationIssue] = Field(default_factory=list)
 
     metadata: JsonDict = Field(default_factory=dict)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from sceneops_core.schemas.runs import (
+    DatasetProfileRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,
     DatasetValidationRunRecord,
+    RunStatus,
 )
 from sceneops_db.runs import (
+    PostgresDatasetProfileRunRepository,
     PostgresEvaluationRunRepository,
     PostgresInferenceRunRepository,
     PostgresDatasetValidationRunRepository,
@@ -77,4 +80,35 @@ class RunRegistryStore:
                 dataset_version=dataset_version,
                 status=status,
                 validation_status=validation_status,
+            )
+
+    async def get_profile_run(
+        self,
+        validation_run_id: str,
+    ) -> DatasetProfileRunRecord:
+        async with async_session_scope() as session:
+            repository = PostgresDatasetProfileRunRepository(session)
+            return await repository.get(validation_run_id)
+
+    async def upsert_profile_run(
+        self,
+        record: DatasetProfileRunRecord,
+    ) -> DatasetProfileRunRecord:
+        async with async_session_scope() as session:
+            repository = PostgresDatasetProfileRunRepository(session)
+            return await repository.upsert(record)
+
+    async def list_profile_runs(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status: RunStatus | None = None,
+    ) -> list[DatasetProfileRunRecord]:
+        async with async_session_scope() as session:
+            repository = PostgresDatasetProfileRunRepository(session)
+            return await repository.list(
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                status=status,
             )

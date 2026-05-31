@@ -12,6 +12,7 @@ from sceneops_core.schemas.jobs.params import (
     IngestDatasetJobParams,
     IngestMode,
     JobParams,
+    ProfileDatasetJobParams,
     PredictDetectionJobParams,
     parse_job_params,
 )
@@ -23,6 +24,7 @@ from sceneops_core.schemas.jobs.results import (
     IngestDatasetJobResult,
     JobResult,
     PredictDetectionJobResult,
+    ProfileDatasetJobResult,
     parse_job_result,
 )
 from sceneops_core.schemas.jobs.steps import JobStep, build_default_steps
@@ -44,7 +46,7 @@ __all__ = [
     "InferenceBackend",
     "IngestDatasetJobParams",
     "ValidateDatasetJobParams",
-    "ValidateDatasetJobResult",
+    "ProfileDatasetJobParams",
     "PredictDetectionJobParams",
     "EvaluateDetectionJobParams",
     "JobParams",
@@ -52,6 +54,8 @@ __all__ = [
     "IngestDatasetJobResult",
     "PredictDetectionJobResult",
     "EvaluateDetectionJobResult",
+    "ValidateDatasetJobResult",
+    "ProfileDatasetJobResult",
     "JobResult",
     "parse_job_result",
 ]

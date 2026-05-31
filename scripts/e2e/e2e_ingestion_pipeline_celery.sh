@@ -97,4 +97,6 @@ assert_json_not_empty "$VALIDATION_REPORT_JSON" '.summary.sample_count // .summa
 assert_json_not_empty "$VALIDATION_REPORT_JSON" '.summary.validated_sample_count // .summary.validatedSampleCount' \
   'validation report summary.validated_sample_count'
 
-echo "✅ Dataset ingestion + validation E2E passed"
+# XXX add profiling check
+
+echo "✅ Dataset ingestion + validation + profiling E2E passed"

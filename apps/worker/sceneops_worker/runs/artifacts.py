@@ -114,14 +114,14 @@ class RunArtifactStore:
     def validation_run_root_uri(self, validation_run_id: str) -> str:
         return self.artifact_store.join_uri(
             self.runs_root_uri,
-            "validations",
+            "dataset_validations",
             validation_run_id,
         )
 
     def validation_run_manifest_uri(self, validation_run_id: str) -> str:
         return self.artifact_store.join_uri(
             self.validation_run_root_uri(validation_run_id),
-            "validation.json",
+            "validation_report.json",
         )
 
     async def write_validation_run_manifest(
@@ -158,6 +158,33 @@ class RunArtifactStore:
             raise ValueError(f"Invalid validation run manifest: {uri}")
 
         return raw
+
+    # ---------------------------------------------------------------------
+    # Dataset profile runs
+    # ---------------------------------------------------------------------
+
+    def dataset_profile_run_root_uri(self, profile_run_id: str):
+        return self.artifact_store.join_uri(
+            self.runs_root_uri,
+            "dataset_profiles",
+            profile_run_id,
+        )
+
+    def dataset_profile_run_report_uri(self, profile_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.dataset_profile_run_root_uri(profile_run_id),
+            "profile_report.json",
+        )
+
+    async def write_dataset_profile_run_report(
+        self,
+        *,
+        profile_run_id: str,
+        manifest: dict[str, Any],
+    ) -> str:
+        uri = self.dataset_profile_run_report_uri(profile_run_id=profile_run_id)
+        await self.artifact_store.write_json(uri, manifest)
+        return uri
 
     # ---------------------------------------------------------------------
     # Evaluation runs

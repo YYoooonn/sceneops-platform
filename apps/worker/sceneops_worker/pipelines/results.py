@@ -17,7 +17,9 @@ from sceneops_core.schemas.pipelines import (
     PipelineValidationOutput,
     PipelineStepRunManifest,
 )
+from sceneops_core.schemas.pipelines.results import PipelineProfileOutput
 from sceneops_worker.pipelines.context import PipelineExecutionContext
+from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
 def build_pipeline_result(
@@ -30,35 +32,45 @@ def build_pipeline_result(
     return PipelineRunResult(
         summary=PipelineResultSummary(
             status=status,
-            dataset_status=context.get("dataset_status"),
-            validation_status=context.get("validation_status"),
-            should_block_pipeline=context.get("should_block_pipeline"),
-            scene_count=context.get("scene_count"),
-            sample_count=context.get("sample_count"),
-            annotation_count=context.get("annotation_count"),
-            validated_scene_count=context.get("validated_scene_count"),
-            validated_sample_count=context.get("validated_sample_count"),
-            issue_count=context.get("validation_issue_count"),
-            error_count=context.get("validation_error_count"),
-            warning_count=context.get("validation_warning_count"),
-            metrics=context.get("metrics"),
+            dataset_status=context.get(Ctx.DATASET_STATUS),
+            validation_status=context.get(Ctx.VALIDATION_STATUS),
+            should_block_pipeline=context.get(Ctx.SHOULD_BLOCK_PIPELINE),
+            scene_count=context.get(Ctx.SCENE_COUNT),
+            sample_count=context.get(Ctx.SAMPLE_COUNT),
+            annotation_count=context.get(Ctx.ANNOTATION_COUNT),
+            validated_scene_count=context.get(Ctx.VALIDATED_SCENE_COUNT),
+            validated_sample_count=context.get(Ctx.VALIDATED_SAMPLE_COUNT),
+            issue_count=context.get(Ctx.ISSUE_COUNT),
+            error_count=context.get(Ctx.ERROR_COUNT),
+            warning_count=context.get(Ctx.WARNING_COUNT),
+            metrics=context.get(Ctx.EVALUATION_METRICS),
+            profiled_scene_count=context.get(Ctx.PROFILE_SCENE_COUNT),
+            profiled_sample_count=context.get(Ctx.PROFILE_SAMPLE_COUNT),
+            observed_channel_count=context.get(Ctx.OBSERVED_CHANNEL_COUNT),
+            sensor_coverage_ratio=context.get(Ctx.SENSOR_COVERAGE_RATIO),
+            empty_annotation_sample_ratio=context.get(
+                Ctx.EMPTY_ANNOTATION_SAMPLE_RATIO
+            ),
         ),
         lineage=PipelineResultLineage(
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
             model_id=pipeline_run.model_id,
             model_version=pipeline_run.model_version,
-            dataset_manifest_uri=context.get("dataset_manifest_uri"),
-            validation_run_id=context.get("validation_run_id"),
-            validation_report_uri=context.get("validation_report_uri"),
-            inference_run_id=context.get("inference_run_id"),
-            prediction_manifest_uri=context.get("prediction_manifest_uri"),
-            evaluation_run_id=context.get("evaluation_run_id"),
-            evaluation_manifest_uri=context.get("evaluation_manifest_uri"),
+            dataset_manifest_uri=context.get(Ctx.DATASET_MANIFEST_URI),
+            validation_run_id=context.get(Ctx.VALIDATION_RUN_ID),
+            validation_report_uri=context.get(Ctx.VALIDATION_REPORT_URI),
+            inference_run_id=context.get(Ctx.INFERENCE_RUN_ID),
+            prediction_manifest_uri=context.get(Ctx.PREDICTION_MANIFEST_URI),
+            evaluation_run_id=context.get(Ctx.EVALUATION_RUN_ID),
+            evaluation_manifest_uri=context.get(Ctx.EVALUATION_MANIFEST_URI),
+            profile_report_uri=context.get(Ctx.PROFILE_REPORT_URI),
+            profile_run_id=context.get(Ctx.PROFILE_RUN_ID),
         ),
         outputs=PipelineResultOutputs(
             dataset=_build_dataset_output(context),
             validation=_build_validation_output(context),
+            profile=_build_profile_output(context),
             inference=_build_inference_output(context),
             evaluation=_build_evaluation_output(context),
         ),
@@ -66,6 +78,7 @@ def build_pipeline_result(
     )
 
 
+# XXX refactor to Ctx.
 def _build_dataset_output(context: Any) -> PipelineDatasetOutput | None:
     if context.get("dataset_manifest_uri") is None:
         return None
@@ -118,6 +131,24 @@ def _build_evaluation_output(context: Any) -> PipelineEvaluationOutput | None:
         run_id=context.get("evaluation_run_id"),
         evaluation_manifest_uri=context.get("evaluation_manifest_uri"),
         metrics=context.get("metrics"),
+    )
+
+
+def _build_profile_output(context: Any) -> PipelineProfileOutput | None:
+    if context.get("profile_run_id") is None:
+        return None
+
+    return PipelineProfileOutput(
+        run_id=context.get("profile_run_id"),
+        report_uri=context.get("profile_report_uri"),
+        profiled_scene_count=context.get("profiled_scene_count"),
+        profiled_sample_count=context.get("profiled_sample_count"),
+        observed_channels=context.get("observed_channels") or [],
+        observed_channel_count=context.get("observed_channel_count"),
+        missing_required_channel_count=context.get("missing_required_channel_count"),
+        sensor_coverage_ratio=context.get("sensor_coverage_ratio"),
+        empty_annotation_sample_count=context.get("empty_annotation_sample_count"),
+        empty_annotation_sample_ratio=context.get("empty_annotation_sample_ratio"),
     )
 
 
