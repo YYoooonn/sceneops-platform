@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from celery.utils.log import get_task_logger
 
 from sceneops_core.constants.tasks import JOB_RUN_TASK
 from sceneops_worker.celery_app import celery_app
+from sceneops_worker.runtime.async_runner import get_async_runtime_runner
 from sceneops_worker.runtime.job_runtime import JobRuntime
 
 logger = get_task_logger(__name__)
@@ -35,7 +35,9 @@ def run_job_task(
         },
     )
 
-    return asyncio.run(
+    runner = get_async_runtime_runner()
+
+    return runner.run(
         _run_job(
             job_id=job_id,
             worker_id=worker_id,

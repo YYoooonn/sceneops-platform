@@ -1,6 +1,6 @@
 import typer
 
-from sceneops_worker.commands import jobs, pipelines
+from sceneops_worker.cli import jobs, pipelines
 
 app = typer.Typer(
     name="sceneops-worker",

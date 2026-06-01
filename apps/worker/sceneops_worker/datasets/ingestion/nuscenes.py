@@ -58,7 +58,7 @@ async def _ingest_nuscenes(request: DatasetIngestionRequest) -> DatasetManifest:
     nusc = NuScenes(
         version=dataset_version,
         dataroot=str(source_uri),
-        verbose=True,
+        verbose=False,
     )
 
     version_root_uri = dataset_artifact_store.dataset_version_root_uri(
