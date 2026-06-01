@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sceneops_core.schemas.models import (
+from sceneops_core.models.schemas import (
     ModelRecord,
     ModelVersionRecord,
 )

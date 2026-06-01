@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from sceneops_core.ids.runs import default_inference_run_id
-from sceneops_core.schemas.datasets import DatasetVersionStatus
-from sceneops_core.schemas.inference import DetectionInferenceInput
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.ids import default_inference_run_id
+from sceneops_core.datasets.schemas import DatasetVersionStatus
+from sceneops_core.inference.schemas import DetectionInferenceInput
+from sceneops_core.jobs.schemas import (
     InferenceBackend,
     JobManifest,
     JobType,
     PredictDetectionJobParams,
     PredictDetectionJobResult,
 )
-from sceneops_core.schemas.models import ModelBackend
-from sceneops_core.schemas.runs import InferenceRunRecord, RunStatus
+from sceneops_core.models.schemas import ModelBackend
+from sceneops_core.runs.schemas import InferenceRunRecord, RunStatus
 from sceneops_core.time import utc_now
 from sceneops_worker.inference.detection import (
     create_detection_inference_backend,

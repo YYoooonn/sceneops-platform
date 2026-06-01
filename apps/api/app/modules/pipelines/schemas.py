@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.base import SceneOpsBaseModel
-from sceneops_core.schemas.executions import (
+from sceneops_core.common.schemas import SceneOpsBaseModel
+from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionKind,
     ExecutionStatus,

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.common import ErrorInfo
-from sceneops_core.schemas.jobs import JobType, ValidateDatasetJobResult
-from sceneops_core.schemas.pipelines import (
+from sceneops_core.common.schemas import ErrorInfo
+from sceneops_core.jobs.schemas import JobType, ValidateDatasetJobResult
+from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
     PipelineStepResult,

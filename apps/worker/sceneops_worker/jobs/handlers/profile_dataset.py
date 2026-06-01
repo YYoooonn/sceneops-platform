@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sceneops_core.ids.runs import default_profile_run_id
-from sceneops_core.schemas.datasets.profile import DatasetProfileScope
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.ids import default_profile_run_id
+from sceneops_core.datasets.schemas import DatasetProfileScope
+from sceneops_core.jobs.schemas import (
     JobManifest,
     JobType,
     ProfileDatasetJobParams,
     ProfileDatasetJobResult,
 )
-from sceneops_core.schemas.runs import DatasetProfileRunRecord, RunStatus
+from sceneops_core.runs.schemas import DatasetProfileRunRecord, RunStatus
 from sceneops_worker.datasets.profiling import profile_dataset
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 

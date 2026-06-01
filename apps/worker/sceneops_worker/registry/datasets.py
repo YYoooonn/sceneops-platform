@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.datasets import (
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.datasets.schemas import (
     DatasetValidationReport,
     DatasetVersionRecord,
     DatasetVersionStatus,
 )
-from sceneops_core.schemas.datasets.profile import DatasetProfileReport
+from sceneops_core.datasets.schemas import DatasetProfileReport
 from sceneops_db.datasets import PostgresDatasetVersionRepository
 from sceneops_db.session import async_session_scope
 

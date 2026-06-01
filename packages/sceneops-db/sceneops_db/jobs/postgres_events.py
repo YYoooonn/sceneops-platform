@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.ids.job_events import generate_job_event_id
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.ids import generate_job_event_id
+from sceneops_core.jobs.schemas import (
     JobEventLevel,
     JobEventManifest,
     JobEventType,

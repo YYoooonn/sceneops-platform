@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.dependencies import get_dataset_service
 from app.modules.datasets.service import DatasetService
-from sceneops_core.schemas.datasets import (
+from sceneops_core.datasets.schemas import (
     CreateDatasetRequest,
     CreateDatasetVersionRequest,
     DatasetDetailResponse,

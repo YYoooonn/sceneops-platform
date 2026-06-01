@@ -4,7 +4,7 @@ import random
 from datetime import UTC, datetime
 from typing import Any
 
-from sceneops_core.schemas.datasets import DatasetManifest, DatasetSampleManifest
+from sceneops_core.datasets.schemas import DatasetManifest, DatasetSampleManifest
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
     DetectionInferenceRequest,

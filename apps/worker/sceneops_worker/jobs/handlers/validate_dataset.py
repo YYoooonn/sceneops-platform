@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sceneops_core.ids.runs import default_validation_run_id
-from sceneops_core.schemas.datasets import DatasetVersionStatus
-from sceneops_core.schemas.datasets.validation import DatasetValidationStatus
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.ids import default_validation_run_id
+from sceneops_core.datasets.schemas import DatasetVersionStatus, DatasetValidationStatus
+from sceneops_core.jobs.schemas import (
     JobManifest,
     JobType,
     ValidateDatasetJobParams,
     ValidateDatasetJobResult,
 )
-from sceneops_core.schemas.runs import DatasetValidationRunRecord, RunStatus
+from sceneops_core.runs.schemas import DatasetValidationRunRecord, RunStatus
 from sceneops_worker.datasets.validation import validate_dataset
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 

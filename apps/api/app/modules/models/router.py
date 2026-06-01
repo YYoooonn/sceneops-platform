@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.dependencies import get_model_service
 from app.modules.models.service import ModelService
-from sceneops_core.schemas.models import (
+from sceneops_core.models.schemas import (
     CreateModelRequest,
     CreateModelVersionRequest,
     ModelDetailResponse,

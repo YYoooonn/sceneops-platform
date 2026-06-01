@@ -4,7 +4,7 @@ import math
 from datetime import UTC, datetime
 from typing import Any
 
-from sceneops_core.schemas.datasets import (
+from sceneops_core.datasets.schemas import (
     DatasetManifest,
     DatasetSampleManifest,
     SampleAnnotationManifest,

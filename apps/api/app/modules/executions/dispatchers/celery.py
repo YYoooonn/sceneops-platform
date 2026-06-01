@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from celery import Celery
 
 from sceneops_core.constants.tasks import JOB_RUN_TASK, PIPELINE_RUN_TASK
-from sceneops_core.schemas.executions import (
+from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionKind,
     ExecutionStatus,

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from sceneops_core.ids.pipelines import (
+from sceneops_core.common.ids import (
     generate_pipeline_run_id,
     generate_pipeline_step_run_id,
 )
 from sceneops_core.pipelines import get_pipeline_definition
-from sceneops_core.schemas.jobs import JobType
-from sceneops_core.schemas.pipelines import (
+from sceneops_core.jobs.schemas import JobType
+from sceneops_core.pipelines.schemas import (
     CreatePipelineRunRequest,
     PipelineRunDetailResponse,
     PipelineRunListResponse,

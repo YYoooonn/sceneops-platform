@@ -9,8 +9,8 @@ from app.core.dependencies import (
 from app.modules.executions.dispatchers import ExecutionDispatcher
 from app.modules.pipelines.schemas import PipelineExecutionResponse
 from app.modules.pipelines.service import PipelineService
-from sceneops_core.schemas.executions import ExecutionStatus
-from sceneops_core.schemas.pipelines import (
+from sceneops_core.executions.schemas import ExecutionStatus
+from sceneops_core.pipelines.schemas import (
     CreatePipelineRunRequest,
     PipelineRunDetailResponse,
     PipelineRunListResponse,

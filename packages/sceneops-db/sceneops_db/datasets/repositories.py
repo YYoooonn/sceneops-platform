@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.datasets import (
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.datasets.schemas import (
     DatasetRecord,
     DatasetVersionRecord,
     DatasetVersionStatus,

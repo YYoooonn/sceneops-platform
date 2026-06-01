@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.models import (
+from sceneops_core.models.schemas import (
     CreateModelRequest,
     CreateModelVersionRequest,
     ModelDetailResponse,
@@ -11,7 +11,7 @@ from sceneops_core.schemas.models import (
     ModelVersionRecord,
     UpsertModelRequest,
 )
-from sceneops_core.ids.models import generate_model_version_id
+from sceneops_core.common.ids import generate_model_version_id
 from sceneops_db.model_registry import ModelRepository, ModelVersionRepository
 
 

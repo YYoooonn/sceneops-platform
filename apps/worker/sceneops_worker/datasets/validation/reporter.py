@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.datasets.validation import DatasetValidationReport
+from sceneops_core.datasets.schemas import DatasetValidationReport
 
 
 async def save_validation_report(

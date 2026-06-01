@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.jobs import JobManifest, JobType
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.jobs.schemas import JobManifest, JobType
 from sceneops_worker.jobs.handlers import JobHandler
 
 

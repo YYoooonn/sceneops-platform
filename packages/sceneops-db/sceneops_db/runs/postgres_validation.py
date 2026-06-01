@@ -4,8 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.datasets.validation import DatasetValidationStatus
-from sceneops_core.schemas.runs import DatasetValidationRunRecord, RunStatus
+from sceneops_core.datasets.schemas import DatasetValidationStatus
+from sceneops_core.runs.schemas import DatasetValidationRunRecord, RunStatus
 from sceneops_db.runs.models import DatasetValidationRunModel
 from sceneops_db.utils import enum_to_str, to_error_info, to_error_json, to_jsonable
 

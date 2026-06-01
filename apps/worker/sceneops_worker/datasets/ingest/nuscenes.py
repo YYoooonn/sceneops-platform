@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from nuscenes.nuscenes import NuScenes
 
-from sceneops_core.schemas.datasets import (
+from sceneops_core.datasets.schemas import (
     CalibratedSensorManifest,
     DatasetIngestMetadata,
     DatasetManifest,

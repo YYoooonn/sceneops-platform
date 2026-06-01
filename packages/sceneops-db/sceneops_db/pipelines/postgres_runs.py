@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.pipelines import (
+from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
     PipelineType,

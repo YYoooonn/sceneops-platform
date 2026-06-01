@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.dependencies import get_artifact_service
 from app.modules.artifacts.service import ArtifactService
-from sceneops_core.schemas.common import JsonDict
+from sceneops_core.common.schemas import JsonDict
 
 router = APIRouter(
     prefix="/artifacts",

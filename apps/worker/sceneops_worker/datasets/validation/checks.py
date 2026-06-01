@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.datasets.validation import (
+from sceneops_core.datasets.schemas import (
     DatasetValidationCheckType,
     DatasetValidationIssue,
     DatasetValidationSeverity,

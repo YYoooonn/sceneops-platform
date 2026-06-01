@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.runs import DatasetProfileRunRecord, RunStatus
+from sceneops_core.runs.schemas import DatasetProfileRunRecord, RunStatus
 from sceneops_db.runs.models import DatasetProfileRunModel
 from sceneops_db.utils import enum_to_str, to_error_info, to_error_json, to_jsonable
 

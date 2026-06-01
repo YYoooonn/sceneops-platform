@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from sceneops_core.schemas.datasets import (
+from sceneops_core.datasets.schemas import (
     DatasetManifest,
     DatasetSampleManifest,
     DatasetSceneIndex,

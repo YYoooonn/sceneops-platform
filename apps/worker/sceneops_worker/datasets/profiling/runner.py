@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections import Counter
 
-from sceneops_core.schemas.datasets import DatasetManifest
-from sceneops_core.schemas.datasets.profile import (
+from sceneops_core.datasets.schemas import DatasetManifest
+from sceneops_core.datasets.schemas import (
     DatasetAnnotationProfile,
     DatasetChannelProfile,
     DatasetProfileReport,

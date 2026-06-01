@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from sceneops_core.ids.runs import default_evaluation_run_id
-from sceneops_core.schemas.datasets import DatasetVersionStatus
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.ids import default_evaluation_run_id
+from sceneops_core.datasets.schemas import DatasetVersionStatus
+from sceneops_core.jobs.schemas import (
     EvaluateDetectionJobParams,
     EvaluateDetectionJobResult,
     JobManifest,
     JobType,
 )
-from sceneops_core.schemas.runs import EvaluationRunRecord, RunStatus
+from sceneops_core.runs.schemas import EvaluationRunRecord, RunStatus
 from sceneops_core.time import utc_now
 from sceneops_worker.evaluation.detection import evaluate_detection_run
 from sceneops_worker.jobs.handlers.base import TypedJobHandler

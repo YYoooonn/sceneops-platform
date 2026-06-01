@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from sceneops_core.schemas.jobs.params import InferenceBackend
+from sceneops_core.jobs.schemas import InferenceBackend
 from sceneops_worker.inference.detection.base import DetectionInferenceBackend
 from sceneops_worker.inference.detection.mock import MockDetectionInferenceBackend
 from sceneops_worker.inference.detection.onnx_runtime import (

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.models import ModelVersionRecord
+from sceneops_core.models.schemas import ModelVersionRecord
 from sceneops_db.model_registry import PostgresModelVersionRepository
 from sceneops_db.session import async_session_scope
 

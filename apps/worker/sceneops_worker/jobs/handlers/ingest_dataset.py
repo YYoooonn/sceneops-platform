@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 
-from sceneops_core.schemas.datasets import DatasetType, DatasetVersionStatus
-from sceneops_core.schemas.jobs import (
+from sceneops_core.datasets.schemas import DatasetType, DatasetVersionStatus
+from sceneops_core.jobs.schemas import (
     IngestDatasetJobParams,
     IngestDatasetJobResult,
     JobManifest,

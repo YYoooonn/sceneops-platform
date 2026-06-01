@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 
-from sceneops_core.schemas.datasets import DatasetManifest, DatasetValidationSeverity
-from sceneops_core.schemas.datasets.validation import (
+from sceneops_core.datasets.schemas import DatasetManifest, DatasetValidationSeverity
+from sceneops_core.datasets.schemas import (
     DatasetValidationReport,
     DatasetValidationScope,
     DatasetValidationStatus,

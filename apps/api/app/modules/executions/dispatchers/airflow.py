@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from sceneops_core.schemas.executions import (
+from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionKind,
     ExecutionStatus,

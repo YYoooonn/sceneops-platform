@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from sceneops_core.schemas.inference import (
+from sceneops_core.inference.schemas import (
     DetectionInferenceInput,
     DetectionInferenceResult,
 )

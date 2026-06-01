@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import onnxruntime as ort
 
-from sceneops_core.schemas.datasets import DatasetManifest, DatasetSampleManifest
+from sceneops_core.datasets.schemas import DatasetManifest, DatasetSampleManifest
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sceneops_core.schemas.common import ErrorInfo
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.schemas import ErrorInfo
+from sceneops_core.jobs.schemas import (
     JobEventLevel,
     JobEventType,
     JobManifest,
