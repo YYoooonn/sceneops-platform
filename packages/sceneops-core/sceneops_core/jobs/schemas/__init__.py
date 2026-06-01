@@ -8,7 +8,6 @@ from .manifests import JobManifest
 from .params import (
     EvaluateDetectionJobParams,
     ValidateDatasetJobParams,
-    InferenceBackend,
     IngestDatasetJobParams,
     IngestMode,
     JobParams,
@@ -43,7 +42,6 @@ __all__ = [
     "JobEventManifest",
     "JobEventListResponse",
     "IngestMode",
-    "InferenceBackend",
     "IngestDatasetJobParams",
     "ValidateDatasetJobParams",
     "ProfileDatasetJobParams",

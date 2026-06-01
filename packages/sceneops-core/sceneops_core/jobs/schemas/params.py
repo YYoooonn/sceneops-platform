@@ -6,18 +6,13 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
 from sceneops_core.datasets.schemas import DatasetType
+from sceneops_core.inference.enums import InferenceBackendType
 from .enums import JobType
 
 
 class IngestMode(StrEnum):
     UPSERT = "upsert"
     OVERWRITE = "overwrite"
-
-
-class InferenceBackend(StrEnum):
-    MOCK = "mock"
-    ONNX_RUNTIME = "onnx_runtime"
-    # TRITON = "triton"
 
 
 class BaseJobParams(SceneOpsBaseModel):
@@ -68,7 +63,7 @@ class ProfileDatasetJobParams(BaseJobParams):
 class PredictDetectionJobParams(BaseJobParams):
     model_id: str
     model_version: str
-    inference_backend: InferenceBackend = InferenceBackend.MOCK
+    inference_backend: InferenceBackendType = InferenceBackendType.MOCK
 
     inference_run_id: str | None = None
     max_samples: int | None = None

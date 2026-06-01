@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from sceneops_core.jobs.schemas import InferenceBackend
+from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_worker.inference.detection.base import DetectionInferenceBackend
 from sceneops_worker.inference.detection.mock import MockDetectionInferenceBackend
 from sceneops_worker.inference.detection.onnx_runtime import (
@@ -11,16 +11,16 @@ from sceneops_worker.inference.detection.onnx_runtime import (
 
 
 _BACKEND_REGISTRY: dict[
-    InferenceBackend,
+    InferenceBackendType,
     Callable[[], DetectionInferenceBackend],
 ] = {
-    InferenceBackend.MOCK: MockDetectionInferenceBackend,
-    InferenceBackend.ONNX_RUNTIME: OnnxRuntimeDetectionInferenceBackend,
+    InferenceBackendType.MOCK: MockDetectionInferenceBackend,
+    InferenceBackendType.ONNX_RUNTIME: OnnxRuntimeDetectionInferenceBackend,
 }
 
 
 def create_detection_inference_backend(
-    backend: InferenceBackend,
+    backend: InferenceBackendType,
 ) -> DetectionInferenceBackend:
     try:
         backend_cls = _BACKEND_REGISTRY[backend]

@@ -3,8 +3,8 @@ from __future__ import annotations
 from sceneops_core.common.ids import default_inference_run_id
 from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.inference.schemas import DetectionInferenceInput
+from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_core.jobs.schemas import (
-    InferenceBackend,
     JobManifest,
     JobType,
     PredictDetectionJobParams,
@@ -186,7 +186,7 @@ class PredictDetectionJobHandler(
 
 def _validate_model_backend(
     *,
-    requested_backend: InferenceBackend,
+    requested_backend: InferenceBackendType,
     registered_backend: ModelBackend,
 ) -> None:
     if requested_backend.value != registered_backend.value:

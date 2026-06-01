@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sceneops_core.datasets.schemas import DatasetManifest, DatasetSampleManifest
+from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
     DetectionInferenceRequest,
@@ -18,6 +19,10 @@ from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
 
 
 class MockDetectionInferenceBackend(DetectionInferenceBackend):
+    @property
+    def backend_type(self) -> str:
+        return InferenceBackendType.MOCK.value
+
     async def run(
         self,
         request: DetectionInferenceRequest,
