@@ -10,7 +10,8 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.runs.schemas import EvaluationRunRecord, RunStatus
 from sceneops_core.time import utc_now
-from sceneops_worker.evaluation.detection import evaluate_detection_run
+from sceneops_worker.evaluation import create_detection_evaluator
+from sceneops_worker.evaluation.detection import DetectionEvaluationRequest
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 
 
@@ -94,13 +95,16 @@ class EvaluateDetectionJobHandler(
         )
 
         try:
-            evaluation_manifest = await evaluate_detection_run(
-                dataset_manifest=dataset_manifest,
-                dataset_artifact_store=self.context.dataset_artifact_store,
-                run_artifact_store=self.context.run_artifact_store,
-                inference_run_id=params.inference_run_id,
-                evaluation_run_id=evaluation_run_id,
-                match_distance_m=params.match_distance_m,
+            evaluator = create_detection_evaluator(params.evaluator_id)
+            evaluation_manifest = await evaluator.run(
+                DetectionEvaluationRequest(
+                    dataset_manifest=dataset_manifest,
+                    dataset_artifact_store=self.context.dataset_artifact_store,
+                    run_artifact_store=self.context.run_artifact_store,
+                    inference_run_id=params.inference_run_id,
+                    evaluation_run_id=evaluation_run_id,
+                    match_distance_m=params.match_distance_m,
+                )
             )
 
             metrics = evaluation_manifest.get("metrics", {})
