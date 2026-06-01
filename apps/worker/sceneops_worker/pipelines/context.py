@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.pipelines import PipelineRunManifest, PipelineStepResult
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.pipelines.schemas import PipelineRunManifest, PipelineStepResult
 
 
 @dataclass

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from sceneops_core.schemas.executions import ExecutionDispatchResult
+from sceneops_core.executions.schemas import ExecutionDispatchResult
 
 
 class ExecutionDispatcher(ABC):

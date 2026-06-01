@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sceneops_worker.jobs.factory import create_job_runner
-from sceneops_worker.jobs.store import PostgresJobStore
+from sceneops_worker.registry import JobRegistryStore
 from sceneops_worker.pipelines.runner import PipelineRunner
 from sceneops_worker.pipelines.store import PostgresPipelineStore
 
@@ -18,7 +18,7 @@ class PipelineRuntime:
         pipeline_run_id: str,
     ):
         pipeline_store = PostgresPipelineStore()
-        job_store = PostgresJobStore()
+        job_store = JobRegistryStore()
 
         job_runner = create_job_runner(
             job_store=job_store,

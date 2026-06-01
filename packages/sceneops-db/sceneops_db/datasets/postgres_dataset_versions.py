@@ -4,8 +4,8 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.datasets import (
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.datasets.schemas import (
     DatasetValidationStatus,
     DatasetVersionRecord,
     DatasetVersionStatus,

@@ -4,11 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.models import (
+from sceneops_core.models.schemas import (
     ModelRecord,
     ModelVersionRecord,
 )
-from sceneops_core.ids.models import generate_model_version_id
+from sceneops_core.common.ids import generate_model_version_id
 from sceneops_db.model_registry.models import ModelModel, ModelVersionModel
 from sceneops_db.utils import enum_to_str, to_jsonable
 

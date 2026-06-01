@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from sceneops_core.schemas.common import ErrorInfo
+from sceneops_core.common.schemas import ErrorInfo
 
 
 def extract_datetime(value: Any) -> datetime | None:

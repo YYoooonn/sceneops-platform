@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.dependencies import get_run_service
 from app.modules.runs.service import RunService
-from sceneops_core.schemas.datasets import DatasetValidationStatus
-from sceneops_core.schemas.runs import (
+from sceneops_core.datasets.schemas import DatasetValidationStatus
+from sceneops_core.runs.schemas import (
     DatasetValidationRunDetailResponse,
     DatasetValidationRunListResponse,
     EvaluationRunDetailResponse,

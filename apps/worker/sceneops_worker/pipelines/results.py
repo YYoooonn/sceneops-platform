@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sceneops_core.schemas.jobs import JobManifest
-from sceneops_core.schemas.pipelines import (
+from sceneops_core.jobs.schemas import JobManifest
+from sceneops_core.pipelines.schemas import (
     PipelineDatasetOutput,
     PipelineEvaluationOutput,
     PipelineInferenceOutput,
@@ -16,8 +16,8 @@ from sceneops_core.schemas.pipelines import (
     PipelineStepResult,
     PipelineValidationOutput,
     PipelineStepRunManifest,
+    PipelineProfileOutput,
 )
-from sceneops_core.schemas.pipelines.results import PipelineProfileOutput
 from sceneops_worker.pipelines.context import PipelineExecutionContext
 from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 

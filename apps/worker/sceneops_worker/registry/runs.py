@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.runs import (
+from sceneops_core.runs.schemas import (
     DatasetProfileRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,

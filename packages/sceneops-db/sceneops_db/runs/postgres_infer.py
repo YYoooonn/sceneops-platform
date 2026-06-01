@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.runs import (
+from sceneops_core.runs.schemas import (
     InferenceRunRecord,
     RunStatus,
 )

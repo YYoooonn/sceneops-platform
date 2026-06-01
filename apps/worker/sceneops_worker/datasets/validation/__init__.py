@@ -1,5 +1,17 @@
-from sceneops_worker.datasets.validation.runner import validate_dataset
+from sceneops_worker.datasets.validation.base import (
+    DatasetValidationRequest,
+    DatasetValidationResult,
+    DatasetValidator,
+)
+from sceneops_worker.datasets.validation.factory import create_dataset_validator
+from sceneops_worker.datasets.validation.manifest_validator import (
+    ManifestDatasetValidator,
+)
 
 __all__ = [
-    "validate_dataset",
+    "DatasetValidationRequest",
+    "DatasetValidationResult",
+    "DatasetValidator",
+    "ManifestDatasetValidator",
+    "create_dataset_validator",
 ]

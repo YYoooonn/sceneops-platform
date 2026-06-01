@@ -2,37 +2,43 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sceneops_core.ids.runs import default_profile_run_id
-from sceneops_core.schemas.datasets.profile import DatasetProfileScope
-from sceneops_core.schemas.jobs import (
-    JobManifest,
+from sceneops_core.common.ids import default_profile_run_id
+from sceneops_core.datasets.schemas import DatasetProfileScope
+from sceneops_core.jobs.schemas import (
     JobType,
     ProfileDatasetJobParams,
     ProfileDatasetJobResult,
 )
-from sceneops_core.schemas.runs import DatasetProfileRunRecord, RunStatus
-from sceneops_worker.datasets.profiling import profile_dataset
-from sceneops_worker.jobs.handlers.base import TypedJobHandler
+from sceneops_core.runs.schemas import DatasetProfileRunRecord, RunStatus
+from sceneops_worker.datasets.profiling import (
+    DatasetProfileRequest,
+    create_dataset_profiler,
+)
+from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
 class ProfileDatasetJobHandler(
-    TypedJobHandler[ProfileDatasetJobParams, ProfileDatasetJobResult]
+    JobHandler[ProfileDatasetJobParams, ProfileDatasetJobResult]
 ):
-    job_type = JobType.PROFILE_DATASET
+    @property
+    def job_type(self) -> JobType:
+        return JobType.PROFILE_DATASET
 
-    def parse_params(self, job: JobManifest) -> ProfileDatasetJobParams:
-        return ProfileDatasetJobParams.model_validate(job.params)
+    @property
+    def params_model(self) -> type[ProfileDatasetJobParams]:
+        return ProfileDatasetJobParams
 
     async def run(
-        self,
-        *,
-        params: ProfileDatasetJobParams,
-        job: JobManifest,
+        self, request: JobHandlerRequest[ProfileDatasetJobParams]
     ) -> ProfileDatasetJobResult:
+        job = request.job
+        params = request.params
+        context = request.context
+
         now = datetime.now(UTC)
         profile_run_id = default_profile_run_id(job.job_id)
 
-        version = await self.context.dataset_registry_store.get_version(
+        version = await context.dataset_registry_store.get_version(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
         )
@@ -49,7 +55,7 @@ class ProfileDatasetJobHandler(
             else DatasetProfileScope.FULL
         )
 
-        await self.context.run_registry_store.upsert_profile_run(
+        await context.run_registry_store.upsert_profile_run(
             DatasetProfileRunRecord(
                 id=profile_run_id,
                 dataset_id=params.dataset_id,
@@ -74,30 +80,34 @@ class ProfileDatasetJobHandler(
 
         try:
             dataset_manifest = (
-                await self.context.dataset_artifact_store.load_dataset_manifest(
+                await context.dataset_artifact_store.load_dataset_manifest(
                     version.manifest_uri
                 )
             )
 
-            report = await profile_dataset(
-                profile_run_id=profile_run_id,
-                job_id=job.job_id,
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                dataset_manifest_uri=version.manifest_uri,
-                dataset_manifest=dataset_manifest,
-                dataset_artifact_store=self.context.dataset_artifact_store,
-                required_channels=params.require_target_channels,
-                scope=scope,
-                max_samples=params.max_samples,
-                profile_samples=params.profile_samples,
-                profile_annotations=params.profile_annotations,
-                profile_sensor_coverage=params.profile_sensor_coverage,
-                profile_scene_distribution=params.profile_scene_distribution,
+            profiler = create_dataset_profiler()
+
+            report = await profiler.run(
+                DatasetProfileRequest(
+                    profile_run_id=profile_run_id,
+                    job_id=job.job_id,
+                    dataset_id=params.dataset_id,
+                    dataset_version=params.dataset_version,
+                    dataset_manifest_uri=version.manifest_uri,
+                    dataset_manifest=dataset_manifest,
+                    dataset_artifact_store=context.dataset_artifact_store,
+                    required_channels=params.require_target_channels,
+                    scope=scope,
+                    max_samples=params.max_samples,
+                    profile_samples=params.profile_samples,
+                    profile_annotations=params.profile_annotations,
+                    profile_sensor_coverage=params.profile_sensor_coverage,
+                    profile_scene_distribution=params.profile_scene_distribution,
+                )
             )
 
             profile_report_uri = (
-                await self.context.run_artifact_store.write_dataset_profile_run_report(
+                await context.run_artifact_store.write_dataset_profile_run_report(
                     profile_run_id=profile_run_id,
                     manifest=report.model_dump(mode="json"),
                 )
@@ -105,7 +115,7 @@ class ProfileDatasetJobHandler(
 
             finished_at = datetime.now(UTC)
 
-            await self.context.run_registry_store.upsert_profile_run(
+            await context.run_registry_store.upsert_profile_run(
                 DatasetProfileRunRecord(
                     id=profile_run_id,
                     dataset_id=params.dataset_id,
@@ -128,13 +138,16 @@ class ProfileDatasetJobHandler(
                     pipeline_run_id=job.pipeline_run_id,
                     pipeline_step_run_id=job.pipeline_step_run_id,
                     job_id=job.job_id,
-                    metadata=report.metadata,
+                    metadata={
+                        **(report.metadata or {}),
+                        "profiler_id": profiler.profiler_id,
+                    },
                     started_at=now,
                     finished_at=finished_at,
                 )
             )
 
-            await self.context.dataset_registry_store.update_profile(
+            await context.dataset_registry_store.update_profile(
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
                 profile_run_id=profile_run_id,
@@ -170,7 +183,7 @@ class ProfileDatasetJobHandler(
         except Exception as exc:
             finished_at = datetime.now(UTC)
 
-            await self.context.run_registry_store.upsert_profile_run(
+            await context.run_registry_store.upsert_profile_run(
                 DatasetProfileRunRecord(
                     id=profile_run_id,
                     dataset_id=params.dataset_id,

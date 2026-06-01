@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 
 import onnxruntime as ort
 
-from sceneops_core.schemas.datasets import DatasetManifest, DatasetSampleManifest
+from sceneops_core.datasets.schemas import DatasetManifest, DatasetSampleManifest
+from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
@@ -20,6 +21,10 @@ from sceneops_worker.inference.detection.base import (
 
 
 class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
+    @property
+    def backend_type(self) -> str:
+        return InferenceBackendType.ONNX_RUNTIME.value
+
     async def run(
         self,
         request: DetectionInferenceRequest,

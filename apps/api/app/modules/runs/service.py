@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.datasets import DatasetValidationStatus
-from sceneops_core.schemas.runs import (
+from sceneops_core.datasets.schemas import DatasetValidationStatus
+from sceneops_core.runs.schemas import (
     DatasetValidationRunDetailResponse,
     DatasetValidationRunListResponse,
     EvaluationRunDetailResponse,

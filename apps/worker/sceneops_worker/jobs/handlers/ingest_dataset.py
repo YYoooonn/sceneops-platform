@@ -1,43 +1,38 @@
 from __future__ import annotations
 
-
-from sceneops_core.schemas.datasets import DatasetType, DatasetVersionStatus
-from sceneops_core.schemas.jobs import (
+from sceneops_core.datasets.schemas import DatasetVersionStatus
+from sceneops_core.jobs.schemas import (
     IngestDatasetJobParams,
     IngestDatasetJobResult,
-    JobManifest,
     JobType,
 )
-from sceneops_worker.datasets.ingest import ingest_nuscenes
-from sceneops_worker.jobs.handlers.base import TypedJobHandler
+from sceneops_worker.datasets.ingestion import (
+    DatasetIngestionRequest,
+    create_dataset_ingestor,
+)
+from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
 class IngestDatasetJobHandler(
-    TypedJobHandler[IngestDatasetJobParams, IngestDatasetJobResult]
+    JobHandler[IngestDatasetJobParams, IngestDatasetJobResult]
 ):
-    job_type = JobType.INGEST_DATASET
+    @property
+    def job_type(self) -> JobType:
+        return JobType.INGEST_DATASET
 
-    def parse_params(self, job: JobManifest) -> IngestDatasetJobParams:
-        return IngestDatasetJobParams.model_validate(job.params)
+    @property
+    def params_model(self) -> type[IngestDatasetJobParams]:
+        return IngestDatasetJobParams
 
     async def run(
         self,
-        *,
-        params: IngestDatasetJobParams,
-        job: JobManifest,
+        request: JobHandlerRequest[IngestDatasetJobParams],
     ) -> IngestDatasetJobResult:
-        if params.dataset_type == DatasetType.NUSCENES:
-            return await self._run_nuscenes(params=params, job=job)
+        job = request.job
+        params = request.params
+        context = request.context
 
-        raise ValueError(f"Unsupported dataset type: {params.dataset_type}")
-
-    async def _run_nuscenes(
-        self,
-        *,
-        params: IngestDatasetJobParams,
-        job: JobManifest,
-    ) -> IngestDatasetJobResult:
-        registry = self.context.dataset_registry_store
+        registry = context.dataset_registry_store
 
         version = await registry.get_version(
             dataset_id=params.dataset_id,
@@ -64,14 +59,18 @@ class IngestDatasetJobHandler(
             metadata=version.metadata,
         )
 
+        ingestor = create_dataset_ingestor(params.dataset_type)
+
         try:
-            dataset_manifest = await ingest_nuscenes(
-                source_uri=source_uri,
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                dataset_artifact_store=self.context.dataset_artifact_store,
-                max_scenes=params.max_scenes,
-                mode=params.mode.value,
+            dataset_manifest = await ingestor.run(
+                DatasetIngestionRequest(
+                    dataset_id=params.dataset_id,
+                    dataset_version=params.dataset_version,
+                    source_uri=source_uri,
+                    dataset_artifact_store=context.dataset_artifact_store,
+                    max_scenes=params.max_scenes,
+                    mode=params.mode,
+                )
             )
 
             await registry.upsert_version(
@@ -87,6 +86,7 @@ class IngestDatasetJobHandler(
                 metadata={
                     **(version.metadata or {}),
                     "last_ingest_job_id": job.job_id,
+                    "ingestor_type": ingestor.dataset_type,
                     "source": dataset_manifest.source,
                     "target_channels": dataset_manifest.channels.target,
                 },

@@ -1,40 +1,44 @@
 from __future__ import annotations
 
-from sceneops_core.ids.runs import default_inference_run_id
-from sceneops_core.schemas.datasets import DatasetVersionStatus
-from sceneops_core.schemas.inference import DetectionInferenceInput
-from sceneops_core.schemas.jobs import (
-    InferenceBackend,
-    JobManifest,
-    JobType,
+from sceneops_core.common.ids import default_inference_run_id
+from sceneops_core.datasets.schemas import DatasetVersionStatus
+from sceneops_core.inference.schemas import DetectionInferenceInput
+from sceneops_core.inference.enums import InferenceBackendType
+from sceneops_core.jobs.schemas import (
     PredictDetectionJobParams,
     PredictDetectionJobResult,
+    JobType,
 )
-from sceneops_core.schemas.models import ModelBackend
-from sceneops_core.schemas.runs import InferenceRunRecord, RunStatus
+from sceneops_core.models.schemas import ModelBackend
+from sceneops_core.runs.schemas import InferenceRunRecord, RunStatus
 from sceneops_core.time import utc_now
 from sceneops_worker.inference.detection import (
     create_detection_inference_backend,
 )
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
-from sceneops_worker.jobs.handlers.base import TypedJobHandler
+from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
 class PredictDetectionJobHandler(
-    TypedJobHandler[PredictDetectionJobParams, PredictDetectionJobResult]
+    JobHandler[PredictDetectionJobParams, PredictDetectionJobResult]
 ):
-    job_type = JobType.PREDICT_DETECTION
+    @property
+    def job_type(self) -> JobType:
+        return JobType.PREDICT_DETECTION
 
-    def parse_params(self, job: JobManifest) -> PredictDetectionJobParams:
-        return PredictDetectionJobParams.model_validate(job.params)
+    @property
+    def params_model(self) -> type[PredictDetectionJobParams]:
+        return PredictDetectionJobParams
 
     async def run(
         self,
-        *,
-        params: PredictDetectionJobParams,
-        job: JobManifest,
+        request: JobHandlerRequest[PredictDetectionJobParams],
     ) -> PredictDetectionJobResult:
-        model_version = await self.context.model_registry_store.get_version(
+        job = request.job
+        params = request.params
+        context = request.context
+
+        model_version = await context.model_registry_store.get_version(
             model_id=params.model_id,
             model_version=params.model_version,
         )
@@ -49,7 +53,7 @@ class PredictDetectionJobHandler(
         model_uri = params.model_uri or model_version.model_uri
         endpoint_url = params.endpoint_url or model_version.endpoint_url
 
-        version = await self.context.dataset_registry_store.get_version(
+        version = await context.dataset_registry_store.get_version(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
         )
@@ -67,10 +71,8 @@ class PredictDetectionJobHandler(
                 f"{params.dataset_id}:{params.dataset_version}"
             )
 
-        dataset_manifest = (
-            await self.context.dataset_artifact_store.load_dataset_manifest(
-                version.manifest_uri
-            )
+        dataset_manifest = await context.dataset_artifact_store.load_dataset_manifest(
+            version.manifest_uri
         )
 
         inference_run_id = params.inference_run_id or default_inference_run_id(
@@ -84,7 +86,7 @@ class PredictDetectionJobHandler(
             "endpoint_url": endpoint_url,
         }
 
-        await self.context.run_registry_store.upsert_inference_run(
+        await context.run_registry_store.upsert_inference_run(
             InferenceRunRecord(
                 id=inference_run_id,
                 dataset_id=params.dataset_id,
@@ -112,12 +114,12 @@ class PredictDetectionJobHandler(
                         endpoint_url=endpoint_url,
                         run_id=inference_run_id,
                     ),
-                    dataset_artifact_store=self.context.dataset_artifact_store,
-                    run_artifact_store=self.context.run_artifact_store,
+                    dataset_artifact_store=context.dataset_artifact_store,
+                    run_artifact_store=context.run_artifact_store,
                 )
             )
 
-            await self.context.run_registry_store.upsert_inference_run(
+            await context.run_registry_store.upsert_inference_run(
                 InferenceRunRecord(
                     id=inference_run_id,
                     dataset_id=params.dataset_id,
@@ -160,7 +162,7 @@ class PredictDetectionJobHandler(
             )
 
         except Exception as error:
-            await self.context.run_registry_store.upsert_inference_run(
+            await context.run_registry_store.upsert_inference_run(
                 InferenceRunRecord(
                     id=inference_run_id,
                     dataset_id=params.dataset_id,
@@ -186,7 +188,7 @@ class PredictDetectionJobHandler(
 
 def _validate_model_backend(
     *,
-    requested_backend: InferenceBackend,
+    requested_backend: InferenceBackendType,
     registered_backend: ModelBackend,
 ) -> None:
     if requested_backend.value != registered_backend.value:

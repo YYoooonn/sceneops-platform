@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from sceneops_core.schemas.jobs import (
+from sceneops_core.jobs.schemas import (
     JobEventLevel,
     JobEventManifest,
     JobEventType,

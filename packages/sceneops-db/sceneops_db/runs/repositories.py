@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sceneops_core.schemas.runs import (
+from sceneops_core.runs.schemas import (
     DatasetValidationRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,
     DatasetProfileRunRecord,
     RunStatus,
 )
-from sceneops_core.schemas.datasets.validation import DatasetValidationStatus
+from sceneops_core.datasets.schemas import DatasetValidationStatus
 
 class InferenceRunRepository(Protocol):
     async def upsert(self, record: InferenceRunRecord) -> InferenceRunRecord:

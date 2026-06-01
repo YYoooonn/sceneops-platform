@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.jobs.schemas import (
     EvaluateDetectionJobResult,
     IngestDatasetJobResult,
     JobType,
@@ -9,7 +9,7 @@ from sceneops_core.schemas.jobs import (
     ProfileDatasetJobResult,
     ValidateDatasetJobResult,
 )
-from sceneops_core.schemas.pipelines import PipelineStepRunManifest
+from sceneops_core.pipelines.schemas import PipelineStepRunManifest
 from sceneops_worker.pipelines.context import PipelineExecutionContext
 from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 

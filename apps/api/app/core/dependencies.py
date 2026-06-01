@@ -20,7 +20,7 @@ from app.modules.executions.dispatchers import (
     CeleryExecutionDispatcher,
     ExecutionDispatcher,
 )
-from sceneops_core.schemas.executions import ExecutionBackend
+from sceneops_core.executions.schemas import ExecutionBackend
 from sceneops_db.datasets import (
     DatasetRepository,
     DatasetVersionRepository,

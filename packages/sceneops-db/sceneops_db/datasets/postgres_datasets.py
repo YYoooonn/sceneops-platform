@@ -4,8 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.datasets import DatasetRecord
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.datasets.schemas import DatasetRecord
 from sceneops_db.datasets.models import DatasetModel
 from sceneops_db.utils import enum_to_str
 

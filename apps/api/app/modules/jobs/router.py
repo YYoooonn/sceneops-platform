@@ -4,8 +4,8 @@ from app.core.dependencies import get_execution_dispatcher, get_job_service
 from app.modules.executions.dispatchers import ExecutionDispatcher
 from app.modules.jobs.schemas import JobExecutionResponse
 from app.modules.jobs.service import JobService
-from sceneops_core.schemas.executions import ExecutionStatus
-from sceneops_core.schemas.jobs import (
+from sceneops_core.executions.schemas import ExecutionStatus
+from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobListResponse,
     JobManifest,

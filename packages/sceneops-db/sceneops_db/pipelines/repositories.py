@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sceneops_core.schemas.pipelines import (
+from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
     PipelineStepRunManifest,

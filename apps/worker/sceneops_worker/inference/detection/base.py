@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TypeAlias
 
-from sceneops_core.schemas.inference import (
+from sceneops_core.inference.contracts import InferenceBackend
+from sceneops_core.inference.schemas import (
     DetectionInferenceInput,
     DetectionInferenceResult,
 )
@@ -18,9 +19,7 @@ class DetectionInferenceRequest:
     run_artifact_store: RunArtifactStore
 
 
-class DetectionInferenceBackend(Protocol):
-    async def run(
-        self,
-        request: DetectionInferenceRequest,
-    ) -> DetectionInferenceResult:
-        raise NotImplementedError
+DetectionInferenceBackend: TypeAlias = InferenceBackend[
+    DetectionInferenceRequest,
+    DetectionInferenceResult,
+]

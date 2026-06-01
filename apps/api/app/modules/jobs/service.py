@@ -1,5 +1,5 @@
-from sceneops_core.ids.jobs import generate_job_id
-from sceneops_core.schemas.jobs import (
+from sceneops_core.common.ids import generate_job_id
+from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEventListResponse,
     JobEventType,

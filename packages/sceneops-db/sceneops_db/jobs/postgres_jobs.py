@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.schemas.common import JsonDict
-from sceneops_core.schemas.jobs import JobManifest, JobStatus
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.jobs.schemas import JobManifest, JobStatus
 
 from sceneops_core.time import utc_now, utc_now_iso
 from sceneops_db.jobs import JobModel
