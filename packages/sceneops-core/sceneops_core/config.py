@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from sceneops_core.schemas.executions import ExecutionBackend
-from sceneops_core.schemas.artifacts import ArtifactBackend
+from sceneops_core.executions.schemas import ExecutionBackend
+from sceneops_core.artifacts.schemas import ArtifactBackend
 from sceneops_core.constants.tasks import PIPELINE_QUEUE, JOB_QUEUE
 
 class ArtifactSettings(BaseModel):

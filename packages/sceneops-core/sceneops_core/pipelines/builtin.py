@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sceneops_core.schemas.jobs import JobType
-from sceneops_core.schemas.pipelines import (
+from sceneops_core.jobs.schemas import JobType
+from sceneops_core.pipelines.schemas import (
     PipelineDefinition,
     PipelineStepDefinition,
     PipelineType,
