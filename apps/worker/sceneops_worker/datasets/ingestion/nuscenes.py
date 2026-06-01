@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from nuscenes.nuscenes import NuScenes
-
+from sceneops_worker.datasets.ingestion.base import (
+    DatasetIngestionRequest,
+    DatasetIngestionResult,
+    DatasetIngestor,
+)
 from sceneops_core.datasets.schemas import (
     CalibratedSensorManifest,
     DatasetIngestMetadata,
@@ -31,15 +35,26 @@ DATA_SOURCE = "nuScenes"
 DATASET_TYPE = DatasetType.NUSCENES.value
 
 
-async def ingest_nuscenes(
-    *,
-    source_uri: str,
-    dataset_id: str,
-    dataset_version: str,
-    dataset_artifact_store: DatasetArtifactStore,
-    max_scenes: int | None = None,
-    mode: str = "upsert",
-) -> DatasetManifest:
+class NuScenesDatasetIngestor(DatasetIngestor):
+    @property
+    def dataset_type(self) -> str:
+        return DatasetType.NUSCENES.value
+
+    async def run(
+        self,
+        request: DatasetIngestionRequest,
+    ) -> DatasetIngestionResult:
+        return await _ingest_nuscenes(request)
+
+
+async def _ingest_nuscenes(request: DatasetIngestionRequest) -> DatasetManifest:
+    source_uri = request.source_uri
+    dataset_id = request.dataset_id
+    dataset_version = request.dataset_version
+    dataset_artifact_store = request.dataset_artifact_store
+    max_scenes = request.max_scenes
+    mode = request.mode
+
     nusc = NuScenes(
         version=dataset_version,
         dataroot=str(source_uri),

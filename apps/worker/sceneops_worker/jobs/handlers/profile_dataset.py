@@ -11,7 +11,10 @@ from sceneops_core.jobs.schemas import (
     ProfileDatasetJobResult,
 )
 from sceneops_core.runs.schemas import DatasetProfileRunRecord, RunStatus
-from sceneops_worker.datasets.profiling import profile_dataset
+from sceneops_worker.datasets.profiling import (
+    DatasetProfileRequest,
+    create_dataset_profiler,
+)
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 
 
@@ -79,21 +82,25 @@ class ProfileDatasetJobHandler(
                 )
             )
 
-            report = await profile_dataset(
-                profile_run_id=profile_run_id,
-                job_id=job.job_id,
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                dataset_manifest_uri=version.manifest_uri,
-                dataset_manifest=dataset_manifest,
-                dataset_artifact_store=self.context.dataset_artifact_store,
-                required_channels=params.require_target_channels,
-                scope=scope,
-                max_samples=params.max_samples,
-                profile_samples=params.profile_samples,
-                profile_annotations=params.profile_annotations,
-                profile_sensor_coverage=params.profile_sensor_coverage,
-                profile_scene_distribution=params.profile_scene_distribution,
+            profiler = create_dataset_profiler()
+
+            report = await profiler.run(
+                DatasetProfileRequest(
+                    profile_run_id=profile_run_id,
+                    job_id=job.job_id,
+                    dataset_id=params.dataset_id,
+                    dataset_version=params.dataset_version,
+                    dataset_manifest_uri=version.manifest_uri,
+                    dataset_manifest=dataset_manifest,
+                    dataset_artifact_store=self.context.dataset_artifact_store,
+                    required_channels=params.require_target_channels,
+                    scope=scope,
+                    max_samples=params.max_samples,
+                    profile_samples=params.profile_samples,
+                    profile_annotations=params.profile_annotations,
+                    profile_sensor_coverage=params.profile_sensor_coverage,
+                    profile_scene_distribution=params.profile_scene_distribution,
+                )
             )
 
             profile_report_uri = (
@@ -128,7 +135,10 @@ class ProfileDatasetJobHandler(
                     pipeline_run_id=job.pipeline_run_id,
                     pipeline_step_run_id=job.pipeline_step_run_id,
                     job_id=job.job_id,
-                    metadata=report.metadata,
+                    metadata={
+                        **(report.metadata or {}),
+                        "profiler_id": profiler.profiler_id,
+                    },
                     started_at=now,
                     finished_at=finished_at,
                 )

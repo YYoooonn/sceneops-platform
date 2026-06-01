@@ -11,7 +11,10 @@ from sceneops_core.jobs.schemas import (
     ValidateDatasetJobResult,
 )
 from sceneops_core.runs.schemas import DatasetValidationRunRecord, RunStatus
-from sceneops_worker.datasets.validation import validate_dataset
+from sceneops_worker.datasets.validation import (
+    DatasetValidationRequest,
+    create_dataset_validator,
+)
 from sceneops_worker.jobs.handlers.base import TypedJobHandler
 
 
@@ -112,17 +115,24 @@ class ValidateDatasetJobHandler(
                 )
             )
 
-            report = await validate_dataset(
-                validation_run_id=validation_run_id,
-                job_id=job.job_id,
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                dataset_manifest_uri=version.manifest_uri,
-                dataset_manifest=dataset_manifest,
-                dataset_artifact_store=self.context.dataset_artifact_store,
-                require_target_channels=params.require_target_channels,
-                validate_samples=params.validate_samples,
-                max_samples=params.max_samples,
+            validator = create_dataset_validator()
+
+            report = await validator.run(
+                DatasetValidationRequest(
+                    validation_run_id=validation_run_id,
+                    job_id=job.job_id,
+                    dataset_id=params.dataset_id,
+                    dataset_version=params.dataset_version,
+                    dataset_manifest_uri=version.manifest_uri,
+                    dataset_manifest=dataset_manifest,
+                    dataset_artifact_store=self.context.dataset_artifact_store,
+                    require_target_channels=params.require_target_channels,
+                    validate_samples=params.validate_samples,
+                    validate_sensor_artifacts=params.validate_sensor_artifacts,
+                    validate_annotations=params.validate_annotations,
+                    validate_calibration=params.validate_calibration,
+                    max_samples=params.max_samples,
+                )
             )
 
             validation_report_uri = await run_artifacts.write_validation_run_manifest(
@@ -157,7 +167,10 @@ class ValidateDatasetJobHandler(
                     missing_channel_count=report.summary.missing_channel_count,
                     missing_artifact_count=report.summary.missing_artifact_count,
                     job_id=job.job_id,
-                    metadata=report.metadata,
+                    metadata={
+                        **(report.metadata or {}),
+                        "validator_id": validator.validator_id,
+                    },
                     started_at=now,
                     finished_at=finished_at,
                 )

@@ -2,35 +2,38 @@ from __future__ import annotations
 
 from collections import Counter
 
-from sceneops_core.datasets.schemas import DatasetManifest
 from sceneops_core.datasets.schemas import (
     DatasetAnnotationProfile,
     DatasetChannelProfile,
     DatasetProfileReport,
-    DatasetProfileScope,
     DatasetProfileSummary,
     DatasetSceneProfile,
 )
-from sceneops_worker.datasets import DatasetArtifactStore
+from sceneops_worker.datasets.profiling.base import (
+    DatasetProfileRequest,
+    DatasetProfileResult,
+    DatasetProfiler,
+)
 
 
-async def profile_dataset(
-    *,
-    profile_run_id: str,
-    job_id: str,
-    dataset_id: str,
-    dataset_version: str,
-    dataset_manifest_uri: str,
-    dataset_manifest: DatasetManifest,
-    dataset_artifact_store: DatasetArtifactStore,
-    required_channels: list[str],
-    scope: DatasetProfileScope,
-    max_samples: int | None = None,
-    profile_samples: bool = True,
-    profile_annotations: bool = True,
-    profile_sensor_coverage: bool = True,
-    profile_scene_distribution: bool = True,
+class StandardDatasetProfiler(DatasetProfiler):
+    @property
+    def profiler_id(self) -> str:
+        return "standard-dataset-profiler"
+
+    async def run(
+        self,
+        request: DatasetProfileRequest,
+    ) -> DatasetProfileResult:
+        return await _profile_dataset(request)
+
+
+async def _profile_dataset(
+    request: DatasetProfileRequest,
 ) -> DatasetProfileReport:
+    dataset_manifest = request.dataset_manifest
+    dataset_artifact_store = request.dataset_artifact_store
+
     scene_index = await dataset_artifact_store.load_scene_index(
         dataset_manifest.uris.scene_index
     )
@@ -38,18 +41,14 @@ async def profile_dataset(
     observed_channels: set[str] = set()
     channel_counts: Counter[str] = Counter()
     channel_modalities: dict[str, str] = {}
-
     class_distribution: Counter[str] = Counter()
-
     scene_profiles: list[DatasetSceneProfile] = []
 
     profiled_scene_count = 0
     profiled_sample_count = 0
-
     annotation_count = 0
     empty_annotation_sample_count = 0
     missing_required_channel_count = 0
-
     reached_limit = False
 
     for scene_item in scene_index.scenes:
@@ -63,13 +62,15 @@ async def profile_dataset(
             continue
 
         profiled_scene_count += 1
-
         scene_sample_count = 0
         scene_annotation_count = 0
         scene_channel_counts: Counter[str] = Counter()
 
         for sample_id in scene_manifest.sample_ids:
-            if max_samples is not None and profiled_sample_count >= max_samples:
+            if (
+                request.max_samples is not None
+                and profiled_sample_count >= request.max_samples
+            ):
                 reached_limit = True
                 break
 
@@ -80,6 +81,7 @@ async def profile_dataset(
             sample_manifest = await dataset_artifact_store.load_sample_manifest(
                 sample_uri
             )
+
             if sample_manifest is None:
                 continue
 
@@ -88,7 +90,7 @@ async def profile_dataset(
 
             sensors = sample_manifest.sensors or {}
 
-            if profile_sensor_coverage:
+            if request.profile_sensor_coverage:
                 for channel, sensor in sensors.items():
                     observed_channels.add(channel)
                     channel_counts[channel] += 1
@@ -98,17 +100,16 @@ async def profile_dataset(
                     if modality is not None:
                         channel_modalities[channel] = str(modality)
 
-                for channel in required_channels:
+                for channel in request.required_channels:
                     if channel not in sensors:
                         missing_required_channel_count += 1
 
             annotations = sample_manifest.annotations or []
             sample_annotation_count = len(annotations)
-
             annotation_count += sample_annotation_count
             scene_annotation_count += sample_annotation_count
 
-            if profile_annotations:
+            if request.profile_annotations:
                 if sample_annotation_count == 0:
                     empty_annotation_sample_count += 1
 
@@ -121,7 +122,7 @@ async def profile_dataset(
 
                     class_distribution[str(category_name)] += 1
 
-        if profile_scene_distribution:
+        if request.profile_scene_distribution:
             scene_profiles.append(
                 DatasetSceneProfile(
                     scene_id=scene_item.scene_id,
@@ -133,8 +134,7 @@ async def profile_dataset(
 
     observed_channel_list = sorted(observed_channels)
 
-    total_required_slots = profiled_sample_count * len(required_channels)
-
+    total_required_slots = profiled_sample_count * len(request.required_channels)
     if total_required_slots > 0:
         sensor_coverage_ratio = (
             total_required_slots - missing_required_channel_count
@@ -176,14 +176,14 @@ async def profile_dataset(
     )
 
     return DatasetProfileReport(
-        profile_run_id=profile_run_id,
-        job_id=job_id,
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        dataset_manifest_uri=dataset_manifest_uri,
-        scope=scope,
-        max_samples=max_samples,
-        required_channels=required_channels,
+        profile_run_id=request.profile_run_id,
+        job_id=request.job_id,
+        dataset_id=request.dataset_id,
+        dataset_version=request.dataset_version,
+        dataset_manifest_uri=request.dataset_manifest_uri,
+        scope=request.scope,
+        max_samples=request.max_samples,
+        required_channels=request.required_channels,
         observed_channels=observed_channel_list,
         summary=summary,
         channels=channels,
@@ -195,10 +195,11 @@ async def profile_dataset(
             empty_sample_ratio=empty_annotation_sample_ratio,
         ),
         metadata={
-            "profile_samples": profile_samples,
-            "profile_annotations": profile_annotations,
-            "profile_sensor_coverage": profile_sensor_coverage,
-            "profile_scene_distribution": profile_scene_distribution,
-            "max_samples": max_samples,
+            "profiler_id": "standard-dataset-profiler",
+            "profile_samples": request.profile_samples,
+            "profile_annotations": request.profile_annotations,
+            "profile_sensor_coverage": request.profile_sensor_coverage,
+            "profile_scene_distribution": request.profile_scene_distribution,
+            "max_samples": request.max_samples,
         },
     )

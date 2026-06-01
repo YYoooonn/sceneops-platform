@@ -1,13 +1,13 @@
 from sceneops_core.datasets.contracts import (
     DatasetIngestor,
     DatasetProfiler,
-    DatasetSource,
+    # DatasetSource,
     DatasetValidator,
 )
 
 __all__ = [
     "DatasetIngestor",
     "DatasetProfiler",
-    "DatasetSource",
+    # "DatasetSource",
     "DatasetValidator",
 ]

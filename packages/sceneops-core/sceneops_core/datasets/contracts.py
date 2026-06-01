@@ -1,94 +1,71 @@
-# packages/sceneops-core/sceneops_core/datasets/contracts.py
-
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Generic, Protocol, TypeVar, runtime_checkable
 
-from sceneops_core.common.types import DatasetId, DatasetVersion, JsonDict, Metadata
+DatasetIngestionRequestT = TypeVar("DatasetIngestionRequestT", contravariant=True)
+DatasetIngestionResultT = TypeVar("DatasetIngestionResultT", covariant=True)
+
+DatasetValidationRequestT = TypeVar("DatasetValidationRequestT", contravariant=True)
+DatasetValidationResultT = TypeVar("DatasetValidationResultT", covariant=True)
+
+DatasetProfileRequestT = TypeVar("DatasetProfileRequestT", contravariant=True)
+DatasetProfileResultT = TypeVar("DatasetProfileResultT", covariant=True)
 
 
 @runtime_checkable
-class DatasetSource(Protocol):
-    """Adapter contract for robotics dataset sources.
+class DatasetIngestor(
+    Protocol,
+    Generic[DatasetIngestionRequestT, DatasetIngestionResultT],
+):
+    """Port-like contract for dataset ingestion.
 
-    Examples:
-    - nuScenes
-    - ROS bag logs
-    - custom robot logs
-    - simulation-generated datasets
+    Implementations may ingest nuScenes, ROS bags, custom robot logs,
+    or simulation-generated datasets into SceneOps manifests.
     """
 
     @property
     def dataset_type(self) -> str:
-        ...
+        """Stable dataset type identifier, e.g. nuscenes."""
 
-    def load_scenes(
-        self,
-        *,
-        dataset_id: DatasetId,
-        dataset_version: DatasetVersion,
-        params: Metadata,
-    ) -> list[JsonDict]:
-        ...
 
-    def load_samples(
+    async def run(
         self,
-        *,
-        dataset_id: DatasetId,
-        dataset_version: DatasetVersion,
-        scene_id: str,
-        params: Metadata,
-    ) -> list[JsonDict]:
-        ...
-
-    def load_annotations(
-        self,
-        *,
-        dataset_id: DatasetId,
-        dataset_version: DatasetVersion,
-        sample_id: str,
-        params: Metadata,
-    ) -> list[JsonDict]:
-        ...
+        request: DatasetIngestionRequestT,
+    ) -> DatasetIngestionResultT:
+        """Ingest a dataset version and return a task-specific result."""
 
 
 @runtime_checkable
-class DatasetIngestor(Protocol):
-    """Contract for converting raw dataset files into SceneOps manifests."""
+class DatasetValidator(
+    Protocol,
+    Generic[DatasetValidationRequestT, DatasetValidationResultT],
+):
+    """Port-like contract for dataset quality validation."""
 
-    def ingest(
+    @property
+    def validator_id(self) -> str:
+        """Stable validator identifier, e.g. manifest-validator."""
+
+    async def run(
         self,
-        *,
-        dataset_id: DatasetId,
-        dataset_version: DatasetVersion,
-        params: Metadata,
-    ) -> JsonDict:
-        ...
+        request: DatasetValidationRequestT,
+    ) -> DatasetValidationResultT:
+        """Validate a dataset version and return a validation report."""
 
 
 @runtime_checkable
-class DatasetValidator(Protocol):
-    """Contract for dataset quality gate validation."""
+class DatasetProfiler(
+    Protocol,
+    Generic[DatasetProfileRequestT, DatasetProfileResultT],
+):
+    """Port-like contract for dataset profiling."""
 
-    def validate(
+    @property
+    def profiler_id(self) -> str:
+        """Stable profiler identifier, e.g. standard-dataset-profiler."""
+
+    async def run(
         self,
-        *,
-        dataset_id: DatasetId,
-        dataset_version: DatasetVersion,
-        params: Metadata,
-    ) -> JsonDict:
-        ...
-
-
-@runtime_checkable
-class DatasetProfiler(Protocol):
-    """Contract for dataset profiling and statistics."""
-
-    def profile(
-        self,
-        *,
-        dataset_id: DatasetId,
-        dataset_version: DatasetVersion,
-        params: Metadata,
-    ) -> JsonDict:
-        ...
+        request: DatasetProfileRequestT,
+    ) -> DatasetProfileResultT:
+        """Profile a dataset version and return a profile report."""
