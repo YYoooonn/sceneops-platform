@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.jobs.schemas import (
     JobEventLevel,
@@ -11,111 +13,98 @@ from sceneops_core.jobs.schemas import (
     JobStepStatus,
 )
 from sceneops_core.time import utc_now
-
-from sceneops_worker.jobs.executor import JobExecutor
-from sceneops_worker.jobs.store import JobStore
-from sceneops_worker.jobs.event_store import JobEventStore
+from sceneops_worker.jobs.base import JobHandlerRequest
+from sceneops_worker.jobs.context import JobContext
+from sceneops_worker.jobs.registry import (
+    JobHandlerRegistry,
+    create_default_job_handler_registry,
+)
 
 
 class JobRunner:
     def __init__(
         self,
         *,
-        job_store: JobStore,
-        job_executor: JobExecutor,
-        job_event_store: JobEventStore,
-        worker_id: str,
+        context: JobContext,
+        handler_registry: JobHandlerRegistry | None = None,
     ) -> None:
-        self.job_store = job_store
-        self.job_event_store = job_event_store
-        self.job_executor = job_executor
-        self.worker_id = worker_id
+        self.job_store = context.job_store
+        self.job_event_store = context.job_event_store
+        self.context = context
+        self.worker_id = context.worker_id
+        self.handler_registry = (
+            handler_registry or create_default_job_handler_registry()
+        )
 
     async def run(self, job_id: str) -> JobManifest:
-        job = await self.job_store.get_job(job_id)
-
-        if job is None:
-            raise FileNotFoundError(f"Job not found: {job_id}")
+        job = await self._load_job(job_id)
 
         self._validate_runnable(job)
 
         job = await self._mark_job_running(job)
 
-        await self.job_event_store.append(
-            job_id=job.job_id,
-            event_type=JobEventType.JOB_STARTED,
-            message="Job started",
-            payload={
-                "worker_id": self.worker_id,
-                "job_type": job.type.value
-                if hasattr(job.type, "value")
-                else str(job.type),
-            },
-        )
+        await self._append_job_started_event(job)
 
         running_step_name = self._get_running_step_name(job)
 
         try:
             if running_step_name is not None:
-                await self.job_event_store.append(
-                    job_id=job.job_id,
-                    event_type=JobEventType.STEP_STARTED,
-                    message=f"Step started: {running_step_name}",
-                    payload={"step": running_step_name},
+                await self._append_step_started_event(
+                    job=job,
+                    step_name=running_step_name,
                 )
 
-            result = await self.job_executor.execute(job)
+            result = await self._execute_job(job)
+            result_payload = self._to_result_payload(result)
 
             if running_step_name is not None:
-                await self.job_event_store.append(
-                    job_id=job.job_id,
-                    event_type=JobEventType.STEP_SUCCEEDED,
-                    message=f"Step succeeded: {running_step_name}",
-                    payload={"step": running_step_name},
+                await self._append_step_succeeded_event(
+                    job=job,
+                    step_name=running_step_name,
                 )
 
-            job = await self._mark_job_succeeded(job, result=result)
+            job = await self._mark_job_succeeded(
+                job,
+                result=result_payload,
+            )
 
-            await self.job_event_store.append(
-                job_id=job.job_id,
-                event_type=JobEventType.JOB_SUCCEEDED,
-                message="Job succeeded",
-                payload={"result": result},
+            await self._append_job_succeeded_event(
+                job=job,
+                result=result_payload,
             )
 
             return job
 
         except Exception as error:
             if running_step_name is not None:
-                await self.job_event_store.append(
-                    job_id=job.job_id,
-                    event_type=JobEventType.STEP_FAILED,
-                    level=JobEventLevel.ERROR,
-                    message=f"Step failed: {running_step_name}",
-                    payload={
-                        "step": running_step_name,
-                        "errorType": error.__class__.__name__,
-                        "errorMessage": str(error),
-                    },
+                await self._append_step_failed_event(
+                    job=job,
+                    step_name=running_step_name,
+                    error=error,
                 )
 
-            await self._mark_job_failed(
+            job = await self._mark_job_failed(
                 job,
-                error=ErrorInfo(type=error.__class__.__name__, message=str(error)),
+                error=ErrorInfo(
+                    type=error.__class__.__name__,
+                    message=str(error),
+                ),
             )
 
-            await self.job_event_store.append(
-                job_id=job.job_id,
-                event_type=JobEventType.JOB_FAILED,
-                level=JobEventLevel.ERROR,
-                message="Job failed",
-                payload={
-                    "errorType": error.__class__.__name__,
-                    "errorMessage": str(error),
-                },
+            await self._append_job_failed_event(
+                job=job,
+                error=error,
             )
 
             raise
+
+    async def _load_job(self, job_id: str) -> JobManifest:
+        job = await self.job_store.get_job(job_id)
+
+        if job is None:
+            raise FileNotFoundError(f"Job not found: {job_id}")
+
+        return job
 
     def _validate_runnable(self, job: JobManifest) -> None:
         if job.status == JobStatus.SUCCEEDED:
@@ -126,6 +115,30 @@ class JobRunner:
 
         if job.status == JobStatus.CANCELED:
             raise RuntimeError(f"Job is canceled: {job.job_id}")
+
+    async def _execute_job(self, job: JobManifest) -> BaseModel:
+        handler = self.handler_registry.get(job.type)
+
+        try:
+            params = handler.params_model.model_validate(job.params)
+        except ValidationError as exc:
+            raise ValueError(
+                f"Invalid params for job {job.job_id} " f"of type {job.type}: {exc}"
+            ) from exc
+
+        return await handler.run(
+            JobHandlerRequest(
+                job=job,
+                params=params,
+                context=self.context,
+            )
+        )
+
+    def _to_result_payload(self, result: BaseModel | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(result, BaseModel):
+            return result.model_dump(mode="json")
+
+        return result
 
     async def _mark_job_running(self, job: JobManifest) -> JobManifest:
         now = utc_now()
@@ -199,7 +212,104 @@ class JobRunner:
     def _get_running_step_name(self, job: JobManifest) -> str | None:
         for step in job.steps:
             if step.status == JobStepStatus.RUNNING:
-                if hasattr(step, "name"):
-                    return step.name
-                return "unknown"
+                return getattr(step, "name", "unknown")
+
         return None
+
+    async def _append_job_started_event(self, job: JobManifest) -> None:
+        await self.job_event_store.append(
+            job_id=job.job_id,
+            event_type=JobEventType.JOB_STARTED,
+            message="Job started",
+            payload={
+                "worker_id": self.worker_id,
+                "job_type": self._enum_value(job.type),
+            },
+        )
+
+    async def _append_job_succeeded_event(
+        self,
+        *,
+        job: JobManifest,
+        result: dict[str, Any],
+    ) -> None:
+        await self.job_event_store.append(
+            job_id=job.job_id,
+            event_type=JobEventType.JOB_SUCCEEDED,
+            message="Job succeeded",
+            payload={
+                "result": result,
+            },
+        )
+
+    async def _append_job_failed_event(
+        self,
+        *,
+        job: JobManifest,
+        error: Exception,
+    ) -> None:
+        await self.job_event_store.append(
+            job_id=job.job_id,
+            event_type=JobEventType.JOB_FAILED,
+            level=JobEventLevel.ERROR,
+            message="Job failed",
+            payload={
+                "error_type": error.__class__.__name__,
+                "error_message": str(error),
+            },
+        )
+
+    async def _append_step_started_event(
+        self,
+        *,
+        job: JobManifest,
+        step_name: str,
+    ) -> None:
+        await self.job_event_store.append(
+            job_id=job.job_id,
+            event_type=JobEventType.STEP_STARTED,
+            message=f"Step started: {step_name}",
+            payload={
+                "step": step_name,
+            },
+        )
+
+    async def _append_step_succeeded_event(
+        self,
+        *,
+        job: JobManifest,
+        step_name: str,
+    ) -> None:
+        await self.job_event_store.append(
+            job_id=job.job_id,
+            event_type=JobEventType.STEP_SUCCEEDED,
+            message=f"Step succeeded: {step_name}",
+            payload={
+                "step": step_name,
+            },
+        )
+
+    async def _append_step_failed_event(
+        self,
+        *,
+        job: JobManifest,
+        step_name: str,
+        error: Exception,
+    ) -> None:
+        await self.job_event_store.append(
+            job_id=job.job_id,
+            event_type=JobEventType.STEP_FAILED,
+            level=JobEventLevel.ERROR,
+            message=f"Step failed: {step_name}",
+            payload={
+                "step": step_name,
+                "error_type": error.__class__.__name__,
+                "error_message": str(error),
+            },
+        )
+
+    def _enum_value(self, value: Any) -> Any:
+        if hasattr(value, "value"):
+            return value.value
+
+        return value

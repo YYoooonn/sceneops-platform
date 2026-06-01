@@ -5,42 +5,34 @@ from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.jobs.schemas import (
     EvaluateDetectionJobParams,
     EvaluateDetectionJobResult,
-    JobManifest,
     JobType,
 )
 from sceneops_core.runs.schemas import EvaluationRunRecord, RunStatus
 from sceneops_core.time import utc_now
 from sceneops_worker.evaluation import create_detection_evaluator
 from sceneops_worker.evaluation.detection import DetectionEvaluationRequest
-from sceneops_worker.jobs.handlers.base import TypedJobHandler
+from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
 class EvaluateDetectionJobHandler(
-    TypedJobHandler[EvaluateDetectionJobParams, EvaluateDetectionJobResult]
+    JobHandler[EvaluateDetectionJobParams, EvaluateDetectionJobResult]
 ):
-    job_type = JobType.EVALUATE_DETECTION
+    @property
+    def job_type(self) -> JobType:
+        return JobType.EVALUATE_DETECTION
 
-    def parse_params(self, job: JobManifest) -> EvaluateDetectionJobParams:
-        return EvaluateDetectionJobParams.model_validate(job.params)
+    @property
+    def params_model(self) -> type[EvaluateDetectionJobParams]:
+        return EvaluateDetectionJobParams
 
     async def run(
-        self,
-        *,
-        params: EvaluateDetectionJobParams,
-        job: JobManifest,
+        self, request: JobHandlerRequest[EvaluateDetectionJobParams]
     ) -> EvaluateDetectionJobResult:
-        if params.evaluator_id == "center-distance":
-            return await self._run_center_distance(params=params, job=job)
+        job = request.job
+        params = request.params
+        context = request.context
 
-        raise ValueError(f"Unsupported evaluator: {params.evaluator_id}")
-
-    async def _run_center_distance(
-        self,
-        *,
-        params: EvaluateDetectionJobParams,
-        job: JobManifest,
-    ) -> EvaluateDetectionJobResult:
-        version = await self.context.dataset_registry_store.get_version(
+        version = await context.dataset_registry_store.get_version(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
         )
@@ -58,14 +50,12 @@ class EvaluateDetectionJobHandler(
                 f"{params.dataset_id}:{params.dataset_version}"
             )
 
-        inference_run = await self.context.run_registry_store.get_inference_run(
+        inference_run = await context.run_registry_store.get_inference_run(
             params.inference_run_id
         )
 
-        dataset_manifest = (
-            await self.context.dataset_artifact_store.load_dataset_manifest(
-                version.manifest_uri
-            )
+        dataset_manifest = await context.dataset_artifact_store.load_dataset_manifest(
+            version.manifest_uri
         )
 
         evaluation_run_id = params.evaluation_run_id or default_evaluation_run_id(
@@ -74,7 +64,7 @@ class EvaluateDetectionJobHandler(
 
         started_at = utc_now()
 
-        await self.context.run_registry_store.upsert_evaluation_run(
+        await context.run_registry_store.upsert_evaluation_run(
             EvaluationRunRecord(
                 id=evaluation_run_id,
                 inference_run_id=params.inference_run_id,
@@ -99,8 +89,8 @@ class EvaluateDetectionJobHandler(
             evaluation_manifest = await evaluator.run(
                 DetectionEvaluationRequest(
                     dataset_manifest=dataset_manifest,
-                    dataset_artifact_store=self.context.dataset_artifact_store,
-                    run_artifact_store=self.context.run_artifact_store,
+                    dataset_artifact_store=context.dataset_artifact_store,
+                    run_artifact_store=context.run_artifact_store,
                     inference_run_id=params.inference_run_id,
                     evaluation_run_id=evaluation_run_id,
                     match_distance_m=params.match_distance_m,
@@ -113,7 +103,7 @@ class EvaluateDetectionJobHandler(
             evaluation_manifest_uri = evaluation_manifest["evaluationManifestUri"]
             samples_root_uri = evaluation_manifest.get("samplesRootUri")
 
-            await self.context.run_registry_store.upsert_evaluation_run(
+            await context.run_registry_store.upsert_evaluation_run(
                 EvaluationRunRecord(
                     id=evaluation_run_id,
                     inference_run_id=params.inference_run_id,
@@ -157,7 +147,7 @@ class EvaluateDetectionJobHandler(
             )
 
         except Exception as error:
-            await self.context.run_registry_store.upsert_evaluation_run(
+            await context.run_registry_store.upsert_evaluation_run(
                 EvaluationRunRecord(
                     id=evaluation_run_id,
                     inference_run_id=params.inference_run_id,

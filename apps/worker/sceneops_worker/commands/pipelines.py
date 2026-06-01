@@ -5,7 +5,7 @@ import asyncio
 import typer
 from rich import print
 
-from sceneops_worker.jobs.store import PostgresJobStore
+from sceneops_worker.registry import JobRegistryStore
 from sceneops_worker.jobs.factory import create_job_runner
 from sceneops_worker.pipelines.runner import PipelineRunner
 from sceneops_worker.pipelines.store import PostgresPipelineStore
@@ -27,7 +27,7 @@ def run_pipeline_command(
     print("[bold cyan]SceneOps Worker - Run pipeline[/bold cyan]")
     print(f"pipeline: {pipeline_run_id}")
 
-    job_store = PostgresJobStore()
+    job_store = JobRegistryStore()
     job_runner = create_job_runner(job_store=job_store)
 
     pipeline_runner = PipelineRunner(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sceneops_core.jobs.schemas import JobType
-from sceneops_worker.runtime.context import JobContext
+from sceneops_worker.jobs.context import JobContext
 from sceneops_worker.jobs.handlers.base import JobHandler
 from sceneops_worker.jobs.handlers.evaluate_detection import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.handlers.ingest_dataset import IngestDatasetJobHandler

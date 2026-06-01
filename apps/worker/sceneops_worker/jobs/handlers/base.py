@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import JobManifest, JobType
-from sceneops_worker.runtime.context import JobContext
+from sceneops_worker.jobs.context import JobContext
 
 ParamsT = TypeVar("ParamsT", bound=BaseModel)
 ResultT = TypeVar("ResultT", bound=BaseModel)

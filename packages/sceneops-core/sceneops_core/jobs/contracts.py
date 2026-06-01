@@ -1,31 +1,25 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Generic, Protocol, TypeVar, runtime_checkable
 
-from sceneops_core.common.types import JobId, JsonDict, Metadata
+JobExecutionRequestT = TypeVar("JobExecutionRequestT", contravariant=True)
+JobExecutionResultT = TypeVar("JobExecutionResultT", covariant=True)
+
+JobDispatchRequestT = TypeVar("JobDispatchRequestT", contravariant=True)
+JobDispatchResultT = TypeVar("JobDispatchResultT", covariant=True)
 
 
 @runtime_checkable
-class JobExecutor(Protocol):
-    """Contract for executing a single SceneOps job."""
+class JobExecutor(Protocol, Generic[JobExecutionRequestT, JobExecutionResultT]):
+    """Port-like contract for executing a SceneOps job."""
 
-    def execute_job(
-        self,
-        *,
-        job_id: JobId,
-        params: Metadata,
-    ) -> JsonDict:
+    async def run(self, request: JobExecutionRequestT) -> JobExecutionResultT:
         ...
 
 
 @runtime_checkable
-class JobDispatcher(Protocol):
-    """Contract for dispatching a job to an execution backend."""
+class JobDispatcher(Protocol, Generic[JobDispatchRequestT, JobDispatchResultT]):
+    """Port-like contract for dispatching a SceneOps job to an execution backend."""
 
-    def dispatch_job(
-        self,
-        *,
-        job_id: JobId,
-        params: Metadata | None = None,
-    ) -> JobId:
+    async def dispatch(self, request: JobDispatchRequestT) -> JobDispatchResultT:
         ...

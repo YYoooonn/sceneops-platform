@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sceneops_worker.jobs.factory import create_job_runner
-from sceneops_worker.jobs.store import PostgresJobStore
+from sceneops_worker.registry import JobRegistryStore
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,7 @@ class JobRuntime:
         job_id: str,
     ):
         runner = create_job_runner(
-            job_store=PostgresJobStore(),
+            job_store=JobRegistryStore(),
             worker_id=self.worker_id,
         )
 

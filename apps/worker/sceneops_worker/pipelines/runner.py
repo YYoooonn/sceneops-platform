@@ -12,8 +12,8 @@ from sceneops_core.pipelines.schemas import (
 from sceneops_core.time import utc_now
 
 # from sceneops_db.utils import to_error_json
+from sceneops_worker.registry import JobStore
 from sceneops_worker.jobs.runner import JobRunner
-from sceneops_worker.jobs.store import JobStore
 from sceneops_worker.pipelines.context import PipelineExecutionContext
 from sceneops_worker.pipelines.planning import PipelineJobPlanner
 from sceneops_worker.pipelines.propagation import PipelineResultPropagator
