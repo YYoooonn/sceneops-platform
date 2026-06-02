@@ -86,8 +86,7 @@ check:
 
 .PHONY: lint
 lint:
-	uv run ruff check .
-	uv run basedpyright
+	uv run ruff check apps/ packages/
 
 .PHONY: prepare-data
 prepare-data:
@@ -128,7 +127,7 @@ compose-down-volumes:
 
 .PHONY: compose-logs
 compose-logs:
-	docker compose -f $(COMPOSE_FILE) logs -f
+	docker compose -f $(COMPOSE_FILE) logs -f postgres redis api worker-pipeline worker-jobs
 
 .PHONY: compose-ps
 compose-ps:

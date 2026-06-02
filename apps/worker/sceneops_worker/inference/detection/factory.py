@@ -9,7 +9,6 @@ from sceneops_worker.inference.detection.onnx_runtime import (
     OnnxRuntimeDetectionInferenceBackend,
 )
 
-
 _BACKEND_REGISTRY: dict[
     InferenceBackendType,
     Callable[[], DetectionInferenceBackend],
@@ -17,6 +16,22 @@ _BACKEND_REGISTRY: dict[
     InferenceBackendType.MOCK: MockDetectionInferenceBackend,
     InferenceBackendType.ONNX_RUNTIME: OnnxRuntimeDetectionInferenceBackend,
 }
+
+
+def register_detection_inference_backend(
+    backend_type: InferenceBackendType,
+    factory: Callable[[], DetectionInferenceBackend],
+) -> None:
+    """Register a detection inference backend factory.
+
+    Call this at import time in the backend module to avoid modifying this file.
+    Raises ValueError if the backend type is already registered.
+    """
+    if backend_type in _BACKEND_REGISTRY:
+        raise ValueError(
+            f"Detection inference backend already registered: {backend_type}"
+        )
+    _BACKEND_REGISTRY[backend_type] = factory
 
 
 def create_detection_inference_backend(

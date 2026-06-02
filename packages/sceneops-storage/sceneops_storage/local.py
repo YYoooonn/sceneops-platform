@@ -32,11 +32,7 @@ class LocalArtifactStore(ArtifactStore):
         if not path.exists():
             return []
 
-        return [
-            str(item)
-            for item in sorted(path.glob("*.json"))
-            if item.is_file()
-        ]
+        return [str(item) for item in sorted(path.glob("*.json")) if item.is_file()]
 
     async def write_json(self, uri: ArtifactUri, payload: Any) -> None:
         path = self._to_path(uri)
@@ -71,8 +67,6 @@ class LocalArtifactStore(ArtifactStore):
             return Path(parsed.path)
 
         if parsed.scheme:
-            raise ValueError(
-                f"Unsupported local artifact URI scheme: {parsed.scheme}"
-            )
+            raise ValueError(f"Unsupported local artifact URI scheme: {parsed.scheme}")
 
         return Path(uri)

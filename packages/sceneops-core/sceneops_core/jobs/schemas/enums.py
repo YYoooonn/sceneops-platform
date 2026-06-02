@@ -9,6 +9,7 @@ class JobType(StrEnum):
     PROFILE_DATASET = "profile_dataset"
     PREDICT_DETECTION = "predict_detection"
     EVALUATE_DETECTION = "evaluate_detection"
+    AUTO_LABEL_DATASET = "auto_label_dataset"
 
 
 class JobStatus(StrEnum):

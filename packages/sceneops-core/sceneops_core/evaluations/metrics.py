@@ -33,9 +33,42 @@ DETECTION_METRIC_SPECS: list[EvaluationMetricSpec] = [
     ),
 ]
 
+AUTO_LABEL_QUALITY_METRIC_SPECS: list[EvaluationMetricSpec] = [
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.PRECISION.value,
+        label="Precision",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        description="Fraction of auto-labeled boxes that match a ground-truth annotation.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.RECALL.value,
+        label="Recall",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        description="Fraction of ground-truth annotations covered by an auto-label.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.F1.value,
+        label="F1",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        description="Harmonic mean of precision and recall.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.LABELING_COVERAGE.value,
+        label="Labeling Coverage",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        description="Fraction of samples that received at least one auto-label.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.LABELED_SAMPLE_COUNT.value,
+        label="Labeled Samples",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+    ),
+]
+
 
 _METRIC_SPECS_BY_TASK: dict[EvaluationTaskType, list[EvaluationMetricSpec]] = {
     EvaluationTaskType.DETECTION: DETECTION_METRIC_SPECS,
+    EvaluationTaskType.AUTO_LABEL_QUALITY: AUTO_LABEL_QUALITY_METRIC_SPECS,
 }
 
 

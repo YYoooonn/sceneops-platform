@@ -1,21 +1,32 @@
-# apps/worker/sceneops_worker/pipelines/planning.py
-
 from __future__ import annotations
 
-from sceneops_core.ids.jobs import generate_job_id
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.jobs.schemas import (
-    JobManifest,
-    JobStatus,
-    JobType,
-    build_default_steps,
-)
+from sceneops_core.ids.jobs import generate_job_id
+from sceneops_core.jobs.schemas import JobManifest, JobStatus, build_default_steps
 from sceneops_core.pipelines.schemas import PipelineRunManifest, PipelineStepRunManifest
 from sceneops_core.time import utc_now
+from sceneops_worker.jobs.registry import (
+    JobHandlerRegistry,
+    create_default_job_handler_registry,
+)
 from sceneops_worker.pipelines.context import PipelineExecutionContext
 
 
 class PipelineJobPlanner:
+    """Builds a JobManifest for a pipeline step.
+
+    Step-specific param assembly is delegated to each handler via
+    ``build_step_params(base, context_values)``. Adding a new JobType only
+    requires implementing that method on the new handler — this class never
+    needs to change.
+    """
+
+    def __init__(
+        self,
+        handler_registry: JobHandlerRegistry | None = None,
+    ) -> None:
+        self._registry = handler_registry or create_default_job_handler_registry()
+
     def build_job_for_step(
         self,
         *,
@@ -24,7 +35,7 @@ class PipelineJobPlanner:
         context: PipelineExecutionContext,
     ) -> JobManifest:
         now = utc_now()
-        params = self.build_step_job_params(
+        params = self._build_step_params(
             pipeline_run=pipeline_run,
             step=step,
             context=context,
@@ -48,7 +59,7 @@ class PipelineJobPlanner:
             updated_at=now,
         )
 
-    def build_step_job_params(
+    def _build_step_params(
         self,
         *,
         pipeline_run: PipelineRunManifest,
@@ -60,66 +71,5 @@ class PipelineJobPlanner:
             "dataset_version": pipeline_run.dataset_version,
             **(step.params or {}),
         }
-
-        if step.job_type == JobType.INGEST_DATASET:
-            return {
-                "dataset_type": base.get("dataset_type", "nuscenes"),
-                **base,
-            }
-
-        if step.job_type == JobType.VALIDATE_DATASET:
-            return {
-                **base,
-                "dataset_manifest_uri": base.get("dataset_manifest_uri")
-                or context.get("dataset_manifest_uri"),
-                "require_target_channels": base.get(
-                    "require_target_channels",
-                    ["CAM_FRONT", "LIDAR_TOP"],
-                ),
-                "validate_samples": base.get("validate_samples", True),
-            }
-
-        if step.job_type == JobType.PROFILE_DATASET:
-            return {
-                **base,
-                "dataset_manifest_uri": base.get("dataset_manifest_uri")
-                or context.get("dataset_manifest_uri"),
-                "require_target_channels": base.get(
-                    "require_target_channels",
-                    ["CAM_FRONT", "LIDAR_TOP"],
-                ),
-                "profile_samples": base.get("profile_samples", True),
-                "profile_annotations": base.get("profile_annotations", True),
-                "profile_sensor_coverage": base.get("profile_sensor_coverage", True),
-                "profile_scene_distribution": base.get(
-                    "profile_scene_distribution", True
-                ),
-            }
-
-        if step.job_type == JobType.PREDICT_DETECTION:
-            model_id = (
-                pipeline_run.model_id or base.get("model_id") or "centerpoint-mock"
-            )
-            model_version = (
-                pipeline_run.model_version or base.get("model_version") or "v0"
-            )
-
-            return {
-                **base,
-                "model_id": model_id,
-                "model_version": model_version,
-            }
-
-        if step.job_type == JobType.EVALUATE_DETECTION:
-            inference_run_id = base.get("inference_run_id") or context.get(
-                "inference_run_id"
-            )
-            if inference_run_id is None:
-                raise ValueError("inference_run_id is required for evaluation step")
-
-            return {
-                **base,
-                "inference_run_id": inference_run_id,
-            }
-
-        raise ValueError(f"Unsupported pipeline step job type: {step.job_type}")
+        handler = self._registry.get(step.job_type)
+        return handler.build_step_params(base=base, context_values=context.values)

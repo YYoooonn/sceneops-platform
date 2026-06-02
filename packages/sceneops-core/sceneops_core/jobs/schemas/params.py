@@ -80,12 +80,26 @@ class EvaluateDetectionJobParams(BaseJobParams):
     match_distance_m: float = 2.0
 
 
+class AutoLabelDatasetJobParams(BaseJobParams):
+    model_id: str
+    model_version: str
+    vlm_backend: InferenceBackendType = InferenceBackendType.VLM
+
+    auto_label_run_id: str | None = None
+    max_samples: int | None = None
+
+    model_uri: str | None = None
+    endpoint_url: str | None = None
+    prompt_template: str | None = None
+
+
 JobParams = (
     IngestDatasetJobParams
     | ValidateDatasetJobParams
     | ProfileDatasetJobParams
     | PredictDetectionJobParams
     | EvaluateDetectionJobParams
+    | AutoLabelDatasetJobParams
 )
 
 
@@ -104,5 +118,8 @@ def parse_job_params(job_type: JobType, params: JsonDict) -> JobParams:
 
     if job_type == JobType.EVALUATE_DETECTION:
         return EvaluateDetectionJobParams.model_validate(params)
+
+    if job_type == JobType.AUTO_LABEL_DATASET:
+        return AutoLabelDatasetJobParams.model_validate(params)
 
     raise ValueError(f"Unsupported job type: {job_type}")

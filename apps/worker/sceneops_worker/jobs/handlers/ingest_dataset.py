@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
+from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.jobs.schemas import (
     IngestDatasetJobParams,
@@ -11,6 +14,7 @@ from sceneops_worker.datasets.ingestion import (
     create_dataset_ingestor,
 )
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
 class IngestDatasetJobHandler(
@@ -23,6 +27,27 @@ class IngestDatasetJobHandler(
     @property
     def params_model(self) -> type[IngestDatasetJobParams]:
         return IngestDatasetJobParams
+
+    def build_step_params(
+        self, base: JsonDict, context_values: dict[str, Any]
+    ) -> JsonDict:
+        return {
+            "dataset_type": base.get("dataset_type", "nuscenes"),
+            **base,
+        }
+
+    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
+        parsed = IngestDatasetJobResult.model_validate(result)
+        updates: dict[str, Any] = {
+            Ctx.DATASET_ID: parsed.dataset_id,
+            Ctx.DATASET_VERSION: parsed.dataset_version,
+            Ctx.DATASET_MANIFEST_URI: parsed.dataset_manifest_uri,
+            Ctx.SCENE_COUNT: parsed.scene_count,
+            Ctx.SAMPLE_COUNT: parsed.sample_count,
+        }
+        if parsed.dataset_type is not None:
+            updates[Ctx.DATASET_TYPE] = _enum_or_value(parsed.dataset_type)
+        return updates
 
     async def run(
         self,
@@ -124,3 +149,7 @@ class IngestDatasetJobHandler(
                 },
             )
             raise
+
+
+def _enum_or_value(value: Any) -> Any:
+    return value.value if hasattr(value, "value") else value

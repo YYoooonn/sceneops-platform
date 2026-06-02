@@ -81,9 +81,48 @@ DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
 )
 
 
+AUTO_LABEL_PIPELINE = PipelineDefinition(
+    type=PipelineType.AUTO_LABEL,
+    name="Auto Label",
+    description="Ingest a dataset, auto-label camera samples with a VLM, then validate.",
+    steps=[
+        PipelineStepDefinition(
+            name="ingest",
+            order=0,
+            job_type=JobType.INGEST_DATASET,
+            depends_on=[],
+            default_params={
+                "dataset_type": "nuscenes",
+                "mode": "upsert",
+            },
+        ),
+        PipelineStepDefinition(
+            name="auto_label",
+            order=1,
+            job_type=JobType.AUTO_LABEL_DATASET,
+            depends_on=["ingest"],
+            default_params={
+                "vlm_backend": "vlm",
+            },
+        ),
+        PipelineStepDefinition(
+            name="validate",
+            order=2,
+            job_type=JobType.VALIDATE_DATASET,
+            depends_on=["auto_label"],
+            default_params={
+                "validate_samples": True,
+                "require_target_channels": ["CAM_FRONT"],
+            },
+        ),
+    ],
+)
+
+
 BUILTIN_PIPELINE_DEFINITIONS = [
     DATASET_INGESTION_PIPELINE,
     DETECTION_VALIDATION_PIPELINE,
+    AUTO_LABEL_PIPELINE,
 ]
 
 

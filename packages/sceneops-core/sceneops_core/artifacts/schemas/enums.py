@@ -22,4 +22,7 @@ class ArtifactKind(StrEnum):
     PREDICTION_MANIFEST = "prediction_manifest"
     EVALUATION_MANIFEST = "evaluation_manifest"
 
+    AUTO_LABEL_MANIFEST = "auto_label_manifest"
+    LIDAR_PROFILE_REPORT = "lidar_profile_report"
+
     MODEL_ARTIFACT = "model_artifact"

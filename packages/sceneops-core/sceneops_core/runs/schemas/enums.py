@@ -15,3 +15,5 @@ class RunType(StrEnum):
     INFERENCE = "inference"
     EVALUATION = "evaluation"
     VALIDATION = "validation"
+    PROFILE = "profile"
+    AUTO_LABEL = "auto_label"

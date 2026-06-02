@@ -95,12 +95,26 @@ class EvaluateDetectionJobResult(BaseJobResult):
     sample_count: int | None = None
 
 
+class AutoLabelDatasetJobResult(BaseJobResult):
+    model_id: str
+    model_version: str
+
+    auto_label_run_id: str
+    auto_label_manifest_uri: str
+
+    sample_count: int
+    labeled_sample_count: int = 0
+
+    metrics: JsonDict = Field(default_factory=dict)
+
+
 JobResult = (
     IngestDatasetJobResult
     | ValidateDatasetJobResult
     | ProfileDatasetJobResult
     | PredictDetectionJobResult
     | EvaluateDetectionJobResult
+    | AutoLabelDatasetJobResult
 )
 
 
@@ -119,5 +133,8 @@ def parse_job_result(job_type: JobType, result: JsonDict) -> JobResult:
 
     if job_type == JobType.EVALUATE_DETECTION:
         return EvaluateDetectionJobResult.model_validate(result)
+
+    if job_type == JobType.AUTO_LABEL_DATASET:
+        return AutoLabelDatasetJobResult.model_validate(result)
 
     raise ValueError(f"Unsupported job type: {job_type}")

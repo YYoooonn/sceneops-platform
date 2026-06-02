@@ -5,7 +5,7 @@ import typer
 from rich import print
 
 from sceneops_worker.cli.async_utils import run_cli_async
-from sceneops_worker.pipelines import create_pipeline_runner
+from sceneops_worker.pipelines.factory import create_pipeline_runner
 
 app = typer.Typer(
     help="Pipeline execution commands.",

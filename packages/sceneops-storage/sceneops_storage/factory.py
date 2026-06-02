@@ -9,6 +9,4 @@ def create_artifact_store(settings: ArtifactSettings) -> ArtifactStore:
     if settings.backend == ArtifactBackend.LOCAL:
         return LocalArtifactStore(root_uri=settings.root_uri)
 
-    raise NotImplementedError(
-        f"Unsupported artifact backend: {settings.backend}"
-    )
+    raise NotImplementedError(f"Unsupported artifact backend: {settings.backend}")

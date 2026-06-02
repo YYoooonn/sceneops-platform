@@ -11,6 +11,7 @@ class EvaluationTaskType(StrEnum):
     DETECTION = "detection"
     TRACKING = "tracking"
     SEGMENTATION = "segmentation"
+    AUTO_LABEL_QUALITY = "auto_label_quality"
     DATASET_VALIDATION = "dataset_validation"
     CUSTOM = "custom"
 
@@ -23,8 +24,11 @@ class MetricDirection(StrEnum):
 class EvaluationMetricKey(StrEnum):
     PRECISION = "precision"
     RECALL = "recall"
+    F1 = "f1"
     MEAN_CENTER_DISTANCE_ERROR = "mean_center_distance_error"
     SAMPLE_COUNT = "sample_count"
+    LABELED_SAMPLE_COUNT = "labeled_sample_count"
+    LABELING_COVERAGE = "labeling_coverage"
     CREATED_AT = "created_at"
 
 
@@ -87,8 +91,10 @@ class ModelVersionEvaluationHistoryResponse(SceneOpsBaseModel):
 class LeaderboardSortBy(StrEnum):
     PRECISION = "precision"
     RECALL = "recall"
+    F1 = "f1"
     MEAN_CENTER_DISTANCE_ERROR = "mean_center_distance_error"
     SAMPLE_COUNT = "sample_count"
+    LABELING_COVERAGE = "labeling_coverage"
     CREATED_AT = "created_at"
 
 

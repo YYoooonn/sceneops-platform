@@ -200,6 +200,66 @@ class DatasetValidationRunModel(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AutoLabelRunModel(Base):
+    __tablename__ = "auto_label_runs"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    dataset_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    dataset_version: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
+
+    model_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    model_version: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+
+    vlm_backend: Mapped[str] = mapped_column(String(64), nullable=False, default="vlm")
+    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+
+    sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    labeled_sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    auto_label_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    samples_root_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+    class_metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+
+    pipeline_run_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    pipeline_step_run_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    job_id: Mapped[str | None] = mapped_column(String(128), index=True)
+
+    metadata_: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("now()"),
+        onupdate=text("now()"),
+        nullable=False,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class DatasetProfileRunModel(Base):
     __tablename__ = "dataset_profile_runs"
 

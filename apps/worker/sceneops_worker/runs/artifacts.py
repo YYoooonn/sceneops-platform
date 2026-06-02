@@ -243,3 +243,83 @@ class RunArtifactStore:
         uri = self.evaluation_run_manifest_uri(evaluation_run_id)
         await self.artifact_store.write_json(uri, manifest)
         return uri
+
+    # ---------------------------------------------------------------------
+    # Auto-label runs
+    # ---------------------------------------------------------------------
+
+    def auto_label_run_root_uri(self, auto_label_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.runs_root_uri,
+            "auto_labels",
+            auto_label_run_id,
+        )
+
+    def auto_label_run_manifest_uri(self, auto_label_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.auto_label_run_root_uri(auto_label_run_id),
+            "auto_label.json",
+        )
+
+    def auto_label_samples_root_uri(self, auto_label_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.auto_label_run_root_uri(auto_label_run_id),
+            "samples",
+        )
+
+    def auto_label_sample_manifest_uri(
+        self,
+        *,
+        auto_label_run_id: str,
+        sample_id: str,
+    ) -> str:
+        return self.artifact_store.join_uri(
+            self.auto_label_samples_root_uri(auto_label_run_id),
+            f"{sample_id}.json",
+        )
+
+    async def write_auto_label_run_manifest(
+        self,
+        *,
+        auto_label_run_id: str,
+        manifest: dict[str, Any],
+    ) -> str:
+        uri = self.auto_label_run_manifest_uri(auto_label_run_id)
+        await self.artifact_store.write_json(uri, manifest)
+        return uri
+
+    async def load_auto_label_run_manifest(
+        self,
+        *,
+        auto_label_run_id: str,
+    ) -> dict[str, Any]:
+        uri = self.auto_label_run_manifest_uri(auto_label_run_id)
+        raw = await self.artifact_store.read_json(uri)
+
+        if not isinstance(raw, dict):
+            raise ValueError(f"Invalid auto-label run manifest: {uri}")
+
+        return raw
+
+    async def write_auto_label_sample_manifest(
+        self,
+        *,
+        auto_label_run_id: str,
+        sample_id: str,
+        manifest: dict[str, Any],
+    ) -> str:
+        uri = self.auto_label_sample_manifest_uri(
+            auto_label_run_id=auto_label_run_id,
+            sample_id=sample_id,
+        )
+        await self.artifact_store.write_json(uri, manifest)
+        return uri
+
+    async def list_auto_label_sample_manifest_uris(
+        self,
+        *,
+        auto_label_run_id: str,
+    ) -> list[str]:
+        return await self.artifact_store.list_json(
+            self.auto_label_samples_root_uri(auto_label_run_id)
+        )

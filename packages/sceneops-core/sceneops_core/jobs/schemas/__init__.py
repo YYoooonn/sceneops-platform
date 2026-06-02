@@ -6,6 +6,7 @@ from .events import (
 )
 from .manifests import JobManifest
 from .params import (
+    AutoLabelDatasetJobParams,
     EvaluateDetectionJobParams,
     ValidateDatasetJobParams,
     IngestDatasetJobParams,
@@ -18,6 +19,7 @@ from .params import (
 from .requests import CreateJobRequest
 from .responses import JobEventListResponse, JobListResponse
 from .results import (
+    AutoLabelDatasetJobResult,
     EvaluateDetectionJobResult,
     ValidateDatasetJobResult,
     IngestDatasetJobResult,
@@ -42,6 +44,7 @@ __all__ = [
     "JobEventManifest",
     "JobEventListResponse",
     "IngestMode",
+    "AutoLabelDatasetJobParams",
     "IngestDatasetJobParams",
     "ValidateDatasetJobParams",
     "ProfileDatasetJobParams",
@@ -49,6 +52,7 @@ __all__ = [
     "EvaluateDetectionJobParams",
     "JobParams",
     "parse_job_params",
+    "AutoLabelDatasetJobResult",
     "IngestDatasetJobResult",
     "PredictDetectionJobResult",
     "EvaluateDetectionJobResult",

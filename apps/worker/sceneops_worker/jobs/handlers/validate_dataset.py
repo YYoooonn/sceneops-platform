@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from sceneops_core.common.ids import default_validation_run_id
+from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas import DatasetVersionStatus, DatasetValidationStatus
 from sceneops_core.jobs.schemas import (
     JobType,
@@ -15,6 +17,7 @@ from sceneops_worker.datasets.validation import (
     create_dataset_validator,
 )
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
 class ValidateDatasetJobHandler(
@@ -27,6 +30,49 @@ class ValidateDatasetJobHandler(
     @property
     def params_model(self) -> type[ValidateDatasetJobParams]:
         return ValidateDatasetJobParams
+
+    def build_step_params(
+        self, base: JsonDict, context_values: dict[str, Any]
+    ) -> JsonDict:
+        return {
+            **base,
+            "dataset_manifest_uri": (
+                base.get("dataset_manifest_uri")
+                or context_values.get(Ctx.DATASET_MANIFEST_URI)
+            ),
+            "require_target_channels": base.get(
+                "require_target_channels", ["CAM_FRONT", "LIDAR_TOP"]
+            ),
+            "validate_samples": base.get("validate_samples", True),
+        }
+
+    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
+        parsed = ValidateDatasetJobResult.model_validate(result)
+        return {
+            Ctx.DATASET_ID: parsed.dataset_id,
+            Ctx.DATASET_VERSION: parsed.dataset_version,
+            Ctx.DATASET_MANIFEST_URI: parsed.dataset_manifest_uri,
+            Ctx.VALIDATION_RUN_ID: parsed.validation_run_id,
+            Ctx.VALIDATION_REPORT_URI: parsed.validation_report_uri,
+            Ctx.VALIDATION_STATUS: _enum_or_value(parsed.status),
+            Ctx.VALIDATION_SCOPE: _enum_or_value(parsed.validation_scope),
+            Ctx.SHOULD_BLOCK_PIPELINE: parsed.should_block_pipeline,
+            Ctx.SCENE_COUNT: parsed.scene_count,
+            Ctx.SAMPLE_COUNT: parsed.sample_count,
+            Ctx.ANNOTATION_COUNT: parsed.annotation_count,
+            Ctx.VALIDATED_SCENE_COUNT: parsed.validated_scene_count,
+            Ctx.VALIDATED_SAMPLE_COUNT: parsed.validated_sample_count,
+            Ctx.VALIDATION_ISSUE_COUNT: parsed.issue_count,
+            Ctx.VALIDATION_ERROR_COUNT: parsed.error_count,
+            Ctx.VALIDATION_WARNING_COUNT: parsed.warning_count,
+            Ctx.ISSUE_COUNT: parsed.issue_count,
+            Ctx.ERROR_COUNT: parsed.error_count,
+            Ctx.WARNING_COUNT: parsed.warning_count,
+            Ctx.MISSING_SCENE_COUNT: parsed.missing_scene_count,
+            Ctx.MISSING_SAMPLE_COUNT: parsed.missing_sample_count,
+            Ctx.MISSING_CHANNEL_COUNT: parsed.missing_channel_count,
+            Ctx.MISSING_ARTIFACT_COUNT: parsed.missing_artifact_count,
+        }
 
     async def run(
         self,
@@ -263,3 +309,7 @@ class ValidateDatasetJobHandler(
                 },
             )
             raise
+
+
+def _enum_or_value(value: Any) -> Any:
+    return value.value if hasattr(value, "value") else value

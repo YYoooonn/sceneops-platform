@@ -1,8 +1,33 @@
 from __future__ import annotations
 
+from sceneops_core.common.schemas import SceneOpsBaseModel
 from sceneops_core.datasets.schemas import DatasetProfileScope
 
 from .base import BaseRunRecord
+
+
+class LidarChannelMetrics(SceneOpsBaseModel):
+    """Point-cloud statistics for a single LiDAR channel across all profiled frames."""
+
+    channel: str
+
+    frame_count: int | None = None
+    total_points: int | None = None
+    points_per_frame_mean: float | None = None
+    points_per_frame_std: float | None = None
+    points_per_frame_min: int | None = None
+    points_per_frame_max: int | None = None
+
+    range_mean_m: float | None = None
+    range_std_m: float | None = None
+    range_min_m: float | None = None
+    range_max_m: float | None = None
+
+    height_min_m: float | None = None
+    height_max_m: float | None = None
+
+    missing_frame_count: int | None = None
+    missing_frame_ratio: float | None = None
 
 
 class DatasetProfileRunRecord(BaseRunRecord):
@@ -28,3 +53,5 @@ class DatasetProfileRunRecord(BaseRunRecord):
 
     empty_annotation_sample_count: int | None = None
     empty_annotation_sample_ratio: float | None = None
+
+    lidar_channel_metrics: dict[str, LidarChannelMetrics] | None = None

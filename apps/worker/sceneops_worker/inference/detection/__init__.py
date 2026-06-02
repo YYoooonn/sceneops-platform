@@ -5,6 +5,7 @@ from sceneops_worker.inference.detection.onnx_runtime import (
 )
 from sceneops_worker.inference.detection.factory import (
     create_detection_inference_backend,
+    register_detection_inference_backend,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "MockDetectionInferenceBackend",
     "OnnxRuntimeDetectionInferenceBackend",
     "create_detection_inference_backend",
+    "register_detection_inference_backend",
 ]

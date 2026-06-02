@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from sceneops_core.runs.schemas import (
+    AutoLabelRunRecord,
     DatasetValidationRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,
@@ -87,3 +88,20 @@ class DatasetProfileRunRepository(Protocol):
         dataset_version: str | None = None,
         limit: int = 50,
     ) -> list[DatasetProfileRunRecord]: ...
+
+
+class AutoLabelRunRepository(Protocol):
+    async def upsert(self, record: AutoLabelRunRecord) -> AutoLabelRunRecord: ...
+
+    async def get(self, auto_label_run_id: str) -> AutoLabelRunRecord: ...
+
+    async def list(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        model_id: str | None = None,
+        model_version: str | None = None,
+        status: RunStatus | None = None,
+        limit: int | None = None,
+    ) -> list[AutoLabelRunRecord]: ...
