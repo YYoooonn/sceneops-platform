@@ -4,13 +4,13 @@ from .responses import (
     ModelListResponse,
     ModelDetailResponse,
     ModelVersionListResponse,
-    ModelVersionDetailResponse
+    ModelVersionDetailResponse,
 )
 from .requests import (
     CreateModelRequest,
     UpsertModelRequest,
     CreateModelVersionRequest,
-    UpsertModelVersionRequest
+    UpsertModelVersionRequest,
 )
 
 __all__ = [

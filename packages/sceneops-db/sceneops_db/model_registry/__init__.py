@@ -1,7 +1,7 @@
 from sceneops_db.model_registry.models import ModelModel, ModelVersionModel
 from sceneops_db.model_registry.postgres_models import (
     PostgresModelRepository,
-    PostgresModelVersionRepository
+    PostgresModelVersionRepository,
 )
 from sceneops_db.model_registry.repositories import (
     ModelRepository,

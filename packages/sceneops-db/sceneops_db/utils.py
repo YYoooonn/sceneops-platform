@@ -76,10 +76,7 @@ def to_jsonable(value: Any) -> Any:
         return str(value)
 
     if isinstance(value, dict):
-        return {
-            str(key): to_jsonable(item)
-            for key, item in value.items()
-        }
+        return {str(key): to_jsonable(item) for key, item in value.items()}
 
     if isinstance(value, list):
         return [to_jsonable(item) for item in value]

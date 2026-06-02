@@ -90,18 +90,13 @@ class PostgresPipelineRunRepository:
 
     async def count_by_status(self) -> dict[str, int]:
         # pylint: disable=not-callable
-        stmt = (
-            select(PipelineRunModel.status, func.count(PipelineRunModel.id))
-            .group_by(PipelineRunModel.status)
-        )
+        stmt = select(
+            PipelineRunModel.status, func.count(PipelineRunModel.id)
+        ).group_by(PipelineRunModel.status)
 
         result = await self.session.execute(stmt)
 
-        return {
-            str(status): count
-            for status, count in result.all()
-        }
-
+        return {str(status): count for status, count in result.all()}
 
     async def list_recent_failures(
         self,
@@ -121,7 +116,6 @@ class PostgresPipelineRunRepository:
         return [self._to_schema(model) for model in models]
 
     def _to_model(self, manifest: PipelineRunManifest) -> PipelineRunModel:
-
         result = manifest.result.to_db_dict() if manifest.result else None
         params = manifest.params if isinstance(manifest.params, dict) else {}
         error = manifest.error if isinstance(manifest.error, dict) else None
@@ -142,19 +136,21 @@ class PostgresPipelineRunRepository:
         )
 
     def _to_schema(self, model: PipelineRunModel) -> PipelineRunManifest:
-        return PipelineRunManifest.model_validate({
-            "pipeline_run_id": model.id,
-            "type": model.type,
-            "status": model.status,
-            "dataset_id": model.dataset_id,
-            "dataset_version": model.dataset_version,
-            "model_id": model.model_id,
-            "model_version": model.model_version,
-            "params": model.params or {},
-            "result": model.result,
-            "error": to_error_info(model.error),
-            "created_at": model.created_at,
-            "updated_at": model.updated_at,
-            "started_at": model.started_at,
-            "finished_at": model.finished_at,
-        })
+        return PipelineRunManifest.model_validate(
+            {
+                "pipeline_run_id": model.id,
+                "type": model.type,
+                "status": model.status,
+                "dataset_id": model.dataset_id,
+                "dataset_version": model.dataset_version,
+                "model_id": model.model_id,
+                "model_version": model.model_version,
+                "params": model.params or {},
+                "result": model.result,
+                "error": to_error_info(model.error),
+                "created_at": model.created_at,
+                "updated_at": model.updated_at,
+                "started_at": model.started_at,
+                "finished_at": model.finished_at,
+            }
+        )

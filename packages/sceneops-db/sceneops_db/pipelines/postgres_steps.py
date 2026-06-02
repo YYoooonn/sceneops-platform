@@ -15,7 +15,9 @@ class PostgresPipelineStepRunRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, manifest: PipelineStepRunManifest) -> PipelineStepRunManifest:
+    async def create(
+        self, manifest: PipelineStepRunManifest
+    ) -> PipelineStepRunManifest:
         model = self._to_model(manifest)
 
         self.session.add(model)
@@ -67,7 +69,9 @@ class PostgresPipelineStepRunRepository:
         self,
         manifest: PipelineStepRunManifest,
     ) -> PipelineStepRunManifest:
-        model = await self.session.get(PipelineStepRunModel, manifest.pipeline_step_run_id)
+        model = await self.session.get(
+            PipelineStepRunModel, manifest.pipeline_step_run_id
+        )
 
         if model is None:
             raise FileNotFoundError(
@@ -135,20 +139,26 @@ class PostgresPipelineStepRunRepository:
         )
 
     def _to_schema(self, model: PipelineStepRunModel) -> PipelineStepRunManifest:
-        return PipelineStepRunManifest.model_validate({
-            "pipeline_step_run_id": model.id,
-            "pipeline_run_id": model.pipeline_run_id,
-            "step_name": model.step_name,
-            "step_order": model.step_order,
-            "status": model.status,
-            "job_type": model.job_type,
-            "job_id": model.job_id,
-            "depends_on_step_names": model.depends_on_step_names or [],
-            "params": model.params or {},
-            "result": model.result,
-            "error": to_error_info(model.error),
-            "created_at": model.created_at.isoformat(),
-            "updated_at": model.updated_at.isoformat(),
-            "started_at": model.started_at.isoformat() if model.started_at else None,
-            "finished_at": model.finished_at.isoformat() if model.finished_at else None,
-        })
+        return PipelineStepRunManifest.model_validate(
+            {
+                "pipeline_step_run_id": model.id,
+                "pipeline_run_id": model.pipeline_run_id,
+                "step_name": model.step_name,
+                "step_order": model.step_order,
+                "status": model.status,
+                "job_type": model.job_type,
+                "job_id": model.job_id,
+                "depends_on_step_names": model.depends_on_step_names or [],
+                "params": model.params or {},
+                "result": model.result,
+                "error": to_error_info(model.error),
+                "created_at": model.created_at.isoformat(),
+                "updated_at": model.updated_at.isoformat(),
+                "started_at": model.started_at.isoformat()
+                if model.started_at
+                else None,
+                "finished_at": model.finished_at.isoformat()
+                if model.finished_at
+                else None,
+            }
+        )

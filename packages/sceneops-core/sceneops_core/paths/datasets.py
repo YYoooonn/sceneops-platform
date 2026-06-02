@@ -7,13 +7,7 @@ def dataset_version_root(
     dataset_id: str,
     dataset_version: str,
 ) -> Path:
-    return (
-        manifest_root
-        / "datasets"
-        / dataset_id
-        / "versions"
-        / dataset_version
-    )
+    return manifest_root / "datasets" / dataset_id / "versions" / dataset_version
 
 
 def dataset_manifest_path(
@@ -22,11 +16,14 @@ def dataset_manifest_path(
     dataset_id: str,
     dataset_version: str,
 ) -> Path:
-    return dataset_version_root(
-        manifest_root=manifest_root,
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-    ) / "dataset.json"
+    return (
+        dataset_version_root(
+            manifest_root=manifest_root,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
+        / "dataset.json"
+    )
 
 
 def scenes_index_path(
@@ -35,11 +32,14 @@ def scenes_index_path(
     dataset_id: str,
     dataset_version: str,
 ) -> Path:
-    return dataset_version_root(
-        manifest_root=manifest_root,
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-    ) / "scenes.json"
+    return (
+        dataset_version_root(
+            manifest_root=manifest_root,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
+        / "scenes.json"
+    )
 
 
 def scene_manifest_path(

@@ -100,17 +100,13 @@ class PostgresJobRepository:
 
     async def count_by_status(self) -> dict[str, int]:
         # pylint: disable=not-callable
-        stmt = (
-            select(JobModel.status, func.count(JobModel.id))
-            .group_by(JobModel.status)
+        stmt = select(JobModel.status, func.count(JobModel.id)).group_by(
+            JobModel.status
         )
 
         result = await self.session.execute(stmt)
 
-        return {
-            str(status): count
-            for status, count in result.all()
-        }
+        return {str(status): count for status, count in result.all()}
 
     async def list_recent_failures(
         self,
@@ -187,30 +183,32 @@ class PostgresJobRepository:
         )
 
     def _to_schema(self, model: JobModel) -> JobManifest:
-        return JobManifest.model_validate({
-            "job_id": model.id,
-            "type": model.type,
-            "status": model.status,
-            "dataset_id": model.dataset_id,
-            "dataset_version": model.dataset_version,
-            "pipeline_run_id": model.pipeline_run_id,
-            "pipeline_step_run_id": model.pipeline_step_run_id,
-            "pipeline_step_name": model.pipeline_step_name,
-            "params": model.params or {},
-            "result": model.result,
-            "error": to_error_json(model.error),
-            "retry_count": model.retry_count,
-            "max_retries": model.max_retries,
-            "worker_id": model.worker_id,
-            "queued_at": model.queued_at,
-            "locked_at": model.locked_at,
-            "heartbeat_at": model.heartbeat_at,
-            "started_at": model.started_at,
-            "finished_at": model.finished_at,
-            "created_at": model.created_at,
-            "updated_at": model.updated_at,
-            "steps": (model.manifest or {}).get("steps", []),
-        })
+        return JobManifest.model_validate(
+            {
+                "job_id": model.id,
+                "type": model.type,
+                "status": model.status,
+                "dataset_id": model.dataset_id,
+                "dataset_version": model.dataset_version,
+                "pipeline_run_id": model.pipeline_run_id,
+                "pipeline_step_run_id": model.pipeline_step_run_id,
+                "pipeline_step_name": model.pipeline_step_name,
+                "params": model.params or {},
+                "result": model.result,
+                "error": to_error_json(model.error),
+                "retry_count": model.retry_count,
+                "max_retries": model.max_retries,
+                "worker_id": model.worker_id,
+                "queued_at": model.queued_at,
+                "locked_at": model.locked_at,
+                "heartbeat_at": model.heartbeat_at,
+                "started_at": model.started_at,
+                "finished_at": model.finished_at,
+                "created_at": model.created_at,
+                "updated_at": model.updated_at,
+                "steps": (model.manifest or {}).get("steps", []),
+            }
+        )
 
     def _extract_run_id(self, result: JsonDict | None) -> str | None:
         if not result:
@@ -218,7 +216,6 @@ class PostgresJobRepository:
 
         value = result.get("inference_run_id") or result.get("run_id")
         return str(value) if value else None
-
 
     def _extract_evaluation_id(self, result: JsonDict | None) -> str | None:
         if not result:

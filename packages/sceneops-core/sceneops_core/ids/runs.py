@@ -7,9 +7,11 @@ def default_evaluation_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"eval-{suffix}"
 
+
 def default_validation_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"val-{suffix}"
+
 
 def default_profile_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")

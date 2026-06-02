@@ -96,9 +96,7 @@ class PostgresEvaluationRunRepository:
         )
 
         if model is None:
-            raise FileNotFoundError(
-                f"Evaluation run not found: {evaluation_run_id}"
-            )
+            raise FileNotFoundError(f"Evaluation run not found: {evaluation_run_id}")
 
         return self._to_schema(model)
 
@@ -114,9 +112,7 @@ class PostgresEvaluationRunRepository:
         status: RunStatus | None = None,
         limit: int | None = None,
     ) -> list[EvaluationRunRecord]:
-        stmt = select(EvaluationRunModel).order_by(
-            EvaluationRunModel.created_at.desc()
-        )
+        stmt = select(EvaluationRunModel).order_by(EvaluationRunModel.created_at.desc())
 
         if dataset_id is not None:
             stmt = stmt.where(EvaluationRunModel.dataset_id == dataset_id)

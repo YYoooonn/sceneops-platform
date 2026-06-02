@@ -141,9 +141,7 @@ class PostgresModelVersionRepository:
         model = result.scalar_one_or_none()
 
         if model is None:
-            raise FileNotFoundError(
-                f"Model version not found: {model_id}:{version}"
-            )
+            raise FileNotFoundError(f"Model version not found: {model_id}:{version}")
 
         return self._to_schema(model)
 

@@ -6,6 +6,7 @@ from sceneops_core.executions.schemas import ExecutionBackend
 from sceneops_core.artifacts.schemas import ArtifactBackend
 from sceneops_core.constants.tasks import PIPELINE_QUEUE, JOB_QUEUE
 
+
 class ArtifactSettings(BaseModel):
     backend: ArtifactBackend = ArtifactBackend.LOCAL
 

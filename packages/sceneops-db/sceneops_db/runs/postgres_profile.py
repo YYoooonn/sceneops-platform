@@ -45,11 +45,7 @@ class PostgresDatasetProfileRunRepository:
             "finished_at": record.finished_at,
         }
 
-        update_values = {
-            key: value
-            for key, value in values.items()
-            if key != "id"
-        }
+        update_values = {key: value for key, value in values.items() if key != "id"}
         update_values["metadata"] = update_values.pop("metadata_")
 
         stmt = (

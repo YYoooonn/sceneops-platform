@@ -58,7 +58,6 @@ class PostgresJobEventRepository:
         return [self._to_schema(model) for model in models]
 
     def _to_model(self, event: JobEventManifest) -> JobEventModel:
-
         payload = event.payload if isinstance(event.payload, dict) else {}
 
         return JobEventModel(
@@ -71,12 +70,14 @@ class PostgresJobEventRepository:
         )
 
     def _to_schema(self, model: JobEventModel) -> JobEventManifest:
-        return JobEventManifest.model_validate({
-            "event_id": model.id,
-            "job_id": model.job_id,
-            "event_type": model.event_type,
-            "level": model.level,
-            "message":model.message,
-            "payload": model.payload or {},
-            "created_at": model.created_at,
-        })
+        return JobEventManifest.model_validate(
+            {
+                "event_id": model.id,
+                "job_id": model.job_id,
+                "event_type": model.event_type,
+                "level": model.level,
+                "message": model.message,
+                "payload": model.payload or {},
+                "created_at": model.created_at,
+            }
+        )

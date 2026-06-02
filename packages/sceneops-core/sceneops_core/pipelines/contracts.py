@@ -19,8 +19,7 @@ class PipelineExecutor(
     async def run(
         self,
         request: PipelineExecutionRequestT,
-    ) -> PipelineExecutionResultT:
-        ...
+    ) -> PipelineExecutionResultT: ...
 
 
 @runtime_checkable
@@ -33,5 +32,4 @@ class PipelineDispatcher(
     async def dispatch(
         self,
         request: PipelineDispatchRequestT,
-    ) -> PipelineDispatchResultT:
-        ...
+    ) -> PipelineDispatchResultT: ...

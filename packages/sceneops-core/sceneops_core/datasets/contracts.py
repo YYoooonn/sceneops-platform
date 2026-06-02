@@ -27,7 +27,6 @@ class DatasetIngestor(
     def dataset_type(self) -> str:
         """Stable dataset type identifier, e.g. nuscenes."""
 
-
     async def run(
         self,
         request: DatasetIngestionRequestT,

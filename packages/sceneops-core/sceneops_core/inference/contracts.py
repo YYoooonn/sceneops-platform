@@ -24,6 +24,5 @@ class InferenceBackend(Protocol, Generic[InferenceRequestT, InferenceResultT]):
     def backend_type(self) -> str:
         """Stable backend identifier, e.g. mock, onnx_runtime, triton."""
 
-
     async def run(self, request: InferenceRequestT) -> InferenceResultT:
         """Run inference and return a task-specific inference result."""

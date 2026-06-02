@@ -1,8 +1,4 @@
-from .enums import (
-    ExecutionBackend,
-    ExecutionKind,
-    ExecutionStatus
-)
+from .enums import ExecutionBackend, ExecutionKind, ExecutionStatus
 from .results import ExecutionDispatchResult
 
 __all__ = [

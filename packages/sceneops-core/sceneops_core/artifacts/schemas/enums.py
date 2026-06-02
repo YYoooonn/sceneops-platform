@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+
 class ArtifactBackend(StrEnum):
     LOCAL = "local"
     MINIO = "minio"

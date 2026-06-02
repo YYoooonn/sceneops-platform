@@ -106,12 +106,14 @@ class PostgresDatasetRepository:
         )
 
     def _to_schema(self, model: DatasetModel) -> DatasetRecord:
-        return DatasetRecord.model_validate({
-            "id":model.id,
-            "name": model.name,
-            "dataset_type":model.dataset_type,
-            "description": model.description,
-            "metadata": model.metadata_ or {},
-            "created_at": model.created_at,
-            "updated_at": model.updated_at,
-        })
+        return DatasetRecord.model_validate(
+            {
+                "id": model.id,
+                "name": model.name,
+                "dataset_type": model.dataset_type,
+                "description": model.description,
+                "metadata": model.metadata_ or {},
+                "created_at": model.created_at,
+                "updated_at": model.updated_at,
+            }
+        )

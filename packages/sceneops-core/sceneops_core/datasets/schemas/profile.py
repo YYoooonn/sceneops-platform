@@ -78,6 +78,8 @@ class DatasetProfileReport(SceneOpsBaseModel):
 
     channels: list[DatasetChannelProfile] = Field(default_factory=list)
     scenes: list[DatasetSceneProfile] = Field(default_factory=list)
-    annotations: DatasetAnnotationProfile = Field(default_factory=DatasetAnnotationProfile)
+    annotations: DatasetAnnotationProfile = Field(
+        default_factory=DatasetAnnotationProfile
+    )
 
     metadata: JsonDict = Field(default_factory=dict)

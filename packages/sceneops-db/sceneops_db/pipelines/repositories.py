@@ -11,11 +11,9 @@ from sceneops_core.pipelines.schemas import (
 
 
 class PipelineRunRepository(Protocol):
-    async def create(self, manifest: PipelineRunManifest) -> PipelineRunManifest:
-        ...
+    async def create(self, manifest: PipelineRunManifest) -> PipelineRunManifest: ...
 
-    async def get(self, pipeline_run_id: str) -> PipelineRunManifest:
-        ...
+    async def get(self, pipeline_run_id: str) -> PipelineRunManifest: ...
 
     async def list(
         self,
@@ -24,11 +22,9 @@ class PipelineRunRepository(Protocol):
         pipeline_type: str | None = None,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-    ) -> list[PipelineRunManifest]:
-        ...
+    ) -> list[PipelineRunManifest]: ...
 
-    async def update(self, manifest: PipelineRunManifest) -> PipelineRunManifest:
-        ...
+    async def update(self, manifest: PipelineRunManifest) -> PipelineRunManifest: ...
 
     async def count_by_status(self) -> dict[str, int]: ...
 
@@ -40,33 +36,29 @@ class PipelineRunRepository(Protocol):
 
 
 class PipelineStepRunRepository(Protocol):
-    async def create(self, manifest: PipelineStepRunManifest) -> PipelineStepRunManifest:
-        ...
+    async def create(
+        self, manifest: PipelineStepRunManifest
+    ) -> PipelineStepRunManifest: ...
 
     async def create_many(
         self,
         manifests: list[PipelineStepRunManifest],
-    ) -> list[PipelineStepRunManifest]:
-        ...
+    ) -> list[PipelineStepRunManifest]: ...
 
-    async def get(self, pipeline_step_run_id: str) -> PipelineStepRunManifest:
-        ...
+    async def get(self, pipeline_step_run_id: str) -> PipelineStepRunManifest: ...
 
     async def list_by_pipeline_run(
         self,
         pipeline_run_id: str,
-    ) -> list[PipelineStepRunManifest]:
-        ...
+    ) -> list[PipelineStepRunManifest]: ...
 
     async def update(
         self,
         manifest: PipelineStepRunManifest,
-    ) -> PipelineStepRunManifest:
-        ...
+    ) -> PipelineStepRunManifest: ...
 
     async def update_status(
         self,
         pipeline_step_run_id: str,
         status: PipelineStepRunStatus,
-    ) -> PipelineStepRunManifest:
-        ...
+    ) -> PipelineStepRunManifest: ...

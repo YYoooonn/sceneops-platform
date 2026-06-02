@@ -15,7 +15,7 @@ def generate_job_id() -> str:
     return f"job-{uuid4().hex[:12]}"
 
 
-def generate_model_version_id(model_id:str, version:str) -> str:
+def generate_model_version_id(model_id: str, version: str) -> str:
     return f"{model_id}:{version}"
 
 

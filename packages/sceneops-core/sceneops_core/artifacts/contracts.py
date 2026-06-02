@@ -19,14 +19,11 @@ class ArtifactStore(Protocol):
     def join_uri(self, root: ArtifactUri, *parts: str) -> ArtifactUri:
         """Join URI parts while preserving the storage backend URI style."""
 
-
     async def exists(self, uri: ArtifactUri) -> bool:
         """Return whether the artifact exists."""
 
-
     async def read_json(self, uri: ArtifactUri) -> Any:
         """Read a JSON artifact."""
-
 
     async def write_json(
         self,
@@ -35,14 +32,11 @@ class ArtifactStore(Protocol):
     ) -> None:
         """Write a JSON artifact."""
 
-
     async def list_json(self, uri: ArtifactUri) -> list[ArtifactUri]:
         """List JSON artifact URIs under a prefix."""
 
-
     async def delete_prefix(self, uri: ArtifactUri) -> None:
         """Delete an artifact prefix or file."""
-
 
     def public_url(self, uri: ArtifactUri) -> str:
         """Return a public or displayable URL for the artifact."""

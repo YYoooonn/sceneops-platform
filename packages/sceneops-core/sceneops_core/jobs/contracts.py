@@ -13,13 +13,11 @@ JobDispatchResultT = TypeVar("JobDispatchResultT", covariant=True)
 class JobExecutor(Protocol, Generic[JobExecutionRequestT, JobExecutionResultT]):
     """Port-like contract for executing a SceneOps job."""
 
-    async def run(self, request: JobExecutionRequestT) -> JobExecutionResultT:
-        ...
+    async def run(self, request: JobExecutionRequestT) -> JobExecutionResultT: ...
 
 
 @runtime_checkable
 class JobDispatcher(Protocol, Generic[JobDispatchRequestT, JobDispatchResultT]):
     """Port-like contract for dispatching a SceneOps job to an execution backend."""
 
-    async def dispatch(self, request: JobDispatchRequestT) -> JobDispatchResultT:
-        ...
+    async def dispatch(self, request: JobDispatchRequestT) -> JobDispatchResultT: ...

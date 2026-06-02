@@ -11,12 +11,11 @@ from sceneops_core.runs.schemas import (
 )
 from sceneops_core.datasets.schemas import DatasetValidationStatus
 
-class InferenceRunRepository(Protocol):
-    async def upsert(self, record: InferenceRunRecord) -> InferenceRunRecord:
-        ...
 
-    async def get(self, run_id: str) -> InferenceRunRecord:
-        ...
+class InferenceRunRepository(Protocol):
+    async def upsert(self, record: InferenceRunRecord) -> InferenceRunRecord: ...
+
+    async def get(self, run_id: str) -> InferenceRunRecord: ...
 
     async def list(
         self,
@@ -29,16 +28,13 @@ class InferenceRunRepository(Protocol):
         evaluator_id: str | None = None,
         status: RunStatus | None = None,
         limit: int | None = None,
-    ) -> list[InferenceRunRecord]:
-        ...
+    ) -> list[InferenceRunRecord]: ...
 
 
 class EvaluationRunRepository(Protocol):
-    async def upsert(self, record: EvaluationRunRecord) -> EvaluationRunRecord:
-        ...
+    async def upsert(self, record: EvaluationRunRecord) -> EvaluationRunRecord: ...
 
-    async def get(self, evaluation_run_id: str) -> EvaluationRunRecord:
-        ...
+    async def get(self, evaluation_run_id: str) -> EvaluationRunRecord: ...
 
     async def list(
         self,
@@ -49,22 +45,19 @@ class EvaluationRunRepository(Protocol):
         model_version: str | None = None,
         inference_run_id: str | None = None,
         status: RunStatus | None = None,
-    ) -> list[EvaluationRunRecord]:
-        ...
+    ) -> list[EvaluationRunRecord]: ...
 
 
 class DatasetValidationRunRepository(Protocol):
     async def upsert(
         self,
         record: DatasetValidationRunRecord,
-    ) -> DatasetValidationRunRecord:
-        ...
+    ) -> DatasetValidationRunRecord: ...
 
     async def get(
         self,
         validation_run_id: str,
-    ) -> DatasetValidationRunRecord:
-        ...
+    ) -> DatasetValidationRunRecord: ...
 
     async def list(
         self,
@@ -73,21 +66,19 @@ class DatasetValidationRunRepository(Protocol):
         dataset_version: str | None = None,
         status: RunStatus | None = None,
         validation_status: DatasetValidationStatus | None = None,
-    ) -> list[DatasetValidationRunRecord]:
-        ...
+    ) -> list[DatasetValidationRunRecord]: ...
+
 
 class DatasetProfileRunRepository(Protocol):
     async def upsert(
         self,
         record: DatasetProfileRunRecord,
-    ) -> DatasetProfileRunRecord:
-        ...
+    ) -> DatasetProfileRunRecord: ...
 
     async def get(
         self,
         profile_run_id: str,
-    ) -> DatasetProfileRunRecord | None:
-        ...
+    ) -> DatasetProfileRunRecord | None: ...
 
     async def list(
         self,
@@ -95,5 +86,4 @@ class DatasetProfileRunRepository(Protocol):
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         limit: int = 50,
-    ) -> list[DatasetProfileRunRecord]:
-        ...
+    ) -> list[DatasetProfileRunRecord]: ...

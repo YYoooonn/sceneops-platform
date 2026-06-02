@@ -16,7 +16,9 @@ class InferenceRunModel(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     dataset_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    dataset_version: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    dataset_version: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
 
     model_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     model_version: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
@@ -73,7 +75,9 @@ class EvaluationRunModel(Base):
     )
 
     dataset_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    dataset_version: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    dataset_version: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
 
     model_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     model_version: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
@@ -130,7 +134,9 @@ class DatasetValidationRunModel(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     dataset_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    dataset_version: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    dataset_version: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
 
     # Run lifecycle status: pending/running/succeeded/failed...
     status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
@@ -200,7 +206,9 @@ class DatasetProfileRunModel(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     dataset_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
-    dataset_version: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    dataset_version: Mapped[str] = mapped_column(
+        String(128), index=True, nullable=False
+    )
 
     # Run lifecycle status: pending/running/succeeded/failed...
     status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)

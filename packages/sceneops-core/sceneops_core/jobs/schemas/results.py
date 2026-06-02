@@ -6,9 +6,10 @@ from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
 from sceneops_core.datasets.schemas import (
     DatasetType,
     DatasetValidationScope,
-    DatasetValidationStatus
+    DatasetValidationStatus,
 )
 from .enums import JobType
+
 
 class BaseJobResult(SceneOpsBaseModel):
     dataset_id: str
