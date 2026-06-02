@@ -1,6 +1,8 @@
+# apps/worker/sceneops_worker/pipelines/planning.py
+
 from __future__ import annotations
 
-from sceneops_core.common.ids import generate_job_id
+from sceneops_core.ids.jobs import generate_job_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import (
     JobManifest,
@@ -68,6 +70,8 @@ class PipelineJobPlanner:
         if step.job_type == JobType.VALIDATE_DATASET:
             return {
                 **base,
+                "dataset_manifest_uri": base.get("dataset_manifest_uri")
+                or context.get("dataset_manifest_uri"),
                 "require_target_channels": base.get(
                     "require_target_channels",
                     ["CAM_FRONT", "LIDAR_TOP"],
@@ -78,6 +82,8 @@ class PipelineJobPlanner:
         if step.job_type == JobType.PROFILE_DATASET:
             return {
                 **base,
+                "dataset_manifest_uri": base.get("dataset_manifest_uri")
+                or context.get("dataset_manifest_uri"),
                 "require_target_channels": base.get(
                     "require_target_channels",
                     ["CAM_FRONT", "LIDAR_TOP"],
@@ -108,7 +114,6 @@ class PipelineJobPlanner:
             inference_run_id = base.get("inference_run_id") or context.get(
                 "inference_run_id"
             )
-
             if inference_run_id is None:
                 raise ValueError("inference_run_id is required for evaluation step")
 
@@ -117,4 +122,4 @@ class PipelineJobPlanner:
                 "inference_run_id": inference_run_id,
             }
 
-        raise ValueError(f"Unsupported pipeline step job type: {str(step.job_type)}")
+        raise ValueError(f"Unsupported pipeline step job type: {step.job_type}")

@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sceneops_worker.jobs.factory import create_job_runner
-from sceneops_worker.registry import JobRegistryStore
-from sceneops_worker.pipelines.runner import PipelineRunner
-from sceneops_worker.pipelines.store import PostgresPipelineStore
+from sceneops_core.pipelines.schemas import PipelineRunManifest
+from sceneops_worker.pipelines.factory import create_pipeline_runner
+from sceneops_worker.registry.runtime import create_runtime_store_registry
 
 
 @dataclass(frozen=True)
@@ -16,19 +15,12 @@ class PipelineRuntime:
         self,
         *,
         pipeline_run_id: str,
-    ):
-        pipeline_store = PostgresPipelineStore()
-        job_store = JobRegistryStore()
+    ) -> PipelineRunManifest:
+        registry = create_runtime_store_registry()
 
-        job_runner = create_job_runner(
-            job_store=job_store,
+        runner = create_pipeline_runner(
+            registry=registry,
             worker_id=self.worker_id,
-        )
-
-        runner = PipelineRunner(
-            pipeline_store=pipeline_store,
-            job_store=job_store,
-            job_runner=job_runner,
         )
 
         return await runner.run(

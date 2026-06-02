@@ -33,7 +33,7 @@ class JobStore(Protocol):
     async def save_job(self, job: JobManifest) -> JobManifest: ...
 
 
-class JobRegistryStore:
+class PostgresJobStore:
     async def create_job(self, job: JobManifest) -> JobManifest:
         async with async_session_scope() as session:
             repository = PostgresJobRepository(session)
@@ -54,7 +54,7 @@ class JobRegistryStore:
             return await repository.update(job)
 
 
-class JobEventRegistryStore:
+class PostgresJobEventStore:
     async def append(
         self,
         *,

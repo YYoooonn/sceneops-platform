@@ -19,17 +19,20 @@ from sceneops_worker.jobs.registry import (
     JobHandlerRegistry,
     create_default_job_handler_registry,
 )
+from sceneops_worker.registry.jobs import JobEventStore, JobStore
 
 
 class JobRunner:
     def __init__(
         self,
         *,
+        job_store: JobStore,
+        job_event_store: JobEventStore,
         context: JobContext,
         handler_registry: JobHandlerRegistry | None = None,
     ) -> None:
-        self.job_store = context.job_store
-        self.job_event_store = context.job_event_store
+        self.job_store = job_store
+        self.job_event_store = job_event_store
         self.context = context
         self.worker_id = context.worker_id
         self.handler_registry = (

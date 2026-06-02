@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sceneops_core.common import DatasetId, DatasetVersion
 from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_worker.datasets import DatasetArtifactStore
-from sceneops_worker.registry import JobEventStore, JobStore
-from sceneops_worker.registry import (
-    DatasetRegistryStore,
-    ModelRegistryStore,
-    RunRegistryStore,
-)
+from sceneops_worker.registry.datasets import DatasetRegistryStore
+from sceneops_worker.registry.models import ModelRegistryStore
+from sceneops_worker.registry.runs import RunRegistryStore
 from sceneops_worker.runs import RunArtifactStore
 
 
@@ -25,8 +23,5 @@ class JobContext:
     model_registry_store: ModelRegistryStore
     run_registry_store: RunRegistryStore
 
-    job_store: JobStore
-    job_event_store: JobEventStore
-
-    default_dataset_id: str
-    default_dataset_version: str
+    default_dataset_id: DatasetId
+    default_dataset_version: DatasetVersion

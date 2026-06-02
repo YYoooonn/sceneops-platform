@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sceneops_worker.registry import create_runtime_store_registry
 import typer
 from rich import print
 
@@ -20,7 +21,11 @@ def run_job_command(
     print(f"job: {job_id}")
 
     async def _run() -> object:
-        job_runner = create_job_runner()
+        registry = create_runtime_store_registry()
+        job_runner = create_job_runner(
+            registry=registry,
+            worker_id="cli",
+        )
         return await job_runner.run(job_id)
 
     job = run_cli_async(_run)

@@ -1,60 +1,49 @@
 from __future__ import annotations
 
-from sceneops_worker.config import get_settings
-from sceneops_worker.datasets import DatasetArtifactStore
-from sceneops_worker.jobs.runner import JobRunner
-from sceneops_worker.registry import (
-    DatasetRegistryStore,
-    ModelRegistryStore,
-    JobEventRegistryStore,
-    RunRegistryStore,
-    JobStore,
-    JobRegistryStore,
-)
-from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.jobs.context import JobContext
-from sceneops_storage import create_artifact_store
+from sceneops_worker.jobs.registry import create_default_job_handler_registry
+from sceneops_worker.jobs.runner import JobRunner
+from sceneops_worker.registry.runtime import (
+    RuntimeStoreRegistry,
+    create_runtime_store_registry,
+)
 
 
 def create_job_context(
-    worker_id: str | None,
-    job_store: JobStore | None,
+    *,
+    registry: RuntimeStoreRegistry,
+    worker_id: str | None = None,
 ) -> JobContext:
-    settings = get_settings()
-
-    artifact_store = create_artifact_store(settings.artifact)
-
-    dataset_artifact_store = DatasetArtifactStore(
-        artifact_store=artifact_store,
-        dataset_root_uri=settings.dataset_root_uri,
-    )
-
-    run_artifact_store = RunArtifactStore(
-        artifact_store=artifact_store,
-        runs_root_uri=settings.run_root_uri,
-    )
+    settings = registry.settings
 
     return JobContext(
         worker_id=worker_id or settings.worker_id,
-        artifact_store=artifact_store,
-        dataset_artifact_store=dataset_artifact_store,
-        dataset_registry_store=DatasetRegistryStore(),
-        model_registry_store=ModelRegistryStore(),
-        run_registry_store=RunRegistryStore(),
-        run_artifact_store=run_artifact_store,
-        job_store=job_store or JobRegistryStore(),
-        job_event_store=JobEventRegistryStore(),
+        artifact_store=registry.artifact_store,
+        dataset_artifact_store=registry.dataset_artifact_store,
+        run_artifact_store=registry.run_artifact_store,
+        dataset_registry_store=registry.dataset_registry_store,
+        model_registry_store=registry.model_registry_store,
+        run_registry_store=registry.run_registry_store,
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,
     )
 
 
 def create_job_runner(
-    *, job_store: JobStore | None = None, worker_id: str | None = None
+    *,
+    registry: RuntimeStoreRegistry | None = None,
+    worker_id: str | None = None,
 ) -> JobRunner:
+    registry = registry or create_runtime_store_registry()
+
     context = create_job_context(
+        registry=registry,
         worker_id=worker_id,
-        job_store=job_store,
     )
 
-    return JobRunner(context=context)
+    return JobRunner(
+        job_store=registry.job_store,
+        job_event_store=registry.job_event_store,
+        context=context,
+        handler_registry=create_default_job_handler_registry(),
+    )

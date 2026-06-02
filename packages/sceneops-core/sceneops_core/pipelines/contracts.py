@@ -1,30 +1,37 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Generic, Protocol, TypeVar, runtime_checkable
 
-from sceneops_core.common.types import JsonDict, Metadata, PipelineRunId
+PipelineExecutionRequestT = TypeVar("PipelineExecutionRequestT", contravariant=True)
+PipelineExecutionResultT = TypeVar("PipelineExecutionResultT", covariant=True)
+
+PipelineDispatchRequestT = TypeVar("PipelineDispatchRequestT", contravariant=True)
+PipelineDispatchResultT = TypeVar("PipelineDispatchResultT", covariant=True)
 
 
 @runtime_checkable
-class PipelineExecutor(Protocol):
-    """Contract for executing a registered pipeline run."""
+class PipelineExecutor(
+    Protocol,
+    Generic[PipelineExecutionRequestT, PipelineExecutionResultT],
+):
+    """Port-like contract for executing a pipeline run."""
 
-    def execute_pipeline(
+    async def run(
         self,
-        *,
-        pipeline_run_id: PipelineRunId,
-    ) -> JsonDict:
+        request: PipelineExecutionRequestT,
+    ) -> PipelineExecutionResultT:
         ...
 
 
 @runtime_checkable
-class PipelineDispatcher(Protocol):
-    """Contract for dispatching a pipeline run to an execution backend."""
+class PipelineDispatcher(
+    Protocol,
+    Generic[PipelineDispatchRequestT, PipelineDispatchResultT],
+):
+    """Port-like contract for dispatching a pipeline run to an execution backend."""
 
-    def dispatch_pipeline(
+    async def dispatch(
         self,
-        *,
-        pipeline_run_id: PipelineRunId,
-        params: Metadata | None = None,
-    ) -> PipelineRunId:
+        request: PipelineDispatchRequestT,
+    ) -> PipelineDispatchResultT:
         ...

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+from sceneops_worker.registry import create_runtime_store_registry
 import typer
 from rich import print
 
 from sceneops_worker.cli.async_utils import run_cli_async
-from sceneops_worker.registry import JobRegistryStore
-from sceneops_worker.jobs.factory import create_job_runner
-from sceneops_worker.pipelines.runner import PipelineRunner
-from sceneops_worker.pipelines.store import PostgresPipelineStore
+from sceneops_worker.pipelines import create_pipeline_runner
 
 app = typer.Typer(
     help="Pipeline execution commands.",
@@ -26,14 +24,11 @@ def run_pipeline_command(
     print("[bold cyan]SceneOps Worker - Run pipeline[/bold cyan]")
     print(f"pipeline: {pipeline_run_id}")
 
-    job_store = JobRegistryStore()
-
     async def _run() -> object:
-        job_runner = create_job_runner(job_store=job_store)
-        pipeline_runner = PipelineRunner(
-            pipeline_store=PostgresPipelineStore(),
-            job_store=job_store,
-            job_runner=job_runner,
+        registry = create_runtime_store_registry()
+        pipeline_runner = create_pipeline_runner(
+            registry=registry,
+            worker_id="cli",
         )
         return await pipeline_runner.run(pipeline_run_id)
 
