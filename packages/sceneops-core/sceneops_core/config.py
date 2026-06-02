@@ -55,7 +55,7 @@ class CelerySettings(BaseModel):
 
     pipeline_queue: str = PIPELINE_QUEUE
     job_queue: str = JOB_QUEUE
-    task_default_queue: str = "sceneops.default"
+    task_default_queue: str = JOB_QUEUE
 
     worker_prefetch_multiplier: int = 1
     task_acks_late: bool = True

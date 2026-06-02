@@ -64,33 +64,59 @@ services:
     profiles:
       - debug
 
-  worker-celery:
+  worker-pipeline:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
     image: sceneops-platform/worker:local
-    container_name: sceneops-worker-celery
+    container_name: sceneops-worker-pipeline
+    command: >
+      celery
+      -A sceneops_worker.celery_app.celery_app
+      worker
+      --loglevel=info
+      --queues=sceneops.pipeline_runs
+      --concurrency=1
+      --hostname=sceneops-pipeline@%h
     env_file:
       - .env.local
-    volumes:
-      - ./data:/data
-      - ./scripts:/workspace/scripts:ro
-    command:
-      [
-        "celery",
-        "-A",
-        "sceneops_worker.celery_app:celery_app",
-        "worker",
-        "--loglevel=info",
-        "-Q",
-        "sceneops.pipeline_runs,sceneops.jobs",
-        "--concurrency=1"
-      ]
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+    volumes:
+      - ./data:/data
+      - ./scripts:/workspace/scripts:ro
+    profiles:
+      - worker
+
+  worker-jobs:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: sceneops-platform/worker:local
+    container_name: sceneops-worker-jobs
+    command: >
+      celery
+      -A sceneops_worker.celery_app.celery_app
+      worker
+      --loglevel=info
+      --queues=sceneops.jobs
+      --concurrency=4
+      --hostname=sceneops-jobs@%h
+    env_file:
+      - .env.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./data:/data
+      - ./scripts:/workspace/scripts:ro
+    profiles:
+      - worker
 
   migrate:
     build:

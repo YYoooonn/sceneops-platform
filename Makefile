@@ -107,16 +107,16 @@ clean-artifacts:
 .PHONY: compose-build
 compose-build:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build api worker-celery
+	docker compose -f $(COMPOSE_FILE) build api worker-pipeline
 
 .PHONY: compose-build-no-cache
 compose-build-no-cache:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-celery worker-cli
+	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-pipeline worker-cli
 
 .PHONY: compose-up
 compose-up: prepare-data
-	docker compose -f $(COMPOSE_FILE) up -d postgres redis api worker-celery
+	docker compose -f $(COMPOSE_FILE) up -d postgres redis api worker-pipeline worker-jobs
 
 .PHONY: compose-down
 compose-down:
@@ -189,7 +189,7 @@ api-shell:
 
 .PHONY: worker-logs
 worker-logs:
-	docker compose -f $(COMPOSE_FILE) logs -f worker-celery
+	docker compose -f $(COMPOSE_FILE) logs -f worker-pipeline worker-jobs
 
 .PHONY: worker-shell
 worker-shell:

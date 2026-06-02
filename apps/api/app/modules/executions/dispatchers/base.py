@@ -1,23 +1,20 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
 
 from sceneops_core.executions.schemas import ExecutionDispatchResult
 
 
-class ExecutionDispatcher(ABC):
-    @abstractmethod
+@runtime_checkable
+class ExecutionDispatcher(Protocol):
     def dispatch_pipeline_run(
         self,
         *,
         pipeline_run_id: str,
-    ) -> ExecutionDispatchResult:
-        raise NotImplementedError
+    ) -> ExecutionDispatchResult: ...
 
-    @abstractmethod
     def dispatch_job_run(
         self,
         *,
         job_id: str,
-    ) -> ExecutionDispatchResult:
-        raise NotImplementedError
+    ) -> ExecutionDispatchResult: ...

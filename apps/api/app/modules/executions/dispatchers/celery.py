@@ -4,14 +4,14 @@ from dataclasses import dataclass
 
 from celery import Celery
 
+from app.modules.executions.dispatchers.base import ExecutionDispatcher
 from sceneops_core.constants.tasks import JOB_RUN_TASK, PIPELINE_RUN_TASK
 from sceneops_core.executions.schemas import (
     ExecutionBackend,
+    ExecutionDispatchResult,
     ExecutionKind,
     ExecutionStatus,
-    ExecutionDispatchResult,
 )
-from app.modules.executions.dispatchers.base import ExecutionDispatcher
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class CeleryExecutionDispatcher(ExecutionDispatcher):
             PIPELINE_RUN_TASK,
             args=[pipeline_run_id],
             queue=self.pipeline_queue,
+            routing_key=self.pipeline_queue,
         )
 
         return ExecutionDispatchResult(
@@ -49,6 +50,7 @@ class CeleryExecutionDispatcher(ExecutionDispatcher):
             JOB_RUN_TASK,
             args=[job_id],
             queue=self.job_queue,
+            routing_key=self.job_queue,
         )
 
         return ExecutionDispatchResult(
