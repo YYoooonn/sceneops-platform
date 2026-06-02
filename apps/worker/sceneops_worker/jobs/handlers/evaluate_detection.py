@@ -98,10 +98,10 @@ class EvaluateDetectionJobHandler(
             )
 
             metrics = evaluation_manifest.get("metrics", {})
-            class_metrics = evaluation_manifest.get("classMetrics", {})
-            sample_count = evaluation_manifest.get("sampleCount")
-            evaluation_manifest_uri = evaluation_manifest["evaluationManifestUri"]
-            samples_root_uri = evaluation_manifest.get("samplesRootUri")
+            class_metrics = evaluation_manifest.get("class_metrics", {})
+            sample_count = evaluation_manifest.get("sample_count")
+            evaluation_manifest_uri = evaluation_manifest["evaluation_manifest_uri"]
+            samples_root_uri = evaluation_manifest.get("samples_root_uri")
 
             await context.run_registry_store.upsert_evaluation_run(
                 EvaluationRunRecord(
@@ -109,8 +109,8 @@ class EvaluateDetectionJobHandler(
                     inference_run_id=params.inference_run_id,
                     dataset_id=params.dataset_id,
                     dataset_version=params.dataset_version,
-                    model_id=evaluation_manifest["modelId"],
-                    model_version=evaluation_manifest["modelVersion"],
+                    model_id=evaluation_manifest["model_id"],
+                    model_version=evaluation_manifest["model_version"],
                     evaluator_id=params.evaluator_id,
                     status=RunStatus.SUCCEEDED,
                     sample_count=sample_count,
@@ -139,10 +139,10 @@ class EvaluateDetectionJobHandler(
                 sample_count=sample_count,
                 result_summary={
                     "status": evaluation_manifest.get("status"),
-                    "match_distance_m": evaluation_manifest.get("matchDistanceM"),
+                    "match_distance_m": evaluation_manifest.get("match_distance_m"),
                     "class_metrics": class_metrics,
                     "samples_root_uri": samples_root_uri,
-                    "created_at": evaluation_manifest.get("createdAt"),
+                    "created_at": evaluation_manifest.get("created_at"),
                 },
             )
 

@@ -52,7 +52,7 @@ class PipelineResultPropagator:
 
         context.set(Ctx.DATASET_ID, parsed.dataset_id)
         context.set(Ctx.DATASET_VERSION, parsed.dataset_version)
-        context.set(Ctx.DATASET_MANIFEST_URI, parsed.dataset_version)
+        context.set(Ctx.DATASET_MANIFEST_URI, parsed.dataset_manifest_uri)
 
         context.set(Ctx.PROFILE_RUN_ID, parsed.profile_run_id)
         context.set(Ctx.PROFILE_REPORT_URI, parsed.profile_report_uri)
