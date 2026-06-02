@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from app.core.dependencies import get_artifact_service
-from app.modules.artifacts.service import ArtifactService
+from app.modules.artifacts.dependencies import ArtifactServiceDep
 from sceneops_core.common.schemas import JsonDict
 
 router = APIRouter(
@@ -20,7 +19,7 @@ router = APIRouter(
 async def get_dataset_manifest_artifact(
     dataset_id: str,
     dataset_version: str,
-    service: ArtifactService = Depends(get_artifact_service),
+    service: ArtifactServiceDep,
 ) -> JsonDict:
     try:
         return await service.get_dataset_manifest(
@@ -38,7 +37,7 @@ async def get_dataset_manifest_artifact(
 )
 async def get_inference_run_artifact(
     run_id: str,
-    service: ArtifactService = Depends(get_artifact_service),
+    service: ArtifactServiceDep,
 ) -> JsonDict:
     try:
         return await service.get_inference_run_manifest(run_id)
@@ -53,7 +52,7 @@ async def get_inference_run_artifact(
 )
 async def get_evaluation_run_artifact(
     evaluation_run_id: str,
-    service: ArtifactService = Depends(get_artifact_service),
+    service: ArtifactServiceDep,
 ) -> JsonDict:
     try:
         return await service.get_evaluation_run_manifest(evaluation_run_id)
@@ -68,7 +67,7 @@ async def get_evaluation_run_artifact(
 )
 async def get_validation_run_artifact(
     validation_run_id: str,
-    service: ArtifactService = Depends(get_artifact_service),
+    service: ArtifactServiceDep,
 ) -> JsonDict:
     try:
         return await service.get_validation_run_report(validation_run_id)

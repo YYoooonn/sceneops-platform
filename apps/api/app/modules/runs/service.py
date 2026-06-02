@@ -11,6 +11,7 @@ from sceneops_core.runs.schemas import (
     RunStatus,
 )
 from sceneops_db.runs import (
+    DatasetProfileRunRepository,
     EvaluationRunRepository,
     InferenceRunRepository,
     DatasetValidationRunRepository,
@@ -23,10 +24,12 @@ class RunService:
         inference_repository: InferenceRunRepository,
         evaluation_repository: EvaluationRunRepository,
         validation_repository: DatasetValidationRunRepository,
+        profile_repository: DatasetProfileRunRepository,
     ) -> None:
         self.inference_repository = inference_repository
         self.evaluation_repository = evaluation_repository
         self.validation_repository = validation_repository
+        self.profile_repository = profile_repository
 
     async def list_inference_runs(
         self,
@@ -114,3 +117,5 @@ class RunService:
         except FileNotFoundError:
             return None
         return DatasetValidationRunDetailResponse(run=run)
+
+    # TODO profile run repository

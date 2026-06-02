@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
-from app.core.dependencies import get_model_service
-from app.modules.models.service import ModelService
+from app.modules.models.dependencies import ModelServiceDep
 from sceneops_core.models.schemas import (
     CreateModelRequest,
     CreateModelVersionRequest,
@@ -21,7 +20,7 @@ router = APIRouter(
 
 @router.get("", response_model=ModelListResponse, response_model_by_alias=True)
 async def list_models(
-    service: ModelService = Depends(get_model_service),
+    service: ModelServiceDep,
 ) -> ModelListResponse:
     return await service.list_models()
 
@@ -34,7 +33,7 @@ async def list_models(
 )
 async def create_model(
     request: CreateModelRequest,
-    service: ModelService = Depends(get_model_service),
+    service: ModelServiceDep,
 ) -> ModelDetailResponse:
     return await service.create_model(request)
 
@@ -46,7 +45,7 @@ async def create_model(
 )
 async def get_model(
     model_id: str,
-    service: ModelService = Depends(get_model_service),
+    service: ModelServiceDep,
 ) -> ModelDetailResponse:
     response = await service.get_model(model_id)
     if response is None:
@@ -61,7 +60,7 @@ async def get_model(
 )
 async def list_model_versions(
     model_id: str,
-    service: ModelService = Depends(get_model_service),
+    service: ModelServiceDep,
 ) -> ModelVersionListResponse:
     return await service.list_model_versions(model_id)
 
@@ -75,7 +74,7 @@ async def list_model_versions(
 async def create_model_version(
     model_id: str,
     request: CreateModelVersionRequest,
-    service: ModelService = Depends(get_model_service),
+    service: ModelServiceDep,
 ) -> ModelVersionDetailResponse:
     return await service.create_model_version(model_id, request)
 
@@ -88,7 +87,7 @@ async def create_model_version(
 async def get_model_version(
     model_id: str,
     version: str,
-    service: ModelService = Depends(get_model_service),
+    service: ModelServiceDep,
 ) -> ModelVersionDetailResponse:
     response = await service.get_model_version(model_id, version)
     if response is None:

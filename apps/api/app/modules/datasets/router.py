@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
-from app.core.dependencies import get_dataset_service
-from app.modules.datasets.service import DatasetService
+from app.modules.datasets.dependencies import DatasetServiceDep
 from sceneops_core.datasets.schemas import (
     CreateDatasetRequest,
     CreateDatasetVersionRequest,
@@ -24,7 +23,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
     response_model_by_alias=True,
 )
 async def list_datasets(
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetListResponse:
     return await service.list_datasets()
 
@@ -37,7 +36,7 @@ async def list_datasets(
 )
 async def create_dataset(
     request: CreateDatasetRequest,
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetDetailResponse:
     return await service.create_dataset(request)
 
@@ -49,7 +48,7 @@ async def create_dataset(
 )
 async def get_dataset(
     dataset_id: str,
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetDetailResponse:
     response = await service.get_dataset(dataset_id)
 
@@ -70,7 +69,7 @@ async def get_dataset(
 async def upsert_dataset(
     dataset_id: str,
     request: UpsertDatasetRequest,
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetDetailResponse:
     return await service.upsert_dataset(dataset_id, request)
 
@@ -82,7 +81,7 @@ async def upsert_dataset(
 )
 async def list_dataset_versions(
     dataset_id: str,
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetVersionListResponse:
     response = await service.list_dataset_versions(dataset_id)
 
@@ -104,7 +103,7 @@ async def list_dataset_versions(
 async def create_dataset_version(
     dataset_id: str,
     request: CreateDatasetVersionRequest,
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetVersionDetailResponse:
     response = await service.create_dataset_version(dataset_id, request)
 
@@ -125,7 +124,7 @@ async def create_dataset_version(
 async def get_dataset_version(
     dataset_id: str,
     version: str,
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetVersionDetailResponse:
     response = await service.get_dataset_version(
         dataset_id=dataset_id,
@@ -150,7 +149,7 @@ async def upsert_dataset_version(
     dataset_id: str,
     version: str,
     request: UpsertDatasetVersionRequest,
-    service: DatasetService = Depends(get_dataset_service),
+    service: DatasetServiceDep,
 ) -> DatasetVersionDetailResponse:
     response = await service.upsert_dataset_version(
         dataset_id=dataset_id,

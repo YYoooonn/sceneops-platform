@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from app.core.dependencies import get_execution_dispatcher, get_job_service
-from app.modules.executions.dispatchers import ExecutionDispatcher
+from app.modules.jobs.dependencies import JobServiceDep
+from app.modules.executions.dependencies import ExecutionDispatcherDep
 from app.modules.jobs.schemas import JobExecutionResponse
-from app.modules.jobs.service import JobService
 from sceneops_core.executions.schemas import ExecutionStatus
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
@@ -19,18 +18,19 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 @router.post("", response_model=JobManifest)
 async def create_job(
     request: CreateJobRequest,
-    service: JobService = Depends(get_job_service),
+    service: JobServiceDep,
 ) -> JobManifest:
     return await service.create_job(request)
 
 
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
+    *,
+    service: JobServiceDep,
     status: JobStatus | None = None,
     job_type: str | None = None,
     dataset_id: str | None = None,
     dataset_version: str | None = None,
-    service: JobService = Depends(get_job_service),
 ) -> JobListResponse:
     return await service.list_jobs(
         status=status,
@@ -42,8 +42,9 @@ async def list_jobs(
 
 @router.get("/{job_id}/events", response_model=JobEventListResponse)
 async def list_job_events(
+    *,
     job_id: str,
-    service: JobService = Depends(get_job_service),
+    service: JobServiceDep,
 ) -> JobEventListResponse:
     response = await service.list_job_events(job_id)
 
@@ -55,8 +56,9 @@ async def list_job_events(
 
 @router.get("/{job_id}", response_model=JobManifest)
 async def get_job(
+    *,
     job_id: str,
-    service: JobService = Depends(get_job_service),
+    service: JobServiceDep,
 ) -> JobManifest:
     job = await service.get_job(job_id)
 
@@ -71,9 +73,10 @@ async def get_job(
     response_model=JobExecutionResponse,
 )
 async def execute_job(
+    *,
     job_id: str,
-    service: JobService = Depends(get_job_service),
-    dispatcher: ExecutionDispatcher = Depends(get_execution_dispatcher),
+    service: JobServiceDep,
+    dispatcher: ExecutionDispatcherDep,
 ) -> JobExecutionResponse:
     try:
         await service.validate_executable(job_id)

@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from app.core.dependencies import (
-    get_execution_dispatcher,
-    get_pipeline_service,
-)
-from app.modules.executions.dispatchers import ExecutionDispatcher
+from app.modules.pipelines.dependencies import PipelineServiceDep
+from app.modules.executions.dependencies import ExecutionDispatcherDep
 from app.modules.pipelines.schemas import PipelineExecutionResponse
-from app.modules.pipelines.service import PipelineService
 from sceneops_core.executions.schemas import ExecutionStatus
 from sceneops_core.pipelines.schemas import (
     CreatePipelineRunRequest,
@@ -23,18 +19,19 @@ router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 @router.post("/runs", response_model=PipelineRunDetailResponse)
 async def create_pipeline_run(
     request: CreatePipelineRunRequest,
-    service: PipelineService = Depends(get_pipeline_service),
+    service: PipelineServiceDep,
 ) -> PipelineRunDetailResponse:
     return await service.create_pipeline_run(request)
 
 
 @router.get("/runs", response_model=PipelineRunListResponse)
 async def list_pipeline_runs(
+    *,
     status: PipelineRunStatus | None = None,
     pipeline_type: str | None = None,
     dataset_id: str | None = None,
     dataset_version: str | None = None,
-    service: PipelineService = Depends(get_pipeline_service),
+    service: PipelineServiceDep,
 ) -> PipelineRunListResponse:
     return await service.list_pipeline_runs(
         status=status,
@@ -47,7 +44,7 @@ async def list_pipeline_runs(
 @router.get("/runs/{pipeline_run_id}", response_model=PipelineRunDetailResponse)
 async def get_pipeline_run(
     pipeline_run_id: str,
-    service: PipelineService = Depends(get_pipeline_service),
+    service: PipelineServiceDep,
 ) -> PipelineRunDetailResponse:
     result = await service.get_pipeline_run_detail(pipeline_run_id)
 
@@ -62,8 +59,8 @@ async def get_pipeline_run(
 )
 async def execute_pipeline_run(
     pipeline_run_id: str,
-    service: PipelineService = Depends(get_pipeline_service),
-    dispatcher: ExecutionDispatcher = Depends(get_execution_dispatcher),
+    service: PipelineServiceDep,
+    dispatcher: ExecutionDispatcherDep,
 ) -> PipelineExecutionResponse:
     try:
         await service.validate_executable(pipeline_run_id)

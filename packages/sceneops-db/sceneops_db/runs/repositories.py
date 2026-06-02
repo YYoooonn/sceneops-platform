@@ -25,7 +25,10 @@ class InferenceRunRepository(Protocol):
         dataset_version: str | None = None,
         model_id: str | None = None,
         model_version: str | None = None,
+        inference_run_id: str | None = None,
+        evaluator_id: str | None = None,
         status: RunStatus | None = None,
+        limit: int | None = None,
     ) -> list[InferenceRunRecord]:
         ...
 
@@ -48,6 +51,7 @@ class EvaluationRunRepository(Protocol):
         status: RunStatus | None = None,
     ) -> list[EvaluationRunRecord]:
         ...
+
 
 class DatasetValidationRunRepository(Protocol):
     async def upsert(

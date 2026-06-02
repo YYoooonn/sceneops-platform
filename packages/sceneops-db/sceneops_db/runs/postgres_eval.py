@@ -110,7 +110,9 @@ class PostgresEvaluationRunRepository:
         model_id: str | None = None,
         model_version: str | None = None,
         inference_run_id: str | None = None,
+        evaluator_id: str | None = None,
         status: RunStatus | None = None,
+        limit: int | None = None,
     ) -> list[EvaluationRunRecord]:
         stmt = select(EvaluationRunModel).order_by(
             EvaluationRunModel.created_at.desc()
@@ -129,12 +131,16 @@ class PostgresEvaluationRunRepository:
             stmt = stmt.where(EvaluationRunModel.model_version == model_version)
 
         if inference_run_id is not None:
-            stmt = stmt.where(
-                EvaluationRunModel.inference_run_id == inference_run_id
-            )
+            stmt = stmt.where(EvaluationRunModel.inference_run_id == inference_run_id)
+
+        if evaluator_id is not None:
+            stmt = stmt.where(EvaluationRunModel.evaluator_id == evaluator_id)
 
         if status is not None:
             stmt = stmt.where(EvaluationRunModel.status == enum_to_str(status))
+
+        if limit is not None:
+            stmt = stmt.limit(limit)
 
         result = await self.session.execute(stmt)
         models = result.scalars().all()

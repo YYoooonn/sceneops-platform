@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from app.core.dependencies import get_run_service
-from app.modules.runs.service import RunService
+from app.modules.runs.dependencies import RunServiceDep
 from sceneops_core.datasets.schemas import DatasetValidationStatus
 from sceneops_core.runs.schemas import (
     DatasetValidationRunDetailResponse,
@@ -27,12 +26,13 @@ router = APIRouter(
     response_model_by_alias=True,
 )
 async def list_inference_runs(
+    *,
     dataset_id: str | None = None,
     dataset_version: str | None = None,
     model_id: str | None = None,
     model_version: str | None = None,
     status: RunStatus | None = None,
-    service: RunService = Depends(get_run_service),
+    service: RunServiceDep,
 ) -> InferenceRunListResponse:
     return await service.list_inference_runs(
         dataset_id=dataset_id,
@@ -50,7 +50,7 @@ async def list_inference_runs(
 )
 async def get_inference_run(
     run_id: str,
-    service: RunService = Depends(get_run_service),
+    service: RunServiceDep,
 ) -> InferenceRunDetailResponse:
     response = await service.get_inference_run(run_id)
     if response is None:
@@ -66,13 +66,14 @@ async def get_inference_run(
     response_model_by_alias=True,
 )
 async def list_evaluation_runs(
+    *,
+    service: RunServiceDep,
     dataset_id: str | None = None,
     dataset_version: str | None = None,
     model_id: str | None = None,
     model_version: str | None = None,
     inference_run_id: str | None = None,
     status: RunStatus | None = None,
-    service: RunService = Depends(get_run_service),
 ) -> EvaluationRunListResponse:
     return await service.list_evaluation_runs(
         dataset_id=dataset_id,
@@ -91,7 +92,7 @@ async def list_evaluation_runs(
 )
 async def get_evaluation_run(
     evaluation_run_id: str,
-    service: RunService = Depends(get_run_service),
+    service: RunServiceDep,
 ) -> EvaluationRunDetailResponse:
     response = await service.get_evaluation_run(evaluation_run_id)
     if response is None:
@@ -108,11 +109,12 @@ async def get_evaluation_run(
     response_model_by_alias=True,
 )
 async def list_validation_runs(
+    *,
+    service: RunServiceDep,
     dataset_id: str | None = None,
     dataset_version: str | None = None,
     status: RunStatus | None = None,
     validation_status: DatasetValidationStatus | None = None,
-    service: RunService = Depends(get_run_service),
 ) -> EvaluationRunListResponse:
     return await service.list_validation_run(
         dataset_id=dataset_id,
@@ -129,7 +131,7 @@ async def list_validation_runs(
 )
 async def get_validation_run(
     validation_run_id: str,
-    service: RunService = Depends(get_run_service),
+    service: RunServiceDep,
 ) -> DatasetValidationRunDetailResponse:
     response = await service.get_validation_run(validation_run_id)
     if response is None:
