@@ -156,3 +156,5 @@ infra/helm/charts/sceneops-db/templates/*
 
 infra/values/local/*
 !infra/values/local/*.example.yaml
+
+.claude

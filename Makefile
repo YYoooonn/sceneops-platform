@@ -120,7 +120,7 @@ compose-up: prepare-data
 
 .PHONY: compose-down
 compose-down:
-	docker compose -f $(COMPOSE_FILE) down
+	docker compose -f $(COMPOSE_FILE) down postgres redis api worker-pipeline worker-jobs
 
 .PHONY: compose-down-volumes
 compose-down-volumes:

@@ -1,368 +1,208 @@
 # SceneOps Platform
 
-SceneOps Platform is a local-first MLOps control plane for robotics perception workflows.
+**Robotics Sensor Data & Model Validation Platform**
 
-It connects robotics sensor datasets, dataset ingestion, dataset validation, dataset profiling, model inference, detection evaluation, artifact lineage, and asynchronous pipeline execution into one reproducible system.
+SceneOps is a local-first, production-oriented platform for managing robotics
+sensor datasets, validating dataset quality, profiling sensor coverage, running
+model inference, evaluating detection results, and tracking artifacts across the
+full data-to-model workflow.
+
+The premise is that robotics AI systems need more than model training. They need
+repeatable dataset ingestion, sensor-data validation, dataset profiling,
+model-versioned inference, evaluation, artifact lineage, and operational
+visibility. SceneOps provides a control plane and execution runtime for that
+workflow.
+
+The current focus is autonomous-driving-style multi-sensor data using
+**nuScenes mini**, but the architecture is built to extend to other robotics
+datasets, inference backends, object storage, and simulation-generated data.
+
+---
+
+## Workflow
 
 ```text
-robotics sensor data
-  -> dataset registry
-  -> ingestion + manifest generation
-  -> dataset validation / quality gate
-  -> dataset profiling / quality statistics
+raw sensor data
+  -> dataset registration
+  -> ingestion
+  -> validation
+  -> profiling
   -> model inference
-  -> detection evaluation
+  -> evaluation
   -> artifact lineage
-  -> model/runtime iteration
+  -> comparison / leaderboard
 ```
 
-The current implementation uses **FastAPI**, **PostgreSQL**, **Redis/Celery**, local artifact storage, and pluggable inference backends including **mock** and **ONNX Runtime**.
-
----
-
-## Why this project exists
-
-Robotics AI systems are not only model-training problems.
-
-A practical robotics AI workflow needs repeatable infrastructure for:
-
-* sensor dataset ingestion and preprocessing
-* dataset versioning
-* dataset validation and quality gating
-* dataset profiling and quality statistics
-* model version management
-* batch inference execution
-* evaluation and metric tracking
-* artifact lineage across datasets, predictions, and evaluations
-* asynchronous job/pipeline orchestration
-* operational visibility for failed or blocked runs
-
-SceneOps is a portfolio-scale implementation of that system, focused on nuScenes-style autonomous-driving sensor data and 3D perception pipeline infrastructure.
-
----
-
-## What is implemented now
-
-| Area                  | Current implementation                                                                                                                    |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Control plane         | FastAPI API server with dataset, model, job, pipeline, run, and artifact routes                                                           |
-| Metadata store        | PostgreSQL-backed repositories with Alembic migrations                                                                                    |
-| Async execution       | Redis broker + Celery worker runtime                                                                                                      |
-| Dataset registry      | Dataset and DatasetVersion registration with source/manifest metadata                                                                     |
-| Dataset ingestion     | nuScenes mini ingestion into dataset, scene, and sample manifests                                                                         |
-| Dataset validation    | First-class `validate_dataset` job, validation run record, validation report artifact, and quality gate                                   |
-| Dataset profiling     | First-class `profile_dataset` job, profile run record, profile report artifact, sensor coverage, observed channels, annotation statistics |
-| Dataset quality cache | Latest validation/profile summary cached on DatasetVersion                                                                                |
-| Model registry        | Model and ModelVersion registration with backend/model URI metadata                                                                       |
-| Pipelines             | `dataset_ingestion` and `detection_validation` pipeline definitions                                                                       |
-| Job runtime           | `ingest_dataset`, `validate_dataset`, `profile_dataset`, `predict_detection`, `evaluate_detection` jobs                                   |
-| Inference             | Mock detection backend and ONNX Runtime dummy detector backend                                                                            |
-| Evaluation            | Center-distance detection evaluator with TP/FP/FN, precision, recall, mean center distance error, and per-class metrics                   |
-| Artifact lineage      | Dataset manifests, validation reports, profile reports, prediction manifests, evaluation manifests, and run records                       |
-| E2E scripts           | Dataset ingestion/profile, mock detection validation, and ONNX detection validation E2E scripts                                           |
-
----
-
-## Current E2E workflows
-
-### 1. Dataset ingestion + validation + profiling
+The goal is not to run a model once, but to answer operational questions:
 
 ```text
-create dataset_ingestion pipeline run
-  -> dispatch pipeline through Celery
-  -> ingest nuScenes dataset version
-  -> write dataset / scene / sample manifests
-  -> validate scene and sample manifests
-  -> validate required sensor channels, e.g. CAM_FRONT and LIDAR_TOP
-  -> write validation_report.json
-  -> update dataset_validation_runs
-  -> update DatasetVersion latest validation summary
-  -> if validation is not blocking, run profile_dataset
-  -> compute observed channels, sensor coverage, annotation statistics
-  -> write profile_report.json
-  -> update dataset_profile_runs
-  -> update DatasetVersion latest profile summary
-  -> return structured pipeline result with dataset / validation / profile outputs
-```
-
-Run:
-
-```bash
-make e2e-dataset-ingest
-```
-
-Expected steps:
-
-```text
-ingest_dataset      succeeded
-validate_dataset    succeeded
-profile_dataset     succeeded
-```
-
-Expected artifacts:
-
-```text
-data/datasets/{dataset_id}/{dataset_version}/...
-data/runs/dataset_validations/{validation_run_id}/validation_report.json
-data/runs/dataset_profiles/{profile_run_id}/profile_report.json
-```
-
-Expected pipeline result shape:
-
-```json
-{
-  "outputs": {
-    "dataset": {
-      "datasetId": "nuscenes",
-      "datasetVersion": "v1.0-mini",
-      "manifestUri": "..."
-    },
-    "validation": {
-      "runId": "validation-job-xxx",
-      "status": "ready",
-      "reportUri": "...",
-      "shouldBlockPipeline": false
-    },
-    "profile": {
-      "runId": "profile-job-xxx",
-      "reportUri": "...",
-      "sensorCoverageRatio": 1.0,
-      "emptyAnnotationSampleRatio": 0.0,
-      "observedChannels": ["CAM_FRONT", "LIDAR_TOP"]
-    }
-  }
-}
-```
-
-### 2. Mock detection validation
-
-```text
-register mock detector model
-  -> create detection_validation pipeline run
-  -> run mock prediction backend
-  -> write prediction manifests
-  -> evaluate predictions with center-distance evaluator
-  -> store inference and evaluation run records
-```
-
-Run:
-
-```bash
-make e2e-mock-celery
-```
-
-### 3. ONNX Runtime detection validation
-
-```text
-create dummy ONNX model artifact
-  -> register ONNX model version
-  -> create detection_validation pipeline run
-  -> run ONNX Runtime prediction backend
-  -> evaluate predictions
-  -> store inference and evaluation artifacts
-```
-
-Run:
-
-```bash
-make e2e-onnx-celery
+Is this dataset version valid enough for downstream model workflows?
+What sensors, scenes, samples, and annotations does this dataset contain?
+Which model version was evaluated on which dataset version?
+Where are the prediction and evaluation artifacts stored?
+Which pipeline step failed, and why?
+Can the same workflow later run on S3/MinIO, Triton, or simulation data?
 ```
 
 ---
 
-## Architecture
+## Tech stack
+
+| Layer            | Implementation                                                        |
+| ---------------- | --------------------------------------------------------------------- |
+| Control plane    | FastAPI (`apps/api`)                                                   |
+| Execution        | Celery on Redis, split into `worker-pipeline` and `worker-jobs`       |
+| Metadata store   | PostgreSQL with Alembic migrations (`packages/sceneops-db`)           |
+| Domain layer     | Shared schemas/contracts (`packages/sceneops-core`)                  |
+| Artifact storage | Pluggable `ArtifactStore`; local filesystem implemented (`packages/sceneops-storage`) |
+| Inference        | Pluggable backends: `mock` and `onnx_runtime`                         |
+| Tooling          | `uv` workspace, Docker Compose, pre-commit, Ruff                      |
+
+Repository layout:
 
 ```text
-[CLI / E2E Script / Future Dashboard]
-        |
-        v
+apps/
+  api/      FastAPI control plane
+  worker/   Celery pipeline + job runtime
+  web/      dashboard (planned, not yet implemented)
+packages/
+  sceneops-core/     domain schemas, contracts, constants
+  sceneops-db/       PostgreSQL models and repositories
+  sceneops-storage/  artifact store implementations
+migrations/          Alembic migrations
+scripts/             checks, e2e, debug, fixtures
+```
+
+---
+
+## What is implemented today
+
+| Area                  | Implementation                                                                                                  |
+| --------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Control plane         | FastAPI with dataset, model, job, pipeline, run, artifact, evaluation, leaderboard, and operations routers      |
+| Metadata store        | PostgreSQL repositories with Alembic migrations                                                                 |
+| Async execution       | Redis broker + Celery, with separate `worker-pipeline` and `worker-jobs`                                        |
+| Pipeline runtime      | `PipelineRunner`, `PipelineStepExecutor`, `PipelineResultPropagator`, `PipelineQualityGate`                     |
+| Job runtime           | `JobRunner` + `JobHandlerRegistry` with typed handlers                                                          |
+| Runtime store registry| `RuntimeStoreRegistry` assembles shared worker dependencies in one place                                        |
+| Dataset registry      | `Dataset` / `DatasetVersion` registration with source and manifest metadata                                     |
+| Dataset ingestion     | nuScenes mini ingestion into dataset, scene, and sample manifests                                               |
+| Dataset validation    | `validate_dataset` job, validation run record, validation report artifact, and quality gate                     |
+| Dataset profiling     | `profile_dataset` job, profile run record, sensor coverage, observed channels, annotation statistics            |
+| Dataset quality cache | Latest validation/profile summary cached on `DatasetVersion`                                                    |
+| Model registry        | `Model` / `ModelVersion` registration with backend and model-URI metadata                                       |
+| Pipelines             | `dataset_ingestion` (ingest → validate → profile) and `detection_validation` (predict → evaluate)               |
+| Inference             | Mock detection backend and ONNX Runtime dummy detector backend                                                  |
+| Evaluation            | Center-distance detection evaluator: TP/FP/FN, precision, recall, mean center distance error, per-class metrics |
+| Comparison            | Dataset-version evaluation comparison and per-model-version evaluation history APIs                             |
+| Leaderboard           | Metric-direction-aware detection leaderboard API                                                                |
+| Operations visibility | Job timeline, pipeline timeline, and status summary with queue latency, heartbeat, and recent failures          |
+| Artifact lineage      | Dataset manifests, validation/profile reports, prediction/evaluation manifests, and run records                 |
+| E2E scripts           | Ingestion, mock-detection, and ONNX-detection end-to-end pipelines over Celery                                  |
+
+Job types (`JobType`): `ingest_dataset`, `validate_dataset`, `profile_dataset`,
+`predict_detection`, `evaluate_detection`.
+
+---
+
+## Execution architecture
+
+SceneOps separates the control plane, the orchestration worker, and the job
+execution worker.
+
+```text
 [FastAPI Control Plane]
-  - Dataset API
-  - Model API
-  - Pipeline API
-  - Job API
-  - Run API
-  - Artifact API
-        |
-        v
-[PostgreSQL Metadata Store]
-  - datasets / dataset_versions
-  - dataset_validation_runs / dataset_profile_runs
-  - models / model_versions
-  - jobs / job_events
-  - pipeline_runs / pipeline_step_runs
-  - inference_runs / evaluation_runs
-        |
-        v
-[Execution Dispatcher]
-  - Celery dispatch backend
+  create pipeline runs / jobs, dispatch executions, expose read APIs
         |
         v
 [Redis Broker]
+  queues: sceneops.pipeline_runs, sceneops.jobs
         |
-        v
-[Celery Worker Runtime]
-  - PipelineRunner
-  - JobRunner
+        +--> [worker-pipeline] (queue: sceneops.pipeline_runs)
+        |        PipelineRunner -> PipelineStepExecutor
+        |        creates step jobs, propagates results, applies quality gates
         |
-        v
-[Executors]
-  - dataset ingestion
-  - dataset validation
-  - dataset profiling
-  - prediction
-  - evaluation
-        |
-        v
-[Artifact Store]
-  - dataset manifests
-  - validation reports
-  - profile reports
-  - prediction manifests
-  - evaluation manifests
-  - local filesystem now
-  - object storage later
-        |
-        v
-[Model Runtime]
-  - mock backend
-  - ONNX Runtime backend
-  - Triton / external inference server later
+        +--> [worker-jobs] (queue: sceneops.jobs)
+                 JobRunner -> JobHandlerRegistry -> typed handler
+                 ingest / validate / profile / predict / evaluate
+                 persists job result and job events
 ```
+
+Separation of concerns:
+
+```text
+Pipeline worker = orchestration
+Job worker      = execution
+PostgreSQL      = source of truth (job/pipeline status, results, timeline)
+Redis/Celery    = execution transport
+Artifact Store  = large output storage
+```
+
+PostgreSQL is the source of truth; the pipeline runtime currently waits on job
+state through bounded DB status polling. This keeps the lifecycle boundary open
+for external orchestrators (Airflow / Argo / Temporal) later.
+
+### Runtime store registry
+
+```text
+RuntimeStoreRegistry
+  -> artifact_store / dataset_artifact_store / run_artifact_store
+  -> job_store / job_event_store / pipeline_store
+  -> dataset_registry_store / model_registry_store / run_registry_store
+```
+
+`PipelineRunner` and `JobRunner` share the same dependency graph through the
+registry, so concrete store construction lives in one place.
 
 ---
 
-## Core domain model
+## API surface
+
+All routers are mounted under `/api/v1` (plus `/health`).
 
 ```text
-Dataset
-  -> DatasetVersion
-  -> DatasetManifest
-
-DatasetVersion
-  -> DatasetValidationRun
-  -> validation_report.json
-
-DatasetVersion
-  -> DatasetProfileRun
-  -> profile_report.json
-
-Model
-  -> ModelVersion
-
-PipelineRun
-  -> PipelineStepRun
-  -> Job
-  -> JobEvent
-
-InferenceRun
-  -> PredictionManifest
-
-EvaluationRun
-  -> EvaluationManifest
+Datasets      /api/v1/datasets
+Models        /api/v1/models
+Pipelines     /api/v1/pipelines
+Jobs          /api/v1/jobs
+Runs          /api/v1/runs
+Artifacts     /api/v1/artifacts
+Evaluations   /api/v1/evaluations
+Leaderboards  /api/v1/leaderboards
+Operations    /api/v1/operations
 ```
 
-### DatasetValidationRun
-
-Validation answers:
+### Operational visibility
 
 ```text
-Can this DatasetVersion be used by downstream model workflows?
+GET /api/v1/operations/jobs/{job_id}/timeline
+GET /api/v1/operations/pipelines/{pipeline_run_id}/timeline
+GET /api/v1/operations/summary
 ```
 
-Responsibilities:
+These expose job status and events, step-level status, queue latency, execution
+duration, worker heartbeat, and recent failures, so pipeline runs are debuggable
+without reading container logs or querying the database by hand.
 
-* validate dataset manifest availability
-* validate scene/sample manifest availability
-* validate required sensor channels
-* detect missing scenes, samples, channels, and artifacts
-* produce `validation_report.json`
-* decide `should_block_pipeline`
-
-Source of truth:
+### Evaluation comparison and leaderboard
 
 ```text
-dataset_validation_runs
-data/runs/dataset_validations/{validation_run_id}/validation_report.json
+GET /api/v1/evaluations/compare?dataset_id=...&dataset_version=...
+GET /api/v1/evaluations/models/{model_id}/versions/{model_version}
+GET /api/v1/leaderboards/detection?dataset_id=...&dataset_version=...&sort_by=precision
 ```
 
-Latest summary cache:
+Supported detection metrics: `precision`, `recall`, `mean_center_distance_error`,
+`sample_count`, and per-class metrics. The leaderboard is metric-direction aware:
 
 ```text
-dataset_versions.latest_validation_run_id
-dataset_versions.validation_status
-dataset_versions.should_block_pipeline
-dataset_versions.validation_report_uri
+precision                  -> higher is better
+recall                     -> higher is better
+mean_center_distance_error -> lower is better
 ```
 
-### DatasetProfileRun
-
-Profiling answers:
-
-```text
-What characteristics does this DatasetVersion have?
-```
-
-Responsibilities:
-
-* compute observed sensor channels
-* compute sensor coverage ratio
-* compute missing required channel count
-* compute scene/sample/annotation statistics
-* compute annotation class distribution
-* compute empty annotation sample ratio
-* produce `profile_report.json`
-
-Source of truth:
-
-```text
-dataset_profile_runs
-data/runs/dataset_profiles/{profile_run_id}/profile_report.json
-```
-
-Latest summary cache:
-
-```text
-dataset_versions.latest_profile_run_id
-dataset_versions.profile_report_uri
-dataset_versions.sensor_coverage_ratio
-dataset_versions.empty_annotation_sample_ratio
-dataset_versions.observed_channels
-```
-
----
-
-## Repository structure
-
-```text
-sceneops-platform/
-  apps/
-    api/                 # FastAPI control plane
-    worker/              # Celery worker, CLI worker, job/pipeline runtime
-
-  packages/
-    sceneops-core/        # shared schemas, enums, ids, contracts
-    sceneops-db/          # database models and repositories
-    sceneops-storage/     # storage abstraction
-
-  migrations/            # Alembic migrations
-
-  scripts/
-    checks/              # local health/import/broker checks
-    debug/               # run/job inspection scripts
-    e2e/                 # end-to-end validation scripts
-    fixtures/            # dataset/model registration fixtures
-
-  data/
-    raw/                 # local raw dataset mount
-    datasets/            # generated dataset manifests
-    runs/                # validation/profile/inference/evaluation outputs
-    models/              # local model artifacts
-
-  docker-compose.local.yml
-  Makefile
-  README.md
-```
+The same `detection_validation` pipeline can run for multiple model versions and
+be compared under a single dataset version.
 
 ---
 
@@ -374,20 +214,8 @@ sceneops-platform/
 make prepare-data
 ```
 
-Expected directories:
-
-```text
-data/raw/
-data/datasets/
-data/runs/
-data/models/
-```
-
-Place nuScenes mini under the configured raw data path, for example:
-
-```text
-data/raw/nuscenes/
-```
+Expected directories: `data/raw/`, `data/datasets/`, `data/runs/`, `data/models/`.
+Place nuScenes mini under the configured raw path, e.g. `data/raw/nuscenes/`.
 
 ### 2. Build and start services
 
@@ -396,29 +224,25 @@ make compose-build
 make compose-up
 ```
 
-This starts PostgreSQL, Redis, FastAPI, and the Celery worker.
+Starts PostgreSQL, Redis, the FastAPI API server, `worker-pipeline`
+(queue `sceneops.pipeline_runs`), and `worker-jobs` (queue `sceneops.jobs`).
 
-### 3. Run database migrations
+### 3. Run migrations and check the environment
 
 ```bash
 make db-migrate
-```
-
-### 4. Check the local environment
-
-```bash
 make check-env
 make check-imports
 make check-celery
 ```
 
-### 5. Register the nuScenes dataset fixture
+### 4. Register the nuScenes dataset fixture
 
 ```bash
 make register-nuscenes-dataset
 ```
 
-### 6. Run E2E workflows
+### 5. Run end-to-end workflows
 
 ```bash
 make e2e-dataset-ingest
@@ -426,7 +250,7 @@ make e2e-mock-celery
 make e2e-onnx-celery
 ```
 
-### 7. Inspect results
+### 6. Inspect results
 
 ```bash
 make show-runs
@@ -434,193 +258,143 @@ make show-pipeline PIPELINE_RUN_ID=pipe-xxx
 make show-job-events JOB_ID=job-xxx
 ```
 
-Useful DB checks:
-
-```sql
-select
-  id,
-  dataset_id,
-  dataset_version,
-  status,
-  validation_status,
-  should_block_pipeline,
-  created_at
-from dataset_validation_runs
-order by created_at desc
-limit 10;
-```
-
-```sql
-select
-  id,
-  dataset_id,
-  dataset_version,
-  status,
-  sensor_coverage_ratio,
-  empty_annotation_sample_ratio,
-  created_at
-from dataset_profile_runs
-order by created_at desc
-limit 10;
-```
-
-```sql
-select
-  dataset_id,
-  version,
-  validation_status,
-  latest_validation_run_id,
-  latest_profile_run_id,
-  sensor_coverage_ratio,
-  empty_annotation_sample_ratio
-from dataset_versions;
+```bash
+curl "http://localhost:8000/api/v1/operations/summary" | jq
+curl "http://localhost:8000/api/v1/evaluations/compare?dataset_id=nuscenes&dataset_version=v1.0-mini" | jq
+curl "http://localhost:8000/api/v1/leaderboards/detection?dataset_id=nuscenes&dataset_version=v1.0-mini&sort_by=precision" | jq
 ```
 
 ---
 
-## Artifact contracts
+## Next milestone — one-week sprint target
 
-### Dataset manifest
+The next milestone turns SceneOps from a local-first validation platform into a
+cloud-native robotics data infrastructure that can auto-label sensor data with a
+foundation model and expose production-grade observability.
 
-Dataset manifests are generated by `ingest_dataset`.
+Milestone: **SceneOps v0.5 — cloud-native data infra + foundation-model auto-labeling + observability**
 
-```text
-data/datasets/{dataset_id}/{dataset_version}/manifest.json
-data/datasets/{dataset_id}/{dataset_version}/scene_index.json
-data/datasets/{dataset_id}/{dataset_version}/scenes/{scene_id}.json
-data/datasets/{dataset_id}/{dataset_version}/samples/{sample_id}.json
-```
+| Day   | Deliverable                                                                                                                                                              | Competency                                                          |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 1     | S3/MinIO object-storage backend behind the existing `ArtifactStore` contract; MinIO in Docker Compose; pipelines run against object storage with `s3://` artifact URIs   | data engineering / infra, cloud data pipelines, S3 storage          |
+| 2-3   | `auto_label_dataset` job + `auto_label` pipeline: a pluggable VLM backend (Claude) labels nuScenes camera samples, writes an auto-label run + manifest, scored against GT | foundation-model (VLM) robotics application, auto-labeling, quality |
+| 4     | Prometheus `/metrics`, worker heartbeat and queue-depth in the Operations API, Grafana starter dashboards                                                               | scalable system design, monitoring & incident response             |
+| 5     | (stretch) LiDAR point-cloud profiling: read `LIDAR_TOP` sweeps for point count / range / density / height-intensity distribution, add 3D coverage to the profile report | 3D sensor data, sensor-fusion-ready profiling                       |
+| —     | (stretch) `apps/web` dashboard: dataset quality, detection leaderboard, pipeline timeline, and auto-label review views                                                  | data analysis & visualization                                       |
 
-### Validation report
+> Note: `ArtifactBackend` already defines `local`, `minio`, `s3`, and `gcs`, and
+> `ArtifactSettings` already carries `bucket` / `endpoint_url` / `region` /
+> credentials. Only `LocalArtifactStore` is implemented today — the object-storage
+> factory branch still raises `NotImplementedError`, so day 1 is a focused
+> store implementation rather than a config redesign.
 
-Validation reports are generated by `validate_dataset`.
-
-```text
-data/runs/dataset_validations/{validation_run_id}/validation_report.json
-```
-
-Validation is a quality gate. It determines whether a dataset version can be used by downstream workflows.
-
-### Profile report
-
-Profile reports are generated by `profile_dataset`.
+Definition of done for the core (days 1-4):
 
 ```text
-data/runs/dataset_profiles/{profile_run_id}/profile_report.json
-```
+object storage:
+  - ArtifactBackend.S3 implemented and selectable by config
+  - existing ingest/validate/profile/predict/evaluate pipelines run unchanged on MinIO
+  - artifact URIs are s3:// and resolve through the same domain logic
 
-Profiling is not a quality gate. It describes dataset statistics, sensor coverage, and annotation distribution.
+auto-labeling:
+  - auto_label_dataset job produces an auto_label_run + auto_label_manifest.json
+  - VLM backend is pluggable behind an inference-style contract
+  - auto-labels are scored against ground truth (precision / recall)
 
-### Prediction manifest
-
-Prediction manifests are generated by `predict_detection`.
-
-```text
-data/runs/inference/{inference_run_id}/...
-```
-
-### Evaluation manifest
-
-Evaluation manifests are generated by `evaluate_detection`.
-
-```text
-data/runs/evaluations/{evaluation_run_id}/...
+observability:
+  - GET /metrics exposes job/pipeline counters, durations, queue depth, worker heartbeat
+  - Grafana dashboard renders execution and queue health
+  - operations summary includes worker heartbeat and queue depth
 ```
 
 ---
 
-## Final product goal
+## Roadmap
 
-The final goal is to build a production-like MLOps platform for robotics perception workflows that can:
+### Phase 1 — Dataset quality and validation loop · implemented
 
-1. ingest robotics sensor datasets,
-2. validate dataset usability,
-3. profile dataset quality and distribution,
-4. run model inference through multiple runtime backends,
-5. evaluate predictions reproducibly,
-6. compare model versions,
-7. track artifact lineage,
-8. monitor asynchronous pipeline execution,
-9. and later connect simulated/counterfactual datasets into the same validation, profiling, and evaluation loop.
+`validate_dataset` and `profile_dataset` jobs, validation/profile run records,
+`validation_report.json` and `profile_report.json` artifacts, the
+`DatasetVersion` quality cache, and the validation quality gate.
 
----
+Next: richer issue-severity presets, per-sensor missing-artifact detail,
+configurable validation policy presets, dataset readiness API.
 
-## Current limitations
+### Phase 2 — Model comparison and leaderboard · implemented
 
-Implemented baseline:
+`/evaluations/compare`, `/evaluations/models/{model_id}/versions/{model_version}`,
+and `/leaderboards/detection`. Compare runs by dataset version, inspect history
+by model version, and rank by metric with direction awareness.
 
-* dataset registry
-* model registry
-* async job/pipeline execution
-* dataset ingestion
-* dataset validation
-* dataset profiling
-* mock / ONNX Runtime inference
-* center-distance detection evaluation
-* local artifact lineage
-* E2E scripts
+Next: evaluation config hashing, comparison by evaluator configuration,
+class-level leaderboard, baseline-vs-candidate diff API.
 
-Still future work:
+### Phase 3 — Operational visibility · implemented
 
-* stricter timestamp consistency validation
-* calibration / ego-pose validity checks
-* official nuScenes metrics
-* model comparison API
-* detection leaderboard
-* pipeline/job timeline API
-* Prometheus/Grafana observability
-* MinIO/S3 artifact backend
-* Triton/external serving backend
-* simulation/counterfactual dataset contract
+Job/pipeline timelines and the operations summary with job events, step status,
+duration/latency, and a recent-failure summary.
 
----
+Next: queue-depth metrics, worker heartbeat summary, Prometheus `/metrics`
+endpoint, retry/failure analytics. (Pulled into the next sprint above.)
 
-## Next priorities
+### Phase 4 — Execution backend hardening · partially implemented
 
-1. **Model Comparison API**
+Redis/Celery backend, split `worker-pipeline` / `worker-jobs`, queue routing,
+runtime store registry, registry-based `JobRunner`.
 
-   * compare evaluation runs by dataset version
-   * compare model versions by precision, recall, and center-distance metrics
+Next: extract a `PipelineStepLifecycleService` and a `JobCompletionWaiter`
+(polling now, event-driven/outbox later) to keep the boundary open for
+Airflow / Argo / Temporal.
 
-2. **Detection Leaderboard**
+### Phase 5 — Artifact storage and lineage hardening · partially implemented
 
-   * rank model versions by selected metric
-   * expose evaluation history for each dataset/model pair
+`ArtifactStore` contract with a local implementation and object-storage config
+surface already in place. Goal: standardized artifact URI contracts and a
+drop-in S3/MinIO store with no change to domain logic.
 
-3. **Operational Timeline**
+```text
+local://datasets/nuscenes/v1.0-mini/manifest.json
+s3://sceneops/datasets/nuscenes/v1.0-mini/manifest.json
+s3://sceneops/runs/inference/inf-xxx/predictions.json
+```
 
-   * pipeline step timeline
-   * job event timeline
-   * queue/start/finish duration fields
+### Phase 6 — External inference and serving · planned
 
-4. **Dataset Quality Hardening**
+Add inference backends for external serving (`external_http`, `triton`) behind
+the existing `InferenceBackend` contract, keeping evaluation independent of the
+serving implementation.
 
-   * timestamp consistency checks
-   * calibration / ego-pose validation
-   * profile report regression tests
+### Phase 7 — Simulation and counterfactual datasets · planned
 
-5. **Artifact Backend Extension**
+Dataset source types (`real`, `simulated`, `counterfactual`, `reobserved`) and
+lineage fields (`parent_dataset_id`, `parent_dataset_version`,
+`generation_run_id`, `transformation_type`).
 
-   * MinIO / S3-compatible artifact storage
-   * artifact metadata table
-   * artifact checksum / size metadata
+### Phase 8 — Foundation-model auto-labeling · planned (next sprint)
 
-6. **Simulation Extension Contract**
-
-   * register reconstructed/simulated/counterfactual dataset versions
-   * connect real2sim2real outputs to validation, profiling, and evaluation workflows
+`auto_label_dataset` job and `auto_label` pipeline (ingest → auto_label →
+validate). A VLM backend (Claude) takes a camera sample image plus
+sensor/calibration metadata and returns 2D detections (and BEV/3D pseudo-labels
+where calibration allows), written as an `auto_label_run` + manifest and scored
+against ground truth. This makes auto-labeling a measurable data-quality loop
+connected to the existing evaluation and leaderboard read models.
 
 ---
 
 ## Positioning
 
-SceneOps demonstrates:
+SceneOps demonstrates building robotics AI infrastructure from a
+data–model–system perspective: sensor-data ingestion, dataset quality validation,
+dataset profiling and selection, model-versioned inference, detection evaluation,
+async workflow execution, metadata and artifact lineage, and an extensible
+backend/storage architecture.
 
-* robotics sensor data pipeline design
-* dataset validation and profiling infrastructure
-* AI/MLOps workflow orchestration
-* metadata and artifact management
-* model inference/evaluation lifecycle design
-* asynchronous execution architecture
-* scalable backend system design
-* production-oriented AI system thinking
+The next milestone extends this along the three axes that matter most for
+robotics data engineering: cloud-native object storage (S3/MinIO) for scalable
+data pipelines, foundation-model (VLM) auto-labeling as a measurable
+data-quality loop, and production observability (Prometheus/Grafana, worker
+heartbeat, queue depth) for monitoring and incident response.
+
+The project is a practical foundation for robotics AI workflows where dataset
+quality, reproducibility, evaluation, and system reliability matter as much as
+model implementation.
