@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
-    PipelineType,
 )
 from sceneops_db.utils import enum_to_str, extract_datetime, to_error_info
 from sceneops_db.pipelines.models import PipelineRunModel
@@ -88,6 +87,38 @@ class PostgresPipelineRunRepository:
         await self.session.refresh(model)
 
         return self._to_schema(model)
+
+    async def count_by_status(self) -> dict[str, int]:
+        # pylint: disable=not-callable
+        stmt = (
+            select(PipelineRunModel.status, func.count(PipelineRunModel.id))
+            .group_by(PipelineRunModel.status)
+        )
+
+        result = await self.session.execute(stmt)
+
+        return {
+            str(status): count
+            for status, count in result.all()
+        }
+
+
+    async def list_recent_failures(
+        self,
+        *,
+        limit: int = 10,
+    ) -> list[PipelineRunManifest]:
+        stmt = (
+            select(PipelineRunModel)
+            .where(PipelineRunModel.status == PipelineRunStatus.FAILED.value)
+            .order_by(PipelineRunModel.updated_at.desc())
+            .limit(limit)
+        )
+
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+
+        return [self._to_schema(model) for model in models]
 
     def _to_model(self, manifest: PipelineRunManifest) -> PipelineRunModel:
 

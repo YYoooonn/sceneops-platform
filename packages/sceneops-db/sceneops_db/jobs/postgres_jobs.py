@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import JobManifest, JobStatus
 
-from sceneops_core.time import utc_now, utc_now_iso
+from sceneops_core.time import utc_now
 from sceneops_db.jobs import JobModel
 from sceneops_db.utils import extract_datetime, to_error_json, enum_to_str
 
@@ -97,6 +97,37 @@ class PostgresJobRepository:
         await self.session.refresh(model)
 
         return self._to_schema(model)
+
+    async def count_by_status(self) -> dict[str, int]:
+        # pylint: disable=not-callable
+        stmt = (
+            select(JobModel.status, func.count(JobModel.id))
+            .group_by(JobModel.status)
+        )
+
+        result = await self.session.execute(stmt)
+
+        return {
+            str(status): count
+            for status, count in result.all()
+        }
+
+    async def list_recent_failures(
+        self,
+        *,
+        limit: int = 10,
+    ) -> list[JobManifest]:
+        stmt = (
+            select(JobModel)
+            .where(JobModel.status == enum_to_str(JobStatus.FAILED))
+            .order_by(JobModel.updated_at.desc())
+            .limit(limit)
+        )
+
+        result = await self.session.execute(stmt)
+        models = result.scalars().all()
+
+        return [self._to_schema(model) for model in models]
 
     async def update_status(
         self,

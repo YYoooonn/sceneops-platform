@@ -30,6 +30,14 @@ class PipelineRunRepository(Protocol):
     async def update(self, manifest: PipelineRunManifest) -> PipelineRunManifest:
         ...
 
+    async def count_by_status(self) -> dict[str, int]: ...
+
+    async def list_recent_failures(
+        self,
+        *,
+        limit: int = 10,
+    ) -> list[PipelineRunManifest]: ...
+
 
 class PipelineStepRunRepository(Protocol):
     async def create(self, manifest: PipelineStepRunManifest) -> PipelineStepRunManifest:

@@ -9,7 +9,7 @@ from app.modules.pipelines.router import router as pipelines_router
 from app.modules.models.router import router as models_router
 from app.modules.evaluations.router import router as evaluations_router
 from app.modules.leaderboards.router import router as leaderboards_router
-
+from app.modules.operations.router import router as operations_router
 
 app = FastAPI(title="SceneOps Drive API")
 
@@ -31,6 +31,7 @@ app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(pipelines_router, prefix="/api/v1")
 app.include_router(evaluations_router, prefix="/api/v1")
 app.include_router(leaderboards_router, prefix="/api/v1")
+app.include_router(operations_router, prefix="/api/v1")
 
 
 @app.get("/health")

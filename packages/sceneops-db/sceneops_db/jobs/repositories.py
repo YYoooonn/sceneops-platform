@@ -31,6 +31,14 @@ class JobRepository(Protocol):
     async def update(self, manifest: JobManifest) -> JobManifest:
         ...
 
+    async def count_by_status(self) -> dict[str, int]: ...
+
+    async def list_recent_failures(
+        self,
+        *,
+        limit: int = 10,
+    ) -> list[JobManifest]: ...
+
 
 class JobEventRepository(Protocol):
     async def append(
