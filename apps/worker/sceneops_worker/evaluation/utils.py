@@ -29,7 +29,7 @@ def evaluate_sample(
             if gt_index in matched_gt_indices:
                 continue
 
-            if gt.category_name != prediction["categoryName"]:
+            if gt.category_name != prediction["category_name"]:
                 continue
 
             distance = center_distance(gt.translation, prediction["translation"])
@@ -45,17 +45,17 @@ def evaluate_sample(
             gt = gt_annotations[best_gt_index]
             matches.append(
                 {
-                    "annotationToken": gt.annotation_token,
-                    "predictionId": prediction["predictionId"],
-                    "categoryName": prediction["categoryName"],
-                    "centerDistance": round(best_distance, 6),
+                    "annotation_token": gt.annotation_token,
+                    "prediction_id": prediction["prediction_id"],
+                    "category_name": prediction["category_name"],
+                    "center_distance": round(best_distance, 6),
                 }
             )
 
     tp = len(matches)
     fp = len(predictions) - len(matched_prediction_indices)
     fn = len(gt_annotations) - len(matched_gt_indices)
-    total_center_distance_error = sum(match["centerDistance"] for match in matches)
+    total_center_distance_error = sum(match["center_distance"] for match in matches)
 
     class_metrics = build_sample_class_metrics(
         gt_annotations=gt_annotations,
@@ -66,23 +66,23 @@ def evaluate_sample(
     )
 
     return {
-        "datasetId": sample.dataset_id,
-        "datasetVersion": sample.dataset_version,
-        "sceneId": sample.scene_id,
-        "sampleId": sample.sample_id,
+        "dataset_id": sample.dataset_id,
+        "dataset_version": sample.dataset_version,
+        "scene_id": sample.scene_id,
+        "sample_id": sample.sample_id,
         "tp": tp,
         "fp": fp,
         "fn": fn,
-        "matchedCount": tp,
-        "totalCenterDistanceError": round(total_center_distance_error, 6),
-        "meanCenterDistanceError": round(
+        "matched_count": tp,
+        "total_center_distance_error": round(total_center_distance_error, 6),
+        "mean_center_distance_error": round(
             safe_div(total_center_distance_error, tp),
             6,
         ),
         "precision": round(safe_div(tp, tp + fp), 6),
         "recall": round(safe_div(tp, tp + fn), 6),
         "matches": matches,
-        "classMetrics": class_metrics,
+        "class_metrics": class_metrics,
     }
 
 
@@ -115,17 +115,17 @@ def build_sample_class_metrics(
     matched_prediction_indices: set[int],
 ) -> dict[str, dict[str, int]]:
     categories = {gt.category_name for gt in gt_annotations} | {
-        pred["categoryName"] for pred in predictions
+        pred["category_name"] for pred in predictions
     }
 
     class_metrics = {category: {"tp": 0, "fp": 0, "fn": 0} for category in categories}
 
     for match in matches:
-        class_metrics[match["categoryName"]]["tp"] += 1
+        class_metrics[match["category_name"]]["tp"] += 1
 
     for index, prediction in enumerate(predictions):
         if index not in matched_prediction_indices:
-            class_metrics[prediction["categoryName"]]["fp"] += 1
+            class_metrics[prediction["category_name"]]["fp"] += 1
 
     for index, gt in enumerate(gt_annotations):
         if index not in matched_gt_indices:

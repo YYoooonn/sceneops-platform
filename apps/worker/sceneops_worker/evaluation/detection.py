@@ -101,7 +101,7 @@ async def _evaluate_center_distance_detection(
         prediction_manifest = await run_artifact_store.load_prediction_manifest(
             uri=prediction_uri
         )
-        sample_id = prediction_manifest["sampleId"]
+        sample_id = prediction_manifest["sample_id"]
 
         sample_uri = dataset_artifact_store.artifact_store.join_uri(
             dataset_manifest.uris.sample_root,
@@ -121,10 +121,10 @@ async def _evaluate_center_distance_detection(
         total_tp += sample_eval["tp"]
         total_fp += sample_eval["fp"]
         total_fn += sample_eval["fn"]
-        total_distance_error += sample_eval["totalCenterDistanceError"]
-        matched_count += sample_eval["matchedCount"]
+        total_distance_error += sample_eval["total_center_distance_error"]
+        matched_count += sample_eval["matched_count"]
 
-        utils.merge_class_stats(class_stats, sample_eval["classMetrics"])
+        utils.merge_class_stats(class_stats, sample_eval["class_metrics"])
 
         await run_artifact_store.write_sample_evaluation_manifest(
             evaluation_run_id=evaluation_run_id,
@@ -142,27 +142,27 @@ async def _evaluate_center_distance_detection(
     samples_root_uri = run_artifact_store.evaluation_samples_root_uri(evaluation_run_id)
 
     evaluation_manifest = {
-        "evaluationRunId": evaluation_run_id,
-        "inferenceRunId": inference_run_id,
-        "datasetId": dataset_manifest.dataset_id,
-        "datasetVersion": dataset_manifest.dataset_version,
-        "modelId": inference_run["modelId"],
-        "modelVersion": inference_run["modelVersion"],
+        "evaluation_run_id": evaluation_run_id,
+        "inference_run_id": inference_run_id,
+        "dataset_id": dataset_manifest.dataset_id,
+        "dataset_version": dataset_manifest.dataset_version,
+        "model_id": inference_run["model_id"],
+        "model_version": inference_run["model_version"],
         "status": "succeeded",
-        "matchDistanceM": match_distance_m,
-        "sampleCount": len(prediction_uris),
-        "evaluationManifestUri": evaluation_manifest_uri,
-        "samplesRootUri": samples_root_uri,
+        "match_distance_m": match_distance_m,
+        "sample_count": len(prediction_uris),
+        "evaluation_manifest_uri": evaluation_manifest_uri,
+        "samples_root_uri": samples_root_uri,
         "metrics": {
             "tp": total_tp,
             "fp": total_fp,
             "fn": total_fn,
             "precision": round(precision, 6),
             "recall": round(recall, 6),
-            "meanCenterDistanceError": round(mean_center_distance_error, 6),
+            "mean_center_distance_error": round(mean_center_distance_error, 6),
         },
-        "classMetrics": utils.finalize_class_metrics(class_stats),
-        "createdAt": datetime.now(UTC).isoformat(),
+        "class_metrics": utils.finalize_class_metrics(class_stats),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
     await run_artifact_store.write_evaluation_run_manifest(

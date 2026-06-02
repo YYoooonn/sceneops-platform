@@ -41,10 +41,10 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
 
         return DetectionInferenceResult(
             run_id=inference_input.run_id,
-            run_manifest_uri=run_manifest["predictionManifestUri"],
-            predictions_root_uri=run_manifest["predictionsRootUri"],
-            sample_count=int(run_manifest.get("sampleCount", 0)),
-            prediction_count=int(run_manifest.get("predictionCount", 0)),
+            run_manifest_uri=run_manifest["prediction_manifest_uri"],
+            predictions_root_uri=run_manifest["predictions_root_uri"],
+            sample_count=int(run_manifest.get("sample_count", 0)),
+            prediction_count=int(run_manifest.get("prediction_count", 0)),
             status=str(run_manifest.get("status", "succeeded")),
             metrics=run_manifest.get("metrics", {}),
             metadata={
@@ -82,13 +82,13 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
             prediction_count += len(predictions)
 
             prediction_manifest = {
-                "runId": run_id,
-                "datasetId": dataset_manifest.dataset_id,
-                "datasetVersion": dataset_manifest.dataset_version,
-                "modelId": model_id,
-                "modelVersion": model_version,
-                "sceneId": sample.scene_id,
-                "sampleId": sample.sample_id,
+                "run_id": run_id,
+                "dataset_id": dataset_manifest.dataset_id,
+                "dataset_version": dataset_manifest.dataset_version,
+                "model_id": model_id,
+                "model_version": model_version,
+                "scene_id": sample.scene_id,
+                "sample_id": sample.sample_id,
                 "predictions": predictions,
             }
 
@@ -102,18 +102,18 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
         predictions_root_uri = run_artifact_store.inference_predictions_root_uri(run_id)
 
         run_manifest = {
-            "runId": run_id,
-            "runType": "inference",
-            "datasetId": dataset_manifest.dataset_id,
-            "datasetVersion": dataset_manifest.dataset_version,
-            "modelId": model_id,
-            "modelVersion": model_version,
+            "run_id": run_id,
+            "run_type": "inference",
+            "dataset_id": dataset_manifest.dataset_id,
+            "dataset_version": dataset_manifest.dataset_version,
+            "model_id": model_id,
+            "model_version": model_version,
             "status": "succeeded",
-            "sampleCount": len(sample_manifests),
-            "predictionCount": prediction_count,
-            "predictionManifestUri": inference_manifest_uri,
-            "predictionsRootUri": predictions_root_uri,
-            "createdAt": datetime.now(UTC).isoformat(),
+            "sample_count": len(sample_manifests),
+            "prediction_count": prediction_count,
+            "prediction_manifest_uri": inference_manifest_uri,
+            "predictions_root_uri": predictions_root_uri,
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         await run_artifact_store.write_inference_run_manifest(
@@ -143,13 +143,13 @@ def _build_predictions_from_sample(
 
         predictions.append(
             {
-                "predictionId": f"{sample.sample_id}-pred-{index:04d}",
-                "categoryName": category_name,
+                "prediction_id": f"{sample.sample_id}-pred-{index:04d}",
+                "category_name": category_name,
                 "translation": translation,
                 "size": size,
                 "rotation": annotation.rotation,
                 "score": round(random.uniform(0.55, 0.98), 4),
-                "sourceAnnotationToken": annotation.annotation_token,
+                "source_annotation_token": annotation.annotation_token,
             }
         )
 
@@ -177,8 +177,8 @@ def _perturb_size(size: list[float]) -> list[float]:
 
 def _build_false_positive(sample_id: str) -> dict[str, Any]:
     return {
-        "predictionId": f"{sample_id}-fp-0000",
-        "categoryName": "vehicle.car",
+        "prediction_id": f"{sample_id}-fp-0000",
+        "category_name": "vehicle.car",
         "translation": [
             round(random.uniform(-30.0, 30.0), 4),
             round(random.uniform(-30.0, 30.0), 4),
@@ -187,5 +187,5 @@ def _build_false_positive(sample_id: str) -> dict[str, Any]:
         "size": [4.2, 1.8, 1.6],
         "rotation": [1.0, 0.0, 0.0, 0.0],
         "score": round(random.uniform(0.3, 0.7), 4),
-        "sourceAnnotationToken": None,
+        "source_annotation_token": None,
     }

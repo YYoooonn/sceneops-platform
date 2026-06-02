@@ -175,38 +175,13 @@ class EvaluationQueryService:
 
     def _normalize_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
         return {
-            "precision": self._get_metric(
-                metrics,
-                "precision",
-                "Precision",
-            ),
-            "recall": self._get_metric(
-                metrics,
-                "recall",
-                "Recall",
-            ),
-            "mean_center_distance_error": self._get_metric(
-                metrics,
-                "mean_center_distance_error",
-                "meanCenterDistanceError",
-                "mean_center_distance",
-                "meanCenterDistance",
-            ),
-            "tp": self._get_metric(metrics, "tp", "true_positive", "truePositive"),
-            "fp": self._get_metric(metrics, "fp", "false_positive", "falsePositive"),
-            "fn": self._get_metric(metrics, "fn", "false_negative", "falseNegative"),
+            "precision": metrics.get("precision"),
+            "recall": metrics.get("recall"),
+            "mean_center_distance_error": metrics.get("mean_center_distance_error"),
+            "tp": metrics.get("tp"),
+            "fp": metrics.get("fp"),
+            "fn": metrics.get("fn"),
         }
-
-    def _get_metric(
-        self,
-        metrics: dict[str, Any],
-        *keys: str,
-    ) -> Any:
-        for key in keys:
-            if key in metrics:
-                return metrics[key]
-
-        return None
 
     def _sort_value(
         self,

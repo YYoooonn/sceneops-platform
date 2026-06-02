@@ -49,10 +49,10 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
 
         return DetectionInferenceResult(
             run_id=inference_input.run_id,
-            run_manifest_uri=run_manifest["predictionManifestUri"],
-            predictions_root_uri=run_manifest["predictionsRootUri"],
-            sample_count=int(run_manifest.get("sampleCount", 0)),
-            prediction_count=int(run_manifest.get("predictionCount", 0)),
+            run_manifest_uri=run_manifest["prediction_manifest_uri"],
+            predictions_root_uri=run_manifest["predictions_root_uri"],
+            sample_count=int(run_manifest.get("sample_count", 0)),
+            prediction_count=int(run_manifest.get("prediction_count", 0)),
             status=str(run_manifest.get("status", "succeeded")),
             metrics=run_manifest.get("metrics", {}),
             metadata={
@@ -107,18 +107,18 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
             prediction_count += len(predictions)
 
             prediction_manifest = {
-                "runId": run_id,
-                "datasetId": dataset_manifest.dataset_id,
-                "datasetVersion": dataset_manifest.dataset_version,
-                "modelId": model_id,
-                "modelVersion": model_version,
-                "sceneId": sample.scene_id,
-                "sampleId": sample.sample_id,
+                "run_id": run_id,
+                "dataset_id": dataset_manifest.dataset_id,
+                "dataset_version": dataset_manifest.dataset_version,
+                "model_id": model_id,
+                "model_version": model_version,
+                "scene_id": sample.scene_id,
+                "sample_id": sample.sample_id,
                 "predictions": predictions,
                 "metadata": {
                     "backend": "onnx_runtime",
-                    "modelUri": model_uri,
-                    "inferenceLatencyMs": round(inference_latency_ms, 4),
+                    "model_uri": model_uri,
+                    "inference_latency_ms": round(inference_latency_ms, 4),
                 },
             }
 
@@ -135,25 +135,25 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         max_latency_ms = max(inference_latencies_ms) if inference_latencies_ms else 0.0
 
         run_manifest = {
-            "runId": run_id,
-            "runType": "inference",
-            "datasetId": dataset_manifest.dataset_id,
-            "datasetVersion": dataset_manifest.dataset_version,
-            "modelId": model_id,
-            "modelVersion": model_version,
+            "run_id": run_id,
+            "run_type": "inference",
+            "dataset_id": dataset_manifest.dataset_id,
+            "dataset_version": dataset_manifest.dataset_version,
+            "model_id": model_id,
+            "model_version": model_version,
             "status": "succeeded",
             "backend": "onnx_runtime",
-            "modelUri": model_uri,
-            "sampleCount": len(sample_manifests),
-            "predictionCount": prediction_count,
-            "predictionManifestUri": inference_manifest_uri,
-            "predictionsRootUri": predictions_root_uri,
+            "model_uri": model_uri,
+            "sample_count": len(sample_manifests),
+            "prediction_count": prediction_count,
+            "prediction_manifest_uri": inference_manifest_uri,
+            "predictions_root_uri": predictions_root_uri,
             "metrics": {
-                "modelLoadMs": round(model_load_ms, 4),
-                "avgInferenceLatencyMs": round(avg_latency_ms, 4),
-                "maxInferenceLatencyMs": round(max_latency_ms, 4),
+                "model_load_ms": round(model_load_ms, 4),
+                "avg_inference_latency_ms": round(avg_latency_ms, 4),
+                "max_inference_latency_ms": round(max_latency_ms, 4),
             },
-            "createdAt": datetime.now(UTC).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         await run_artifact_store.write_inference_run_manifest(
@@ -199,13 +199,13 @@ def _build_contract_predictions_from_sample(
 
         predictions.append(
             {
-                "predictionId": f"{sample.sample_id}-onnx-pred-{index:04d}",
-                "categoryName": category_name,
+                "prediction_id": f"{sample.sample_id}-onnx-pred-{index:04d}",
+                "category_name": category_name,
                 "translation": annotation.translation,
                 "size": annotation.size,
                 "rotation": annotation.rotation,
                 "score": 0.9,
-                "sourceAnnotationToken": annotation.annotation_token,
+                "source_annotation_token": annotation.annotation_token,
             }
         )
 
