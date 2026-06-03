@@ -53,6 +53,7 @@ class SceneBuildPolicyType(StrEnum):
     FIXED_WINDOW = "fixed_window"
     GAP_BASED = "gap_based"
     EVENT_BASED = "event_based"
+    SCENARIO_MINING = "scenario_mining"
 
 
 class SensorFrameRole(StrEnum):

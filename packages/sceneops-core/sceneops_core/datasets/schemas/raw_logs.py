@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated, Literal, Union
+
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
@@ -10,6 +12,56 @@ from .enums import (
     SensorFrameRole,
     SensorModality,
 )
+
+
+# ── Predicate configs (sceneops-core owns the schema; worker owns the logic) ──
+
+
+class ObjectNeighborhoodPredicateConfig(SceneOpsBaseModel):
+    type: Literal["object_neighborhood"] = "object_neighborhood"
+    required_categories: list[str] = Field(default_factory=list)
+    excluded_categories: list[str] = Field(default_factory=list)
+    max_distance_m: float | None = None
+    min_count: int = 1
+    max_count: int | None = None
+
+
+class EgoKinematicPredicateConfig(SceneOpsBaseModel):
+    type: Literal["ego_kinematic"] = "ego_kinematic"
+    speed_min_kmh: float | None = None
+    speed_max_kmh: float | None = None
+    decel_min_ms2: float | None = None
+
+
+class AndPredicateConfig(SceneOpsBaseModel):
+    type: Literal["and"] = "and"
+    predicates: list[AnyPredicateConfig] = Field(default_factory=list)
+
+
+class OrPredicateConfig(SceneOpsBaseModel):
+    type: Literal["or"] = "or"
+    predicates: list[AnyPredicateConfig] = Field(default_factory=list)
+
+
+AnyPredicateConfig = Annotated[
+    Union[
+        ObjectNeighborhoodPredicateConfig,
+        EgoKinematicPredicateConfig,
+        AndPredicateConfig,
+        OrPredicateConfig,
+    ],
+    Field(discriminator="type"),
+]
+
+AndPredicateConfig.model_rebuild()
+OrPredicateConfig.model_rebuild()
+
+
+class ScenarioMiningConfig(SceneOpsBaseModel):
+    predicate: AnyPredicateConfig
+    pre_event_seconds: float = 3.0
+    post_event_seconds: float = 7.0
+    min_gap_between_scenes_seconds: float = 5.0
 
 
 class TimeRange(SceneOpsBaseModel):
@@ -69,6 +121,7 @@ class RawLogFrameIndex(SceneOpsBaseModel):
 class SceneBuildPolicy(SceneOpsBaseModel):
     type: SceneBuildPolicyType = SceneBuildPolicyType.FIXED_WINDOW
 
+    # FIXED_WINDOW / GAP_BASED
     window_seconds: float = 20.0
     stride_seconds: float | None = None
 
@@ -81,6 +134,9 @@ class SceneBuildPolicy(SceneOpsBaseModel):
     split_on_missing_required_channel: bool = True
     split_on_timestamp_gap: bool = False
     split_on_source_scene_boundary: bool = False
+
+    # SCENARIO_MINING
+    mining: ScenarioMiningConfig | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

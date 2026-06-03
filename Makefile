@@ -60,6 +60,7 @@ help:
 	@echo "  make e2e-mock-celery"
 	@echo "  make e2e-onnx-celery"
 	@echo "  make e2e-build-scenes"
+	@echo "  make e2e-scenario-mining"
 	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"
@@ -330,6 +331,11 @@ e2e-onnx-celery:
 e2e-build-scenes:
 	chmod +x scripts/e2e/e2e_build_scenes_pipeline_celery.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_build_scenes_pipeline_celery.sh
+
+.PHONY: e2e-scenario-mining
+e2e-scenario-mining:
+	chmod +x scripts/e2e/e2e_scenario_mining_pipeline_celery.sh
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_scenario_mining_pipeline_celery.sh
 
 # --------------------
 # Debug

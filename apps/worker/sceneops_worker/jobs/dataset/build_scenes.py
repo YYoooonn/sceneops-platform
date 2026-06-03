@@ -7,6 +7,7 @@ from sceneops_core.datasets.schemas import (
     RawLogManifest,
     RawSensorFrameManifest,
     SceneSegmentIndex,
+    SceneBuildPolicyType,
     TimeRange,
 )
 from sceneops_core.jobs.schemas import (
@@ -15,18 +16,74 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.ids import generate_raw_log_id
+from sceneops_core.common.schemas import JsonDict
 from sceneops_worker.datasets.scene_building.builders.dataset_manifest_builder import (
     SceneSegmentDatasetManifestBuilder,
 )
 from sceneops_worker.datasets.scene_building.indexers.nuscenes import (
     NuscenesRawLogIndexer,
 )
+from sceneops_worker.datasets.scene_building.models import IndexedRawFrame
+from sceneops_worker.datasets.scene_building.predicates.factory import build_predicate
 from sceneops_worker.datasets.scene_building.segmenters.fixed_window import (
     FixedWindowSceneSegmenter,
 )
-from sceneops_core.common.schemas import JsonDict
+from sceneops_worker.datasets.scene_building.segmenters.scenario_mining import (
+    ScenarioMiningSegmenter,
+)
+from sceneops_worker.datasets.scene_building.semantic_indexers.nuscenes import (
+    NuscenesSemanticIndexer,
+)
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
+
+
+async def _index_and_segment(
+    *,
+    source_uri: str,
+    dataset_version: str,
+    params: BuildScenesJobParams,
+    raw_log_id: str,
+) -> tuple[list[IndexedRawFrame], list]:
+    policy_type = params.policy.type
+
+    if policy_type == SceneBuildPolicyType.SCENARIO_MINING:
+        if params.policy.mining is None:
+            raise ValueError("policy.mining is required for SCENARIO_MINING type")
+
+        semantic_indexer = NuscenesSemanticIndexer(
+            source_uri=source_uri,
+            version=dataset_version,
+        )
+        keyframes = await semantic_indexer.index()
+
+        predicate = build_predicate(params.policy.mining.predicate)
+        segmenter = ScenarioMiningSegmenter(
+            raw_log_id=raw_log_id,
+            predicate=predicate,
+            pre_event_us=int(params.policy.mining.pre_event_seconds * 1_000_000),
+            post_event_us=int(params.policy.mining.post_event_seconds * 1_000_000),
+            min_gap_between_anchors_us=int(
+                params.policy.mining.min_gap_between_scenes_seconds * 1_000_000
+            ),
+            policy=params.policy,
+        )
+        segments = segmenter.segment(keyframes)
+        frames = [frame for kf in keyframes for frame in kf.frames]
+        return frames, segments
+
+    # Default: FIXED_WINDOW (and future gap_based etc.)
+    indexer = NuscenesRawLogIndexer(
+        source_uri=source_uri,
+        version=dataset_version,
+        max_frames=params.max_frames,
+    )
+    frames = await indexer.index()
+    segmenter = FixedWindowSceneSegmenter(
+        raw_log_id=raw_log_id,
+        policy=params.policy,
+    )
+    return frames, segmenter.segment(frames)
 
 
 class BuildScenesJobHandler(JobHandler):
@@ -84,12 +141,12 @@ class BuildScenesJobHandler(JobHandler):
                 f"Unsupported build_scenes dataset_type: {params.dataset_type}"
             )
 
-        indexer = NuscenesRawLogIndexer(
+        frames, segments = await _index_and_segment(
             source_uri=source_uri,
-            version=dataset_version,
-            max_frames=params.max_frames,
+            dataset_version=dataset_version,
+            params=params,
+            raw_log_id=raw_log_id,
         )
-        frames = await indexer.index()
 
         if not frames:
             raise ValueError("No raw frames indexed")
@@ -155,12 +212,6 @@ class BuildScenesJobHandler(JobHandler):
             uri=raw_log_manifest_uri,
             manifest=raw_log_manifest,
         )
-
-        segmenter = FixedWindowSceneSegmenter(
-            raw_log_id=raw_log_id,
-            policy=params.policy,
-        )
-        segments = segmenter.segment(frames)
 
         if params.max_scenes is not None:
             segments = segments[: params.max_scenes]

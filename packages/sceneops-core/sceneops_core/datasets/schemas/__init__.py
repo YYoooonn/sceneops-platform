@@ -5,6 +5,7 @@ from .enums import (
     SensorModality,
     DatasetIngestMode,
     RawLogSourceFormat,
+    SceneBuildPolicyType,
     SensorFrameRole,
 )
 from .manifests import (
@@ -57,9 +58,15 @@ from .profile import (
     DatasetProfileReport,
 )
 from .raw_logs import (
+    AnyPredicateConfig,
+    AndPredicateConfig,
+    EgoKinematicPredicateConfig,
+    ObjectNeighborhoodPredicateConfig,
+    OrPredicateConfig,
     RawLogFrameIndex,
     RawLogManifest,
     RawSensorFrameManifest,
+    ScenarioMiningConfig,
     SceneBuildPolicy,
     SceneSegmentIndex,
     SceneSegmentListResponse,
@@ -68,11 +75,18 @@ from .raw_logs import (
 )
 
 __all__ = [
+    "AnyPredicateConfig",
+    "AndPredicateConfig",
+    "EgoKinematicPredicateConfig",
+    "ObjectNeighborhoodPredicateConfig",
+    "OrPredicateConfig",
+    "ScenarioMiningConfig",
     "DatasetType",
     "DatasetManifestStatus",
     "DatasetVersionStatus",
     "DatasetIngestMode",
     "RawLogSourceFormat",
+    "SceneBuildPolicyType",
     "SensorFrameRole",
     "SensorModality",
     "DatasetManifest",
