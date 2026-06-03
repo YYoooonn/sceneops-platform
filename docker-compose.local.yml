@@ -162,6 +162,8 @@ services:
   minio-init:
     image: minio/mc:RELEASE.2024-11-17T19-35-25Z
     container_name: sceneops-minio-init
+    env_file:
+      - .env.local
     depends_on:
       minio:
         condition: service_healthy
