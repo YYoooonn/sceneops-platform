@@ -77,3 +77,10 @@ class PipelineContextKey:
     AUTO_LABEL_MANIFEST_URI = "auto_label_manifest_uri"
     AUTO_LABEL_SAMPLE_COUNT = "auto_label_sample_count"
     AUTO_LABEL_LABELED_SAMPLE_COUNT = "auto_label_labeled_sample_count"
+
+    BUILD_SCENES_RAW_LOG_ID = "build_scenes_raw_log_id"
+    BUILD_SCENES_RAW_LOG_MANIFEST_URI = "build_scenes_raw_log_manifest_uri"
+    BUILD_SCENES_SCENE_SEGMENTS_URI = "build_scenes_scene_segments_uri"
+    BUILD_SCENES_SCENE_INDEX_URI = "build_scenes_scene_index_uri"
+    BUILD_SCENES_FRAME_COUNT = "build_scenes_frame_count"
+    BUILD_SCENES_CHANNELS = "build_scenes_channels"

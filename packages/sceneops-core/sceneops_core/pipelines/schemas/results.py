@@ -144,7 +144,19 @@ class PipelineEvaluationOutput(SceneOpsBaseModel):
     class_metrics: JsonDict | None = None
 
 
+class PipelineBuildScenesOutput(SceneOpsBaseModel):
+    raw_log_id: str | None = None
+    raw_log_manifest_uri: str | None = None
+    scene_segments_uri: str | None = None
+    scene_index_uri: str | None = None
+    frame_count: int | None = None
+    scene_count: int | None = None
+    sample_count: int | None = None
+    channels: list[str] = Field(default_factory=list)
+
+
 class PipelineResultOutputs(SceneOpsBaseModel):
+    build_scenes: PipelineBuildScenesOutput | None = None
     dataset: PipelineDatasetOutput | None = None
     validation: PipelineValidationOutput | None = None
     profile: PipelineProfileOutput | None = None

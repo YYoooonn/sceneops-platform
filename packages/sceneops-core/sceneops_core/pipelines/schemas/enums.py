@@ -7,6 +7,7 @@ class PipelineType(StrEnum):
     DATASET_INGESTION = "dataset_ingestion"
     DETECTION_VALIDATION = "detection_validation"
     AUTO_LABEL = "auto_label"
+    SCENE_BUILDING = "scene_building"
 
 
 class PipelineRunStatus(StrEnum):

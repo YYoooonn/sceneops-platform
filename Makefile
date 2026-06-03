@@ -59,6 +59,7 @@ help:
 	@echo "E2E:"
 	@echo "  make e2e-mock-celery"
 	@echo "  make e2e-onnx-celery"
+	@echo "  make e2e-build-scenes"
 	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"
@@ -125,10 +126,12 @@ compose-build-no-cache:
 
 .PHONY: compose-up
 compose-up: prepare-data
+	$(MAKE) minio-up
 	docker compose -f $(COMPOSE_FILE) up -d postgres redis api worker-pipeline worker-jobs
 
 .PHONY: compose-down
 compose-down:
+	$(MAKE) minio-down
 	docker compose -f $(COMPOSE_FILE) down postgres redis api worker-pipeline worker-jobs
 
 .PHONY: compose-down-volumes
@@ -322,6 +325,11 @@ e2e-mock-celery:
 e2e-onnx-celery:
 	chmod +x scripts/e2e/e2e_onnx_pipeline_celery.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_onnx_pipeline_celery.sh
+
+.PHONY: e2e-build-scenes
+e2e-build-scenes:
+	chmod +x scripts/e2e/e2e_build_scenes_pipeline_celery.sh
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_build_scenes_pipeline_celery.sh
 
 # --------------------
 # Debug

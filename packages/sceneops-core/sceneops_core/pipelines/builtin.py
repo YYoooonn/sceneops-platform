@@ -119,10 +119,55 @@ AUTO_LABEL_PIPELINE = PipelineDefinition(
 )
 
 
+SCENE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.SCENE_BUILDING,
+    name="Scene Building",
+    description="Index a raw sensor log, segment into scenes, validate and profile the result.",
+    steps=[
+        PipelineStepDefinition(
+            name="build_scenes",
+            order=0,
+            job_type=JobType.BUILD_SCENES,
+            depends_on=[],
+            default_params={
+                "dataset_type": "nuscenes",
+                "source_format": "nuscenes",
+                "write_dataset_manifest": True,
+                "use_existing_dataset_scenes": False,
+            },
+        ),
+        PipelineStepDefinition(
+            name="validate",
+            order=1,
+            job_type=JobType.VALIDATE_DATASET,
+            depends_on=["build_scenes"],
+            default_params={
+                "validate_samples": True,
+                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
+            },
+        ),
+        PipelineStepDefinition(
+            name="profile",
+            order=2,
+            job_type=JobType.PROFILE_DATASET,
+            depends_on=["validate"],
+            default_params={
+                "profile_samples": True,
+                "profile_annotations": False,
+                "profile_sensor_coverage": True,
+                "profile_scene_distribution": True,
+                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
+            },
+        ),
+    ],
+)
+
+
 BUILTIN_PIPELINE_DEFINITIONS = [
     DATASET_INGESTION_PIPELINE,
     DETECTION_VALIDATION_PIPELINE,
     AUTO_LABEL_PIPELINE,
+    SCENE_BUILDING_PIPELINE,
 ]
 
 

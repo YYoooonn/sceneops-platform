@@ -4,6 +4,7 @@ from typing import Any
 
 from sceneops_core.jobs.schemas import JobManifest
 from sceneops_core.pipelines.schemas import (
+    PipelineBuildScenesOutput,
     PipelineDatasetOutput,
     PipelineEvaluationOutput,
     PipelineInferenceOutput,
@@ -68,6 +69,7 @@ def build_pipeline_result(
             profile_run_id=context.get(Ctx.PROFILE_RUN_ID),
         ),
         outputs=PipelineResultOutputs(
+            build_scenes=_build_build_scenes_output(context),
             dataset=_build_dataset_output(context),
             validation=_build_validation_output(context),
             profile=_build_profile_output(context),
@@ -75,6 +77,22 @@ def build_pipeline_result(
             evaluation=_build_evaluation_output(context),
         ),
         steps=steps,
+    )
+
+
+def _build_build_scenes_output(context: Any) -> PipelineBuildScenesOutput | None:
+    if context.get(Ctx.BUILD_SCENES_RAW_LOG_ID) is None:
+        return None
+
+    return PipelineBuildScenesOutput(
+        raw_log_id=context.get(Ctx.BUILD_SCENES_RAW_LOG_ID),
+        raw_log_manifest_uri=context.get(Ctx.BUILD_SCENES_RAW_LOG_MANIFEST_URI),
+        scene_segments_uri=context.get(Ctx.BUILD_SCENES_SCENE_SEGMENTS_URI),
+        scene_index_uri=context.get(Ctx.BUILD_SCENES_SCENE_INDEX_URI),
+        frame_count=context.get(Ctx.BUILD_SCENES_FRAME_COUNT),
+        scene_count=context.get(Ctx.SCENE_COUNT),
+        sample_count=context.get(Ctx.SAMPLE_COUNT),
+        channels=context.get(Ctx.BUILD_SCENES_CHANNELS) or [],
     )
 
 
@@ -181,6 +199,19 @@ def _compact_step_result(
         return {}
 
     raw = job_result.get("job_result", job_result)
+
+    if step_name == "build_scenes":
+        return {
+            "raw_log_id": raw.get("raw_log_id"),
+            "raw_log_manifest_uri": raw.get("raw_log_manifest_uri"),
+            "scene_segments_uri": raw.get("scene_segments_uri"),
+            "scene_index_uri": raw.get("scene_index_uri"),
+            "dataset_manifest_uri": raw.get("dataset_manifest_uri"),
+            "scene_count": raw.get("scene_count"),
+            "sample_count": raw.get("sample_count"),
+            "frame_count": raw.get("frame_count"),
+            "channels": raw.get("channels", []),
+        }
 
     if step_name == "ingest":
         return {

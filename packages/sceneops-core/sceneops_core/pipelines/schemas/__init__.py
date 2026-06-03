@@ -18,6 +18,7 @@ from .responses import (
     PipelineStepRunListResponse,
 )
 from .results import (
+    PipelineBuildScenesOutput,
     PipelineResultSummary,
     PipelineResultLineage,
     PipelineResultOutputs,
@@ -52,4 +53,5 @@ __all__ = [
     "PipelineProfileOutput",
     "PipelineStepResult",
     "PipelineValidationOutput",
+    "PipelineBuildScenesOutput",
 ]

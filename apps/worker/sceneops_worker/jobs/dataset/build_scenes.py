@@ -26,6 +26,7 @@ from sceneops_worker.datasets.scene_building.segmenters.fixed_window import (
 )
 from sceneops_core.common.schemas import JsonDict
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
 class BuildScenesJobHandler(JobHandler):
@@ -41,7 +42,20 @@ class BuildScenesJobHandler(JobHandler):
         return base
 
     def extract_context_updates(self, result: JsonDict) -> dict:
-        return {}
+        parsed = BuildScenesJobResult.model_validate(result)
+        updates: dict = {
+            Ctx.SCENE_COUNT: parsed.scene_count,
+            Ctx.SAMPLE_COUNT: parsed.sample_count,
+            Ctx.BUILD_SCENES_RAW_LOG_ID: parsed.raw_log_id,
+            Ctx.BUILD_SCENES_RAW_LOG_MANIFEST_URI: parsed.raw_log_manifest_uri,
+            Ctx.BUILD_SCENES_SCENE_SEGMENTS_URI: parsed.scene_segments_uri,
+            Ctx.BUILD_SCENES_SCENE_INDEX_URI: parsed.scene_index_uri,
+            Ctx.BUILD_SCENES_FRAME_COUNT: parsed.frame_count,
+            Ctx.BUILD_SCENES_CHANNELS: parsed.channels,
+        }
+        if parsed.dataset_manifest_uri is not None:
+            updates[Ctx.DATASET_MANIFEST_URI] = parsed.dataset_manifest_uri
+        return updates
 
     async def run(
         self, request: JobHandlerRequest[BuildScenesJobParams]

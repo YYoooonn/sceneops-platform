@@ -207,25 +207,51 @@ class SceneSegmentDatasetManifestBuilder:
             samples=samples,
         )
 
+    def _group_frames(
+        self,
+        frames: list[IndexedRawFrame],
+        tolerance_us: int = 100_000,
+    ) -> list[list[IndexedRawFrame]]:
+        """Group frames into logical samples.
+
+        Primary: fixed-size bucket (int(ts / tolerance_us)).
+        Fallback: adjacent buckets whose boundary gap is smaller than tolerance_us
+                  are merged — handles the case where a bucket boundary falls
+                  inside a single logical sample.
+        """
+        if not frames:
+            return []
+
+        sorted_frames = sorted(frames, key=lambda f: f.timestamp_us)
+
+        raw: dict[int, list[IndexedRawFrame]] = defaultdict(list)
+        for frame in sorted_frames:
+            raw[int(frame.timestamp_us / tolerance_us)].append(frame)
+        bucket_groups = [v for _, v in sorted(raw.items())]
+
+        # Greedy fallback: merge adjacent buckets split by a boundary
+        merged: list[list[IndexedRawFrame]] = [bucket_groups[0]]
+        for nxt in bucket_groups[1:]:
+            gap_us = nxt[0].timestamp_us - merged[-1][-1].timestamp_us
+            if gap_us < tolerance_us:
+                merged[-1] = merged[-1] + nxt
+            else:
+                merged.append(nxt)
+        return merged
+
     def _build_samples(
         self,
         *,
         scene_id: str,
         frames: list[IndexedRawFrame],
     ) -> list[DatasetSampleManifest]:
-        buckets: dict[int, list[IndexedRawFrame]] = defaultdict(list)
-        for frame in frames:
-            bucket = int(frame.timestamp_us / 100_000)  # 100ms grouping window
-            buckets[bucket].append(frame)
+        grouped = self._group_frames(frames)
 
         # Two-pass: collect IDs first so prev/next links can be set
-        sample_ids: list[str] = []
-        raw_buckets: list[tuple[int, list[IndexedRawFrame]]] = sorted(buckets.items())
-        for _ in raw_buckets:
-            sample_ids.append(generate_prefixed_id("sample"))
+        sample_ids = [generate_prefixed_id("sample") for _ in grouped]
 
         samples: list[DatasetSampleManifest] = []
-        for i, (_, bucket_frames) in enumerate(raw_buckets):
+        for i, bucket_frames in enumerate(grouped):
             sensors: dict[str, SampleSensorManifest] = {}
             for frame in bucket_frames:
                 sensors[frame.channel] = SampleSensorManifest(
