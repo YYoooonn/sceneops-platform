@@ -14,6 +14,7 @@ from sceneops_worker.inference.detection.base import (
     DetectionInferenceRequest,
     DetectionInferenceResult,
 )
+from sceneops_worker.inference.detection.frustum_lifting import frustum_lift
 
 CAMERA_CHANNEL = "CAM_FRONT"
 
@@ -99,12 +100,14 @@ class GroundingDinoDetectionBackend:
                     )
                     latencies_ms.append((time.perf_counter() - t0) * 1000.0)
 
-                    # TODO (step 2): pass sensor calibration + LIDAR_TOP point cloud
-                    # to frustum_lift() so translation/size/rotation are real 3D values.
-                    # frustum_lift(detections_2d, sensor, sample.sensors["LIDAR_TOP"], raw_root)
+                    lidar_sensor = sample.sensors.get("LIDAR_TOP")
                     predictions = _build_predictions(
                         sample=sample,
                         detections_2d=detections_2d,
+                        camera_sensor=sensor,
+                        lidar_sensor=lidar_sensor,
+                        raw_root=raw_root,
+                        max_image_size=self._max_image_size,
                     )
 
                 prediction_count += len(predictions)
@@ -193,23 +196,42 @@ def _build_predictions(
     *,
     sample: DatasetSampleManifest,
     detections_2d: list[dict[str, Any]],
+    camera_sensor: Any,
+    lidar_sensor: Any,
+    raw_root: str,
+    max_image_size: int,
 ) -> list[dict[str, Any]]:
     predictions: list[dict[str, Any]] = []
     for i, det in enumerate(detections_2d):
+        bbox_2d: list[float] = det["bbox_2d"]
+
+        lift: dict[str, Any] | None = None
+        if lidar_sensor is not None and lidar_sensor.filename:
+            try:
+                lift = frustum_lift(
+                    bbox_2d=bbox_2d,
+                    camera_sensor=camera_sensor,
+                    lidar_sensor=lidar_sensor,
+                    raw_root=raw_root,
+                    max_image_size=max_image_size,
+                )
+            except Exception:
+                pass  # keep placeholder on any lifting failure
+
         predictions.append(
             {
                 "prediction_id": f"{sample.sample_id}-gdino-{i:04d}",
                 "category_name": det["category_name"],
-                # Placeholder 3D fields — replaced in step 2 by frustum-LiDAR lifting.
-                # TODO (step 2): frustum_lift() computes these from bbox_2d +
-                #   camera_intrinsic/extrinsic + LIDAR_TOP point cloud (DBSCAN clustering).
-                "translation": [0.0, 0.0, 0.0],
-                "size": [1.0, 1.0, 1.0],
-                "rotation": [1.0, 0.0, 0.0, 0.0],
+                "translation": lift["translation"] if lift else [0.0, 0.0, 0.0],
+                "size": lift["size"] if lift else [1.0, 1.0, 1.0],
+                "rotation": lift["rotation"] if lift else [1.0, 0.0, 0.0, 0.0],
                 "score": det["score"],
                 "source_annotation_token": None,
-                "bbox_2d": det["bbox_2d"],
-                "lifting_method": "none",
+                "bbox_2d": bbox_2d,
+                "lifting_method": lift["lifting_method"] if lift else "none",
+                "cluster_point_count": lift.get("cluster_point_count")
+                if lift
+                else None,
             }
         )
     return predictions
