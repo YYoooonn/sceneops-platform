@@ -240,6 +240,48 @@ minio-down:
 	docker compose -f $(COMPOSE_FILE) --profile minio rm -f minio minio-init
 
 # --------------------
+# Inference Server (GPU)
+# --------------------
+
+.PHONY: inference-server-build
+inference-server-build:
+	docker compose -f $(COMPOSE_FILE) --profile gpu build inference-server
+
+.PHONY: inference-server-up
+inference-server-up:
+	mkdir -p cache/hf
+	docker compose -f $(COMPOSE_FILE) --profile gpu up -d inference-server
+
+.PHONY: inference-server-down
+inference-server-down:
+	docker compose -f $(COMPOSE_FILE) --profile gpu stop inference-server
+	docker compose -f $(COMPOSE_FILE) --profile gpu rm -f inference-server
+
+.PHONY: inference-server-logs
+inference-server-logs:
+	docker compose -f $(COMPOSE_FILE) --profile gpu logs -f inference-server
+
+.PHONY: check-inference-server
+check-inference-server:
+	curl -sf http://localhost:8001/healthz | python3 -m json.tool
+
+.PHONY: inference-server-local
+inference-server-local:
+	mkdir -p cache/hf
+	uv lock
+	docker compose -f $(COMPOSE_FILE) --profile inference build inference-server-local
+	docker compose -f $(COMPOSE_FILE) --profile inference up -d inference-server-local
+
+.PHONY: inference-server-local-down
+inference-server-local-down:
+	docker compose -f $(COMPOSE_FILE) --profile inference stop inference-server-local
+	docker compose -f $(COMPOSE_FILE) --profile inference rm -f inference-server-local
+
+.PHONY: inference-server-local-logs
+inference-server-local-logs:
+	docker compose -f $(COMPOSE_FILE) --profile inference logs -f inference-server-local
+
+# --------------------
 # Checks
 # --------------------
 
@@ -280,6 +322,11 @@ register-nuscenes-dataset:
 e2e-dataset-ingest:
 	chmod +x scripts/e2e/e2e_ingestion_pipeline_celery.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_ingestion_pipeline_celery.sh
+
+.PHONY: e2e-autolabel
+e2e-autolabel:
+	chmod +x scripts/e2e/e2e_autolabel_celery.sh
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_autolabel_celery.sh
 
 .PHONY: e2e-mock-celery
 e2e-mock-celery:

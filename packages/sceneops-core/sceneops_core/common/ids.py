@@ -45,3 +45,8 @@ def default_validation_run_id(job_id: str) -> str:
 def default_profile_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"profile-{suffix}"
+
+
+def default_auto_label_run_id(job_id: str) -> str:
+    suffix = job_id.removeprefix("job-")
+    return f"al-{suffix}"

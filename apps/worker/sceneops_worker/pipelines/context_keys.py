@@ -72,3 +72,8 @@ class PipelineContextKey:
 
     EVALUATION_METRICS = "evaluation_metrics"
     EVALUATION_SAMPLE_COUNT = "evaluation_sample_count"
+
+    AUTO_LABEL_RUN_ID = "auto_label_run_id"
+    AUTO_LABEL_MANIFEST_URI = "auto_label_manifest_uri"
+    AUTO_LABEL_SAMPLE_COUNT = "auto_label_sample_count"
+    AUTO_LABEL_LABELED_SAMPLE_COUNT = "auto_label_labeled_sample_count"

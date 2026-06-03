@@ -1,3 +1,4 @@
+from sceneops_worker.jobs.handlers.auto_label_dataset import AutoLabelDatasetJobHandler
 from sceneops_worker.jobs.handlers.evaluate_detection import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.handlers.ingest_dataset import IngestDatasetJobHandler
 from sceneops_worker.jobs.handlers.predict_detection import PredictDetectionJobHandler
@@ -5,6 +6,7 @@ from sceneops_worker.jobs.handlers.profile_dataset import ProfileDatasetJobHandl
 from sceneops_worker.jobs.handlers.validate_dataset import ValidateDatasetJobHandler
 
 __all__ = [
+    "AutoLabelDatasetJobHandler",
     "EvaluateDetectionJobHandler",
     "IngestDatasetJobHandler",
     "PredictDetectionJobHandler",

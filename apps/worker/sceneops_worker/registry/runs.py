@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sceneops_core.runs.schemas import (
+    AutoLabelRunRecord,
     DatasetProfileRunRecord,
     EvaluationRunRecord,
     InferenceRunRecord,
@@ -8,6 +9,7 @@ from sceneops_core.runs.schemas import (
     RunStatus,
 )
 from sceneops_db.runs import (
+    PostgresAutoLabelRunRepository,
     PostgresDatasetProfileRunRepository,
     PostgresEvaluationRunRepository,
     PostgresInferenceRunRepository,
@@ -112,3 +114,11 @@ class RunRegistryStore:
                 dataset_version=dataset_version,
                 status=status,
             )
+
+    async def upsert_auto_label_run(
+        self,
+        record: AutoLabelRunRecord,
+    ) -> AutoLabelRunRecord:
+        async with async_session_scope() as session:
+            repository = PostgresAutoLabelRunRepository(session)
+            return await repository.upsert(record)
