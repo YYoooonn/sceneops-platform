@@ -15,6 +15,7 @@ from sceneops_core.datasets.schemas import (
     DatasetSceneManifest,
     DatasetSampleManifest,
     DatasetType,
+    SampleSensorManifest,
     SceneSegmentManifest,
 )
 
@@ -212,47 +213,51 @@ class SceneSegmentDatasetManifestBuilder:
         scene_id: str,
         frames: list[IndexedRawFrame],
     ) -> list[DatasetSampleManifest]:
-        # 실제 DatasetSampleManifest 필드명에 맞춰 조정 필요.
-        # 여기서는 timestamp bucket 기반 sample grouping만 설계로 둔다.
         buckets: dict[int, list[IndexedRawFrame]] = defaultdict(list)
-
         for frame in frames:
-            bucket = int(frame.timestamp_us / 100_000)  # 100ms bucket
+            bucket = int(frame.timestamp_us / 100_000)  # 100ms grouping window
             buckets[bucket].append(frame)
 
-        samples: list[DatasetSampleManifest] = []
+        # Two-pass: collect IDs first so prev/next links can be set
+        sample_ids: list[str] = []
+        raw_buckets: list[tuple[int, list[IndexedRawFrame]]] = sorted(buckets.items())
+        for _ in raw_buckets:
+            sample_ids.append(generate_prefixed_id("sample"))
 
-        for _, bucket_frames in sorted(buckets.items()):
-            sample_id = generate_prefixed_id("sample")
-            timestamp_us = min(frame.timestamp_us for frame in bucket_frames)
+        samples: list[DatasetSampleManifest] = []
+        for i, (_, bucket_frames) in enumerate(raw_buckets):
+            sensors: dict[str, SampleSensorManifest] = {}
+            for frame in bucket_frames:
+                sensors[frame.channel] = SampleSensorManifest(
+                    channel=frame.channel,
+                    modality=frame.modality,
+                    uri=frame.uri,
+                    is_key_frame=True,
+                    source_ref=frame.frame_id,
+                    metadata={
+                        "ego_pose_ref": frame.ego_pose_ref,
+                        "calibration_ref": frame.calibration_ref,
+                        "annotation_refs": list(frame.annotation_refs),
+                        "source_sample_id": frame.source_sample_id,
+                        "source_scene_id": frame.source_scene_id,
+                    },
+                )
 
             samples.append(
                 DatasetSampleManifest(
-                    sample_id=sample_id,
-                    sample_token=sample_id,
+                    sample_id=sample_ids[i],
+                    sample_token=sample_ids[i],
                     scene_id=scene_id,
                     dataset_id=self.dataset_id,
                     dataset_version=self.dataset_version,
-                    timestamp_us=timestamp_us,
-                    channels=sorted({frame.channel for frame in bucket_frames}),
-                    sensor_data=[
-                        {
-                            "frame_id": frame.frame_id,
-                            "channel": frame.channel,
-                            "modality": frame.modality.value,
-                            "role": frame.role.value,
-                            "uri": frame.uri,
-                            "ego_pose_ref": frame.ego_pose_ref,
-                            "calibration_ref": frame.calibration_ref,
-                            "annotation_refs": list(frame.annotation_refs),
-                            "source_sample_id": frame.source_sample_id,
-                            "source_scene_id": frame.source_scene_id,
-                        }
-                        for frame in bucket_frames
-                    ],
-                    metadata={
-                        "built_from_raw_log": True,
-                    },
+                    timestamp_us=min(f.timestamp_us for f in bucket_frames),
+                    channels=sorted(sensors.keys()),
+                    prev_sample_id=sample_ids[i - 1] if i > 0 else None,
+                    next_sample_id=sample_ids[i + 1]
+                    if i < len(sample_ids) - 1
+                    else None,
+                    sensors=sensors,
+                    metadata={"built_from_raw_log": True},
                 )
             )
 

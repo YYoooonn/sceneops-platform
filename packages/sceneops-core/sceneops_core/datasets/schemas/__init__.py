@@ -62,6 +62,7 @@ from .raw_logs import (
     RawSensorFrameManifest,
     SceneBuildPolicy,
     SceneSegmentIndex,
+    SceneSegmentListResponse,
     SceneSegmentManifest,
     TimeRange,
 )
@@ -116,6 +117,7 @@ __all__ = [
     "RawSensorFrameManifest",
     "SceneBuildPolicy",
     "SceneSegmentIndex",
+    "SceneSegmentListResponse",
     "SceneSegmentManifest",
     "TimeRange",
 ]

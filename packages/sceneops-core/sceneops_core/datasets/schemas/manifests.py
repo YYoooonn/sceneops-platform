@@ -114,16 +114,20 @@ class SampleSensorManifest(SceneOpsBaseModel):
     channel: str
     modality: SensorModality
 
-    sample_data_token: str
-    filename: str
-    fileformat: str
+    # Generic file reference — absolute URI or path relative to raw_root
+    uri: str
+    fileformat: str | None = None
 
-    is_key_frame: bool
+    is_key_frame: bool = True
     width: int | None = None
     height: int | None = None
 
-    calibrated_sensor: CalibratedSensorManifest
-    ego_pose: EgoPoseManifest
+    # Optional calibration — populated by ingestion, None when not yet resolved
+    calibrated_sensor: CalibratedSensorManifest | None = None
+    ego_pose: EgoPoseManifest | None = None
+
+    # Format-specific traceability token (nuScenes: sample_data_token, raw log: frame_id)
+    source_ref: str | None = None
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -154,10 +158,12 @@ class DatasetSampleManifest(SceneOpsBaseModel):
     sample_token: str
     scene_id: str
 
-    index: int
-    timestamp: int
-    prev: str
-    next: str
+    timestamp_us: int
+    channels: list[str] = Field(default_factory=list)
+
+    # Optional sequence links — token or sample_id depending on source format
+    prev_sample_id: str | None = None
+    next_sample_id: str | None = None
 
     sensors: dict[str, SampleSensorManifest] = Field(default_factory=dict)
     annotations: list[SampleAnnotationManifest] = Field(default_factory=list)

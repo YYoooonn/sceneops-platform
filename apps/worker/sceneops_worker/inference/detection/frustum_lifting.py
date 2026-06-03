@@ -39,10 +39,22 @@ def frustum_lift(
     Returns None when fewer than MIN_FRUSTUM_POINTS points fall inside the frustum.
     """
     # ── 0. Load and parse inputs ──────────────────────────────────────────
-    lidar_path = _resolve_path(raw_root, lidar_sensor.filename)
+    if (
+        camera_sensor.calibrated_sensor is None
+        or lidar_sensor.calibrated_sensor is None
+    ):
+        return None
+    if camera_sensor.ego_pose is None:
+        return None
+
+    lidar_path = _resolve_path(raw_root, lidar_sensor.uri)
     pts_lidar = _load_lidar(lidar_path)  # (N, 3)
 
-    K = np.array(camera_sensor.calibrated_sensor.camera_intrinsic, dtype=np.float64)
+    cam_cal = camera_sensor.calibrated_sensor
+    if cam_cal.camera_intrinsic is None:
+        return None
+
+    K = np.array(cam_cal.camera_intrinsic, dtype=np.float64)
     orig_w = camera_sensor.width or int(K[0, 2] * 2)
     orig_h = camera_sensor.height or int(K[1, 2] * 2)
 
@@ -59,8 +71,8 @@ def frustum_lift(
 
     # ── 3. Ego → camera frame ─────────────────────────────────────────────
     # calibrated_sensor gives us T_cam→ego, so T_ego→cam = T_cam→ego^{-1}
-    R_c2e = _quat_to_rot(camera_sensor.calibrated_sensor.rotation)
-    t_c2e = np.array(camera_sensor.calibrated_sensor.translation, dtype=np.float64)
+    R_c2e = _quat_to_rot(cam_cal.rotation)
+    t_c2e = np.array(cam_cal.translation, dtype=np.float64)
     R_e2c = R_c2e.T  # rotation inverse
     pts_cam = (R_e2c @ (pts_ego - t_c2e).T).T  # (N, 3)
 
@@ -111,8 +123,9 @@ def frustum_lift(
 
     # ── 7. Ego → global frame ─────────────────────────────────────────────
     # Use CAM_FRONT ego_pose (same keyframe timestamp; vehicle frame is shared).
-    R_e2g = _quat_to_rot(camera_sensor.ego_pose.rotation)
-    t_e2g = np.array(camera_sensor.ego_pose.translation, dtype=np.float64)
+    # ego_pose is guaranteed non-None by the guard at the top of the function.
+    R_e2g = _quat_to_rot(camera_sensor.ego_pose.rotation)  # type: ignore[union-attr]
+    t_e2g = np.array(camera_sensor.ego_pose.translation, dtype=np.float64)  # type: ignore[union-attr]
     centroid_global = (R_e2g @ centroid_ego) + t_e2g
 
     return {

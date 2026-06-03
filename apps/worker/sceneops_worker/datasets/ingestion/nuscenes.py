@@ -396,8 +396,7 @@ def _build_sample_manifest(
         sensors[channel] = SampleSensorManifest(
             channel=channel,
             modality=_infer_sensor_modality(channel),
-            sample_data_token=sample_data_token,
-            filename=sample_data["filename"],
+            uri=sample_data["filename"],
             fileformat=sample_data["fileformat"],
             is_key_frame=sample_data["is_key_frame"],
             width=sample_data.get("width"),
@@ -411,6 +410,7 @@ def _build_sample_manifest(
                 translation=ego_pose["translation"],
                 rotation=ego_pose["rotation"],
             ),
+            source_ref=sample_data_token,
         )
 
     annotations: list[SampleAnnotationManifest] = []
@@ -439,10 +439,10 @@ def _build_sample_manifest(
         sample_id=sample_id,
         sample_token=sample["token"],
         scene_id=scene_id,
-        index=index,
-        timestamp=sample["timestamp"],
-        prev=sample["prev"],
-        next=sample["next"],
+        timestamp_us=sample["timestamp"],
+        channels=sorted(sensors.keys()),
+        prev_sample_id=sample["prev"] or None,
+        next_sample_id=sample["next"] or None,
         sensors=sensors,
         annotations=annotations,
     )

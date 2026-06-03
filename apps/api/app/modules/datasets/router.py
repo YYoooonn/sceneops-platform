@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-from app.modules.datasets.dependencies import DatasetServiceDep
+from app.modules.datasets.dependencies import DatasetServiceDep, SceneBuildingServiceDep
 from sceneops_core.datasets.schemas import (
     CreateDatasetRequest,
     CreateDatasetVersionRequest,
@@ -10,6 +10,9 @@ from sceneops_core.datasets.schemas import (
     DatasetListResponse,
     DatasetVersionDetailResponse,
     DatasetVersionListResponse,
+    RawLogManifest,
+    SceneSegmentListResponse,
+    SceneSegmentManifest,
     UpsertDatasetRequest,
     UpsertDatasetVersionRequest,
 )
@@ -164,3 +167,71 @@ async def upsert_dataset_version(
         )
 
     return response
+
+
+# ── Scene building endpoints ──────────────────────────────────────────────────
+
+
+@router.get(
+    "/{dataset_id}/versions/{version}/raw-log",
+    response_model=RawLogManifest,
+    response_model_by_alias=True,
+    tags=["scene-building"],
+)
+async def get_raw_log(
+    dataset_id: str,
+    version: str,
+    service: SceneBuildingServiceDep,
+) -> RawLogManifest:
+    return await service.get_raw_log(
+        dataset_id=dataset_id,
+        dataset_version=version,
+    )
+
+
+@router.get(
+    "/{dataset_id}/versions/{version}/scene-segments",
+    response_model=SceneSegmentListResponse,
+    response_model_by_alias=True,
+    tags=["scene-building"],
+)
+async def list_scene_segments(
+    dataset_id: str,
+    version: str,
+    service: SceneBuildingServiceDep,
+    channel: str | None = Query(
+        default=None, description="Filter by channel (e.g. CAM_FRONT)"
+    ),
+    valid_only: bool = Query(
+        default=False, description="Only segments within timestamp gap policy"
+    ),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> SceneSegmentListResponse:
+    return await service.list_scene_segments(
+        dataset_id=dataset_id,
+        dataset_version=version,
+        channel=channel,
+        valid_only=valid_only,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/{dataset_id}/versions/{version}/scene-segments/{segment_id}",
+    response_model=SceneSegmentManifest,
+    response_model_by_alias=True,
+    tags=["scene-building"],
+)
+async def get_scene_segment(
+    dataset_id: str,
+    version: str,
+    segment_id: str,
+    service: SceneBuildingServiceDep,
+) -> SceneSegmentManifest:
+    return await service.get_scene_segment(
+        dataset_id=dataset_id,
+        dataset_version=version,
+        segment_id=segment_id,
+    )

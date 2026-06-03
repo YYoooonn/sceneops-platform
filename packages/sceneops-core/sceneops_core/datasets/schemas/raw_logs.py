@@ -109,3 +109,9 @@ class SceneSegmentIndex(SceneOpsBaseModel):
     segments: list[SceneSegmentManifest] = Field(default_factory=list)
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class SceneSegmentListResponse(SceneOpsBaseModel):
+    segments: list[SceneSegmentManifest]
+    count: int
+    total: int
