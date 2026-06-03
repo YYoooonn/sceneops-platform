@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sceneops_core.common.ids import default_inference_run_id
+from sceneops_core.ids import default_inference_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.inference.schemas import DetectionInferenceInput

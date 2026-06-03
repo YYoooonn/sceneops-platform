@@ -4,6 +4,8 @@ from .enums import (
     DatasetVersionStatus,
     SensorModality,
     DatasetIngestMode,
+    RawLogSourceFormat,
+    SensorFrameRole,
 )
 from .manifests import (
     CalibratedSensorManifest,
@@ -54,12 +56,23 @@ from .profile import (
     DatasetProfileSummary,
     DatasetProfileReport,
 )
+from .raw_logs import (
+    RawLogFrameIndex,
+    RawLogManifest,
+    RawSensorFrameManifest,
+    SceneBuildPolicy,
+    SceneSegmentIndex,
+    SceneSegmentManifest,
+    TimeRange,
+)
 
 __all__ = [
     "DatasetType",
     "DatasetManifestStatus",
     "DatasetVersionStatus",
     "DatasetIngestMode",
+    "RawLogSourceFormat",
+    "SensorFrameRole",
     "SensorModality",
     "DatasetManifest",
     "DatasetManifestSummary",
@@ -98,4 +111,11 @@ __all__ = [
     "DatasetAnnotationProfile",
     "DatasetProfileSummary",
     "DatasetProfileReport",
+    "RawLogFrameIndex",
+    "RawLogManifest",
+    "RawSensorFrameManifest",
+    "SceneBuildPolicy",
+    "SceneSegmentIndex",
+    "SceneSegmentManifest",
+    "TimeRange",
 ]

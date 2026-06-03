@@ -153,6 +153,7 @@ migrate-build:
 
 .PHONY: db-migrate
 db-migrate: migrate-build
+	$(MAKE) db-up
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate
 
 .PHONY: db-revision
@@ -240,46 +241,30 @@ minio-down:
 	docker compose -f $(COMPOSE_FILE) --profile minio rm -f minio minio-init
 
 # --------------------
-# Inference Server (GPU)
+# Inference Server (LOCAL)
 # --------------------
 
 .PHONY: inference-server-build
 inference-server-build:
-	docker compose -f $(COMPOSE_FILE) --profile gpu build inference-server
+	docker compose -f $(COMPOSE_FILE) --profile inference build inference-server
 
 .PHONY: inference-server-up
 inference-server-up:
 	mkdir -p cache/hf
-	docker compose -f $(COMPOSE_FILE) --profile gpu up -d inference-server
+	docker compose -f $(COMPOSE_FILE) --profile inference up -d inference-server
 
 .PHONY: inference-server-down
 inference-server-down:
-	docker compose -f $(COMPOSE_FILE) --profile gpu stop inference-server
-	docker compose -f $(COMPOSE_FILE) --profile gpu rm -f inference-server
+	docker compose -f $(COMPOSE_FILE) --profile inference stop inference-server
+	docker compose -f $(COMPOSE_FILE) --profile inference rm -f inference-server
 
 .PHONY: inference-server-logs
 inference-server-logs:
-	docker compose -f $(COMPOSE_FILE) --profile gpu logs -f inference-server
+	docker compose -f $(COMPOSE_FILE) --profile inference logs -f inference-server
 
 .PHONY: check-inference-server
 check-inference-server:
 	curl -sf http://localhost:8001/healthz | python3 -m json.tool
-
-.PHONY: inference-server-local
-inference-server-local:
-	mkdir -p cache/hf
-	uv lock
-	docker compose -f $(COMPOSE_FILE) --profile inference build inference-server-local
-	docker compose -f $(COMPOSE_FILE) --profile inference up -d inference-server-local
-
-.PHONY: inference-server-local-down
-inference-server-local-down:
-	docker compose -f $(COMPOSE_FILE) --profile inference stop inference-server-local
-	docker compose -f $(COMPOSE_FILE) --profile inference rm -f inference-server-local
-
-.PHONY: inference-server-local-logs
-inference-server-local-logs:
-	docker compose -f $(COMPOSE_FILE) --profile inference logs -f inference-server-local
 
 # --------------------
 # Checks

@@ -2,10 +2,8 @@ services:
   postgres:
     image: postgres:16
     container_name: sceneops-postgres
-    environment:
-      POSTGRES_USER: sceneops
-      POSTGRES_PASSWORD: sceneops
-      POSTGRES_DB: sceneops
+    env_file:
+      - .env.local
     ports:
       - "5432:5432"
     volumes:
@@ -24,6 +22,40 @@ services:
     volumes:
       - redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: sceneops-minio
+    command: server /data --console-address ":9001"
+    env_file:
+      - .env.local
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles:
+      - minio
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-17T19-35-25Z
+    container_name: sceneops-minio-init
+    env_file:
+      - .env.local
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/scripts/init/minio_init.sh"]
+    volumes:
+      - ./data:/data:ro
+      - ./scripts:/scripts:ro
+    profiles:
+      - minio
 
   api:
     build:
@@ -139,40 +171,6 @@ services:
         "upgrade",
         "head"
       ]
-
-  minio:
-    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
-    container_name: sceneops-minio
-    command: server /data --console-address ":9001"
-    env_file:
-      - .env.local
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    profiles:
-      - minio
-
-  minio-init:
-    image: minio/mc:RELEASE.2024-11-17T19-35-25Z
-    container_name: sceneops-minio-init
-    env_file:
-      - .env.local
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "/scripts/init/minio_init.sh"]
-    volumes:
-      - ./data:/data:ro
-      - ./scripts:/scripts:ro
-    profiles:
-      - minio
 
   inference-server:
     build:

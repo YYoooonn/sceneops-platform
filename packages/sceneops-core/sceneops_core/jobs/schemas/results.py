@@ -108,8 +108,28 @@ class AutoLabelDatasetJobResult(BaseJobResult):
     metrics: JsonDict = Field(default_factory=dict)
 
 
+class BuildScenesJobResult(BaseJobResult):
+    raw_log_manifest_uri: str
+    frame_index_uri: str
+    scene_segments_uri: str
+
+    scene_index_uri: str
+    scene_root_uri: str
+    sample_root_uri: str
+
+    dataset_manifest_uri: str | None = None
+
+    raw_log_id: str
+    scene_count: int
+    sample_count: int
+    frame_count: int
+
+    channels: list[str] = Field(default_factory=list)
+
+
 JobResult = (
-    IngestDatasetJobResult
+    BuildScenesJobResult
+    | IngestDatasetJobResult
     | ValidateDatasetJobResult
     | ProfileDatasetJobResult
     | PredictDetectionJobResult
@@ -119,6 +139,9 @@ JobResult = (
 
 
 def parse_job_result(job_type: JobType, result: JsonDict) -> JobResult:
+    if job_type == JobType.BUILD_SCENES:
+        return BuildScenesJobResult.model_validate(result)
+
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobResult.model_validate(result)
 

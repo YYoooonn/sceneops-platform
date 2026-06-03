@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+
+from sceneops_core.datasets.schemas import (
+    DatasetType,
+    RawLogFrameIndex,
+    RawLogManifest,
+    RawSensorFrameManifest,
+    SceneSegmentIndex,
+    TimeRange,
+)
+from sceneops_core.jobs.schemas import (
+    BuildScenesJobParams,
+    BuildScenesJobResult,
+    JobType,
+)
+from sceneops_core.ids import generate_raw_log_id
+from sceneops_worker.datasets.scene_building.builders.dataset_manifest_builder import (
+    SceneSegmentDatasetManifestBuilder,
+)
+from sceneops_worker.datasets.scene_building.indexers.nuscenes import (
+    NuscenesRawLogIndexer,
+)
+from sceneops_worker.datasets.scene_building.segmenters.fixed_window import (
+    FixedWindowSceneSegmenter,
+)
+from sceneops_core.common.schemas import JsonDict
+from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+
+
+class BuildScenesJobHandler(JobHandler):
+    @property
+    def job_type(self) -> JobType:
+        return JobType.BUILD_SCENES
+
+    @property
+    def params_model(self) -> type[BuildScenesJobParams]:
+        return BuildScenesJobParams
+
+    def build_step_params(self, base: JsonDict, context_values: dict) -> JsonDict:
+        return base
+
+    def extract_context_updates(self, result: JsonDict) -> dict:
+        return {}
+
+    async def run(
+        self, request: JobHandlerRequest[BuildScenesJobParams]
+    ) -> BuildScenesJobResult:
+        # job = request.job
+        context = request.context
+        params = request.params
+
+        dataset_id = params.dataset_id
+        dataset_version = params.dataset_version
+        source_uri = params.source_uri
+
+        if source_uri is None:
+            raise ValueError("source_uri is required for build_scenes job")
+
+        version_root_uri = context.dataset_artifact_store.dataset_version_root_uri(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
+        raw_root_uri = context.dataset_artifact_store.raw_root_uri(version_root_uri)
+
+        raw_log_id = generate_raw_log_id()
+
+        if params.dataset_type != DatasetType.NUSCENES:
+            raise ValueError(
+                f"Unsupported build_scenes dataset_type: {params.dataset_type}"
+            )
+
+        indexer = NuscenesRawLogIndexer(
+            source_uri=source_uri,
+            version=dataset_version,
+            max_frames=params.max_frames,
+        )
+        frames = await indexer.index()
+
+        if not frames:
+            raise ValueError("No raw frames indexed")
+
+        raw_frame_manifests = [
+            RawSensorFrameManifest(
+                frame_id=frame.frame_id,
+                timestamp_us=frame.timestamp_us,
+                channel=frame.channel,
+                modality=frame.modality,
+                role=frame.role,
+                uri=frame.uri,
+                source_sample_id=frame.source_sample_id,
+                source_scene_id=frame.source_scene_id,
+                ego_pose_ref=frame.ego_pose_ref,
+                calibration_ref=frame.calibration_ref,
+                annotation_refs=list(frame.annotation_refs),
+            )
+            for frame in frames
+        ]
+
+        frame_index_uri = context.dataset_artifact_store.raw_frame_index_uri(
+            version_root_uri
+        )
+        raw_log_manifest_uri = context.dataset_artifact_store.raw_log_manifest_uri(
+            version_root_uri
+        )
+        scene_segments_uri = context.dataset_artifact_store.scene_segments_uri(
+            version_root_uri
+        )
+
+        frame_index = RawLogFrameIndex(
+            raw_log_id=raw_log_id,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            frames=raw_frame_manifests,
+        )
+
+        raw_log_manifest = RawLogManifest(
+            raw_log_id=raw_log_id,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            dataset_type=params.dataset_type,
+            source_format=params.source_format,
+            root_uri=source_uri,
+            time_range=TimeRange(
+                start_timestamp_us=min(frame.timestamp_us for frame in frames),
+                end_timestamp_us=max(frame.timestamp_us for frame in frames),
+            ),
+            channels=sorted({frame.channel for frame in frames}),
+            frame_count=len(frames),
+            frame_index_uri=frame_index_uri,
+            metadata={
+                "use_existing_dataset_scenes": params.use_existing_dataset_scenes,
+            },
+        )
+
+        await context.dataset_artifact_store.save_raw_frame_index(
+            uri=frame_index_uri,
+            frame_index=frame_index,
+        )
+        await context.dataset_artifact_store.save_raw_log_manifest(
+            uri=raw_log_manifest_uri,
+            manifest=raw_log_manifest,
+        )
+
+        segmenter = FixedWindowSceneSegmenter(
+            raw_log_id=raw_log_id,
+            policy=params.policy,
+        )
+        segments = segmenter.segment(frames)
+
+        if params.max_scenes is not None:
+            segments = segments[: params.max_scenes]
+
+        if not segments:
+            raise ValueError("No valid scene segments built from raw log")
+
+        segment_index = SceneSegmentIndex(
+            raw_log_id=raw_log_id,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            segments=segments,
+        )
+
+        await context.dataset_artifact_store.save_scene_segment_index(
+            uri=scene_segments_uri,
+            segment_index=segment_index,
+        )
+
+        builder = SceneSegmentDatasetManifestBuilder(
+            artifact_store=context.dataset_artifact_store,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            dataset_type=params.dataset_type,
+            source="raw_log_scene_builder",
+        )
+
+        built = builder.build(
+            version_root_uri=version_root_uri,
+            raw_root_uri=raw_root_uri,
+            frames=frames,
+            segments=segments,
+        )
+
+        for scene in built.scenes:
+            await context.dataset_artifact_store.save_scene_manifest(
+                uri=context.dataset_artifact_store.scene_manifest_uri(
+                    version_root_uri=version_root_uri,
+                    scene_id=scene.scene_id,
+                ),
+                manifest=scene,
+            )
+
+        for sample in built.samples:
+            await context.dataset_artifact_store.save_sample_manifest(
+                uri=context.dataset_artifact_store.sample_manifest_uri(
+                    version_root_uri=version_root_uri,
+                    sample_id=sample.sample_id,
+                ),
+                manifest=sample,
+            )
+
+        await context.dataset_artifact_store.save_scene_index(
+            uri=built.dataset_manifest.uris.scene_index,
+            scene_index=built.scene_index,
+        )
+
+        dataset_manifest_uri = None
+        if params.write_dataset_manifest:
+            await context.dataset_artifact_store.save_dataset_manifest(
+                uri=built.dataset_manifest.uris.dataset_manifest,
+                manifest=built.dataset_manifest,
+            )
+            dataset_manifest_uri = built.dataset_manifest.uris.dataset_manifest
+
+        return BuildScenesJobResult(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            raw_log_manifest_uri=raw_log_manifest_uri,
+            frame_index_uri=frame_index_uri,
+            scene_segments_uri=scene_segments_uri,
+            scene_index_uri=built.dataset_manifest.uris.scene_index,
+            scene_root_uri=built.dataset_manifest.uris.scene_root,
+            sample_root_uri=built.dataset_manifest.uris.sample_root,
+            dataset_manifest_uri=dataset_manifest_uri,
+            raw_log_id=raw_log_id,
+            scene_count=len(built.scenes),
+            sample_count=len(built.samples),
+            frame_count=len(frames),
+            channels=sorted({frame.channel for frame in frames}),
+            result_summary={
+                "source_uri": source_uri,
+                "policy": params.policy.to_artifact_dict(),
+            },
+        )

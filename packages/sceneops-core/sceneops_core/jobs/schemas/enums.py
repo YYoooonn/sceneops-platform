@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class JobType(StrEnum):
+    BUILD_SCENES = "build_scenes"
     INGEST_DATASET = "ingest_dataset"
     VALIDATE_DATASET = "validate_dataset"
     PROFILE_DATASET = "profile_dataset"

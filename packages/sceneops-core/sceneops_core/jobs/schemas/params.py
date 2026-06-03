@@ -5,7 +5,11 @@ from enum import StrEnum
 from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
-from sceneops_core.datasets.schemas import DatasetType
+from sceneops_core.datasets.schemas import (
+    DatasetType,
+    RawLogSourceFormat,
+    SceneBuildPolicy,
+)
 from sceneops_core.inference.enums import InferenceBackendType
 from .enums import JobType
 
@@ -19,6 +23,26 @@ class BaseJobParams(SceneOpsBaseModel):
     dataset_id: str
     dataset_version: str
     extra: JsonDict = Field(default_factory=dict)
+
+
+class BuildScenesJobParams(BaseJobParams):
+    dataset_type: DatasetType = DatasetType.NUSCENES
+
+    source_format: RawLogSourceFormat = RawLogSourceFormat.NUSCENES
+    source_uri: str | None = None
+
+    # nuScenes 같은 benchmark dataset에서 기존 scene metadata를 쓸지,
+    # 아니면 sample_data stream을 raw log처럼 flatten할지 선택
+    use_existing_dataset_scenes: bool = False
+
+    policy: SceneBuildPolicy = Field(default_factory=SceneBuildPolicy)
+
+    max_frames: int | None = None
+    max_scenes: int | None = None
+
+    # true면 build_scenes job이 DatasetManifest까지 생성
+    # false면 raw_log/frame_index/scene_segments/scene_manifest만 생성
+    write_dataset_manifest: bool = True
 
 
 class IngestDatasetJobParams(BaseJobParams):
@@ -94,7 +118,8 @@ class AutoLabelDatasetJobParams(BaseJobParams):
 
 
 JobParams = (
-    IngestDatasetJobParams
+    BuildScenesJobParams
+    | IngestDatasetJobParams
     | ValidateDatasetJobParams
     | ProfileDatasetJobParams
     | PredictDetectionJobParams
@@ -104,6 +129,9 @@ JobParams = (
 
 
 def parse_job_params(job_type: JobType, params: JsonDict) -> JobParams:
+    if job_type == JobType.BUILD_SCENES:
+        return BuildScenesJobParams.model_validate(params)
+
     if job_type == JobType.INGEST_DATASET:
         return IngestDatasetJobParams.model_validate(params)
 

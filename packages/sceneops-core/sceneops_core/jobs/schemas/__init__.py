@@ -15,6 +15,7 @@ from .params import (
     ProfileDatasetJobParams,
     PredictDetectionJobParams,
     parse_job_params,
+    BuildScenesJobParams,
 )
 from .requests import CreateJobRequest
 from .responses import JobEventListResponse, JobListResponse
@@ -27,6 +28,7 @@ from .results import (
     PredictDetectionJobResult,
     ProfileDatasetJobResult,
     parse_job_result,
+    BuildScenesJobResult,
 )
 from .steps import JobStep, build_default_steps
 
@@ -44,6 +46,7 @@ __all__ = [
     "JobEventManifest",
     "JobEventListResponse",
     "IngestMode",
+    "BuildScenesJobParams",
     "AutoLabelDatasetJobParams",
     "IngestDatasetJobParams",
     "ValidateDatasetJobParams",
@@ -60,4 +63,5 @@ __all__ = [
     "ProfileDatasetJobResult",
     "JobResult",
     "parse_job_result",
+    "BuildScenesJobResult",
 ]

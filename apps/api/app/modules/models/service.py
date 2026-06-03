@@ -11,7 +11,7 @@ from sceneops_core.models.schemas import (
     ModelVersionRecord,
     UpsertModelRequest,
 )
-from sceneops_core.common.ids import generate_model_version_id
+from sceneops_core.ids import generate_model_version_id
 from sceneops_db.model_registry import ModelRepository, ModelVersionRepository
 
 

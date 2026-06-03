@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sceneops_core.common.ids import (
+from sceneops_core.ids import (
     generate_pipeline_run_id,
     generate_pipeline_step_run_id,
 )
