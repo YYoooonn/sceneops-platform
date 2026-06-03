@@ -178,12 +178,20 @@ services:
     build:
       context: .
       dockerfile: apps/inference-server/Dockerfile
+      args:
+        TORCH_FLAVOR: cu121
     image: sceneops-platform/inference-server:local
     container_name: sceneops-inference-server
+    env_file:
+      - .env.local
+    environment:
+      HF_HOME: /cache/hf
+      SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
     ports:
       - "8001:8001"
     volumes:
       - ./data:/data:ro
+      - ./cache/hf:/cache/hf
     deploy:
       resources:
         reservations:
@@ -193,6 +201,25 @@ services:
               capabilities: [gpu]
     profiles:
       - gpu
+
+  inference-server-local:
+    build:
+      context: .
+      dockerfile: apps/inference-server/Dockerfile
+    image: sceneops-platform/inference-server:local
+    container_name: sceneops-inference-server-local
+    env_file:
+      - .env.local
+    environment:
+      HF_HOME: /cache/hf
+      SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/data:ro
+      - ./cache/hf:/cache/hf
+    profiles:
+      - inference
 
 volumes:
   sceneops_postgres_data:

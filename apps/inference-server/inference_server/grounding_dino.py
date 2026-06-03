@@ -4,14 +4,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from inference_server.config import InferenceServerSettings, get_settings
 from inference_server.schemas import DetectRequest, Detection2D
 
-MODEL_ID = "IDEA-Research/grounding-dino-tiny"
-
-# Period-separated phrases — GroundingDINO text prompt format.
-DETECTION_PROMPT = "car . person . barrier ."
-
 # Maps GroundingDINO output phrase → nuScenes category name.
+# Extend this dict to support more categories without changing other code.
 LABEL_TO_CATEGORY: dict[str, str] = {
     "car": "vehicle.car",
     "person": "human.pedestrian.adult",
@@ -22,7 +19,8 @@ LABEL_TO_CATEGORY: dict[str, str] = {
 class GroundingDinoModel:
     """GroundingDINO-T wrapper. Load once at server startup, reuse per request."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings: InferenceServerSettings | None = None) -> None:
+        self._settings = settings or get_settings()
         self._processor: Any = None
         self._model: Any = None
         self._device: str = "cpu"
@@ -31,11 +29,22 @@ class GroundingDinoModel:
         import torch
         from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._processor = AutoProcessor.from_pretrained(MODEL_ID)
-        self._model = AutoModelForZeroShotObjectDetection.from_pretrained(MODEL_ID).to(
-            self._device
+        if torch.cuda.is_available():
+            self._device = "cuda"
+        elif torch.backends.mps.is_available():
+            self._device = "mps"
+        else:
+            self._device = "cpu"
+
+        cache_dir = self._settings.hf_cache_dir
+        self._processor = AutoProcessor.from_pretrained(
+            self._settings.model_id,
+            cache_dir=cache_dir,
         )
+        self._model = AutoModelForZeroShotObjectDetection.from_pretrained(
+            self._settings.model_id,
+            cache_dir=cache_dir,
+        ).to(self._device)
         self._model.eval()
 
     @property
@@ -62,9 +71,10 @@ class GroundingDinoModel:
         image = _resize_long_edge(image, request.max_image_size)
         img_w, img_h = image.size
 
+        prompt = request.prompt or self._settings.detection_prompt
         inputs = self._processor(
             images=image,
-            text=DETECTION_PROMPT,
+            text=prompt,
             return_tensors="pt",
         ).to(self._device)
 

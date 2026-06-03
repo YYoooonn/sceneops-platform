@@ -5,9 +5,11 @@ from pydantic import BaseModel, Field
 
 class DetectRequest(BaseModel):
     image_path: str
-    box_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
-    text_threshold: float = Field(default=0.25, ge=0.0, le=1.0)
-    max_image_size: int = Field(default=800, ge=64, le=2048)
+    # None → use server-side defaults from InferenceServerSettings
+    prompt: str | None = Field(default=None)
+    box_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    text_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_image_size: int | None = Field(default=None, ge=64, le=2048)
 
 
 class Detection2D(BaseModel):
