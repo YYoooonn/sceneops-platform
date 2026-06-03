@@ -240,6 +240,31 @@ minio-down:
 	docker compose -f $(COMPOSE_FILE) --profile minio rm -f minio minio-init
 
 # --------------------
+# Inference Server (GPU)
+# --------------------
+
+.PHONY: inference-server-build
+inference-server-build:
+	docker compose -f $(COMPOSE_FILE) --profile gpu build inference-server
+
+.PHONY: inference-server-up
+inference-server-up:
+	docker compose -f $(COMPOSE_FILE) --profile gpu up -d inference-server
+
+.PHONY: inference-server-down
+inference-server-down:
+	docker compose -f $(COMPOSE_FILE) --profile gpu stop inference-server
+	docker compose -f $(COMPOSE_FILE) --profile gpu rm -f inference-server
+
+.PHONY: inference-server-logs
+inference-server-logs:
+	docker compose -f $(COMPOSE_FILE) --profile gpu logs -f inference-server
+
+.PHONY: check-inference-server
+check-inference-server:
+	curl -sf http://localhost:8001/healthz | python3 -m json.tool
+
+# --------------------
 # Checks
 # --------------------
 
