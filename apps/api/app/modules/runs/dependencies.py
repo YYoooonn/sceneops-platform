@@ -7,6 +7,7 @@ from fastapi import Depends
 from app.core.dependencies import DbSessionDep
 from app.modules.runs.service import RunService
 from sceneops_db.runs import (
+    DatasetProfileRunRepository,
     DatasetValidationRunRepository,
     EvaluationRunRepository,
     InferenceRunRepository,
@@ -55,12 +56,12 @@ ValidationRunRepositoryDep = Annotated[
 
 def get_profile_run_repository(
     session: DbSessionDep,
-) -> DatasetValidationRunRepository:
+) -> DatasetProfileRunRepository:
     return PostgresDatasetProfileRunRepository(session)
 
 
 ProfileRunRepositoryDep = Annotated[
-    DatasetValidationRunRepository,
+    DatasetProfileRunRepository,
     Depends(get_profile_run_repository),
 ]
 

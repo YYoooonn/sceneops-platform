@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException
 from app.modules.runs.dependencies import RunServiceDep
 from sceneops_core.datasets.schemas import DatasetValidationStatus
 from sceneops_core.runs.schemas import (
+    DatasetProfileRunDetailResponse,
+    DatasetProfileRunListResponse,
     DatasetValidationRunDetailResponse,
     DatasetValidationRunListResponse,
     EvaluationRunDetailResponse,
@@ -137,6 +139,43 @@ async def get_validation_run(
     if response is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Evaluation run not found: {validation_run_id}",
+            detail=f"Validation run not found: {validation_run_id}",
+        )
+    return response
+
+
+@router.get(
+    "/profiles",
+    response_model=DatasetProfileRunListResponse,
+    response_model_by_alias=True,
+)
+async def list_profile_runs(
+    *,
+    service: RunServiceDep,
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
+    status: RunStatus | None = None,
+) -> DatasetProfileRunListResponse:
+    return await service.list_profile_runs(
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        status=status,
+    )
+
+
+@router.get(
+    "/profiles/{profile_run_id}",
+    response_model=DatasetProfileRunDetailResponse,
+    response_model_by_alias=True,
+)
+async def get_profile_run(
+    profile_run_id: str,
+    service: RunServiceDep,
+) -> DatasetProfileRunDetailResponse:
+    response = await service.get_profile_run(profile_run_id)
+    if response is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Profile run not found: {profile_run_id}",
         )
     return response

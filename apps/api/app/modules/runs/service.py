@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from sceneops_core.datasets.schemas import DatasetValidationStatus
 from sceneops_core.runs.schemas import (
+    DatasetProfileRunDetailResponse,
+    DatasetProfileRunListResponse,
     DatasetValidationRunDetailResponse,
     DatasetValidationRunListResponse,
     EvaluationRunDetailResponse,
@@ -118,4 +120,26 @@ class RunService:
             return None
         return DatasetValidationRunDetailResponse(run=run)
 
-    # TODO profile run repository
+    async def list_profile_runs(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status: RunStatus | None = None,
+    ) -> DatasetProfileRunListResponse:
+        runs = await self.profile_repository.list(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            status=status,
+        )
+        return DatasetProfileRunListResponse(runs=runs, count=len(runs))
+
+    async def get_profile_run(
+        self,
+        profile_run_id: str,
+    ) -> DatasetProfileRunDetailResponse | None:
+        try:
+            run = await self.profile_repository.get(profile_run_id=profile_run_id)
+        except FileNotFoundError:
+            return None
+        return DatasetProfileRunDetailResponse(run=run)
