@@ -27,6 +27,11 @@ help:
 	@echo "  make compose-logs"
 	@echo "  make compose-ps"
 	@echo ""
+	@echo "MinIO (object storage):"
+	@echo "  make minio-up       Start MinIO + create bucket"
+	@echo "  make minio-down     Stop MinIO"
+	@echo "  make check-minio    Verify S3ArtifactStore against MinIO"
+	@echo ""
 	@echo "Database:"
 	@echo "  make db-migrate"
 	@echo "  make db-revision MSG='create jobs table'"
@@ -49,6 +54,7 @@ help:
 	@echo "  make check-env"
 	@echo "  make check-imports"
 	@echo "  make check-celery"
+	@echo "  make check-minio"
 	@echo ""
 	@echo "E2E:"
 	@echo "  make e2e-mock-celery"
@@ -63,6 +69,10 @@ help:
 # --------------------
 # Setup / Quality
 # --------------------
+.PHONY: setup-dev
+setup:
+	chmod +x scripts/setup_dev.sh
+	./scripts/setup_dev.sh
 
 .PHONY: uv-sync
 uv-sync:
@@ -217,6 +227,19 @@ worker-run-pipeline:
 		pipelines run --pipeline-run-id $(PIPELINE_RUN_ID)
 
 # --------------------
+# MinIO
+# --------------------
+
+.PHONY: minio-up
+minio-up:
+	docker compose -f $(COMPOSE_FILE) --profile minio up -d minio minio-init
+
+.PHONY: minio-down
+minio-down:
+	docker compose -f $(COMPOSE_FILE) --profile minio stop minio
+	docker compose -f $(COMPOSE_FILE) --profile minio rm -f minio minio-init
+
+# --------------------
 # Checks
 # --------------------
 
@@ -234,6 +257,11 @@ check-imports:
 check-celery:
 	chmod +x scripts/checks/check_celery_broker.sh
 	scripts/checks/check_celery_broker.sh
+
+.PHONY: check-minio
+check-minio:
+	chmod +x scripts/checks/check_minio.sh
+	scripts/checks/check_minio.sh
 
 # --------------------
 # Prepare

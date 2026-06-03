@@ -5,7 +5,8 @@ description = "Storage adapters for SceneOps artifacts"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "sceneops-core",
-  "pydantic>=2.0.0"
+  "pydantic>=2.0.0",
+  "boto3>=1.34.0",
 ]
 
 [tool.uv.sources]
