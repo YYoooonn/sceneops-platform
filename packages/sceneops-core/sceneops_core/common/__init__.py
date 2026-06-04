@@ -1,6 +1,4 @@
-# packages/sceneops-core/sceneops_core/common/__init__.py
-
-from sceneops_core.common.types import (
+from sceneops_core.common.schemas import (
     ArtifactId,
     ArtifactUri,
     DatasetId,

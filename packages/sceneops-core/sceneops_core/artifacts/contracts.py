@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from sceneops_core.common.types import ArtifactUri
+from sceneops_core.common.schemas import ArtifactUri
 
 
 @runtime_checkable

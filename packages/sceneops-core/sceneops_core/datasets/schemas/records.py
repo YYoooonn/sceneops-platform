@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
-from .enums import DatasetType, DatasetVersionStatus
+from .enums import DatasetType, DatasetVersionStatus, SceneOriginType
 
 
 class DatasetRecord(SceneOpsBaseModel):
@@ -27,6 +27,8 @@ class DatasetVersionRecord(SceneOpsBaseModel):
 
     dataset_type: DatasetType | str = DatasetType.CUSTOM
     status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
+
+    origin_type: SceneOriginType = SceneOriginType.REAL
 
     source_uri: str | None = None
     manifest_uri: str | None = None

@@ -7,6 +7,14 @@ def sample_sensor_artifact_id(*, sample_id: str, channel: str) -> str:
     return f"{sample_id}-{channel}"
 
 
+def generate_scene_db_id() -> str:
+    return generate_prefixed_id("scene")
+
+
+def generate_sample_db_id() -> str:
+    return generate_prefixed_id("smpl")
+
+
 def generate_raw_log_id():
     return generate_prefixed_id("rawlog")
 

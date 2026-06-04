@@ -5,6 +5,21 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+ArtifactId = str
+ArtifactUri = str
+DatasetId = str
+DatasetVersion = str
+JobId = str
+JsonList = list[Any]
+JsonValue = str | int | float | bool | None
+Metadata = dict[str, Any]
+ModelId = str
+ModelVersion = str
+PipelineRunId = str
+RunId = str
+JsonDict = dict[str, Any]
+
+
 def to_camel(value: str) -> str:
     first, *rest = value.split("_")
     return first + "".join(word.capitalize() for word in rest)
@@ -24,9 +39,6 @@ class SceneOpsBaseModel(BaseModel):
 
     def to_api_dict(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, mode="json")
-
-
-JsonDict = dict[str, Any]
 
 
 class ErrorInfo(SceneOpsBaseModel):
