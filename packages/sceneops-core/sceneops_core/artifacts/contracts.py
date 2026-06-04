@@ -32,6 +32,12 @@ class ArtifactStore(Protocol):
     ) -> None:
         """Write a JSON artifact."""
 
+    async def read_bytes(self, uri: ArtifactUri) -> bytes:
+        """Read a binary artifact."""
+
+    async def write_bytes(self, uri: ArtifactUri, data: bytes) -> None:
+        """Write a binary artifact."""
+
     async def list_json(self, uri: ArtifactUri) -> list[ArtifactUri]:
         """List JSON artifact URIs under a prefix."""
 
