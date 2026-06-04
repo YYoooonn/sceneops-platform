@@ -12,6 +12,7 @@ class ModelRecord(SceneOpsBaseModel):
     id: str
     name: str | None = None
     description: str | None = None
+    task_type: ModelTaskType = ModelTaskType.DETECTION
     metadata: JsonDict = Field(default_factory=dict)
 
     created_at: datetime | None = None
@@ -31,6 +32,7 @@ class ModelVersionRecord(SceneOpsBaseModel):
 
     model_uri: str | None = None
     endpoint_url: str | None = None
+    artifact_manifest_uri: str | None = None
 
     runtime: JsonDict = Field(default_factory=dict)
     metadata: JsonDict = Field(default_factory=dict)

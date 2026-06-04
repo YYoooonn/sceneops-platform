@@ -5,6 +5,7 @@ from pydantic import Field
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
 from .enums import DatasetStatus, DatasetType, DatasetVersionStatus
+from .validation import DatasetValidationStatus
 
 
 class DatasetRecord(SceneOpsBaseModel):
@@ -39,6 +40,19 @@ class DatasetVersionRecord(SceneOpsBaseModel):
 
     source_dataset_id: str | None = None
     source_dataset_version: str | None = None
+
+    # Latest dataset quality cache.
+    # Source of truth is dataset_run_records.
+    latest_validation_run_id: str | None = None
+    validation_status: DatasetValidationStatus | None = None
+    should_block_pipeline: bool | None = None
+    validation_report_uri: str | None = None
+
+    latest_profile_run_id: str | None = None
+    profile_report_uri: str | None = None
+
+    latest_distribution_run_id: str | None = None
+    distribution_report_uri: str | None = None
 
     created_at: str | None = None
     updated_at: str | None = None

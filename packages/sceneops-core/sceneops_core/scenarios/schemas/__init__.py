@@ -18,7 +18,7 @@ from .predicates import (
     TagPredicate,
     TimeRangePredicate,
 )
-from .records import ScenarioRecord
+from .records import ScenarioRecord, ScenarioSetRecord
 from .requests import (
     GetScenarioRequest,
     GetScenarioSetRequest,
@@ -54,6 +54,7 @@ __all__ = [
     "ScenarioCurationConfig",
     "ScenarioCandidate",
     "ScenarioRecord",
+    "ScenarioSetRecord",
     "ScenarioSetManifest",
     "ScenarioMiningReport",
     "MineScenariosRequest",

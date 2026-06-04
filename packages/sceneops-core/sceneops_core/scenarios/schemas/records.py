@@ -31,3 +31,23 @@ class ScenarioRecord(SceneOpsBaseModel):
     scenario_manifest_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class ScenarioSetRecord(SceneOpsBaseModel):
+    scenario_set_id: str
+
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    name: str | None = None
+    description: str | None = None
+
+    scenario_set_uri: str | None = None
+
+    scenario_count: int = 0
+    tags: list[str] = Field(default_factory=list)
+
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
