@@ -70,14 +70,24 @@ class DatasetVersionModel(Base):
         String(128),
         ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     version: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="registered",
+        server_default=text("'registered'"),
+        index=True,
+    )
     manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scene_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default=text("0")
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
     )
     sample_count: Mapped[int] = mapped_column(
         Integer,
@@ -93,7 +103,10 @@ class DatasetVersionModel(Base):
     )
 
     channels: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
     )
 
     source_dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -102,23 +115,48 @@ class DatasetVersionModel(Base):
     )
 
     latest_validation_run_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
+        String(128),
+        nullable=True,
+        index=True,
     )
-    latest_profile_run_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
-    latest_distribution_run_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
-
     validation_status: Mapped[str | None] = mapped_column(
-        String(32), nullable=True, index=True
+        String(32),
+        nullable=True,
+        index=True,
+    )
+    should_block_pipeline: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+    validation_report_uri: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
     )
 
-    should_block_pipeline: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    latest_profile_run_id: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        index=True,
+    )
+    profile_report_uri: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    latest_distribution_run_id: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        index=True,
+    )
+    distribution_report_uri: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

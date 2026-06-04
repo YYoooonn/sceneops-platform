@@ -11,7 +11,7 @@ from sceneops_db.base import Base
 
 
 class ArtifactRefModel(Base):
-    __tablename__ = "artifacts_ref"
+    __tablename__ = "artifacts_refs"
 
     artifact_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
@@ -45,13 +45,14 @@ class ArtifactRefModel(Base):
     checksum: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
-Index("ix_artifacts_kind", ArtifactRefModel.kind)
-Index("ix_artifacts_run_id", ArtifactRefModel.run_id)
-Index("ix_artifacts_job_id", ArtifactRefModel.job_id)
-Index("ix_artifacts_pipeline_run_id", ArtifactRefModel.pipeline_run_id)
+Index("ix_artifact_refs_kind", ArtifactRefModel.kind)
+Index("ix_artifact_refs_run_id", ArtifactRefModel.run_id)
+Index("ix_artifact_refs_job_id", ArtifactRefModel.job_id)
+Index("ix_artifact_refs_pipeline_run_id", ArtifactRefModel.pipeline_run_id)
 Index(
-    "ix_artifacts_dataset",
+    "ix_artifact_refs_dataset",
     ArtifactRefModel.dataset_id,
     ArtifactRefModel.dataset_version,
 )
-Index("ix_artifacts_scene_id", ArtifactRefModel.scene_id)
+Index("ix_artifact_refs_scene_id", ArtifactRefModel.scene_id)
+Index("ix_artifact_refs_owner", ArtifactRefModel.owner_type, ArtifactRefModel.owner_id)
