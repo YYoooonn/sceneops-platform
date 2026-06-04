@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.jobs.schemas import (
@@ -21,15 +23,15 @@ class JobTimelineEvent(SceneOpsBaseModel):
     level: JobEventLevel
     message: str | None = None
     payload: JsonDict = Field(default_factory=dict)
-    created_at: str | None = None
+    created_at: datetime | None = None
 
 
 class JobTimelineStep(SceneOpsBaseModel):
     step_id: str
     name: str
     status: str
-    started_at: str | None = None
-    finished_at: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     duration_ms: int | None = None
 
 
@@ -43,11 +45,11 @@ class JobTimelineResponse(SceneOpsBaseModel):
     pipeline_step_run_id: str | None = None
     pipeline_step_name: str | None = None
 
-    queued_at: str | None = None
-    locked_at: str | None = None
-    started_at: str | None = None
-    heartbeat_at: str | None = None
-    finished_at: str | None = None
+    queued_at: datetime | None = None
+    locked_at: datetime | None = None
+    started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    finished_at: datetime | None = None
 
     queue_latency_ms: int | None = None
     duration_ms: int | None = None
@@ -71,8 +73,8 @@ class PipelineStepTimelineItem(SceneOpsBaseModel):
 
     depends_on_step_ids: list[str] = Field(default_factory=list)
 
-    started_at: str | None = None
-    finished_at: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     duration_ms: int | None = None
 
     error_type: str | None = None
@@ -89,9 +91,9 @@ class PipelineTimelineResponse(SceneOpsBaseModel):
     model_id: str | None = None
     model_version: str | None = None
 
-    created_at: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
     queue_latency_ms: int | None = None
     duration_ms: int | None = None
@@ -117,10 +119,10 @@ class RecentFailureItem(SceneOpsBaseModel):
     error_type: str | None = None
     error_message: str | None = None
 
-    created_at: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class OperationsSummaryResponse(SceneOpsBaseModel):

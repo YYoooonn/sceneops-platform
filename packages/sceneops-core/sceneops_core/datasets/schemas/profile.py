@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import Field
@@ -42,6 +44,6 @@ class DatasetProfileReport(SceneOpsBaseModel):
 
     timestamp_summary: JsonDict = Field(default_factory=dict)
 
-    created_at: str | None = None
+    created_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

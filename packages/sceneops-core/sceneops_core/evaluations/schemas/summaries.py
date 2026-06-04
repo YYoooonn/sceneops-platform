@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import Field
@@ -32,6 +33,6 @@ class EvaluationRunSummaryItem(SceneOpsBaseModel):
     class_metrics: dict[str, Any] = Field(default_factory=dict)
     metadata: JsonDict = Field(default_factory=dict)
 
-    created_at: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

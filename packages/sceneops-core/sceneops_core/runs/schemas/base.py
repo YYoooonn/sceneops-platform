@@ -25,8 +25,8 @@ class BaseRunRecord(SceneOpsBaseModel):
     artifact_root_uri: str | None = None
     manifest_uri: str | None = None
 
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 

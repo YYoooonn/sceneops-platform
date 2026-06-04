@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
@@ -26,8 +28,8 @@ class SceneRecord(SceneOpsBaseModel):
     frame_count: int = 0
     channels: list[str] = Field(default_factory=list)
 
-    started_at: str | None = None
-    ended_at: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

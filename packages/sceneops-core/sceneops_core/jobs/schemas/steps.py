@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 
 from pydantic import Field
 
@@ -25,8 +26,8 @@ class JobStep(SceneOpsBaseModel):
 
     status: JobStepStatus = JobStepStatus.PENDING
 
-    started_at: str | None = None
-    finished_at: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
     input: JsonDict | None = None
     output: JsonDict | None = None

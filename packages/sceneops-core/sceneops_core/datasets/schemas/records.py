@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
@@ -18,8 +20,8 @@ class DatasetRecord(SceneOpsBaseModel):
 
     default_version: str | None = None
 
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -54,7 +56,7 @@ class DatasetVersionRecord(SceneOpsBaseModel):
     latest_distribution_run_id: str | None = None
     distribution_report_uri: str | None = None
 
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

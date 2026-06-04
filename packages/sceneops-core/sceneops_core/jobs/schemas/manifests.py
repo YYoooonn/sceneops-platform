@@ -41,7 +41,7 @@ class JobManifest(SceneOpsBaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

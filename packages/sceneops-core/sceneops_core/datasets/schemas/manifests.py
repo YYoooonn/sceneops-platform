@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
@@ -46,6 +48,6 @@ class DatasetManifest(SceneOpsBaseModel):
     validation_summary: JsonDict = Field(default_factory=dict)
     profile_summary: JsonDict = Field(default_factory=dict)
 
-    created_at: str | None = None
+    created_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

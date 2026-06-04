@@ -41,4 +41,4 @@ class JobEvent(SceneOpsBaseModel):
 
     data: JsonDict = Field(default_factory=dict)
 
-    created_at: datetime
+    created_at: datetime | None = None

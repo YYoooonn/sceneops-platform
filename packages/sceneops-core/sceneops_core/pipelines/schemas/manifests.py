@@ -27,8 +27,8 @@ class PipelineRunManifest(SceneOpsBaseModel):
     result: PipelineRunResult | None = None
     error: ErrorInfo | None = None
 
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
@@ -55,8 +55,8 @@ class PipelineStepRunManifest(SceneOpsBaseModel):
     result: PipelineStepResult | None = None
     error: ErrorInfo | None = None
 
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 

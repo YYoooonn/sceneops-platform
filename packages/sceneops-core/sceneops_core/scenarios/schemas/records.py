@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
@@ -47,7 +49,7 @@ class ScenarioSetRecord(SceneOpsBaseModel):
     scenario_count: int = 0
     tags: list[str] = Field(default_factory=list)
 
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
