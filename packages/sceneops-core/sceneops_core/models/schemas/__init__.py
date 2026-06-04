@@ -1,4 +1,4 @@
-from .enums import ModelBackend, ModelVersionStatus
+from .enums import ModelBackend, ModelTaskType, ModelVersionStatus
 from .records import ModelRecord, ModelVersionRecord
 from .responses import (
     ModelListResponse,
@@ -12,10 +12,12 @@ from .requests import (
     CreateModelVersionRequest,
     UpsertModelVersionRequest,
 )
+from .artifacts import ModelArtifactManifest
 
 __all__ = [
     "ModelBackend",
     "ModelVersionStatus",
+    "ModelTaskType",
     "ModelRecord",
     "ModelVersionRecord",
     "ModelListResponse",
@@ -26,4 +28,5 @@ __all__ = [
     "UpsertModelRequest",
     "CreateModelVersionRequest",
     "UpsertModelVersionRequest",
+    "ModelArtifactManifest",
 ]

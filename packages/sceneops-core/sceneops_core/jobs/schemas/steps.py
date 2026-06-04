@@ -1,36 +1,38 @@
 from __future__ import annotations
 
-from datetime import datetime
 
-from sceneops_core.common.schemas import SceneOpsBaseModel
-from sceneops_core.constants.jobs import (
-    EVALUATE_DETECTION_STEPS,
-    INGEST_DATASET_STEPS,
-    PREDICT_MOCK_DETECTION_STEPS,
-    VALIDATE_DATASET_STEPS,
-)
+from pydantic import Field
 
-from .enums import JobStepStatus, JobType
+from sceneops_core.common.schemas import ErrorInfo, JsonDict, SceneOpsBaseModel
+
+from .enums import JobStepStatus
+
+
+class JobStepDefinition(SceneOpsBaseModel):
+    step_id: str
+    name: str
+
+    description: str | None = None
+
+    optional: bool = False
+
+    metadata: JsonDict = Field(default_factory=dict)
 
 
 class JobStep(SceneOpsBaseModel):
+    step_id: str
     name: str
+
     status: JobStepStatus = JobStepStatus.PENDING
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
 
+    started_at: str | None = None
+    finished_at: str | None = None
 
-def build_default_steps(job_type: JobType) -> list[JobStep]:
-    if job_type == JobType.INGEST_DATASET:
-        return [JobStep(name=name) for name in INGEST_DATASET_STEPS]
+    input: JsonDict | None = None
+    output: JsonDict | None = None
+    error: ErrorInfo | None = None
 
-    if job_type == JobType.VALIDATE_DATASET:
-        return [JobStep(name=name) for name in VALIDATE_DATASET_STEPS]
+    produced_artifacts: dict[str, str] = Field(default_factory=dict)
+    consumed_artifacts: dict[str, str] = Field(default_factory=dict)
 
-    if job_type == JobType.PREDICT_DETECTION:
-        return [JobStep(name=name) for name in PREDICT_MOCK_DETECTION_STEPS]
-
-    if job_type == JobType.EVALUATE_DETECTION:
-        return [JobStep(name=name) for name in EVALUATE_DETECTION_STEPS]
-
-    return []
+    metadata: JsonDict = Field(default_factory=dict)

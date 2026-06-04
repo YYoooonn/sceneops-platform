@@ -4,22 +4,30 @@ from datetime import datetime
 
 from pydantic import Field
 
-from sceneops_core.common.schemas import SceneOpsBaseModel, ErrorInfo, JsonDict
-from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.common.schemas import ErrorInfo, JsonDict, SceneOpsBaseModel
+
+from .enums import RunStatus, RunType
 
 
 class BaseRunRecord(SceneOpsBaseModel):
-    id: str
+    run_id: str
+    type: RunType
     status: RunStatus = RunStatus.PENDING
 
     pipeline_run_id: str | None = None
     pipeline_step_run_id: str | None = None
     job_id: str | None = None
 
-    metadata: JsonDict = Field(default_factory=dict)
+    params: JsonDict = Field(default_factory=dict)
+    result: JsonDict | None = None
     error: ErrorInfo | None = None
 
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    artifact_root_uri: str | None = None
+    manifest_uri: str | None = None
+
+    created_at: datetime
+    updated_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)

@@ -31,6 +31,10 @@ from .responses import (
     ScenarioMiningReportResponse,
     ScenarioSetDetailResponse,
 )
+from .runs import (
+    ScenarioMiningRunRecord,
+    ScenarioReadinessRunRecord,
+)
 
 __all__ = [
     "ScenarioStatus",
@@ -60,4 +64,6 @@ __all__ = [
     "ScenarioCandidateListResponse",
     "ScenarioSetDetailResponse",
     "ScenarioMiningReportResponse",
+    "ScenarioMiningRunRecord",
+    "ScenarioReadinessRunRecord",
 ]

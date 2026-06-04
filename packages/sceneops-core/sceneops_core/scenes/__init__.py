@@ -31,6 +31,11 @@ from .schemas import (
     SceneSensorFrameManifest,
     SceneStatus,
     WorldStateManifest,
+    SceneComparisonRunRecord,
+    ScenePackageExportRunRecord,
+    SceneProfileRunRecord,
+    SceneReconstructionRunRecord,
+    SceneValidationRunRecord,
 )
 
 __all__ = [
@@ -66,4 +71,9 @@ __all__ = [
     "SceneSampleListResponse",
     "SceneSegmentListResponse",
     "SceneSegmentIndexResponse",
+    "SceneComparisonRunRecord",
+    "ScenePackageExportRunRecord",
+    "SceneProfileRunRecord",
+    "SceneReconstructionRunRecord",
+    "SceneValidationRunRecord",
 ]

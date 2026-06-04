@@ -4,16 +4,27 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
-from .enums import DatasetManifestStatus
+from .enums import DatasetManifestStatus, DatasetSplit
 
 
 class DatasetSceneIndexEntry(SceneOpsBaseModel):
     scene_id: str
+
     scene_manifest_uri: str
+
+    split: DatasetSplit = DatasetSplit.UNASSIGNED
 
     sample_count: int = 0
     frame_count: int = 0
     channels: list[str] = Field(default_factory=list)
+
+    start_timestamp_us: int | None = None
+    end_timestamp_us: int | None = None
+
+    raw_log_id: str | None = None
+    segment_id: str | None = None
+
+    tags: list[str] = Field(default_factory=list)
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -34,5 +45,7 @@ class DatasetManifest(SceneOpsBaseModel):
 
     validation_summary: JsonDict = Field(default_factory=dict)
     profile_summary: JsonDict = Field(default_factory=dict)
+
+    created_at: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

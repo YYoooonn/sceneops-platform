@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
-from sceneops_core.models.schemas import ModelBackend, ModelVersionStatus
+from .enums import ModelBackend, ModelTaskType, ModelVersionStatus
 
 
 class ModelRecord(SceneOpsBaseModel):
@@ -23,6 +23,8 @@ class ModelVersionRecord(SceneOpsBaseModel):
 
     model_id: str
     version: str
+
+    task_type: ModelTaskType = ModelTaskType.DETECTION
 
     backend: ModelBackend = ModelBackend.MOCK
     status: ModelVersionStatus = ModelVersionStatus.REGISTERED

@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-from sceneops_core.common.schemas import SceneOpsBaseModel
+from pydantic import Field
 
-from .events import JobEventManifest
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
+
+from .events import JobEvent
 from .manifests import JobManifest
+
+
+class JobDetailResponse(SceneOpsBaseModel):
+    job: JobManifest
+
+    events: list[JobEvent] = Field(default_factory=list)
+
+    metadata: JsonDict = Field(default_factory=dict)
 
 
 class JobListResponse(SceneOpsBaseModel):
@@ -12,5 +22,5 @@ class JobListResponse(SceneOpsBaseModel):
 
 
 class JobEventListResponse(SceneOpsBaseModel):
-    events: list[JobEventManifest]
+    events: list[JobEvent]
     count: int

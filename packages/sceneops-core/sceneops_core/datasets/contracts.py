@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Generic, Protocol, TypeVar, runtime_checkable
 
-DatasetIngestionRequestT = TypeVar("DatasetIngestionRequestT", contravariant=True)
-DatasetIngestionResultT = TypeVar("DatasetIngestionResultT", covariant=True)
+DatasetAssemblyRequestT = TypeVar("DatasetAssemblyRequestT", contravariant=True)
+DatasetAssemblyResultT = TypeVar("DatasetAssemblyResultT", covariant=True)
 
 DatasetValidationRequestT = TypeVar("DatasetValidationRequestT", contravariant=True)
 DatasetValidationResultT = TypeVar("DatasetValidationResultT", covariant=True)
@@ -13,25 +13,25 @@ DatasetProfileResultT = TypeVar("DatasetProfileResultT", covariant=True)
 
 
 @runtime_checkable
-class DatasetIngestor(
+class DatasetAssembler(
     Protocol,
-    Generic[DatasetIngestionRequestT, DatasetIngestionResultT],
+    Generic[DatasetAssemblyRequestT, DatasetAssemblyResultT],
 ):
-    """Port-like contract for dataset ingestion.
+    """Port-like contract for assembling a dataset version from scene manifests.
 
-    Implementations may ingest nuScenes, ROS bags, custom robot logs,
-    or simulation-generated datasets into SceneOps manifests.
+    This does not ingest raw sensor logs. It builds or updates a dataset
+    manifest as a versioned collection of scene manifest references.
     """
 
     @property
-    def dataset_type(self) -> str:
-        """Stable dataset type identifier, e.g. nuscenes."""
+    def assembler_id(self) -> str:
+        """Stable assembler identifier, e.g. scene-dataset-assembler."""
 
     async def run(
         self,
-        request: DatasetIngestionRequestT,
-    ) -> DatasetIngestionResultT:
-        """Ingest a dataset version and return a task-specific result."""
+        request: DatasetAssemblyRequestT,
+    ) -> DatasetAssemblyResultT:
+        """Assemble a dataset manifest from scene references."""
 
 
 @runtime_checkable
@@ -39,11 +39,11 @@ class DatasetValidator(
     Protocol,
     Generic[DatasetValidationRequestT, DatasetValidationResultT],
 ):
-    """Port-like contract for dataset quality validation."""
+    """Port-like contract for dataset-level quality validation."""
 
     @property
     def validator_id(self) -> str:
-        """Stable validator identifier, e.g. manifest-validator."""
+        """Stable validator identifier, e.g. dataset-manifest-validator."""
 
     async def run(
         self,
@@ -57,7 +57,7 @@ class DatasetProfiler(
     Protocol,
     Generic[DatasetProfileRequestT, DatasetProfileResultT],
 ):
-    """Port-like contract for dataset profiling."""
+    """Port-like contract for dataset-level profiling."""
 
     @property
     def profiler_id(self) -> str:

@@ -34,6 +34,13 @@ from .world_state import (
     SceneNodeType,
     WorldStateManifest,
 )
+from .runs import (
+    SceneComparisonRunRecord,
+    ScenePackageExportRunRecord,
+    SceneProfileRunRecord,
+    SceneReconstructionRunRecord,
+    SceneValidationRunRecord,
+)
 
 __all__ = [
     "SceneStatus",
@@ -68,4 +75,9 @@ __all__ = [
     "SceneSampleListResponse",
     "SceneSegmentListResponse",
     "SceneSegmentIndexResponse",
+    "SceneComparisonRunRecord",
+    "ScenePackageExportRunRecord",
+    "SceneProfileRunRecord",
+    "SceneReconstructionRunRecord",
+    "SceneValidationRunRecord",
 ]

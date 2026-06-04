@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 from sceneops_core.common.schemas import SceneOpsBaseModel
+
+from .manifests import DatasetManifest
+from .profile import DatasetProfileReport
 from .records import DatasetRecord, DatasetVersionRecord
+from .validation import DatasetValidationReport
+
+
+class DatasetDetailResponse(SceneOpsBaseModel):
+    dataset: DatasetRecord
 
 
 class DatasetListResponse(SceneOpsBaseModel):
@@ -9,8 +17,8 @@ class DatasetListResponse(SceneOpsBaseModel):
     count: int
 
 
-class DatasetDetailResponse(SceneOpsBaseModel):
-    dataset: DatasetRecord
+class DatasetVersionDetailResponse(SceneOpsBaseModel):
+    version: DatasetVersionRecord
 
 
 class DatasetVersionListResponse(SceneOpsBaseModel):
@@ -18,5 +26,13 @@ class DatasetVersionListResponse(SceneOpsBaseModel):
     count: int
 
 
-class DatasetVersionDetailResponse(SceneOpsBaseModel):
-    version: DatasetVersionRecord
+class DatasetManifestResponse(SceneOpsBaseModel):
+    manifest: DatasetManifest
+
+
+class DatasetValidationReportResponse(SceneOpsBaseModel):
+    report: DatasetValidationReport
+
+
+class DatasetProfileReportResponse(SceneOpsBaseModel):
+    report: DatasetProfileReport

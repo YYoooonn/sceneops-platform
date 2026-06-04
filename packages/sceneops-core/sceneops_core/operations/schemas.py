@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from sceneops_core.common.schemas import SceneOpsBaseModel
+from pydantic import Field
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.jobs.schemas import (
     JobEventLevel,
     JobEventType,
@@ -19,11 +20,12 @@ class JobTimelineEvent(SceneOpsBaseModel):
     event_type: JobEventType
     level: JobEventLevel
     message: str | None = None
-    payload: dict | None = None
+    payload: JsonDict = Field(default_factory=dict)
     created_at: str | None = None
 
 
 class JobTimelineStep(SceneOpsBaseModel):
+    step_id: str
     name: str
     status: str
     started_at: str | None = None
@@ -60,13 +62,14 @@ class JobTimelineResponse(SceneOpsBaseModel):
 
 class PipelineStepTimelineItem(SceneOpsBaseModel):
     pipeline_step_run_id: str
+    step_id: str
     step_name: str
     step_order: int
     job_type: JobType
     job_id: str | None = None
     status: PipelineStepRunStatus
 
-    depends_on_step_names: list[str] = []
+    depends_on_step_ids: list[str] = Field(default_factory=list)
 
     started_at: str | None = None
     finished_at: str | None = None

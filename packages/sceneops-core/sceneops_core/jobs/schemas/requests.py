@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from sceneops_core.common.schemas import SceneOpsBaseModel
-from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from .enums import JobType
 
 
@@ -20,3 +19,6 @@ class CreateJobRequest(SceneOpsBaseModel):
     pipeline_step_name: str | None = None
 
     max_retries: int = 0
+    idempotency_key: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)

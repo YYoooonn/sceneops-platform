@@ -1,38 +1,44 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import StrEnum
 
 from pydantic import Field
 
-from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
+from sceneops_core.common.schemas import ErrorInfo, JsonDict, SceneOpsBaseModel
+
+from .enums import JobEventLevel, JobEventType, JobStatus, JobStepStatus, JobType
 
 
-class JobEventType(StrEnum):
-    JOB_CREATED = "job_created"
-    JOB_STARTED = "job_started"
-    JOB_SUCCEEDED = "job_succeeded"
-    JOB_FAILED = "job_failed"
-
-    STEP_STARTED = "step_started"
-    STEP_SUCCEEDED = "step_succeeded"
-    STEP_FAILED = "step_failed"
-
-    JOB_CANCELED = "job_canceled"
-    JOB_RETRYING = "job_retrying"
-
-
-class JobEventLevel(StrEnum):
-    INFO = "info"
-    WARNING = "warning"
-    ERROR = "error"
-
-
-class JobEventManifest(SceneOpsBaseModel):
+class JobEvent(SceneOpsBaseModel):
     event_id: str
     job_id: str
-    event_type: JobEventType
+
+    type: JobEventType
+
+    job_type: JobType | None = None
     level: JobEventLevel = JobEventLevel.INFO
+
+    # Current or target job status after this event.
+    status: JobStatus | None = None
+
+    # Optional step context.
+    step_id: str | None = None
+    step_name: str | None = None
+    step_status: JobStepStatus | None = None
+
+    # Optional pipeline context snapshot.
+    pipeline_run_id: str | None = None
+    pipeline_step_run_id: str | None = None
+    pipeline_step_name: str | None = None
+
+    # Worker/runtime context.
+    worker_id: str | None = None
+    attempt: int | None = None
+
     message: str | None = None
-    payload: JsonDict = Field(default_factory=dict)
-    created_at: datetime | None = None
+
+    error: ErrorInfo | None = None
+
+    data: JsonDict = Field(default_factory=dict)
+
+    created_at: datetime

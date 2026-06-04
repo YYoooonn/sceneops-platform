@@ -1,16 +1,18 @@
-from sceneops_core.evaluations.contracts import Evaluator
-from sceneops_core.evaluations.metrics import (
+from .metrics import (
     AUTO_LABEL_QUALITY_METRIC_SPECS,
     DETECTION_METRIC_SPECS,
+    METRIC_SPECS_BY_TASK,
     get_metric_direction,
     get_metric_specs_for_task,
     is_descending_sort,
 )
-from sceneops_core.evaluations.schemas import (
+from .schemas import (
     EvaluationComparisonResponse,
     EvaluationLeaderboardResponse,
     EvaluationMetricKey,
     EvaluationMetricSpec,
+    EvaluationMetricValue,
+    EvaluationRunRecord,
     EvaluationRunSummaryItem,
     EvaluationTaskType,
     LeaderboardItem,
@@ -20,20 +22,22 @@ from sceneops_core.evaluations.schemas import (
 )
 
 __all__ = [
-    "Evaluator",
-    "AUTO_LABEL_QUALITY_METRIC_SPECS",
-    "DETECTION_METRIC_SPECS",
-    "EvaluationComparisonResponse",
-    "EvaluationLeaderboardResponse",
-    "EvaluationMetricKey",
-    "EvaluationMetricSpec",
-    "EvaluationRunSummaryItem",
     "EvaluationTaskType",
-    "LeaderboardItem",
-    "LeaderboardSortBy",
     "MetricDirection",
+    "EvaluationMetricKey",
+    "LeaderboardSortBy",
+    "EvaluationMetricSpec",
+    "EvaluationMetricValue",
+    "EvaluationRunRecord",
+    "EvaluationRunSummaryItem",
+    "EvaluationComparisonResponse",
     "ModelVersionEvaluationHistoryResponse",
-    "get_metric_direction",
+    "LeaderboardItem",
+    "EvaluationLeaderboardResponse",
+    "DETECTION_METRIC_SPECS",
+    "AUTO_LABEL_QUALITY_METRIC_SPECS",
+    "METRIC_SPECS_BY_TASK",
     "get_metric_specs_for_task",
+    "get_metric_direction",
     "is_descending_sort",
 ]

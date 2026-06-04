@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from sceneops_core.common.schemas import SceneOpsBaseModel
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
 from .enums import ExecutionBackend, ExecutionKind, ExecutionStatus
 
@@ -17,3 +17,5 @@ class ExecutionDispatchResult(SceneOpsBaseModel):
     # Celery task id, Airflow dag_run_id, K8s job name 등 외부 실행 ID.
     # 지금은 execution_id와 동일하게
     external_id: str | None = Field(default=None)
+
+    metadata: JsonDict = Field(default_factory=dict)

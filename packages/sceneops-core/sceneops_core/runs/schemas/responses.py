@@ -1,47 +1,16 @@
 from __future__ import annotations
 
-from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
+from pydantic import Field
 
-from .dataset_validation import DatasetValidationRunRecord
-from .dataset_profile import DatasetProfileRunRecord
-from .evaluation import EvaluationRunRecord
-from .inference import InferenceRunRecord
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
+
+from .refs import RunRef
 
 
-class InferenceRunListResponse(SceneOpsBaseModel):
-    runs: list[InferenceRunRecord]
+class RunRefListResponse(SceneOpsBaseModel):
+    runs: list[RunRef]
     count: int
-
-
-class InferenceRunDetailResponse(SceneOpsBaseModel):
-    run: InferenceRunRecord
-
-
-class EvaluationRunListResponse(SceneOpsBaseModel):
-    runs: list[EvaluationRunRecord]
-    count: int
-
-
-class EvaluationRunDetailResponse(SceneOpsBaseModel):
-    run: EvaluationRunRecord
-
-
-class DatasetValidationRunListResponse(SceneOpsBaseModel):
-    runs: list[DatasetValidationRunRecord]
-    count: int
-
-
-class DatasetValidationRunDetailResponse(SceneOpsBaseModel):
-    run: DatasetValidationRunRecord
-
-
-class DatasetProfileRunListResponse(SceneOpsBaseModel):
-    runs: list[DatasetProfileRunRecord]
-    count: int
-
-
-class DatasetProfileRunDetailResponse(SceneOpsBaseModel):
-    run: DatasetProfileRunRecord
+    metadata: JsonDict = Field(default_factory=dict)
 
 
 class RunArtifactResponse(SceneOpsBaseModel):

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from sceneops_core.evaluations.schemas import (
+from sceneops_core.evaluations.schemas.enums import (
     EvaluationMetricKey,
-    EvaluationMetricSpec,
     EvaluationTaskType,
     LeaderboardSortBy,
     MetricDirection,
 )
+from sceneops_core.evaluations.schemas.metrics import EvaluationMetricSpec
 
 
 DETECTION_METRIC_SPECS: list[EvaluationMetricSpec] = [
@@ -32,6 +32,56 @@ DETECTION_METRIC_SPECS: list[EvaluationMetricSpec] = [
         direction=MetricDirection.HIGHER_IS_BETTER,
     ),
 ]
+
+SCENE_COMPARISON_METRIC_SPECS: list[EvaluationMetricSpec] = [
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.GEOMETRY_ERROR.value,
+        label="Geometry Error",
+        direction=MetricDirection.LOWER_IS_BETTER,
+        unit="m",
+        description="Mean positional error between source and target scene geometry.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.TRAJECTORY_ERROR.value,
+        label="Trajectory Error",
+        direction=MetricDirection.LOWER_IS_BETTER,
+        unit="m",
+        description="Mean displacement error between corresponding agent trajectories.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.ANNOTATION_F1.value,
+        label="Annotation F1",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        description="F1 score for matching annotations between source and target scene.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.SAMPLE_COUNT.value,
+        label="Sample Count",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+    ),
+]
+
+
+SCENARIO_READINESS_METRIC_SPECS: list[EvaluationMetricSpec] = [
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.READINESS_SCORE.value,
+        label="Readiness Score",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+        description="Composite score indicating overall scenario readiness for training or evaluation.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.BLOCKED_COUNT.value,
+        label="Blocked Count",
+        direction=MetricDirection.LOWER_IS_BETTER,
+        description="Number of scenarios blocked due to quality or coverage issues.",
+    ),
+    EvaluationMetricSpec(
+        key=EvaluationMetricKey.SAMPLE_COUNT.value,
+        label="Sample Count",
+        direction=MetricDirection.HIGHER_IS_BETTER,
+    ),
+]
+
 
 AUTO_LABEL_QUALITY_METRIC_SPECS: list[EvaluationMetricSpec] = [
     EvaluationMetricSpec(
@@ -66,16 +116,18 @@ AUTO_LABEL_QUALITY_METRIC_SPECS: list[EvaluationMetricSpec] = [
 ]
 
 
-_METRIC_SPECS_BY_TASK: dict[EvaluationTaskType, list[EvaluationMetricSpec]] = {
+METRIC_SPECS_BY_TASK: dict[EvaluationTaskType, list[EvaluationMetricSpec]] = {
     EvaluationTaskType.DETECTION: DETECTION_METRIC_SPECS,
     EvaluationTaskType.AUTO_LABEL_QUALITY: AUTO_LABEL_QUALITY_METRIC_SPECS,
+    EvaluationTaskType.SCENE_COMPARISON: SCENE_COMPARISON_METRIC_SPECS,
+    EvaluationTaskType.SCENARIO_READINESS: SCENARIO_READINESS_METRIC_SPECS,
 }
 
 
 def get_metric_specs_for_task(
     task_type: EvaluationTaskType,
 ) -> list[EvaluationMetricSpec]:
-    return _METRIC_SPECS_BY_TASK.get(task_type, [])
+    return METRIC_SPECS_BY_TASK.get(task_type, [])
 
 
 def get_metric_direction(

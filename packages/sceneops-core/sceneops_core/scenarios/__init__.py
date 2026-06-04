@@ -26,6 +26,8 @@ from .schemas import (
     SensorChannelPredicate,
     TagPredicate,
     TimeRangePredicate,
+    ScenarioMiningRunRecord,
+    ScenarioReadinessRunRecord,
 )
 
 __all__ = [
@@ -56,4 +58,6 @@ __all__ = [
     "ScenarioCandidateListResponse",
     "ScenarioSetDetailResponse",
     "ScenarioMiningReportResponse",
+    "ScenarioMiningRunRecord",
+    "ScenarioReadinessRunRecord",
 ]

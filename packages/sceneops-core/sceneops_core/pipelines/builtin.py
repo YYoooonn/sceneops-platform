@@ -1,5 +1,3 @@
-# packages/sceneops-core/sceneops_core/pipelines/builtin.py
-
 from __future__ import annotations
 
 from sceneops_core.jobs.schemas import JobType
@@ -11,67 +9,308 @@ from sceneops_core.pipelines.schemas import (
 )
 
 
-DATASET_INGESTION_PIPELINE = PipelineDefinition(
-    type=PipelineType.DATASET_INGESTION,
-    name="Dataset Ingestion",
-    description="Ingest, validate, and profile a dataset version.",
+DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
+    type=PipelineType.DATASET_SCENE_INGESTION,
+    name="Dataset Scene Ingestion",
+    description=(
+        "Import existing scene-aware datasets such as nuScenes, Waymo, or KITTI "
+        "into SceneOps scene manifests, then build a dataset manifest."
+    ),
     steps=[
         PipelineStepDefinition(
-            name="ingest",
+            step_id="ingest_scenes",
+            name="Ingest scenes",
             order=0,
-            job_type=JobType.INGEST_DATASET,
-            depends_on=[],
+            job_type=JobType.INGEST_SCENES,
             default_params={
-                "dataset_type": "nuscenes",
+                "source_format": "nuscenes",
                 "mode": "upsert",
             },
         ),
         PipelineStepDefinition(
-            name="validate",
+            step_id="validate_scene",
+            name="Validate scene",
             order=1,
-            job_type=JobType.VALIDATE_DATASET,
-            depends_on=["ingest"],
+            job_type=JobType.VALIDATE_SCENE,
+            depends_on=["ingest_scenes"],
             default_params={
-                "validate_samples": True,
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
+            },
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="profile_scene",
+            name="Profile scene",
+            order=2,
+            job_type=JobType.PROFILE_SCENE,
+            depends_on=["ingest_scenes"],
+            default_params={
+                "profile_samples": True,
+                "profile_assets": True,
+            },
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="build_dataset_manifest",
+            name="Build dataset manifest",
+            order=3,
+            job_type=JobType.BUILD_DATASET_MANIFEST,
+            depends_on=["ingest_scenes"],
+        ),
+    ],
+)
+
+
+RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.RAW_LOG_SCENE_BUILDING,
+    name="Raw Log Scene Building",
+    description=(
+        "Build SceneOps scene manifests from raw logs or raw sensor streams, "
+        "then aggregate them into a dataset manifest."
+    ),
+    steps=[
+        PipelineStepDefinition(
+            step_id="build_scenes",
+            name="Build scenes",
+            order=0,
+            job_type=JobType.BUILD_SCENES,
+            default_params={
+                "build_assets": True,
+                "build_world_state": False,
             },
         ),
         PipelineStepDefinition(
-            name="profile",
-            order=2,
-            job_type=JobType.PROFILE_DATASET,
-            depends_on=["validate"],
+            step_id="validate_scene",
+            name="Validate scene",
+            order=1,
+            job_type=JobType.VALIDATE_SCENE,
+            depends_on=["build_scenes"],
             default_params={
-                "profile_samples": True,
-                "profile_annotations": True,
-                "profile_sensor_coverage": True,
-                "profile_scene_distribution": True,
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
+            },
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="profile_scene",
+            name="Profile scene",
+            order=2,
+            job_type=JobType.PROFILE_SCENE,
+            depends_on=["build_scenes"],
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="build_dataset_manifest",
+            name="Build dataset manifest",
+            order=3,
+            job_type=JobType.BUILD_DATASET_MANIFEST,
+            depends_on=["build_scenes"],
+        ),
+    ],
+)
+
+
+SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
+    type=PipelineType.SCENE_RECONSTRUCTION,
+    name="Scene Reconstruction",
+    description=(
+        "Build physics-grounded scene representation from raw logs, validate/profile "
+        "the scene, and export a reconstruction package."
+    ),
+    steps=[
+        PipelineStepDefinition(
+            step_id="build_scenes",
+            name="Build scenes",
+            order=0,
+            job_type=JobType.BUILD_SCENES,
+            default_params={
+                "build_assets": True,
+                "build_world_state": True,
+            },
+        ),
+        PipelineStepDefinition(
+            step_id="validate_scene",
+            name="Validate scene",
+            order=1,
+            job_type=JobType.VALIDATE_SCENE,
+            depends_on=["build_scenes"],
+            default_params={
+                "require_world_state": True,
+                "require_assets": True,
+            },
+        ),
+        PipelineStepDefinition(
+            step_id="profile_scene",
+            name="Profile scene",
+            order=2,
+            job_type=JobType.PROFILE_SCENE,
+            depends_on=["build_scenes"],
+            default_params={
+                "profile_assets": True,
+                "profile_world_state": True,
+            },
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="export_scene_package",
+            name="Export scene package",
+            order=3,
+            job_type=JobType.EXPORT_SCENE_PACKAGE,
+            depends_on=["validate_scene"],
+            default_params={
+                "package_type": "reconstruction",
+                "include_assets": True,
+                "include_world_state": True,
             },
         ),
     ],
 )
 
 
-DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
-    type=PipelineType.DETECTION_VALIDATION,
-    name="Detection Validation",
-    description="Run prediction and evaluate detection metrics on a ready dataset.",
+SCENE_REGISTRATION_PIPELINE = PipelineDefinition(
+    type=PipelineType.SCENE_REGISTRATION,
+    name="Scene Registration",
+    description=(
+        "Register a generated, reconstructed, simulated, or re-observed scene "
+        "and run basic scene-level quality checks."
+    ),
     steps=[
         PipelineStepDefinition(
-            name="predict",
+            step_id="register_scene",
+            name="Register scene",
+            order=0,
+            job_type=JobType.REGISTER_SCENE,
+        ),
+        PipelineStepDefinition(
+            step_id="validate_scene",
+            name="Validate scene",
+            order=1,
+            job_type=JobType.VALIDATE_SCENE,
+            depends_on=["register_scene"],
+            default_params={
+                "require_assets": True,
+            },
+        ),
+        PipelineStepDefinition(
+            step_id="profile_scene",
+            name="Profile scene",
+            order=2,
+            job_type=JobType.PROFILE_SCENE,
+            depends_on=["register_scene"],
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="compare_scenes",
+            name="Compare scenes",
+            order=3,
+            job_type=JobType.COMPARE_SCENES,
+            depends_on=["validate_scene"],
+            optional=True,
+        ),
+    ],
+)
+
+
+SCENARIO_CURATION_PIPELINE = PipelineDefinition(
+    type=PipelineType.SCENARIO_CURATION,
+    name="Scenario Curation",
+    description=(
+        "Mine scenario candidates from a dataset and score their reconstruction "
+        "or evaluation readiness."
+    ),
+    steps=[
+        PipelineStepDefinition(
+            step_id="mine_scenarios",
+            name="Mine scenarios",
+            order=0,
+            job_type=JobType.MINE_SCENARIOS,
+        ),
+        PipelineStepDefinition(
+            step_id="score_scenario_readiness",
+            name="Score scenario readiness",
+            order=1,
+            job_type=JobType.SCORE_SCENARIO_READINESS,
+            depends_on=["mine_scenarios"],
+        ),
+    ],
+)
+
+
+GENERATED_DATASET_PREPARATION_PIPELINE = PipelineDefinition(
+    type=PipelineType.GENERATED_DATASET_PREPARATION,
+    name="Generated Dataset Preparation",
+    description=(
+        "Prepare generated or reconstructed scenes as a dataset version, "
+        "optionally auto-label scenes, check distribution, and export the dataset."
+    ),
+    steps=[
+        PipelineStepDefinition(
+            step_id="register_scene",
+            name="Register scene",
+            order=0,
+            job_type=JobType.REGISTER_SCENE,
+        ),
+        PipelineStepDefinition(
+            step_id="compare_scenes",
+            name="Compare scenes",
+            order=1,
+            job_type=JobType.COMPARE_SCENES,
+            depends_on=["register_scene"],
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="auto_label_scene",
+            name="Auto-label scene",
+            order=2,
+            job_type=JobType.AUTO_LABEL_SCENE,
+            depends_on=["register_scene"],
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="build_dataset_manifest",
+            name="Build dataset manifest",
+            order=3,
+            job_type=JobType.BUILD_DATASET_MANIFEST,
+            depends_on=["register_scene"],
+        ),
+        PipelineStepDefinition(
+            step_id="check_distribution",
+            name="Check distribution",
+            order=4,
+            job_type=JobType.CHECK_DISTRIBUTION,
+            depends_on=["build_dataset_manifest"],
+            optional=True,
+        ),
+        PipelineStepDefinition(
+            step_id="export_dataset",
+            name="Export dataset",
+            order=5,
+            job_type=JobType.EXPORT_DATASET,
+            depends_on=["build_dataset_manifest"],
+        ),
+    ],
+)
+
+
+DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
+    type=PipelineType.DETECTION_EVALUATION,
+    name="Detection Evaluation",
+    description="Run detection prediction and evaluate detection metrics on a dataset.",
+    steps=[
+        PipelineStepDefinition(
+            step_id="predict_detection",
+            name="Predict detection",
             order=0,
             job_type=JobType.PREDICT_DETECTION,
-            depends_on=[],
             default_params={
                 "inference_backend": "mock",
             },
         ),
         PipelineStepDefinition(
-            name="evaluate",
+            step_id="evaluate_detection",
+            name="Evaluate detection",
             order=1,
             job_type=JobType.EVALUATE_DETECTION,
-            depends_on=["predict"],
+            depends_on=["predict_detection"],
             default_params={
                 "evaluator_id": "center-distance",
                 "match_distance_m": 2.0,
@@ -81,93 +320,14 @@ DETECTION_VALIDATION_PIPELINE = PipelineDefinition(
 )
 
 
-AUTO_LABEL_PIPELINE = PipelineDefinition(
-    type=PipelineType.AUTO_LABEL,
-    name="Auto Label",
-    description="Ingest a dataset, auto-label camera samples with a VLM, then validate.",
-    steps=[
-        PipelineStepDefinition(
-            name="ingest",
-            order=0,
-            job_type=JobType.INGEST_DATASET,
-            depends_on=[],
-            default_params={
-                "dataset_type": "nuscenes",
-                "mode": "upsert",
-            },
-        ),
-        PipelineStepDefinition(
-            name="auto_label",
-            order=1,
-            job_type=JobType.AUTO_LABEL_DATASET,
-            depends_on=["ingest"],
-            default_params={
-                "vlm_backend": "vlm",
-            },
-        ),
-        PipelineStepDefinition(
-            name="validate",
-            order=2,
-            job_type=JobType.VALIDATE_DATASET,
-            depends_on=["auto_label"],
-            default_params={
-                "validate_samples": True,
-                "require_target_channels": ["CAM_FRONT"],
-            },
-        ),
-    ],
-)
-
-
-SCENE_BUILDING_PIPELINE = PipelineDefinition(
-    type=PipelineType.SCENE_BUILDING,
-    name="Scene Building",
-    description="Index a raw sensor log, segment into scenes, validate and profile the result.",
-    steps=[
-        PipelineStepDefinition(
-            name="build_scenes",
-            order=0,
-            job_type=JobType.BUILD_SCENES,
-            depends_on=[],
-            default_params={
-                "dataset_type": "nuscenes",
-                "source_format": "nuscenes",
-                "write_dataset_manifest": True,
-                "use_existing_dataset_scenes": False,
-            },
-        ),
-        PipelineStepDefinition(
-            name="validate",
-            order=1,
-            job_type=JobType.VALIDATE_DATASET,
-            depends_on=["build_scenes"],
-            default_params={
-                "validate_samples": True,
-                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
-            },
-        ),
-        PipelineStepDefinition(
-            name="profile",
-            order=2,
-            job_type=JobType.PROFILE_DATASET,
-            depends_on=["validate"],
-            default_params={
-                "profile_samples": True,
-                "profile_annotations": False,
-                "profile_sensor_coverage": True,
-                "profile_scene_distribution": True,
-                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
-            },
-        ),
-    ],
-)
-
-
 BUILTIN_PIPELINE_DEFINITIONS = [
-    DATASET_INGESTION_PIPELINE,
-    DETECTION_VALIDATION_PIPELINE,
-    AUTO_LABEL_PIPELINE,
-    SCENE_BUILDING_PIPELINE,
+    DATASET_SCENE_INGESTION_PIPELINE,
+    RAW_LOG_SCENE_BUILDING_PIPELINE,
+    SCENE_RECONSTRUCTION_PIPELINE,
+    SCENE_REGISTRATION_PIPELINE,
+    SCENARIO_CURATION_PIPELINE,
+    GENERATED_DATASET_PREPARATION_PIPELINE,
+    DETECTION_EVALUATION_PIPELINE,
 ]
 
 
@@ -175,7 +335,13 @@ def create_builtin_pipeline_definition_registry() -> PipelineDefinitionRegistry:
     return PipelineDefinitionRegistry(BUILTIN_PIPELINE_DEFINITIONS)
 
 
+_BUILTIN_REGISTRY: PipelineDefinitionRegistry | None = None
+
+
 def get_pipeline_definition(
     pipeline_type: PipelineType,
 ) -> PipelineDefinition:
-    return create_builtin_pipeline_definition_registry().get(pipeline_type)
+    global _BUILTIN_REGISTRY
+    if _BUILTIN_REGISTRY is None:
+        _BUILTIN_REGISTRY = create_builtin_pipeline_definition_registry()
+    return _BUILTIN_REGISTRY.get(pipeline_type)

@@ -5,27 +5,72 @@ from collections.abc import Iterable
 from sceneops_core.pipelines.schemas import PipelineDefinition, PipelineType
 
 
+def _validate_pipeline_definition(definition: PipelineDefinition) -> None:
+    step_ids = {step.step_id for step in definition.steps}
+
+    if len(step_ids) != len(definition.steps):
+        raise ValueError(f"Duplicate step_id in pipeline: {definition.type}")
+
+    for step in definition.steps:
+        for dependency in step.depends_on:
+            if dependency not in step_ids:
+                raise ValueError(
+                    f"Invalid dependency in pipeline={definition.type}: "
+                    f"step={step.step_id}, dependency={dependency}"
+                )
+
+
 class PipelineDefinitionRegistry:
+    """In-memory registry for pipeline definitions.
+
+    This registry maps a PipelineType to a PipelineDefinition.
+    It is intended for built-in/static pipeline definitions. Runtime pipeline
+    run state should be stored separately as PipelineRunManifest records.
+    """
+
     def __init__(
         self,
-        definitions: Iterable[PipelineDefinition],
+        definitions: Iterable[PipelineDefinition] | None = None,
     ) -> None:
         self._definitions: dict[PipelineType, PipelineDefinition] = {}
 
-        for definition in definitions:
-            self.register(definition)
+        if definitions is not None:
+            self.register_many(definitions)
 
     def register(self, definition: PipelineDefinition) -> None:
         if definition.type in self._definitions:
             raise ValueError(f"Duplicate pipeline definition: {definition.type}")
 
+        _validate_pipeline_definition(definition)
+
         self._definitions[definition.type] = definition
 
-    def get(self, pipeline_type: PipelineType) -> PipelineDefinition:
-        try:
-            return self._definitions[pipeline_type]
-        except KeyError as exc:
-            raise ValueError(f"Unsupported pipeline type: {pipeline_type}") from exc
+    def register_many(
+        self,
+        definitions: Iterable[PipelineDefinition],
+    ) -> None:
+        for definition in definitions:
+            self.register(definition)
+
+    def has(self, pipeline_type: PipelineType) -> bool:
+        return pipeline_type in self._definitions
+
+    def get_optional(
+        self,
+        pipeline_type: PipelineType,
+    ) -> PipelineDefinition | None:
+        return self._definitions.get(pipeline_type)
+
+    def get(
+        self,
+        pipeline_type: PipelineType,
+    ) -> PipelineDefinition:
+        definition = self.get_optional(pipeline_type)
+
+        if definition is None:
+            raise ValueError(f"Unsupported pipeline type: {pipeline_type}")
+
+        return definition
 
     def list(self) -> list[PipelineDefinition]:
         return sorted(
