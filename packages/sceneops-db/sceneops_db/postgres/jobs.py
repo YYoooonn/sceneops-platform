@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.jobs.schemas import (
@@ -79,6 +79,11 @@ class PostgresJobRepository:
         )
         result = await self._session.execute(stmt)
         return [job_model_to_manifest(m) for m in result.scalars().all()]
+
+    async def count_by_status(self) -> dict[str, int]:
+        stmt = select(JobModel.status, func.count()).group_by(JobModel.status)
+        result = await self._session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
 
 
 class PostgresJobEventRepository:

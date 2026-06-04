@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
@@ -14,8 +16,9 @@ class ExecutionDispatchResult(SceneOpsBaseModel):
     resource_id: str
     status: ExecutionStatus = ExecutionStatus.QUEUED
 
-    # Celery task id, Airflow dag_run_id, K8s job name 등 외부 실행 ID.
-    # 지금은 execution_id와 동일하게
     external_id: str | None = Field(default=None)
+
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

@@ -13,6 +13,9 @@ from app.domains.models.router import router as models_router
 from app.domains.scenarios.router import router as scenarios_router
 from app.domains.scenes.router import router as scenes_router
 
+from app.views.leaderboards.router import router as leaderboards_router
+from app.views.operations.router import router as operations_router
+
 api_router = APIRouter()
 
 # platform
@@ -34,8 +37,8 @@ api_router.include_router(
 )
 api_router.include_router(labels_router, prefix="/labels", tags=["labels"])
 
-# views — Phase 5
-# from app.views.operations.router import router as operations_router
-# from app.views.leaderboards.router import router as leaderboards_router
-# api_router.include_router(operations_router, prefix="/operations", tags=["operations"])
-# api_router.include_router(leaderboards_router, prefix="/leaderboards", tags=["leaderboards"])
+# views
+api_router.include_router(operations_router, prefix="/operations", tags=["operations"])
+api_router.include_router(
+    leaderboards_router, prefix="/leaderboards", tags=["leaderboards"]
+)

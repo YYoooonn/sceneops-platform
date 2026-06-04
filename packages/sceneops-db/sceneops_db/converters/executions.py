@@ -17,6 +17,8 @@ def execution_model_to_result(model: ExecutionRecordModel) -> ExecutionDispatchR
         resource_id=model.resource_id,
         status=model.status,
         external_id=model.external_id,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
         metadata=metadata_from_model(model),
     )
 

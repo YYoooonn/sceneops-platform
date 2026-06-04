@@ -18,7 +18,9 @@ from sceneops_core.jobs.schemas import (
 router = APIRouter()
 
 
-@router.post("", response_model=JobDetailResponse, status_code=201)
+@router.post(
+    "", response_model=JobDetailResponse, status_code=201, summary="Create job"
+)
 async def create_job(
     request: CreateJobRequest,
     service: JobServiceDep,
@@ -27,7 +29,7 @@ async def create_job(
     return JobDetailResponse(job=job)
 
 
-@router.get("", response_model=JobListResponse)
+@router.get("", response_model=JobListResponse, summary="List jobs")
 async def list_jobs(
     *,
     service: JobServiceDep,
@@ -47,7 +49,7 @@ async def list_jobs(
     )
 
 
-@router.get("/{job_id}", response_model=JobDetailResponse)
+@router.get("/{job_id}", response_model=JobDetailResponse, summary="Get job")
 async def get_job(job_id: str, service: JobServiceDep) -> JobDetailResponse:
     job = await service.get_job(job_id)
     if job is None:
@@ -55,7 +57,9 @@ async def get_job(job_id: str, service: JobServiceDep) -> JobDetailResponse:
     return JobDetailResponse(job=job)
 
 
-@router.get("/{job_id}/events", response_model=JobEventListResponse)
+@router.get(
+    "/{job_id}/events", response_model=JobEventListResponse, summary="List job events"
+)
 async def list_job_events(job_id: str, service: JobServiceDep) -> JobEventListResponse:
     result = await service.list_job_events(job_id)
     if result is None:
@@ -63,7 +67,11 @@ async def list_job_events(job_id: str, service: JobServiceDep) -> JobEventListRe
     return result
 
 
-@router.post("/{job_id}/execute", response_model=JobExecuteResponse)
+@router.post(
+    "/{job_id}/execute",
+    response_model=JobExecuteResponse,
+    summary="Dispatch job execution",
+)
 async def execute_job(
     job_id: str,
     service: JobServiceDep,

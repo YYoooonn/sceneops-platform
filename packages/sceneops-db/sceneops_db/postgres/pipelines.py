@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.pipelines.schemas import (
@@ -83,6 +83,13 @@ class PostgresPipelineRunRepository:
         )
         result = await self._session.execute(stmt)
         return [pipeline_run_model_to_manifest(m) for m in result.scalars().all()]
+
+    async def count_by_status(self) -> dict[str, int]:
+        stmt = select(PipelineRunModel.status, func.count()).group_by(
+            PipelineRunModel.status
+        )
+        result = await self._session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
 
 
 class PostgresPipelineStepRunRepository:
