@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# pylint: disable=no-member,unused-import
-
 import asyncio
 from logging.config import fileConfig
 
@@ -13,17 +11,27 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from sceneops_db.base import Base
 from sceneops_db.config import get_db_settings
 
-# Import models so SQLAlchemy registers them in Base.metadata.
-from sceneops_db.datasets import DatasetModel, DatasetVersionModel  # noqa: F401
-from sceneops_db.jobs import JobEventModel, JobModel  # noqa: F401
-from sceneops_db.model_registry import ModelModel, ModelVersionModel  # noqa: F401
-from sceneops_db.pipelines import PipelineRunModel, PipelineStepRunModel  # noqa: F401
-from sceneops_db.runs import (
+# Import all models so SQLAlchemy registers them in Base.metadata.
+from sceneops_db.models import (  # noqa: F401
+    ArtifactRefModel,
+    DatasetModel,
+    DatasetRunRecordModel,
+    DatasetVersionModel,
     EvaluationRunModel,
+    ExecutionRecordModel,
     InferenceRunModel,
-    DatasetValidationRunModel,
-    DatasetProfileRunModel
-)  # noqa: F401
+    JobEventModel,
+    JobModel,
+    LabelRunModel,
+    ModelModel,
+    ModelVersionModel,
+    PipelineRunModel,
+    PipelineStepRunModel,
+    ScenarioRunRecordModel,
+    ScenarioSetModel,
+    SceneModel,
+    SceneRunRecordModel,
+)
 
 config = context.config
 
@@ -43,9 +51,7 @@ def run_migrations_offline() -> None:
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        dialect_opts={
-            "paramstyle": "named",
-        },
+        dialect_opts={"paramstyle": "named"},
         compare_type=True,
         compare_server_default=True,
     )
