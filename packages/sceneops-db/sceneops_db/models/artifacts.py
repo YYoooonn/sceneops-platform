@@ -10,8 +10,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sceneops_db.base import Base
 
 
-class ArtifactRefModel(Base):
-    __tablename__ = "artifacts_refs"
+class ArtifactModel(Base):
+    __tablename__ = "artifacts"
 
     artifact_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
@@ -45,14 +45,14 @@ class ArtifactRefModel(Base):
     checksum: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
-Index("ix_artifact_refs_kind", ArtifactRefModel.kind)
-Index("ix_artifact_refs_run_id", ArtifactRefModel.run_id)
-Index("ix_artifact_refs_job_id", ArtifactRefModel.job_id)
-Index("ix_artifact_refs_pipeline_run_id", ArtifactRefModel.pipeline_run_id)
+Index("ix_artifacts_kind", ArtifactModel.kind)
+Index("ix_artifacts_run_id", ArtifactModel.run_id)
+Index("ix_artifacts_job_id", ArtifactModel.job_id)
+Index("ix_artifacts_pipeline_run_id", ArtifactModel.pipeline_run_id)
 Index(
-    "ix_artifact_refs_dataset",
-    ArtifactRefModel.dataset_id,
-    ArtifactRefModel.dataset_version,
+    "ix_artifacts_dataset",
+    ArtifactModel.dataset_id,
+    ArtifactModel.dataset_version,
 )
-Index("ix_artifact_refs_scene_id", ArtifactRefModel.scene_id)
-Index("ix_artifact_refs_owner", ArtifactRefModel.owner_type, ArtifactRefModel.owner_id)
+Index("ix_artifacts_scene_id", ArtifactModel.scene_id)
+Index("ix_artifacts_owner", ArtifactModel.owner_type, ArtifactModel.owner_id)

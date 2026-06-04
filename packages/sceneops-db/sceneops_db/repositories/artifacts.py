@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRef
+from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRef, ArtifactRecord
 
 
 @runtime_checkable
-class ArtifactRefRepository(Protocol):
+class ArtifactRepository(Protocol):
     async def create(
         self,
         *,
@@ -22,9 +22,9 @@ class ArtifactRefRepository(Protocol):
         run_id: str | None = None,
         job_id: str | None = None,
         pipeline_run_id: str | None = None,
-    ) -> ArtifactRef: ...
+    ) -> ArtifactRecord: ...
 
-    async def get(self, artifact_id: str) -> ArtifactRef | None: ...
+    async def get(self, artifact_id: str) -> ArtifactRecord | None: ...
 
     async def list(
         self,
@@ -41,4 +41,4 @@ class ArtifactRefRepository(Protocol):
         pipeline_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[ArtifactRef]: ...
+    ) -> list[ArtifactRecord]: ...

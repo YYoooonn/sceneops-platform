@@ -16,7 +16,7 @@ class CreateJobRequest(SceneOpsBaseModel):
 
     pipeline_run_id: str | None = None
     pipeline_step_run_id: str | None = None
-    pipeline_step_name: str | None = None
+    pipeline_step_id: str | None = None
 
     max_retries: int = 0
     idempotency_key: str | None = None

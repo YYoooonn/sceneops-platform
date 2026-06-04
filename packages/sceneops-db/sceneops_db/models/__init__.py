@@ -1,4 +1,4 @@
-from .artifacts import ArtifactRefModel
+from .artifacts import ArtifactModel
 from .datasets import DatasetModel, DatasetRunRecordModel, DatasetVersionModel
 from .evaluations import EvaluationRunModel
 from .executions import ExecutionRecordModel
@@ -39,5 +39,5 @@ __all__ = [
     "ModelModel",
     "ModelVersionModel",
     # artifacts
-    "ArtifactRefModel",
+    "ArtifactModel",
 ]

@@ -3,13 +3,13 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRef
+from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord, ArtifactRef
 
 from sceneops_db.converters.artifacts import (
-    artifact_ref_model_to_ref,
+    artifact_ref_model_to_record,
     artifact_ref_to_values_with_owner,
 )
-from sceneops_db.models.artifacts import ArtifactRefModel
+from sceneops_db.models.artifacts import ArtifactModel
 
 from ._utils import apply_pagination, enum_value
 
@@ -33,7 +33,7 @@ class PostgresArtifactRefRepository:
         run_id: str | None = None,
         job_id: str | None = None,
         pipeline_run_id: str | None = None,
-    ) -> ArtifactRef:
+    ) -> ArtifactRecord:
         values = artifact_ref_to_values_with_owner(
             ref,
             artifact_id=artifact_id,
@@ -48,18 +48,16 @@ class PostgresArtifactRefRepository:
             job_id=job_id,
             pipeline_run_id=pipeline_run_id,
         )
-        model = ArtifactRefModel(**values)
+        model = ArtifactModel(**values)
         self._session.add(model)
         await self._session.flush()
-        return artifact_ref_model_to_ref(model)
+        return artifact_ref_model_to_record(model)
 
-    async def get(self, artifact_id: str) -> ArtifactRef | None:
-        stmt = select(ArtifactRefModel).where(
-            ArtifactRefModel.artifact_id == artifact_id
-        )
+    async def get(self, artifact_id: str) -> ArtifactRecord | None:
+        stmt = select(ArtifactModel).where(ArtifactModel.artifact_id == artifact_id)
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
-        return artifact_ref_model_to_ref(model) if model is not None else None
+        return artifact_ref_model_to_record(model) if model is not None else None
 
     async def list(
         self,
@@ -76,32 +74,32 @@ class PostgresArtifactRefRepository:
         pipeline_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[ArtifactRef]:
-        stmt = select(ArtifactRefModel)
+    ) -> list[ArtifactRecord]:
+        stmt = select(ArtifactModel)
         if kind is not None:
-            stmt = stmt.where(ArtifactRefModel.kind == enum_value(kind))
+            stmt = stmt.where(ArtifactModel.kind == enum_value(kind))
         if owner_type is not None:
-            stmt = stmt.where(ArtifactRefModel.owner_type == owner_type)
+            stmt = stmt.where(ArtifactModel.owner_type == owner_type)
         if owner_id is not None:
-            stmt = stmt.where(ArtifactRefModel.owner_id == owner_id)
+            stmt = stmt.where(ArtifactModel.owner_id == owner_id)
         if dataset_id is not None:
-            stmt = stmt.where(ArtifactRefModel.dataset_id == dataset_id)
+            stmt = stmt.where(ArtifactModel.dataset_id == dataset_id)
         if dataset_version is not None:
-            stmt = stmt.where(ArtifactRefModel.dataset_version == dataset_version)
+            stmt = stmt.where(ArtifactModel.dataset_version == dataset_version)
         if scene_id is not None:
-            stmt = stmt.where(ArtifactRefModel.scene_id == scene_id)
+            stmt = stmt.where(ArtifactModel.scene_id == scene_id)
         if scenario_set_id is not None:
-            stmt = stmt.where(ArtifactRefModel.scenario_set_id == scenario_set_id)
+            stmt = stmt.where(ArtifactModel.scenario_set_id == scenario_set_id)
         if run_id is not None:
-            stmt = stmt.where(ArtifactRefModel.run_id == run_id)
+            stmt = stmt.where(ArtifactModel.run_id == run_id)
         if job_id is not None:
-            stmt = stmt.where(ArtifactRefModel.job_id == job_id)
+            stmt = stmt.where(ArtifactModel.job_id == job_id)
         if pipeline_run_id is not None:
-            stmt = stmt.where(ArtifactRefModel.pipeline_run_id == pipeline_run_id)
+            stmt = stmt.where(ArtifactModel.pipeline_run_id == pipeline_run_id)
         stmt = apply_pagination(
-            stmt.order_by(ArtifactRefModel.created_at.desc()),
+            stmt.order_by(ArtifactModel.created_at.desc()),
             limit=limit,
             offset=offset,
         )
         result = await self._session.execute(stmt)
-        return [artifact_ref_model_to_ref(m) for m in result.scalars().all()]
+        return [artifact_ref_model_to_record(m) for m in result.scalars().all()]

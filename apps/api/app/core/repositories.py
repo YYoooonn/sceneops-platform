@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from app.core.dependencies import DbSessionDep
-from sceneops_db.repositories.artifacts import ArtifactRefRepository
+from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.datasets import (
     DatasetRepository,
     DatasetRunRepository,
@@ -110,13 +110,11 @@ ExecutionRecordRepositoryDep = Annotated[
 # --- platform: artifacts ---
 
 
-def get_artifact_ref_repository(session: DbSessionDep) -> ArtifactRefRepository:
+def get_artifact_repository(session: DbSessionDep) -> ArtifactRepository:
     return PostgresArtifactRefRepository(session)
 
 
-ArtifactRefRepositoryDep = Annotated[
-    ArtifactRefRepository, Depends(get_artifact_ref_repository)
-]
+ArtifactRepositoryDep = Annotated[ArtifactRepository, Depends(get_artifact_repository)]
 
 
 # --- domains: datasets ---

@@ -2,14 +2,37 @@ from __future__ import annotations
 
 from typing import Any
 
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.artifacts.schemas import ArtifactRef, ArtifactRecord
 
-from sceneops_db.models.artifacts import ArtifactRefModel
+from sceneops_db.models.artifacts import ArtifactModel
 
 from ._utils import metadata_from_model
 
 
-def artifact_ref_model_to_ref(model: ArtifactRefModel) -> ArtifactRef:
+def artifact_ref_model_to_record(model: ArtifactModel) -> ArtifactRecord:
+    return ArtifactRecord(
+        artifact_id=model.artifact_id,
+        kind=model.kind,
+        uri=model.uri,
+        backend=model.backend,
+        owner_type=model.owner_type,
+        owner_id=model.owner_id,
+        dataset_id=model.dataset_id,
+        dataset_version=model.dataset_version,
+        scene_id=model.scene_id,
+        scenario_set_id=model.scenario_set_id,
+        run_id=model.run_id,
+        job_id=model.job_id,
+        pipeline_run_id=model.pipeline_run_id,
+        media_type=model.media_type,
+        size_bytes=model.size_bytes,
+        checksum=model.checksum,
+        created_at=model.created_at,
+        metadata=metadata_from_model(model),
+    )
+
+
+def artifact_ref_model_to_ref(model: ArtifactModel) -> ArtifactRef:
     return ArtifactRef(
         kind=model.kind,
         uri=model.uri,

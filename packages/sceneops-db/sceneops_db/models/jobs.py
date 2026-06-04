@@ -31,7 +31,7 @@ class JobModel(Base):
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_step_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    pipeline_step_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_step_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     retry_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
@@ -102,7 +102,7 @@ class JobEventModel(Base):
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_step_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    pipeline_step_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_step_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
