@@ -5,9 +5,11 @@ from typing import Any
 from celery.utils.log import get_task_logger
 
 from sceneops_core.constants.tasks import JOB_RUN_TASK
+from sceneops_db.session import async_session_scope
 from sceneops_worker.celery_app import celery_app
+from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.jobs.runner import JobRunner
 from sceneops_worker.runtime.async_runner import get_async_runtime_runner
-from sceneops_worker.runtime.job_runtime import JobRuntime
 
 logger = get_task_logger(__name__)
 
@@ -50,11 +52,9 @@ async def _run_job(
     job_id: str,
     worker_id: str,
 ) -> dict[str, Any]:
-    runtime = JobRuntime(worker_id=worker_id)
-
-    result = await runtime.run_job(
-        job_id=job_id,
-    )
+    async with async_session_scope() as session:
+        context = create_worker_context(session, worker_id=worker_id)
+        result = await JobRunner(context).run(job_id)
 
     return {
         "job_id": job_id,

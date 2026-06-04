@@ -3,20 +3,22 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sceneops_core.ids import default_evaluation_run_id
+from sceneops_core.common.ids import default_evaluation_run_id
 from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetVersionStatus
+from sceneops_core.evaluations.schemas import EvaluationTaskType
+from sceneops_core.evaluations.schemas.runs import EvaluationRunRecord
 from sceneops_core.jobs.schemas import (
     EvaluateDetectionJobParams,
     EvaluateDetectionJobResult,
     JobType,
 )
-from sceneops_core.runs.schemas import EvaluationRunRecord, RunStatus
-from sceneops_core.time import utc_now
+from sceneops_core.runs.schemas import RunStatus
+from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.evaluation import create_detection_evaluator
 from sceneops_worker.evaluation.detection import DetectionEvaluationRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-from sceneops_worker.jobs.context import JobContext
 from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
@@ -64,12 +66,11 @@ class EvaluateDetectionJobHandler(
             job.job_id
         )
         return EvaluationRunRecord(
-            id=evaluation_run_id,
+            run_id=evaluation_run_id,
             inference_run_id=params.inference_run_id,
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
-            model_id="",  # resolved during execute once inference run is loaded
-            model_version="",
+            task_type=EvaluationTaskType.DETECTION,
             evaluator_id=params.evaluator_id,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
@@ -84,16 +85,21 @@ class EvaluateDetectionJobHandler(
         *,
         job: Any,
         params: EvaluateDetectionJobParams,
-        context: JobContext,
+        context: WorkerContext,
         initial_record: EvaluationRunRecord,
         started_at: datetime,
     ) -> tuple[EvaluationRunRecord, EvaluateDetectionJobResult]:
-        evaluation_run_id = initial_record.id
+        evaluation_run_id = initial_record.run_id
 
-        version = await context.dataset_registry_store.get_version(
+        version = await context.dataset_store.get_version(
             dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
+            version=params.dataset_version,
         )
+
+        if version is None:
+            raise ValueError(
+                f"Dataset version not found: {params.dataset_id}:{params.dataset_version}"
+            )
 
         if version.status != DatasetVersionStatus.READY:
             raise ValueError(
@@ -108,16 +114,16 @@ class EvaluateDetectionJobHandler(
                 f"{params.dataset_id}:{params.dataset_version}"
             )
 
-        inference_run = await context.run_registry_store.get_inference_run(
-            params.inference_run_id
-        )
+        inference_run = await context.runs.inference.get(params.inference_run_id)
+        if inference_run is None:
+            raise ValueError(f"Inference run not found: {params.inference_run_id}")
 
         dataset_manifest = await context.dataset_artifact_store.load_dataset_manifest(
             version.manifest_uri
         )
 
-        # patch model identity into initial record now that we have the inference run
-        await context.run_registry_store.upsert_evaluation_run(
+        # Patch model identity onto the initial record now that we have the inference run.
+        await context.runs.evaluations.save(
             initial_record.model_copy(
                 update={
                     "model_id": inference_run.model_id,
@@ -142,7 +148,6 @@ class EvaluateDetectionJobHandler(
         class_metrics = evaluation_manifest.get("class_metrics", {})
         sample_count = evaluation_manifest.get("sample_count")
         evaluation_manifest_uri = evaluation_manifest["evaluation_manifest_uri"]
-        samples_root_uri = evaluation_manifest.get("samples_root_uri")
 
         succeeded_record = initial_record.model_copy(
             update={
@@ -151,9 +156,13 @@ class EvaluateDetectionJobHandler(
                 "status": RunStatus.SUCCEEDED,
                 "sample_count": sample_count,
                 "evaluation_manifest_uri": evaluation_manifest_uri,
-                "samples_root_uri": samples_root_uri,
                 "metrics": metrics,
                 "class_metrics": class_metrics,
+                "summary": {
+                    "status": evaluation_manifest.get("status"),
+                    "match_distance_m": evaluation_manifest.get("match_distance_m"),
+                    "samples_root_uri": evaluation_manifest.get("samples_root_uri"),
+                },
                 "finished_at": utc_now(),
             }
         )
@@ -170,12 +179,14 @@ class EvaluateDetectionJobHandler(
                 "status": evaluation_manifest.get("status"),
                 "match_distance_m": evaluation_manifest.get("match_distance_m"),
                 "class_metrics": class_metrics,
-                "samples_root_uri": samples_root_uri,
+                "samples_root_uri": evaluation_manifest.get("samples_root_uri"),
                 "created_at": evaluation_manifest.get("created_at"),
             },
         )
 
         return succeeded_record, job_result
 
-    async def _upsert(self, context: JobContext, record: EvaluationRunRecord) -> None:
-        await context.run_registry_store.upsert_evaluation_run(record)
+    async def _upsert(
+        self, context: WorkerContext, record: EvaluationRunRecord
+    ) -> None:
+        await context.runs.evaluations.upsert(record)

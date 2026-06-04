@@ -20,6 +20,12 @@ class InferenceRunStore:
     async def save(self, run: InferenceRunRecord) -> InferenceRunRecord:
         return await self._repo.update(run)
 
+    async def upsert(self, run: InferenceRunRecord) -> InferenceRunRecord:
+        existing = await self._repo.get(run.run_id)
+        if existing is None:
+            return await self._repo.create(run)
+        return await self._repo.update(run)
+
     async def list(
         self,
         *,

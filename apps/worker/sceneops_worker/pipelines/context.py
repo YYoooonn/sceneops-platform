@@ -13,6 +13,7 @@ from sceneops_core.pipelines.schemas import (
 
 @dataclass(frozen=True)
 class PipelineStepState:
+    step_id: str
     step_name: str
     status: PipelineStepRunStatus
     job_id: str | None = None
@@ -64,23 +65,27 @@ class PipelineExecutionContext:
     def mark_step(
         self,
         *,
+        step_id: str,
         step_name: str,
         status: PipelineStepRunStatus,
         job_id: str | None,
         result: PipelineStepResult | None = None,
     ) -> None:
-        self.steps[step_name] = PipelineStepState(
+        self.steps[step_id] = PipelineStepState(
+            step_id=step_id,
             step_name=step_name,
             status=status,
             job_id=job_id,
             result=result,
         )
 
-    def require_step_succeeded(self, step_name: str) -> None:
-        state = self.steps.get(step_name)
+    def require_step_succeeded(self, step_id: str) -> None:
+        state = self.steps.get(step_id)
 
         if state is None:
-            raise RuntimeError(f"Step dependency has not completed: {step_name}")
+            raise RuntimeError(f"Step dependency has not completed: {step_id}")
 
         if state.status != PipelineStepRunStatus.SUCCEEDED:
-            raise RuntimeError(f"Step dependency is not succeeded: {step_name}")
+            raise RuntimeError(
+                f"Step dependency is not succeeded: {step_id} (status={state.status})"
+            )

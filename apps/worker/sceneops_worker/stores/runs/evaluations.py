@@ -21,6 +21,12 @@ class EvaluationRunStore:
     async def save(self, run: EvaluationRunRecord) -> EvaluationRunRecord:
         return await self._repo.update(run)
 
+    async def upsert(self, run: EvaluationRunRecord) -> EvaluationRunRecord:
+        existing = await self._repo.get(run.run_id)
+        if existing is None:
+            return await self._repo.create(run)
+        return await self._repo.update(run)
+
     async def list(
         self,
         *,

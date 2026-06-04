@@ -1,27 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+# Deprecated: replaced by WorkerContext in sceneops_worker.core.context.
+# This stub is retained so old handler imports do not break at import time.
+# All handlers will be migrated to WorkerContext in Phase 2B.
 
-from sceneops_core.common import DatasetId, DatasetVersion
-from sceneops_core.artifacts.contracts import ArtifactStore
-from sceneops_worker.datasets import DatasetArtifactStore
-from sceneops_worker.registry.datasets import DatasetRegistryStore
-from sceneops_worker.registry.models import ModelRegistryStore
-from sceneops_worker.registry.runs import RunRegistryStore
-from sceneops_worker.runs import RunArtifactStore
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
 class JobContext:
-    worker_id: str
+    """Deprecated shim. Use WorkerContext instead."""
 
-    artifact_store: ArtifactStore
-    dataset_artifact_store: DatasetArtifactStore
-    run_artifact_store: RunArtifactStore
-
-    dataset_registry_store: DatasetRegistryStore
-    model_registry_store: ModelRegistryStore
-    run_registry_store: RunRegistryStore
-
-    default_dataset_id: DatasetId
-    default_dataset_version: DatasetVersion
+    worker_id: str = ""
+    artifact_store: Any = None
+    dataset_artifact_store: Any = None
+    run_artifact_store: Any = None
+    dataset_registry_store: Any = None
+    model_registry_store: Any = None
+    run_registry_store: Any = None
+    scene_registry_store: Any = None
+    default_dataset_id: str = ""
+    default_dataset_version: str = ""

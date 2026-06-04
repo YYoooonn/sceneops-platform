@@ -24,6 +24,7 @@ def create_job_context(
         dataset_registry_store=registry.dataset_registry_store,
         model_registry_store=registry.model_registry_store,
         run_registry_store=registry.run_registry_store,
+        scene_registry_store=registry.scene_registry_store,
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,
     )

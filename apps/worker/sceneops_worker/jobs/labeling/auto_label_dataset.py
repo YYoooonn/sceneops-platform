@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sceneops_core.ids import default_auto_label_run_id
+from sceneops_core.common.ids import default_auto_label_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.inference.enums import InferenceBackendType
@@ -12,8 +12,11 @@ from sceneops_core.jobs.schemas import (
     AutoLabelDatasetJobResult,
     JobType,
 )
-from sceneops_core.runs.schemas import AutoLabelRunRecord, RunStatus
-from sceneops_core.time import utc_now
+from sceneops_core.labels.schemas.runs import (
+    DatasetAutoLabelRunRecord as AutoLabelRunRecord,
+)
+from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.common.time import utc_now
 from sceneops_worker.inference.detection import (
     create_detection_inference_backend,
 )

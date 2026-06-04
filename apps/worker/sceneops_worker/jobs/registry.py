@@ -4,15 +4,17 @@ from collections.abc import Iterable
 
 from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
-from sceneops_worker.jobs.labeling import AutoLabelDatasetJobHandler
 from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
-from sceneops_worker.jobs.dataset import (
-    IngestDatasetJobHandler,
-    ProfileDatasetJobHandler,
-    ValidateDatasetJobHandler,
-    BuildScenesJobHandler,
-)
 from sceneops_worker.jobs.inference import PredictDetectionJobHandler
+
+# Disabled until Phase 3 (schema incompatibilities require deeper rewrite):
+# from sceneops_worker.jobs.labeling import AutoLabelDatasetJobHandler
+# from sceneops_worker.jobs.dataset import (
+#     BuildScenesJobHandler,    # SceneBuildPolicy removed, scene_building broken
+#     IngestDatasetJobHandler,  # IngestScenesJobParams rename + nuscenes ingestion
+#     ProfileDatasetJobHandler, # ProfileDatasetJobParams → ProfileSceneJobParams
+#     ValidateDatasetJobHandler, # ValidateDatasetJobParams → ValidateSceneJobParams
+# )
 
 
 class JobHandlerRegistry:
@@ -43,12 +45,7 @@ class JobHandlerRegistry:
 def create_default_job_handler_registry() -> JobHandlerRegistry:
     return JobHandlerRegistry(
         handlers=[
-            IngestDatasetJobHandler(),
-            ValidateDatasetJobHandler(),
-            ProfileDatasetJobHandler(),
             PredictDetectionJobHandler(),
             EvaluateDetectionJobHandler(),
-            AutoLabelDatasetJobHandler(),
-            BuildScenesJobHandler(),
         ]
     )
