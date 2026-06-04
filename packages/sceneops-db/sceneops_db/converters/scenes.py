@@ -16,7 +16,6 @@ from sceneops_db.models.scenes import SceneModel, SceneRunRecordModel
 
 from ._utils import (
     base_run_to_values,
-    dt_to_iso,
     enum_to_value,
     error_from_json,
     metadata_from_model,
@@ -72,8 +71,8 @@ def scene_model_to_record(model: SceneModel) -> SceneRecord:
         sample_count=model.sample_count,
         frame_count=model.frame_count,
         channels=list(model.channels or []),
-        started_at=dt_to_iso(model.started_at),
-        ended_at=dt_to_iso(model.ended_at),
+        started_at=model.started_at,
+        ended_at=model.ended_at,
         metadata={**base_meta, **db_extras} if db_extras else base_meta,
     )
 

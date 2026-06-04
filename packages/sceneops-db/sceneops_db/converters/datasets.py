@@ -19,7 +19,6 @@ from sceneops_db.models.datasets import (
 
 from ._utils import (
     base_run_to_values,
-    dt_to_iso,
     enum_to_value,
     error_from_json,
     metadata_from_model,
@@ -56,8 +55,8 @@ def dataset_model_to_record(model: DatasetModel) -> DatasetRecord:
         type=model.type,
         status=model.status,
         default_version=model.default_version,
-        created_at=dt_to_iso(model.created_at),
-        updated_at=dt_to_iso(model.updated_at),
+        created_at=model.created_at,
+        updated_at=model.updated_at,
         metadata=metadata_from_model(model),
     )
 
