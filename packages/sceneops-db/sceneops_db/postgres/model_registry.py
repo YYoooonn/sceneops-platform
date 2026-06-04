@@ -34,7 +34,7 @@ class PostgresModelRepository:
         return model_model_to_record(orm_model)
 
     async def upsert(self, model: ModelRecord) -> ModelRecord:
-        existing = await self.get(model.id)
+        existing = await self.get(model.model_id)
         if existing is None:
             return await self.create(model)
         return await self.update(model)
@@ -46,11 +46,11 @@ class PostgresModelRepository:
         return model_model_to_record(orm_model) if orm_model is not None else None
 
     async def update(self, model: ModelRecord) -> ModelRecord:
-        stmt = select(ModelModel).where(ModelModel.model_id == model.id)
+        stmt = select(ModelModel).where(ModelModel.model_id == model.model_id)
         result = await self._session.execute(stmt)
         orm_model = result.scalar_one_or_none()
         if orm_model is None:
-            raise ValueError(f"Model not found: {model.id}")
+            raise ValueError(f"Model not found: {model.model_id}")
         apply_values(orm_model, model_record_to_values(model))
         await self._session.flush()
         return model_model_to_record(orm_model)

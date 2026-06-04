@@ -26,6 +26,7 @@ class PostgresScenarioSetRepository:
         model = ScenarioSetModel(**scenario_set_record_to_values(record))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return scenario_set_model_to_record(model)
 
     async def upsert(self, record: ScenarioSetRecord) -> ScenarioSetRecord:

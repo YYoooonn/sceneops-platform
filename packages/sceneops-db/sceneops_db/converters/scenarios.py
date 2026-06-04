@@ -57,11 +57,10 @@ def scenario_set_record_to_values(record: ScenarioSetRecord) -> dict[str, Any]:
             "scenario_set_uri": record.scenario_set_uri,
             "scenario_count": record.scenario_count,
             "tags": record.tags,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
             "metadata": record.metadata,
         }
     )
+    # created_at / updated_at are excluded — populated by DB server defaults.
 
 
 # ── ScenarioRunRecord ─────────────────────────────────────────────────────────
