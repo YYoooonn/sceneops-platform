@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends
@@ -11,8 +12,7 @@ from sceneops_db.session import async_session_scope
 from sceneops_storage import ArtifactStore, create_artifact_store
 
 
-def get_api_settings() -> ApiSettings:
-    return get_settings()
+ApiSettingsDep = Annotated[ApiSettings, Depends(get_settings)]
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -21,13 +21,15 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
 
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
-ApiSettingsDep = Annotated[ApiSettings, Depends(get_api_settings)]
 
 
-def get_artifact_store(
-    settings: ApiSettingsDep,
-) -> ArtifactStore:
-    return create_artifact_store(settings.artifact)
+@lru_cache
+def _build_artifact_store() -> ArtifactStore:
+    return create_artifact_store(get_settings().artifact)
+
+
+def get_artifact_store() -> ArtifactStore:
+    return _build_artifact_store()
 
 
 ArtifactStoreDep = Annotated[ArtifactStore, Depends(get_artifact_store)]
