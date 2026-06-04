@@ -9,7 +9,7 @@ from .enums import ModelBackend, ModelTaskType, ModelVersionStatus
 
 
 class ModelRecord(SceneOpsBaseModel):
-    id: str
+    model_id: str
     name: str | None = None
     description: str | None = None
     task_type: ModelTaskType = ModelTaskType.DETECTION

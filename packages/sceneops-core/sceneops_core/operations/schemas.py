@@ -43,7 +43,7 @@ class JobTimelineResponse(SceneOpsBaseModel):
 
     pipeline_run_id: str | None = None
     pipeline_step_run_id: str | None = None
-    pipeline_step_name: str | None = None
+    pipeline_step_id: str | None = None
 
     queued_at: datetime | None = None
     locked_at: datetime | None = None

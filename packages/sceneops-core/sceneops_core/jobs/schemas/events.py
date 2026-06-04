@@ -29,7 +29,7 @@ class JobEvent(SceneOpsBaseModel):
     # Optional pipeline context snapshot.
     pipeline_run_id: str | None = None
     pipeline_step_run_id: str | None = None
-    pipeline_step_name: str | None = None
+    pipeline_step_id: str | None = None
 
     # Worker/runtime context.
     worker_id: str | None = None

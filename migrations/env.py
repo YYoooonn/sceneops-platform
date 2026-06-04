@@ -13,7 +13,7 @@ from sceneops_db.config import get_db_settings
 
 # Import all models so SQLAlchemy registers them in Base.metadata.
 from sceneops_db.models import (  # noqa: F401
-    ArtifactRefModel,
+    ArtifactModel,
     DatasetModel,
     DatasetRunRecordModel,
     DatasetVersionModel,

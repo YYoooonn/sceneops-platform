@@ -33,6 +33,8 @@ class JobRepository(Protocol):
         offset: int = 0,
     ) -> list[JobManifest]: ...
 
+    async def count_by_status(self) -> dict[str, int]: ...
+
 
 @runtime_checkable
 class JobEventRepository(Protocol):

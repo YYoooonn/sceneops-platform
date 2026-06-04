@@ -1,4 +1,4 @@
-from .artifacts import ArtifactRefRepository
+from .artifacts import ArtifactRepository
 from .datasets import (
     DatasetRepository,
     DatasetRunRecord,
@@ -48,5 +48,5 @@ __all__ = [
     "ModelRepository",
     "ModelVersionRepository",
     # artifacts
-    "ArtifactRefRepository",
+    "ArtifactRepository",
 ]

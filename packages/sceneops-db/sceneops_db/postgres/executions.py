@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.executions.schemas import (
@@ -85,3 +85,10 @@ class PostgresExecutionRecordRepository:
         )
         result = await self._session.execute(stmt)
         return [execution_model_to_result(m) for m in result.scalars().all()]
+
+    async def count_by_status(self) -> dict[str, int]:
+        stmt = select(ExecutionRecordModel.status, func.count()).group_by(
+            ExecutionRecordModel.status
+        )
+        result = await self._session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}

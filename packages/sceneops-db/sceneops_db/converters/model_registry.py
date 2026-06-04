@@ -18,7 +18,7 @@ def make_model_version_id(model_id: str, version: str) -> str:
 
 def model_model_to_record(model: ModelModel) -> ModelRecord:
     return ModelRecord(
-        id=model.model_id,
+        model_id=model.model_id,
         name=model.name,
         description=model.description,
         task_type=model.task_type,
@@ -30,7 +30,7 @@ def model_model_to_record(model: ModelModel) -> ModelRecord:
 
 def model_record_to_values(record: ModelRecord) -> dict[str, Any]:
     return {
-        "model_id": record.id,
+        "model_id": record.model_id,
         "name": record.name,
         "description": record.description,
         "task_type": enum_to_value(record.task_type),

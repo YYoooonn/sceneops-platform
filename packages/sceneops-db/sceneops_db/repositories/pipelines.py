@@ -31,6 +31,8 @@ class PipelineRunRepository(Protocol):
         offset: int = 0,
     ) -> list[PipelineRunManifest]: ...
 
+    async def count_by_status(self) -> dict[str, int]: ...
+
 
 @runtime_checkable
 class PipelineStepRunRepository(Protocol):
