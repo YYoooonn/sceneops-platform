@@ -1,91 +1,75 @@
 #!/usr/bin/env bash
+# register_nuscenes_dataset.sh
+#
+# Idempotent: creates the nuScenes dataset and v1.0-mini version if they
+# don't already exist. Safe to run multiple times.
+#
+# Usage:
+#   bash scripts/fixtures/register_nuscenes_dataset.sh
+#
+# Env overrides:
+#   API_BASE_URL      (default: http://localhost:8000)
+#   DATASET_ID        (default: nuscenes)
+#   DATASET_VERSION   (default: v1.0-mini)
+
 set -euo pipefail
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-API_PREFIX="${API_PREFIX:-}"
-
+API_PREFIX="${API_PREFIX:-/api/v1}"
 DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_TYPE="${DATASET_TYPE:-nuscenes}"
-DATASET_NAME="${DATASET_NAME:-nuScenes}"
-DATASET_DESCRIPTION="${DATASET_DESCRIPTION:-nuScenes autonomous driving dataset}"
-
 DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-SOURCE_URI="${SOURCE_URI:-/data/raw/nuscenes}"
 
-DATASET_CREATE_PATH="${DATASET_CREATE_PATH:-/datasets}"
-DATASET_VERSION_CREATE_PATH="${DATASET_VERSION_CREATE_PATH:-/datasets/${DATASET_ID}/versions}"
+url() { echo "${API_BASE_URL}${API_PREFIX}${1}"; }
 
-url() {
+http_status() {
+  curl -sS -o /dev/null -w "%{http_code}" "$(url "$1")"
+}
+
+http_post() {
   local path="$1"
-  echo "${API_BASE_URL}${API_PREFIX}${path}"
+  local body="$2"
+  curl -sS -X POST "$(url "$path")" \
+    -H "Content-Type: application/json" \
+    -d "$body"
 }
 
-pretty_json() {
-  python -m json.tool
-}
-
-request_json() {
-  local method="$1"
-  local path="$2"
-  local payload="${3:-}"
-
-  local tmp_body
-  tmp_body="$(mktemp)"
-
-  local status_code
-
-  if [ -n "${payload}" ]; then
-    status_code="$(
-      curl -sS -o "${tmp_body}" -w "%{http_code}" \
-        -X "${method}" "$(url "${path}")" \
-        -H "Content-Type: application/json" \
-        -d "${payload}"
-    )"
-  else
-    status_code="$(
-      curl -sS -o "${tmp_body}" -w "%{http_code}" \
-        -X "${method}" "$(url "${path}")" \
-        -H "Content-Type: application/json"
-    )"
-  fi
-
-  if [ "${status_code}" -lt 200 ] || [ "${status_code}" -ge 300 ]; then
-    echo "HTTP ${status_code} ${method} $(url "${path}")" >&2
-    cat "${tmp_body}" >&2
-    echo "" >&2
-    rm -f "${tmp_body}"
-    exit 1
-  fi
-
-  cat "${tmp_body}"
-  rm -f "${tmp_body}"
-}
-
-echo "== Register dataset =="
-DATASET_RESPONSE="$(
-  request_json PUT "${DATASET_CREATE_PATH}/${DATASET_ID}" "{
-    \"id\": \"${DATASET_ID}\",
-    \"datasetType\": \"${DATASET_TYPE}\",
-    \"name\": \"${DATASET_NAME}\",
-    \"description\": \"${DATASET_DESCRIPTION}\",
-    \"metadata\": {
-      \"source\": \"fixture\"
-    }
-  }"
-)"
-echo "${DATASET_RESPONSE}" | pretty_json
-
+echo "=== register nuScenes dataset ==="
+echo "  API_BASE_URL=$API_BASE_URL"
+echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo ""
-echo "== Register dataset version =="
-DATASET_VERSION_RESPONSE="$(
-  request_json PUT "${DATASET_VERSION_CREATE_PATH}/${DATASET_VERSION}" "{
-    \"version\": \"${DATASET_VERSION}\",
-    \"datasetType\": \"${DATASET_TYPE}\",
-    \"sourceUri\": \"${SOURCE_URI}\",
-    \"metadata\": {
-      \"split\": \"mini\",
-      \"source\": \"fixture\"
-    }
-  }"
-)"
-echo "${DATASET_VERSION_RESPONSE}" | pretty_json
+
+# ── Dataset ───────────────────────────────────────────────────────────────────
+
+echo "--- dataset ---"
+if [ "$(http_status "/datasets/$DATASET_ID")" = "200" ]; then
+  echo "  already exists"
+  curl -sS "$(url "/datasets/$DATASET_ID")" | jq '.dataset | {datasetId, type, status}'
+else
+  echo "  creating..."
+  http_post "/datasets" "{
+    \"dataset_id\": \"$DATASET_ID\",
+    \"name\": \"nuScenes\",
+    \"description\": \"nuScenes autonomous driving dataset\",
+    \"type\": \"nuscenes\",
+    \"metadata\": {}
+  }" | jq '.dataset | {datasetId, type, status}'
+fi
+echo ""
+
+# ── Dataset version ───────────────────────────────────────────────────────────
+
+echo "--- dataset version ---"
+if [ "$(http_status "/datasets/$DATASET_ID/versions/$DATASET_VERSION")" = "200" ]; then
+  echo "  already exists"
+  curl -sS "$(url "/datasets/$DATASET_ID/versions/$DATASET_VERSION")" \
+    | jq '.version | {version, status, sceneCount, manifestUri}'
+else
+  echo "  creating..."
+  http_post "/datasets/$DATASET_ID/versions" "{
+    \"version\": \"$DATASET_VERSION\",
+    \"metadata\": {}
+  }" | jq '.version | {version, status}'
+fi
+echo ""
+
+echo "=== done ==="
