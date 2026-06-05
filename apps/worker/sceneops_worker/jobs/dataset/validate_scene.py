@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
@@ -16,13 +17,15 @@ from sceneops_core.jobs.schemas import (
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.manifests import SceneManifest
 from sceneops_core.scenes.schemas.runs import SceneValidationRunRecord
-
-# from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
 
 class ValidateSceneJobHandler(
-    JobHandler[ValidateSceneJobParams, ValidateSceneJobResult]
+    RunRecordHandler[
+        ValidateSceneJobParams, ValidateSceneJobResult, SceneValidationRunRecord
+    ],
+    JobHandler[ValidateSceneJobParams, ValidateSceneJobResult],
 ):
     @property
     def job_type(self) -> JobType:
@@ -52,21 +55,15 @@ class ValidateSceneJobHandler(
             "validation_report_uri": parsed.report_uri,
         }
 
-    async def run(
+    def build_initial_record(
         self,
-        request: JobHandlerRequest[ValidateSceneJobParams],
-    ) -> ValidateSceneJobResult:
-        job = request.job
-        params = request.params
-        context = request.context
-
-        uris = _resolve_scene_manifest_uris(params)
-
-        run_id = default_validation_run_id(job.job_id)
-        started_at = utc_now()
-
-        initial_record = SceneValidationRunRecord(
-            run_id=run_id,
+        *,
+        job: Any,
+        params: ValidateSceneJobParams,
+        started_at: datetime,
+    ) -> SceneValidationRunRecord:
+        return SceneValidationRunRecord(
+            run_id=default_validation_run_id(job.job_id),
             dataset_id=job.params.get("dataset_id"),
             dataset_version=job.params.get("dataset_version"),
             status=RunStatus.RUNNING,
@@ -75,7 +72,18 @@ class ValidateSceneJobHandler(
             job_id=job.job_id,
             started_at=started_at,
         )
-        saved_record = await context.runs.scene_runs.upsert(initial_record)
+
+    async def execute(
+        self,
+        *,
+        job: Any,
+        params: ValidateSceneJobParams,
+        context: WorkerContext,
+        initial_record: SceneValidationRunRecord,
+        started_at: datetime,
+    ) -> tuple[SceneValidationRunRecord, ValidateSceneJobResult]:
+        run_id = initial_record.run_id
+        uris = _resolve_scene_manifest_uris(params)
 
         total_issues = 0
         blocking = False
@@ -149,26 +157,29 @@ class ValidateSceneJobHandler(
                 pipeline_run_id=job.pipeline_run_id,
             )
 
-        now = utc_now()
-        succeeded_record = saved_record.model_copy(
+        succeeded_record = initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "validation_status": "failed" if blocking else "ready",
                 "should_block_pipeline": blocking,
                 "validation_report_uri": report_uri,
                 "issue_count": total_issues,
-                "finished_at": now,
+                "finished_at": utc_now(),
             }
         )
-        await context.runs.scene_runs.upsert(succeeded_record)
 
-        return ValidateSceneJobResult(
+        return succeeded_record, ValidateSceneJobResult(
             status="failed" if blocking else "ready",
             should_block_pipeline=blocking,
             checked_scene_count=len(uris),
             issue_count=total_issues,
             report_uri=report_uri,
         )
+
+    async def _upsert(
+        self, context: WorkerContext, record: SceneValidationRunRecord
+    ) -> SceneValidationRunRecord:
+        return await context.runs.scene_runs.upsert(record)
 
 
 def _resolve_scene_manifest_uris(params: ValidateSceneJobParams) -> list[str]:

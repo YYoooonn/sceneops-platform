@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
@@ -15,12 +16,16 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.runs import SceneProfileRunRecord
+from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
-# from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
-
-class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobResult]):
+class ProfileSceneJobHandler(
+    RunRecordHandler[
+        ProfileSceneJobParams, ProfileSceneJobResult, SceneProfileRunRecord
+    ],
+    JobHandler[ProfileSceneJobParams, ProfileSceneJobResult],
+):
     @property
     def job_type(self) -> JobType:
         return JobType.PROFILE_SCENE
@@ -48,21 +53,15 @@ class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobRe
             "profile_report_uri": parsed.report_uri,
         }
 
-    async def run(
+    def build_initial_record(
         self,
-        request: JobHandlerRequest[ProfileSceneJobParams],
-    ) -> ProfileSceneJobResult:
-        job = request.job
-        params = request.params
-        context = request.context
-
-        uris = _resolve_scene_manifest_uris(params)
-
-        run_id = default_profile_run_id(job.job_id)
-        started_at = utc_now()
-
-        initial_record = SceneProfileRunRecord(
-            run_id=run_id,
+        *,
+        job: Any,
+        params: ProfileSceneJobParams,
+        started_at: datetime,
+    ) -> SceneProfileRunRecord:
+        return SceneProfileRunRecord(
+            run_id=default_profile_run_id(job.job_id),
             dataset_id=job.params.get("dataset_id"),
             dataset_version=job.params.get("dataset_version"),
             status=RunStatus.RUNNING,
@@ -71,7 +70,18 @@ class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobRe
             job_id=job.job_id,
             started_at=started_at,
         )
-        saved_record = await context.runs.scene_runs.upsert(initial_record)
+
+    async def execute(
+        self,
+        *,
+        job: Any,
+        params: ProfileSceneJobParams,
+        context: WorkerContext,
+        initial_record: SceneProfileRunRecord,
+        started_at: datetime,
+    ) -> tuple[SceneProfileRunRecord, ProfileSceneJobResult]:
+        run_id = initial_record.run_id
+        uris = _resolve_scene_manifest_uris(params)
 
         total_samples = 0
         total_frames = 0
@@ -146,8 +156,7 @@ class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobRe
                 pipeline_run_id=job.pipeline_run_id,
             )
 
-        now = utc_now()
-        succeeded_record = saved_record.model_copy(
+        succeeded_record = initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "sample_count": total_samples,
@@ -155,18 +164,22 @@ class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobRe
                 "annotation_count": total_annotations,
                 "observed_channels": observed_channels,
                 "profile_report_uri": report_uri,
-                "finished_at": now,
+                "finished_at": utc_now(),
             }
         )
-        await context.runs.scene_runs.upsert(succeeded_record)
 
-        return ProfileSceneJobResult(
+        return succeeded_record, ProfileSceneJobResult(
             scene_count=len(scene_profiles),
             sample_count=total_samples,
             frame_count=total_frames,
             observed_channels=observed_channels,
             report_uri=report_uri,
         )
+
+    async def _upsert(
+        self, context: WorkerContext, record: SceneProfileRunRecord
+    ) -> SceneProfileRunRecord:
+        return await context.runs.scene_runs.upsert(record)
 
 
 def _resolve_scene_manifest_uris(params: ProfileSceneJobParams) -> list[str]:

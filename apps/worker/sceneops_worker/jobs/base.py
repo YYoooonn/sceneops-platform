@@ -79,6 +79,7 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
         )
 
         saved_initial = await self._upsert(context, initial_record)
+        await context.commit()
 
         try:
             succeeded_record, result = await self.execute(
@@ -89,9 +90,11 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
                 started_at=started_at,
             )
             await self._upsert(context, succeeded_record)
+            await context.commit()
             return result
 
         except Exception as exc:
+            await context.rollback()
             failed_record = saved_initial.model_copy(
                 update={
                     "status": RunStatus.FAILED,
@@ -103,6 +106,7 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
                 }
             )
             await self._upsert(context, failed_record)
+            await context.commit()
             raise
 
     def build_initial_record(
