@@ -178,7 +178,7 @@ async def _ingest_nuscenes_scenes(
             scene_id=scene_id,
         )
 
-        scene_manifest_uri = await context.dataset_artifact_store.write_scene_manifest(
+        scene_manifest_uri = await context.scene_artifact_store.write_scene_manifest(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             scene_id=scene_id,

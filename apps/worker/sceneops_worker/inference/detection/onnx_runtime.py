@@ -12,8 +12,8 @@ from sceneops_core.datasets.schemas import DatasetManifest
 from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_core.inference.schemas.manifests import DetectionPredictionManifest
 from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
-from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
+from sceneops_worker.scenes import SceneArtifactStore
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
@@ -40,7 +40,7 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
 
         run_manifest = await self.generate_onnx_runtime_predictions(
             dataset_manifest=inference_input.dataset_manifest,
-            dataset_artifact_store=request.dataset_artifact_store,
+            scene_artifact_store=request.scene_artifact_store,
             run_artifact_store=request.run_artifact_store,
             model_id=inference_input.config.model_id,
             model_version=inference_input.config.model_version,
@@ -68,7 +68,7 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         self,
         *,
         dataset_manifest: DatasetManifest,
-        dataset_artifact_store: DatasetArtifactStore,
+        scene_artifact_store: SceneArtifactStore,
         run_artifact_store: RunArtifactStore,
         model_id: str,
         model_version: str,
@@ -86,7 +86,7 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         model_load_ms = (time.perf_counter() - load_started) * 1000.0
 
         sample_manifests: list[SceneSampleManifest] = []
-        async for sample_manifest in dataset_artifact_store.iter_samples(
+        async for sample_manifest in scene_artifact_store.iter_samples(
             dataset_manifest,
             max_samples=max_samples,
         ):

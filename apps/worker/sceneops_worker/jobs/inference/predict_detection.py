@@ -165,7 +165,7 @@ class PredictDetectionJobHandler(
                     ),
                     dataset_manifest=dataset_manifest,
                 ),
-                dataset_artifact_store=context.dataset_artifact_store,
+                scene_artifact_store=context.scene_artifact_store,
                 run_artifact_store=context.run_artifact_store,
             )
         )

@@ -161,7 +161,7 @@ class AutoLabelDatasetJobHandler(
         inference_result = await backend.run(
             DetectionInferenceRequest(
                 input=inference_input,
-                dataset_artifact_store=context.dataset_artifact_store,
+                scene_artifact_store=context.scene_artifact_store,
                 run_artifact_store=context.run_artifact_store,
             )
         )

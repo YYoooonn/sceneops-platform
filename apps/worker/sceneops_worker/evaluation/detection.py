@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias, Any
+from typing import TypeAlias
 
 from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetManifest
 from sceneops_core.evaluations.contracts import Evaluator
 from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
 from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
-from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
+from sceneops_worker.scenes import SceneArtifactStore
 
 from . import utils
 
@@ -20,7 +20,7 @@ DEFAULT_MATCH_DISTANCE_M = 2.0
 @dataclass(frozen=True)
 class DetectionEvaluationRequest:
     dataset_manifest: DatasetManifest
-    dataset_artifact_store: DatasetArtifactStore
+    scene_artifact_store: SceneArtifactStore
     run_artifact_store: RunArtifactStore
     inference_run_id: str
     evaluation_run_id: str
@@ -51,12 +51,12 @@ class CenterDistanceDetectionEvaluator(DetectionEvaluator):
 async def evaluate_detection_run(
     *,
     dataset_manifest: DatasetManifest,
-    dataset_artifact_store: DatasetArtifactStore,
+    scene_artifact_store: SceneArtifactStore,
     run_artifact_store: RunArtifactStore,
     inference_run_id: str,
     evaluation_run_id: str,
     match_distance_m: float = DEFAULT_MATCH_DISTANCE_M,
-) -> dict[str, Any]:
+) -> DetectionEvaluationManifest:
     """Compatibility wrapper for older call sites.
 
     New code should prefer CenterDistanceDetectionEvaluator.run().
@@ -66,7 +66,7 @@ async def evaluate_detection_run(
     return await evaluator.run(
         DetectionEvaluationRequest(
             dataset_manifest=dataset_manifest,
-            dataset_artifact_store=dataset_artifact_store,
+            scene_artifact_store=scene_artifact_store,
             run_artifact_store=run_artifact_store,
             inference_run_id=inference_run_id,
             evaluation_run_id=evaluation_run_id,
@@ -79,7 +79,7 @@ async def _evaluate_center_distance_detection(
     request: DetectionEvaluationRequest,
 ) -> DetectionEvaluationResult:
     dataset_manifest = request.dataset_manifest
-    dataset_artifact_store = request.dataset_artifact_store
+    scene_artifact_store = request.scene_artifact_store
     run_artifact_store = request.run_artifact_store
     inference_run_id = request.inference_run_id
     evaluation_run_id = request.evaluation_run_id
@@ -95,7 +95,7 @@ async def _evaluate_center_distance_detection(
     # Build sample index from scene manifests (samples are embedded, not individual files)
     sample_index: dict[str, SceneSampleManifest] = {}
     for scene_entry in dataset_manifest.scenes:
-        scene_manifest = await dataset_artifact_store.load_scene_manifest(
+        scene_manifest = await scene_artifact_store.load_scene_manifest(
             scene_entry.scene_manifest_uri
         )
         if scene_manifest is None:

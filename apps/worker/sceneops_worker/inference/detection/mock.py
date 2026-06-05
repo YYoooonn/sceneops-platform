@@ -15,8 +15,8 @@ from sceneops_worker.inference.detection.base import (
 )
 
 # from sceneops_worker.inference.mock_detection import generate_mock_predictions
-from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
+from sceneops_worker.scenes import SceneArtifactStore
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
 
 
@@ -33,7 +33,7 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
 
         run_manifest = await self.generate_mock_predictions(
             dataset_manifest=inference_input.dataset_manifest,
-            dataset_artifact_store=request.dataset_artifact_store,
+            scene_artifact_store=request.scene_artifact_store,
             run_artifact_store=request.run_artifact_store,
             model_id=inference_input.config.model_id,
             model_version=inference_input.config.model_version,
@@ -60,7 +60,7 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
         self,
         *,
         dataset_manifest: DatasetManifest,
-        dataset_artifact_store: DatasetArtifactStore,
+        scene_artifact_store: SceneArtifactStore,
         run_artifact_store: RunArtifactStore,
         model_id: str,
         model_version: str,
@@ -71,7 +71,7 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
         random.seed(seed)
 
         sample_manifests: list[SceneSampleManifest] = []
-        async for sample_manifest in dataset_artifact_store.iter_samples(
+        async for sample_manifest in scene_artifact_store.iter_samples(
             dataset_manifest,
             max_samples=max_samples,
         ):

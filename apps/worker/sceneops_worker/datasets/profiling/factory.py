@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 from sceneops_worker.datasets.profiling.base import DatasetProfiler
-from sceneops_worker.datasets.profiling.standard_profiler import StandardDatasetProfiler
 
 
-_DATASET_PROFILER_REGISTRY: dict[str, type[DatasetProfiler]] = {
-    "standard-dataset-profiler": StandardDatasetProfiler,
-}
+_DATASET_PROFILER_REGISTRY: dict[str, type[DatasetProfiler]] = {}
 
 
 def create_dataset_profiler(

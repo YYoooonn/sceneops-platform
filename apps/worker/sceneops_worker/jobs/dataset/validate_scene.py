@@ -15,10 +15,12 @@ from sceneops_core.jobs.schemas import (
     ValidateSceneJobResult,
 )
 from sceneops_core.runs.schemas import RunStatus
-from sceneops_core.scenes.schemas.manifests import SceneManifest
 from sceneops_core.scenes.schemas.runs import SceneValidationRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
+from sceneops_worker.scenes.validation import SceneManifestValidator
+
+_validator = SceneManifestValidator()
 
 
 class ValidateSceneJobHandler(
@@ -87,34 +89,34 @@ class ValidateSceneJobHandler(
 
         total_issues = 0
         blocking = False
-        report_data: list[dict] = []
+        report_scenes: list[dict] = []
 
         for uri in uris:
-            scene_manifest = await context.dataset_artifact_store.load_scene_manifest(
-                uri
-            )
+            scene_manifest = await context.scene_artifact_store.load_scene_manifest(uri)
             if scene_manifest is None:
                 total_issues += 1
                 blocking = True
-                report_data.append({"uri": uri, "error": "manifest_not_found"})
+                report_scenes.append({"uri": uri, "error": "manifest_not_found"})
                 continue
 
-            issues = _validate_scene(
+            result = _validator.validate(
                 manifest=scene_manifest,
-                require_target_channels=params.require_target_channels,
+                required_channels=params.require_target_channels,
             )
 
-            total_issues += len(issues)
-            if any(i.get("blocking") for i in issues):
+            total_issues += len(result.issues)
+            if result.should_block:
                 blocking = True
 
-            report_data.append(
+            report_scenes.append(
                 {
-                    "scene_id": scene_manifest.scene_id,
+                    "scene_id": result.scene_id,
                     "uri": uri,
-                    "issues": issues,
-                    "sample_count": scene_manifest.sample_count,
-                    "channels": scene_manifest.channels,
+                    "status": result.status,
+                    "sample_count": result.sample_count,
+                    "observed_channels": result.observed_channels,
+                    "missing_channels": result.missing_channels,
+                    "issues": [i.model_dump() for i in result.issues],
                 }
             )
 
@@ -125,21 +127,19 @@ class ValidateSceneJobHandler(
             "total_issues": total_issues,
             "should_block_pipeline": blocking,
             "status": "failed" if blocking else "ready",
-            "scenes": report_data,
+            "scenes": report_scenes,
             "created_at": utc_now().isoformat(),
         }
 
         report_uri: str | None = None
         if uris:
-            report_uri = context.dataset_artifact_store.artifact_store.join_uri(
+            report_uri = context.artifact_store.join_uri(
                 context.settings.run_root_uri,
                 "scene_validations",
                 run_id,
                 "report.json",
             )
-            await context.dataset_artifact_store.artifact_store.write_json(
-                report_uri, report
-            )
+            await context.artifact_store.write_json(report_uri, report)
 
             await context.artifact_record_store.create(
                 artifact_id=generate_artifact_id(),
@@ -188,34 +188,3 @@ def _resolve_scene_manifest_uris(params: ValidateSceneJobParams) -> list[str]:
     if params.scene_manifest_uri:
         return [params.scene_manifest_uri]
     return []
-
-
-def _validate_scene(
-    *,
-    manifest: SceneManifest,
-    require_target_channels: list[str],
-) -> list[dict]:
-    issues: list[dict] = []
-
-    if manifest.sample_count == 0:
-        issues.append(
-            {
-                "type": "empty_scene",
-                "message": "Scene has no samples",
-                "blocking": True,
-            }
-        )
-
-    actual_channels = set(manifest.channels)
-    for required in require_target_channels:
-        if required not in actual_channels:
-            issues.append(
-                {
-                    "type": "missing_channel",
-                    "message": f"Required channel missing: {required}",
-                    "channel": required,
-                    "blocking": True,
-                }
-            )
-
-    return issues

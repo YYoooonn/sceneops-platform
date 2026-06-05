@@ -74,7 +74,7 @@ class GroundingDinoDetectionBackend:
             )
 
         sample_manifests: list[SceneSampleManifest] = []
-        async for sample in request.dataset_artifact_store.iter_samples(
+        async for sample in request.scene_artifact_store.iter_samples(
             dataset_manifest,
             max_samples=inference_input.config.max_samples,
         ):

@@ -139,7 +139,7 @@ class EvaluateDetectionJobHandler(
         evaluation_manifest = await evaluator.run(
             DetectionEvaluationRequest(
                 dataset_manifest=dataset_manifest,
-                dataset_artifact_store=context.dataset_artifact_store,
+                scene_artifact_store=context.scene_artifact_store,
                 run_artifact_store=context.run_artifact_store,
                 inference_run_id=params.inference_run_id,
                 evaluation_run_id=evaluation_run_id,

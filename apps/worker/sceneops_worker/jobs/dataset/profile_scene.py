@@ -18,6 +18,9 @@ from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.runs import SceneProfileRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
+from sceneops_worker.scenes.profiling import SceneManifestProfiler
+
+_profiler = SceneManifestProfiler()
 
 
 class ProfileSceneJobHandler(
@@ -90,27 +93,24 @@ class ProfileSceneJobHandler(
         scene_profiles: list[dict] = []
 
         for uri in uris:
-            scene_manifest = await context.dataset_artifact_store.load_scene_manifest(
-                uri
-            )
+            scene_manifest = await context.scene_artifact_store.load_scene_manifest(uri)
             if scene_manifest is None:
                 continue
 
-            scene_channels = set(scene_manifest.channels)
-            scene_annotations = sum(len(s.annotations) for s in scene_manifest.samples)
+            result = _profiler.profile(manifest=scene_manifest)
 
-            all_channels.update(scene_channels)
-            total_samples += scene_manifest.sample_count
-            total_frames += scene_manifest.frame_count
-            total_annotations += scene_annotations
+            all_channels.update(result.channels)
+            total_samples += result.sample_count
+            total_frames += result.frame_count
+            total_annotations += result.annotation_count
 
             scene_profiles.append(
                 {
-                    "scene_id": scene_manifest.scene_id,
-                    "sample_count": scene_manifest.sample_count,
-                    "frame_count": scene_manifest.frame_count,
-                    "channels": scene_manifest.channels,
-                    "annotation_count": scene_annotations,
+                    "scene_id": result.scene_id,
+                    "sample_count": result.sample_count,
+                    "frame_count": result.frame_count,
+                    "channels": result.channels,
+                    "annotation_count": result.annotation_count,
                 }
             )
 
@@ -130,15 +130,13 @@ class ProfileSceneJobHandler(
 
         report_uri: str | None = None
         if uris:
-            report_uri = context.dataset_artifact_store.artifact_store.join_uri(
+            report_uri = context.artifact_store.join_uri(
                 context.settings.run_root_uri,
                 "scene_profiles",
                 run_id,
                 "report.json",
             )
-            await context.dataset_artifact_store.artifact_store.write_json(
-                report_uri, report
-            )
+            await context.artifact_store.write_json(report_uri, report)
 
             await context.artifact_record_store.create(
                 artifact_id=generate_artifact_id(),

@@ -84,9 +84,7 @@ class BuildDatasetManifestJobHandler(
         all_channels: set[str] = set()
 
         for uri in uris:
-            scene_manifest = await context.dataset_artifact_store.load_scene_manifest(
-                uri
-            )
+            scene_manifest = await context.scene_artifact_store.load_scene_manifest(uri)
             if scene_manifest is None:
                 continue
 

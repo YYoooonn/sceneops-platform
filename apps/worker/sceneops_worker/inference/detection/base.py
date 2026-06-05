@@ -8,14 +8,14 @@ from sceneops_core.inference.schemas import (
     DetectionInferenceInput,
     DetectionInferenceResult,
 )
-from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
+from sceneops_worker.scenes import SceneArtifactStore
 
 
 @dataclass(frozen=True)
 class DetectionInferenceRequest:
     input: DetectionInferenceInput
-    dataset_artifact_store: DatasetArtifactStore
+    scene_artifact_store: SceneArtifactStore
     run_artifact_store: RunArtifactStore
 
 
