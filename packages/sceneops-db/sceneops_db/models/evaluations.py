@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, text
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +36,12 @@ class EvaluationRunModel(Base):
     )
 
     sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prediction_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ground_truth_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evaluation_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    primary_metric_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    primary_metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     evaluation_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     metrics_uri: Mapped[str | None] = mapped_column(Text, nullable=True)

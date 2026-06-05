@@ -48,12 +48,11 @@ class EvaluateDetectionJobHandler(
 
     def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
         parsed = EvaluateDetectionJobResult.model_validate(result)
-        meta = parsed.metadata or {}
         return {
             Ctx.EVALUATION_RUN_ID: parsed.evaluation_run_id,
-            Ctx.EVALUATION_MANIFEST_URI: parsed.metrics_uri,
-            Ctx.EVALUATION_METRICS: (parsed.summary or {}).get("metrics"),
-            Ctx.EVALUATION_SAMPLE_COUNT: meta.get("sample_count"),
+            Ctx.EVALUATION_MANIFEST_URI: parsed.evaluation_manifest_uri,
+            Ctx.EVALUATION_METRICS: parsed.metrics,
+            Ctx.EVALUATION_SAMPLE_COUNT: parsed.sample_count,
         }
 
     def build_initial_record(
@@ -148,7 +147,14 @@ class EvaluateDetectionJobHandler(
         metrics = evaluation_manifest.get("metrics", {})
         class_metrics = evaluation_manifest.get("class_metrics", {})
         sample_count = evaluation_manifest.get("sample_count")
+        prediction_count = evaluation_manifest.get("prediction_count")
+        ground_truth_count = evaluation_manifest.get("ground_truth_count")
+        evaluation_unit = evaluation_manifest.get("evaluation_unit", "annotation")
         evaluation_manifest_uri = evaluation_manifest["evaluation_manifest_uri"]
+
+        # Use precision as the default primary metric if available.
+        primary_metric_value = metrics.get("precision")
+        primary_metric_name = "precision" if primary_metric_value is not None else None
 
         succeeded_record = initial_record.model_copy(
             update={
@@ -156,7 +162,13 @@ class EvaluateDetectionJobHandler(
                 "model_version": inference_run.model_version,
                 "status": RunStatus.SUCCEEDED,
                 "sample_count": sample_count,
+                "prediction_count": prediction_count,
+                "ground_truth_count": ground_truth_count,
+                "evaluation_unit": evaluation_unit,
+                "primary_metric_name": primary_metric_name,
+                "primary_metric_value": primary_metric_value,
                 "evaluation_manifest_uri": evaluation_manifest_uri,
+                "metrics_uri": evaluation_manifest_uri,
                 "metrics": metrics,
                 "class_metrics": class_metrics,
                 "summary": {
@@ -170,18 +182,27 @@ class EvaluateDetectionJobHandler(
 
         job_result = EvaluateDetectionJobResult(
             evaluation_run_id=evaluation_run_id,
+            evaluation_manifest_uri=evaluation_manifest_uri,
             metrics_uri=evaluation_manifest_uri,
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
+            model_id=inference_run.model_id,
+            model_version=inference_run.model_version,
+            inference_run_id=params.inference_run_id,
+            sample_count=sample_count,
+            prediction_count=prediction_count,
+            ground_truth_count=ground_truth_count,
+            evaluation_unit=evaluation_unit,
+            primary_metric_name=primary_metric_name,
+            primary_metric_value=primary_metric_value,
+            metrics=metrics,
+            class_metrics=class_metrics,
             summary={
-                "metrics": metrics,
-                "class_metrics": class_metrics,
                 "status": evaluation_manifest.get("status"),
                 "match_distance_m": evaluation_manifest.get("match_distance_m"),
-            },
-            metadata={
-                "sample_count": sample_count,
-                "inference_run_id": params.inference_run_id,
                 "samples_root_uri": evaluation_manifest.get("samples_root_uri"),
             },
+            metadata={},
         )
 
         return succeeded_record, job_result

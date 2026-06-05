@@ -153,6 +153,9 @@ async def _evaluate_center_distance_detection(
     )
     samples_root_uri = run_artifact_store.evaluation_samples_root_uri(evaluation_run_id)
 
+    prediction_count = total_tp + total_fp
+    ground_truth_count = total_tp + total_fn
+
     evaluation_manifest = {
         "evaluation_run_id": evaluation_run_id,
         "inference_run_id": inference_run_id,
@@ -163,6 +166,9 @@ async def _evaluate_center_distance_detection(
         "status": "succeeded",
         "match_distance_m": match_distance_m,
         "sample_count": len(prediction_uris),
+        "prediction_count": prediction_count,
+        "ground_truth_count": ground_truth_count,
+        "evaluation_unit": "annotation",
         "evaluation_manifest_uri": evaluation_manifest_uri,
         "samples_root_uri": samples_root_uri,
         "metrics": {

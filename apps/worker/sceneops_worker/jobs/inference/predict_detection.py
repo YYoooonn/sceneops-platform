@@ -54,13 +54,12 @@ class PredictDetectionJobHandler(
 
     def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
         parsed = PredictDetectionJobResult.model_validate(result)
-        meta = parsed.metadata or {}
         return {
             Ctx.INFERENCE_RUN_ID: parsed.inference_run_id,
-            Ctx.PREDICTION_MANIFEST_URI: meta.get("prediction_manifest_uri"),
+            Ctx.PREDICTION_MANIFEST_URI: parsed.prediction_manifest_uri,
             Ctx.PREDICTION_SAMPLE_COUNT: parsed.sample_count,
-            Ctx.PREDICTION_MODEL_ID: meta.get("model_id"),
-            Ctx.PREDICTION_MODEL_VERSION: meta.get("model_version"),
+            Ctx.PREDICTION_MODEL_ID: parsed.model_id,
+            Ctx.PREDICTION_MODEL_VERSION: parsed.model_version,
         }
 
     def build_initial_record(
@@ -187,15 +186,17 @@ class PredictDetectionJobHandler(
 
         job_result = PredictDetectionJobResult(
             inference_run_id=inference_run_id,
+            prediction_manifest_uri=inference_result.run_manifest_uri,
             predictions_root_uri=inference_result.predictions_root_uri,
+            model_id=params.model_id,
+            model_version=params.model_version,
+            inference_backend=params.inference_backend.value,
             sample_count=inference_result.sample_count,
+            prediction_count=inference_result.prediction_count,
+            metrics=inference_result.metrics,
             metadata={
-                "prediction_manifest_uri": inference_result.run_manifest_uri,
-                "model_id": params.model_id,
-                "model_version": params.model_version,
-                "prediction_count": inference_result.prediction_count,
-                "backend": params.inference_backend.value,
-                "metrics": inference_result.metrics,
+                "model_uri": model_uri,
+                "endpoint_url": endpoint_url,
             },
         )
 

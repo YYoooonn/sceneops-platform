@@ -24,6 +24,14 @@ class EvaluationLeaderboardEntry(SceneOpsBaseModel):
     metric_name: str | None = None
     metric_value: float | None = None
 
+    primary_metric_name: str | None = None
+    primary_metric_value: float | None = None
+
+    sample_count: int | None = None
+    prediction_count: int | None = None
+    ground_truth_count: int | None = None
+    evaluation_unit: str | None = None
+
     summary: JsonDict = Field(default_factory=dict)
     metrics: JsonDict = Field(default_factory=dict)
 

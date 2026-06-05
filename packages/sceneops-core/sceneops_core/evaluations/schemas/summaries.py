@@ -26,6 +26,13 @@ class EvaluationRunSummaryItem(SceneOpsBaseModel):
     status: RunStatus
 
     sample_count: int | None = None
+    prediction_count: int | None = None
+    ground_truth_count: int | None = None
+    evaluation_unit: str | None = None
+
+    primary_metric_name: str | None = None
+    primary_metric_value: float | None = None
+
     evaluation_manifest_uri: str | None = None
     metrics_uri: str | None = None
 
