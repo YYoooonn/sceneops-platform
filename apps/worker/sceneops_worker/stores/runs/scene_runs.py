@@ -20,6 +20,12 @@ class SceneRunStore:
     async def save(self, run: SceneRunRecord) -> SceneRunRecord:
         return await self._repo.update(run)
 
+    async def upsert(self, run: SceneRunRecord) -> SceneRunRecord:
+        existing = await self._repo.get(run.run_id)
+        if existing is None:
+            return await self._repo.create(run)
+        return await self._repo.update(run)
+
     async def list(
         self,
         *,
