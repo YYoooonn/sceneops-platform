@@ -1,3 +1,19 @@
+x-worker-common: &worker-common
+  build:
+    context: .
+    dockerfile: apps/worker/Dockerfile
+  image: sceneops-platform/worker:local
+  env_file:
+    - .env.local
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_started
+  volumes:
+    - ./data:/data
+    - ./scripts:/workspace/scripts:ro
+
 services:
   postgres:
     image: postgres:16
@@ -74,33 +90,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-
-  worker-cli:
-    build:
-      context: .
-      dockerfile: apps/worker/Dockerfile
-    image: sceneops-platform/worker:local
-    container_name: sceneops-worker-cli
-    env_file:
-      - .env.local
-    volumes:
-      - ./data:/data
-      - ./scripts:/workspace/scripts:ro
-    entrypoint: ["sceneops-worker"]
-    command: ["--help"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    profiles:
-      - debug
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   worker-pipeline:
-    build:
-      context: .
-      dockerfile: apps/worker/Dockerfile
-    image: sceneops-platform/worker:local
+    <<: *worker-common
     container_name: sceneops-worker-pipeline
     command: >
       celery
@@ -108,26 +105,13 @@ services:
       worker
       --loglevel=info
       --queues=sceneops.pipeline_runs
-      --concurrency=1
+      --concurrency=${SCENEOPS_WORKER_PIPELINE_CONCURRENCY:-1}
       --hostname=sceneops-pipeline@%h
-    env_file:
-      - .env.local
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    volumes:
-      - ./data:/data
-      - ./scripts:/workspace/scripts:ro
     profiles:
       - worker
 
   worker-jobs:
-    build:
-      context: .
-      dockerfile: apps/worker/Dockerfile
-    image: sceneops-platform/worker:local
+    <<: *worker-common
     container_name: sceneops-worker-jobs
     command: >
       celery
@@ -135,20 +119,18 @@ services:
       worker
       --loglevel=info
       --queues=sceneops.jobs
-      --concurrency=4
+      --concurrency=${SCENEOPS_WORKER_JOBS_CONCURRENCY:-4}
       --hostname=sceneops-jobs@%h
-    env_file:
-      - .env.local
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    volumes:
-      - ./data:/data
-      - ./scripts:/workspace/scripts:ro
     profiles:
       - worker
+
+  worker-cli:
+    <<: *worker-common
+    container_name: sceneops-worker-cli
+    entrypoint: ["sceneops-worker"]
+    command: ["--help"]
+    profiles:
+      - debug
 
   migrate:
     build:
@@ -157,7 +139,7 @@ services:
     env_file:
       - .env.local
     volumes:
-      - ./migrations/versions:/workspace/migrations/versions
+      - ./migrations:/workspace/migrations
     profiles:
       - tools
     depends_on:
@@ -178,7 +160,7 @@ services:
       dockerfile: apps/inference-server/Dockerfile
       args:
         TORCH_FLAVOR: cu121
-    image: sceneops-platform/inference-server:local
+    image: sceneops-platform/inference-server:gpu-local
     container_name: sceneops-inference-server
     env_file:
       - .env.local

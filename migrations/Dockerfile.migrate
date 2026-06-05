@@ -17,7 +17,11 @@ COPY pyproject.toml uv.lock ./
 
 COPY packages/sceneops-core ./packages/sceneops-core
 COPY packages/sceneops-db ./packages/sceneops-db
-COPY migrations ./migrations
+
+COPY migrations/__init__.py ./migrations/__init__.py
+COPY migrations/alembic.ini ./migrations/alembic.ini
+COPY migrations/env.py ./migrations/env.py
+COPY migrations/script.py.mako ./migrations/script.py.mako
 
 RUN uv sync --package sceneops-db --frozen --no-dev
 

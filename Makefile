@@ -1,24 +1,49 @@
 COMPOSE_FILE ?= docker-compose.local.yml
-API_PREFIX ?= /api/v1
+API_HOST     ?= http://localhost:8000
+API_PREFIX   ?= /api/v1
 ALEMBIC_CONFIG ?= migrations/alembic.ini
 
-JOB_ID ?=
+JOB_ID          ?=
 PIPELINE_RUN_ID ?=
-MSG ?=
+MSG             ?=
+
+MODEL_ID        ?= dummy-detector
+MODEL_VERSION   ?= v1
+DATASET_ID      ?= nuscenes
+DATASET_VERSION ?= v1.0-mini
 
 .DEFAULT_GOAL := help
+
+# --------------------
+# Help
+# --------------------
 
 .PHONY: help
 help:
 	@echo "SceneOps Platform"
 	@echo ""
+	@echo "Quick start:"
+	@echo "  make setup                    Install deps, hooks"
+	@echo "  make local-up                 Start full local stack (MinIO + DB migrate + API + workers)"
+	@echo "  make e2e                      Run all E2E tests"
+	@echo "  make local-down               Stop all services"
+	@echo ""
 	@echo "Setup:"
+	@echo "  make setup"
 	@echo "  make uv-sync"
 	@echo "  make uv-lock"
 	@echo "  make install-hooks"
 	@echo "  make check"
+	@echo "  make lint"
 	@echo ""
-	@echo "Docker Compose:"
+	@echo "Local stack:"
+	@echo "  make local-up                 MinIO + migrate + API + workers"
+	@echo "  make local-down               Stop everything"
+	@echo "  make local-reset              Wipe volumes, restart from scratch"
+	@echo "  make local-logs               Follow logs for main services"
+	@echo "  make local-ps                 Show service status"
+	@echo ""
+	@echo "Docker Compose (raw):"
 	@echo "  make compose-build"
 	@echo "  make compose-build-no-cache"
 	@echo "  make compose-up"
@@ -27,28 +52,48 @@ help:
 	@echo "  make compose-logs"
 	@echo "  make compose-ps"
 	@echo ""
-	@echo "MinIO (object storage):"
-	@echo "  make minio-up       Start MinIO + create bucket"
-	@echo "  make minio-down     Stop MinIO"
-	@echo "  make check-minio    Verify S3ArtifactStore against MinIO"
+	@echo "MinIO:"
+	@echo "  make minio-up"
+	@echo "  make minio-down"
+	@echo "  make minio-logs"
+	@echo "  make minio-console"
+	@echo "  make check-minio"
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-migrate"
-	@echo "  make db-revision MSG='create jobs table'"
+	@echo "  make db-revision MSG='create table'"
 	@echo "  make db-current"
 	@echo "  make db-history"
 	@echo "  make db-reset"
+	@echo "  make db-shell"
 	@echo ""
 	@echo "API:"
 	@echo "  make api-logs"
 	@echo "  make api-shell"
+	@echo "  make api-health"
+	@echo "  make api-openapi"
 	@echo ""
 	@echo "Worker:"
 	@echo "  make worker-logs"
 	@echo "  make worker-shell"
+	@echo "  make worker-python"
+	@echo "  make worker-imports"
 	@echo "  make worker-cli"
 	@echo "  make worker-run-job JOB_ID=job-xxx"
 	@echo "  make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"
+	@echo ""
+	@echo "Inference (local CPU):"
+	@echo "  make inference-local-build"
+	@echo "  make inference-local-up"
+	@echo "  make inference-local-down"
+	@echo "  make inference-local-logs"
+	@echo "  make check-inference-server"
+	@echo ""
+	@echo "Inference (GPU):"
+	@echo "  make inference-gpu-build"
+	@echo "  make inference-gpu-up"
+	@echo "  make inference-gpu-down"
+	@echo "  make inference-gpu-logs"
 	@echo ""
 	@echo "Checks:"
 	@echo "  make check-env"
@@ -56,22 +101,32 @@ help:
 	@echo "  make check-celery"
 	@echo "  make check-minio"
 	@echo ""
+	@echo "Fixtures:"
+	@echo "  make register-nuscenes-dataset"
+	@echo ""
 	@echo "E2E:"
-	@echo "  make e2e-mock-celery"
-	@echo "  make e2e-onnx-celery"
-	@echo "  make e2e-build-scenes"
-	@echo "  make e2e-scenario-mining"
+	@echo "  make e2e                       Run all E2E tests"
+	@echo "  make e2e-api-smoke"
+	@echo "  make e2e-dataset-scene-ingestion"
+	@echo "  make e2e-detection-evaluation"
 	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"
 	@echo "  make show-pipeline PIPELINE_RUN_ID=pipe-xxx"
 	@echo "  make show-job-events JOB_ID=job-xxx"
+	@echo "  make tail-worker-logs"
+	@echo ""
+	@echo "Cleanup:"
+	@echo "  make prepare-data"
+	@echo "  make clean-artifacts"
+	@echo "  make clean-python"
 	@echo "  make reset-local"
 
 # --------------------
 # Setup / Quality
 # --------------------
-.PHONY: setup-dev
+
+.PHONY: setup
 setup:
 	chmod +x scripts/setup_dev.sh
 	./scripts/setup_dev.sh
@@ -100,40 +155,82 @@ check:
 lint:
 	uv run ruff check apps/ packages/
 
+.PHONY: format
+format:
+	uv run ruff format apps/ packages/
+
+# --------------------
+# Cleanup
+# --------------------
+
 .PHONY: prepare-data
 prepare-data:
-	mkdir -p data/raw data/datasets data/runs data/models
+	mkdir -p data/raw data/datasets data/runs data/models data/artifacts cache/hf
 
 .PHONY: clean-artifacts
 clean-artifacts:
-	rm -rf data/datasets/*
-	rm -rf data/runs/*
-	rm -rf data/models/*
+	rm -rf data/datasets/* data/runs/* data/models/* data/artifacts/*
 	$(MAKE) prepare-data
 
+.PHONY: clean-python
+clean-python:
+	find . -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	find . -name ".pytest_cache" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	find . -name ".mypy_cache" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	find . -name ".ruff_cache" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+.PHONY: reset-local
+reset-local:
+	chmod +x scripts/dev/reset_local_state.sh
+	scripts/dev/reset_local_state.sh
+
 # --------------------
-# Docker Compose
+# Local stack
+# --------------------
+
+.PHONY: local-up
+local-up: prepare-data minio-up db-migrate
+	docker compose -f $(COMPOSE_FILE) up -d api worker-pipeline worker-jobs
+
+.PHONY: local-down
+local-down:
+	docker compose -f $(COMPOSE_FILE) --profile minio down
+
+.PHONY: local-reset
+local-reset:
+	docker compose -f $(COMPOSE_FILE) --profile minio down -v
+	$(MAKE) clean-artifacts
+	$(MAKE) local-up
+
+.PHONY: local-logs
+local-logs:
+	docker compose -f $(COMPOSE_FILE) logs -f postgres redis minio api worker-pipeline worker-jobs
+
+.PHONY: local-ps
+local-ps:
+	docker compose -f $(COMPOSE_FILE) --profile worker --profile minio ps
+
+# --------------------
+# Docker Compose (raw)
 # --------------------
 
 .PHONY: compose-build
 compose-build:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build api worker-pipeline
+	docker compose -f $(COMPOSE_FILE) build api worker-pipeline worker-jobs worker-cli
 
 .PHONY: compose-build-no-cache
 compose-build-no-cache:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-pipeline worker-cli
+	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-pipeline worker-jobs worker-cli
 
 .PHONY: compose-up
-compose-up: prepare-data
-	$(MAKE) minio-up
+compose-up: prepare-data minio-up
 	docker compose -f $(COMPOSE_FILE) up -d postgres redis api worker-pipeline worker-jobs
 
 .PHONY: compose-down
 compose-down:
-	$(MAKE) minio-down
-	docker compose -f $(COMPOSE_FILE) down postgres redis api worker-pipeline worker-jobs
+	docker compose -f $(COMPOSE_FILE) down
 
 .PHONY: compose-down-volumes
 compose-down-volumes:
@@ -150,6 +247,7 @@ compose-ps:
 # --------------------
 # Database
 # --------------------
+
 .PHONY: migrate-build
 migrate-build:
 	uv lock
@@ -157,7 +255,7 @@ migrate-build:
 
 .PHONY: db-migrate
 db-migrate: migrate-build
-	$(MAKE) db-up
+	docker compose -f $(COMPOSE_FILE) up -d postgres
 	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate
 
 .PHONY: db-revision
@@ -182,8 +280,11 @@ db-history:
 .PHONY: db-reset
 db-reset:
 	docker compose -f $(COMPOSE_FILE) down -v
-	docker compose -f $(COMPOSE_FILE) up -d postgres
 	$(MAKE) db-migrate
+
+.PHONY: db-shell
+db-shell:
+	docker compose -f $(COMPOSE_FILE) exec postgres psql -U sceneops -d sceneops
 
 # --------------------
 # API
@@ -197,6 +298,15 @@ api-logs:
 api-shell:
 	docker compose -f $(COMPOSE_FILE) exec api sh
 
+.PHONY: api-health
+api-health:
+	curl -sf $(API_HOST)/health | python3 -m json.tool
+
+.PHONY: api-openapi
+api-openapi:
+	docker compose -f $(COMPOSE_FILE) exec api python -c \
+		"from app.main import app; app.openapi(); print('api openapi ok')"
+
 # --------------------
 # Worker
 # --------------------
@@ -207,7 +317,16 @@ worker-logs:
 
 .PHONY: worker-shell
 worker-shell:
-	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli sh
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm --entrypoint sh worker-cli
+
+.PHONY: worker-python
+worker-python:
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm --entrypoint python worker-cli
+
+.PHONY: worker-imports
+worker-imports:
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm --entrypoint python worker-cli \
+		-c "import sceneops_worker; from sceneops_worker.jobs.registry import create_default_job_handler_registry; print('worker import ok'); print(create_default_job_handler_registry())"
 
 .PHONY: worker-cli
 worker-cli:
@@ -244,31 +363,62 @@ minio-down:
 	docker compose -f $(COMPOSE_FILE) --profile minio stop minio
 	docker compose -f $(COMPOSE_FILE) --profile minio rm -f minio minio-init
 
+.PHONY: minio-logs
+minio-logs:
+	docker compose -f $(COMPOSE_FILE) --profile minio logs -f minio
+
+.PHONY: minio-console
+minio-console:
+	@echo "MinIO API:     http://localhost:9000"
+	@echo "MinIO Console: http://localhost:9001"
+
 # --------------------
-# Inference Server (LOCAL)
+# Inference (local CPU)
 # --------------------
 
-.PHONY: inference-server-build
-inference-server-build:
-	docker compose -f $(COMPOSE_FILE) --profile inference build inference-server
+.PHONY: inference-local-build
+inference-local-build:
+	docker compose -f $(COMPOSE_FILE) --profile inference build inference-server-local
 
-.PHONY: inference-server-up
-inference-server-up:
+.PHONY: inference-local-up
+inference-local-up:
 	mkdir -p cache/hf
-	docker compose -f $(COMPOSE_FILE) --profile inference up -d inference-server
+	docker compose -f $(COMPOSE_FILE) --profile inference up -d inference-server-local
 
-.PHONY: inference-server-down
-inference-server-down:
-	docker compose -f $(COMPOSE_FILE) --profile inference stop inference-server
-	docker compose -f $(COMPOSE_FILE) --profile inference rm -f inference-server
+.PHONY: inference-local-down
+inference-local-down:
+	docker compose -f $(COMPOSE_FILE) --profile inference stop inference-server-local
+	docker compose -f $(COMPOSE_FILE) --profile inference rm -f inference-server-local
 
-.PHONY: inference-server-logs
-inference-server-logs:
-	docker compose -f $(COMPOSE_FILE) --profile inference logs -f inference-server
+.PHONY: inference-local-logs
+inference-local-logs:
+	docker compose -f $(COMPOSE_FILE) --profile inference logs -f inference-server-local
 
 .PHONY: check-inference-server
 check-inference-server:
 	curl -sf http://localhost:8001/healthz | python3 -m json.tool
+
+# --------------------
+# Inference (GPU)
+# --------------------
+
+.PHONY: inference-gpu-build
+inference-gpu-build:
+	docker compose -f $(COMPOSE_FILE) --profile gpu build inference-server
+
+.PHONY: inference-gpu-up
+inference-gpu-up:
+	mkdir -p cache/hf
+	docker compose -f $(COMPOSE_FILE) --profile gpu up -d inference-server
+
+.PHONY: inference-gpu-down
+inference-gpu-down:
+	docker compose -f $(COMPOSE_FILE) --profile gpu stop inference-server
+	docker compose -f $(COMPOSE_FILE) --profile gpu rm -f inference-server
+
+.PHONY: inference-gpu-logs
+inference-gpu-logs:
+	docker compose -f $(COMPOSE_FILE) --profile gpu logs -f inference-server
 
 # --------------------
 # Checks
@@ -295,7 +445,7 @@ check-minio:
 	scripts/checks/check_minio.sh
 
 # --------------------
-# Prepare
+# Fixtures
 # --------------------
 
 .PHONY: register-nuscenes-dataset
@@ -307,35 +457,30 @@ register-nuscenes-dataset:
 # E2E
 # --------------------
 
+.PHONY: e2e-api-smoke
+e2e-api-smoke:
+	chmod +x scripts/e2e/e2e_api_smoke.sh
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_api_smoke.sh
+
+.PHONY: e2e-dataset-scene-ingestion
+e2e-dataset-scene-ingestion:
+	chmod +x scripts/e2e/e2e_dataset_scene_ingestion.sh
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_dataset_scene_ingestion.sh
+
+.PHONY: e2e-detection-evaluation
+e2e-detection-evaluation:
+	chmod +x scripts/e2e/e2e_detection_evaluation.sh
+	API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	MODEL_ID=$(MODEL_ID) MODEL_VERSION=$(MODEL_VERSION) \
+	scripts/e2e/e2e_detection_evaluation.sh
+
+.PHONY: e2e
+e2e: e2e-api-smoke e2e-dataset-scene-ingestion e2e-detection-evaluation
+
+# Backward-compatible alias
 .PHONY: e2e-dataset-ingest
-e2e-dataset-ingest:
-	chmod +x scripts/e2e/e2e_ingestion_pipeline_celery.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_ingestion_pipeline_celery.sh
-
-.PHONY: e2e-autolabel
-e2e-autolabel:
-	chmod +x scripts/e2e/e2e_autolabel_celery.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_autolabel_celery.sh
-
-.PHONY: e2e-mock-celery
-e2e-mock-celery:
-	chmod +x scripts/e2e/e2e_mock_pipeline_celery.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_mock_pipeline_celery.sh
-
-.PHONY: e2e-onnx-celery
-e2e-onnx-celery:
-	chmod +x scripts/e2e/e2e_onnx_pipeline_celery.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_onnx_pipeline_celery.sh
-
-.PHONY: e2e-build-scenes
-e2e-build-scenes:
-	chmod +x scripts/e2e/e2e_build_scenes_pipeline_celery.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_build_scenes_pipeline_celery.sh
-
-.PHONY: e2e-scenario-mining
-e2e-scenario-mining:
-	chmod +x scripts/e2e/e2e_scenario_mining_pipeline_celery.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_scenario_mining_pipeline_celery.sh
+e2e-dataset-ingest: e2e-dataset-scene-ingestion
 
 # --------------------
 # Debug
@@ -352,6 +497,7 @@ show-pipeline:
 		echo "PIPELINE_RUN_ID is required. Usage: make show-pipeline PIPELINE_RUN_ID=pipe-xxx"; \
 		exit 1; \
 	fi
+	chmod +x scripts/debug/show_pipeline.sh
 	API_PREFIX=$(API_PREFIX) PIPELINE_RUN_ID=$(PIPELINE_RUN_ID) scripts/debug/show_pipeline.sh
 
 .PHONY: show-job-events
@@ -363,6 +509,7 @@ show-job-events:
 	chmod +x scripts/debug/show_job_events.sh
 	API_PREFIX=$(API_PREFIX) JOB_ID=$(JOB_ID) scripts/debug/show_job_events.sh
 
-.PHONY: reset-local
-reset-local:
-	scripts/dev/reset_local_state.sh
+.PHONY: tail-worker-logs
+tail-worker-logs:
+	chmod +x scripts/debug/tail_worker_logs.sh
+	scripts/debug/tail_worker_logs.sh
