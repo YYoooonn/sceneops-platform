@@ -190,11 +190,13 @@ reset-local:
 
 .PHONY: local-up
 local-up: prepare-data minio-up db-migrate
+	docker compose -f $(COMPOSE_FILE) up -d postgres redis
 	docker compose -f $(COMPOSE_FILE) up -d api worker-pipeline worker-jobs
 
 .PHONY: local-down
-local-down:
-	docker compose -f $(COMPOSE_FILE) --profile minio down
+local-down: minio-down
+	docker compose -f $(COMPOSE_FILE) postgres redis down
+	docker compose -f $(COMPOSE_FILE) api worker-pipeline worker-jobs down
 
 .PHONY: local-reset
 local-reset:
