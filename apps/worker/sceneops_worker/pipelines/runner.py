@@ -24,6 +24,7 @@ class PipelineRunner:
         self._validate_runnable(pipeline_run)
 
         pipeline_run = await self._mark_pipeline_running(pipeline_run)
+        await self._context.commit()
 
         context = PipelineExecutionContext.from_pipeline_run(pipeline_run)
         step_results: list[PipelineStepResult] = []
@@ -44,11 +45,14 @@ class PipelineRunner:
                         PipelineStepResult.model_validate(saved_step.result)
                     )
 
-            return await self._mark_pipeline_succeeded(
+            result = await self._mark_pipeline_succeeded(
                 pipeline_run,
                 context=context,
                 step_results=step_results,
             )
+            await self._context.commit()
+
+            return result
 
         except Exception as error:
             return await self._fail_and_raise(
@@ -152,6 +156,8 @@ class PipelineRunner:
         step_results: list[PipelineStepResult],
         error: Exception,
     ) -> PipelineRunManifest:
+        await self._context.rollback()
+
         result = await self._mark_pipeline_failed(
             pipeline_run,
             context=context,
@@ -161,6 +167,7 @@ class PipelineRunner:
                 message=str(error),
             ),
         )
+        await self._context.commit()
 
         raise error
 

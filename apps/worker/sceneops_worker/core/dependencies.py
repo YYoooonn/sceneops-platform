@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_storage import ArtifactStore, create_artifact_store
@@ -26,9 +24,14 @@ from sceneops_worker.stores.scenarios import ScenarioStore
 from sceneops_worker.stores.scenes import SceneStore
 
 
-@lru_cache
+_artifact_store: ArtifactStore | None = None
+
+
 def _get_artifact_store(settings: WorkerSettings) -> ArtifactStore:
-    return create_artifact_store(settings.artifact)
+    global _artifact_store
+    if _artifact_store is None:
+        _artifact_store = create_artifact_store(settings.artifact)
+    return _artifact_store
 
 
 def create_worker_context(
@@ -44,6 +47,7 @@ def create_worker_context(
     return WorkerContext(
         worker_id=worker_id or settings.worker_id,
         settings=settings,
+        session=session,
         artifact_store=artifact_store,
         dataset_artifact_store=DatasetArtifactStore(
             artifact_store=artifact_store,

@@ -9,7 +9,7 @@ from sceneops_db.session import async_session_scope
 from sceneops_worker.celery_app import celery_app
 from sceneops_worker.core.dependencies import create_worker_context
 from sceneops_worker.pipelines.runner import PipelineRunner
-from sceneops_worker.runtime.async_runner import get_async_runtime_runner
+from sceneops_worker.runtime.async_runner import AsyncRuntimeRunner
 
 logger = get_task_logger(__name__)
 
@@ -31,32 +31,14 @@ def run_pipeline_task(
 
     logger.info(
         "Starting pipeline task",
-        extra={
-            "pipeline_run_id": pipeline_run_id,
-            "celery_task_id": celery_task_id,
-        },
+        extra={"pipeline_run_id": pipeline_run_id, "celery_task_id": celery_task_id},
     )
 
-    runner = get_async_runtime_runner()
+    async def _run() -> dict[str, Any]:
+        async with async_session_scope() as session:
+            context = create_worker_context(session, worker_id=worker_id)
+            result = await PipelineRunner(context).run(pipeline_run_id)
 
-    return runner.run(
-        _run_pipeline(
-            pipeline_run_id=pipeline_run_id,
-            worker_id=worker_id,
-        )
-    )
+        return {"pipeline_run_id": pipeline_run_id, "status": result.status.value}
 
-
-async def _run_pipeline(
-    *,
-    pipeline_run_id: str,
-    worker_id: str,
-) -> dict[str, Any]:
-    async with async_session_scope() as session:
-        context = create_worker_context(session, worker_id=worker_id)
-        result = await PipelineRunner(context).run(pipeline_run_id)
-
-    return {
-        "pipeline_run_id": pipeline_run_id,
-        "status": result.status.value,
-    }
+    return AsyncRuntimeRunner.run(_run())

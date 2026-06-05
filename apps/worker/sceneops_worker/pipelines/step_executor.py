@@ -42,6 +42,7 @@ class PipelineStepExecutor:
         self._validate_dependencies_succeeded(step=step, context=context)
 
         step = await self._mark_step_running(step)
+        await self._context.commit()
 
         try:
             job = self._planner.build_job_for_step(
@@ -54,6 +55,7 @@ class PipelineStepExecutor:
             step.job_id = created_job.job_id
             step.updated_at = utc_now()
             step = await self._context.pipeline_store.save_step(step)
+            await self._context.commit()
 
             finished_job = await self._job_runner.run(created_job.job_id)
 
@@ -74,6 +76,7 @@ class PipelineStepExecutor:
             step.updated_at = step.finished_at
 
             saved = await self._context.pipeline_store.save_step(step)
+            await self._context.commit()
 
             context.mark_step(
                 step_id=saved.step_id,
@@ -95,6 +98,8 @@ class PipelineStepExecutor:
             return saved
 
         except Exception as error:
+            await self._context.rollback()
+
             step.status = PipelineStepRunStatus.FAILED
             step.error = ErrorInfo(
                 type=error.__class__.__name__,
@@ -103,6 +108,8 @@ class PipelineStepExecutor:
             step.finished_at = utc_now()
             step.updated_at = step.finished_at
             await self._context.pipeline_store.save_step(step)
+            await self._context.commit()
+
             raise
 
     def _validate_dependencies_succeeded(

@@ -74,6 +74,7 @@ class JobRunner:
         self._validate_runnable(job)
 
         job = await self._mark_job_running(job)
+        await self.context.commit()
 
         await self._append_event(
             job=job,
@@ -82,6 +83,7 @@ class JobRunner:
             message="Job started",
             data={"worker_id": self.worker_id, "job_type": job.type.value},
         )
+        await self.context.commit()
 
         running_step_name = self._get_running_step_name(job)
 
@@ -94,6 +96,7 @@ class JobRunner:
                     step_status=JobStepStatus.RUNNING,
                     message=f"Step started: {running_step_name}",
                 )
+                await self.context.commit()
 
             result = await self._execute_job(job)
             result_payload = self._to_result_payload(result)
@@ -106,8 +109,10 @@ class JobRunner:
                     step_status=JobStepStatus.SUCCEEDED,
                     message=f"Step succeeded: {running_step_name}",
                 )
+                await self.context.commit()
 
             job = await self._mark_job_succeeded(job, result=result_payload)
+            await self.context.commit()
 
             await self._append_event(
                 job=job,
@@ -115,10 +120,13 @@ class JobRunner:
                 status=JobStatus.SUCCEEDED,
                 message="Job succeeded",
             )
+            await self.context.commit()
 
             return job
 
         except Exception as error:
+            await self.context.rollback()
+
             if running_step_name is not None:
                 await self._append_event(
                     job=job,
@@ -152,6 +160,7 @@ class JobRunner:
                     message=str(error),
                 ),
             )
+            await self.context.commit()
 
             raise
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from sceneops_storage import ArtifactStore
 
 from sceneops_worker.config import WorkerSettings
@@ -36,6 +38,7 @@ class RunStores:
 class WorkerContext:
     worker_id: str
     settings: WorkerSettings
+    session: AsyncSession
 
     artifact_store: ArtifactStore
     dataset_artifact_store: DatasetArtifactStore
@@ -55,3 +58,9 @@ class WorkerContext:
 
     default_dataset_id: str
     default_dataset_version: str
+
+    async def commit(self) -> None:
+        await self.session.commit()
+
+    async def rollback(self) -> None:
+        await self.session.rollback()
