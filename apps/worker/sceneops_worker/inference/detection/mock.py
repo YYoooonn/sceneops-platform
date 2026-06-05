@@ -4,7 +4,8 @@ import random
 from datetime import UTC, datetime
 from typing import Any
 
-from sceneops_core.datasets.schemas import DatasetManifest, DatasetSampleManifest
+from sceneops_core.datasets.schemas import DatasetManifest
+from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
@@ -68,7 +69,7 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
     ) -> dict[str, Any]:
         random.seed(seed)
 
-        sample_manifests: list[DatasetSampleManifest] = []
+        sample_manifests: list[SceneSampleManifest] = []
         async for sample_manifest in dataset_artifact_store.iter_samples(
             dataset_manifest,
             max_samples=max_samples,
@@ -125,7 +126,7 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
 
 
 def _build_predictions_from_sample(
-    sample: DatasetSampleManifest,
+    sample: SceneSampleManifest,
 ) -> list[dict[str, Any]]:
     predictions: list[dict[str, Any]] = []
 
