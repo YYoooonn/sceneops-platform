@@ -7,20 +7,18 @@ from app.core.pagination import PaginationDep
 from app.domains.datasets.dependencies import DatasetServiceDep
 from app.domains.datasets.schemas import (
     CreateDatasetVersionBody,
-    DatasetVersionQualityResponse,
-    UpdateDatasetRequest,
-    UpdateDatasetVersionRequest,
-)
-from app.platform.artifacts.schemas import ArtifactListResponse
-from sceneops_core.datasets.schemas import (
-    CreateDatasetRequest,
     DatasetDetailResponse,
     DatasetListResponse,
     DatasetVersionDetailResponse,
     DatasetVersionListResponse,
+    DatasetVersionQualityResponse,
+    UpdateDatasetRequest,
+    UpdateDatasetVersionRequest,
 )
+from app.domains.scenes.schemas import SceneListResponse
+from app.platform.artifacts.schemas import ArtifactListResponse
+from sceneops_core.datasets.schemas import CreateDatasetRequest
 from sceneops_core.datasets.schemas.enums import DatasetStatus, DatasetType
-from sceneops_core.scenes.schemas import SceneListResponse
 
 router = APIRouter()
 

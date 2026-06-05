@@ -6,15 +6,17 @@ from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.domains.models.dependencies import ModelServiceDep
 from app.platform.artifacts.schemas import ArtifactListResponse
+from app.domains.models.schemas import (
+    ModelDetailResponse,
+    ModelListResponse,
+    ModelVersionDetailResponse,
+    ModelVersionListResponse,
+)
 from sceneops_core.models.schemas import (
     CreateModelRequest,
     CreateModelVersionRequest,
     ModelBackend,
-    ModelDetailResponse,
-    ModelListResponse,
     ModelTaskType,
-    ModelVersionDetailResponse,
-    ModelVersionListResponse,
     ModelVersionStatus,
 )
 

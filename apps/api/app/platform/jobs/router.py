@@ -6,14 +6,13 @@ from app.core.errors import raise_bad_request, raise_not_found
 from app.core.pagination import PaginationDep
 from app.platform.executions.dependencies import ExecutionServiceDep
 from app.platform.jobs.dependencies import JobServiceDep
-from app.platform.jobs.schemas import JobExecuteResponse
-from sceneops_core.jobs.schemas import (
-    CreateJobRequest,
+from app.platform.jobs.schemas import (
     JobDetailResponse,
     JobEventListResponse,
+    JobExecuteResponse,
     JobListResponse,
-    JobStatus,
 )
+from sceneops_core.jobs.schemas import CreateJobRequest, JobStatus
 
 router = APIRouter()
 

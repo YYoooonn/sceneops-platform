@@ -6,14 +6,13 @@ from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
     JobEventLevel,
-    JobEventListResponse,
     JobEventType,
-    JobListResponse,
     JobManifest,
     JobStatus,
     create_initial_job_steps,
     parse_job_params,
 )
+from app.platform.jobs.schemas import JobEventListResponse, JobListResponse
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
 
 

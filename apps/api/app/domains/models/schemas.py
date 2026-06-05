@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sceneops_core.common.schemas import SceneOpsBaseModel
-from .records import ModelRecord, ModelVersionRecord
+from sceneops_core.models.schemas.records import ModelRecord, ModelVersionRecord
 
 
 class ModelListResponse(SceneOpsBaseModel):

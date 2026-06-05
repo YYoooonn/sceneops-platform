@@ -3,15 +3,17 @@ from __future__ import annotations
 from sceneops_core.artifacts.schemas import ArtifactRecord
 from sceneops_core.datasets.schemas import (
     CreateDatasetRequest,
-    DatasetDetailResponse,
-    DatasetListResponse,
     DatasetRecord,
-    DatasetVersionDetailResponse,
-    DatasetVersionListResponse,
     DatasetVersionRecord,
 )
 from sceneops_core.datasets.schemas.enums import DatasetStatus, DatasetType
-from sceneops_core.scenes.schemas import SceneListResponse
+from app.domains.datasets.schemas import (
+    DatasetDetailResponse,
+    DatasetListResponse,
+    DatasetVersionDetailResponse,
+    DatasetVersionListResponse,
+)
+from app.domains.scenes.schemas import SceneListResponse
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.datasets import (
     DatasetRepository,

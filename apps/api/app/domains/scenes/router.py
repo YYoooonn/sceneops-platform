@@ -5,11 +5,10 @@ from fastapi import APIRouter
 from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.domains.scenes.dependencies import SceneServiceDep
+from app.domains.scenes.schemas import SceneDetailResponse, SceneListResponse
 from app.platform.artifacts.schemas import ArtifactListResponse
 from sceneops_core.scenes.schemas import (
-    SceneDetailResponse,
     SceneGenerationMethod,
-    SceneListResponse,
     SceneOriginType,
     SceneStatus,
 )

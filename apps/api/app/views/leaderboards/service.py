@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from sceneops_core.evaluations.schemas.enums import EvaluationTaskType
 from sceneops_core.evaluations.schemas.runs import EvaluationRunRecord
-from sceneops_core.evaluations.schemas.summaries import EvaluationRunSummaryItem
 from sceneops_core.runs.schemas import RunStatus
+from app.views.leaderboards.schemas import EvaluationRunSummaryItem
 from sceneops_db.repositories.evaluations import EvaluationRunRepository
 
 from app.views.leaderboards.schemas import (

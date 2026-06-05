@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
 from sceneops_core.scenes.schemas import (
-    SceneDetailResponse,
-    SceneListResponse,
     SceneGenerationMethod,
     SceneOriginType,
     SceneStatus,
 )
+from app.domains.scenes.schemas import SceneDetailResponse, SceneListResponse
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.scenes import SceneRepository
 

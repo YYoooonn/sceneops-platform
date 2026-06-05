@@ -6,14 +6,16 @@ from sceneops_core.models.schemas import (
     CreateModelRequest,
     CreateModelVersionRequest,
     ModelBackend,
-    ModelDetailResponse,
-    ModelListResponse,
     ModelRecord,
     ModelTaskType,
-    ModelVersionDetailResponse,
-    ModelVersionListResponse,
     ModelVersionRecord,
     ModelVersionStatus,
+)
+from app.domains.models.schemas import (
+    ModelDetailResponse,
+    ModelListResponse,
+    ModelVersionDetailResponse,
+    ModelVersionListResponse,
 )
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.model_registry import (

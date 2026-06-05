@@ -12,14 +12,16 @@ from sceneops_core.pipelines.builtin import (
 from sceneops_core.pipelines.schemas import (
     CreatePipelineRunRequest,
     PipelineDefinition,
-    PipelineRunDetailResponse,
-    PipelineRunListResponse,
     PipelineRunManifest,
     PipelineRunStatus,
-    PipelineStepRunListResponse,
     PipelineStepRunManifest,
     PipelineStepRunStatus,
     PipelineType,
+)
+from app.platform.pipelines.schemas import (
+    PipelineRunDetailResponse,
+    PipelineRunListResponse,
+    PipelineStepRunListResponse,
 )
 from sceneops_core.jobs.schemas import JobType
 from sceneops_db.repositories.pipelines import (

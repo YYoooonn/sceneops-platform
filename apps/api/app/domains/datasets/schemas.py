@@ -4,6 +4,7 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.datasets.schemas.enums import DatasetType, DatasetVersionStatus
+from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from sceneops_core.datasets.schemas.validation import DatasetValidationStatus
 
 
@@ -38,6 +39,24 @@ class CreateDatasetVersionBody(SceneOpsBaseModel):
     source_dataset_id: str | None = None
     source_dataset_version: str | None = None
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class DatasetDetailResponse(SceneOpsBaseModel):
+    dataset: DatasetRecord
+
+
+class DatasetListResponse(SceneOpsBaseModel):
+    datasets: list[DatasetRecord]
+    count: int
+
+
+class DatasetVersionDetailResponse(SceneOpsBaseModel):
+    version: DatasetVersionRecord
+
+
+class DatasetVersionListResponse(SceneOpsBaseModel):
+    versions: list[DatasetVersionRecord]
+    count: int
 
 
 class DatasetVersionQualityResponse(SceneOpsBaseModel):
