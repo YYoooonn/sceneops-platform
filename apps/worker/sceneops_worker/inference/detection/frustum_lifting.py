@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 
-from sceneops_core.datasets.schemas import SampleSensorManifest
+from sceneops_core.scenes.schemas.manifests import SceneSensorFrameManifest
 
 MIN_FRUSTUM_POINTS = 3  # fewer → skip lifting, keep placeholder
 MIN_CLUSTER_POINTS = 5  # fewer → use all frustum points (no DBSCAN pruning)
@@ -15,8 +15,8 @@ MIN_CLUSTER_POINTS = 5  # fewer → use all frustum points (no DBSCAN pruning)
 def frustum_lift(
     *,
     bbox_2d: list[float],
-    camera_sensor: SampleSensorManifest,
-    lidar_sensor: SampleSensorManifest,
+    camera_sensor: SceneSensorFrameManifest,
+    lidar_sensor: SceneSensorFrameManifest,
     raw_root: str,
     max_image_size: int = 800,
     dbscan_eps: float = 0.5,

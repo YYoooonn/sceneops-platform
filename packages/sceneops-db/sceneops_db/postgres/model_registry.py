@@ -31,6 +31,7 @@ class PostgresModelRepository:
         orm_model = ModelModel(**model_record_to_values(model))
         self._session.add(orm_model)
         await self._session.flush()
+        await self._session.refresh(orm_model)
         return model_model_to_record(orm_model)
 
     async def upsert(self, model: ModelRecord) -> ModelRecord:
@@ -53,6 +54,7 @@ class PostgresModelRepository:
             raise ValueError(f"Model not found: {model.model_id}")
         apply_values(orm_model, model_record_to_values(model))
         await self._session.flush()
+        await self._session.refresh(orm_model)
         return model_model_to_record(orm_model)
 
     async def list(
@@ -80,6 +82,7 @@ class PostgresModelVersionRepository:
         model = ModelVersionModel(**model_version_record_to_values(version))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return model_version_model_to_record(model)
 
     async def upsert(self, version: ModelVersionRecord) -> ModelVersionRecord:
@@ -111,6 +114,7 @@ class PostgresModelVersionRepository:
             )
         apply_values(model, model_version_record_to_values(version))
         await self._session.flush()
+        await self._session.refresh(model)
         return model_version_model_to_record(model)
 
     async def list(

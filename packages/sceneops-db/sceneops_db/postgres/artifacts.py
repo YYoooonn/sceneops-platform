@@ -51,6 +51,7 @@ class PostgresArtifactRefRepository:
         model = ArtifactModel(**values)
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return artifact_ref_model_to_record(model)
 
     async def get(self, artifact_id: str) -> ArtifactRecord | None:

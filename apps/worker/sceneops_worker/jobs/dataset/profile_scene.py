@@ -71,7 +71,7 @@ class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobRe
             job_id=job.job_id,
             started_at=started_at,
         )
-        await context.runs.scene_runs.upsert(initial_record)
+        saved_record = await context.runs.scene_runs.upsert(initial_record)
 
         total_samples = 0
         total_frames = 0
@@ -147,7 +147,7 @@ class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobRe
             )
 
         now = utc_now()
-        succeeded_record = initial_record.model_copy(
+        succeeded_record = saved_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "sample_count": total_samples,

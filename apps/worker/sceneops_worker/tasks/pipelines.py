@@ -5,7 +5,11 @@ from typing import Any
 from celery.utils.log import get_task_logger
 
 from sceneops_core.constants.tasks import PIPELINE_RUN_TASK
-from sceneops_db.session import async_session_scope
+from sceneops_db.session import (
+    async_session_scope,
+    dispose_async_engine,
+    reset_async_engine_cache,
+)
 from sceneops_worker.celery_app import celery_app
 from sceneops_worker.core.dependencies import create_worker_context
 from sceneops_worker.pipelines.runner import PipelineRunner
@@ -34,11 +38,16 @@ def run_pipeline_task(
         extra={"pipeline_run_id": pipeline_run_id, "celery_task_id": celery_task_id},
     )
 
-    async def _run() -> dict[str, Any]:
-        async with async_session_scope() as session:
-            context = create_worker_context(session, worker_id=worker_id)
-            result = await PipelineRunner(context).run(pipeline_run_id)
+    reset_async_engine_cache()
 
-        return {"pipeline_run_id": pipeline_run_id, "status": result.status.value}
+    async def _run() -> dict[str, Any]:
+        try:
+            async with async_session_scope() as session:
+                context = create_worker_context(session, worker_id=worker_id)
+                result = await PipelineRunner(context).run(pipeline_run_id)
+
+            return {"pipeline_run_id": pipeline_run_id, "status": result.status.value}
+        finally:
+            await dispose_async_engine()
 
     return AsyncRuntimeRunner.run(_run())

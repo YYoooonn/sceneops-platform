@@ -75,7 +75,7 @@ class ValidateSceneJobHandler(
             job_id=job.job_id,
             started_at=started_at,
         )
-        await context.runs.scene_runs.upsert(initial_record)
+        saved_record = await context.runs.scene_runs.upsert(initial_record)
 
         total_issues = 0
         blocking = False
@@ -150,7 +150,7 @@ class ValidateSceneJobHandler(
             )
 
         now = utc_now()
-        succeeded_record = initial_record.model_copy(
+        succeeded_record = saved_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "validation_status": "failed" if blocking else "ready",

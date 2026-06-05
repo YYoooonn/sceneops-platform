@@ -31,6 +31,7 @@ class PostgresSceneRepository:
         model = SceneModel(**scene_record_to_values(scene))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return scene_model_to_record(model)
 
     async def upsert(self, scene: SceneRecord) -> SceneRecord:
@@ -53,6 +54,7 @@ class PostgresSceneRepository:
             raise ValueError(f"Scene not found: {scene.scene_id}")
         apply_values(model, scene_record_to_values(scene))
         await self._session.flush()
+        await self._session.refresh(model)
         return scene_model_to_record(model)
 
     async def list(
@@ -94,6 +96,7 @@ class PostgresSceneRunRepository:
         model = SceneRunRecordModel(**scene_run_record_to_values(run))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return scene_run_model_to_record(model)
 
     async def get(self, run_id: str) -> SceneRunRecord | None:
@@ -112,6 +115,7 @@ class PostgresSceneRunRepository:
             raise ValueError(f"SceneRun not found: {run.run_id}")
         apply_values(model, scene_run_record_to_values(run))
         await self._session.flush()
+        await self._session.refresh(model)
         return scene_run_model_to_record(model)
 
     async def list(

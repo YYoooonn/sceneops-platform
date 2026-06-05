@@ -24,6 +24,7 @@ class PostgresEvaluationRunRepository:
         model = EvaluationRunModel(**evaluation_run_record_to_values(run))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return evaluation_run_model_to_record(model)
 
     async def get(self, run_id: str) -> EvaluationRunRecord | None:
@@ -40,6 +41,7 @@ class PostgresEvaluationRunRepository:
             raise ValueError(f"EvaluationRun not found: {run.run_id}")
         apply_values(model, evaluation_run_record_to_values(run))
         await self._session.flush()
+        await self._session.refresh(model)
         return evaluation_run_model_to_record(model)
 
     async def list(
