@@ -4,8 +4,8 @@ import math
 from typing import Any
 
 from sceneops_core.scenes.schemas.manifests import (
-    SceneSampleManifest,
     SceneAnnotationManifest as SampleAnnotationManifest,
+    SceneSampleManifest,
 )
 
 
@@ -14,6 +14,8 @@ def evaluate_sample(
     sample: SceneSampleManifest,
     predictions: list[dict[str, Any]],
     match_distance_m: float,
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
 ) -> dict[str, Any]:
     gt_annotations = _filter_supported_gt(sample.annotations)
 
@@ -29,7 +31,7 @@ def evaluate_sample(
             if gt_index in matched_gt_indices:
                 continue
 
-            if gt.category_name != prediction["category_name"]:
+            if gt.category != prediction["category_name"]:
                 continue
 
             distance = center_distance(gt.translation, prediction["translation"])
@@ -45,7 +47,7 @@ def evaluate_sample(
             gt = gt_annotations[best_gt_index]
             matches.append(
                 {
-                    "annotation_token": gt.annotation_token,
+                    "annotation_id": gt.annotation_id,
                     "prediction_id": prediction["prediction_id"],
                     "category_name": prediction["category_name"],
                     "center_distance": round(best_distance, 6),
@@ -66,8 +68,8 @@ def evaluate_sample(
     )
 
     return {
-        "dataset_id": sample.dataset_id,
-        "dataset_version": sample.dataset_version,
+        "dataset_id": dataset_id,
+        "dataset_version": dataset_version,
         "scene_id": sample.scene_id,
         "sample_id": sample.sample_id,
         "tp": tp,
@@ -98,7 +100,8 @@ def _filter_supported_gt(
     return [
         annotation
         for annotation in annotations
-        if annotation.category_name.startswith(supported_prefixes)
+        if annotation.category is not None
+        and annotation.category.startswith(supported_prefixes)
     ]
 
 
@@ -114,7 +117,7 @@ def build_sample_class_metrics(
     matched_gt_indices: set[int],
     matched_prediction_indices: set[int],
 ) -> dict[str, dict[str, int]]:
-    categories = {gt.category_name for gt in gt_annotations} | {
+    categories = {gt.category for gt in gt_annotations if gt.category} | {
         pred["category_name"] for pred in predictions
     }
 
@@ -128,8 +131,8 @@ def build_sample_class_metrics(
             class_metrics[prediction["category_name"]]["fp"] += 1
 
     for index, gt in enumerate(gt_annotations):
-        if index not in matched_gt_indices:
-            class_metrics[gt.category_name]["fn"] += 1
+        if index not in matched_gt_indices and gt.category:
+            class_metrics[gt.category]["fn"] += 1
 
     return class_metrics
 

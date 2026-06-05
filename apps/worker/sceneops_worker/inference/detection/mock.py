@@ -34,10 +34,10 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
             dataset_manifest=inference_input.dataset_manifest,
             dataset_artifact_store=request.dataset_artifact_store,
             run_artifact_store=request.run_artifact_store,
-            model_id=inference_input.params.model_id,
-            model_version=inference_input.params.model_version,
+            model_id=inference_input.config.model_id,
+            model_version=inference_input.config.model_version,
             run_id=inference_input.run_id,
-            max_samples=inference_input.params.max_samples,
+            max_samples=inference_input.config.max_samples,
         )
 
         return DetectionInferenceResult(
@@ -49,9 +49,9 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
             status=str(run_manifest.get("status", "succeeded")),
             metrics=run_manifest.get("metrics", {}),
             metadata={
-                "backend": inference_input.params.inference_backend.value,
-                "model_uri": inference_input.model_uri,
-                "endpoint_url": inference_input.endpoint_url,
+                "backend": inference_input.config.inference_backend,
+                "model_uri": inference_input.config.model_uri,
+                "endpoint_url": inference_input.config.endpoint_url,
             },
         )
 
@@ -131,7 +131,7 @@ def _build_predictions_from_sample(
     predictions: list[dict[str, Any]] = []
 
     for index, annotation in enumerate(sample.annotations):
-        category_name = annotation.category_name
+        category_name = annotation.category
 
         if category_name not in SUPPORTED_CATEGORIES:
             continue
@@ -150,7 +150,7 @@ def _build_predictions_from_sample(
                 "size": size,
                 "rotation": annotation.rotation,
                 "score": round(random.uniform(0.55, 0.98), 4),
-                "source_annotation_token": annotation.annotation_token,
+                "source_annotation_token": annotation.annotation_id,
             }
         )
 

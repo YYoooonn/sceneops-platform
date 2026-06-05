@@ -31,21 +31,21 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         request: DetectionInferenceRequest,
     ) -> DetectionInferenceResult:
         inference_input = request.input
-        if inference_input.model_uri is None:
+        if inference_input.config.model_uri is None:
             raise ValueError(
                 "ONNX Runtime detection backend requires model_uri. "
-                f"model={inference_input.params.model_id}:{inference_input.params.model_version}"
+                f"model={inference_input.config.model_id}:{inference_input.config.model_version}"
             )
 
         run_manifest = await self.generate_onnx_runtime_predictions(
             dataset_manifest=inference_input.dataset_manifest,
             dataset_artifact_store=request.dataset_artifact_store,
             run_artifact_store=request.run_artifact_store,
-            model_id=inference_input.params.model_id,
-            model_version=inference_input.params.model_version,
-            model_uri=inference_input.model_uri,
+            model_id=inference_input.config.model_id,
+            model_version=inference_input.config.model_version,
+            model_uri=inference_input.config.model_uri,
             run_id=inference_input.run_id,
-            max_samples=inference_input.params.max_samples,
+            max_samples=inference_input.config.max_samples,
         )
 
         return DetectionInferenceResult(
@@ -57,9 +57,9 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
             status=str(run_manifest.get("status", "succeeded")),
             metrics=run_manifest.get("metrics", {}),
             metadata={
-                "backend": inference_input.params.inference_backend.value,
-                "model_uri": inference_input.model_uri,
-                "endpoint_url": inference_input.endpoint_url,
+                "backend": inference_input.config.inference_backend,
+                "model_uri": inference_input.config.model_uri,
+                "endpoint_url": inference_input.config.endpoint_url,
             },
         )
 

@@ -56,7 +56,7 @@ class GroundingDinoDetectionBackend:
         request: DetectionInferenceRequest,
     ) -> DetectionInferenceResult:
         inference_input = request.input
-        endpoint_url = (inference_input.endpoint_url or "").rstrip("/")
+        endpoint_url = (inference_input.config.endpoint_url or "").rstrip("/")
         if not endpoint_url:
             raise ValueError(
                 "GroundingDINO backend requires endpoint_url pointing to the "
@@ -76,7 +76,7 @@ class GroundingDinoDetectionBackend:
         sample_manifests: list[SceneSampleManifest] = []
         async for sample in request.dataset_artifact_store.iter_samples(
             dataset_manifest,
-            max_samples=inference_input.params.max_samples,
+            max_samples=inference_input.config.max_samples,
         ):
             sample_manifests.append(sample)
 
@@ -118,8 +118,8 @@ class GroundingDinoDetectionBackend:
                     manifest=_prediction_manifest(
                         run_id=run_id,
                         dataset_manifest=dataset_manifest,
-                        model_id=inference_input.params.model_id,
-                        model_version=inference_input.params.model_version,
+                        model_id=inference_input.config.model_id,
+                        model_version=inference_input.config.model_version,
                         sample=sample,
                         predictions=predictions,
                         camera_channel=self._camera_channel,
@@ -138,8 +138,8 @@ class GroundingDinoDetectionBackend:
             "run_type": "inference",
             "dataset_id": dataset_manifest.dataset_id,
             "dataset_version": dataset_manifest.dataset_version,
-            "model_id": inference_input.params.model_id,
-            "model_version": inference_input.params.model_version,
+            "model_id": inference_input.config.model_id,
+            "model_version": inference_input.config.model_version,
             "status": "succeeded",
             "backend": self.backend_type,
             "endpoint_url": endpoint_url,

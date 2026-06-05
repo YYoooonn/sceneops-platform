@@ -176,6 +176,7 @@ def _build_sample_manifest(
             SceneAnnotationManifest(
                 annotation_id=ann_token,
                 sample_id=sample_id,
+                source_annotation_id=ann_token,
                 category=ann["category_name"],
                 instance_id=ann["instance_token"],
                 translation=ann["translation"],
