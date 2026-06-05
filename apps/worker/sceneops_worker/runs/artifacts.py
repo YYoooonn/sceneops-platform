@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sceneops_core.inference.schemas.manifests import DetectionPredictionManifest
 from sceneops_storage import ArtifactStore
 
 
@@ -63,14 +64,14 @@ class RunArtifactStore:
         self,
         *,
         run_id: str,
-    ) -> dict[str, Any]:
+    ) -> DetectionPredictionManifest:
         uri = self.inference_run_manifest_uri(run_id)
         raw = await self.artifact_store.read_json(uri)
 
         if not isinstance(raw, dict):
             raise ValueError(f"Invalid inference run manifest: {uri}")
 
-        return raw
+        return DetectionPredictionManifest.model_validate(raw)
 
     async def write_prediction_manifest(
         self,
@@ -203,6 +204,12 @@ class RunArtifactStore:
             "evaluation.json",
         )
 
+    def evaluation_run_metrics_uri(self, evaluation_run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.evaluation_run_root_uri(evaluation_run_id),
+            "metrics.json",
+        )
+
     def evaluation_samples_root_uri(self, evaluation_run_id: str) -> str:
         return self.artifact_store.join_uri(
             self.evaluation_run_root_uri(evaluation_run_id),
@@ -242,6 +249,16 @@ class RunArtifactStore:
     ) -> str:
         uri = self.evaluation_run_manifest_uri(evaluation_run_id)
         await self.artifact_store.write_json(uri, manifest)
+        return uri
+
+    async def write_evaluation_run_metrics(
+        self,
+        *,
+        evaluation_run_id: str,
+        metrics: dict[str, Any],
+    ) -> str:
+        uri = self.evaluation_run_metrics_uri(evaluation_run_id)
+        await self.artifact_store.write_json(uri, metrics)
         return uri
 
     # ---------------------------------------------------------------------

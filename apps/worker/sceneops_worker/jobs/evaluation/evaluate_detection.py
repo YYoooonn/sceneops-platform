@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sceneops_core.common.ids import default_evaluation_run_id
+from sceneops_core.artifacts.schemas.enums import ArtifactKind
+from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
+from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.ids import default_evaluation_run_id, generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetVersionStatus
@@ -144,17 +147,64 @@ class EvaluateDetectionJobHandler(
             )
         )
 
-        metrics = evaluation_manifest.get("metrics", {})
-        class_metrics = evaluation_manifest.get("class_metrics", {})
-        sample_count = evaluation_manifest.get("sample_count")
-        prediction_count = evaluation_manifest.get("prediction_count")
-        ground_truth_count = evaluation_manifest.get("ground_truth_count")
-        evaluation_unit = evaluation_manifest.get("evaluation_unit", "annotation")
-        evaluation_manifest_uri = evaluation_manifest["evaluation_manifest_uri"]
+        # evaluation_manifest is now a typed DetectionEvaluationManifest
+        metrics = evaluation_manifest.metrics
+        class_metrics = evaluation_manifest.class_metrics
+        sample_count = evaluation_manifest.sample_count
+        prediction_count = evaluation_manifest.prediction_count
+        ground_truth_count = evaluation_manifest.ground_truth_count
+        evaluation_unit = evaluation_manifest.evaluation_unit or "annotation"
+        evaluation_manifest_uri = evaluation_manifest.evaluation_manifest_uri
+        primary_metric_name = evaluation_manifest.primary_metric_name
+        primary_metric_value = evaluation_manifest.primary_metric_value
 
-        # Use precision as the default primary metric if available.
-        primary_metric_value = metrics.get("precision")
-        primary_metric_name = "precision" if primary_metric_value is not None else None
+        # Write a separate metrics.json artifact.
+        metrics_uri = await context.run_artifact_store.write_evaluation_run_metrics(
+            evaluation_run_id=evaluation_run_id,
+            metrics={
+                "evaluation_run_id": evaluation_run_id,
+                "primary_metric_name": primary_metric_name,
+                "primary_metric_value": primary_metric_value,
+                "metrics": metrics,
+                "class_metrics": class_metrics,
+                "sample_count": sample_count,
+                "prediction_count": prediction_count,
+                "ground_truth_count": ground_truth_count,
+                "evaluation_unit": evaluation_unit,
+            },
+        )
+
+        await context.artifact_record_store.create(
+            artifact_id=generate_artifact_id(),
+            ref=ArtifactRef(
+                kind=ArtifactKind.EVALUATION_MANIFEST,
+                uri=evaluation_manifest_uri,
+                media_type="application/json",
+            ),
+            owner_type=ArtifactOwnerType.EVALUATION_RUN,
+            owner_id=evaluation_run_id,
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
+            run_id=evaluation_run_id,
+            job_id=job.job_id,
+            pipeline_run_id=job.pipeline_run_id,
+        )
+
+        await context.artifact_record_store.create(
+            artifact_id=generate_artifact_id(),
+            ref=ArtifactRef(
+                kind=ArtifactKind.METRICS,
+                uri=metrics_uri,
+                media_type="application/json",
+            ),
+            owner_type=ArtifactOwnerType.EVALUATION_RUN,
+            owner_id=evaluation_run_id,
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
+            run_id=evaluation_run_id,
+            job_id=job.job_id,
+            pipeline_run_id=job.pipeline_run_id,
+        )
 
         succeeded_record = initial_record.model_copy(
             update={
@@ -168,13 +218,13 @@ class EvaluateDetectionJobHandler(
                 "primary_metric_name": primary_metric_name,
                 "primary_metric_value": primary_metric_value,
                 "evaluation_manifest_uri": evaluation_manifest_uri,
-                "metrics_uri": evaluation_manifest_uri,
+                "metrics_uri": metrics_uri,
                 "metrics": metrics,
                 "class_metrics": class_metrics,
                 "summary": {
-                    "status": evaluation_manifest.get("status"),
-                    "match_distance_m": evaluation_manifest.get("match_distance_m"),
-                    "samples_root_uri": evaluation_manifest.get("samples_root_uri"),
+                    "status": evaluation_manifest.status,
+                    "match_distance_m": evaluation_manifest.match_distance_m,
+                    "samples_root_uri": evaluation_manifest.samples_root_uri,
                 },
                 "finished_at": utc_now(),
             }
@@ -183,7 +233,7 @@ class EvaluateDetectionJobHandler(
         job_result = EvaluateDetectionJobResult(
             evaluation_run_id=evaluation_run_id,
             evaluation_manifest_uri=evaluation_manifest_uri,
-            metrics_uri=evaluation_manifest_uri,
+            metrics_uri=metrics_uri,
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
             model_id=inference_run.model_id,
@@ -198,9 +248,9 @@ class EvaluateDetectionJobHandler(
             metrics=metrics,
             class_metrics=class_metrics,
             summary={
-                "status": evaluation_manifest.get("status"),
-                "match_distance_m": evaluation_manifest.get("match_distance_m"),
-                "samples_root_uri": evaluation_manifest.get("samples_root_uri"),
+                "status": evaluation_manifest.status,
+                "match_distance_m": evaluation_manifest.match_distance_m,
+                "samples_root_uri": evaluation_manifest.samples_root_uri,
             },
             metadata={},
         )

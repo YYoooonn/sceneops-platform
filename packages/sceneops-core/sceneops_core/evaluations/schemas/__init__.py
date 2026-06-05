@@ -8,6 +8,7 @@ from .enums import (
 from .history import ModelVersionEvaluationHistoryResponse
 from .leaderboard import EvaluationLeaderboardResponse, LeaderboardItem
 from .metrics import EvaluationMetricSpec, EvaluationMetricValue
+from .manifests import DetectionEvaluationManifest
 from .runs import EvaluationRunRecord
 from .summaries import EvaluationRunSummaryItem
 
@@ -18,6 +19,7 @@ __all__ = [
     "LeaderboardSortBy",
     "EvaluationMetricSpec",
     "EvaluationMetricValue",
+    "DetectionEvaluationManifest",
     "EvaluationRunRecord",
     "EvaluationRunSummaryItem",
     "EvaluationComparisonResponse",

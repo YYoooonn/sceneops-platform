@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import random
-from datetime import UTC, datetime
 from typing import Any
 
+from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetManifest
-from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.inference.enums import InferenceBackendType
+from sceneops_core.inference.schemas.manifests import DetectionPredictionManifest
+from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
     DetectionInferenceRequest,
@@ -42,12 +43,12 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
 
         return DetectionInferenceResult(
             run_id=inference_input.run_id,
-            run_manifest_uri=run_manifest["prediction_manifest_uri"],
-            predictions_root_uri=run_manifest["predictions_root_uri"],
-            sample_count=int(run_manifest.get("sample_count", 0)),
-            prediction_count=int(run_manifest.get("prediction_count", 0)),
-            status=str(run_manifest.get("status", "succeeded")),
-            metrics=run_manifest.get("metrics", {}),
+            run_manifest_uri=run_manifest.prediction_manifest_uri,
+            predictions_root_uri=run_manifest.predictions_root_uri,
+            sample_count=run_manifest.sample_count,
+            prediction_count=run_manifest.prediction_count,
+            status=run_manifest.status,
+            metrics=run_manifest.metrics,
             metadata={
                 "backend": inference_input.config.inference_backend,
                 "model_uri": inference_input.config.model_uri,
@@ -66,7 +67,7 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
         run_id: str,
         max_samples: int | None = None,
         seed: int = 42,
-    ) -> dict[str, Any]:
+    ) -> DetectionPredictionManifest:
         random.seed(seed)
 
         sample_manifests: list[SceneSampleManifest] = []
@@ -102,24 +103,24 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
         inference_manifest_uri = run_artifact_store.inference_run_manifest_uri(run_id)
         predictions_root_uri = run_artifact_store.inference_predictions_root_uri(run_id)
 
-        run_manifest = {
-            "run_id": run_id,
-            "run_type": "inference",
-            "dataset_id": dataset_manifest.dataset_id,
-            "dataset_version": dataset_manifest.dataset_version,
-            "model_id": model_id,
-            "model_version": model_version,
-            "status": "succeeded",
-            "sample_count": len(sample_manifests),
-            "prediction_count": prediction_count,
-            "prediction_manifest_uri": inference_manifest_uri,
-            "predictions_root_uri": predictions_root_uri,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
+        run_manifest = DetectionPredictionManifest(
+            inference_run_id=run_id,
+            dataset_id=dataset_manifest.dataset_id,
+            dataset_version=dataset_manifest.dataset_version,
+            model_id=model_id,
+            model_version=model_version,
+            inference_backend="mock",
+            status="succeeded",
+            sample_count=len(sample_manifests),
+            prediction_count=prediction_count,
+            prediction_manifest_uri=inference_manifest_uri,
+            predictions_root_uri=predictions_root_uri,
+            created_at=utc_now(),
+        )
 
         await run_artifact_store.write_inference_run_manifest(
             run_id=run_id,
-            manifest=run_manifest,
+            manifest=run_manifest.model_dump(mode="json"),
         )
 
         return run_manifest

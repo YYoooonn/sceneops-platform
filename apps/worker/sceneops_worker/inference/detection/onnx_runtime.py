@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import onnxruntime as ort
 
+from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetManifest
-from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.inference.enums import InferenceBackendType
+from sceneops_core.inference.schemas.manifests import DetectionPredictionManifest
+from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
@@ -50,12 +51,12 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
 
         return DetectionInferenceResult(
             run_id=inference_input.run_id,
-            run_manifest_uri=run_manifest["prediction_manifest_uri"],
-            predictions_root_uri=run_manifest["predictions_root_uri"],
-            sample_count=int(run_manifest.get("sample_count", 0)),
-            prediction_count=int(run_manifest.get("prediction_count", 0)),
-            status=str(run_manifest.get("status", "succeeded")),
-            metrics=run_manifest.get("metrics", {}),
+            run_manifest_uri=run_manifest.prediction_manifest_uri,
+            predictions_root_uri=run_manifest.predictions_root_uri,
+            sample_count=run_manifest.sample_count,
+            prediction_count=run_manifest.prediction_count,
+            status=run_manifest.status,
+            metrics=run_manifest.metrics,
             metadata={
                 "backend": inference_input.config.inference_backend,
                 "model_uri": inference_input.config.model_uri,
@@ -74,7 +75,7 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         model_uri: str,
         run_id: str,
         max_samples: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> DetectionPredictionManifest:
         model_path = _to_local_path(model_uri)
 
         load_started = time.perf_counter()
@@ -135,31 +136,33 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         avg_latency_ms = _avg(inference_latencies_ms)
         max_latency_ms = max(inference_latencies_ms) if inference_latencies_ms else 0.0
 
-        run_manifest = {
-            "run_id": run_id,
-            "run_type": "inference",
-            "dataset_id": dataset_manifest.dataset_id,
-            "dataset_version": dataset_manifest.dataset_version,
-            "model_id": model_id,
-            "model_version": model_version,
-            "status": "succeeded",
-            "backend": "onnx_runtime",
-            "model_uri": model_uri,
-            "sample_count": len(sample_manifests),
-            "prediction_count": prediction_count,
-            "prediction_manifest_uri": inference_manifest_uri,
-            "predictions_root_uri": predictions_root_uri,
-            "metrics": {
+        run_manifest = DetectionPredictionManifest(
+            inference_run_id=run_id,
+            dataset_id=dataset_manifest.dataset_id,
+            dataset_version=dataset_manifest.dataset_version,
+            model_id=model_id,
+            model_version=model_version,
+            inference_backend="onnx_runtime",
+            status="succeeded",
+            sample_count=len(sample_manifests),
+            prediction_count=prediction_count,
+            prediction_manifest_uri=inference_manifest_uri,
+            predictions_root_uri=predictions_root_uri,
+            metrics={
                 "model_load_ms": round(model_load_ms, 4),
                 "avg_inference_latency_ms": round(avg_latency_ms, 4),
                 "max_inference_latency_ms": round(max_latency_ms, 4),
             },
-            "created_at": datetime.now(UTC).isoformat(),
-        }
+            metadata={
+                "backend": "onnx_runtime",
+                "model_uri": model_uri,
+            },
+            created_at=utc_now(),
+        )
 
         await run_artifact_store.write_inference_run_manifest(
             run_id=run_id,
-            manifest=run_manifest,
+            manifest=run_manifest.model_dump(mode="json"),
         )
 
         return run_manifest

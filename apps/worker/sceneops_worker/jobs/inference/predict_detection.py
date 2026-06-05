@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sceneops_core.common.ids import default_inference_run_id
+from sceneops_core.artifacts.schemas.enums import ArtifactKind
+from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
+from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.ids import default_inference_run_id, generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetVersionStatus
@@ -167,13 +170,49 @@ class PredictDetectionJobHandler(
             )
         )
 
+        prediction_manifest_uri = inference_result.run_manifest_uri
+        predictions_root_uri = inference_result.predictions_root_uri
+
+        await context.artifact_record_store.create(
+            artifact_id=generate_artifact_id(),
+            ref=ArtifactRef(
+                kind=ArtifactKind.PREDICTION_MANIFEST,
+                uri=prediction_manifest_uri,
+                media_type="application/json",
+            ),
+            owner_type=ArtifactOwnerType.INFERENCE_RUN,
+            owner_id=inference_run_id,
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
+            run_id=inference_run_id,
+            job_id=job.job_id,
+            pipeline_run_id=job.pipeline_run_id,
+        )
+
+        if predictions_root_uri:
+            await context.artifact_record_store.create(
+                artifact_id=generate_artifact_id(),
+                ref=ArtifactRef(
+                    kind=ArtifactKind.PREDICTIONS_ROOT,
+                    uri=predictions_root_uri,
+                    media_type="application/json",
+                ),
+                owner_type=ArtifactOwnerType.INFERENCE_RUN,
+                owner_id=inference_run_id,
+                dataset_id=params.dataset_id,
+                dataset_version=params.dataset_version,
+                run_id=inference_run_id,
+                job_id=job.job_id,
+                pipeline_run_id=job.pipeline_run_id,
+            )
+
         succeeded_record = initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "sample_count": inference_result.sample_count,
                 "prediction_count": inference_result.prediction_count,
-                "prediction_manifest_uri": inference_result.run_manifest_uri,
-                "predictions_root_uri": inference_result.predictions_root_uri,
+                "prediction_manifest_uri": prediction_manifest_uri,
+                "predictions_root_uri": predictions_root_uri,
                 "metadata": {
                     "model_uri": model_uri,
                     "endpoint_url": endpoint_url,
@@ -186,8 +225,8 @@ class PredictDetectionJobHandler(
 
         job_result = PredictDetectionJobResult(
             inference_run_id=inference_run_id,
-            prediction_manifest_uri=inference_result.run_manifest_uri,
-            predictions_root_uri=inference_result.predictions_root_uri,
+            prediction_manifest_uri=prediction_manifest_uri,
+            predictions_root_uri=predictions_root_uri,
             model_id=params.model_id,
             model_version=params.model_version,
             inference_backend=params.inference_backend.value,

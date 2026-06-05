@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any, TypeAlias
+from typing import TypeAlias, Any
 
+from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetManifest
-from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.evaluations.contracts import Evaluator
+from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
+from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
 
@@ -26,7 +27,7 @@ class DetectionEvaluationRequest:
     match_distance_m: float = DEFAULT_MATCH_DISTANCE_M
 
 
-DetectionEvaluationResult: TypeAlias = dict[str, Any]
+DetectionEvaluationResult: TypeAlias = DetectionEvaluationManifest
 
 
 DetectionEvaluator: TypeAlias = Evaluator[
@@ -86,7 +87,7 @@ async def _evaluate_center_distance_detection(
 
     inference_run = await run_artifact_store.load_inference_run_manifest(
         run_id=inference_run_id
-    )
+    )  # returns DetectionPredictionManifest
     prediction_uris = await run_artifact_store.list_prediction_manifest_uris(
         run_id=inference_run_id
     )
@@ -151,41 +152,50 @@ async def _evaluate_center_distance_detection(
     evaluation_manifest_uri = run_artifact_store.evaluation_run_manifest_uri(
         evaluation_run_id
     )
+    metrics_uri = run_artifact_store.evaluation_run_metrics_uri(evaluation_run_id)
     samples_root_uri = run_artifact_store.evaluation_samples_root_uri(evaluation_run_id)
 
     prediction_count = total_tp + total_fp
     ground_truth_count = total_tp + total_fn
 
-    evaluation_manifest = {
-        "evaluation_run_id": evaluation_run_id,
-        "inference_run_id": inference_run_id,
-        "dataset_id": dataset_manifest.dataset_id,
-        "dataset_version": dataset_manifest.dataset_version,
-        "model_id": inference_run["model_id"],
-        "model_version": inference_run["model_version"],
-        "status": "succeeded",
-        "match_distance_m": match_distance_m,
-        "sample_count": len(prediction_uris),
-        "prediction_count": prediction_count,
-        "ground_truth_count": ground_truth_count,
-        "evaluation_unit": "annotation",
-        "evaluation_manifest_uri": evaluation_manifest_uri,
-        "samples_root_uri": samples_root_uri,
-        "metrics": {
-            "tp": total_tp,
-            "fp": total_fp,
-            "fn": total_fn,
-            "precision": round(precision, 6),
-            "recall": round(recall, 6),
-            "mean_center_distance_error": round(mean_center_distance_error, 6),
-        },
-        "class_metrics": utils.finalize_class_metrics(class_stats),
-        "created_at": datetime.now(UTC).isoformat(),
+    metrics = {
+        "tp": total_tp,
+        "fp": total_fp,
+        "fn": total_fn,
+        "precision": round(precision, 6),
+        "recall": round(recall, 6),
+        "mean_center_distance_error": round(mean_center_distance_error, 6),
     }
+
+    primary_metric_value = metrics.get("precision")
+    primary_metric_name = "precision" if primary_metric_value is not None else None
+
+    evaluation_manifest = DetectionEvaluationManifest(
+        evaluation_run_id=evaluation_run_id,
+        inference_run_id=inference_run_id,
+        dataset_id=dataset_manifest.dataset_id,
+        dataset_version=dataset_manifest.dataset_version,
+        model_id=inference_run.model_id,
+        model_version=inference_run.model_version,
+        status="succeeded",
+        match_distance_m=match_distance_m,
+        sample_count=len(prediction_uris),
+        prediction_count=prediction_count,
+        ground_truth_count=ground_truth_count,
+        evaluation_unit="annotation",
+        primary_metric_name=primary_metric_name,
+        primary_metric_value=primary_metric_value,
+        evaluation_manifest_uri=evaluation_manifest_uri,
+        metrics_uri=metrics_uri,
+        samples_root_uri=samples_root_uri,
+        metrics=metrics,
+        class_metrics=utils.finalize_class_metrics(class_stats),
+        created_at=utc_now(),
+    )
 
     await run_artifact_store.write_evaluation_run_manifest(
         evaluation_run_id=evaluation_run_id,
-        manifest=evaluation_manifest,
+        manifest=evaluation_manifest.model_dump(mode="json"),
     )
 
     return evaluation_manifest
