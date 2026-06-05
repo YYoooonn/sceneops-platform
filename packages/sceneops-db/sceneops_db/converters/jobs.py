@@ -16,6 +16,17 @@ from ._utils import (
 )
 
 
+def _remap_legacy_job_step(s: dict) -> dict:
+    # Stored before rename: {step_id, name} → {job_step_id, job_step_name}
+    if "step_id" in s and "job_step_id" not in s:
+        s = {
+            **s,
+            "job_step_id": s["step_id"],
+            "job_step_name": s.get("name", s["step_id"]),
+        }
+    return s
+
+
 def job_model_to_manifest(model: JobModel) -> JobManifest:
     return JobManifest(
         job_id=model.job_id,
@@ -24,7 +35,10 @@ def job_model_to_manifest(model: JobModel) -> JobManifest:
         dataset_id=model.dataset_id,
         dataset_version=model.dataset_version,
         params=model.params or {},
-        steps=[JobStep.model_validate(s) for s in (model.steps or [])],
+        steps=[
+            JobStep.model_validate(_remap_legacy_job_step(s))
+            for s in (model.steps or [])
+        ],
         result=model.result,
         error=error_from_json(model.error),
         pipeline_run_id=model.pipeline_run_id,

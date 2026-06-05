@@ -18,6 +18,22 @@ from ._utils import (
 )
 
 
+def _remap_legacy_pipeline_result(result: dict) -> dict:
+    # Stored before rename: steps[]{step_id, step_name} → {pipeline_step_id, pipeline_step_name}
+    if "steps" not in result:
+        return result
+    remapped_steps = []
+    for step in result["steps"]:
+        if "step_id" in step and "pipeline_step_id" not in step:
+            step = {
+                **step,
+                "pipeline_step_id": step["step_id"],
+                "pipeline_step_name": step.get("step_name", step["step_id"]),
+            }
+        remapped_steps.append(step)
+    return {**result, "steps": remapped_steps}
+
+
 def pipeline_run_model_to_manifest(model: PipelineRunModel) -> PipelineRunManifest:
     return PipelineRunManifest(
         pipeline_run_id=model.pipeline_run_id,
@@ -28,7 +44,11 @@ def pipeline_run_model_to_manifest(model: PipelineRunModel) -> PipelineRunManife
         model_id=model.model_id,
         model_version=model.model_version,
         params=model.params or {},
-        result=PipelineRunResult.model_validate(model.result) if model.result else None,
+        result=PipelineRunResult.model_validate(
+            _remap_legacy_pipeline_result(model.result)
+        )
+        if model.result
+        else None,
         error=error_from_json(model.error),
         created_at=model.created_at,
         updated_at=model.updated_at,

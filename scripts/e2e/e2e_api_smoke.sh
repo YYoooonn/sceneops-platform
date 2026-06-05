@@ -150,7 +150,7 @@ dataset_resp="$(post /datasets "{
   \"type\": \"custom\"
 }")"
 check "POST /datasets" "$dataset_resp"
-check_field "dataset.dataset_id" "$dataset_resp" '.dataset.dataset_id'
+check_field "dataset.datasetId" "$dataset_resp" '.dataset.datasetId'
 
 # create dataset version
 version_resp="$(post "/datasets/${DATASET_ID}/versions" "{
@@ -189,8 +189,8 @@ pipe_resp="$(post /pipelines/runs "{
   \"model_version\": \"v1.0\"
 }")"
 check "POST /pipelines/runs" "$pipe_resp"
-PIPE_ID="$(echo "$pipe_resp" | jq -r '.pipeline_run.pipeline_run_id')"
-check_field "pipeline_run_id" "$pipe_resp" '.pipeline_run.pipeline_run_id'
+PIPE_ID="$(echo "$pipe_resp" | jq -r '.pipelineRun.pipelineRunId')"
+check_field "pipelineRunId" "$pipe_resp" '.pipelineRun.pipelineRunId'
 check "GET /pipelines/runs/{id}" "$(get "/pipelines/runs/${PIPE_ID}")"
 check "GET /pipelines/runs/{id}/steps" "$(get "/pipelines/runs/${PIPE_ID}/steps")"
 
