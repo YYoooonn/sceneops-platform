@@ -77,21 +77,22 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
         initial_record = self.build_initial_record(
             job=job, params=params, started_at=started_at
         )
-        await self._upsert(context, initial_record)
+
+        saved_initial = await self._upsert(context, initial_record)
 
         try:
             succeeded_record, result = await self.execute(
                 job=job,
                 params=params,
                 context=context,
-                initial_record=initial_record,
+                initial_record=saved_initial,
                 started_at=started_at,
             )
             await self._upsert(context, succeeded_record)
             return result
 
         except Exception as exc:
-            failed_record = initial_record.model_copy(
+            failed_record = saved_initial.model_copy(
                 update={
                     "status": RunStatus.FAILED,
                     "error": ErrorInfo(
@@ -124,5 +125,5 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
     ) -> tuple[RunRecordT, JobResultT]:
         raise NotImplementedError
 
-    async def _upsert(self, context: WorkerContext, record: RunRecordT) -> None:
+    async def _upsert(self, context: WorkerContext, record: RunRecordT) -> RunRecordT:
         raise NotImplementedError

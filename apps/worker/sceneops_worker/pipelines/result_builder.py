@@ -51,8 +51,8 @@ def build_pipeline_step_result(
     job_id = job.job_id if job is not None else step.job_id
 
     return PipelineStepResult(
-        step_id=step.step_id,
-        step_name=step.step_name,
+        pipeline_step_id=step.pipeline_step_id,
+        pipeline_step_name=step.pipeline_step_name,
         job_type=step.job_type,
         job_id=job_id,
         status=JobStatus.SUCCEEDED if job_result is not None else JobStatus.FAILED,

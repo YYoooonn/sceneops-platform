@@ -7,10 +7,10 @@ from sceneops_core.jobs.schemas import JobStatus, JobType
 
 
 class PipelineLineageEdge(SceneOpsBaseModel):
-    from_step_id: str
+    from_pipeline_step_id: str
     from_output: str | None = None
 
-    to_step_id: str | None = None
+    to_pipeline_step_id: str | None = None
     to_input: str | None = None
 
     artifact_uri: str | None = None
@@ -27,8 +27,8 @@ class PipelineLineage(SceneOpsBaseModel):
 
 
 class PipelineStepResult(SceneOpsBaseModel):
-    step_id: str
-    step_name: str
+    pipeline_step_id: str
+    pipeline_step_name: str
 
     job_type: JobType
     job_id: str | None = None

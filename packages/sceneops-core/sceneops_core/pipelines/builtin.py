@@ -18,7 +18,7 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
     ),
     steps=[
         PipelineStepDefinition(
-            step_id="ingest_scenes",
+            pipeline_step_id="ingest_scenes",
             name="Ingest scenes",
             order=0,
             job_type=JobType.INGEST_SCENES,
@@ -28,22 +28,22 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             },
         ),
         PipelineStepDefinition(
-            step_id="validate_scene",
+            pipeline_step_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on=["ingest_scenes"],
+            depends_on_pipeline_step_ids=["ingest_scenes"],
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="profile_scene",
+            pipeline_step_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on=["ingest_scenes"],
+            depends_on_pipeline_step_ids=["ingest_scenes"],
             default_params={
                 "profile_samples": True,
                 "profile_assets": True,
@@ -51,11 +51,11 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="build_dataset_manifest",
+            pipeline_step_id="build_dataset_manifest",
             name="Build dataset manifest",
             order=3,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on=["ingest_scenes"],
+            depends_on_pipeline_step_ids=["ingest_scenes"],
         ),
     ],
 )
@@ -70,7 +70,7 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
     ),
     steps=[
         PipelineStepDefinition(
-            step_id="build_scenes",
+            pipeline_step_id="build_scenes",
             name="Build scenes",
             order=0,
             job_type=JobType.BUILD_SCENES,
@@ -80,30 +80,30 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             },
         ),
         PipelineStepDefinition(
-            step_id="validate_scene",
+            pipeline_step_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on=["build_scenes"],
+            depends_on_pipeline_step_ids=["build_scenes"],
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="profile_scene",
+            pipeline_step_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on=["build_scenes"],
+            depends_on_pipeline_step_ids=["build_scenes"],
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="build_dataset_manifest",
+            pipeline_step_id="build_dataset_manifest",
             name="Build dataset manifest",
             order=3,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on=["build_scenes"],
+            depends_on_pipeline_step_ids=["build_scenes"],
         ),
     ],
 )
@@ -118,7 +118,7 @@ SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
     ),
     steps=[
         PipelineStepDefinition(
-            step_id="build_scenes",
+            pipeline_step_id="build_scenes",
             name="Build scenes",
             order=0,
             job_type=JobType.BUILD_SCENES,
@@ -128,22 +128,22 @@ SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
             },
         ),
         PipelineStepDefinition(
-            step_id="validate_scene",
+            pipeline_step_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on=["build_scenes"],
+            depends_on_pipeline_step_ids=["build_scenes"],
             default_params={
                 "require_world_state": True,
                 "require_assets": True,
             },
         ),
         PipelineStepDefinition(
-            step_id="profile_scene",
+            pipeline_step_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on=["build_scenes"],
+            depends_on_pipeline_step_ids=["build_scenes"],
             default_params={
                 "profile_assets": True,
                 "profile_world_state": True,
@@ -151,11 +151,11 @@ SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="export_scene_package",
+            pipeline_step_id="export_scene_package",
             name="Export scene package",
             order=3,
             job_type=JobType.EXPORT_SCENE_PACKAGE,
-            depends_on=["validate_scene"],
+            depends_on_pipeline_step_ids=["validate_scene"],
             default_params={
                 "package_type": "reconstruction",
                 "include_assets": True,
@@ -175,35 +175,35 @@ SCENE_REGISTRATION_PIPELINE = PipelineDefinition(
     ),
     steps=[
         PipelineStepDefinition(
-            step_id="register_scene",
+            pipeline_step_id="register_scene",
             name="Register scene",
             order=0,
             job_type=JobType.REGISTER_SCENE,
         ),
         PipelineStepDefinition(
-            step_id="validate_scene",
+            pipeline_step_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on=["register_scene"],
+            depends_on_pipeline_step_ids=["register_scene"],
             default_params={
                 "require_assets": True,
             },
         ),
         PipelineStepDefinition(
-            step_id="profile_scene",
+            pipeline_step_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on=["register_scene"],
+            depends_on_pipeline_step_ids=["register_scene"],
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="compare_scenes",
+            pipeline_step_id="compare_scenes",
             name="Compare scenes",
             order=3,
             job_type=JobType.COMPARE_SCENES,
-            depends_on=["validate_scene"],
+            depends_on_pipeline_step_ids=["validate_scene"],
             optional=True,
         ),
     ],
@@ -219,17 +219,17 @@ SCENARIO_CURATION_PIPELINE = PipelineDefinition(
     ),
     steps=[
         PipelineStepDefinition(
-            step_id="mine_scenarios",
+            pipeline_step_id="mine_scenarios",
             name="Mine scenarios",
             order=0,
             job_type=JobType.MINE_SCENARIOS,
         ),
         PipelineStepDefinition(
-            step_id="score_scenario_readiness",
+            pipeline_step_id="score_scenario_readiness",
             name="Score scenario readiness",
             order=1,
             job_type=JobType.SCORE_SCENARIO_READINESS,
-            depends_on=["mine_scenarios"],
+            depends_on_pipeline_step_ids=["mine_scenarios"],
         ),
     ],
 )
@@ -244,48 +244,48 @@ GENERATED_DATASET_PREPARATION_PIPELINE = PipelineDefinition(
     ),
     steps=[
         PipelineStepDefinition(
-            step_id="register_scene",
+            pipeline_step_id="register_scene",
             name="Register scene",
             order=0,
             job_type=JobType.REGISTER_SCENE,
         ),
         PipelineStepDefinition(
-            step_id="compare_scenes",
+            pipeline_step_id="compare_scenes",
             name="Compare scenes",
             order=1,
             job_type=JobType.COMPARE_SCENES,
-            depends_on=["register_scene"],
+            depends_on_pipeline_step_ids=["register_scene"],
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="auto_label_scene",
+            pipeline_step_id="auto_label_scene",
             name="Auto-label scene",
             order=2,
             job_type=JobType.AUTO_LABEL_SCENE,
-            depends_on=["register_scene"],
+            depends_on_pipeline_step_ids=["register_scene"],
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="build_dataset_manifest",
+            pipeline_step_id="build_dataset_manifest",
             name="Build dataset manifest",
             order=3,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on=["register_scene"],
+            depends_on_pipeline_step_ids=["register_scene"],
         ),
         PipelineStepDefinition(
-            step_id="check_distribution",
+            pipeline_step_id="check_distribution",
             name="Check distribution",
             order=4,
             job_type=JobType.CHECK_DISTRIBUTION,
-            depends_on=["build_dataset_manifest"],
+            depends_on_pipeline_step_ids=["build_dataset_manifest"],
             optional=True,
         ),
         PipelineStepDefinition(
-            step_id="export_dataset",
+            pipeline_step_id="export_dataset",
             name="Export dataset",
             order=5,
             job_type=JobType.EXPORT_DATASET,
-            depends_on=["build_dataset_manifest"],
+            depends_on_pipeline_step_ids=["build_dataset_manifest"],
         ),
     ],
 )
@@ -297,7 +297,7 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
     description="Run detection prediction and evaluate detection metrics on a dataset.",
     steps=[
         PipelineStepDefinition(
-            step_id="predict_detection",
+            pipeline_step_id="predict_detection",
             name="Predict detection",
             order=0,
             job_type=JobType.PREDICT_DETECTION,
@@ -306,11 +306,11 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
             },
         ),
         PipelineStepDefinition(
-            step_id="evaluate_detection",
+            pipeline_step_id="evaluate_detection",
             name="Evaluate detection",
             order=1,
             job_type=JobType.EVALUATE_DETECTION,
-            depends_on=["predict_detection"],
+            depends_on_pipeline_step_ids=["predict_detection"],
             default_params={
                 "evaluator_id": "center-distance",
                 "match_distance_m": 2.0,

@@ -158,7 +158,7 @@ class PipelineRunner:
     ) -> PipelineRunManifest:
         await self._context.rollback()
 
-        result = await self._mark_pipeline_failed(
+        await self._mark_pipeline_failed(
             pipeline_run,
             context=context,
             step_results=step_results,
@@ -170,5 +170,3 @@ class PipelineRunner:
         await self._context.commit()
 
         raise error
-
-        return result

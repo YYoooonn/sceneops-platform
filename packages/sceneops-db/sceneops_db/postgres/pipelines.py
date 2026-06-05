@@ -155,7 +155,7 @@ class PostgresPipelineStepRunRepository:
     ) -> PipelineStepRunManifest | None:
         stmt = select(PipelineStepRunModel).where(
             PipelineStepRunModel.pipeline_run_id == pipeline_run_id,
-            PipelineStepRunModel.step_id == step_id,
+            PipelineStepRunModel.pipeline_step_id == step_id,
         )
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()

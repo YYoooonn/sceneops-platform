@@ -51,7 +51,7 @@ class PipelineJobPlanner:
             steps=create_initial_job_steps(step.job_type),
             pipeline_run_id=pipeline_run.pipeline_run_id,
             pipeline_step_run_id=step.pipeline_step_run_id,
-            pipeline_step_id=step.step_id,
+            pipeline_step_id=step.pipeline_step_id,
             retry_count=0,
             max_retries=0,
             queued_at=now,

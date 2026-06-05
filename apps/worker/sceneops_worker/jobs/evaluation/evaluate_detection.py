@@ -48,11 +48,12 @@ class EvaluateDetectionJobHandler(
 
     def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
         parsed = EvaluateDetectionJobResult.model_validate(result)
+        meta = parsed.metadata or {}
         return {
             Ctx.EVALUATION_RUN_ID: parsed.evaluation_run_id,
-            Ctx.EVALUATION_MANIFEST_URI: parsed.evaluation_manifest_uri,
-            Ctx.EVALUATION_METRICS: parsed.metrics,
-            Ctx.EVALUATION_SAMPLE_COUNT: parsed.sample_count,
+            Ctx.EVALUATION_MANIFEST_URI: parsed.metrics_uri,
+            Ctx.EVALUATION_METRICS: (parsed.summary or {}).get("metrics"),
+            Ctx.EVALUATION_SAMPLE_COUNT: meta.get("sample_count"),
         }
 
     def build_initial_record(
@@ -168,19 +169,18 @@ class EvaluateDetectionJobHandler(
         )
 
         job_result = EvaluateDetectionJobResult(
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
-            inference_run_id=params.inference_run_id,
             evaluation_run_id=evaluation_run_id,
-            evaluation_manifest_uri=evaluation_manifest_uri,
-            metrics=metrics,
-            sample_count=sample_count,
-            result_summary={
+            metrics_uri=evaluation_manifest_uri,
+            summary={
+                "metrics": metrics,
+                "class_metrics": class_metrics,
                 "status": evaluation_manifest.get("status"),
                 "match_distance_m": evaluation_manifest.get("match_distance_m"),
-                "class_metrics": class_metrics,
+            },
+            metadata={
+                "sample_count": sample_count,
+                "inference_run_id": params.inference_run_id,
                 "samples_root_uri": evaluation_manifest.get("samples_root_uri"),
-                "created_at": evaluation_manifest.get("created_at"),
             },
         )
 
@@ -188,5 +188,5 @@ class EvaluateDetectionJobHandler(
 
     async def _upsert(
         self, context: WorkerContext, record: EvaluationRunRecord
-    ) -> None:
-        await context.runs.evaluations.upsert(record)
+    ) -> EvaluationRunRecord:
+        return await context.runs.evaluations.upsert(record)

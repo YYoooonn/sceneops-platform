@@ -30,8 +30,9 @@ def _build_job_event(
     worker_id: str | None = None,
     level: JobEventLevel = JobEventLevel.INFO,
     status: JobStatus | None = None,
-    step_name: str | None = None,
-    step_status: JobStepStatus | None = None,
+    job_step_id: str | None,
+    job_step_name: str | None = None,
+    job_step_status: JobStepStatus | None = None,
     message: str | None = None,
     error: ErrorInfo | None = None,
     data: dict[str, Any] | None = None,
@@ -43,8 +44,9 @@ def _build_job_event(
         job_type=job.type,
         level=level,
         status=status,
-        step_name=step_name,
-        step_status=step_status,
+        job_step_id=job_step_id,
+        job_step_name=job_step_name,
+        job_step_status=job_step_status,
         pipeline_run_id=job.pipeline_run_id,
         pipeline_step_run_id=job.pipeline_step_run_id,
         pipeline_step_id=job.pipeline_step_id,
@@ -85,15 +87,19 @@ class JobRunner:
         )
         await self.context.commit()
 
-        running_step_name = self._get_running_step_name(job)
+        running_step = self._get_running_step(job)
+        running_step_id, running_step_name = (
+            running_step if running_step is not None else (None, None)
+        )
 
         try:
-            if running_step_name is not None:
+            if running_step is not None:
                 await self._append_event(
                     job=job,
                     event_type=JobEventType.STEP_STARTED,
-                    step_name=running_step_name,
-                    step_status=JobStepStatus.RUNNING,
+                    job_step_id=running_step_id,
+                    job_step_name=running_step_name,
+                    job_step_status=JobStepStatus.RUNNING,
                     message=f"Step started: {running_step_name}",
                 )
                 await self.context.commit()
@@ -101,12 +107,13 @@ class JobRunner:
             result = await self._execute_job(job)
             result_payload = self._to_result_payload(result)
 
-            if running_step_name is not None:
+            if running_step is not None:
                 await self._append_event(
                     job=job,
                     event_type=JobEventType.STEP_SUCCEEDED,
-                    step_name=running_step_name,
-                    step_status=JobStepStatus.SUCCEEDED,
+                    job_step_id=running_step_id,
+                    job_step_name=running_step_name,
+                    job_step_status=JobStepStatus.SUCCEEDED,
                     message=f"Step succeeded: {running_step_name}",
                 )
                 await self.context.commit()
@@ -127,13 +134,14 @@ class JobRunner:
         except Exception as error:
             await self.context.rollback()
 
-            if running_step_name is not None:
+            if running_step is not None:
                 await self._append_event(
                     job=job,
                     event_type=JobEventType.STEP_FAILED,
                     level=JobEventLevel.ERROR,
-                    step_name=running_step_name,
-                    step_status=JobStepStatus.FAILED,
+                    job_step_id=running_step_id,
+                    job_step_name=running_step_name,
+                    job_step_status=JobStepStatus.FAILED,
                     message=f"Step failed: {running_step_name}",
                     error=ErrorInfo(
                         type=error.__class__.__name__,
@@ -275,10 +283,10 @@ class JobRunner:
                 step.started_at = step.started_at or now
                 return
 
-    def _get_running_step_name(self, job: JobManifest) -> str | None:
+    def _get_running_step(self, job: JobManifest) -> tuple[str, str] | None:
         for step in job.steps:
             if step.status == JobStepStatus.RUNNING:
-                return getattr(step, "name", None)
+                return step.job_step_id, step.job_step_name
 
         return None
 
@@ -289,8 +297,9 @@ class JobRunner:
         event_type: JobEventType,
         level: JobEventLevel = JobEventLevel.INFO,
         status: JobStatus | None = None,
-        step_name: str | None = None,
-        step_status: JobStepStatus | None = None,
+        job_step_id: str | None = None,
+        job_step_name: str | None = None,
+        job_step_status: JobStepStatus | None = None,
         message: str | None = None,
         error: ErrorInfo | None = None,
         data: dict[str, Any] | None = None,
@@ -301,8 +310,9 @@ class JobRunner:
             worker_id=self.worker_id,
             level=level,
             status=status,
-            step_name=step_name,
-            step_status=step_status,
+            job_step_id=job_step_id,
+            job_step_name=job_step_name,
+            job_step_status=job_step_status,
             message=message,
             error=error,
             data=data,

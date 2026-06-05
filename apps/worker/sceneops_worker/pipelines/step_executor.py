@@ -79,8 +79,8 @@ class PipelineStepExecutor:
             await self._context.commit()
 
             context.mark_step(
-                step_id=saved.step_id,
-                step_name=saved.step_name,
+                pipeline_step_id=saved.pipeline_step_id,
+                pipeline_step_name=saved.pipeline_step_name,
                 status=saved.status,
                 job_id=saved.job_id,
                 result=(

@@ -184,7 +184,6 @@ class DatasetArtifactStore:
         self,
         dataset_manifest: DatasetManifest,
         *,
-        version_root_uri: str,
         max_samples: int | None = None,
     ) -> AsyncIterator[SceneSampleManifest]:
         yielded = 0

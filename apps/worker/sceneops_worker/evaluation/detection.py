@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, TypeAlias
 
 from sceneops_core.datasets.schemas import DatasetManifest
+from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.evaluations.contracts import Evaluator
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
@@ -90,6 +91,17 @@ async def _evaluate_center_distance_detection(
         run_id=inference_run_id
     )
 
+    # Build sample index from scene manifests (samples are embedded, not individual files)
+    sample_index: dict[str, SceneSampleManifest] = {}
+    for scene_entry in dataset_manifest.scenes:
+        scene_manifest = await dataset_artifact_store.load_scene_manifest(
+            scene_entry.scene_manifest_uri
+        )
+        if scene_manifest is None:
+            continue
+        for sample in scene_manifest.samples:
+            sample_index[sample.sample_id] = sample
+
     total_tp = 0
     total_fp = 0
     total_fn = 0
@@ -103,19 +115,19 @@ async def _evaluate_center_distance_detection(
         )
         sample_id = prediction_manifest["sample_id"]
 
-        sample_uri = dataset_artifact_store.artifact_store.join_uri(
-            dataset_manifest.uris.sample_root,
-            f"{sample_id}.json",
-        )
-        sample_manifest = await dataset_artifact_store.load_sample_manifest(sample_uri)
+        sample_manifest = sample_index.get(sample_id)
 
         if sample_manifest is None:
-            raise FileNotFoundError(f"Sample manifest not found: {sample_uri}")
+            raise FileNotFoundError(
+                f"Sample manifest not found for sample_id: {sample_id}"
+            )
 
         sample_eval = utils.evaluate_sample(
             sample=sample_manifest,
             predictions=prediction_manifest.get("predictions", []),
             match_distance_m=match_distance_m,
+            dataset_id=prediction_manifest.get("dataset_id"),
+            dataset_version=prediction_manifest.get("dataset_version"),
         )
 
         total_tp += sample_eval["tp"]

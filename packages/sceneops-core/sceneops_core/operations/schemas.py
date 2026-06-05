@@ -27,7 +27,7 @@ class JobTimelineEvent(SceneOpsBaseModel):
 
 
 class JobTimelineStep(SceneOpsBaseModel):
-    step_id: str
+    job_step_id: str
     name: str
     status: str
     started_at: datetime | None = None
@@ -64,14 +64,14 @@ class JobTimelineResponse(SceneOpsBaseModel):
 
 class PipelineStepTimelineItem(SceneOpsBaseModel):
     pipeline_step_run_id: str
-    step_id: str
-    step_name: str
+    pipeline_step_id: str
+    pipeline_step_name: str
     step_order: int
     job_type: JobType
     job_id: str | None = None
     status: PipelineStepRunStatus
 
-    depends_on_step_ids: list[str] = Field(default_factory=list)
+    depends_on_pipeline_step_ids: list[str] = Field(default_factory=list)
 
     started_at: datetime | None = None
     finished_at: datetime | None = None

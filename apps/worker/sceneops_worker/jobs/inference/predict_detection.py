@@ -8,7 +8,10 @@ from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.inference.enums import InferenceBackendType
-from sceneops_core.inference.schemas import DetectionInferenceInput
+from sceneops_core.inference.schemas import (
+    DetectionInferenceConfig,
+    DetectionInferenceInput,
+)
 from sceneops_core.inference.schemas.runs import InferenceRunRecord
 from sceneops_core.jobs.schemas import (
     JobType,
@@ -51,12 +54,13 @@ class PredictDetectionJobHandler(
 
     def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
         parsed = PredictDetectionJobResult.model_validate(result)
+        meta = parsed.metadata or {}
         return {
             Ctx.INFERENCE_RUN_ID: parsed.inference_run_id,
-            Ctx.PREDICTION_MANIFEST_URI: parsed.prediction_manifest_uri,
+            Ctx.PREDICTION_MANIFEST_URI: meta.get("prediction_manifest_uri"),
             Ctx.PREDICTION_SAMPLE_COUNT: parsed.sample_count,
-            Ctx.PREDICTION_MODEL_ID: parsed.model_id,
-            Ctx.PREDICTION_MODEL_VERSION: parsed.model_version,
+            Ctx.PREDICTION_MODEL_ID: meta.get("model_id"),
+            Ctx.PREDICTION_MODEL_VERSION: meta.get("model_version"),
         }
 
     def build_initial_record(
@@ -148,11 +152,16 @@ class PredictDetectionJobHandler(
         inference_result = await backend.run(
             DetectionInferenceRequest(
                 input=DetectionInferenceInput(
-                    params=params,
-                    dataset_manifest=dataset_manifest,
-                    model_uri=model_uri,
-                    endpoint_url=endpoint_url,
                     run_id=inference_run_id,
+                    config=DetectionInferenceConfig(
+                        model_id=params.model_id,
+                        model_version=params.model_version,
+                        inference_backend=params.inference_backend.value,
+                        max_samples=params.max_samples,
+                        model_uri=model_uri,
+                        endpoint_url=endpoint_url,
+                    ),
+                    dataset_manifest=dataset_manifest,
                 ),
                 dataset_artifact_store=context.dataset_artifact_store,
                 run_artifact_store=context.run_artifact_store,
@@ -177,17 +186,14 @@ class PredictDetectionJobHandler(
         )
 
         job_result = PredictDetectionJobResult(
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
-            model_id=params.model_id,
-            model_version=params.model_version,
             inference_run_id=inference_run_id,
-            prediction_manifest_uri=inference_result.run_manifest_uri,
+            predictions_root_uri=inference_result.predictions_root_uri,
             sample_count=inference_result.sample_count,
-            result_summary={
+            metadata={
+                "prediction_manifest_uri": inference_result.run_manifest_uri,
+                "model_id": params.model_id,
+                "model_version": params.model_version,
                 "prediction_count": inference_result.prediction_count,
-                "status": inference_result.status,
-                "predictions_root_uri": inference_result.predictions_root_uri,
                 "backend": params.inference_backend.value,
                 "metrics": inference_result.metrics,
             },
@@ -195,8 +201,10 @@ class PredictDetectionJobHandler(
 
         return succeeded_record, job_result
 
-    async def _upsert(self, context: WorkerContext, record: InferenceRunRecord) -> None:
-        await context.runs.inference.upsert(record)
+    async def _upsert(
+        self, context: WorkerContext, record: InferenceRunRecord
+    ) -> InferenceRunRecord:
+        return await context.runs.inference.upsert(record)
 
 
 def _validate_model_backend(

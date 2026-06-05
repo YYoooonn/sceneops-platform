@@ -76,6 +76,8 @@ class SceneAnnotationManifest(SceneOpsBaseModel):
     annotation_id: str
     sample_id: str
 
+    source_annotation_id: str | None = None
+
     category: str | None = None
     instance_id: str | None = None
 

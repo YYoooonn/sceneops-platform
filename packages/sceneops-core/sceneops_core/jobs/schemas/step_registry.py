@@ -16,8 +16,8 @@ def step(
     optional: bool = False,
 ) -> JobStepDefinition:
     return JobStepDefinition(
-        step_id=step_id,
-        name=name,
+        job_step_id=step_id,
+        job_step_name=name,
         description=description,
         optional=optional,
     )
@@ -135,8 +135,8 @@ def get_job_step_definitions(job_type: JobType) -> list[JobStepDefinition]:
 def create_initial_job_steps(job_type: JobType) -> list[JobStep]:
     return [
         JobStep(
-            step_id=definition.step_id,
-            name=definition.name,
+            job_step_id=definition.job_step_id,
+            job_step_name=definition.job_step_name,
             status=JobStepStatus.PENDING,
             metadata={
                 **definition.metadata,

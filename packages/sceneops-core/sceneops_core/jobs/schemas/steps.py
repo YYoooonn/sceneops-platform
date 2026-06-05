@@ -10,8 +10,8 @@ from .enums import JobStepStatus
 
 
 class JobStepDefinition(SceneOpsBaseModel):
-    step_id: str
-    name: str
+    job_step_id: str
+    job_step_name: str
 
     description: str | None = None
 
@@ -21,8 +21,8 @@ class JobStepDefinition(SceneOpsBaseModel):
 
 
 class JobStep(SceneOpsBaseModel):
-    step_id: str
-    name: str
+    job_step_id: str
+    job_step_name: str
 
     status: JobStepStatus = JobStepStatus.PENDING
 

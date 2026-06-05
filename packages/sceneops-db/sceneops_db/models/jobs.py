@@ -96,9 +96,9 @@ class JobEventModel(Base):
     job_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    step_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    step_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    step_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    job_step_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    job_step_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    job_step_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_step_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

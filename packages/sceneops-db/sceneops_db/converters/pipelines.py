@@ -57,13 +57,15 @@ def pipeline_step_run_model_to_manifest(
     return PipelineStepRunManifest(
         pipeline_step_run_id=model.pipeline_step_run_id,
         pipeline_run_id=model.pipeline_run_id,
-        step_id=model.step_id,
-        step_name=model.step_name,
+        pipeline_step_id=model.pipeline_step_id,
+        pipeline_step_name=model.pipeline_step_name,
         step_order=model.step_order,
         status=model.status,
         job_type=model.job_type,
         job_id=model.job_id,
-        depends_on_step_ids=list(model.depends_on_step_ids or []),
+        depends_on_step_ids=list(
+            model.depends_on_step_ids or []
+        ),  # DB column stays depends_on_step_ids
         params=model.params or {},
         result=PipelineStepResult.model_validate(model.result)
         if model.result

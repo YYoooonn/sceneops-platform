@@ -67,8 +67,8 @@ class PipelineStepRunModel(Base):
         nullable=False,
     )
 
-    step_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    step_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    pipeline_step_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    pipeline_step_name: Mapped[str] = mapped_column(String(128), nullable=False)
     step_order: Mapped[int] = mapped_column(Integer, nullable=False)
 
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -132,7 +132,7 @@ Index(
 Index(
     "ix_pipeline_step_runs_pipeline_run_step_id",
     PipelineStepRunModel.pipeline_run_id,
-    PipelineStepRunModel.step_id,
+    PipelineStepRunModel.pipeline_step_id,
 )
 Index("ix_pipeline_step_runs_job_id", PipelineStepRunModel.job_id)
 Index("ix_pipeline_step_runs_status", PipelineStepRunModel.status)

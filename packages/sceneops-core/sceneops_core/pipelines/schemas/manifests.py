@@ -39,8 +39,8 @@ class PipelineStepRunManifest(SceneOpsBaseModel):
     pipeline_step_run_id: str
     pipeline_run_id: str
 
-    step_id: str
-    step_name: str
+    pipeline_step_id: str
+    pipeline_step_name: str
     step_order: int
 
     status: PipelineStepRunStatus

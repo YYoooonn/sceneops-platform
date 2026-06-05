@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict
+from sceneops_core.inference.enums import InferenceBackendType
 
 from .base import BaseJobParams
 
@@ -17,7 +18,7 @@ class PredictDetectionJobParams(BaseJobParams):
     dataset_manifest_uri: str | None = None
     scene_ids: list[str] | None = None
 
-    inference_backend: str = "mock"
+    inference_backend: InferenceBackendType = InferenceBackendType.MOCK
 
     inference_run_id: str | None = None
 

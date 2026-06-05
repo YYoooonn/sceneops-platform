@@ -83,17 +83,17 @@ class PipelineService:
         for step_def in sorted(definition.steps, key=lambda s: s.order):
             step_params = {
                 **step_def.default_params,
-                **request.params.get(step_def.step_id, {}),
+                **request.params.get(step_def.pipeline_step_id, {}),
             }
             step = PipelineStepRunManifest(
                 pipeline_step_run_id=generate_pipeline_step_run_id(),
                 pipeline_run_id=pipeline_run.pipeline_run_id,
-                step_id=step_def.step_id,
-                step_name=step_def.name,
+                pipeline_step_id=step_def.pipeline_step_id,
+                pipeline_step_name=step_def.name,
                 step_order=step_def.order,
                 status=PipelineStepRunStatus.PENDING,
                 job_type=JobType(step_def.job_type),
-                depends_on_step_ids=step_def.depends_on,
+                depends_on_step_ids=step_def.depends_on_pipeline_step_ids,
                 params=step_params,
                 created_at=now,
                 updated_at=now,

@@ -21,10 +21,10 @@ class JobEvent(SceneOpsBaseModel):
     # Current or target job status after this event.
     status: JobStatus | None = None
 
-    # Optional step context.
-    step_id: str | None = None
-    step_name: str | None = None
-    step_status: JobStepStatus | None = None
+    # Optional job-internal step context.
+    job_step_id: str | None = None
+    job_step_name: str | None = None
+    job_step_status: JobStepStatus | None = None
 
     # Optional pipeline context snapshot.
     pipeline_run_id: str | None = None
