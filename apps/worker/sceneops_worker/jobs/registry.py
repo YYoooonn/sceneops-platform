@@ -4,15 +4,17 @@ from collections.abc import Iterable
 
 from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
-from sceneops_worker.jobs.labeling import AutoLabelDatasetJobHandler
-from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.dataset import (
-    IngestDatasetJobHandler,
-    ProfileDatasetJobHandler,
-    ValidateDatasetJobHandler,
-    BuildScenesJobHandler,
+    BuildDatasetManifestJobHandler,
+    IngestScenesJobHandler,
+    ProfileSceneJobHandler,
+    ValidateSceneJobHandler,
 )
+from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.inference import PredictDetectionJobHandler
+
+# Phase 3 disabled (auto-label schema changed, pending rewrite):
+# from sceneops_worker.jobs.labeling import AutoLabelDatasetJobHandler
 
 
 class JobHandlerRegistry:
@@ -43,12 +45,11 @@ class JobHandlerRegistry:
 def create_default_job_handler_registry() -> JobHandlerRegistry:
     return JobHandlerRegistry(
         handlers=[
-            IngestDatasetJobHandler(),
-            ValidateDatasetJobHandler(),
-            ProfileDatasetJobHandler(),
+            IngestScenesJobHandler(),
+            ValidateSceneJobHandler(),
+            ProfileSceneJobHandler(),
+            BuildDatasetManifestJobHandler(),
             PredictDetectionJobHandler(),
             EvaluateDetectionJobHandler(),
-            AutoLabelDatasetJobHandler(),
-            BuildScenesJobHandler(),
         ]
     )

@@ -110,11 +110,7 @@ def dataset_version_record_to_values(
 ) -> dict[str, Any]:
     return values_with_metadata(
         {
-            "id": record.id
-            or make_dataset_version_id(
-                record.dataset_id,
-                record.version,
-            ),
+            "id": make_dataset_version_id(record.dataset_id, record.version),
             "dataset_id": record.dataset_id,
             "version": record.version,
             "status": enum_to_value(record.status),

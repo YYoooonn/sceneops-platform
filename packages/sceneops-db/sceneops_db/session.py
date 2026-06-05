@@ -63,11 +63,17 @@ def _get_async_engine_locked() -> AsyncEngine:
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI request-scoped session.
+
+    Auto-commits when the request completes successfully.
+    API services rely on this behavior for control-plane writes.
+    """
     sessionmaker = get_async_sessionmaker()
 
     async with sessionmaker() as session:
         try:
             yield session
+            await session.commit()
         except Exception:
             await session.rollback()
             raise
@@ -77,6 +83,11 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 @asynccontextmanager
 async def async_session_scope() -> AsyncGenerator[AsyncSession, None]:
+    """Worker/CLI session scope.
+
+    Does not auto-commit. Worker runners own commit checkpoints explicitly
+    via WorkerContext.commit() / WorkerContext.rollback().
+    """
     sessionmaker = get_async_sessionmaker()
 
     async with sessionmaker() as session:

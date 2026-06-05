@@ -29,6 +29,7 @@ class PostgresPipelineRunRepository:
         model = PipelineRunModel(**pipeline_run_manifest_to_values(run))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return pipeline_run_model_to_manifest(model)
 
     async def get(self, pipeline_run_id: str) -> PipelineRunManifest | None:
@@ -49,6 +50,7 @@ class PostgresPipelineRunRepository:
             raise ValueError(f"PipelineRun not found: {run.pipeline_run_id}")
         apply_values(model, pipeline_run_manifest_to_values(run))
         await self._session.flush()
+        await self._session.refresh(model)
         return pipeline_run_model_to_manifest(model)
 
     async def list(
@@ -100,6 +102,7 @@ class PostgresPipelineStepRunRepository:
         model = PipelineStepRunModel(**pipeline_step_run_manifest_to_values(step))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return pipeline_step_run_model_to_manifest(model)
 
     async def get(
@@ -123,6 +126,7 @@ class PostgresPipelineStepRunRepository:
             raise ValueError(f"PipelineStepRun not found: {step.pipeline_step_run_id}")
         apply_values(model, pipeline_step_run_manifest_to_values(step))
         await self._session.flush()
+        await self._session.refresh(model)
         return pipeline_step_run_model_to_manifest(model)
 
     async def list_for_pipeline_run(

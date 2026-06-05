@@ -45,7 +45,15 @@ def job_model_to_manifest(model: JobModel) -> JobManifest:
 
 
 def job_manifest_to_values(job: JobManifest) -> dict[str, Any]:
-    return values_with_metadata(job.model_dump(mode="json"))
+    data = job.model_dump(mode="python")
+    # enums → values for DB
+    data["type"] = enum_to_value(job.type)
+    data["status"] = enum_to_value(job.status)
+    # steps stored as JSON list
+    data["steps"] = [s.model_dump(mode="json") for s in job.steps]
+    # error stored as JSON
+    data["error"] = error_to_json(job.error)
+    return values_with_metadata(data)
 
 
 def job_event_model_to_event(model: JobEventModel) -> JobEvent:

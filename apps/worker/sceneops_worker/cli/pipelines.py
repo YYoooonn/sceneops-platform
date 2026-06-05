@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from sceneops_worker.registry import create_runtime_store_registry
 import typer
 from rich import print
 
+from sceneops_db.session import async_session_scope
 from sceneops_worker.cli.async_utils import run_cli_async
-from sceneops_worker.pipelines.factory import create_pipeline_runner
+from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.pipelines.runner import PipelineRunner
 
 app = typer.Typer(
     help="Pipeline execution commands.",
@@ -25,12 +26,9 @@ def run_pipeline_command(
     print(f"pipeline: {pipeline_run_id}")
 
     async def _run() -> object:
-        registry = create_runtime_store_registry()
-        pipeline_runner = create_pipeline_runner(
-            registry=registry,
-            worker_id="cli",
-        )
-        return await pipeline_runner.run(pipeline_run_id)
+        async with async_session_scope() as session:
+            context = create_worker_context(session, worker_id="cli")
+            return await PipelineRunner(context).run(pipeline_run_id)
 
     pipeline_run = run_cli_async(_run)
 

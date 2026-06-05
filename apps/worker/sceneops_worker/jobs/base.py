@@ -6,11 +6,11 @@ from typing import Any, Generic, Protocol, TypeAlias, TypeVar, runtime_checkable
 from pydantic import BaseModel
 
 from sceneops_core.common.schemas import ErrorInfo, JsonDict
+from sceneops_core.common.time import utc_now
 from sceneops_core.jobs.contracts import JobExecutor
 from sceneops_core.jobs.schemas import JobManifest, JobType
 from sceneops_core.runs.schemas import BaseRunRecord, RunStatus
-from sceneops_core.time import utc_now
-from sceneops_worker.jobs.context import JobContext
+from sceneops_worker.core.context import WorkerContext
 
 JobParamsT = TypeVar("JobParamsT", bound=BaseModel)
 JobResultT = TypeVar("JobResultT", bound=BaseModel)
@@ -21,7 +21,7 @@ RunRecordT = TypeVar("RunRecordT", bound=BaseRunRecord)
 class JobHandlerRequest(Generic[JobParamsT]):
     job: JobManifest
     params: JobParamsT
-    context: JobContext
+    context: WorkerContext
 
 
 @runtime_checkable
@@ -118,11 +118,11 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
         *,
         job: JobManifest,
         params: JobParamsT,
-        context: JobContext,
+        context: WorkerContext,
         initial_record: RunRecordT,
         started_at: Any,
     ) -> tuple[RunRecordT, JobResultT]:
         raise NotImplementedError
 
-    async def _upsert(self, context: JobContext, record: RunRecordT) -> None:
+    async def _upsert(self, context: WorkerContext, record: RunRecordT) -> None:
         raise NotImplementedError

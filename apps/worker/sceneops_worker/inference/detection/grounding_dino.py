@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from sceneops_core.datasets.schemas import DatasetManifest, DatasetSampleManifest
+from sceneops_core.datasets.schemas import DatasetManifest
+from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceRequest,
@@ -72,7 +73,7 @@ class GroundingDinoDetectionBackend:
                 "to locate raw image files."
             )
 
-        sample_manifests: list[DatasetSampleManifest] = []
+        sample_manifests: list[SceneSampleManifest] = []
         async for sample in request.dataset_artifact_store.iter_samples(
             dataset_manifest,
             max_samples=inference_input.params.max_samples,
@@ -194,7 +195,7 @@ async def _call_inference_server(
 
 def _build_predictions(
     *,
-    sample: DatasetSampleManifest,
+    sample: SceneSampleManifest,
     detections_2d: list[dict[str, Any]],
     camera_sensor: Any,
     lidar_sensor: Any,
@@ -243,7 +244,7 @@ def _prediction_manifest(
     dataset_manifest: DatasetManifest,
     model_id: str,
     model_version: str,
-    sample: DatasetSampleManifest,
+    sample: SceneSampleManifest,
     predictions: list[dict[str, Any]],
     camera_channel: str,
     endpoint_url: str,

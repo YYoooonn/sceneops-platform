@@ -30,6 +30,7 @@ class PostgresExecutionRecordRepository:
         model = ExecutionRecordModel(**execution_result_to_values(execution))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return execution_model_to_result(model)
 
     async def get(self, execution_id: str) -> ExecutionDispatchResult | None:
@@ -53,6 +54,7 @@ class PostgresExecutionRecordRepository:
             raise ValueError(f"Execution not found: {execution.execution_id}")
         apply_values(model, execution_result_to_values(execution))
         await self._session.flush()
+        await self._session.refresh(model)
         return execution_model_to_result(model)
 
     async def list(

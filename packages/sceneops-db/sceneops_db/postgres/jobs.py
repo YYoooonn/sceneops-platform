@@ -31,6 +31,7 @@ class PostgresJobRepository:
         model = JobModel(**job_manifest_to_values(job))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return job_model_to_manifest(model)
 
     async def get(self, job_id: str) -> JobManifest | None:
@@ -47,6 +48,7 @@ class PostgresJobRepository:
             raise ValueError(f"Job not found: {job.job_id}")
         apply_values(model, job_manifest_to_values(job))
         await self._session.flush()
+        await self._session.refresh(model)
         return job_model_to_manifest(model)
 
     async def list(
@@ -94,6 +96,7 @@ class PostgresJobEventRepository:
         model = JobEventModel(**job_event_to_values(event))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return job_event_model_to_event(model)
 
     async def get(self, event_id: str) -> JobEvent | None:

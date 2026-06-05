@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.ids import generate_job_id
-from sceneops_core.jobs.schemas import JobManifest, JobStatus, build_default_steps
+from sceneops_core.common.ids import generate_job_id
+from sceneops_core.jobs.schemas import JobManifest, JobStatus, create_initial_job_steps
 from sceneops_core.pipelines.schemas import PipelineRunManifest, PipelineStepRunManifest
-from sceneops_core.time import utc_now
+from sceneops_core.common.time import utc_now
 from sceneops_worker.jobs.registry import (
     JobHandlerRegistry,
     create_default_job_handler_registry,
@@ -48,10 +48,10 @@ class PipelineJobPlanner:
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
             params=params,
-            steps=build_default_steps(step.job_type),
+            steps=create_initial_job_steps(step.job_type),
             pipeline_run_id=pipeline_run.pipeline_run_id,
             pipeline_step_run_id=step.pipeline_step_run_id,
-            pipeline_step_name=step.step_name,
+            pipeline_step_id=step.step_id,
             retry_count=0,
             max_retries=0,
             queued_at=now,

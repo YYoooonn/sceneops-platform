@@ -23,6 +23,7 @@ class PostgresInferenceRunRepository:
         model = InferenceRunModel(**inference_run_record_to_values(run))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return inference_run_model_to_record(model)
 
     async def get(self, run_id: str) -> InferenceRunRecord | None:
@@ -39,6 +40,7 @@ class PostgresInferenceRunRepository:
             raise ValueError(f"InferenceRun not found: {run.run_id}")
         apply_values(model, inference_run_record_to_values(run))
         await self._session.flush()
+        await self._session.refresh(model)
         return inference_run_model_to_record(model)
 
     async def list(

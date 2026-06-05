@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sceneops_core.ids import default_auto_label_run_id
+from sceneops_core.common.ids import default_auto_label_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.inference.enums import InferenceBackendType
@@ -12,14 +12,17 @@ from sceneops_core.jobs.schemas import (
     AutoLabelDatasetJobResult,
     JobType,
 )
-from sceneops_core.runs.schemas import AutoLabelRunRecord, RunStatus
-from sceneops_core.time import utc_now
+from sceneops_core.labels.schemas.runs import (
+    DatasetAutoLabelRunRecord as AutoLabelRunRecord,
+)
+from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.common.time import utc_now
 from sceneops_worker.inference.detection import (
     create_detection_inference_backend,
 )
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
+from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-from sceneops_worker.jobs.context import JobContext
 from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 # Re-use the DetectionInferenceInput schema since GroundingDinoDetectionBackend
@@ -106,7 +109,7 @@ class AutoLabelDatasetJobHandler(
         *,
         job: Any,
         params: AutoLabelDatasetJobParams,
-        context: JobContext,
+        context: WorkerContext,
         initial_record: AutoLabelRunRecord,
         started_at: datetime,
     ) -> tuple[AutoLabelRunRecord, AutoLabelDatasetJobResult]:
@@ -215,7 +218,7 @@ class AutoLabelDatasetJobHandler(
 
         return succeeded_record, job_result
 
-    async def _upsert(self, context: JobContext, record: AutoLabelRunRecord) -> None:
+    async def _upsert(self, context: WorkerContext, record: AutoLabelRunRecord) -> None:
         await context.run_registry_store.upsert_auto_label_run(record)
 
 

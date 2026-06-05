@@ -35,6 +35,7 @@ class PostgresDatasetRepository:
         model = DatasetModel(**dataset_record_to_values(dataset))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return dataset_model_to_record(model)
 
     async def upsert(self, dataset: DatasetRecord) -> DatasetRecord:
@@ -57,6 +58,7 @@ class PostgresDatasetRepository:
             raise ValueError(f"Dataset not found: {dataset.dataset_id}")
         apply_values(model, dataset_record_to_values(dataset))
         await self._session.flush()
+        await self._session.refresh(model)
         return dataset_model_to_record(model)
 
     async def list(
@@ -87,6 +89,7 @@ class PostgresDatasetVersionRepository:
         model = DatasetVersionModel(**dataset_version_record_to_values(version))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return dataset_version_model_to_record(model)
 
     async def upsert(self, version: DatasetVersionRecord) -> DatasetVersionRecord:
@@ -120,6 +123,7 @@ class PostgresDatasetVersionRepository:
             )
         apply_values(model, dataset_version_record_to_values(version))
         await self._session.flush()
+        await self._session.refresh(model)
         return dataset_version_model_to_record(model)
 
     async def update_quality_cache(
@@ -159,6 +163,7 @@ class PostgresDatasetVersionRepository:
         )
         apply_values(model, cache_values)
         await self._session.flush()
+        await self._session.refresh(model)
         return dataset_version_model_to_record(model)
 
     async def list(
@@ -191,6 +196,7 @@ class PostgresDatasetRunRepository:
         model = DatasetRunRecordModel(**dataset_run_record_to_values(run))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return dataset_run_model_to_record(model)
 
     async def get(self, run_id: str) -> DatasetRunRecord | None:
@@ -211,6 +217,7 @@ class PostgresDatasetRunRepository:
             raise ValueError(f"DatasetRun not found: {run.run_id}")
         apply_values(model, dataset_run_record_to_values(run))
         await self._session.flush()
+        await self._session.refresh(model)
         return dataset_run_model_to_record(model)
 
     async def list(

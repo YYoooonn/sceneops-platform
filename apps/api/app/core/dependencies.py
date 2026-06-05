@@ -8,7 +8,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import ApiSettings, get_settings
-from sceneops_db.session import async_session_scope
+from sceneops_db.session import get_db_session as _sceneops_db_session
 from sceneops_storage import ArtifactStore, create_artifact_store
 
 
@@ -16,7 +16,7 @@ ApiSettingsDep = Annotated[ApiSettings, Depends(get_settings)]
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
-    async with async_session_scope() as session:
+    async for session in _sceneops_db_session():
         yield session
 
 

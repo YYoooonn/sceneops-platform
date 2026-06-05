@@ -3,15 +3,15 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from sceneops_core.datasets.schemas import (
-    DatasetSampleManifest,
-    SampleAnnotationManifest,
+from sceneops_core.scenes.schemas.manifests import (
+    SceneSampleManifest,
+    SceneAnnotationManifest as SampleAnnotationManifest,
 )
 
 
 def evaluate_sample(
     *,
-    sample: DatasetSampleManifest,
+    sample: SceneSampleManifest,
     predictions: list[dict[str, Any]],
     match_distance_m: float,
 ) -> dict[str, Any]:

@@ -8,7 +8,8 @@ from urllib.parse import urlparse
 
 import onnxruntime as ort
 
-from sceneops_core.datasets.schemas import DatasetManifest, DatasetSampleManifest
+from sceneops_core.datasets.schemas import DatasetManifest
+from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_worker.datasets import DatasetArtifactStore
 from sceneops_worker.runs import RunArtifactStore
@@ -83,7 +84,7 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         )
         model_load_ms = (time.perf_counter() - load_started) * 1000.0
 
-        sample_manifests: list[DatasetSampleManifest] = []
+        sample_manifests: list[SceneSampleManifest] = []
         async for sample_manifest in dataset_artifact_store.iter_samples(
             dataset_manifest,
             max_samples=max_samples,
@@ -188,7 +189,7 @@ def _try_warmup_session(session: ort.InferenceSession) -> None:
 
 
 def _build_contract_predictions_from_sample(
-    sample: DatasetSampleManifest,
+    sample: SceneSampleManifest,
 ) -> list[dict[str, Any]]:
     predictions: list[dict[str, Any]] = []
 

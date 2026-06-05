@@ -3,25 +3,24 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sceneops_core.ids import default_inference_run_id
+from sceneops_core.common.ids import default_inference_run_id
 from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetVersionStatus
-from sceneops_core.inference.schemas import DetectionInferenceInput
 from sceneops_core.inference.enums import InferenceBackendType
+from sceneops_core.inference.schemas import DetectionInferenceInput
+from sceneops_core.inference.schemas.runs import InferenceRunRecord
 from sceneops_core.jobs.schemas import (
+    JobType,
     PredictDetectionJobParams,
     PredictDetectionJobResult,
-    JobType,
 )
 from sceneops_core.models.schemas import ModelBackend
-from sceneops_core.runs.schemas import InferenceRunRecord, RunStatus
-from sceneops_core.time import utc_now
-from sceneops_worker.inference.detection import (
-    create_detection_inference_backend,
-)
+from sceneops_core.runs.schemas import RunStatus
+from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.inference.detection import create_detection_inference_backend
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
-from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest, RunRecordHandler
-from sceneops_worker.jobs.context import JobContext
+from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
@@ -63,7 +62,7 @@ class PredictDetectionJobHandler(
     def build_initial_record(
         self,
         *,
-        job: JobHandlerRequest | Any,
+        job: Any,
         params: PredictDetectionJobParams,
         started_at: datetime,
     ) -> InferenceRunRecord:
@@ -71,17 +70,17 @@ class PredictDetectionJobHandler(
             job.job_id
         )
         return InferenceRunRecord(
-            id=inference_run_id,
+            run_id=inference_run_id,
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
             model_id=params.model_id,
             model_version=params.model_version,
+            inference_backend=params.inference_backend.value,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
             pipeline_step_run_id=job.pipeline_step_run_id,
             job_id=job.job_id,
             metadata={
-                "backend": params.inference_backend.value,
                 "model_uri": params.model_uri,
                 "endpoint_url": params.endpoint_url,
             },
@@ -93,16 +92,21 @@ class PredictDetectionJobHandler(
         *,
         job: Any,
         params: PredictDetectionJobParams,
-        context: JobContext,
+        context: WorkerContext,
         initial_record: InferenceRunRecord,
         started_at: datetime,
     ) -> tuple[InferenceRunRecord, PredictDetectionJobResult]:
-        inference_run_id = initial_record.id
+        inference_run_id = initial_record.run_id
 
-        model_version = await context.model_registry_store.get_version(
+        model_version = await context.model_store.get_version(
             model_id=params.model_id,
-            model_version=params.model_version,
+            version=params.model_version,
         )
+
+        if model_version is None:
+            raise ValueError(
+                f"Model version not found: {params.model_id}:{params.model_version}"
+            )
 
         _validate_model_backend(
             requested_backend=params.inference_backend,
@@ -112,10 +116,15 @@ class PredictDetectionJobHandler(
         model_uri = params.model_uri or model_version.model_uri
         endpoint_url = params.endpoint_url or model_version.endpoint_url
 
-        version = await context.dataset_registry_store.get_version(
+        version = await context.dataset_store.get_version(
             dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
+            version=params.dataset_version,
         )
+
+        if version is None:
+            raise ValueError(
+                f"Dataset version not found: {params.dataset_id}:{params.dataset_version}"
+            )
 
         if version.status != DatasetVersionStatus.READY:
             raise ValueError(
@@ -150,22 +159,19 @@ class PredictDetectionJobHandler(
             )
         )
 
-        metadata = {
-            "backend": params.inference_backend.value,
-            "model_uri": model_uri,
-            "endpoint_url": endpoint_url,
-            "metrics": inference_result.metrics,
-            **inference_result.metadata,
-        }
-
         succeeded_record = initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "sample_count": inference_result.sample_count,
                 "prediction_count": inference_result.prediction_count,
-                "run_manifest_uri": inference_result.run_manifest_uri,
+                "prediction_manifest_uri": inference_result.run_manifest_uri,
                 "predictions_root_uri": inference_result.predictions_root_uri,
-                "metadata": metadata,
+                "metadata": {
+                    "model_uri": model_uri,
+                    "endpoint_url": endpoint_url,
+                    "metrics": inference_result.metrics,
+                    **inference_result.metadata,
+                },
                 "finished_at": utc_now(),
             }
         )
@@ -189,8 +195,8 @@ class PredictDetectionJobHandler(
 
         return succeeded_record, job_result
 
-    async def _upsert(self, context: JobContext, record: InferenceRunRecord) -> None:
-        await context.run_registry_store.upsert_inference_run(record)
+    async def _upsert(self, context: WorkerContext, record: InferenceRunRecord) -> None:
+        await context.runs.inference.upsert(record)
 
 
 def _validate_model_backend(

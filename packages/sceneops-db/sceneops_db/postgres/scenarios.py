@@ -53,6 +53,7 @@ class PostgresScenarioSetRepository:
             raise ValueError(f"ScenarioSet not found: {record.scenario_set_id}")
         apply_values(model, scenario_set_record_to_values(record))
         await self._session.flush()
+        await self._session.refresh(model)
         return scenario_set_model_to_record(model)
 
     async def list(
@@ -85,6 +86,7 @@ class PostgresScenarioRunRepository:
         model = ScenarioRunRecordModel(**scenario_run_record_to_values(run))
         self._session.add(model)
         await self._session.flush()
+        await self._session.refresh(model)
         return scenario_run_model_to_record(model)
 
     async def get(self, run_id: str) -> ScenarioRunRecord | None:
@@ -105,6 +107,7 @@ class PostgresScenarioRunRepository:
             raise ValueError(f"ScenarioRun not found: {run.run_id}")
         apply_values(model, scenario_run_record_to_values(run))
         await self._session.flush()
+        await self._session.refresh(model)
         return scenario_run_model_to_record(model)
 
     async def list(

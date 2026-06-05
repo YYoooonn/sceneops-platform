@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from typing import Any
+
+from sceneops_core.artifacts.schemas.enums import ArtifactKind
+from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
+from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.ids import default_profile_run_id, generate_artifact_id
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.time import utc_now
+from sceneops_core.jobs.schemas import (
+    JobType,
+    ProfileSceneJobParams,
+    ProfileSceneJobResult,
+)
+from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.scenes.schemas.runs import SceneProfileRunRecord
+
+# from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+
+
+class ProfileSceneJobHandler(JobHandler[ProfileSceneJobParams, ProfileSceneJobResult]):
+    @property
+    def job_type(self) -> JobType:
+        return JobType.PROFILE_SCENE
+
+    @property
+    def params_model(self) -> type[ProfileSceneJobParams]:
+        return ProfileSceneJobParams
+
+    def build_step_params(
+        self, base: JsonDict, context_values: dict[str, Any]
+    ) -> JsonDict:
+        scene_manifest_uris = (
+            base.get("scene_manifest_uris")
+            or context_values.get("scene_manifest_uris")
+            or []
+        )
+        return {**base, "scene_manifest_uris": scene_manifest_uris}
+
+    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
+        parsed = ProfileSceneJobResult.model_validate(result)
+        return {
+            "profile_scene_count": parsed.scene_count,
+            "profile_sample_count": parsed.sample_count,
+            "observed_channels": parsed.observed_channels,
+            "profile_report_uri": parsed.report_uri,
+        }
+
+    async def run(
+        self,
+        request: JobHandlerRequest[ProfileSceneJobParams],
+    ) -> ProfileSceneJobResult:
+        job = request.job
+        params = request.params
+        context = request.context
+
+        uris = _resolve_scene_manifest_uris(params)
+
+        run_id = default_profile_run_id(job.job_id)
+        started_at = utc_now()
+
+        initial_record = SceneProfileRunRecord(
+            run_id=run_id,
+            dataset_id=job.params.get("dataset_id"),
+            dataset_version=job.params.get("dataset_version"),
+            status=RunStatus.RUNNING,
+            pipeline_run_id=job.pipeline_run_id,
+            pipeline_step_run_id=job.pipeline_step_run_id,
+            job_id=job.job_id,
+            started_at=started_at,
+        )
+        saved_record = await context.runs.scene_runs.upsert(initial_record)
+
+        total_samples = 0
+        total_frames = 0
+        total_annotations = 0
+        all_channels: set[str] = set()
+        scene_profiles: list[dict] = []
+
+        for uri in uris:
+            scene_manifest = await context.dataset_artifact_store.load_scene_manifest(
+                uri
+            )
+            if scene_manifest is None:
+                continue
+
+            scene_channels = set(scene_manifest.channels)
+            scene_annotations = sum(len(s.annotations) for s in scene_manifest.samples)
+
+            all_channels.update(scene_channels)
+            total_samples += scene_manifest.sample_count
+            total_frames += scene_manifest.frame_count
+            total_annotations += scene_annotations
+
+            scene_profiles.append(
+                {
+                    "scene_id": scene_manifest.scene_id,
+                    "sample_count": scene_manifest.sample_count,
+                    "frame_count": scene_manifest.frame_count,
+                    "channels": scene_manifest.channels,
+                    "annotation_count": scene_annotations,
+                }
+            )
+
+        observed_channels = sorted(all_channels)
+
+        report = {
+            "run_id": run_id,
+            "job_id": job.job_id,
+            "scene_count": len(scene_profiles),
+            "sample_count": total_samples,
+            "frame_count": total_frames,
+            "annotation_count": total_annotations,
+            "observed_channels": observed_channels,
+            "scenes": scene_profiles,
+            "created_at": utc_now().isoformat(),
+        }
+
+        report_uri: str | None = None
+        if uris:
+            report_uri = context.dataset_artifact_store.artifact_store.join_uri(
+                context.settings.run_root_uri,
+                "scene_profiles",
+                run_id,
+                "report.json",
+            )
+            await context.dataset_artifact_store.artifact_store.write_json(
+                report_uri, report
+            )
+
+            await context.artifact_record_store.create(
+                artifact_id=generate_artifact_id(),
+                ref=ArtifactRef(
+                    kind=ArtifactKind.DATASET_PROFILE_REPORT,
+                    uri=report_uri,
+                    media_type="application/json",
+                ),
+                owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
+                owner_id=run_id,
+                dataset_id=job.params.get("dataset_id"),
+                dataset_version=job.params.get("dataset_version"),
+                run_id=run_id,
+                job_id=job.job_id,
+                pipeline_run_id=job.pipeline_run_id,
+            )
+
+        now = utc_now()
+        succeeded_record = saved_record.model_copy(
+            update={
+                "status": RunStatus.SUCCEEDED,
+                "sample_count": total_samples,
+                "frame_count": total_frames,
+                "annotation_count": total_annotations,
+                "observed_channels": observed_channels,
+                "profile_report_uri": report_uri,
+                "finished_at": now,
+            }
+        )
+        await context.runs.scene_runs.upsert(succeeded_record)
+
+        return ProfileSceneJobResult(
+            scene_count=len(scene_profiles),
+            sample_count=total_samples,
+            frame_count=total_frames,
+            observed_channels=observed_channels,
+            report_uri=report_uri,
+        )
+
+
+def _resolve_scene_manifest_uris(params: ProfileSceneJobParams) -> list[str]:
+    if params.scene_manifest_uris:
+        return params.scene_manifest_uris
+    if params.scene_manifest_uri:
+        return [params.scene_manifest_uri]
+    return []
