@@ -1,7 +1,7 @@
 """rename pipeline step to task
 
 Revision ID: fa61176f354f
-Revises: b1572d66b02a
+Revises: 913307030490
 Create Date: 2026-06-06
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = 'fa61176f354f'
-down_revision: str | None = 'b1572d66b02a'
+down_revision: str | None = '913307030490'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
