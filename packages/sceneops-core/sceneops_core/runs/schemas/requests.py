@@ -19,5 +19,5 @@ class ListRunsRequest(SceneOpsBaseModel):
     model_version: str | None = None
 
     pipeline_run_id: str | None = None
-    pipeline_step_run_id: str | None = None
+    pipeline_task_run_id: str | None = None
     job_id: str | None = None

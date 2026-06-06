@@ -4,9 +4,9 @@ from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.common.time import utc_now
 from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
-    PipelineStepResult,
-    PipelineStepRunManifest,
-    PipelineStepRunStatus,
+    PipelineTaskResult,
+    PipelineTaskRunManifest,
+    PipelineTaskRunStatus,
 )
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.runner import JobRunner
@@ -14,10 +14,10 @@ from sceneops_worker.pipelines.context import PipelineExecutionContext
 from sceneops_worker.pipelines.planning import PipelineJobPlanner
 from sceneops_worker.pipelines.propagation import PipelineResultPropagator
 from sceneops_worker.pipelines.quality_gate import PipelineQualityGate
-from sceneops_worker.pipelines.result_builder import build_pipeline_step_result
+from sceneops_worker.pipelines.result_builder import build_pipeline_task_result
 
 
-class PipelineStepExecutor:
+class PipelineTaskExecutor:
     def __init__(
         self,
         context: WorkerContext,
@@ -32,66 +32,66 @@ class PipelineStepExecutor:
         self._propagator = propagator or PipelineResultPropagator()
         self._quality_gate = quality_gate or PipelineQualityGate()
 
-    async def run_step(
+    async def run_task(
         self,
         *,
         pipeline_run: PipelineRunManifest,
-        step: PipelineStepRunManifest,
+        task: PipelineTaskRunManifest,
         context: PipelineExecutionContext,
-    ) -> PipelineStepRunManifest:
-        self._validate_dependencies_succeeded(step=step, context=context)
+    ) -> PipelineTaskRunManifest:
+        self._validate_dependencies_succeeded(task=task, context=context)
 
-        step = await self._mark_step_running(step)
+        task = await self._mark_task_running(task)
         await self._context.commit()
 
         try:
-            job = self._planner.build_job_for_step(
+            job = self._planner.build_job_for_task(
                 pipeline_run=pipeline_run,
-                step=step,
+                task=task,
                 context=context,
             )
             created_job = await self._context.job_store.create(job)
 
-            step.job_id = created_job.job_id
-            step.updated_at = utc_now()
-            step = await self._context.pipeline_store.save_step(step)
+            task.job_id = created_job.job_id
+            task.updated_at = utc_now()
+            task = await self._context.pipeline_store.save_task(task)
             await self._context.commit()
 
             finished_job = await self._job_runner.run(created_job.job_id)
 
             if finished_job.result is not None:
-                self._propagator.apply_step_result(
-                    step=step,
+                self._propagator.apply_task_result(
+                    task=task,
                     result=finished_job.result,
                     context=context,
                 )
 
-            step.status = PipelineStepRunStatus.SUCCEEDED
-            step.result = build_pipeline_step_result(
-                step=step,
+            task.status = PipelineTaskRunStatus.SUCCEEDED
+            task.result = build_pipeline_task_result(
+                task=task,
                 job=finished_job,
             )
-            step.error = None
-            step.finished_at = utc_now()
-            step.updated_at = step.finished_at
+            task.error = None
+            task.finished_at = utc_now()
+            task.updated_at = task.finished_at
 
-            saved = await self._context.pipeline_store.save_step(step)
+            saved = await self._context.pipeline_store.save_task(task)
             await self._context.commit()
 
-            context.mark_step(
-                pipeline_step_id=saved.pipeline_step_id,
-                pipeline_step_name=saved.pipeline_step_name,
+            context.mark_task(
+                pipeline_task_id=saved.pipeline_task_id,
+                pipeline_task_name=saved.pipeline_task_name,
                 status=saved.status,
                 job_id=saved.job_id,
                 result=(
-                    PipelineStepResult.model_validate(saved.result)
+                    PipelineTaskResult.model_validate(saved.result)
                     if saved.result is not None
                     else None
                 ),
             )
 
-            self._quality_gate.check_step_result(
-                job_type=step.job_type,
+            self._quality_gate.check_task_result(
+                job_type=task.job_type,
                 result=finished_job.result,
             )
 
@@ -100,14 +100,14 @@ class PipelineStepExecutor:
         except Exception as error:
             await self._context.rollback()
 
-            step.status = PipelineStepRunStatus.FAILED
-            step.error = ErrorInfo(
+            task.status = PipelineTaskRunStatus.FAILED
+            task.error = ErrorInfo(
                 type=error.__class__.__name__,
                 message=str(error),
             )
-            step.finished_at = utc_now()
-            step.updated_at = step.finished_at
-            await self._context.pipeline_store.save_step(step)
+            task.finished_at = utc_now()
+            task.updated_at = task.finished_at
+            await self._context.pipeline_store.save_task(task)
             await self._context.commit()
 
             raise
@@ -115,21 +115,21 @@ class PipelineStepExecutor:
     def _validate_dependencies_succeeded(
         self,
         *,
-        step: PipelineStepRunManifest,
+        task: PipelineTaskRunManifest,
         context: PipelineExecutionContext,
     ) -> None:
-        for dep_step_id in step.depends_on_step_ids:
-            context.require_step_succeeded(dep_step_id)
+        for dep_task_id in task.depends_on_task_ids:
+            context.require_task_succeeded(dep_task_id)
 
-    async def _mark_step_running(
+    async def _mark_task_running(
         self,
-        step: PipelineStepRunManifest,
-    ) -> PipelineStepRunManifest:
+        task: PipelineTaskRunManifest,
+    ) -> PipelineTaskRunManifest:
         now = utc_now()
 
-        step.status = PipelineStepRunStatus.RUNNING
-        step.started_at = step.started_at or now
-        step.updated_at = now
-        step.error = None
+        task.status = PipelineTaskRunStatus.RUNNING
+        task.started_at = task.started_at or now
+        task.updated_at = now
+        task.error = None
 
-        return await self._context.pipeline_store.save_step(step)
+        return await self._context.pipeline_store.save_task(task)

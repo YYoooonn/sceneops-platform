@@ -77,7 +77,7 @@ class EvaluateDetectionJobHandler(
             evaluator_id=params.evaluator_id,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
-            pipeline_step_run_id=job.pipeline_step_run_id,
+            pipeline_task_run_id=job.pipeline_task_run_id,
             job_id=job.job_id,
             metadata={"match_distance_m": params.match_distance_m},
             started_at=started_at,

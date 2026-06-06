@@ -5,19 +5,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
-    PipelineStepRunManifest,
+    PipelineTaskRunManifest,
     PipelineType,
 )
 from sceneops_db.postgres import (
     PostgresPipelineRunRepository,
-    PostgresPipelineStepRunRepository,
+    PostgresPipelineTaskRunRepository,
 )
 
 
 class PipelineStore:
     def __init__(self, session: AsyncSession) -> None:
         self._runs = PostgresPipelineRunRepository(session)
-        self._steps = PostgresPipelineStepRunRepository(session)
+        self._tasks = PostgresPipelineTaskRunRepository(session)
 
     async def get(self, pipeline_run_id: str) -> PipelineRunManifest | None:
         return await self._runs.get(pipeline_run_id)
@@ -51,26 +51,26 @@ class PipelineStore:
             offset=offset,
         )
 
-    async def get_step(
-        self, pipeline_step_run_id: str
-    ) -> PipelineStepRunManifest | None:
-        return await self._steps.get(pipeline_step_run_id)
+    async def get_task(
+        self, pipeline_task_run_id: str
+    ) -> PipelineTaskRunManifest | None:
+        return await self._tasks.get(pipeline_task_run_id)
 
-    async def list_steps(
+    async def list_tasks(
         self,
         pipeline_run_id: str,
         *,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[PipelineStepRunManifest]:
-        return await self._steps.list_for_pipeline_run(
+    ) -> list[PipelineTaskRunManifest]:
+        return await self._tasks.list_for_pipeline_run(
             pipeline_run_id, limit=limit, offset=offset
         )
 
-    async def create_step(
-        self, step: PipelineStepRunManifest
-    ) -> PipelineStepRunManifest:
-        return await self._steps.create(step)
+    async def create_task(
+        self, task: PipelineTaskRunManifest
+    ) -> PipelineTaskRunManifest:
+        return await self._tasks.create(task)
 
-    async def save_step(self, step: PipelineStepRunManifest) -> PipelineStepRunManifest:
-        return await self._steps.update(step)
+    async def save_task(self, task: PipelineTaskRunManifest) -> PipelineTaskRunManifest:
+        return await self._tasks.update(task)

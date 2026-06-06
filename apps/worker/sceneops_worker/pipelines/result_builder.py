@@ -6,8 +6,8 @@ from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunResult,
     PipelineRunStatus,
-    PipelineStepResult,
-    PipelineStepRunManifest,
+    PipelineTaskResult,
+    PipelineTaskRunManifest,
 )
 from sceneops_worker.pipelines.context import PipelineExecutionContext
 
@@ -16,7 +16,7 @@ def build_pipeline_result(
     *,
     pipeline_run: PipelineRunManifest,
     context: PipelineExecutionContext,
-    steps: list[PipelineStepResult],
+    tasks: list[PipelineTaskResult],
     status: PipelineRunStatus,
 ) -> PipelineRunResult:
     summary: dict = {
@@ -38,24 +38,24 @@ def build_pipeline_result(
             }
         ),
         outputs={},
-        steps=steps,
+        tasks=tasks,
     )
 
 
-def build_pipeline_step_result(
+def build_pipeline_task_result(
     *,
-    step: PipelineStepRunManifest,
+    task: PipelineTaskRunManifest,
     job: JobManifest | None,
-) -> PipelineStepResult:
+) -> PipelineTaskResult:
     job_result = job.result if job is not None else None
-    job_id = job.job_id if job is not None else step.job_id
+    job_id = job.job_id if job is not None else task.job_id
 
-    return PipelineStepResult(
-        pipeline_step_id=step.pipeline_step_id,
-        pipeline_step_name=step.pipeline_step_name,
-        job_type=step.job_type,
+    return PipelineTaskResult(
+        pipeline_task_id=task.pipeline_task_id,
+        pipeline_task_name=task.pipeline_task_name,
+        job_type=task.job_type,
         job_id=job_id,
         status=JobStatus.SUCCEEDED if job_result is not None else JobStatus.FAILED,
         result=job_result,
-        error=step.error,
+        error=task.error,
     )

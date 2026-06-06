@@ -6,7 +6,7 @@ from .inference import InferenceRunModel
 from .jobs import JobEventModel, JobModel
 from .labels import LabelRunModel
 from .model_registry import ModelModel, ModelVersionModel
-from .pipelines import PipelineRunModel, PipelineStepRunModel
+from .pipelines import PipelineRunModel, PipelineTaskRunModel
 from .scenarios import ScenarioRunRecordModel, ScenarioSetModel
 from .scenes import SceneModel, SceneRunRecordModel
 
@@ -16,7 +16,7 @@ __all__ = [
     "JobEventModel",
     # pipelines
     "PipelineRunModel",
-    "PipelineStepRunModel",
+    "PipelineTaskRunModel",
     # executions
     "ExecutionRecordModel",
     # datasets

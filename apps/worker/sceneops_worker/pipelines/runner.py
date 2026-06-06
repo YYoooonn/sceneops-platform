@@ -5,18 +5,18 @@ from sceneops_core.common.time import utc_now
 from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
-    PipelineStepResult,
+    PipelineTaskResult,
 )
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.pipelines.context import PipelineExecutionContext
 from sceneops_worker.pipelines.result_builder import build_pipeline_result
-from sceneops_worker.pipelines.step_executor import PipelineStepExecutor
+from sceneops_worker.pipelines.task_executor import PipelineTaskExecutor
 
 
 class PipelineRunner:
     def __init__(self, context: WorkerContext) -> None:
         self._context = context
-        self._step_executor = PipelineStepExecutor(context)
+        self._task_executor = PipelineTaskExecutor(context)
 
     async def run(self, pipeline_run_id: str) -> PipelineRunManifest:
         pipeline_run = await self._load_pipeline_run(pipeline_run_id)
@@ -27,28 +27,28 @@ class PipelineRunner:
         await self._context.commit()
 
         context = PipelineExecutionContext.from_pipeline_run(pipeline_run)
-        step_results: list[PipelineStepResult] = []
+        task_results: list[PipelineTaskResult] = []
 
         try:
-            steps = await self._context.pipeline_store.list_steps(pipeline_run_id)
-            steps = sorted(steps, key=lambda s: s.step_order)
+            tasks = await self._context.pipeline_store.list_tasks(pipeline_run_id)
+            tasks = sorted(tasks, key=lambda t: t.task_order)
 
-            for step in steps:
-                saved_step = await self._step_executor.run_step(
+            for task in tasks:
+                saved_task = await self._task_executor.run_task(
                     pipeline_run=pipeline_run,
-                    step=step,
+                    task=task,
                     context=context,
                 )
 
-                if saved_step.result is not None:
-                    step_results.append(
-                        PipelineStepResult.model_validate(saved_step.result)
+                if saved_task.result is not None:
+                    task_results.append(
+                        PipelineTaskResult.model_validate(saved_task.result)
                     )
 
             result = await self._mark_pipeline_succeeded(
                 pipeline_run,
                 context=context,
-                step_results=step_results,
+                task_results=task_results,
             )
             await self._context.commit()
 
@@ -58,7 +58,7 @@ class PipelineRunner:
             return await self._fail_and_raise(
                 pipeline_run=pipeline_run,
                 context=context,
-                step_results=step_results,
+                task_results=task_results,
                 error=error,
             )
 
@@ -108,7 +108,7 @@ class PipelineRunner:
         pipeline_run: PipelineRunManifest,
         *,
         context: PipelineExecutionContext,
-        step_results: list[PipelineStepResult],
+        task_results: list[PipelineTaskResult],
     ) -> PipelineRunManifest:
         now = utc_now()
 
@@ -119,7 +119,7 @@ class PipelineRunner:
         pipeline_run.result = build_pipeline_result(
             pipeline_run=pipeline_run,
             context=context,
-            steps=step_results,
+            tasks=task_results,
             status=PipelineRunStatus.SUCCEEDED,
         )
 
@@ -130,7 +130,7 @@ class PipelineRunner:
         pipeline_run: PipelineRunManifest,
         *,
         context: PipelineExecutionContext,
-        step_results: list[PipelineStepResult],
+        task_results: list[PipelineTaskResult],
         error: ErrorInfo,
     ) -> PipelineRunManifest:
         now = utc_now()
@@ -142,7 +142,7 @@ class PipelineRunner:
         pipeline_run.result = build_pipeline_result(
             pipeline_run=pipeline_run,
             context=context,
-            steps=step_results,
+            tasks=task_results,
             status=PipelineRunStatus.FAILED,
         )
 
@@ -153,7 +153,7 @@ class PipelineRunner:
         *,
         pipeline_run: PipelineRunManifest,
         context: PipelineExecutionContext,
-        step_results: list[PipelineStepResult],
+        task_results: list[PipelineTaskResult],
         error: Exception,
     ) -> PipelineRunManifest:
         await self._context.rollback()
@@ -161,7 +161,7 @@ class PipelineRunner:
         await self._mark_pipeline_failed(
             pipeline_run,
             context=context,
-            step_results=step_results,
+            task_results=task_results,
             error=ErrorInfo(
                 type=error.__class__.__name__,
                 message=str(error),

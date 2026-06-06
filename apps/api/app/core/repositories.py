@@ -22,7 +22,7 @@ from sceneops_db.repositories.model_registry import (
 )
 from sceneops_db.repositories.pipelines import (
     PipelineRunRepository,
-    PipelineStepRunRepository,
+    PipelineTaskRunRepository,
 )
 from sceneops_db.repositories.scenarios import (
     ScenarioRunRepository,
@@ -47,7 +47,7 @@ from sceneops_db.postgres.model_registry import (
 )
 from sceneops_db.postgres.pipelines import (
     PostgresPipelineRunRepository,
-    PostgresPipelineStepRunRepository,
+    PostgresPipelineTaskRunRepository,
 )
 from sceneops_db.postgres.scenarios import (
     PostgresScenarioRunRepository,
@@ -81,17 +81,17 @@ def get_pipeline_run_repository(session: DbSessionDep) -> PipelineRunRepository:
     return PostgresPipelineRunRepository(session)
 
 
-def get_pipeline_step_run_repository(
+def get_pipeline_task_run_repository(
     session: DbSessionDep,
-) -> PipelineStepRunRepository:
-    return PostgresPipelineStepRunRepository(session)
+) -> PipelineTaskRunRepository:
+    return PostgresPipelineTaskRunRepository(session)
 
 
 PipelineRunRepositoryDep = Annotated[
     PipelineRunRepository, Depends(get_pipeline_run_repository)
 ]
-PipelineStepRunRepositoryDep = Annotated[
-    PipelineStepRunRepository, Depends(get_pipeline_step_run_repository)
+PipelineTaskRunRepositoryDep = Annotated[
+    PipelineTaskRunRepository, Depends(get_pipeline_task_run_repository)
 ]
 
 

@@ -30,8 +30,8 @@ class JobModel(Base):
     error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    pipeline_step_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    pipeline_step_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_task_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     retry_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
@@ -101,8 +101,8 @@ class JobEventModel(Base):
     job_step_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    pipeline_step_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    pipeline_step_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_task_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -123,7 +123,7 @@ class JobEventModel(Base):
 Index("ix_jobs_type_status", JobModel.type, JobModel.status)
 Index("ix_jobs_dataset", JobModel.dataset_id, JobModel.dataset_version)
 Index("ix_jobs_pipeline_run_id", JobModel.pipeline_run_id)
-Index("ix_jobs_pipeline_step_run_id", JobModel.pipeline_step_run_id)
+Index("ix_jobs_pipeline_task_run_id", JobModel.pipeline_task_run_id)
 Index("ix_jobs_status_queued_at", JobModel.status, JobModel.queued_at)
 Index("ix_jobs_status_locked_at", JobModel.status, JobModel.locked_at)
 

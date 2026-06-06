@@ -34,8 +34,8 @@ from .model_registry import (
 from .pipelines import (
     pipeline_run_manifest_to_values,
     pipeline_run_model_to_manifest,
-    pipeline_step_run_manifest_to_values,
-    pipeline_step_run_model_to_manifest,
+    pipeline_task_run_manifest_to_values,
+    pipeline_task_run_model_to_manifest,
 )
 from .scenarios import (
     ScenarioRunRecord,
@@ -64,8 +64,8 @@ __all__ = [
     # pipelines
     "pipeline_run_model_to_manifest",
     "pipeline_run_manifest_to_values",
-    "pipeline_step_run_model_to_manifest",
-    "pipeline_step_run_manifest_to_values",
+    "pipeline_task_run_model_to_manifest",
+    "pipeline_task_run_manifest_to_values",
     # executions
     "execution_model_to_result",
     "execution_result_to_values",

@@ -6,17 +6,17 @@ from sceneops_core.pipelines.schemas import PipelineDefinition, PipelineType
 
 
 def _validate_pipeline_definition(definition: PipelineDefinition) -> None:
-    step_ids = {step.pipeline_step_id for step in definition.steps}
+    task_ids = {task.pipeline_task_id for task in definition.tasks}
 
-    if len(step_ids) != len(definition.steps):
-        raise ValueError(f"Duplicate pipeline_step_id in pipeline: {definition.type}")
+    if len(task_ids) != len(definition.tasks):
+        raise ValueError(f"Duplicate pipeline_task_id in pipeline: {definition.type}")
 
-    for step in definition.steps:
-        for dependency in step.depends_on_pipeline_step_ids:
-            if dependency not in step_ids:
+    for task in definition.tasks:
+        for dependency in task.depends_on_pipeline_task_ids:
+            if dependency not in task_ids:
                 raise ValueError(
                     f"Invalid dependency in pipeline={definition.type}: "
-                    f"step={step.pipeline_step_id}, dependency={dependency}"
+                    f"task={task.pipeline_task_id}, dependency={dependency}"
                 )
 
 

@@ -46,7 +46,7 @@ def base_run_to_values(record: BaseRunRecord) -> dict[str, Any]:
         "type": enum_to_value(record.type),
         "status": enum_to_value(record.status),
         "pipeline_run_id": record.pipeline_run_id,
-        "pipeline_step_run_id": record.pipeline_step_run_id,
+        "pipeline_task_run_id": record.pipeline_task_run_id,
         "job_id": record.job_id,
         "params": record.params or {},
         "result": record.result,

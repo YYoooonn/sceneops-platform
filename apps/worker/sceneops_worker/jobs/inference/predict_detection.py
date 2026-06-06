@@ -84,7 +84,7 @@ class PredictDetectionJobHandler(
             inference_backend=params.inference_backend.value,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
-            pipeline_step_run_id=job.pipeline_step_run_id,
+            pipeline_task_run_id=job.pipeline_task_run_id,
             job_id=job.job_id,
             metadata={
                 "model_uri": params.model_uri,

@@ -11,7 +11,7 @@ from .inference import InferenceRunRepository
 from .jobs import JobEventRepository, JobRepository
 from .labels import LabelRunRecord, LabelRunRepository
 from .model_registry import ModelRepository, ModelVersionRepository
-from .pipelines import PipelineRunRepository, PipelineStepRunRepository
+from .pipelines import PipelineRunRepository, PipelineTaskRunRepository
 from .scenarios import ScenarioRunRecord, ScenarioRunRepository, ScenarioSetRepository
 from .scenes import SceneRepository, SceneRunRecord, SceneRunRepository
 
@@ -21,7 +21,7 @@ __all__ = [
     "JobEventRepository",
     # pipelines
     "PipelineRunRepository",
-    "PipelineStepRunRepository",
+    "PipelineTaskRunRepository",
     # executions
     "ExecutionRecordRepository",
     # datasets

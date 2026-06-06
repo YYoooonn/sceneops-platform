@@ -35,7 +35,7 @@ class PipelineRunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-class PipelineStepRunStatus(StrEnum):
+class PipelineTaskRunStatus(StrEnum):
     PENDING = "pending"
     WAITING = "waiting"
     RUNNING = "running"

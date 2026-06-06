@@ -14,7 +14,7 @@ from app.platform.pipelines.schemas import (
     PipelineExecuteResponse,
     PipelineRunDetailResponse,
     PipelineRunListResponse,
-    PipelineStepRunListResponse,
+    PipelineTaskRunListResponse,
 )
 from sceneops_core.pipelines.schemas import (
     CreatePipelineRunRequest,
@@ -91,12 +91,12 @@ async def get_pipeline_run(
     return result
 
 
-@router.get("/runs/{pipeline_run_id}/steps", response_model=PipelineStepRunListResponse)
-async def list_pipeline_steps(
+@router.get("/runs/{pipeline_run_id}/tasks", response_model=PipelineTaskRunListResponse)
+async def list_pipeline_tasks(
     pipeline_run_id: str,
     service: PipelineServiceDep,
-) -> PipelineStepRunListResponse:
-    result = await service.list_pipeline_step_runs(pipeline_run_id)
+) -> PipelineTaskRunListResponse:
+    result = await service.list_pipeline_task_runs(pipeline_run_id)
     if result is None:
         raise_not_found("Pipeline run", pipeline_run_id)
     return result

@@ -4,7 +4,7 @@ from sceneops_core.jobs.schemas import JobType
 from sceneops_core.pipelines.registry import PipelineDefinitionRegistry
 from sceneops_core.pipelines.schemas import (
     PipelineDefinition,
-    PipelineStepDefinition,
+    PipelineTaskDefinition,
     PipelineType,
 )
 
@@ -16,9 +16,9 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
         "Import existing scene-aware datasets such as nuScenes, Waymo, or KITTI "
         "into SceneOps scene manifests, then build a dataset manifest."
     ),
-    steps=[
-        PipelineStepDefinition(
-            pipeline_step_id="ingest_scenes",
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="ingest_scenes",
             name="Ingest scenes",
             order=0,
             job_type=JobType.INGEST_SCENES,
@@ -27,35 +27,35 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
                 "mode": "upsert",
             },
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="validate_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on_pipeline_step_ids=["ingest_scenes"],
+            depends_on_pipeline_task_ids=["ingest_scenes"],
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="profile_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on_pipeline_step_ids=["ingest_scenes"],
+            depends_on_pipeline_task_ids=["ingest_scenes"],
             default_params={
                 "profile_samples": True,
                 "profile_assets": True,
             },
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="build_dataset_manifest",
+        PipelineTaskDefinition(
+            pipeline_task_id="build_dataset_manifest",
             name="Build dataset manifest",
             order=3,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on_pipeline_step_ids=["ingest_scenes"],
+            depends_on_pipeline_task_ids=["ingest_scenes"],
         ),
     ],
 )
@@ -68,9 +68,9 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
         "Build SceneOps scene manifests from raw logs or raw sensor streams, "
         "then aggregate them into a dataset manifest."
     ),
-    steps=[
-        PipelineStepDefinition(
-            pipeline_step_id="build_scenes",
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="build_scenes",
             name="Build scenes",
             order=0,
             job_type=JobType.BUILD_SCENES,
@@ -79,31 +79,31 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
                 "build_world_state": False,
             },
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="validate_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on_pipeline_step_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["build_scenes"],
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="profile_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on_pipeline_step_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["build_scenes"],
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="build_dataset_manifest",
+        PipelineTaskDefinition(
+            pipeline_task_id="build_dataset_manifest",
             name="Build dataset manifest",
             order=3,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on_pipeline_step_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["build_scenes"],
         ),
     ],
 )
@@ -116,9 +116,9 @@ SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
         "Build physics-grounded scene representation from raw logs, validate/profile "
         "the scene, and export a reconstruction package."
     ),
-    steps=[
-        PipelineStepDefinition(
-            pipeline_step_id="build_scenes",
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="build_scenes",
             name="Build scenes",
             order=0,
             job_type=JobType.BUILD_SCENES,
@@ -127,35 +127,35 @@ SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
                 "build_world_state": True,
             },
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="validate_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on_pipeline_step_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["build_scenes"],
             default_params={
                 "require_world_state": True,
                 "require_assets": True,
             },
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="profile_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on_pipeline_step_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["build_scenes"],
             default_params={
                 "profile_assets": True,
                 "profile_world_state": True,
             },
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="export_scene_package",
+        PipelineTaskDefinition(
+            pipeline_task_id="export_scene_package",
             name="Export scene package",
             order=3,
             job_type=JobType.EXPORT_SCENE_PACKAGE,
-            depends_on_pipeline_step_ids=["validate_scene"],
+            depends_on_pipeline_task_ids=["validate_scene"],
             default_params={
                 "package_type": "reconstruction",
                 "include_assets": True,
@@ -173,37 +173,37 @@ SCENE_REGISTRATION_PIPELINE = PipelineDefinition(
         "Register a generated, reconstructed, simulated, or re-observed scene "
         "and run basic scene-level quality checks."
     ),
-    steps=[
-        PipelineStepDefinition(
-            pipeline_step_id="register_scene",
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="register_scene",
             name="Register scene",
             order=0,
             job_type=JobType.REGISTER_SCENE,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="validate_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="validate_scene",
             name="Validate scene",
             order=1,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on_pipeline_step_ids=["register_scene"],
+            depends_on_pipeline_task_ids=["register_scene"],
             default_params={
                 "require_assets": True,
             },
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="profile_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="profile_scene",
             name="Profile scene",
             order=2,
             job_type=JobType.PROFILE_SCENE,
-            depends_on_pipeline_step_ids=["register_scene"],
+            depends_on_pipeline_task_ids=["register_scene"],
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="compare_scenes",
+        PipelineTaskDefinition(
+            pipeline_task_id="compare_scenes",
             name="Compare scenes",
             order=3,
             job_type=JobType.COMPARE_SCENES,
-            depends_on_pipeline_step_ids=["validate_scene"],
+            depends_on_pipeline_task_ids=["validate_scene"],
             optional=True,
         ),
     ],
@@ -217,19 +217,19 @@ SCENARIO_CURATION_PIPELINE = PipelineDefinition(
         "Mine scenario candidates from a dataset and score their reconstruction "
         "or evaluation readiness."
     ),
-    steps=[
-        PipelineStepDefinition(
-            pipeline_step_id="mine_scenarios",
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="mine_scenarios",
             name="Mine scenarios",
             order=0,
             job_type=JobType.MINE_SCENARIOS,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="score_scenario_readiness",
+        PipelineTaskDefinition(
+            pipeline_task_id="score_scenario_readiness",
             name="Score scenario readiness",
             order=1,
             job_type=JobType.SCORE_SCENARIO_READINESS,
-            depends_on_pipeline_step_ids=["mine_scenarios"],
+            depends_on_pipeline_task_ids=["mine_scenarios"],
         ),
     ],
 )
@@ -242,50 +242,50 @@ GENERATED_DATASET_PREPARATION_PIPELINE = PipelineDefinition(
         "Prepare generated or reconstructed scenes as a dataset version, "
         "optionally auto-label scenes, check distribution, and export the dataset."
     ),
-    steps=[
-        PipelineStepDefinition(
-            pipeline_step_id="register_scene",
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="register_scene",
             name="Register scene",
             order=0,
             job_type=JobType.REGISTER_SCENE,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="compare_scenes",
+        PipelineTaskDefinition(
+            pipeline_task_id="compare_scenes",
             name="Compare scenes",
             order=1,
             job_type=JobType.COMPARE_SCENES,
-            depends_on_pipeline_step_ids=["register_scene"],
+            depends_on_pipeline_task_ids=["register_scene"],
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="auto_label_scene",
+        PipelineTaskDefinition(
+            pipeline_task_id="auto_label_scene",
             name="Auto-label scene",
             order=2,
             job_type=JobType.AUTO_LABEL_SCENE,
-            depends_on_pipeline_step_ids=["register_scene"],
+            depends_on_pipeline_task_ids=["register_scene"],
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="build_dataset_manifest",
+        PipelineTaskDefinition(
+            pipeline_task_id="build_dataset_manifest",
             name="Build dataset manifest",
             order=3,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on_pipeline_step_ids=["register_scene"],
+            depends_on_pipeline_task_ids=["register_scene"],
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="check_distribution",
+        PipelineTaskDefinition(
+            pipeline_task_id="check_distribution",
             name="Check distribution",
             order=4,
             job_type=JobType.CHECK_DISTRIBUTION,
-            depends_on_pipeline_step_ids=["build_dataset_manifest"],
+            depends_on_pipeline_task_ids=["build_dataset_manifest"],
             optional=True,
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="export_dataset",
+        PipelineTaskDefinition(
+            pipeline_task_id="export_dataset",
             name="Export dataset",
             order=5,
             job_type=JobType.EXPORT_DATASET,
-            depends_on_pipeline_step_ids=["build_dataset_manifest"],
+            depends_on_pipeline_task_ids=["build_dataset_manifest"],
         ),
     ],
 )
@@ -295,9 +295,9 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
     type=PipelineType.DETECTION_EVALUATION,
     name="Detection Evaluation",
     description="Run detection prediction and evaluate detection metrics on a dataset.",
-    steps=[
-        PipelineStepDefinition(
-            pipeline_step_id="predict_detection",
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="predict_detection",
             name="Predict detection",
             order=0,
             job_type=JobType.PREDICT_DETECTION,
@@ -305,12 +305,12 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
                 "inference_backend": "mock",
             },
         ),
-        PipelineStepDefinition(
-            pipeline_step_id="evaluate_detection",
+        PipelineTaskDefinition(
+            pipeline_task_id="evaluate_detection",
             name="Evaluate detection",
             order=1,
             job_type=JobType.EVALUATE_DETECTION,
-            depends_on_pipeline_step_ids=["predict_detection"],
+            depends_on_pipeline_task_ids=["predict_detection"],
             default_params={
                 "evaluator_id": "center-distance",
                 "match_distance_m": 2.0,

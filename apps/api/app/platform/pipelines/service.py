@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sceneops_core.common.ids import (
     generate_pipeline_run_id,
-    generate_pipeline_step_run_id,
+    generate_pipeline_task_run_id,
 )
 from sceneops_core.common.time import utc_now
 from sceneops_core.pipelines.builtin import (
@@ -14,19 +14,19 @@ from sceneops_core.pipelines.schemas import (
     PipelineDefinition,
     PipelineRunManifest,
     PipelineRunStatus,
-    PipelineStepRunManifest,
-    PipelineStepRunStatus,
+    PipelineTaskRunManifest,
+    PipelineTaskRunStatus,
     PipelineType,
 )
 from app.platform.pipelines.schemas import (
     PipelineRunDetailResponse,
     PipelineRunListResponse,
-    PipelineStepRunListResponse,
+    PipelineTaskRunListResponse,
 )
 from sceneops_core.jobs.schemas import JobType
 from sceneops_db.repositories.pipelines import (
     PipelineRunRepository,
-    PipelineStepRunRepository,
+    PipelineTaskRunRepository,
 )
 
 
@@ -35,12 +35,12 @@ class PipelineService:
         self,
         *,
         pipeline_repository: PipelineRunRepository,
-        step_repository: PipelineStepRunRepository,
+        task_repository: PipelineTaskRunRepository,
         default_dataset_id: str,
         default_dataset_version: str,
     ) -> None:
         self._pipeline_repository = pipeline_repository
-        self._step_repository = step_repository
+        self._task_repository = task_repository
         self._default_dataset_id = default_dataset_id
         self._default_dataset_version = default_dataset_version
 
@@ -81,31 +81,31 @@ class PipelineService:
 
         created_pipeline = await self._pipeline_repository.create(pipeline_run)
 
-        created_steps: list[PipelineStepRunManifest] = []
-        for step_def in sorted(definition.steps, key=lambda s: s.order):
-            step_params = {
-                **step_def.default_params,
-                **request.params.get(step_def.pipeline_step_id, {}),
+        created_tasks: list[PipelineTaskRunManifest] = []
+        for task_def in sorted(definition.tasks, key=lambda t: t.order):
+            task_params = {
+                **task_def.default_params,
+                **request.params.get(task_def.pipeline_task_id, {}),
             }
-            step = PipelineStepRunManifest(
-                pipeline_step_run_id=generate_pipeline_step_run_id(),
+            task = PipelineTaskRunManifest(
+                pipeline_task_run_id=generate_pipeline_task_run_id(),
                 pipeline_run_id=pipeline_run.pipeline_run_id,
-                pipeline_step_id=step_def.pipeline_step_id,
-                pipeline_step_name=step_def.name,
-                step_order=step_def.order,
-                status=PipelineStepRunStatus.PENDING,
-                job_type=JobType(step_def.job_type),
-                depends_on_step_ids=step_def.depends_on_pipeline_step_ids,
-                params=step_params,
+                pipeline_task_id=task_def.pipeline_task_id,
+                pipeline_task_name=task_def.name,
+                task_order=task_def.order,
+                status=PipelineTaskRunStatus.PENDING,
+                job_type=JobType(task_def.job_type),
+                depends_on_task_ids=task_def.depends_on_pipeline_task_ids,
+                params=task_params,
                 created_at=now,
                 updated_at=now,
             )
-            created = await self._step_repository.create(step)
-            created_steps.append(created)
+            created = await self._task_repository.create(task)
+            created_tasks.append(created)
 
         return PipelineRunDetailResponse(
             pipeline_run=created_pipeline,
-            steps=created_steps,
+            tasks=created_tasks,
         )
 
     async def get_pipeline_run(
@@ -114,8 +114,8 @@ class PipelineService:
         pipeline_run = await self._pipeline_repository.get(pipeline_run_id)
         if pipeline_run is None:
             return None
-        steps = await self._step_repository.list_for_pipeline_run(pipeline_run_id)
-        return PipelineRunDetailResponse(pipeline_run=pipeline_run, steps=steps)
+        tasks = await self._task_repository.list_for_pipeline_run(pipeline_run_id)
+        return PipelineRunDetailResponse(pipeline_run=pipeline_run, tasks=tasks)
 
     async def list_pipeline_runs(
         self,
@@ -137,14 +137,14 @@ class PipelineService:
         )
         return PipelineRunListResponse(pipeline_runs=runs, count=len(runs))
 
-    async def list_pipeline_step_runs(
+    async def list_pipeline_task_runs(
         self, pipeline_run_id: str
-    ) -> PipelineStepRunListResponse | None:
+    ) -> PipelineTaskRunListResponse | None:
         run = await self._pipeline_repository.get(pipeline_run_id)
         if run is None:
             return None
-        steps = await self._step_repository.list_for_pipeline_run(pipeline_run_id)
-        return PipelineStepRunListResponse(steps=steps, count=len(steps))
+        tasks = await self._task_repository.list_for_pipeline_run(pipeline_run_id)
+        return PipelineTaskRunListResponse(tasks=tasks, count=len(tasks))
 
     async def validate_executable(self, pipeline_run_id: str) -> PipelineRunManifest:
         run = await self._pipeline_repository.get(pipeline_run_id)

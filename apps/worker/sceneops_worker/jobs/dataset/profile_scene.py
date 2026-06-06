@@ -69,7 +69,7 @@ class ProfileSceneJobHandler(
             dataset_version=job.params.get("dataset_version"),
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
-            pipeline_step_run_id=job.pipeline_step_run_id,
+            pipeline_task_run_id=job.pipeline_task_run_id,
             job_id=job.job_id,
             started_at=started_at,
         )

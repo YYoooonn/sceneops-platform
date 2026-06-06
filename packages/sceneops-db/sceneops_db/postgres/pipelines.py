@@ -6,17 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
-    PipelineStepRunManifest,
+    PipelineTaskRunManifest,
     PipelineType,
 )
 
 from sceneops_db.converters.pipelines import (
     pipeline_run_manifest_to_values,
     pipeline_run_model_to_manifest,
-    pipeline_step_run_manifest_to_values,
-    pipeline_step_run_model_to_manifest,
+    pipeline_task_run_manifest_to_values,
+    pipeline_task_run_model_to_manifest,
 )
-from sceneops_db.models.pipelines import PipelineRunModel, PipelineStepRunModel
+from sceneops_db.models.pipelines import PipelineRunModel, PipelineTaskRunModel
 
 from ._utils import apply_pagination, apply_values, enum_value
 
@@ -94,40 +94,40 @@ class PostgresPipelineRunRepository:
         return {row[0]: row[1] for row in result.all()}
 
 
-class PostgresPipelineStepRunRepository:
+class PostgresPipelineTaskRunRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, step: PipelineStepRunManifest) -> PipelineStepRunManifest:
-        model = PipelineStepRunModel(**pipeline_step_run_manifest_to_values(step))
+    async def create(self, task: PipelineTaskRunManifest) -> PipelineTaskRunManifest:
+        model = PipelineTaskRunModel(**pipeline_task_run_manifest_to_values(task))
         self._session.add(model)
         await self._session.flush()
         await self._session.refresh(model)
-        return pipeline_step_run_model_to_manifest(model)
+        return pipeline_task_run_model_to_manifest(model)
 
     async def get(
         self,
-        pipeline_step_run_id: str,
-    ) -> PipelineStepRunManifest | None:
-        stmt = select(PipelineStepRunModel).where(
-            PipelineStepRunModel.pipeline_step_run_id == pipeline_step_run_id
+        pipeline_task_run_id: str,
+    ) -> PipelineTaskRunManifest | None:
+        stmt = select(PipelineTaskRunModel).where(
+            PipelineTaskRunModel.pipeline_task_run_id == pipeline_task_run_id
         )
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
-        return pipeline_step_run_model_to_manifest(model) if model is not None else None
+        return pipeline_task_run_model_to_manifest(model) if model is not None else None
 
-    async def update(self, step: PipelineStepRunManifest) -> PipelineStepRunManifest:
-        stmt = select(PipelineStepRunModel).where(
-            PipelineStepRunModel.pipeline_step_run_id == step.pipeline_step_run_id
+    async def update(self, task: PipelineTaskRunManifest) -> PipelineTaskRunManifest:
+        stmt = select(PipelineTaskRunModel).where(
+            PipelineTaskRunModel.pipeline_task_run_id == task.pipeline_task_run_id
         )
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
         if model is None:
-            raise ValueError(f"PipelineStepRun not found: {step.pipeline_step_run_id}")
-        apply_values(model, pipeline_step_run_manifest_to_values(step))
+            raise ValueError(f"PipelineTaskRun not found: {task.pipeline_task_run_id}")
+        apply_values(model, pipeline_task_run_manifest_to_values(task))
         await self._session.flush()
         await self._session.refresh(model)
-        return pipeline_step_run_model_to_manifest(model)
+        return pipeline_task_run_model_to_manifest(model)
 
     async def list_for_pipeline_run(
         self,
@@ -135,28 +135,28 @@ class PostgresPipelineStepRunRepository:
         *,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[PipelineStepRunManifest]:
-        stmt = select(PipelineStepRunModel).where(
-            PipelineStepRunModel.pipeline_run_id == pipeline_run_id
+    ) -> list[PipelineTaskRunManifest]:
+        stmt = select(PipelineTaskRunModel).where(
+            PipelineTaskRunModel.pipeline_run_id == pipeline_run_id
         )
         stmt = apply_pagination(
-            stmt.order_by(PipelineStepRunModel.step_order.asc()),
+            stmt.order_by(PipelineTaskRunModel.task_order.asc()),
             limit=limit,
             offset=offset,
         )
         result = await self._session.execute(stmt)
-        return [pipeline_step_run_model_to_manifest(m) for m in result.scalars().all()]
+        return [pipeline_task_run_model_to_manifest(m) for m in result.scalars().all()]
 
-    async def get_by_step_id(
+    async def get_by_task_id(
         self,
         *,
         pipeline_run_id: str,
-        step_id: str,
-    ) -> PipelineStepRunManifest | None:
-        stmt = select(PipelineStepRunModel).where(
-            PipelineStepRunModel.pipeline_run_id == pipeline_run_id,
-            PipelineStepRunModel.pipeline_step_id == step_id,
+        task_id: str,
+    ) -> PipelineTaskRunManifest | None:
+        stmt = select(PipelineTaskRunModel).where(
+            PipelineTaskRunModel.pipeline_run_id == pipeline_run_id,
+            PipelineTaskRunModel.pipeline_task_id == task_id,
         )
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
-        return pipeline_step_run_model_to_manifest(model) if model is not None else None
+        return pipeline_task_run_model_to_manifest(model) if model is not None else None

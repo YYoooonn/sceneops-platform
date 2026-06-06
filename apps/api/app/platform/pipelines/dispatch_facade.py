@@ -6,7 +6,7 @@ from sceneops_core.executions.schemas import ExecutionDispatchResult
 from sceneops_db.postgres.executions import PostgresExecutionRecordRepository
 from sceneops_db.postgres.pipelines import (
     PostgresPipelineRunRepository,
-    PostgresPipelineStepRunRepository,
+    PostgresPipelineTaskRunRepository,
 )
 
 from app.platform.executions.backends.base import PipelineExecutionBackend
@@ -36,7 +36,7 @@ class PipelineDispatchFacade:
         async with self._session_factory() as session:
             pipeline_service = PipelineService(
                 pipeline_repository=PostgresPipelineRunRepository(session),
-                step_repository=PostgresPipelineStepRunRepository(session),
+                task_repository=PostgresPipelineTaskRunRepository(session),
                 default_dataset_id=self._default_dataset_id,
                 default_dataset_version=self._default_dataset_version,
             )

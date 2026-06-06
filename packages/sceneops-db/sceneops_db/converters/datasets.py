@@ -151,7 +151,7 @@ def dataset_run_model_to_record(model: DatasetRunRecordModel) -> DatasetRunRecor
         dataset_id=model.dataset_id,
         dataset_version=model.dataset_version,
         pipeline_run_id=model.pipeline_run_id,
-        pipeline_step_run_id=model.pipeline_step_run_id,
+        pipeline_task_run_id=model.pipeline_task_run_id,
         job_id=model.job_id,
         params=model.params or {},
         result=model.result,

@@ -1,25 +1,25 @@
-from .definitions import PipelineDefinition, PipelineStepDefinition
-from .enums import PipelineRunStatus, PipelineStepRunStatus, PipelineType
-from .manifests import PipelineRunManifest, PipelineStepRunManifest
+from .definitions import PipelineDefinition, PipelineTaskDefinition
+from .enums import PipelineRunStatus, PipelineTaskRunStatus, PipelineType
+from .manifests import PipelineRunManifest, PipelineTaskRunManifest
 from .requests import CreatePipelineRunRequest
 from .results import (
     PipelineLineage,
     PipelineLineageEdge,
     PipelineRunResult,
-    PipelineStepResult,
+    PipelineTaskResult,
 )
 
 __all__ = [
     "PipelineType",
     "PipelineRunStatus",
-    "PipelineStepRunStatus",
+    "PipelineTaskRunStatus",
     "PipelineDefinition",
-    "PipelineStepDefinition",
+    "PipelineTaskDefinition",
     "PipelineRunManifest",
-    "PipelineStepRunManifest",
+    "PipelineTaskRunManifest",
     "CreatePipelineRunRequest",
     "PipelineLineageEdge",
     "PipelineLineage",
-    "PipelineStepResult",
+    "PipelineTaskResult",
     "PipelineRunResult",
 ]
