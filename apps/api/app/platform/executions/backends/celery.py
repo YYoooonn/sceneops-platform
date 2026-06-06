@@ -14,10 +14,9 @@ from sceneops_core.executions.schemas import (
 
 
 @dataclass(frozen=True)
-class CeleryExecutionDispatchBackend:
+class CeleryJobExecutionBackend:
     app: Celery
     job_queue: str
-    pipeline_queue: str
 
     async def dispatch_job(self, job_id: str) -> ExecutionDispatchResult:
         result = self.app.send_task(
@@ -34,6 +33,12 @@ class CeleryExecutionDispatchBackend:
             resource_id=job_id,
             status=ExecutionStatus.QUEUED,
         )
+
+
+@dataclass(frozen=True)
+class CeleryPipelineExecutionBackend:
+    app: Celery
+    pipeline_queue: str
 
     async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
         result = self.app.send_task(

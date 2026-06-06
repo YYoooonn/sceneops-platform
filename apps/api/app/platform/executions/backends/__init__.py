@@ -1,7 +1,17 @@
-from app.platform.executions.backends.base import ExecutionDispatchBackend
-from app.platform.executions.backends.celery import CeleryExecutionDispatchBackend
+from app.platform.executions.backends.airflow import AirflowPipelineExecutionBackend
+from app.platform.executions.backends.base import (
+    JobExecutionBackend,
+    PipelineExecutionBackend,
+)
+from app.platform.executions.backends.celery import (
+    CeleryJobExecutionBackend,
+    CeleryPipelineExecutionBackend,
+)
 
 __all__ = [
-    "ExecutionDispatchBackend",
-    "CeleryExecutionDispatchBackend",
+    "JobExecutionBackend",
+    "PipelineExecutionBackend",
+    "CeleryJobExecutionBackend",
+    "CeleryPipelineExecutionBackend",
+    "AirflowPipelineExecutionBackend",
 ]

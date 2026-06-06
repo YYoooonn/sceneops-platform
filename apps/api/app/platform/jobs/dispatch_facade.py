@@ -6,7 +6,7 @@ from sceneops_core.executions.schemas import ExecutionDispatchResult
 from sceneops_db.postgres.executions import PostgresExecutionRecordRepository
 from sceneops_db.postgres.jobs import PostgresJobEventRepository, PostgresJobRepository
 
-from app.platform.executions.backends.base import ExecutionDispatchBackend
+from app.platform.executions.backends.base import JobExecutionBackend
 from app.platform.executions.service import ExecutionService
 from app.platform.jobs.service import JobService
 
@@ -16,12 +16,12 @@ class JobDispatchFacade:
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
-        backend: ExecutionDispatchBackend,
+        job_backend: JobExecutionBackend,
         default_dataset_id: str,
         default_dataset_version: str,
     ) -> None:
         self._session_factory = session_factory
-        self._backend = backend
+        self._job_backend = job_backend
         self._default_dataset_id = default_dataset_id
         self._default_dataset_version = default_dataset_version
 
@@ -38,7 +38,7 @@ class JobDispatchFacade:
                 default_dataset_version=self._default_dataset_version,
             )
             execution_service = ExecutionService(
-                backend=self._backend,
+                job_backend=self._job_backend,
                 record_repository=PostgresExecutionRecordRepository(session),
             )
 

@@ -9,7 +9,7 @@ from sceneops_db.postgres.pipelines import (
     PostgresPipelineStepRunRepository,
 )
 
-from app.platform.executions.backends.base import ExecutionDispatchBackend
+from app.platform.executions.backends.base import PipelineExecutionBackend
 from app.platform.executions.service import ExecutionService
 from app.platform.pipelines.service import PipelineService
 
@@ -19,12 +19,12 @@ class PipelineDispatchFacade:
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
-        backend: ExecutionDispatchBackend,
+        pipeline_backend: PipelineExecutionBackend,
         default_dataset_id: str,
         default_dataset_version: str,
     ) -> None:
         self._session_factory = session_factory
-        self._backend = backend
+        self._pipeline_backend = pipeline_backend
         self._default_dataset_id = default_dataset_id
         self._default_dataset_version = default_dataset_version
 
@@ -41,7 +41,7 @@ class PipelineDispatchFacade:
                 default_dataset_version=self._default_dataset_version,
             )
             execution_service = ExecutionService(
-                backend=self._backend,
+                pipeline_backend=self._pipeline_backend,
                 record_repository=PostgresExecutionRecordRepository(session),
             )
 
