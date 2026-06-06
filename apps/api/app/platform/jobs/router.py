@@ -77,11 +77,9 @@ async def execute_job(
     execution_service: ExecutionServiceDep,
 ) -> JobExecuteResponse:
     try:
-        await service.validate_executable(job_id)
+        execution = await service.dispatch_job(job_id, execution_service)
     except FileNotFoundError:
         raise_not_found("Job", job_id)
     except ValueError as exc:
         raise_bad_request(str(exc))
-
-    execution = await execution_service.dispatch_job(job_id)
     return JobExecuteResponse(execution=execution)

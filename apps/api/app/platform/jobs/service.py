@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sceneops_core.common.ids import generate_job_event_id, generate_job_id
 from sceneops_core.common.time import utc_now
+from sceneops_core.executions.schemas import ExecutionDispatchResult
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
@@ -14,6 +17,9 @@ from sceneops_core.jobs.schemas import (
 )
 from app.platform.jobs.schemas import JobEventListResponse, JobListResponse
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
+
+if TYPE_CHECKING:
+    from app.platform.executions.service import ExecutionService
 
 
 class JobService:
@@ -124,3 +130,38 @@ class JobService:
                 f"Job is not executable: job_id={job_id}, status={job.status}"
             )
         return job
+
+    async def dispatch_job(
+        self,
+        job_id: str,
+        execution_service: ExecutionService,
+    ) -> ExecutionDispatchResult:
+        job = await self.validate_executable(job_id)
+
+        now = utc_now()
+        job = job.model_copy(
+            update={
+                "status": JobStatus.QUEUED,
+                "queued_at": now,
+                "updated_at": now,
+            }
+        )
+        await self._repository.update(job)
+
+        await self._event_repository.append(
+            JobEvent(
+                event_id=generate_job_event_id(),
+                job_id=job.job_id,
+                type=JobEventType.QUEUED,
+                level=JobEventLevel.INFO,
+                status=JobStatus.QUEUED,
+                job_type=job.type,
+                pipeline_run_id=job.pipeline_run_id,
+                pipeline_step_run_id=job.pipeline_step_run_id,
+                pipeline_step_id=job.pipeline_step_id,
+                message="Job queued",
+                created_at=now,
+            )
+        )
+
+        return await execution_service.dispatch_job(job_id)

@@ -107,11 +107,9 @@ async def execute_pipeline_run(
     execution_service: ExecutionServiceDep,
 ) -> PipelineExecuteResponse:
     try:
-        await service.validate_executable(pipeline_run_id)
+        execution = await service.dispatch_pipeline(pipeline_run_id, execution_service)
     except FileNotFoundError:
         raise_not_found("Pipeline run", pipeline_run_id)
     except ValueError as exc:
         raise_bad_request(str(exc))
-
-    execution = await execution_service.dispatch_pipeline(pipeline_run_id)
     return PipelineExecuteResponse(execution=execution)
