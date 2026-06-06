@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from sceneops_core.common.ids import generate_job_event_id, generate_job_id
 from sceneops_core.common.time import utc_now
-from sceneops_core.executions.schemas import ExecutionDispatchResult
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
@@ -17,9 +14,6 @@ from sceneops_core.jobs.schemas import (
 )
 from app.platform.jobs.schemas import JobEventListResponse, JobListResponse
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
-
-if TYPE_CHECKING:
-    from app.platform.executions.service import ExecutionService
 
 
 class JobService:
@@ -131,11 +125,7 @@ class JobService:
             )
         return job
 
-    async def dispatch_job(
-        self,
-        job_id: str,
-        execution_service: ExecutionService,
-    ) -> ExecutionDispatchResult:
+    async def mark_queued(self, job_id: str) -> JobManifest:
         job = await self.validate_executable(job_id)
 
         now = utc_now()
@@ -164,4 +154,4 @@ class JobService:
             )
         )
 
-        return await execution_service.dispatch_job(job_id)
+        return job

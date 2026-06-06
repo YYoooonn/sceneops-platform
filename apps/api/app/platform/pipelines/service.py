@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from sceneops_core.common.ids import (
     generate_pipeline_run_id,
     generate_pipeline_step_run_id,
 )
 from sceneops_core.common.time import utc_now
-from sceneops_core.executions.schemas import ExecutionDispatchResult
 from sceneops_core.pipelines.builtin import (
     BUILTIN_PIPELINE_DEFINITIONS,
     get_pipeline_definition,
@@ -31,9 +28,6 @@ from sceneops_db.repositories.pipelines import (
     PipelineRunRepository,
     PipelineStepRunRepository,
 )
-
-if TYPE_CHECKING:
-    from app.platform.executions.service import ExecutionService
 
 
 class PipelineService:
@@ -168,11 +162,7 @@ class PipelineService:
             )
         return run
 
-    async def dispatch_pipeline(
-        self,
-        pipeline_run_id: str,
-        execution_service: ExecutionService,
-    ) -> ExecutionDispatchResult:
+    async def mark_queued(self, pipeline_run_id: str) -> PipelineRunManifest:
         run = await self.validate_executable(pipeline_run_id)
 
         now = utc_now()
@@ -184,4 +174,4 @@ class PipelineService:
         )
         await self._pipeline_repository.update(run)
 
-        return await execution_service.dispatch_pipeline(pipeline_run_id)
+        return run

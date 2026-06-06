@@ -7,10 +7,9 @@ from fastapi import Depends
 
 from app.core.dependencies import ApiSettingsDep
 from app.core.repositories import ExecutionRecordRepositoryDep
-from app.platform.executions.dispatchers import (
-    AirflowExecutionDispatcher,
-    CeleryExecutionDispatcher,
-    ExecutionDispatcher,
+from app.platform.executions.backends import (
+    CeleryExecutionDispatchBackend,
+    ExecutionDispatchBackend,
 )
 from app.platform.executions.factory import create_celery_app
 from app.platform.executions.service import ExecutionService
@@ -25,41 +24,32 @@ def get_celery_app(settings: ApiSettingsDep) -> Celery:
 CeleryAppDep = Annotated[Celery, Depends(get_celery_app)]
 
 
-def get_execution_dispatcher(
+def get_execution_backend(
     settings: ApiSettingsDep,
     celery_app: CeleryAppDep,
-) -> ExecutionDispatcher:
+) -> ExecutionDispatchBackend:
     backend = settings.execution.backend
     if backend == ExecutionBackend.CELERY:
         c = settings.execution.celery
-        return CeleryExecutionDispatcher(
+        return CeleryExecutionDispatchBackend(
             app=celery_app,
-            pipeline_queue=c.pipeline_queue,
             job_queue=c.job_queue,
-        )
-    if backend == ExecutionBackend.AIRFLOW:
-        a = settings.execution.airflow
-        return AirflowExecutionDispatcher(
-            base_url=a.base_url,
-            username=a.username,
-            password=a.password,
-            pipeline_dag_id=a.pipeline_dag_id,
-            job_dag_id=a.job_dag_id,
+            pipeline_queue=c.pipeline_queue,
         )
     raise ValueError(f"Unsupported execution backend: {backend}")
 
 
-ExecutionDispatcherDep = Annotated[
-    ExecutionDispatcher, Depends(get_execution_dispatcher)
+ExecutionBackendDep = Annotated[
+    ExecutionDispatchBackend, Depends(get_execution_backend)
 ]
 
 
 def get_execution_service(
-    dispatcher: ExecutionDispatcherDep,
+    backend: ExecutionBackendDep,
     record_repository: ExecutionRecordRepositoryDep,
 ) -> ExecutionService:
     return ExecutionService(
-        dispatcher=dispatcher,
+        backend=backend,
         record_repository=record_repository,
     )
 

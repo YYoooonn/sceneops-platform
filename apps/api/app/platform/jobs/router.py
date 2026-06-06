@@ -4,8 +4,7 @@ from fastapi import APIRouter
 
 from app.core.errors import raise_bad_request, raise_not_found
 from app.core.pagination import PaginationDep
-from app.platform.executions.dependencies import ExecutionServiceDep
-from app.platform.jobs.dependencies import JobServiceDep
+from app.platform.jobs.dependencies import JobDispatchFacadeDep, JobServiceDep
 from app.platform.jobs.schemas import (
     JobDetailResponse,
     JobEventListResponse,
@@ -73,11 +72,10 @@ async def list_job_events(job_id: str, service: JobServiceDep) -> JobEventListRe
 )
 async def execute_job(
     job_id: str,
-    service: JobServiceDep,
-    execution_service: ExecutionServiceDep,
+    facade: JobDispatchFacadeDep,
 ) -> JobExecuteResponse:
     try:
-        execution = await service.dispatch_job(job_id, execution_service)
+        execution = await facade.dispatch(job_id)
     except FileNotFoundError:
         raise_not_found("Job", job_id)
     except ValueError as exc:

@@ -4,8 +4,10 @@ from fastapi import APIRouter
 
 from app.core.errors import raise_bad_request, raise_not_found
 from app.core.pagination import PaginationDep
-from app.platform.executions.dependencies import ExecutionServiceDep
-from app.platform.pipelines.dependencies import PipelineServiceDep
+from app.platform.pipelines.dependencies import (
+    PipelineDispatchFacadeDep,
+    PipelineServiceDep,
+)
 from app.platform.pipelines.schemas import (
     PipelineDefinitionListResponse,
     PipelineDefinitionResponse,
@@ -103,11 +105,10 @@ async def list_pipeline_steps(
 @router.post("/runs/{pipeline_run_id}/execute", response_model=PipelineExecuteResponse)
 async def execute_pipeline_run(
     pipeline_run_id: str,
-    service: PipelineServiceDep,
-    execution_service: ExecutionServiceDep,
+    facade: PipelineDispatchFacadeDep,
 ) -> PipelineExecuteResponse:
     try:
-        execution = await service.dispatch_pipeline(pipeline_run_id, execution_service)
+        execution = await facade.dispatch(pipeline_run_id)
     except FileNotFoundError:
         raise_not_found("Pipeline run", pipeline_run_id)
     except ValueError as exc:

@@ -8,25 +8,25 @@ from sceneops_core.executions.schemas import (
 )
 from sceneops_db.repositories.executions import ExecutionRecordRepository
 
-from app.platform.executions.dispatchers.base import ExecutionDispatcher
+from app.platform.executions.backends.base import ExecutionDispatchBackend
 
 
 class ExecutionService:
     def __init__(
         self,
         *,
-        dispatcher: ExecutionDispatcher,
+        backend: ExecutionDispatchBackend,
         record_repository: ExecutionRecordRepository,
     ) -> None:
-        self._dispatcher = dispatcher
+        self._backend = backend
         self._record_repository = record_repository
 
     async def dispatch_job(self, job_id: str) -> ExecutionDispatchResult:
-        result = self._dispatcher.dispatch_job_run(job_id=job_id)
+        result = await self._backend.dispatch_job(job_id)
         return await self._record_repository.create(result)
 
     async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
-        result = self._dispatcher.dispatch_pipeline_run(pipeline_run_id=pipeline_run_id)
+        result = await self._backend.dispatch_pipeline(pipeline_run_id)
         return await self._record_repository.create(result)
 
     async def get_execution(self, execution_id: str) -> ExecutionDispatchResult | None:
