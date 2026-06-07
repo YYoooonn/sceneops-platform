@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from sceneops_core.datasets.schemas import DatasetManifest
+from sceneops_core.datasets.schemas import DatasetManifest, DatasetSceneIndexEntry
 from sceneops_core.scenes.schemas.manifests import SceneManifest, SceneSampleManifest
 from sceneops_storage import ArtifactStore
 
@@ -41,6 +41,12 @@ class SceneArtifactStore:
         )
         return self.artifact_store.join_uri(version_root, "scenes", f"{scene_id}.json")
 
+    def scene_index_uri(self, *, dataset_id: str, dataset_version: str) -> str:
+        version_root = self._version_root_uri(
+            dataset_id=dataset_id, dataset_version=dataset_version
+        )
+        return self.artifact_store.join_uri(version_root, "scene_index.json")
+
     # ------------------------------------------------------------------
     # Scene manifest I/O
     # ------------------------------------------------------------------
@@ -57,6 +63,25 @@ class SceneArtifactStore:
             dataset_id=dataset_id, dataset_version=dataset_version, scene_id=scene_id
         )
         await self.artifact_store.write_json(uri, manifest.to_artifact_dict())
+        return uri
+
+    async def write_scene_index(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        entries: list[DatasetSceneIndexEntry],
+    ) -> str:
+        uri = self.scene_index_uri(
+            dataset_id=dataset_id, dataset_version=dataset_version
+        )
+        payload = {
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "scene_count": len(entries),
+            "scenes": [e.model_dump(mode="json") for e in entries],
+        }
+        await self.artifact_store.write_json(uri, payload)
         return uri
 
     async def load_scene_manifest(self, uri: str) -> SceneManifest | None:

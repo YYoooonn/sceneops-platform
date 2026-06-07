@@ -8,6 +8,7 @@ from .detection import EvaluateDetectionJobResult, PredictDetectionJobResult
 from .scene import (
     AutoLabelSceneJobResult,
     BuildDatasetManifestJobResult,
+    BuildSceneIndexJobResult,
     BuildScenesJobResult,
     CompareScenesJobResult,
     ExportScenePackageJobResult,
@@ -23,6 +24,7 @@ __all__ = [
     "IngestScenesJobResult",
     "BuildScenesJobResult",
     "BuildDatasetManifestJobResult",
+    "BuildSceneIndexJobResult",
     "ValidateSceneJobResult",
     "ProfileSceneJobResult",
     "RegisterSceneJobResult",

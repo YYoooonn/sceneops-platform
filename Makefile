@@ -152,6 +152,10 @@ uninstall-hooks:
 check:
 	uv run pre-commit run --all-files
 
+.PHONY: test
+test:
+	uv run --package sceneops-worker pytest apps/worker/tests/ -v
+
 .PHONY: lint
 lint:
 	uv run ruff check apps/ packages/
@@ -196,8 +200,8 @@ local-up: prepare-data minio-up
 
 .PHONY: local-down
 local-down: minio-down
-	docker compose -f $(COMPOSE_FILE) down postgres redis
 	docker compose -f $(COMPOSE_FILE) down api worker-pipeline worker-jobs
+	docker compose -f $(COMPOSE_FILE) down postgres redis
 
 .PHONY: local-reset
 local-reset:
@@ -479,6 +483,16 @@ e2e-api-smoke:
 e2e-dataset-scene-ingestion:
 	chmod +x scripts/e2e/e2e_dataset_scene_ingestion.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_dataset_scene_ingestion.sh
+
+.PHONY: e2e-raw-log-scene-building
+e2e-raw-log-scene-building:
+	chmod +x scripts/e2e/e2e_raw_log_scene_building.sh
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_raw_log_scene_building.sh
+
+.PHONY: e2e-raw-log-scene-building-time-window
+e2e-raw-log-scene-building-time-window:
+	chmod +x scripts/e2e/e2e_raw_log_scene_building_time_window_celery.sh
+	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_raw_log_scene_building_time_window_celery.sh
 
 .PHONY: e2e-detection-evaluation
 e2e-detection-evaluation:

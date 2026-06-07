@@ -4,7 +4,7 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
-from .enums import RawLogSourceFormat
+from .enums import RawLogSourceFormat, RawLogSourceType
 from .frames import RawSensorFrameManifest, TimeRange
 
 
@@ -23,6 +23,12 @@ class RawLogManifest(SceneOpsBaseModel):
     frame_count: int = 0
 
     frame_index_uri: str | None = None
+
+    # Extended for raw-log source classification
+    source_type: RawLogSourceType | None = None
+    records_uri: str | None = None
+    observation_count: int = 0
+    source_sequence_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 

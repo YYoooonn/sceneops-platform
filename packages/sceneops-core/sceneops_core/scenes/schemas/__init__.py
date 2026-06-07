@@ -1,4 +1,10 @@
 from .config import SceneSegmentationConfig, SceneSegmentationStrategy
+from .sampling import (
+    MissingChannelPolicy,
+    SampleGroupingConfig,
+    SampleGroupingStrategy,
+    SensorSyncPolicy,
+)
 from .enums import (
     SceneAssetKind,
     SceneGenerationMethod,
@@ -41,6 +47,10 @@ __all__ = [
     "SceneAssetKind",
     "SceneSegmentationStrategy",
     "SceneSegmentationConfig",
+    "SampleGroupingStrategy",
+    "SensorSyncPolicy",
+    "MissingChannelPolicy",
+    "SampleGroupingConfig",
     "SceneRecord",
     "SceneSampleRecord",
     "SceneSegment",

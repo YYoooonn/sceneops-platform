@@ -2,7 +2,8 @@
 # e2e_dataset_scene_ingestion.sh
 #
 # E2E test for the dataset_scene_ingestion pipeline:
-#   ingest_scenes -> validate_scene -> profile_scene -> build_dataset_manifest
+#   ingest_scenes -> register_scene -> validate_scene -> profile_scene
+#   -> build_scene_index -> build_dataset_manifest
 #
 # Usage:
 #   bash scripts/e2e/e2e_dataset_scene_ingestion.sh
@@ -12,7 +13,7 @@
 #   DATASET_ID     (default: nuscenes)
 #   DATASET_VERSION (default: v1.0-mini)
 #   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
-#   MAX_SCENES     (default: 2)
+#   MAX_SOURCE_SCENES     (default: 2)
 #   POLL_TIMEOUT   max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
@@ -24,13 +25,13 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 DATASET_ID="${DATASET_ID:-nuscenes}"
 DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
 SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
-MAX_SCENES="${MAX_SCENES:-10}"
+MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-10}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 echo "=== dataset_scene_ingestion E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SCENES=$MAX_SCENES"
+echo "  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
 echo ""
 
 # ── 1. Ensure dataset exists ──────────────────────────────────────────────────
@@ -51,8 +52,11 @@ PAYLOAD="$(cat <<JSON
     "ingest_scenes": {
       "source_format": "nuscenes",
       "source_root_uri": "$SOURCE_ROOT_URI",
-      "max_scenes": $MAX_SCENES,
+      "max_source_scenes": $MAX_SOURCE_SCENES,
       "mode": "upsert"
+    },
+    "register_scene": {
+      "replace_existing": true
     },
     "validate_scene": {
       "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"]
@@ -61,6 +65,7 @@ PAYLOAD="$(cat <<JSON
       "profile_samples": true,
       "profile_assets": true
     },
+    "build_scene_index": {},
     "build_dataset_manifest": {}
   }
 }
@@ -118,6 +123,40 @@ if [ -n "$FAILED_TASKS" ]; then
   exit 1
 fi
 echo "  All $TASK_COUNT steps: OK"
+echo ""
+
+# ── 6b. Assert key task refs ──────────────────────────────────────────────────
+
+echo "--- 6b. Assert task refs ---"
+
+# ingest_scenes: scene_manifest_uris populated
+INGEST_URIS="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "ingest_scenes") | .result.refs.scene_manifest_uris | length // 0')"
+echo "  ingest_scenes scene_manifest_uris count=$INGEST_URIS"
+if [ "${INGEST_URIS:-0}" -lt 1 ]; then
+  echo "❌ ingest_scenes: expected scene_manifest_uris" >&2; exit 1
+fi
+
+# register_scene: registered_scene_count > 0
+REG_COUNT="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "register_scene") | .result.summary.registered_scene_count // 0')"
+echo "  register_scene registered_scene_count=$REG_COUNT"
+if [ "${REG_COUNT:-0}" -lt 1 ]; then
+  echo "❌ register_scene: expected registered_scene_count > 0" >&2; exit 1
+fi
+
+# build_scene_index: scene_index_uri exists
+SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.refs.scene_index_uri // empty')"
+echo "  build_scene_index scene_index_uri=$SCENE_INDEX_URI"
+if [ -z "$SCENE_INDEX_URI" ]; then
+  echo "❌ build_scene_index: expected scene_index_uri" >&2; exit 1
+fi
+
+# build_dataset_manifest: dataset_manifest_uri exists
+MANIFEST_URI_TASK="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_dataset_manifest") | .result.refs.dataset_manifest_uri // empty')"
+echo "  build_dataset_manifest dataset_manifest_uri=$MANIFEST_URI_TASK"
+if [ -z "$MANIFEST_URI_TASK" ]; then
+  echo "❌ build_dataset_manifest: expected dataset_manifest_uri" >&2; exit 1
+fi
+echo "  OK"
 echo ""
 
 # ── 7. Assert scenes created ─────────────────────────────────────────────────

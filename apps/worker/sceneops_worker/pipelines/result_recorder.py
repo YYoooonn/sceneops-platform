@@ -27,15 +27,25 @@ from sceneops_core.pipelines.schemas import (
 )
 from sceneops_worker.core.context import WorkerContext
 
-# Keys extracted into refs — IDs and URIs consumed by downstream tasks
+# Keys extracted into refs — IDs and URIs consumed by downstream tasks.
+# Grouped by artifact domain for readability; behavior is a flat frozenset lookup.
 _REFS_KEYS: frozenset[str] = frozenset(
     {
+        # Scene / dataset artifacts
         "dataset_manifest_uri",
         "scene_manifest_uris",
+        "scene_index_uri",
+        # Raw-log observation artifacts
+        "scene_segment_index_uri",
+        "raw_log_manifest_uri",
+        "raw_log_frame_index_uri",
+        "records_uri",
+        # Validation / profile run artifacts
         "validation_run_id",
         "validation_report_uri",
         "profile_run_id",
         "profile_report_uri",
+        # Inference / evaluation artifacts
         "inference_run_id",
         "predictions_root_uri",
         "prediction_manifest_uri",
@@ -45,25 +55,38 @@ _REFS_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# Keys extracted into summary — counts, status flags, and metric summaries
+# Keys extracted into summary — counts, status flags, and metric summaries.
+# Grouped by domain for readability; behavior is a flat frozenset lookup.
 _SUMMARY_KEYS: frozenset[str] = frozenset(
     {
+        # Scene / sample counts
         "scene_count",
         "sample_count",
         "frame_count",
+        "registered_scene_count",
+        "checked_scene_count",
+        "observed_channels",
+        # Raw-log provenance
+        "source_type",
+        "source_format",
+        "observation_count",
+        "source_sequence_count",
+        "segmentation_strategy",
+        "sampling_strategy",
+        # Validation status
         "validation_status",
         "should_block_pipeline",
-        "checked_scene_count",
         "issue_count",
+        "status",
+        # Profile metrics
+        "sensor_coverage_ratio",
+        # Annotation / detection / evaluation
         "annotation_count",
         "prediction_count",
         "ground_truth_count",
         "evaluation_unit",
         "primary_metric_name",
         "primary_metric_value",
-        "status",
-        "observed_channels",
-        "sensor_coverage_ratio",
     }
 )
 
@@ -107,6 +130,18 @@ def _normalize_job_result(
         alias_key = _REPORT_URI_ALIAS.get(str(job_type))
         if alias_key and alias_key not in refs:
             refs[alias_key] = report_uri
+
+    # REGISTER_SCENE: normalize bulk scene_manifest_uris into refs and compute count.
+    if str(job_type) == str(JobType.REGISTER_SCENE):
+        bulk_uris = job_result.get("scene_manifest_uris")
+        singular_uri = job_result.get("scene_manifest_uri")
+        if bulk_uris:
+            refs["scene_manifest_uris"] = bulk_uris
+        elif singular_uri:
+            refs["scene_manifest_uris"] = [singular_uri]
+        if "registered_scene_count" not in summary:
+            resolved_uris = refs.get("scene_manifest_uris") or []
+            summary["registered_scene_count"] = len(resolved_uris)
 
     return refs, summary, dict(job_result)
 

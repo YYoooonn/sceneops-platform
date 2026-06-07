@@ -42,6 +42,11 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("aggregate_dataset_index", "Aggregate dataset index"),
         step("save_dataset_manifest", "Save dataset manifest"),
     ],
+    JobType.BUILD_SCENE_INDEX: [
+        step("load_scene_manifests", "Load scene manifests"),
+        step("build_scene_index", "Build scene index"),
+        step("save_scene_index", "Save scene index"),
+    ],
     JobType.VALIDATE_SCENE: [
         step("load_scene_manifest", "Load scene manifest"),
         step("validate_scene_structure", "Validate scene structure"),

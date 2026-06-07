@@ -271,7 +271,12 @@ Artifact content lives in the artifact store (local or MinIO). The database stor
 
 ```
 dataset_scene_ingestion
-  ingest_scenes → validate_scene → profile_scene → build_dataset_manifest
+  ingest_scenes → register_scene → validate_scene → profile_scene
+  → build_scene_index → build_dataset_manifest
+
+raw_log_scene_building
+  build_scenes → register_scene → validate_scene → profile_scene
+  → build_scene_index → build_dataset_manifest
 
 detection_evaluation
   predict_detection → evaluate_detection
@@ -282,18 +287,52 @@ detection_evaluation
 | Job | Pipeline |
 |---|---|
 | `ingest_scenes` | `dataset_scene_ingestion` |
-| `validate_scene` | `dataset_scene_ingestion` |
-| `profile_scene` | `dataset_scene_ingestion` |
-| `build_dataset_manifest` | `dataset_scene_ingestion` |
+| `build_scenes` | `raw_log_scene_building` |
+| `register_scene` | both scene pipelines |
+| `validate_scene` | both scene pipelines |
+| `profile_scene` | both scene pipelines |
+| `build_scene_index` | both scene pipelines |
+| `build_dataset_manifest` | both scene pipelines |
 | `predict_detection` | `detection_evaluation` |
 | `evaluate_detection` | `detection_evaluation` |
+
+### raw_log_scene_building modes
+
+`raw_log_scene_building` supports two segmentation/sampling modes:
+
+**1. Sequence / frame-id mode** (`segmentation.strategy=sequence`, `sampling.strategy=frame_id`)
+
+Uses `source_sequence_id` / `source_scene_id` hints to group raw frames into scene segments,
+and `source_frame_id` / `source_sample_id` hints to group frames into samples within each scene.
+In the local nuScenes mock, nuScenes scene and sample tokens are mapped into these generic
+sequence and frame hint fields — the public strategy names remain raw-log-agnostic.
+
+**2. Timestamp reconstruction mode** (`segmentation.strategy=fixed_window`, `sampling.strategy=time_bucket`)
+
+Reconstructs scenes and samples purely from raw sensor observation timestamps,
+without using any source scene/sample hints.
+
+- `fixed_window` splits frames into equal-duration time windows (e.g. 2 s).
+  The `scene_segment_index` artifact records all segment boundaries with
+  generated SceneOps IDs (`{raw_log_id}-fwXXXX`).
+- `time_bucket` groups frames within each segment into sample buckets by timestamp
+  (e.g. 500 ms), with generated sample IDs (`{scene_id}-sample-XXXXXX`).
+
+**Scene count params**
+
+- `max_source_sequences`: limits how many source sequences the adapter reads.
+- `max_built_scenes`: caps the number of output SceneOps scenes after segmentation.
+
+**Validation**
+
+Validation separates scene-level channel coverage (blocking by default) from sample-level
+missing channels. Set `sample_validation.block_on_sample_missing_channels: true` in
+`validate_scene` params to make sample-level missing channels blocking.
 
 ### Planned pipelines (roadmap)
 
 ```
-raw_log_scene_building
 scene_reconstruction
-scene_registration
 scenario_curation
 generated_dataset_preparation
 ```
@@ -301,8 +340,6 @@ generated_dataset_preparation
 ### Planned jobs (roadmap)
 
 ```
-build_scenes
-register_scene
 compare_scenes
 mine_scenarios
 score_scenario_readiness

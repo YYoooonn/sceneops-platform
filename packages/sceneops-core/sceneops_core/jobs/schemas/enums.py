@@ -10,6 +10,7 @@ class JobType(StrEnum):
 
     # ── dataset-level aggregation ──
     BUILD_DATASET_MANIFEST = "build_dataset_manifest"
+    BUILD_SCENE_INDEX = "build_scene_index"
 
     # ── scene-level jobs ──
     VALIDATE_SCENE = "validate_scene"

@@ -33,6 +33,17 @@ class BuildScenesJobResult(BaseJobResult):
     scene_segment_index_uri: str | None = None
     world_state_uris: list[str] = Field(default_factory=list)
 
+    # Raw-log provenance
+    raw_log_manifest_uri: str | None = None
+    raw_log_frame_index_uri: str | None = None
+    records_uri: str | None = None
+    source_type: str | None = None
+    source_format: str | None = None
+    observation_count: int = 0
+    channels: list[str] = Field(default_factory=list)
+    segmentation_strategy: str | None = None
+    sampling_strategy: str | None = None
+
     metadata: JsonDict = Field(default_factory=dict)
 
 
@@ -76,10 +87,30 @@ class ProfileSceneJobResult(BaseJobResult):
 
 
 class RegisterSceneJobResult(BaseJobResult):
-    scene_id: str
-    scene_manifest_uri: str
+    # Singular (backward-compatible)
+    scene_id: str | None = None
+    scene_manifest_uri: str | None = None
+
+    # Bulk
+    scene_ids: list[str] = Field(default_factory=list)
+    scene_manifest_uris: list[str] = Field(default_factory=list)
+    registered_scene_count: int = 0
 
     registered: bool = True
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class BuildSceneIndexJobResult(BaseJobResult):
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    scene_index_uri: str
+
+    scene_manifest_uris: list[str] = Field(default_factory=list)
+    scene_count: int = 0
+    sample_count: int = 0
+    frame_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 

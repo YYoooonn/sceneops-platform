@@ -8,12 +8,14 @@ from .detection import EvaluateDetectionJobParams, PredictDetectionJobParams
 from .scene import (
     AutoLabelSceneJobParams,
     BuildDatasetManifestJobParams,
+    BuildSceneIndexJobParams,
     BuildScenesJobParams,
     CompareScenesJobParams,
     ExportScenePackageJobParams,
     IngestScenesJobParams,
     ProfileSceneJobParams,
     RegisterSceneJobParams,
+    SceneSampleValidationConfig,
     ValidateSceneJobParams,
 )
 from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
@@ -23,9 +25,11 @@ __all__ = [
     "IngestScenesJobParams",
     "BuildScenesJobParams",
     "BuildDatasetManifestJobParams",
+    "BuildSceneIndexJobParams",
     "ValidateSceneJobParams",
     "ProfileSceneJobParams",
     "RegisterSceneJobParams",
+    "SceneSampleValidationConfig",
     "CompareScenesJobParams",
     "AutoLabelSceneJobParams",
     "ExportScenePackageJobParams",

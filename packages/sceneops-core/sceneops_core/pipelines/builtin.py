@@ -14,7 +14,7 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
     name="Dataset Scene Ingestion",
     description=(
         "Import existing scene-aware datasets such as nuScenes, Waymo, or KITTI "
-        "into SceneOps scene manifests, then build a dataset manifest."
+        "into SceneOps scene manifests, register them, then build a dataset manifest."
     ),
     tasks=[
         PipelineTaskDefinition(
@@ -28,11 +28,21 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             },
         ),
         PipelineTaskDefinition(
+            pipeline_task_id="register_scene",
+            name="Register scenes",
+            order=1,
+            job_type=JobType.REGISTER_SCENE,
+            depends_on_pipeline_task_ids=["ingest_scenes"],
+            default_params={
+                "replace_existing": True,
+            },
+        ),
+        PipelineTaskDefinition(
             pipeline_task_id="validate_scene",
             name="Validate scene",
-            order=1,
+            order=2,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on_pipeline_task_ids=["ingest_scenes"],
+            depends_on_pipeline_task_ids=["register_scene"],
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
@@ -41,9 +51,9 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
         PipelineTaskDefinition(
             pipeline_task_id="profile_scene",
             name="Profile scene",
-            order=2,
+            order=3,
             job_type=JobType.PROFILE_SCENE,
-            depends_on_pipeline_task_ids=["ingest_scenes"],
+            depends_on_pipeline_task_ids=["register_scene"],
             default_params={
                 "profile_samples": True,
                 "profile_assets": True,
@@ -51,11 +61,18 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             optional=True,
         ),
         PipelineTaskDefinition(
+            pipeline_task_id="build_scene_index",
+            name="Build scene index",
+            order=4,
+            job_type=JobType.BUILD_SCENE_INDEX,
+            depends_on_pipeline_task_ids=["register_scene"],
+        ),
+        PipelineTaskDefinition(
             pipeline_task_id="build_dataset_manifest",
             name="Build dataset manifest",
-            order=3,
+            order=5,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on_pipeline_task_ids=["ingest_scenes"],
+            depends_on_pipeline_task_ids=["build_scene_index"],
         ),
     ],
 )
@@ -65,8 +82,9 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
     type=PipelineType.RAW_LOG_SCENE_BUILDING,
     name="Raw Log Scene Building",
     description=(
-        "Build SceneOps scene manifests from raw logs or raw sensor streams, "
-        "then aggregate them into a dataset manifest."
+        "Build SceneOps scene manifests from raw observation streams, register them, "
+        "then build a scene index and dataset manifest. "
+        "Local E2E uses NuScenesRawLogMocker to flatten nuScenes into mock raw frames."
     ),
     tasks=[
         PipelineTaskDefinition(
@@ -80,11 +98,21 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             },
         ),
         PipelineTaskDefinition(
+            pipeline_task_id="register_scene",
+            name="Register scenes",
+            order=1,
+            job_type=JobType.REGISTER_SCENE,
+            depends_on_pipeline_task_ids=["build_scenes"],
+            default_params={
+                "replace_existing": True,
+            },
+        ),
+        PipelineTaskDefinition(
             pipeline_task_id="validate_scene",
             name="Validate scene",
-            order=1,
+            order=2,
             job_type=JobType.VALIDATE_SCENE,
-            depends_on_pipeline_task_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["register_scene"],
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
@@ -93,17 +121,24 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
         PipelineTaskDefinition(
             pipeline_task_id="profile_scene",
             name="Profile scene",
-            order=2,
+            order=3,
             job_type=JobType.PROFILE_SCENE,
-            depends_on_pipeline_task_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["register_scene"],
             optional=True,
+        ),
+        PipelineTaskDefinition(
+            pipeline_task_id="build_scene_index",
+            name="Build scene index",
+            order=4,
+            job_type=JobType.BUILD_SCENE_INDEX,
+            depends_on_pipeline_task_ids=["register_scene"],
         ),
         PipelineTaskDefinition(
             pipeline_task_id="build_dataset_manifest",
             name="Build dataset manifest",
-            order=3,
+            order=5,
             job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on_pipeline_task_ids=["build_scenes"],
+            depends_on_pipeline_task_ids=["build_scene_index"],
         ),
     ],
 )

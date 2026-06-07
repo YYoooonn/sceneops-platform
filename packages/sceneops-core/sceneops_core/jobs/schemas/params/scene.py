@@ -2,15 +2,24 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.datasets.schemas import DatasetType
+from sceneops_core.observations.schemas import RawLogSourceFormat, RawLogSourceType
 from sceneops_core.scenes.schemas import (
+    SampleGroupingConfig,
     SceneGenerationMethod,
     SceneOriginType,
     SceneSegmentationConfig,
 )
 
 from .base import BaseJobParams
+
+
+class SceneSampleValidationConfig(SceneOpsBaseModel):
+    """Validation options applied per sample within a scene."""
+
+    validate_samples: bool = True
+    block_on_sample_missing_channels: bool = False
 
 
 class IngestScenesJobParams(BaseJobParams):
@@ -33,7 +42,7 @@ class IngestScenesJobParams(BaseJobParams):
     source_root_uri: str
 
     source_scene_ids: list[str] | None = None
-    max_scenes: int | None = None
+    max_source_scenes: int | None = None
 
     output_scene_root_uri: str | None = None
 
@@ -43,11 +52,7 @@ class IngestScenesJobParams(BaseJobParams):
 
 
 class BuildScenesJobParams(BaseJobParams):
-    """Build SceneOps scenes from raw logs or raw sensor streams.
-
-    This job constructs scenes from raw observations using segmentation,
-    sensor alignment, optional reconstruction, and asset/world-state creation.
-    """
+    """raw logs to scene"""
 
     raw_log_id: str | None = None
     raw_log_manifest_uri: str | None = None
@@ -58,9 +63,19 @@ class BuildScenesJobParams(BaseJobParams):
     dataset_id: str | None = None
     dataset_version: str | None = None
 
+    # Raw-log source classification
+    source_type: RawLogSourceType | None = None
+    source_format: RawLogSourceFormat | None = None
+    records_uri: str | None = None
+
     segmentation: SceneSegmentationConfig = Field(
         default_factory=SceneSegmentationConfig
     )
+
+    sampling: SampleGroupingConfig = Field(default_factory=SampleGroupingConfig)
+
+    max_source_sequences: int | None = None
+    max_built_scenes: int | None = None
 
     build_assets: bool = True
     build_world_state: bool = False
@@ -96,6 +111,10 @@ class ValidateSceneJobParams(BaseJobParams):
     require_world_state: bool = False
     require_assets: bool = False
 
+    sample_validation: SceneSampleValidationConfig = Field(
+        default_factory=SceneSampleValidationConfig
+    )
+
     metadata: JsonDict = Field(default_factory=dict)
 
 
@@ -113,16 +132,27 @@ class ProfileSceneJobParams(BaseJobParams):
 
 
 class RegisterSceneJobParams(BaseJobParams):
-    scene_id: str
-    scene_manifest_uri: str
+    scene_ids: list[str] = Field(default_factory=list)
+    scene_manifest_uris: list[str] = Field(default_factory=list)
 
     dataset_id: str | None = None
     dataset_version: str | None = None
 
-    origin_type: SceneOriginType = SceneOriginType.GENERATED
+    origin_type: SceneOriginType = SceneOriginType.REAL
     generation_method: SceneGenerationMethod = SceneGenerationMethod.UNKNOWN
 
     replace_existing: bool = False
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class BuildSceneIndexJobParams(BaseJobParams):
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    scene_manifest_uris: list[str] = Field(default_factory=list)
+
+    output_scene_index_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

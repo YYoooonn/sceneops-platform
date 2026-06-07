@@ -11,6 +11,8 @@ class SceneManifestValidator:
         *,
         manifest: SceneManifest,
         required_channels: list[str] | None = None,
+        validate_samples: bool = False,
+        block_on_sample_missing_channels: bool = False,
     ) -> SceneValidationResult:
         required = required_channels or []
         observed = manifest.channels
@@ -27,6 +29,7 @@ class SceneManifestValidator:
                 )
             )
 
+        # Scene-level channel check — always blocking
         missing_channels = [ch for ch in required if ch not in observed_set]
         for ch in missing_channels:
             issues.append(
@@ -37,6 +40,21 @@ class SceneManifestValidator:
                     blocking=True,
                 )
             )
+
+        # Sample-level channel check — blocking only if explicitly requested
+        if validate_samples and required:
+            for sample in manifest.samples:
+                sample_channels = {sf.channel for sf in sample.sensor_frames}
+                for ch in required:
+                    if ch not in sample_channels:
+                        issues.append(
+                            SceneValidationIssue(
+                                type="sample_missing_channel",
+                                message=f"Sample {sample.sample_id} missing channel: {ch}",
+                                channel=ch,
+                                blocking=block_on_sample_missing_channels,
+                            )
+                        )
 
         should_block = any(i.blocking for i in issues)
 

@@ -12,6 +12,13 @@ class RawLogSourceFormat(StrEnum):
     CUSTOM = "custom"
 
 
+class RawLogSourceType(StrEnum):
+    REAL_ROBOT_LOG = "real_robot_log"
+    NUSCENES_RAW_LOG_MOCK = "nuscenes_raw_log_mock"
+    GENERIC_FILE_SEQUENCE = "generic_file_sequence"
+    SIMULATOR_LOG = "simulator_log"
+
+
 class SensorFrameRole(StrEnum):
     IMAGE = "image"
     POINT_CLOUD = "point_cloud"

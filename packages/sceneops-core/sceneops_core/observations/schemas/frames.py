@@ -29,4 +29,10 @@ class RawSensorFrameManifest(SceneOpsBaseModel):
     calibration_ref: str | None = None
     annotation_refs: list[str] = Field(default_factory=list)
 
+    # Generic raw-log source identifiers
+    source_sequence_id: str | None = None
+    source_frame_id: str | None = None
+    source_sensor_id: str | None = None
+    duration_us: int | None = None
+
     metadata: JsonDict = Field(default_factory=dict)

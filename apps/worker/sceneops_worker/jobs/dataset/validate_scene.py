@@ -94,6 +94,8 @@ class ValidateSceneJobHandler(
             result = _validator.validate(
                 manifest=scene_manifest,
                 required_channels=params.require_target_channels,
+                validate_samples=params.sample_validation.validate_samples,
+                block_on_sample_missing_channels=params.sample_validation.block_on_sample_missing_channels,
             )
 
             total_issues += len(result.issues)

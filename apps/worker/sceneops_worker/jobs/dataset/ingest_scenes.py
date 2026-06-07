@@ -16,10 +16,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.datasets.ingestion.nuscenes_scene import (
-    build_scene_manifest,
-    build_scene_record,
-)
+from sceneops_worker.datasets.ingestion.nuscenes_scene import build_scene_manifest
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
@@ -156,8 +153,8 @@ async def _ingest_nuscenes_scenes(
         scene_names = set(params.source_scene_ids)
         scenes = [s for s in scenes if s["name"] in scene_names]
 
-    if params.max_scenes is not None:
-        scenes = scenes[: params.max_scenes]
+    if params.max_source_scenes is not None:
+        scenes = scenes[: params.max_source_scenes]
 
     results: list[tuple[str, str, Any]] = []
 
@@ -178,16 +175,6 @@ async def _ingest_nuscenes_scenes(
             scene_id=scene_id,
             manifest=manifest,
         )
-
-        scene_record = build_scene_record(
-            scene_id=scene_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            manifest=manifest,
-            scene_manifest_uri=scene_manifest_uri,
-        )
-
-        await context.scene_store.upsert(scene_record)
 
         results.append((scene_id, scene_manifest_uri, manifest))
 
