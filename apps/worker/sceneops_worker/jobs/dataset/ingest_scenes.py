@@ -14,6 +14,7 @@ from sceneops_core.jobs.schemas import (
     IngestScenesJobResult,
     JobType,
 )
+from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.datasets.ingestion.nuscenes_scene import (
     build_scene_manifest,
@@ -31,10 +32,14 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
     def params_model(self) -> type[IngestScenesJobParams]:
         return IngestScenesJobParams
 
-    def build_step_params(
-        self, base: JsonDict, context_values: dict[str, Any]
-    ) -> JsonDict:
-        return base
+    def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
+        return {
+            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
+            "dataset_version": inputs.dataset.dataset_version
+            if inputs.dataset
+            else None,
+            **inputs.params,
+        }
 
     async def run(
         self,

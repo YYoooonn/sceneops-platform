@@ -22,6 +22,7 @@ from sceneops_core.jobs.schemas import (
     PredictDetectionJobResult,
 )
 from sceneops_core.models.schemas import ModelBackend
+from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.inference.detection import create_detection_inference_backend
@@ -43,16 +44,27 @@ class PredictDetectionJobHandler(
     def params_model(self) -> type[PredictDetectionJobParams]:
         return PredictDetectionJobParams
 
-    def build_step_params(
-        self, base: JsonDict, context_values: dict[str, Any]
-    ) -> JsonDict:
+    def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
+        model = inputs.model
         model_id = (
-            base.get("model_id") or context_values.get("model_id") or "centerpoint-mock"
+            inputs.params.get("model_id")
+            or (model.model_id if model else None)
+            or "centerpoint-mock"
         )
         model_version = (
-            base.get("model_version") or context_values.get("model_version") or "v0"
+            inputs.params.get("model_version")
+            or (model.model_version if model else None)
+            or "v0"
         )
-        return {**base, "model_id": model_id, "model_version": model_version}
+        return {
+            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
+            "dataset_version": inputs.dataset.dataset_version
+            if inputs.dataset
+            else None,
+            **inputs.params,
+            "model_id": model_id,
+            "model_version": model_version,
+        }
 
     def build_initial_record(
         self,

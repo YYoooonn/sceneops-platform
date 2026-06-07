@@ -14,6 +14,7 @@ from sceneops_core.jobs.schemas import (
     ProfileSceneJobParams,
     ProfileSceneJobResult,
 )
+from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.runs import SceneProfileRunRecord
 from sceneops_worker.core.context import WorkerContext
@@ -37,15 +38,16 @@ class ProfileSceneJobHandler(
     def params_model(self) -> type[ProfileSceneJobParams]:
         return ProfileSceneJobParams
 
-    def build_step_params(
-        self, base: JsonDict, context_values: dict[str, Any]
-    ) -> JsonDict:
-        scene_manifest_uris = (
-            base.get("scene_manifest_uris")
-            or context_values.get("scene_manifest_uris")
-            or []
-        )
-        return {**base, "scene_manifest_uris": scene_manifest_uris}
+    def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
+        scene_manifest_uris = inputs.refs.get("scene_manifest_uris") or []
+        return {
+            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
+            "dataset_version": inputs.dataset.dataset_version
+            if inputs.dataset
+            else None,
+            **inputs.params,
+            "scene_manifest_uris": scene_manifest_uris,
+        }
 
     def build_initial_record(
         self,

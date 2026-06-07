@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
@@ -18,6 +16,7 @@ from sceneops_core.jobs.schemas import (
     BuildDatasetManifestJobResult,
     JobType,
 )
+from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
@@ -32,15 +31,16 @@ class BuildDatasetManifestJobHandler(
     def params_model(self) -> type[BuildDatasetManifestJobParams]:
         return BuildDatasetManifestJobParams
 
-    def build_step_params(
-        self, base: JsonDict, context_values: dict[str, Any]
-    ) -> JsonDict:
-        scene_manifest_uris = (
-            base.get("scene_manifest_uris")
-            or context_values.get("scene_manifest_uris")
-            or []
-        )
-        return {**base, "scene_manifest_uris": scene_manifest_uris}
+    def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
+        scene_manifest_uris = inputs.refs.get("scene_manifest_uris") or []
+        return {
+            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
+            "dataset_version": inputs.dataset.dataset_version
+            if inputs.dataset
+            else None,
+            **inputs.params,
+            "scene_manifest_uris": scene_manifest_uris,
+        }
 
     async def run(
         self,

@@ -9,6 +9,7 @@ from sceneops_core.common.schemas import ErrorInfo, JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.jobs.contracts import JobExecutor
 from sceneops_core.jobs.schemas import JobManifest, JobType
+from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import BaseRunRecord, RunStatus
 from sceneops_worker.core.context import WorkerContext
 
@@ -40,9 +41,7 @@ class JobHandler(
 
     async def run(self, request: JobHandlerRequest[JobParamsT]) -> JobResultT: ...
 
-    def build_step_params(
-        self, base: JsonDict, context_values: dict[str, Any]
-    ) -> JsonDict: ...
+    def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict: ...
 
 
 AnyJobHandler: TypeAlias = JobHandler[Any, Any]
@@ -55,7 +54,7 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
     - ``job_type``, ``params_model``: identity
     - ``build_initial_record``: returns a RUNNING-state record with all immutable fields set
     - ``execute``: performs the actual work, may mutate the run record, returns (record, result)
-    - ``build_step_params``: assembles job params from PipelineTaskInputs.to_context_values()
+    - ``build_job_params``: assembles job params from a typed PipelineTaskInputs envelope
 
     The base class owns:
     - initial upsert with RUNNING status

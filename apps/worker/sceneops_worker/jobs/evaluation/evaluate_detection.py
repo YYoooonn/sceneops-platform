@@ -17,12 +17,12 @@ from sceneops_core.jobs.schemas import (
     EvaluateDetectionJobResult,
     JobType,
 )
+from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.evaluation import create_detection_evaluator
 from sceneops_worker.evaluation.detection import DetectionEvaluationRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
 class EvaluateDetectionJobHandler(
@@ -39,15 +39,18 @@ class EvaluateDetectionJobHandler(
     def params_model(self) -> type[EvaluateDetectionJobParams]:
         return EvaluateDetectionJobParams
 
-    def build_step_params(
-        self, base: JsonDict, context_values: dict[str, Any]
-    ) -> JsonDict:
-        inference_run_id = base.get("inference_run_id") or context_values.get(
-            Ctx.INFERENCE_RUN_ID
-        )
+    def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
+        inference_run_id = inputs.refs.get("inference_run_id")
         if inference_run_id is None:
-            raise ValueError("inference_run_id is required for evaluation step")
-        return {**base, "inference_run_id": inference_run_id}
+            raise ValueError("inference_run_id is required for evaluate_detection")
+        return {
+            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
+            "dataset_version": inputs.dataset.dataset_version
+            if inputs.dataset
+            else None,
+            **inputs.params,
+            "inference_run_id": inference_run_id,
+        }
 
     def build_initial_record(
         self,

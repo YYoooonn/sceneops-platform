@@ -19,9 +19,8 @@ class PipelineJobPlanner:
     """Builds a JobManifest for a pipeline task.
 
     Task-specific param assembly is delegated to each handler via
-    ``build_step_params(base, context_values)``. Adding a new JobType only
-    requires implementing that method on the new handler — this class never
-    needs to change.
+    ``build_job_params(inputs)``. Adding a new JobType only requires
+    implementing that method on the new handler — this class never needs to change.
     """
 
     def __init__(
@@ -69,15 +68,11 @@ class PipelineJobPlanner:
         task: PipelineTaskRunManifest,
         inputs: PipelineTaskInputs,
     ) -> JsonDict:
-        base: JsonDict = {
-            "dataset_id": pipeline_run.dataset_id,
-            "dataset_version": pipeline_run.dataset_version,
-            **(task.params or {}),
-        }
-
+        # Merge task-level static params (PipelineTaskDefinition.default_params) into
+        # inputs.params so handlers can access them via inputs.params.
+        if task.params:
+            inputs = inputs.model_copy(
+                update={"params": {**inputs.params, **task.params}}
+            )
         handler = self._registry.get(task.job_type)
-        # Handlers receive a flat context_values dict for build_step_params compat,
-        # but the pipeline layer itself is schema-based (PipelineTaskInputs).
-        return handler.build_step_params(
-            base=base, context_values=inputs.to_context_values()
-        )
+        return handler.build_job_params(inputs)
