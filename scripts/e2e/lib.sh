@@ -97,10 +97,10 @@ fetch_pipeline_run() {
   curl -sS "$(api_url "$api_base_url" "/pipelines/runs/$pipeline_run_id")"
 }
 
-fetch_pipeline_steps() {
+fetch_pipeline_tasks() {
   local api_base_url="$1"
   local pipeline_run_id="$2"
-  curl -sS "$(api_url "$api_base_url" "/pipelines/runs/$pipeline_run_id/steps")"
+  curl -sS "$(api_url "$api_base_url" "/pipelines/runs/$pipeline_run_id/tasks")"
 }
 
 extract_pipeline_run_id() {

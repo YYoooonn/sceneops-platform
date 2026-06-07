@@ -4,15 +4,17 @@ from fastapi import APIRouter
 
 from app.core.errors import raise_bad_request, raise_not_found
 from app.core.pagination import PaginationDep
-from app.platform.executions.dependencies import ExecutionServiceDep
-from app.platform.pipelines.dependencies import PipelineServiceDep
+from app.platform.pipelines.dependencies import (
+    PipelineDispatchFacadeDep,
+    PipelineServiceDep,
+)
 from app.platform.pipelines.schemas import (
     PipelineDefinitionListResponse,
     PipelineDefinitionResponse,
     PipelineExecuteResponse,
     PipelineRunDetailResponse,
     PipelineRunListResponse,
-    PipelineStepRunListResponse,
+    PipelineTaskRunListResponse,
 )
 from sceneops_core.pipelines.schemas import (
     CreatePipelineRunRequest,
@@ -89,12 +91,12 @@ async def get_pipeline_run(
     return result
 
 
-@router.get("/runs/{pipeline_run_id}/steps", response_model=PipelineStepRunListResponse)
-async def list_pipeline_steps(
+@router.get("/runs/{pipeline_run_id}/tasks", response_model=PipelineTaskRunListResponse)
+async def list_pipeline_tasks(
     pipeline_run_id: str,
     service: PipelineServiceDep,
-) -> PipelineStepRunListResponse:
-    result = await service.list_pipeline_step_runs(pipeline_run_id)
+) -> PipelineTaskRunListResponse:
+    result = await service.list_pipeline_task_runs(pipeline_run_id)
     if result is None:
         raise_not_found("Pipeline run", pipeline_run_id)
     return result
@@ -103,15 +105,12 @@ async def list_pipeline_steps(
 @router.post("/runs/{pipeline_run_id}/execute", response_model=PipelineExecuteResponse)
 async def execute_pipeline_run(
     pipeline_run_id: str,
-    service: PipelineServiceDep,
-    execution_service: ExecutionServiceDep,
+    facade: PipelineDispatchFacadeDep,
 ) -> PipelineExecuteResponse:
     try:
-        await service.validate_executable(pipeline_run_id)
+        execution = await facade.dispatch(pipeline_run_id)
     except FileNotFoundError:
         raise_not_found("Pipeline run", pipeline_run_id)
     except ValueError as exc:
         raise_bad_request(str(exc))
-
-    execution = await execution_service.dispatch_pipeline(pipeline_run_id)
     return PipelineExecuteResponse(execution=execution)

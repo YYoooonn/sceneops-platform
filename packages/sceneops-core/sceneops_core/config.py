@@ -48,6 +48,8 @@ class WorkerRuntimeSettings(BaseModel):
     worker_id: str = "local-worker"
     poll_interval_seconds: float = 2.0
     heartbeat_interval_seconds: float = 10.0
+    job_poll_interval_seconds: float = 1.0
+    job_wait_timeout_seconds: float = 3600.0
 
 
 class CelerySettings(BaseModel):
@@ -73,7 +75,8 @@ class AirflowSettings(BaseModel):
 
 
 class ExecutionSettings(BaseModel):
-    backend: ExecutionBackend = ExecutionBackend.CELERY
+    job_backend: ExecutionBackend = ExecutionBackend.CELERY
+    pipeline_backend: ExecutionBackend = ExecutionBackend.CELERY
     celery: CelerySettings = Field(default_factory=CelerySettings)
     airflow: AirflowSettings = Field(default_factory=AirflowSettings)
 

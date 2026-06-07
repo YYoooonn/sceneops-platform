@@ -7,13 +7,13 @@ from sceneops_core.executions.schemas import ExecutionDispatchResult
 from sceneops_core.pipelines.schemas import PipelineDefinition
 from sceneops_core.pipelines.schemas.manifests import (
     PipelineRunManifest,
-    PipelineStepRunManifest,
+    PipelineTaskRunManifest,
 )
 
 
 class PipelineRunDetailResponse(SceneOpsBaseModel):
     pipeline_run: PipelineRunManifest
-    steps: list[PipelineStepRunManifest] = Field(default_factory=list)
+    tasks: list[PipelineTaskRunManifest] = Field(default_factory=list)
     metadata: JsonDict = Field(default_factory=dict)
 
 
@@ -23,8 +23,8 @@ class PipelineRunListResponse(SceneOpsBaseModel):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class PipelineStepRunListResponse(SceneOpsBaseModel):
-    steps: list[PipelineStepRunManifest]
+class PipelineTaskRunListResponse(SceneOpsBaseModel):
+    tasks: list[PipelineTaskRunManifest]
     count: int
     metadata: JsonDict = Field(default_factory=dict)
 

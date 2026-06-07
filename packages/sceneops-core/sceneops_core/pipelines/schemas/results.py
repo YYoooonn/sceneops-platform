@@ -7,10 +7,10 @@ from sceneops_core.jobs.schemas import JobStatus, JobType
 
 
 class PipelineLineageEdge(SceneOpsBaseModel):
-    from_pipeline_step_id: str
+    from_pipeline_task_id: str
     from_output: str | None = None
 
-    to_pipeline_step_id: str | None = None
+    to_pipeline_task_id: str | None = None
     to_input: str | None = None
 
     artifact_uri: str | None = None
@@ -26,22 +26,19 @@ class PipelineLineage(SceneOpsBaseModel):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class PipelineStepResult(SceneOpsBaseModel):
-    pipeline_step_id: str
-    pipeline_step_name: str
+class PipelineTaskResult(SceneOpsBaseModel):
+    pipeline_task_id: str
+    pipeline_task_run_id: str | None = None
 
-    job_type: JobType
+    job_type: JobType | str | None = None
     job_id: str | None = None
+    job_status: JobStatus | str | None = None
 
-    status: JobStatus
+    refs: JsonDict = Field(default_factory=dict)
+    summary: JsonDict = Field(default_factory=dict)
+    raw_result: JsonDict = Field(default_factory=dict)
 
-    result: JsonDict | None = None
     error: ErrorInfo | None = None
-
-    produced_artifacts: dict[str, str] = Field(default_factory=dict)
-    consumed_artifacts: dict[str, str] = Field(default_factory=dict)
-
-    metadata: JsonDict = Field(default_factory=dict)
 
 
 class PipelineRunResult(SceneOpsBaseModel):
@@ -49,4 +46,4 @@ class PipelineRunResult(SceneOpsBaseModel):
     lineage: PipelineLineage = Field(default_factory=PipelineLineage)
     outputs: dict[str, JsonDict] = Field(default_factory=dict)
 
-    steps: list[PipelineStepResult] = Field(default_factory=list)
+    tasks: list[PipelineTaskResult] = Field(default_factory=list)

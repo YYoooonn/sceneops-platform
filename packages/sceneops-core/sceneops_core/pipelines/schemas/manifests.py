@@ -7,8 +7,8 @@ from pydantic import Field
 from sceneops_core.common.schemas import ErrorInfo, JsonDict, SceneOpsBaseModel
 from sceneops_core.jobs.schemas import JobType
 
-from .enums import PipelineRunStatus, PipelineStepRunStatus, PipelineType
-from .results import PipelineRunResult, PipelineStepResult
+from .enums import PipelineRunStatus, PipelineTaskRunStatus, PipelineType
+from .results import PipelineRunResult, PipelineTaskResult
 
 
 class PipelineRunManifest(SceneOpsBaseModel):
@@ -35,24 +35,24 @@ class PipelineRunManifest(SceneOpsBaseModel):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class PipelineStepRunManifest(SceneOpsBaseModel):
-    pipeline_step_run_id: str
+class PipelineTaskRunManifest(SceneOpsBaseModel):
+    pipeline_task_run_id: str
     pipeline_run_id: str
 
-    pipeline_step_id: str
-    pipeline_step_name: str
-    step_order: int
+    pipeline_task_id: str
+    pipeline_task_name: str
+    task_order: int
 
-    status: PipelineStepRunStatus
+    status: PipelineTaskRunStatus
 
     job_type: JobType
     job_id: str | None = None
 
-    depends_on_step_ids: list[str] = Field(default_factory=list)
+    depends_on_task_ids: list[str] = Field(default_factory=list)
 
     params: JsonDict = Field(default_factory=dict)
 
-    result: PipelineStepResult | None = None
+    result: PipelineTaskResult | None = None
     error: ErrorInfo | None = None
 
     created_at: datetime | None = None

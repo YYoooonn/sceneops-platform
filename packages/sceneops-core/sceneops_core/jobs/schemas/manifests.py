@@ -26,8 +26,8 @@ class JobManifest(SceneOpsBaseModel):
 
     # Pipeline linkage.
     pipeline_run_id: str | None = None
-    pipeline_step_run_id: str | None = None
-    pipeline_step_id: str | None = None
+    pipeline_task_run_id: str | None = None
+    pipeline_task_id: str | None = None
 
     # Orchestration fields.
     retry_count: int = 0

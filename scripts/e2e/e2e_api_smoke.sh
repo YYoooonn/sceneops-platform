@@ -192,7 +192,7 @@ check "POST /pipelines/runs" "$pipe_resp"
 PIPE_ID="$(echo "$pipe_resp" | jq -r '.pipelineRun.pipelineRunId')"
 check_field "pipelineRunId" "$pipe_resp" '.pipelineRun.pipelineRunId'
 check "GET /pipelines/runs/{id}" "$(get "/pipelines/runs/${PIPE_ID}")"
-check "GET /pipelines/runs/{id}/steps" "$(get "/pipelines/runs/${PIPE_ID}/steps")"
+check "GET /pipelines/runs/{id}/steps" "$(get "/pipelines/runs/${PIPE_ID}/tasks")"
 
 # ── summary ───────────────────────────────────────────────────────────────────
 

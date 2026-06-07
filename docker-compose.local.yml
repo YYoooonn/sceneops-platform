@@ -127,8 +127,6 @@ services:
   worker-cli:
     <<: *worker-common
     container_name: sceneops-worker-cli
-    entrypoint: ["sceneops-worker"]
-    command: ["--help"]
     profiles:
       - debug
 

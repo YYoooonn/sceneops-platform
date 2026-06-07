@@ -50,8 +50,8 @@ class JobService:
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             pipeline_run_id=request.pipeline_run_id,
-            pipeline_step_run_id=request.pipeline_step_run_id,
-            pipeline_step_id=request.pipeline_step_id,
+            pipeline_task_run_id=request.pipeline_task_run_id,
+            pipeline_task_id=request.pipeline_task_id,
             params=validated_params.model_dump(),
             steps=create_initial_job_steps(request.type),
             retry_count=0,
@@ -71,8 +71,8 @@ class JobService:
                 level=JobEventLevel.INFO,
                 job_type=created.type,
                 pipeline_run_id=created.pipeline_run_id,
-                pipeline_step_run_id=created.pipeline_step_run_id,
-                pipeline_step_id=created.pipeline_step_id,
+                pipeline_task_run_id=created.pipeline_task_run_id,
+                pipeline_task_id=created.pipeline_task_id,
                 message="Job created",
                 data={
                     "dataset_id": created.dataset_id,
@@ -123,4 +123,35 @@ class JobService:
             raise ValueError(
                 f"Job is not executable: job_id={job_id}, status={job.status}"
             )
+        return job
+
+    async def mark_queued(self, job_id: str) -> JobManifest:
+        job = await self.validate_executable(job_id)
+
+        now = utc_now()
+        job = job.model_copy(
+            update={
+                "status": JobStatus.QUEUED,
+                "queued_at": now,
+                "updated_at": now,
+            }
+        )
+        await self._repository.update(job)
+
+        await self._event_repository.append(
+            JobEvent(
+                event_id=generate_job_event_id(),
+                job_id=job.job_id,
+                type=JobEventType.QUEUED,
+                level=JobEventLevel.INFO,
+                status=JobStatus.QUEUED,
+                job_type=job.type,
+                pipeline_run_id=job.pipeline_run_id,
+                pipeline_task_run_id=job.pipeline_task_run_id,
+                pipeline_task_id=job.pipeline_task_id,
+                message="Job queued",
+                created_at=now,
+            )
+        )
+
         return job

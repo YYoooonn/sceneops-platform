@@ -47,7 +47,7 @@ class EvaluationRunModel(Base):
     metrics_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    pipeline_step_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pipeline_task_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     job_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     params: Mapped[dict[str, Any]] = mapped_column(

@@ -8,25 +8,38 @@ from sceneops_core.executions.schemas import (
 )
 from sceneops_db.repositories.executions import ExecutionRecordRepository
 
-from app.platform.executions.dispatchers.base import ExecutionDispatcher
+from app.platform.executions.backends.base import (
+    JobExecutionBackend,
+    PipelineExecutionBackend,
+)
 
 
 class ExecutionService:
     def __init__(
         self,
         *,
-        dispatcher: ExecutionDispatcher,
         record_repository: ExecutionRecordRepository,
+        job_backend: JobExecutionBackend | None = None,
+        pipeline_backend: PipelineExecutionBackend | None = None,
     ) -> None:
-        self._dispatcher = dispatcher
+        self._job_backend = job_backend
+        self._pipeline_backend = pipeline_backend
         self._record_repository = record_repository
 
     async def dispatch_job(self, job_id: str) -> ExecutionDispatchResult:
-        result = self._dispatcher.dispatch_job_run(job_id=job_id)
+        if self._job_backend is None:
+            raise RuntimeError(
+                "Job execution backend is not configured on this service instance"
+            )
+        result = await self._job_backend.dispatch_job(job_id)
         return await self._record_repository.create(result)
 
     async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
-        result = self._dispatcher.dispatch_pipeline_run(pipeline_run_id=pipeline_run_id)
+        if self._pipeline_backend is None:
+            raise RuntimeError(
+                "Pipeline execution backend is not configured on this service instance"
+            )
+        result = await self._pipeline_backend.dispatch_pipeline(pipeline_run_id)
         return await self._record_repository.create(result)
 
     async def get_execution(self, execution_id: str) -> ExecutionDispatchResult | None:

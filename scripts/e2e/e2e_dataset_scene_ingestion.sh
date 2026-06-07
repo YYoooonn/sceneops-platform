@@ -107,17 +107,17 @@ echo ""
 # ── 6. Assert all steps succeeded ────────────────────────────────────────────
 
 echo "--- 6. Assert steps ---"
-STEPS_JSON="$(fetch_pipeline_steps "$API_BASE_URL" "$PIPELINE_RUN_ID")"
-STEP_COUNT="$(echo "$STEPS_JSON" | jq '.steps | length')"
-FAILED_STEPS="$(echo "$STEPS_JSON" | jq -r '[.steps[] | select(.status != "succeeded")] | map("\(.stepId)=\(.status)") | join(", ")')"
+TASKS_JSON="$(fetch_pipeline_tasks "$API_BASE_URL" "$PIPELINE_RUN_ID")"
+TASK_COUNT="$(echo "$TASKS_JSON" | jq '.tasks | length')"
+FAILED_TASKS="$(echo "$TASKS_JSON" | jq -r '[.tasks[] | select(.status != "succeeded")] | map("\(.pipelineTaskId)=\(.status)") | join(", ")')"
 
-echo "$STEPS_JSON" | jq -r '.steps[] | "  \(.stepId): \(.status)"'
+echo "$TASKS_JSON" | jq -r '.tasks[] | "  \(.pipelineTaskId): \(.status)"'
 
-if [ -n "$FAILED_STEPS" ]; then
-  echo "❌ Non-succeeded steps: $FAILED_STEPS" >&2
+if [ -n "$FAILED_TASKS" ]; then
+  echo "❌ Non-succeeded tasks: $FAILED_TASKS" >&2
   exit 1
 fi
-echo "  All $STEP_COUNT steps: OK"
+echo "  All $TASK_COUNT steps: OK"
 echo ""
 
 # ── 7. Assert scenes created ─────────────────────────────────────────────────

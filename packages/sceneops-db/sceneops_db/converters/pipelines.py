@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from sceneops_core.pipelines.schemas import PipelineRunManifest, PipelineStepRunManifest
+from sceneops_core.pipelines.schemas import PipelineRunManifest, PipelineTaskRunManifest
 from sceneops_core.pipelines.schemas.results import (
     PipelineRunResult,
-    PipelineStepResult,
+    PipelineTaskResult,
 )
 
-from sceneops_db.models.pipelines import PipelineRunModel, PipelineStepRunModel
+from sceneops_db.models.pipelines import PipelineRunModel, PipelineTaskRunModel
 
 from ._utils import (
     enum_to_value,
@@ -19,19 +19,40 @@ from ._utils import (
 
 
 def _remap_legacy_pipeline_result(result: dict) -> dict:
-    # Stored before rename: steps[]{step_id, step_name} → {pipeline_step_id, pipeline_step_name}
-    if "steps" not in result:
+    # Handle field renames in stored results:
+    # 1. "steps" key → "tasks" (pipeline step→task rename)
+    # 2. Within each item:
+    #    - step_id/pipeline_step_id → pipeline_task_id (very old + pre-task-rename data)
+    #    - step_name/pipeline_step_name → pipeline_task_name
+    if "steps" not in result and "tasks" not in result:
         return result
-    remapped_steps = []
-    for step in result["steps"]:
-        if "step_id" in step and "pipeline_step_id" not in step:
-            step = {
-                **step,
-                "pipeline_step_id": step["step_id"],
-                "pipeline_step_name": step.get("step_name", step["step_id"]),
+
+    items = result.get("tasks") or result.get("steps") or []
+    remapped = []
+    for item in items:
+        if (
+            "step_id" in item
+            and "pipeline_task_id" not in item
+            and "pipeline_step_id" not in item
+        ):
+            item = {
+                **item,
+                "pipeline_task_id": item["step_id"],
+                "pipeline_task_name": item.get("step_name", item["step_id"]),
             }
-        remapped_steps.append(step)
-    return {**result, "steps": remapped_steps}
+        elif "pipeline_step_id" in item and "pipeline_task_id" not in item:
+            item = {
+                **item,
+                "pipeline_task_id": item["pipeline_step_id"],
+                "pipeline_task_name": item.get(
+                    "pipeline_step_name", item["pipeline_step_id"]
+                ),
+            }
+        remapped.append(item)
+
+    new_result = {k: v for k, v in result.items() if k not in ("steps", "tasks")}
+    new_result["tasks"] = remapped
+    return new_result
 
 
 def pipeline_run_model_to_manifest(model: PipelineRunModel) -> PipelineRunManifest:
@@ -71,23 +92,21 @@ def pipeline_run_manifest_to_values(run: PipelineRunManifest) -> dict[str, Any]:
     return values_with_metadata(data)
 
 
-def pipeline_step_run_model_to_manifest(
-    model: PipelineStepRunModel,
-) -> PipelineStepRunManifest:
-    return PipelineStepRunManifest(
-        pipeline_step_run_id=model.pipeline_step_run_id,
+def pipeline_task_run_model_to_manifest(
+    model: PipelineTaskRunModel,
+) -> PipelineTaskRunManifest:
+    return PipelineTaskRunManifest(
+        pipeline_task_run_id=model.pipeline_task_run_id,
         pipeline_run_id=model.pipeline_run_id,
-        pipeline_step_id=model.pipeline_step_id,
-        pipeline_step_name=model.pipeline_step_name,
-        step_order=model.step_order,
+        pipeline_task_id=model.pipeline_task_id,
+        pipeline_task_name=model.pipeline_task_name,
+        task_order=model.task_order,
         status=model.status,
         job_type=model.job_type,
         job_id=model.job_id,
-        depends_on_step_ids=list(
-            model.depends_on_step_ids or []
-        ),  # DB column stays depends_on_step_ids
+        depends_on_task_ids=list(model.depends_on_task_ids or []),
         params=model.params or {},
-        result=PipelineStepResult.model_validate(model.result)
+        result=PipelineTaskResult.model_validate(model.result)
         if model.result
         else None,
         error=error_from_json(model.error),
@@ -99,16 +118,16 @@ def pipeline_step_run_model_to_manifest(
     )
 
 
-def pipeline_step_run_manifest_to_values(
-    step: PipelineStepRunManifest,
+def pipeline_task_run_manifest_to_values(
+    task: PipelineTaskRunManifest,
 ) -> dict[str, Any]:
-    data = step.model_dump(mode="python")
+    data = task.model_dump(mode="python")
     # result/error stored as JSON
     if data.get("result") is not None:
-        data["result"] = step.result.model_dump(mode="json") if step.result else None
+        data["result"] = task.result.model_dump(mode="json") if task.result else None
     if data.get("error") is not None:
-        data["error"] = step.error.model_dump(mode="json") if step.error else None
+        data["error"] = task.error.model_dump(mode="json") if task.error else None
     # enums → values
-    data["status"] = step.status.value if hasattr(step.status, "value") else step.status
-    data["job_type"] = enum_to_value(step.job_type)
+    data["status"] = task.status.value if hasattr(task.status, "value") else task.status
+    data["job_type"] = enum_to_value(task.job_type)
     return values_with_metadata(data)

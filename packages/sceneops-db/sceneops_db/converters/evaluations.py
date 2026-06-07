@@ -36,7 +36,7 @@ def evaluation_run_model_to_record(model: EvaluationRunModel) -> EvaluationRunRe
         evaluation_manifest_uri=model.evaluation_manifest_uri,
         metrics_uri=model.metrics_uri,
         pipeline_run_id=model.pipeline_run_id,
-        pipeline_step_run_id=model.pipeline_step_run_id,
+        pipeline_task_run_id=model.pipeline_task_run_id,
         job_id=model.job_id,
         params=model.params or {},
         result=model.result,

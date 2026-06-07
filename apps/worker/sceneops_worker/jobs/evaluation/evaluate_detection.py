@@ -49,15 +49,6 @@ class EvaluateDetectionJobHandler(
             raise ValueError("inference_run_id is required for evaluation step")
         return {**base, "inference_run_id": inference_run_id}
 
-    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
-        parsed = EvaluateDetectionJobResult.model_validate(result)
-        return {
-            Ctx.EVALUATION_RUN_ID: parsed.evaluation_run_id,
-            Ctx.EVALUATION_MANIFEST_URI: parsed.evaluation_manifest_uri,
-            Ctx.EVALUATION_METRICS: parsed.metrics,
-            Ctx.EVALUATION_SAMPLE_COUNT: parsed.sample_count,
-        }
-
     def build_initial_record(
         self,
         *,
@@ -77,7 +68,7 @@ class EvaluateDetectionJobHandler(
             evaluator_id=params.evaluator_id,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
-            pipeline_step_run_id=job.pipeline_step_run_id,
+            pipeline_task_run_id=job.pipeline_task_run_id,
             job_id=job.job_id,
             metadata={"match_distance_m": params.match_distance_m},
             started_at=started_at,

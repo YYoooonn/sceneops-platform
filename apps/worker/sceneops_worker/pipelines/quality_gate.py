@@ -8,7 +8,7 @@ from sceneops_worker.pipelines.errors import PipelineBlockedByValidationError
 
 
 class PipelineQualityGate:
-    def check_step_result(
+    def check_task_result(
         self,
         *,
         job_type: JobType,

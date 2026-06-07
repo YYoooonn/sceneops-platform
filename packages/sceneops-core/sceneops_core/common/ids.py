@@ -43,8 +43,8 @@ def generate_pipeline_run_id() -> str:
     return generate_prefixed_id("pipe")
 
 
-def generate_pipeline_step_run_id() -> str:
-    return generate_prefixed_id("pstep")
+def generate_pipeline_task_run_id() -> str:
+    return generate_prefixed_id("ptask")
 
 
 def generate_execution_id() -> str:

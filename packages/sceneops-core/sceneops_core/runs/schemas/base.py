@@ -15,7 +15,7 @@ class BaseRunRecord(SceneOpsBaseModel):
     status: RunStatus = RunStatus.PENDING
 
     pipeline_run_id: str | None = None
-    pipeline_step_run_id: str | None = None
+    pipeline_task_run_id: str | None = None
     job_id: str | None = None
 
     params: JsonDict = Field(default_factory=dict)

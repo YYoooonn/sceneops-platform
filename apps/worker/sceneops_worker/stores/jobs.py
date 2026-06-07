@@ -34,7 +34,7 @@ class JobStore:
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         pipeline_run_id: str | None = None,
-        pipeline_step_run_id: str | None = None,
+        pipeline_task_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[JobManifest]:
@@ -44,7 +44,7 @@ class JobStore:
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             pipeline_run_id=pipeline_run_id,
-            pipeline_step_run_id=pipeline_step_run_id,
+            pipeline_task_run_id=pipeline_task_run_id,
             limit=limit,
             offset=offset,
         )

@@ -5,6 +5,7 @@ ALEMBIC_CONFIG ?= migrations/alembic.ini
 
 JOB_ID          ?=
 PIPELINE_RUN_ID ?=
+TASK_ID         ?=
 MSG             ?=
 
 MODEL_ID        ?= dummy-detector
@@ -189,14 +190,14 @@ reset-local:
 # --------------------
 
 .PHONY: local-up
-local-up: prepare-data minio-up db-migrate
+local-up: prepare-data minio-up
 	docker compose -f $(COMPOSE_FILE) up -d postgres redis
 	docker compose -f $(COMPOSE_FILE) up -d api worker-pipeline worker-jobs
 
 .PHONY: local-down
 local-down: minio-down
-	docker compose -f $(COMPOSE_FILE) postgres redis down
-	docker compose -f $(COMPOSE_FILE) api worker-pipeline worker-jobs down
+	docker compose -f $(COMPOSE_FILE) down postgres redis
+	docker compose -f $(COMPOSE_FILE) down api worker-pipeline worker-jobs
 
 .PHONY: local-reset
 local-reset:
@@ -219,12 +220,12 @@ local-ps:
 .PHONY: compose-build
 compose-build:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build api worker-pipeline worker-jobs worker-cli
+	docker compose -f $(COMPOSE_FILE) build api worker-pipeline
 
 .PHONY: compose-build-no-cache
 compose-build-no-cache:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-pipeline worker-jobs worker-cli
+	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-pipeline
 
 .PHONY: compose-up
 compose-up: prepare-data minio-up
@@ -341,7 +342,7 @@ worker-run-job:
 		exit 1; \
 	fi
 	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli \
-		jobs run --job-id $(JOB_ID)
+		sceneops-worker jobs run --job-id $(JOB_ID)
 
 .PHONY: worker-run-pipeline
 worker-run-pipeline:
@@ -350,7 +351,17 @@ worker-run-pipeline:
 		exit 1; \
 	fi
 	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli \
-		pipelines run --pipeline-run-id $(PIPELINE_RUN_ID)
+		sceneops-worker pipelines run --pipeline-run-id $(PIPELINE_RUN_ID)
+
+
+.PHONY: worker-run-pipeline-task
+worker-run-pipeline-task:
+	@if [ -z "$(PIPELINE_RUN_ID)" ]; then \
+		echo "PIPELINE_RUN_ID is required. Usage: make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"; \
+		exit 1; \
+	fi
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli \
+		sceneops-worker run-pipeline-task --pipeline-run-id $(PIPELINE_RUN_ID) --task-id $(TASK_ID)
 
 # --------------------
 # MinIO

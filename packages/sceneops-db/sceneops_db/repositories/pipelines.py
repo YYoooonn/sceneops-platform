@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
-    PipelineStepRunManifest,
+    PipelineTaskRunManifest,
     PipelineType,
 )
 
@@ -35,19 +35,19 @@ class PipelineRunRepository(Protocol):
 
 
 @runtime_checkable
-class PipelineStepRunRepository(Protocol):
+class PipelineTaskRunRepository(Protocol):
     async def create(
-        self, step: PipelineStepRunManifest
-    ) -> PipelineStepRunManifest: ...
+        self, task: PipelineTaskRunManifest
+    ) -> PipelineTaskRunManifest: ...
 
     async def get(
         self,
-        pipeline_step_run_id: str,
-    ) -> PipelineStepRunManifest | None: ...
+        pipeline_task_run_id: str,
+    ) -> PipelineTaskRunManifest | None: ...
 
     async def update(
-        self, step: PipelineStepRunManifest
-    ) -> PipelineStepRunManifest: ...
+        self, task: PipelineTaskRunManifest
+    ) -> PipelineTaskRunManifest: ...
 
     async def list_for_pipeline_run(
         self,
@@ -55,11 +55,11 @@ class PipelineStepRunRepository(Protocol):
         *,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[PipelineStepRunManifest]: ...
+    ) -> list[PipelineTaskRunManifest]: ...
 
-    async def get_by_step_id(
+    async def get_by_task_id(
         self,
         *,
         pipeline_run_id: str,
-        step_id: str,
-    ) -> PipelineStepRunManifest | None: ...
+        task_id: str,
+    ) -> PipelineTaskRunManifest | None: ...

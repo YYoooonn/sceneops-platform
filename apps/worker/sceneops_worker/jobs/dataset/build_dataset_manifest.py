@@ -42,16 +42,6 @@ class BuildDatasetManifestJobHandler(
         )
         return {**base, "scene_manifest_uris": scene_manifest_uris}
 
-    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
-        parsed = BuildDatasetManifestJobResult.model_validate(result)
-        return {
-            "dataset_manifest_uri": parsed.dataset_manifest_uri,
-            "scene_count": parsed.scene_count,
-            "sample_count": parsed.sample_count,
-            "frame_count": parsed.frame_count,
-            "should_block_pipeline": False,
-        }
-
     async def run(
         self,
         request: JobHandlerRequest[BuildDatasetManifestJobParams],

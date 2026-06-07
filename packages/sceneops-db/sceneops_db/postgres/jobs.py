@@ -59,7 +59,7 @@ class PostgresJobRepository:
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         pipeline_run_id: str | None = None,
-        pipeline_step_run_id: str | None = None,
+        pipeline_task_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[JobManifest]:
@@ -74,8 +74,8 @@ class PostgresJobRepository:
             stmt = stmt.where(JobModel.dataset_version == dataset_version)
         if pipeline_run_id is not None:
             stmt = stmt.where(JobModel.pipeline_run_id == pipeline_run_id)
-        if pipeline_step_run_id is not None:
-            stmt = stmt.where(JobModel.pipeline_step_run_id == pipeline_step_run_id)
+        if pipeline_task_run_id is not None:
+            stmt = stmt.where(JobModel.pipeline_task_run_id == pipeline_task_run_id)
         stmt = apply_pagination(
             stmt.order_by(JobModel.created_at.desc()), limit=limit, offset=offset
         )

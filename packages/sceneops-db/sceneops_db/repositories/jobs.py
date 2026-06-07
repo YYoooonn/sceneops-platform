@@ -28,7 +28,7 @@ class JobRepository(Protocol):
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         pipeline_run_id: str | None = None,
-        pipeline_step_run_id: str | None = None,
+        pipeline_task_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[JobManifest]: ...

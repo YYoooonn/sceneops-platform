@@ -49,17 +49,17 @@ class PipelineRunModel(Base):
         "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
-    steps: Mapped[list["PipelineStepRunModel"]] = relationship(
+    tasks: Mapped[list["PipelineTaskRunModel"]] = relationship(
         back_populates="pipeline_run",
         cascade="all, delete-orphan",
-        order_by="PipelineStepRunModel.step_order",
+        order_by="PipelineTaskRunModel.task_order",
     )
 
 
-class PipelineStepRunModel(Base):
-    __tablename__ = "pipeline_step_runs"
+class PipelineTaskRunModel(Base):
+    __tablename__ = "pipeline_task_runs"
 
-    pipeline_step_run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    pipeline_task_run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     pipeline_run_id: Mapped[str] = mapped_column(
         String(128),
@@ -67,16 +67,16 @@ class PipelineStepRunModel(Base):
         nullable=False,
     )
 
-    pipeline_step_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    pipeline_step_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    pipeline_task_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    pipeline_task_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    task_order: Mapped[int] = mapped_column(Integer, nullable=False)
 
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
     job_type: Mapped[str] = mapped_column(String(64), nullable=False)
     job_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    depends_on_step_ids: Mapped[list[str]] = mapped_column(
+    depends_on_task_ids: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
 
@@ -106,7 +106,7 @@ class PipelineStepRunModel(Base):
         "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
-    pipeline_run: Mapped[PipelineRunModel] = relationship(back_populates="steps")
+    pipeline_run: Mapped[PipelineRunModel] = relationship(back_populates="tasks")
 
 
 Index("ix_pipeline_runs_type_status", PipelineRunModel.type, PipelineRunModel.status)
@@ -125,14 +125,14 @@ Index(
 )
 
 Index(
-    "ix_pipeline_step_runs_pipeline_run_order",
-    PipelineStepRunModel.pipeline_run_id,
-    PipelineStepRunModel.step_order,
+    "ix_pipeline_task_runs_pipeline_run_order",
+    PipelineTaskRunModel.pipeline_run_id,
+    PipelineTaskRunModel.task_order,
 )
 Index(
-    "ix_pipeline_step_runs_pipeline_run_step_id",
-    PipelineStepRunModel.pipeline_run_id,
-    PipelineStepRunModel.pipeline_step_id,
+    "ix_pipeline_task_runs_pipeline_run_task_id",
+    PipelineTaskRunModel.pipeline_run_id,
+    PipelineTaskRunModel.pipeline_task_id,
 )
-Index("ix_pipeline_step_runs_job_id", PipelineStepRunModel.job_id)
-Index("ix_pipeline_step_runs_status", PipelineStepRunModel.status)
+Index("ix_pipeline_task_runs_job_id", PipelineTaskRunModel.job_id)
+Index("ix_pipeline_task_runs_status", PipelineTaskRunModel.status)

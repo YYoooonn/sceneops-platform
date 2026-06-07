@@ -44,8 +44,6 @@ class JobHandler(
         self, base: JsonDict, context_values: dict[str, Any]
     ) -> JsonDict: ...
 
-    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]: ...
-
 
 AnyJobHandler: TypeAlias = JobHandler[Any, Any]
 
@@ -57,7 +55,7 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
     - ``job_type``, ``params_model``: identity
     - ``build_initial_record``: returns a RUNNING-state record with all immutable fields set
     - ``execute``: performs the actual work, may mutate the run record, returns (record, result)
-    - ``build_step_params`` / ``extract_context_updates``: pipeline planner / propagator hooks
+    - ``build_step_params``: assembles job params from PipelineTaskInputs.to_context_values()
 
     The base class owns:
     - initial upsert with RUNNING status

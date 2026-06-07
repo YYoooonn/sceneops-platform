@@ -25,7 +25,7 @@ def inference_run_model_to_record(model: InferenceRunModel) -> InferenceRunRecor
         sample_count=model.sample_count,
         prediction_count=model.prediction_count,
         pipeline_run_id=model.pipeline_run_id,
-        pipeline_step_run_id=model.pipeline_step_run_id,
+        pipeline_task_run_id=model.pipeline_task_run_id,
         job_id=model.job_id,
         params=model.params or {},
         result=model.result,

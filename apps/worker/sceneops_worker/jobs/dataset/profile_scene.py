@@ -47,15 +47,6 @@ class ProfileSceneJobHandler(
         )
         return {**base, "scene_manifest_uris": scene_manifest_uris}
 
-    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
-        parsed = ProfileSceneJobResult.model_validate(result)
-        return {
-            "profile_scene_count": parsed.scene_count,
-            "profile_sample_count": parsed.sample_count,
-            "observed_channels": parsed.observed_channels,
-            "profile_report_uri": parsed.report_uri,
-        }
-
     def build_initial_record(
         self,
         *,
@@ -69,7 +60,7 @@ class ProfileSceneJobHandler(
             dataset_version=job.params.get("dataset_version"),
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
-            pipeline_step_run_id=job.pipeline_step_run_id,
+            pipeline_task_run_id=job.pipeline_task_run_id,
             job_id=job.job_id,
             started_at=started_at,
         )

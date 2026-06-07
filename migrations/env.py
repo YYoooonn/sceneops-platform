@@ -26,7 +26,7 @@ from sceneops_db.models import (  # noqa: F401
     ModelModel,
     ModelVersionModel,
     PipelineRunModel,
-    PipelineStepRunModel,
+    PipelineTaskRunModel,
     ScenarioRunRecordModel,
     ScenarioSetModel,
     SceneModel,

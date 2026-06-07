@@ -7,10 +7,12 @@ from fastapi import Depends
 
 from app.core.dependencies import ApiSettingsDep
 from app.core.repositories import ExecutionRecordRepositoryDep
-from app.platform.executions.dispatchers import (
-    AirflowExecutionDispatcher,
-    CeleryExecutionDispatcher,
-    ExecutionDispatcher,
+from app.platform.executions.backends import (
+    AirflowPipelineExecutionBackend,
+    CeleryJobExecutionBackend,
+    CeleryPipelineExecutionBackend,
+    JobExecutionBackend,
+    PipelineExecutionBackend,
 )
 from app.platform.executions.factory import create_celery_app
 from app.platform.executions.service import ExecutionService
@@ -25,41 +27,56 @@ def get_celery_app(settings: ApiSettingsDep) -> Celery:
 CeleryAppDep = Annotated[Celery, Depends(get_celery_app)]
 
 
-def get_execution_dispatcher(
+def get_job_execution_backend(
     settings: ApiSettingsDep,
     celery_app: CeleryAppDep,
-) -> ExecutionDispatcher:
-    backend = settings.execution.backend
+) -> JobExecutionBackend:
+    backend = settings.execution.job_backend
     if backend == ExecutionBackend.CELERY:
         c = settings.execution.celery
-        return CeleryExecutionDispatcher(
-            app=celery_app,
-            pipeline_queue=c.pipeline_queue,
-            job_queue=c.job_queue,
+        return CeleryJobExecutionBackend(app=celery_app, job_queue=c.job_queue)
+    raise ValueError(f"Unsupported job execution backend: {backend}")
+
+
+JobExecutionBackendDep = Annotated[
+    JobExecutionBackend, Depends(get_job_execution_backend)
+]
+
+
+def get_pipeline_execution_backend(
+    settings: ApiSettingsDep,
+    celery_app: CeleryAppDep,
+) -> PipelineExecutionBackend:
+    backend = settings.execution.pipeline_backend
+    if backend == ExecutionBackend.CELERY:
+        c = settings.execution.celery
+        return CeleryPipelineExecutionBackend(
+            app=celery_app, pipeline_queue=c.pipeline_queue
         )
     if backend == ExecutionBackend.AIRFLOW:
         a = settings.execution.airflow
-        return AirflowExecutionDispatcher(
+        return AirflowPipelineExecutionBackend(
             base_url=a.base_url,
+            pipeline_dag_id=a.pipeline_dag_id,
             username=a.username,
             password=a.password,
-            pipeline_dag_id=a.pipeline_dag_id,
-            job_dag_id=a.job_dag_id,
         )
-    raise ValueError(f"Unsupported execution backend: {backend}")
+    raise ValueError(f"Unsupported pipeline execution backend: {backend}")
 
 
-ExecutionDispatcherDep = Annotated[
-    ExecutionDispatcher, Depends(get_execution_dispatcher)
+PipelineExecutionBackendDep = Annotated[
+    PipelineExecutionBackend, Depends(get_pipeline_execution_backend)
 ]
 
 
 def get_execution_service(
-    dispatcher: ExecutionDispatcherDep,
+    job_backend: JobExecutionBackendDep,
+    pipeline_backend: PipelineExecutionBackendDep,
     record_repository: ExecutionRecordRepositoryDep,
 ) -> ExecutionService:
     return ExecutionService(
-        dispatcher=dispatcher,
+        job_backend=job_backend,
+        pipeline_backend=pipeline_backend,
         record_repository=record_repository,
     )
 

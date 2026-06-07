@@ -14,28 +14,11 @@ from sceneops_core.executions.schemas import (
 
 
 @dataclass(frozen=True)
-class CeleryExecutionDispatcher:
+class CeleryJobExecutionBackend:
     app: Celery
-    pipeline_queue: str
     job_queue: str
 
-    def dispatch_pipeline_run(self, *, pipeline_run_id: str) -> ExecutionDispatchResult:
-        result = self.app.send_task(
-            PIPELINE_RUN_TASK,
-            args=[pipeline_run_id],
-            queue=self.pipeline_queue,
-            routing_key=self.pipeline_queue,
-        )
-        return ExecutionDispatchResult(
-            execution_id=result.id,
-            external_id=result.id,
-            execution_backend=ExecutionBackend.CELERY,
-            execution_kind=ExecutionKind.PIPELINE_RUN,
-            resource_id=pipeline_run_id,
-            status=ExecutionStatus.QUEUED,
-        )
-
-    def dispatch_job_run(self, *, job_id: str) -> ExecutionDispatchResult:
+    async def dispatch_job(self, job_id: str) -> ExecutionDispatchResult:
         result = self.app.send_task(
             JOB_RUN_TASK,
             args=[job_id],
@@ -48,5 +31,27 @@ class CeleryExecutionDispatcher:
             execution_backend=ExecutionBackend.CELERY,
             execution_kind=ExecutionKind.JOB_RUN,
             resource_id=job_id,
+            status=ExecutionStatus.QUEUED,
+        )
+
+
+@dataclass(frozen=True)
+class CeleryPipelineExecutionBackend:
+    app: Celery
+    pipeline_queue: str
+
+    async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
+        result = self.app.send_task(
+            PIPELINE_RUN_TASK,
+            args=[pipeline_run_id],
+            queue=self.pipeline_queue,
+            routing_key=self.pipeline_queue,
+        )
+        return ExecutionDispatchResult(
+            execution_id=result.id,
+            external_id=result.id,
+            execution_backend=ExecutionBackend.CELERY,
+            execution_kind=ExecutionKind.PIPELINE_RUN,
+            resource_id=pipeline_run_id,
             status=ExecutionStatus.QUEUED,
         )

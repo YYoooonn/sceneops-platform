@@ -14,5 +14,8 @@ app = typer.Typer(
 app.add_typer(jobs.app, name="jobs")
 app.add_typer(pipelines.app, name="pipelines")
 
+# Top-level command for standalone task execution (stable Airflow contract).
+app.command("run-pipeline-task")(pipelines.run_pipeline_task_command)
+
 if __name__ == "__main__":
     app()
