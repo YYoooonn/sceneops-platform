@@ -36,17 +36,6 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
     ) -> JsonDict:
         return base
 
-    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
-        parsed = IngestScenesJobResult.model_validate(result)
-        return {
-            "scene_ids": parsed.scene_ids,
-            "scene_manifest_uris": parsed.scene_manifest_uris,
-            "scene_count": parsed.scene_count,
-            "sample_count": parsed.sample_count,
-            "frame_count": parsed.frame_count,
-            "channels": parsed.channels,
-        }
-
     async def run(
         self,
         request: JobHandlerRequest[IngestScenesJobParams],

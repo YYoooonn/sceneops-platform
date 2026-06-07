@@ -27,7 +27,6 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.inference.detection import create_detection_inference_backend
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-from sceneops_worker.pipelines.context_keys import PipelineContextKey as Ctx
 
 
 class PredictDetectionJobHandler(
@@ -54,16 +53,6 @@ class PredictDetectionJobHandler(
             base.get("model_version") or context_values.get("model_version") or "v0"
         )
         return {**base, "model_id": model_id, "model_version": model_version}
-
-    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
-        parsed = PredictDetectionJobResult.model_validate(result)
-        return {
-            Ctx.INFERENCE_RUN_ID: parsed.inference_run_id,
-            Ctx.PREDICTION_MANIFEST_URI: parsed.prediction_manifest_uri,
-            Ctx.PREDICTION_SAMPLE_COUNT: parsed.sample_count,
-            Ctx.PREDICTION_MODEL_ID: parsed.model_id,
-            Ctx.PREDICTION_MODEL_VERSION: parsed.model_version,
-        }
 
     def build_initial_record(
         self,

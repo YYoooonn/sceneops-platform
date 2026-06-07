@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.ids import generate_job_id
-from sceneops_core.jobs.schemas import JobManifest, JobStatus, create_initial_job_steps
-from sceneops_core.pipelines.schemas import PipelineRunManifest, PipelineTaskRunManifest
+from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
+from sceneops_core.jobs.schemas import JobManifest, JobStatus, create_initial_job_steps
+from sceneops_core.pipelines.schemas import (
+    PipelineRunManifest,
+    PipelineTaskInputs,
+    PipelineTaskRunManifest,
+)
 from sceneops_worker.jobs.registry import (
     JobHandlerRegistry,
     create_default_job_handler_registry,
 )
-from sceneops_worker.pipelines.context import PipelineExecutionContext
 
 
 class PipelineJobPlanner:
@@ -32,13 +35,13 @@ class PipelineJobPlanner:
         *,
         pipeline_run: PipelineRunManifest,
         task: PipelineTaskRunManifest,
-        context: PipelineExecutionContext,
+        inputs: PipelineTaskInputs,
     ) -> JobManifest:
         now = utc_now()
         params = self._build_task_params(
             pipeline_run=pipeline_run,
             task=task,
-            context=context,
+            inputs=inputs,
         )
 
         return JobManifest(
@@ -64,12 +67,17 @@ class PipelineJobPlanner:
         *,
         pipeline_run: PipelineRunManifest,
         task: PipelineTaskRunManifest,
-        context: PipelineExecutionContext,
+        inputs: PipelineTaskInputs,
     ) -> JsonDict:
         base: JsonDict = {
             "dataset_id": pipeline_run.dataset_id,
             "dataset_version": pipeline_run.dataset_version,
             **(task.params or {}),
         }
+
         handler = self._registry.get(task.job_type)
-        return handler.build_step_params(base=base, context_values=context.values)
+        # Handlers receive a flat context_values dict for build_step_params compat,
+        # but the pipeline layer itself is schema-based (PipelineTaskInputs).
+        return handler.build_step_params(
+            base=base, context_values=inputs.to_context_values()
+        )

@@ -47,16 +47,6 @@ class ValidateSceneJobHandler(
         )
         return {**base, "scene_manifest_uris": scene_manifest_uris}
 
-    def extract_context_updates(self, result: JsonDict) -> dict[str, Any]:
-        parsed = ValidateSceneJobResult.model_validate(result)
-        return {
-            "should_block_pipeline": parsed.should_block_pipeline,
-            "validation_status": parsed.status,
-            "validation_issue_count": parsed.issue_count,
-            "checked_scene_count": parsed.checked_scene_count,
-            "validation_report_uri": parsed.report_uri,
-        }
-
     def build_initial_record(
         self,
         *,
