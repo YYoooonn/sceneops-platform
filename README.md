@@ -111,16 +111,65 @@ The worker data plane executes all pipeline and job work asynchronously via Cele
 **Responsibilities:**
 
 - Execute jobs and pipelines inside a `WorkerContext` with session-scoped stores
-- Run `PipelineRunner` (orchestration) and `JobRunner` (individual job execution)
 - Checkpoint job and pipeline state transitions (RUNNING → SUCCEEDED / FAILED)
 - Write artifacts to the artifact store
 - Handle scene ingestion, validation, profiling, detection inference, and evaluation
+
+**Pipeline execution architecture:**
+
+```
+PipelineRunner              (local Celery orchestrator)
+└── PipelineTaskRunner      (single task use case — also the Airflow task entry point)
+    ├── PipelineInputResolver   → resolves PipelineTaskInputs from DB records
+    ├── PipelineJobPlanner      → builds JobManifest from PipelineTaskInputs
+    ├── JobRunner               → executes the concrete job by job_id (pipeline-agnostic)
+    ├── PipelineTaskResultRecorder → persists normalized PipelineTaskResult to DB
+    └── PipelineQualityGate     → validates result against task contract
+```
+
+Each pipeline task can be executed as a standalone invocation:
+
+```bash
+sceneops-worker run-pipeline-task \
+  --pipeline-run-id <id> \
+  --task-id <task_id>
+```
+
+This is the Airflow-compatible entry point. A future Airflow DAG, DockerOperator, or KubernetesPodOperator will call this command for each task — the container exit code reflects success (0) or failure (non-zero).
+
+**`PipelineTaskInputs` — compact reference envelope:**
+
+```
+PipelineTaskInputs
+  pipeline       — stable task-level identity (pipeline_run_id, task_id, ...)
+  dataset        — DatasetInputRef (identity + baseline quality-cache refs)
+  model          — ModelInputRef (identity + URI + backend + runtime)
+  upstream_tasks — PipelineUpstreamTaskRef per upstream task (refs/summary/raw_result)
+  refs           — merged URIs and IDs from upstream task results
+  summary        — merged counts, status flags, and metric summaries from upstream tasks
+  params         — explicit task-level params
+  extra          — caller-supplied overrides
+```
+
+`PipelineInputResolver` resolves this from DB records (DatasetVersionRecord, ModelVersionRecord, upstream PipelineTaskRun.result) — no in-memory context propagation.
+
+**`PipelineTaskResult` — normalized output:**
+
+```
+PipelineTaskResult
+  refs        — downstream-input-oriented IDs and URIs (read by PipelineInputResolver)
+  summary     — counts, status flags, metric summaries
+  raw_result  — full handler output for debugging
+```
+
+`PipelineTaskResultRecorder` splits the raw job handler output into these three buckets using `_REFS_KEYS` / `_SUMMARY_KEYS` and job-type-specific alias normalization (e.g., `report_uri → validation_report_uri` for `validate_scene`).
 
 **Implementation notes:**
 
 - Each Celery task spawns a fresh thread with an `AsyncRuntimeRunner` to isolate SQLAlchemy async event loops from Celery's prefork process model.
 - Worker sessions do not auto-commit; job and pipeline lifecycle checkpoints commit state transitions explicitly.
 - `RunRecordHandler` owns domain run record lifecycle: RUNNING → SUCCEEDED / FAILED.
+- `PipelineRunner` iterates `PipelineDefinition.tasks` (sorted by `task.order`) and delegates each task to `PipelineTaskRunner`. Final `PipelineRunResult` is aggregated from persisted `PipelineTaskRun.result` records — no in-memory value propagation.
 
 ### Core Contracts
 
@@ -169,12 +218,14 @@ SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
 
 ## Execution Model
 
+### Local / Celery mode
+
 Jobs and pipelines are dispatched from the API and executed on separate Celery queues:
 
 | Queue | Worker | Concurrency | Purpose |
 |---|---|---|---|
-| `sceneops.pipeline_runs` | `worker-pipeline` | 1 (default) | Pipeline orchestration, step sequencing |
-| `sceneops.jobs` | `worker-jobs` | 4 (default) | Individual job execution |
+| `sceneops.pipeline_runs` | `worker-pipeline` | 1 (default) | Pipeline orchestration via `PipelineRunner` |
+| `sceneops.jobs` | `worker-jobs` | 4 (default) | Individual job execution via `JobRunner` |
 
 Concurrency is configurable via environment variables:
 
@@ -182,6 +233,20 @@ Concurrency is configurable via environment variables:
 SCENEOPS_WORKER_PIPELINE_CONCURRENCY=1
 SCENEOPS_WORKER_JOBS_CONCURRENCY=4
 ```
+
+### Standalone task mode (Airflow-compatible)
+
+Each pipeline task can be executed independently using the worker CLI:
+
+```bash
+sceneops-worker run-pipeline-task \
+  --pipeline-run-id <pipeline_run_id> \
+  --task-id <task_id>
+```
+
+This invokes `PipelineTaskRunner.run(pipeline_run_id, task_id)` directly. It resolves all inputs from DB records, executes the job, and writes the normalized result back to DB — with no dependency on in-memory context from other tasks.
+
+The exit code is 0 on success and non-zero on failure, making it suitable as a DockerOperator or KubernetesPodOperator command in Airflow. A future Airflow DAG will call this command once per task, replacing the local `PipelineRunner` for cloud-scale orchestration.
 
 ---
 
@@ -261,7 +326,8 @@ sceneops-platform/
 │   ├── inference-server/           # GroundingDINO inference server (FastAPI, port 8001)
 │   └── worker/                     # Celery execution runtime
 │       └── sceneops_worker/
-│           ├── pipelines/          # PipelineRunner, StepExecutor
+│           ├── pipelines/          # PipelineRunner, PipelineTaskRunner, InputResolver,
+│           │                       #   JobPlanner, ResultRecorder, QualityGate
 │           ├── jobs/               # job handlers by domain
 │           ├── stores/             # session-scoped data stores
 │           ├── datasets/           # nuScenes ingestion
@@ -365,6 +431,7 @@ make local-down
 | `make worker-cli` | Run worker CLI (help) |
 | `make worker-run-job JOB_ID=...` | Run a specific job directly |
 | `make worker-run-pipeline PIPELINE_RUN_ID=...` | Run a specific pipeline directly |
+| `make worker-run-pipeline-task PIPELINE_RUN_ID=... TASK_ID=...` | Run one pipeline task directly (Airflow-compatible entry point) |
 
 ### E2E
 
@@ -442,13 +509,13 @@ Previous E2E results were confirmed passing. Makefile targets were dry-run valid
 
 ## Roadmap
 
+- Airflow DAG integration using `sceneops-worker run-pipeline-task` as the DockerOperator / KubernetesPodOperator command
 - Raw-log / ROS bag scene building pipeline
 - Dataset sample index artifact
 - Scenario mining and readiness scoring
 - Auto-labeling with `labeler_id`-based `LabelerRegistry`
 - Real detector integration through inference server
 - Dataset export for generated and reconstructed scenes
-- Airflow orchestration backend integration
 - Cloud object storage support beyond local MinIO
 
 ---
