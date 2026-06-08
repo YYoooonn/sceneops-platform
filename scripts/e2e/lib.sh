@@ -161,3 +161,27 @@ upsert_dataset() {
     -H "Content-Type: application/json" \
     -d "{\"dataset_id\": \"$dataset_id\", \"name\": \"$name\", \"metadata\": {}}"
 }
+
+
+upsert_model() {
+  local api_base_url="$1"
+  local model_id="$2"
+  local model_version="$3"
+  local name="$4"
+
+  local existing
+  existing="$(curl -sS "$(api_url "$api_base_url" "/models/$model_id/versions/$model_version")")"
+
+  if echo "$existing" | jq -e '.version' >/dev/null 2>&1; then
+    echo "$existing"
+    return 0
+  fi
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/models")" \
+    -H "Content-Type: application/json" \
+    -d "{\"modelId\": \"$model_id\", \"name\": \"$name\", \"metadata\": {}}"
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/models/$model_id/versions")" \
+    -H "Content-Type: application/json" \
+    -d "{\"version\": \"$model_version\", \"backend\": \"mock\", \"metadata\": {}}"
+}

@@ -110,6 +110,7 @@ help:
 	@echo "  make e2e-api-smoke"
 	@echo "  make e2e-dataset-scene-ingestion"
 	@echo "  make e2e-detection-evaluation"
+	@echo "  make e2e-pipeline-contracts"
 	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"
@@ -502,8 +503,15 @@ e2e-detection-evaluation:
 	MODEL_ID=$(MODEL_ID) MODEL_VERSION=$(MODEL_VERSION) \
 	scripts/e2e/e2e_detection_evaluation.sh
 
+.PHONY: e2e-pipeline-contracts
+e2e-pipeline-contracts:
+	chmod +x scripts/e2e/e2e_pipeline_contracts.sh
+	API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	scripts/e2e/e2e_pipeline_contracts.sh
+
 .PHONY: e2e
-e2e: e2e-api-smoke e2e-dataset-scene-ingestion e2e-detection-evaluation
+e2e: e2e-api-smoke e2e-dataset-scene-ingestion e2e-detection-evaluation e2e-pipeline-contracts
 
 # Backward-compatible alias
 .PHONY: e2e-dataset-ingest

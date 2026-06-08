@@ -142,9 +142,9 @@ echo "--- 7. Assert build_scenes refs ---"
 
 BUILD_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "build_scenes")')"
 
-RAW_LOG_MANIFEST_URI="$(echo "$BUILD_TASK" | jq -r '.result.refs.raw_log_manifest_uri // empty')"
-RAW_FRAME_INDEX_URI="$(echo "$BUILD_TASK" | jq -r '.result.refs.raw_log_frame_index_uri // empty')"
-SEGMENT_INDEX_URI="$(echo "$BUILD_TASK" | jq -r '.result.refs.scene_segment_index_uri // empty')"
+RAW_LOG_MANIFEST_URI="$(echo "$BUILD_TASK" | jq -r '.result.artifacts.raw_log_manifest_uri // empty')"
+RAW_FRAME_INDEX_URI="$(echo "$BUILD_TASK" | jq -r '.result.artifacts.raw_log_frame_index_uri // empty')"
+SEGMENT_INDEX_URI="$(echo "$BUILD_TASK" | jq -r '.result.artifacts.scene_segment_index_uri // empty')"
 SCENE_MANIFEST_URIS_COUNT="$(echo "$BUILD_TASK" | jq -r '.result.refs.scene_manifest_uris | length // 0')"
 OBS_COUNT="$(echo "$BUILD_TASK" | jq -r '.result.summary.observation_count // 0')"
 
@@ -174,7 +174,7 @@ echo ""
 # ── 9. Assert build_scene_index refs ─────────────────────────────────────────
 
 echo "--- 9. Assert build_scene_index refs ---"
-SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.refs.scene_index_uri // empty')"
+SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.artifacts.scene_index_uri // empty')"
 echo "  scene_index_uri=$SCENE_INDEX_URI"
 [ -n "$SCENE_INDEX_URI" ] || { echo "❌ build_scene_index: missing scene_index_uri" >&2; exit 1; }
 echo "  OK"

@@ -144,7 +144,7 @@ if [ "${REG_COUNT:-0}" -lt 1 ]; then
 fi
 
 # build_scene_index: scene_index_uri exists
-SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.refs.scene_index_uri // empty')"
+SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.artifacts.scene_index_uri // empty')"
 echo "  build_scene_index scene_index_uri=$SCENE_INDEX_URI"
 if [ -z "$SCENE_INDEX_URI" ]; then
   echo "❌ build_scene_index: expected scene_index_uri" >&2; exit 1

@@ -39,6 +39,12 @@ echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  MODEL_ID=$MODEL_ID  MODEL_VERSION=$MODEL_VERSION"
 echo ""
 
+# ── 0. Ensure model exists ────────────────────────────────────────────────────
+
+echo "--- 0. Upsert model ---"
+upsert_model "$API_BASE_URL" "$MODEL_ID" "$MODEL_VERSION" "dummy detector" | jq '.version | {id, modelId}' 2>/dev/null || true
+echo ""
+
 # ── 1. Create pipeline run ────────────────────────────────────────────────────
 
 echo "--- 1. Create pipeline run ---"
@@ -119,8 +125,8 @@ echo ""
 
 echo "--- 6. Extract run IDs ---"
 CONTEXT_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/pipelines/runs/$PIPELINE_RUN_ID")")"
-INFERENCE_RUN_ID="$(echo "$CONTEXT_JSON" | jq -r '.pipelineRun.result.summary.inference_run_id // empty')"
-EVALUATION_RUN_ID="$(echo "$CONTEXT_JSON" | jq -r '.pipelineRun.result.summary.evaluation_run_id // empty')"
+INFERENCE_RUN_ID="$(echo "$CONTEXT_JSON" | jq -r '.pipelineRun.result.outputs.inference_run_id // empty')"
+EVALUATION_RUN_ID="$(echo "$CONTEXT_JSON" | jq -r '.pipelineRun.result.outputs.evaluation_run_id // empty')"
 echo "  inference_run_id=$INFERENCE_RUN_ID"
 echo "  evaluation_run_id=$EVALUATION_RUN_ID"
 
