@@ -1,4 +1,11 @@
-from .definitions import PipelineDefinition, PipelineTaskDefinition
+from .definitions import (
+    PipelineDefinition,
+    PipelineTaskDefinition,
+    PipelineTaskOutputKind,
+    PipelineTaskOutputSpec,
+    PipelineTaskQualityRule,
+    PipelineTaskQualityRuleType,
+)
 from .enums import PipelineRunStatus, PipelineTaskRunStatus, PipelineType
 from .inputs import (
     DatasetInputRef,
@@ -22,6 +29,10 @@ __all__ = [
     "PipelineTaskRunStatus",
     "PipelineDefinition",
     "PipelineTaskDefinition",
+    "PipelineTaskOutputKind",
+    "PipelineTaskOutputSpec",
+    "PipelineTaskQualityRule",
+    "PipelineTaskQualityRuleType",
     "PipelineRunManifest",
     "PipelineTaskRunManifest",
     "CreatePipelineRunRequest",

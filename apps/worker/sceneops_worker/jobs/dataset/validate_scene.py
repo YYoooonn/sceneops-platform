@@ -9,6 +9,7 @@ from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import default_validation_run_id, generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
+from sceneops_core.datasets.schemas import DatasetValidationStatus
 from sceneops_core.jobs.schemas import (
     JobType,
     ValidateSceneJobParams,
@@ -78,6 +79,32 @@ class ValidateSceneJobHandler(
     ) -> tuple[SceneValidationRunRecord, ValidateSceneJobResult]:
         run_id = initial_record.run_id
         uris = _resolve_scene_manifest_uris(params)
+
+        if not uris:
+            failed_record = initial_record.model_copy(
+                update={
+                    "status": RunStatus.SUCCEEDED,
+                    "validation_status": "failed",
+                    "should_block_pipeline": True,
+                    "issue_count": 1,
+                    "finished_at": utc_now(),
+                }
+            )
+            return failed_record, ValidateSceneJobResult(
+                status="failed",
+                should_block_pipeline=True,
+                checked_scene_count=0,
+                issue_count=1,
+                validation_run_id=run_id,
+                metadata={
+                    "issues": [
+                        {
+                            "code": "empty_scene_manifest_input",
+                            "message": "validate_scene requires at least one scene manifest URI.",
+                        }
+                    ]
+                },
+            )
 
         total_issues = 0
         blocking = False
@@ -151,6 +178,20 @@ class ValidateSceneJobHandler(
                 pipeline_run_id=job.pipeline_run_id,
             )
 
+        dataset_id = job.params.get("dataset_id")
+        dataset_version = job.params.get("dataset_version")
+        if dataset_id and dataset_version:
+            await context.dataset_store.update_quality_cache(
+                dataset_id=dataset_id,
+                version=dataset_version,
+                latest_validation_run_id=run_id,
+                validation_status=DatasetValidationStatus(
+                    "failed" if blocking else "ready"
+                ),
+                should_block_pipeline=blocking,
+                validation_report_uri=report_uri,
+            )
+
         succeeded_record = initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
@@ -167,6 +208,7 @@ class ValidateSceneJobHandler(
             should_block_pipeline=blocking,
             checked_scene_count=len(uris),
             issue_count=total_issues,
+            validation_run_id=run_id,
             report_uri=report_uri,
         )
 

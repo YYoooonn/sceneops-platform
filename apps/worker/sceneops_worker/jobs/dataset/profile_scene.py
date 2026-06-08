@@ -79,6 +79,9 @@ class ProfileSceneJobHandler(
         run_id = initial_record.run_id
         uris = _resolve_scene_manifest_uris(params)
 
+        if not uris:
+            raise ValueError("profile_scene requires at least one scene manifest URI.")
+
         total_samples = 0
         total_frames = 0
         total_annotations = 0
@@ -147,6 +150,16 @@ class ProfileSceneJobHandler(
                 pipeline_run_id=job.pipeline_run_id,
             )
 
+        dataset_id = job.params.get("dataset_id")
+        dataset_version = job.params.get("dataset_version")
+        if dataset_id and dataset_version:
+            await context.dataset_store.update_quality_cache(
+                dataset_id=dataset_id,
+                version=dataset_version,
+                latest_profile_run_id=run_id,
+                profile_report_uri=report_uri,
+            )
+
         succeeded_record = initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
@@ -164,6 +177,7 @@ class ProfileSceneJobHandler(
             sample_count=total_samples,
             frame_count=total_frames,
             observed_channels=observed_channels,
+            profile_run_id=run_id,
             report_uri=report_uri,
         )
 

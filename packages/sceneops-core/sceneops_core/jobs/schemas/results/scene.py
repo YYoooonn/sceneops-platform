@@ -67,6 +67,7 @@ class ValidateSceneJobResult(BaseJobResult):
     checked_scene_count: int = 0
     issue_count: int = 0
 
+    validation_run_id: str | None = None
     report_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
@@ -81,6 +82,7 @@ class ProfileSceneJobResult(BaseJobResult):
     asset_summary: JsonDict = Field(default_factory=dict)
     world_state_summary: JsonDict = Field(default_factory=dict)
 
+    profile_run_id: str | None = None
     report_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

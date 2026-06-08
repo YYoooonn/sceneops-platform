@@ -12,11 +12,15 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.pipelines.result_builder import (
     build_pipeline_result_from_task_runs,
 )
+from sceneops_worker.pipelines.task_execution import (
+    PipelineTaskOutcome,
+    PipelineTaskRunResult,
+)
 from sceneops_worker.pipelines.task_runner import PipelineTaskRunner
 
 
 class PipelineRunner:
-    """Orchestrates a full pipeline run by invoking PipelineTaskRunner for each task."""
+    """Local/dev sequential orchestrator for a full pipeline run."""
 
     def __init__(self, context: WorkerContext) -> None:
         self._context = context
@@ -27,41 +31,45 @@ class PipelineRunner:
 
         self._validate_runnable(pipeline_run)
 
-        pipeline_run = await self._mark_pipeline_running(pipeline_run)
-        await self._context.commit()
+        pipeline_run = await self._start_pipeline(pipeline_run)
 
         definition = get_pipeline_definition(pipeline_run.type)
-        ordered_tasks = sorted(definition.tasks, key=lambda t: t.order)
+        ordered_tasks = sorted(definition.tasks, key=lambda task: task.order)
 
         try:
             for task_def in ordered_tasks:
-                await self._task_runner.run(
-                    pipeline_run_id=pipeline_run_id,
+                task_result = await self._task_runner.run(
+                    pipeline_run_id=pipeline_run.pipeline_run_id,
                     task_id=task_def.pipeline_task_id,
                 )
 
-            # Reload all task runs to get the normalized results written by the recorder.
-            finished_task_runs = await self._context.pipeline_store.list_tasks(
-                pipeline_run_id
+                if self._is_blocked_task(task_result):
+                    return await self._block_pipeline_from_task_result(
+                        pipeline_run=pipeline_run,
+                        task_result=task_result,
+                    )
+
+            finished_task_runs = await self._list_task_runs(
+                pipeline_run.pipeline_run_id
             )
 
-            result = await self._mark_pipeline_succeeded(
-                pipeline_run,
+            return await self._succeed_pipeline(
+                pipeline_run=pipeline_run,
                 task_runs=finished_task_runs,
             )
-            await self._context.commit()
-            return result
 
         except Exception as error:
-            # Reload to capture any normalized results committed before failure.
-            completed_task_runs = await self._context.pipeline_store.list_tasks(
-                pipeline_run_id
+            completed_task_runs = await self._list_task_runs(
+                pipeline_run.pipeline_run_id
             )
+
             return await self._fail_and_raise(
                 pipeline_run=pipeline_run,
                 task_runs=completed_task_runs,
                 error=error,
             )
+
+    # ── loading / validation ─────────────────────────────────────────────────
 
     async def _load_pipeline_run(
         self,
@@ -90,7 +98,14 @@ class PipelineRunner:
                 f"Pipeline run is cancelled: {pipeline_run.pipeline_run_id}"
             )
 
-    async def _mark_pipeline_running(
+        if pipeline_run.status == PipelineRunStatus.BLOCKED:
+            raise RuntimeError(
+                f"Pipeline run is already blocked: {pipeline_run.pipeline_run_id}"
+            )
+
+    # ── execution ────────────────────────────────────────────────────────────
+
+    async def _start_pipeline(
         self,
         pipeline_run: PipelineRunManifest,
     ) -> PipelineRunManifest:
@@ -102,12 +117,29 @@ class PipelineRunner:
         pipeline_run.finished_at = None
         pipeline_run.error = None
 
-        return await self._context.pipeline_store.save(pipeline_run)
+        saved = await self._context.pipeline_store.save(pipeline_run)
+        await self._context.commit()
 
-    async def _mark_pipeline_succeeded(
+        return saved
+
+    def _is_blocked_task(
         self,
-        pipeline_run: PipelineRunManifest,
+        task_result: PipelineTaskRunResult,
+    ) -> bool:
+        return task_result.outcome == PipelineTaskOutcome.BLOCKED
+
+    async def _list_task_runs(
+        self,
+        pipeline_run_id: str,
+    ) -> list[PipelineTaskRunManifest]:
+        return await self._context.pipeline_store.list_tasks(pipeline_run_id)
+
+    # ── terminal transitions ─────────────────────────────────────────────────
+
+    async def _succeed_pipeline(
+        self,
         *,
+        pipeline_run: PipelineRunManifest,
         task_runs: list[PipelineTaskRunManifest],
     ) -> PipelineRunManifest:
         now = utc_now()
@@ -122,12 +154,58 @@ class PipelineRunner:
             status=PipelineRunStatus.SUCCEEDED,
         )
 
-        return await self._context.pipeline_store.save(pipeline_run)
+        saved = await self._context.pipeline_store.save(pipeline_run)
+        await self._context.commit()
 
-    async def _mark_pipeline_failed(
+        return saved
+
+    async def _block_pipeline_from_task_result(
         self,
-        pipeline_run: PipelineRunManifest,
         *,
+        pipeline_run: PipelineRunManifest,
+        task_result: PipelineTaskRunResult,
+    ) -> PipelineRunManifest:
+        task_runs = await self._list_task_runs(pipeline_run.pipeline_run_id)
+
+        message = self._build_blocked_message(task_result)
+
+        return await self._block_pipeline(
+            pipeline_run=pipeline_run,
+            task_runs=task_runs,
+            error=ErrorInfo(
+                type="PipelineQualityBlocked",
+                message=message,
+            ),
+        )
+
+    async def _block_pipeline(
+        self,
+        *,
+        pipeline_run: PipelineRunManifest,
+        task_runs: list[PipelineTaskRunManifest],
+        error: ErrorInfo,
+    ) -> PipelineRunManifest:
+        now = utc_now()
+
+        pipeline_run.status = PipelineRunStatus.BLOCKED
+        pipeline_run.error = error
+        pipeline_run.finished_at = now
+        pipeline_run.updated_at = now
+        pipeline_run.result = build_pipeline_result_from_task_runs(
+            pipeline_run=pipeline_run,
+            task_runs=task_runs,
+            status=PipelineRunStatus.BLOCKED,
+        )
+
+        saved = await self._context.pipeline_store.save(pipeline_run)
+        await self._context.commit()
+
+        return saved
+
+    async def _fail_pipeline(
+        self,
+        *,
+        pipeline_run: PipelineRunManifest,
         task_runs: list[PipelineTaskRunManifest],
         error: ErrorInfo,
     ) -> PipelineRunManifest:
@@ -143,7 +221,10 @@ class PipelineRunner:
             status=PipelineRunStatus.FAILED,
         )
 
-        return await self._context.pipeline_store.save(pipeline_run)
+        saved = await self._context.pipeline_store.save(pipeline_run)
+        await self._context.commit()
+
+        return saved
 
     async def _fail_and_raise(
         self,
@@ -154,14 +235,29 @@ class PipelineRunner:
     ) -> PipelineRunManifest:
         await self._context.rollback()
 
-        await self._mark_pipeline_failed(
-            pipeline_run,
+        await self._fail_pipeline(
+            pipeline_run=pipeline_run,
             task_runs=task_runs,
             error=ErrorInfo(
                 type=error.__class__.__name__,
                 message=str(error),
             ),
         )
-        await self._context.commit()
 
         raise error
+
+    # ── messages ─────────────────────────────────────────────────────────────
+
+    def _build_blocked_message(
+        self,
+        task_result: PipelineTaskRunResult,
+    ) -> str:
+        task_run = task_result.task_run
+
+        if task_run.error is not None:
+            return task_run.error.message
+
+        return (
+            "Pipeline blocked by quality gate at task "
+            f"'{task_run.pipeline_task_id}'."
+        )

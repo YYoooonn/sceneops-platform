@@ -45,6 +45,11 @@ class BuildSceneIndexJobHandler(
 
         uris = list(params.scene_manifest_uris)
 
+        if not uris:
+            raise ValueError(
+                "build_scene_index requires at least one scene manifest URI."
+            )
+
         entries: list[DatasetSceneIndexEntry] = []
         total_samples = 0
         total_frames = 0

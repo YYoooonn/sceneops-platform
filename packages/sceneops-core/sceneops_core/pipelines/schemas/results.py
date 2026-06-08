@@ -36,6 +36,8 @@ class PipelineTaskResult(SceneOpsBaseModel):
 
     refs: JsonDict = Field(default_factory=dict)
     summary: JsonDict = Field(default_factory=dict)
+    metrics: JsonDict = Field(default_factory=dict)
+    artifacts: JsonDict = Field(default_factory=dict)
     raw_result: JsonDict = Field(default_factory=dict)
 
     error: ErrorInfo | None = None
@@ -44,6 +46,7 @@ class PipelineTaskResult(SceneOpsBaseModel):
 class PipelineRunResult(SceneOpsBaseModel):
     summary: JsonDict = Field(default_factory=dict)
     lineage: PipelineLineage = Field(default_factory=PipelineLineage)
-    outputs: dict[str, JsonDict] = Field(default_factory=dict)
+    outputs: JsonDict = Field(default_factory=dict)
+    metrics: JsonDict = Field(default_factory=dict)
 
     tasks: list[PipelineTaskResult] = Field(default_factory=list)

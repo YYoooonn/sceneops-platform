@@ -68,6 +68,12 @@ class BuildDatasetManifestJobHandler(
                 s.scene_manifest_uri for s in uris if s.scene_manifest_uri is not None
             ]
 
+        if not uris:
+            raise ValueError(
+                "build_dataset_manifest requires a scene index URI or at least one "
+                "scene manifest URI."
+            )
+
         scenes: list[DatasetSceneIndexEntry] = []
         total_samples = 0
         total_frames = 0

@@ -5,9 +5,203 @@ from sceneops_core.pipelines.registry import PipelineDefinitionRegistry
 from sceneops_core.pipelines.schemas import (
     PipelineDefinition,
     PipelineTaskDefinition,
+    PipelineTaskOutputKind,
+    PipelineTaskOutputSpec,
+    PipelineTaskQualityRule,
+    PipelineTaskQualityRuleType,
     PipelineType,
 )
 
+# ── Shared output / quality-rule declarations ──────────────────────────────────
+# Reused across pipeline definitions that share the same task type.
+
+_REF = PipelineTaskOutputKind.REF
+_SUMMARY = PipelineTaskOutputKind.SUMMARY
+_METRIC = PipelineTaskOutputKind.METRIC
+_ARTIFACT = PipelineTaskOutputKind.ARTIFACT
+
+_INGEST_SCENES_OUTPUTS = [
+    PipelineTaskOutputSpec(
+        name="scene_manifest_uris", kind=_REF, source="scene_manifest_uris"
+    ),
+    PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
+    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+]
+
+_BUILD_SCENES_OUTPUTS = [
+    # scene_manifest_uris consumed by register_scene → REF.
+    PipelineTaskOutputSpec(
+        name="scene_manifest_uris", kind=_REF, source="scene_manifest_uris"
+    ),
+    # Diagnostic/archival URIs not consumed by downstream tasks → ARTIFACT.
+    PipelineTaskOutputSpec(
+        name="scene_segment_index_uri", kind=_ARTIFACT, source="scene_segment_index_uri"
+    ),
+    PipelineTaskOutputSpec(
+        name="raw_log_manifest_uri", kind=_ARTIFACT, source="raw_log_manifest_uri"
+    ),
+    PipelineTaskOutputSpec(
+        name="raw_log_frame_index_uri", kind=_ARTIFACT, source="raw_log_frame_index_uri"
+    ),
+    PipelineTaskOutputSpec(name="records_uri", kind=_ARTIFACT, source="records_uri"),
+    PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
+    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+    PipelineTaskOutputSpec(name="source_type", kind=_SUMMARY, source="source_type"),
+    PipelineTaskOutputSpec(name="source_format", kind=_SUMMARY, source="source_format"),
+    PipelineTaskOutputSpec(
+        name="observation_count", kind=_SUMMARY, source="observation_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="segmentation_strategy", kind=_SUMMARY, source="segmentation_strategy"
+    ),
+    PipelineTaskOutputSpec(
+        name="sampling_strategy", kind=_SUMMARY, source="sampling_strategy"
+    ),
+]
+
+_REGISTER_SCENE_OUTPUTS = [
+    PipelineTaskOutputSpec(
+        name="scene_manifest_uris", kind=_REF, source="scene_manifest_uris"
+    ),
+    PipelineTaskOutputSpec(
+        name="registered_scene_count", kind=_SUMMARY, source="registered_scene_count"
+    ),
+]
+
+_VALIDATE_SCENE_OUTPUTS = [
+    # validation_run_id kept as REF for cross-referencing from quality cache.
+    PipelineTaskOutputSpec(
+        name="validation_run_id", kind=_REF, source="validation_run_id"
+    ),
+    # Report URI not consumed by downstream tasks → ARTIFACT.
+    PipelineTaskOutputSpec(
+        name="validation_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="validation_report_uri",
+    ),
+    PipelineTaskOutputSpec(
+        name="validation_status",
+        kind=_SUMMARY,
+        source="status",
+        target="validation_status",
+    ),
+    PipelineTaskOutputSpec(
+        name="should_block_pipeline", kind=_SUMMARY, source="should_block_pipeline"
+    ),
+    PipelineTaskOutputSpec(name="issue_count", kind=_SUMMARY, source="issue_count"),
+    PipelineTaskOutputSpec(
+        name="checked_scene_count", kind=_SUMMARY, source="checked_scene_count"
+    ),
+]
+
+_VALIDATE_SCENE_QUALITY_RULES = [
+    PipelineTaskQualityRule(
+        rule_type=PipelineTaskQualityRuleType.BLOCK_IF_TRUE,
+        source="summary.should_block_pipeline",
+        message="Scene validation blocked pipeline",
+        code="validate_scene_blocked",
+    ),
+]
+
+_PROFILE_SCENE_OUTPUTS = [
+    # profile_run_id kept as REF for cross-referencing.
+    PipelineTaskOutputSpec(name="profile_run_id", kind=_REF, source="profile_run_id"),
+    # Report URI not consumed by downstream tasks → ARTIFACT.
+    PipelineTaskOutputSpec(
+        name="profile_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="profile_report_uri",
+    ),
+    PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
+    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+    PipelineTaskOutputSpec(
+        name="observed_channels", kind=_SUMMARY, source="observed_channels"
+    ),
+    PipelineTaskOutputSpec(
+        name="sensor_coverage_ratio", kind=_METRIC, source="sensor_coverage_ratio"
+    ),
+]
+
+_BUILD_SCENE_INDEX_OUTPUTS = [
+    # scene_manifest_uris consumed by build_dataset_manifest → REF.
+    PipelineTaskOutputSpec(
+        name="scene_manifest_uris", kind=_REF, source="scene_manifest_uris"
+    ),
+    # scene_index_uri not consumed downstream → ARTIFACT.
+    PipelineTaskOutputSpec(
+        name="scene_index_uri", kind=_ARTIFACT, source="scene_index_uri"
+    ),
+    PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
+    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+]
+
+_BUILD_DATASET_MANIFEST_OUTPUTS = [
+    PipelineTaskOutputSpec(
+        name="dataset_manifest_uri", kind=_REF, source="dataset_manifest_uri"
+    ),
+    PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
+    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+]
+
+_PREDICT_DETECTION_OUTPUTS = [
+    # inference_run_id consumed by evaluate_detection → REF.
+    PipelineTaskOutputSpec(
+        name="inference_run_id", kind=_REF, source="inference_run_id"
+    ),
+    # Prediction file URIs not consumed downstream → ARTIFACT.
+    PipelineTaskOutputSpec(
+        name="prediction_manifest_uri", kind=_ARTIFACT, source="prediction_manifest_uri"
+    ),
+    PipelineTaskOutputSpec(
+        name="predictions_root_uri", kind=_ARTIFACT, source="predictions_root_uri"
+    ),
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
+    PipelineTaskOutputSpec(
+        name="prediction_count", kind=_SUMMARY, source="prediction_count"
+    ),
+]
+
+_EVALUATE_DETECTION_OUTPUTS = [
+    # Run IDs kept as REFs for cross-referencing.
+    PipelineTaskOutputSpec(
+        name="evaluation_run_id", kind=_REF, source="evaluation_run_id"
+    ),
+    PipelineTaskOutputSpec(
+        name="inference_run_id", kind=_REF, source="inference_run_id"
+    ),
+    # File URIs not consumed downstream → ARTIFACT.
+    PipelineTaskOutputSpec(
+        name="evaluation_manifest_uri", kind=_ARTIFACT, source="evaluation_manifest_uri"
+    ),
+    PipelineTaskOutputSpec(name="metrics_uri", kind=_ARTIFACT, source="metrics_uri"),
+    PipelineTaskOutputSpec(
+        name="annotation_count", kind=_SUMMARY, source="annotation_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="prediction_count", kind=_SUMMARY, source="prediction_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="ground_truth_count", kind=_SUMMARY, source="ground_truth_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="evaluation_unit", kind=_SUMMARY, source="evaluation_unit"
+    ),
+    PipelineTaskOutputSpec(
+        name="primary_metric_name", kind=_METRIC, source="primary_metric_name"
+    ),
+    PipelineTaskOutputSpec(
+        name="primary_metric_value", kind=_METRIC, source="primary_metric_value"
+    ),
+]
+
+# ── Pipeline definitions ───────────────────────────────────────────────────────
 
 DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
     type=PipelineType.DATASET_SCENE_INGESTION,
@@ -26,6 +220,7 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
                 "source_format": "nuscenes",
                 "mode": "upsert",
             },
+            outputs=_INGEST_SCENES_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="register_scene",
@@ -36,6 +231,7 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             default_params={
                 "replace_existing": True,
             },
+            outputs=_REGISTER_SCENE_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="validate_scene",
@@ -47,6 +243,8 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
             optional=True,
+            outputs=_VALIDATE_SCENE_OUTPUTS,
+            quality_rules=_VALIDATE_SCENE_QUALITY_RULES,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="profile_scene",
@@ -59,6 +257,7 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
                 "profile_assets": True,
             },
             optional=True,
+            outputs=_PROFILE_SCENE_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="build_scene_index",
@@ -66,6 +265,7 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             order=4,
             job_type=JobType.BUILD_SCENE_INDEX,
             depends_on_pipeline_task_ids=["register_scene"],
+            outputs=_BUILD_SCENE_INDEX_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="build_dataset_manifest",
@@ -73,6 +273,7 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             order=5,
             job_type=JobType.BUILD_DATASET_MANIFEST,
             depends_on_pipeline_task_ids=["build_scene_index"],
+            outputs=_BUILD_DATASET_MANIFEST_OUTPUTS,
         ),
     ],
 )
@@ -96,6 +297,7 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
                 "build_assets": True,
                 "build_world_state": False,
             },
+            outputs=_BUILD_SCENES_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="register_scene",
@@ -106,6 +308,7 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             default_params={
                 "replace_existing": True,
             },
+            outputs=_REGISTER_SCENE_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="validate_scene",
@@ -117,6 +320,8 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
             optional=True,
+            outputs=_VALIDATE_SCENE_OUTPUTS,
+            quality_rules=_VALIDATE_SCENE_QUALITY_RULES,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="profile_scene",
@@ -125,6 +330,7 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             job_type=JobType.PROFILE_SCENE,
             depends_on_pipeline_task_ids=["register_scene"],
             optional=True,
+            outputs=_PROFILE_SCENE_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="build_scene_index",
@@ -132,6 +338,7 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             order=4,
             job_type=JobType.BUILD_SCENE_INDEX,
             depends_on_pipeline_task_ids=["register_scene"],
+            outputs=_BUILD_SCENE_INDEX_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="build_dataset_manifest",
@@ -139,6 +346,7 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             order=5,
             job_type=JobType.BUILD_DATASET_MANIFEST,
             depends_on_pipeline_task_ids=["build_scene_index"],
+            outputs=_BUILD_DATASET_MANIFEST_OUTPUTS,
         ),
     ],
 )
@@ -151,6 +359,9 @@ SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
         "Build physics-grounded scene representation from raw logs, validate/profile "
         "the scene, and export a reconstruction package."
     ),
+    supported=False,
+    experimental=True,
+    implemented=False,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="build_scenes",
@@ -208,6 +419,9 @@ SCENE_REGISTRATION_PIPELINE = PipelineDefinition(
         "Register a generated, reconstructed, simulated, or re-observed scene "
         "and run basic scene-level quality checks."
     ),
+    supported=False,
+    experimental=True,
+    implemented=False,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="register_scene",
@@ -252,6 +466,9 @@ SCENARIO_CURATION_PIPELINE = PipelineDefinition(
         "Mine scenario candidates from a dataset and score their reconstruction "
         "or evaluation readiness."
     ),
+    supported=False,
+    experimental=True,
+    implemented=False,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="mine_scenarios",
@@ -277,6 +494,9 @@ GENERATED_DATASET_PREPARATION_PIPELINE = PipelineDefinition(
         "Prepare generated or reconstructed scenes as a dataset version, "
         "optionally auto-label scenes, check distribution, and export the dataset."
     ),
+    supported=False,
+    experimental=True,
+    implemented=False,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="register_scene",
@@ -339,6 +559,7 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
             default_params={
                 "inference_backend": "mock",
             },
+            outputs=_PREDICT_DETECTION_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="evaluate_detection",
@@ -350,6 +571,7 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
                 "evaluator_id": "center-distance",
                 "match_distance_m": 2.0,
             },
+            outputs=_EVALUATE_DETECTION_OUTPUTS,
         ),
     ],
 )

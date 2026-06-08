@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
-
+from sceneops_core.common.schemas import JsonDict
 from sceneops_core.pipelines.schemas import (
     PipelineLineage,
     PipelineRunManifest,
@@ -20,33 +19,49 @@ def build_pipeline_result_from_task_runs(
 ) -> PipelineRunResult:
     """Build PipelineRunResult from persisted PipelineTaskRun.result records.
 
-    Aggregation priority per task: raw_result < summary < refs (refs highest).
-    Tasks processed in task_order — later tasks win on conflicting keys.
-    Artifact URIs collected from all _uri-suffixed string values in refs.
+    Each bucket is sourced exclusively from its dedicated task result bucket:
+      outputs         ← task.result.refs   (pipeline-level downstream refs)
+      metrics         ← task.result.metrics
+      lineage.artifacts ← task.result.artifacts
+      summary         ← pipeline status + task count fields only
+
+    Tasks are processed in task_order; later tasks win on conflicting keys.
+    raw_result is never promoted — it stays inside result.tasks[].raw_result.
     """
     tasks: list[PipelineTaskResult] = []
-    task_outputs: dict[str, Any] = {}
-    artifact_uris: dict[str, str] = {}
+    outputs: JsonDict = {}
+    metrics: JsonDict = {}
+    artifacts: dict[str, str] = {}
+
+    counts: dict[str, int] = {
+        "succeeded": 0,
+        "skipped": 0,
+        "blocked": 0,
+        "failed": 0,
+    }
 
     for task_run in sorted(task_runs, key=lambda t: t.task_order):
+        task_status = str(task_run.status)
+        if task_status in counts:
+            counts[task_status] += 1
+
         if task_run.result is not None:
             tr = task_run.result
             tasks.append(tr)
 
-            # Merge: raw_result < summary < refs
-            merged: dict[str, Any] = {}
-            for src in (tr.raw_result, tr.summary, tr.refs):
-                for k, v in src.items():
-                    if v is not None:
-                        merged[k] = v
+            for k, v in tr.refs.items():
+                if v is not None:
+                    outputs[k] = v
 
-            for k, v in merged.items():
-                task_outputs[k] = v
-                if isinstance(v, str) and k.endswith("_uri") and v:
-                    artifact_uris[k] = v
+            for k, v in tr.metrics.items():
+                if v is not None:
+                    metrics[k] = v
+
+            for k, v in tr.artifacts.items():
+                if isinstance(v, str) and v:
+                    artifacts[k] = v
 
         elif task_run.job_id is not None:
-            # Minimal placeholder for completed task runs with no stored result
             tasks.append(
                 PipelineTaskResult(
                     pipeline_task_id=task_run.pipeline_task_id,
@@ -57,18 +72,19 @@ def build_pipeline_result_from_task_runs(
                 )
             )
 
-    run_summary: dict[str, Any] = {
+    run_summary: JsonDict = {
         "status": status.value,
-        "dataset_id": pipeline_run.dataset_id,
-        "dataset_version": pipeline_run.dataset_version,
-        "model_id": pipeline_run.model_id,
-        "model_version": pipeline_run.model_version,
-        **{k: v for k, v in task_outputs.items() if v is not None},
+        "task_count": len(task_runs),
+        "succeeded_task_count": counts["succeeded"],
+        "skipped_task_count": counts["skipped"],
+        "blocked_task_count": counts["blocked"],
+        "failed_task_count": counts["failed"],
     }
 
     return PipelineRunResult(
         summary=run_summary,
-        lineage=PipelineLineage(artifacts=artifact_uris),
-        outputs={},
+        lineage=PipelineLineage(artifacts=artifacts),
+        outputs=outputs,
+        metrics=metrics,
         tasks=tasks,
     )

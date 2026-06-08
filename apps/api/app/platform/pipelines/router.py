@@ -57,7 +57,10 @@ async def create_pipeline_run(
     request: CreatePipelineRunRequest,
     service: PipelineServiceDep,
 ) -> PipelineRunDetailResponse:
-    return await service.create_pipeline_run(request)
+    try:
+        return await service.create_pipeline_run(request)
+    except ValueError as exc:
+        raise_bad_request(str(exc))
 
 
 @router.get("/runs", response_model=PipelineRunListResponse)
