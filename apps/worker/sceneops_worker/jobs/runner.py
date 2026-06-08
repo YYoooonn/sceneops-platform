@@ -17,6 +17,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandlerRequest
+from sceneops_worker.jobs.execution import JobExecution
 from sceneops_worker.jobs.registry import (
     JobHandlerRegistry,
     create_default_job_handler_registry,
@@ -71,106 +72,27 @@ class JobRunner:
         )
 
     async def run(self, job_id: str) -> JobManifest:
-        job = await self._load_job(job_id)
-
-        self._validate_runnable(job)
-
-        job = await self._mark_job_running(job)
-        await self.context.commit()
-
-        await self._append_event(
-            job=job,
-            event_type=JobEventType.STARTED,
-            status=JobStatus.RUNNING,
-            message="Job started",
-            data={"worker_id": self.worker_id, "job_type": job.type.value},
-        )
-        await self.context.commit()
-
-        running_step = self._get_running_step(job)
-        running_step_id, running_step_name = (
-            running_step if running_step is not None else (None, None)
-        )
+        execution = await self._prepare_execution(job_id)
 
         try:
-            if running_step is not None:
-                await self._append_event(
-                    job=job,
-                    event_type=JobEventType.STEP_STARTED,
-                    job_step_id=running_step_id,
-                    job_step_name=running_step_name,
-                    job_step_status=JobStepStatus.RUNNING,
-                    message=f"Step started: {running_step_name}",
-                )
-                await self.context.commit()
-
-            result = await self._execute_job(job)
-            result_payload = self._to_result_payload(result)
-
-            if running_step is not None:
-                await self._append_event(
-                    job=job,
-                    event_type=JobEventType.STEP_SUCCEEDED,
-                    job_step_id=running_step_id,
-                    job_step_name=running_step_name,
-                    job_step_status=JobStepStatus.SUCCEEDED,
-                    message=f"Step succeeded: {running_step_name}",
-                )
-                await self.context.commit()
-
-            job = await self._mark_job_succeeded(job, result=result_payload)
-            await self.context.commit()
-
-            await self._append_event(
-                job=job,
-                event_type=JobEventType.SUCCEEDED,
-                status=JobStatus.SUCCEEDED,
-                message="Job succeeded",
-            )
-            await self.context.commit()
-
-            return job
+            await self._start_job(execution)
+            await self._start_step(execution)
+            await self._execute_handler(execution)
+            await self._complete_step(execution)
+            await self._complete_job(execution)
+            return execution.job
 
         except Exception as error:
             await self.context.rollback()
-
-            if running_step is not None:
-                await self._append_event(
-                    job=job,
-                    event_type=JobEventType.STEP_FAILED,
-                    level=JobEventLevel.ERROR,
-                    job_step_id=running_step_id,
-                    job_step_name=running_step_name,
-                    job_step_status=JobStepStatus.FAILED,
-                    message=f"Step failed: {running_step_name}",
-                    error=ErrorInfo(
-                        type=error.__class__.__name__,
-                        message=str(error),
-                    ),
-                )
-
-            job = await self._mark_job_failed(
-                job,
-                error=ErrorInfo(
-                    type=error.__class__.__name__,
-                    message=str(error),
-                ),
-            )
-
-            await self._append_event(
-                job=job,
-                event_type=JobEventType.FAILED,
-                level=JobEventLevel.ERROR,
-                status=JobStatus.FAILED,
-                message="Job failed",
-                error=ErrorInfo(
-                    type=error.__class__.__name__,
-                    message=str(error),
-                ),
-            )
-            await self.context.commit()
-
+            await self._fail_execution(execution, error)
             raise
+
+    # ── preparation ───────────────────────────────────────────────────────────
+
+    async def _prepare_execution(self, job_id: str) -> JobExecution:
+        job = await self._load_job(job_id)
+        self._validate_runnable(job)
+        return JobExecution(job=job, worker_id=self.worker_id)
 
     async def _load_job(self, job_id: str) -> JobManifest:
         job = await self.context.job_store.get(job_id)
@@ -190,23 +112,128 @@ class JobRunner:
         if job.status == JobStatus.CANCELLED:
             raise RuntimeError(f"Job is cancelled: {job.job_id}")
 
-    async def _execute_job(self, job: JobManifest) -> BaseModel:
-        handler = self.handler_registry.get(job.type)
+    # ── lifecycle steps ───────────────────────────────────────────────────────
+
+    async def _start_job(self, execution: JobExecution) -> None:
+        saved_job = await self._mark_job_running(execution.job)
+        await self.context.commit()
+
+        execution.update_job(saved_job)
+
+        await self._append_event(
+            job=execution.job,
+            event_type=JobEventType.STARTED,
+            status=JobStatus.RUNNING,
+            message="Job started",
+            data={"worker_id": self.worker_id, "job_type": execution.job.type.value},
+        )
+        await self.context.commit()
+
+        running_step = self._get_running_step(execution.job)
+        step_id, step_name = running_step if running_step is not None else (None, None)
+        execution.update_running_step(step_id=step_id, step_name=step_name)
+
+    async def _start_step(self, execution: JobExecution) -> None:
+        if execution.running_step_id is None:
+            return
+
+        await self._append_event(
+            job=execution.job,
+            event_type=JobEventType.STEP_STARTED,
+            job_step_id=execution.running_step_id,
+            job_step_name=execution.running_step_name,
+            job_step_status=JobStepStatus.RUNNING,
+            message=f"Step started: {execution.running_step_name}",
+        )
+        await self.context.commit()
+
+    async def _execute_handler(self, execution: JobExecution) -> None:
+        handler = self.handler_registry.get(execution.job.type)
 
         try:
-            params = handler.params_model.model_validate(job.params)
+            params = handler.params_model.model_validate(execution.job.params)
         except ValidationError as exc:
             raise ValueError(
-                f"Invalid params for job {job.job_id} of type {job.type}: {exc}"
+                f"Invalid params for job {execution.job.job_id} of type "
+                f"{execution.job.type}: {exc}"
             ) from exc
 
-        return await handler.run(
+        result = await handler.run(
             JobHandlerRequest(
-                job=job,
+                job=execution.job,
                 params=params,
                 context=self.context,
             )
         )
+        execution.update_handler_result(result, self._to_result_payload(result))
+
+    async def _complete_step(self, execution: JobExecution) -> None:
+        if execution.running_step_id is None:
+            return
+
+        await self._append_event(
+            job=execution.job,
+            event_type=JobEventType.STEP_SUCCEEDED,
+            job_step_id=execution.running_step_id,
+            job_step_name=execution.running_step_name,
+            job_step_status=JobStepStatus.SUCCEEDED,
+            message=f"Step succeeded: {execution.running_step_name}",
+        )
+        await self.context.commit()
+
+    async def _complete_job(self, execution: JobExecution) -> None:
+        saved_job = await self._mark_job_succeeded(
+            execution.job,
+            result=execution.result_payload or {},
+        )
+        await self.context.commit()
+
+        execution.update_job(saved_job)
+
+        await self._append_event(
+            job=execution.job,
+            event_type=JobEventType.SUCCEEDED,
+            status=JobStatus.SUCCEEDED,
+            message="Job succeeded",
+        )
+        await self.context.commit()
+
+    async def _fail_execution(
+        self,
+        execution: JobExecution,
+        error: Exception,
+    ) -> None:
+        error_info = self._error_info(error)
+
+        if execution.running_step_id is not None:
+            await self._append_event(
+                job=execution.job,
+                event_type=JobEventType.STEP_FAILED,
+                level=JobEventLevel.ERROR,
+                job_step_id=execution.running_step_id,
+                job_step_name=execution.running_step_name,
+                job_step_status=JobStepStatus.FAILED,
+                message=f"Step failed: {execution.running_step_name}",
+                error=error_info,
+            )
+
+        failed_job = await self._mark_job_failed(execution.job, error=error_info)
+        execution.update_job(failed_job)
+
+        await self._append_event(
+            job=execution.job,
+            event_type=JobEventType.FAILED,
+            level=JobEventLevel.ERROR,
+            status=JobStatus.FAILED,
+            message="Job failed",
+            error=error_info,
+        )
+        await self.context.commit()
+
+    # ── internal helpers ──────────────────────────────────────────────────────
+
+    def _error_info(self, error: Exception) -> ErrorInfo:
+        return ErrorInfo(type=error.__class__.__name__, message=str(error))
 
     def _to_result_payload(self, result: BaseModel | dict[str, Any]) -> dict[str, Any]:
         if isinstance(result, BaseModel):
