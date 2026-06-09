@@ -269,7 +269,6 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
-            optional=True,
             outputs=_VALIDATE_SCENE_OUTPUTS,
             quality_rules=_VALIDATE_SCENE_QUALITY_RULES,
         ),
@@ -346,7 +345,6 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             default_params={
                 "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
             },
-            optional=True,
             outputs=_VALIDATE_SCENE_OUTPUTS,
             quality_rules=_VALIDATE_SCENE_QUALITY_RULES,
         ),

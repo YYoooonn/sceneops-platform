@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.jobs.schemas import (
@@ -86,6 +86,37 @@ class PostgresJobRepository:
         stmt = select(JobModel.status, func.count()).group_by(JobModel.status)
         result = await self._session.execute(stmt)
         return {row[0]: row[1] for row in result.all()}
+
+    async def claim_for_run(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        runnable_statuses: set[JobStatus],
+    ) -> JobManifest | None:
+        now = func.now()
+
+        stmt = (
+            update(JobModel)
+            .where(JobModel.job_id == job_id)
+            .where(JobModel.status.in_([enum_value(s) for s in runnable_statuses]))
+            .values(
+                status=enum_value(JobStatus.RUNNING),
+                worker_id=worker_id,
+                locked_at=now,
+                heartbeat_at=now,
+                started_at=func.coalesce(JobModel.started_at, now),
+                finished_at=None,
+                error=None,
+                updated_at=now,
+            )
+            .returning(JobModel)
+        )
+
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        return job_model_to_manifest(model) if model is not None else None
 
 
 class PostgresJobEventRepository:

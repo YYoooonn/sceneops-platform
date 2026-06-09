@@ -49,6 +49,19 @@ class JobStore:
             offset=offset,
         )
 
+    async def claim_for_run(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        runnable_statuses: set[JobStatus],
+    ) -> JobManifest | None:
+        return await self._repo.claim_for_run(
+            job_id,
+            worker_id=worker_id,
+            runnable_statuses=runnable_statuses,
+        )
+
 
 class JobEventStore:
     def __init__(self, session: AsyncSession) -> None:
