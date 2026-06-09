@@ -22,7 +22,7 @@ SceneOps Platform addresses this by separating concerns into:
 Pipeline: `dataset_scene_ingestion`
 
 ```text
-ingest_scenes → validate_scene → profile_scene → build_dataset_manifest
+ingest_scenes → register_scene → validate_scene → profile_scene → build_scene_index → build_dataset_manifest
 ```
 
 Validated with nuScenes mini:
@@ -124,6 +124,7 @@ PipelineRunner              (local Celery orchestrator)
     ├── PipelineJobPlanner      → builds JobManifest from PipelineTaskInputs
     ├── JobRunner               → executes the concrete job by job_id (pipeline-agnostic)
     ├── PipelineTaskResultRecorder → persists normalized PipelineTaskResult to DB
+    ├── PipelineTaskResultBuilder  → splits raw handler output into refs/summary/raw_result
     └── PipelineQualityGate     → validates result against task contract
 ```
 
@@ -166,10 +167,12 @@ PipelineTaskResult
 
 **Implementation notes:**
 
-- Each Celery task spawns a fresh thread with an `AsyncRuntimeRunner` to isolate SQLAlchemy async event loops from Celery's prefork process model.
+- Each Celery task spawns a fresh thread with an `AsyncRuntimeRunner` (`runtime/`) to isolate SQLAlchemy async event loops from Celery's prefork process model.
 - Worker sessions do not auto-commit; job and pipeline lifecycle checkpoints commit state transitions explicitly.
 - `RunRecordHandler` owns domain run record lifecycle: RUNNING → SUCCEEDED / FAILED.
 - `PipelineRunner` iterates `PipelineDefinition.tasks` (sorted by `task.order`) and delegates each task to `PipelineTaskRunner`. Final `PipelineRunResult` is aggregated from persisted `PipelineTaskRun.result` records — no in-memory value propagation.
+- `WorkerContext` and `RunStores` are defined in `core/` and injected into job handlers via `core/dependencies.py`.
+- Celery task wiring lives in `tasks/` (`jobs.py`, `pipelines.py`); Celery app factory and job dispatch/watch utilities live in `execution/`.
 
 ### Core Contracts
 
@@ -332,7 +335,8 @@ missing channels. Set `sample_validation.block_on_sample_missing_channels: true`
 ### Planned pipelines (roadmap)
 
 ```
-scene_reconstruction
+scene_reconstruction           (defined, not yet implemented)
+scene_registration             (defined, not yet implemented)
 scenario_curation
 generated_dataset_preparation
 ```
@@ -364,13 +368,22 @@ sceneops-platform/
 │   └── worker/                     # Celery execution runtime
 │       └── sceneops_worker/
 │           ├── pipelines/          # PipelineRunner, PipelineTaskRunner, InputResolver,
-│           │                       #   JobPlanner, ResultRecorder, QualityGate
-│           ├── jobs/               # job handlers by domain
+│           │                       #   JobPlanner, ResultBuilder, ResultRecorder, QualityGate
+│           ├── jobs/               # job handlers by domain (dataset/, evaluation/,
+│           │                       #   inference/, labeling/, simulation/)
+│           ├── core/               # WorkerContext, RunStores, dependency injection
+│           ├── execution/          # Celery app factory, job dispatcher, job watcher
+│           ├── tasks/              # Celery task definitions (jobs.py, pipelines.py)
+│           ├── runtime/            # AsyncRuntimeRunner (async event-loop isolation)
+│           ├── scenes/             # scene validation, profiling, raw scene builder,
+│           │                       #   sample grouping, scene artifacts
 │           ├── stores/             # session-scoped data stores
 │           ├── datasets/           # nuScenes ingestion
 │           ├── inference/          # Mock / ONNX / GroundingDINO backends
 │           ├── evaluation/         # detection metrics
-│           └── runs/               # run artifact I/O
+│           ├── runs/               # run artifact I/O
+│           ├── tools/              # dataset/scene adapters and artifact utilities
+│           └── observations/       # raw-log observation artifact scaffold (future use)
 ├── packages/
 │   ├── sceneops-core/              # domain contracts, Pydantic schemas, constants
 │   ├── sceneops-db/                # SQLAlchemy models, async repositories, migrations
@@ -381,6 +394,7 @@ sceneops-platform/
 │   ├── fixtures/                   # nuScenes dataset registration
 │   ├── checks/                     # environment and health checks
 │   ├── debug/                      # pipeline/job inspection scripts
+│   ├── dev/                        # local dev utilities (reset_local_state.sh)
 │   └── init/                       # MinIO initialization
 ├── docker-compose.local.yml
 ├── Makefile
@@ -417,7 +431,7 @@ make register-nuscenes-dataset
 make e2e
 ```
 
-`make local-up` starts MinIO, runs Alembic migrations, then starts the API and both workers.
+`make local-up` starts MinIO, then starts Postgres, Redis, the API, and both workers. Run `make db-migrate` separately before `make local-up` if the database has not been migrated yet.
 
 **Stop all services:**
 
@@ -429,16 +443,28 @@ make local-down
 
 ## Makefile Commands
 
-### Stack management
+### Setup / Quality
 
 | Command | Description |
 |---|---|
 | `make setup` | Install dependencies and pre-commit hooks |
-| `make local-up` | Start full local stack (MinIO + migrate + API + workers) |
+| `make uv-sync` | Sync all workspace packages |
+| `make uv-lock` | Update uv.lock |
+| `make check` | Run pre-commit on all files |
+| `make lint` | Run ruff check |
+| `make format` | Run ruff format |
+| `make test` | Run worker unit tests |
+
+### Stack management
+
+| Command | Description |
+|---|---|
+| `make local-up` | Start full local stack (MinIO + Postgres + Redis + API + workers) |
 | `make local-down` | Stop all services |
 | `make local-reset` | Wipe volumes and restart from scratch |
 | `make local-logs` | Follow logs for all main services |
 | `make local-ps` | Show service status |
+| `make reset-local` | Reset local state (artifacts + DB) without full volume wipe |
 
 ### Database
 
@@ -456,6 +482,7 @@ make local-down
 | Command | Description |
 |---|---|
 | `make api-logs` | Follow API container logs |
+| `make api-shell` | Open shell in API container |
 | `make api-health` | Hit `/health` endpoint |
 | `make api-openapi` | Validate OpenAPI schema generation |
 
@@ -464,20 +491,34 @@ make local-down
 | Command | Description |
 |---|---|
 | `make worker-logs` | Follow pipeline and jobs worker logs |
+| `make worker-shell` | Open shell in worker-cli container |
+| `make worker-python` | Open Python REPL in worker-cli container |
 | `make worker-imports` | Validate worker package imports and job registry |
 | `make worker-cli` | Run worker CLI (help) |
 | `make worker-run-job JOB_ID=...` | Run a specific job directly |
 | `make worker-run-pipeline PIPELINE_RUN_ID=...` | Run a specific pipeline directly |
 | `make worker-run-pipeline-task PIPELINE_RUN_ID=... TASK_ID=...` | Run one pipeline task directly (Airflow-compatible entry point) |
 
+### Checks
+
+| Command | Description |
+|---|---|
+| `make check-env` | Verify environment variables |
+| `make check-imports` | Validate Python package imports |
+| `make check-celery` | Check Celery broker connectivity |
+| `make check-minio` | Health check MinIO |
+
 ### E2E
 
 | Command | Description |
 |---|---|
-| `make e2e` | Run all E2E tests |
+| `make e2e` | Run all E2E tests (smoke + ingestion + detection + contracts) |
 | `make e2e-api-smoke` | API smoke test |
 | `make e2e-dataset-scene-ingestion` | Dataset ingestion pipeline E2E |
 | `make e2e-detection-evaluation` | Detection evaluation pipeline E2E |
+| `make e2e-pipeline-contracts` | Pipeline contract validation E2E |
+| `make e2e-raw-log-scene-building` | Raw log scene building pipeline E2E (sequence/frame-id mode) |
+| `make e2e-raw-log-scene-building-time-window` | Raw log scene building E2E (fixed-window/time-bucket mode) |
 
 ### Debug
 
@@ -502,7 +543,7 @@ make local-down
 
 ## E2E Validation
 
-The E2E suite covers three flows:
+The E2E suite covers four flows:
 
 **1. API smoke (`e2e-api-smoke`)** — verifies the API is reachable and returns expected responses for core endpoints.
 
@@ -511,10 +552,12 @@ The E2E suite covers three flows:
 ```mermaid
 flowchart LR
   A[nuScenes mini] --> B[ingest_scenes]
-  B --> C[validate_scene]
-  C --> D[profile_scene]
-  D --> E[build_dataset_manifest]
-  E --> F[DatasetVersion Ready]
+  B --> C[register_scene]
+  C --> D[validate_scene]
+  C --> E[profile_scene]
+  C --> F[build_scene_index]
+  F --> G[build_dataset_manifest]
+  G --> H[DatasetVersion Ready]
 ```
 
 **3. Detection evaluation (`e2e-detection-evaluation`):**
@@ -529,14 +572,14 @@ flowchart LR
   F --> G[Leaderboard]
 ```
 
-Previous E2E results were confirmed passing. Makefile targets were dry-run validated (`make -n local-up`, `make -n e2e`) in the current state of the repo.
+**4. Pipeline contracts (`e2e-pipeline-contracts`)** — validates PipelineTaskInputs/PipelineTaskResult contract consistency across pipeline task runs for a given dataset version.
 
 ---
 
 ## Current Limitations
 
 - The detection E2E uses a mock detector. It validates orchestration and metric plumbing, not real model quality.
-- Raw-log scene building and reconstruction are planned but not fully implemented.
+- Raw-log scene building is implemented and E2E-validated (sequence/frame-id and fixed-window/time-bucket modes). Scene reconstruction pipeline is defined but not yet implemented (`supported=False`).
 - Auto-labeling is intentionally disabled pending a `labeler_id`-based rewrite.
 - `ObservationArtifactStore` is scaffolded for future raw-log ingestion.
 - The inference server (GroundingDINO) is present but gated behind optional Docker Compose profiles (`inference` for CPU, `gpu` for NVIDIA GPU). It is not required for the validated E2E flows.
