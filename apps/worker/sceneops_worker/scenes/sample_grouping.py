@@ -5,9 +5,11 @@ Source-agnostic. Receives a flat list of RawSensorFrameManifest objects
 SampleGroupingStrategy.
 
 Implemented strategies:
-  FRAME_ID       — groups frames by source_frame_id / source_sample_id fallback.
-  TIME_BUCKET    — fixed time windows anchored at the first frame's timestamp.
-  NEAREST_TIMESTAMP — raises NotImplementedError (reserved for Phase 4).
+  FRAME_ID          — groups frames by source_frame_id / source_sample_id fallback.
+  TIME_BUCKET       — fixed time windows anchored at the first frame's timestamp.
+  NEAREST_TIMESTAMP — reference_channel drives sample cadence; other channels
+                      are matched to each reference frame by nearest timestamp.
+                      sync_policy controls inclusion strictness.
 
 Missing channel handling (required_channels + missing_channel_policy):
   Fully implemented. Supports KEEP_WITH_WARNING, DROP_SAMPLE, FAIL_SCENE.
@@ -25,6 +27,7 @@ from sceneops_core.scenes.schemas import (
     MissingChannelPolicy,
     SampleGroupingConfig,
     SampleGroupingStrategy,
+    SensorSyncPolicy,
 )
 from sceneops_core.scenes.schemas.manifests import (
     SceneSampleManifest,
@@ -280,6 +283,95 @@ class SampleGrouper:
         *,
         scene_id: str,
     ) -> list[SceneSampleManifest]:
-        raise NotImplementedError(
-            "NEAREST_TIMESTAMP sampling strategy is not yet implemented"
-        )
+        """Anchor each sample to a reference_channel frame"""
+        if not frames:
+            return []
+
+        if not self.config.reference_channel:
+            raise ValueError(
+                "NEAREST_TIMESTAMP strategy requires reference_channel to be set in config"
+            )
+
+        tolerance_us = int(self.config.sync_tolerance_ms * 1000)
+        sync_policy = self.config.sync_policy
+        reference_channel = self.config.reference_channel
+
+        by_channel: dict[str, list[RawSensorFrameManifest]] = defaultdict(list)
+        for f in frames:
+            by_channel[f.channel].append(f)
+        for ch in by_channel:
+            by_channel[ch].sort(key=lambda f: f.timestamp_us)
+
+        ref_frames = by_channel.get(reference_channel, [])
+        if not ref_frames:
+            return []
+
+        other_channels = sorted(ch for ch in by_channel if ch != reference_channel)
+
+        samples: list[SceneSampleManifest] = []
+        for idx, ref_frame in enumerate(ref_frames):
+            ref_ts = ref_frame.timestamp_us
+            selected: list[RawSensorFrameManifest] = [ref_frame]
+
+            for ch in other_channels:
+                nearest = self._find_nearest_frame(by_channel[ch], ref_ts)
+                if nearest is None:
+                    continue
+                delta_us = abs(nearest.timestamp_us - ref_ts)
+                if sync_policy == SensorSyncPolicy.EXACT and delta_us > 0:
+                    continue
+                if (
+                    sync_policy == SensorSyncPolicy.WITHIN_TOLERANCE
+                    and delta_us > tolerance_us
+                ):
+                    continue
+                selected.append(nearest)
+
+            sample_id = f"{scene_id}-sample-{idx:06d}"
+            sensor_frames = [
+                SceneSensorFrameManifest(
+                    frame_id=f.frame_id,
+                    sample_id=sample_id,
+                    timestamp_us=f.timestamp_us,
+                    channel=f.channel,
+                    modality=f.modality,
+                    uri=f.uri,
+                    metadata=f.metadata,
+                )
+                for f in selected
+            ]
+            samples.append(
+                SceneSampleManifest(
+                    sample_id=sample_id,
+                    scene_id=scene_id,
+                    timestamp_us=ref_ts,
+                    frame_index=idx,
+                    sensor_frames=sensor_frames,
+                )
+            )
+
+        return samples
+
+    @staticmethod
+    def _find_nearest_frame(
+        sorted_frames: list[RawSensorFrameManifest],
+        target_us: int,
+    ) -> RawSensorFrameManifest | None:
+        """Binary search for the frame whose timestamp is nearest to target_us."""
+        if not sorted_frames:
+            return None
+        lo, hi = 0, len(sorted_frames) - 1
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if sorted_frames[mid].timestamp_us < target_us:
+                lo = mid + 1
+            else:
+                hi = mid
+        candidate = sorted_frames[lo]
+        if lo > 0:
+            prev = sorted_frames[lo - 1]
+            if abs(prev.timestamp_us - target_us) < abs(
+                candidate.timestamp_us - target_us
+            ):
+                candidate = prev
+        return candidate

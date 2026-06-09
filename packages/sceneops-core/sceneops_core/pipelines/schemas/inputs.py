@@ -24,6 +24,10 @@ class DatasetInputRef(SceneOpsBaseModel):
     dataset_version: str | None = None
     manifest_uri: str | None = None
 
+    # Declared required channels from DatasetVersionRecord.
+    # Propagated by PipelineInputResolver into job handlers for sampling and validation.
+    required_channels: list[str] = Field(default_factory=list)
+
     # URI refs from the version record (validation/profile report locations)
     refs: JsonDict = Field(default_factory=dict)
     # Counts, status flags, and run IDs cached on the version record

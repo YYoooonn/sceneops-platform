@@ -59,7 +59,6 @@ _BUILD_SCENES_OUTPUTS = [
     PipelineTaskOutputSpec(
         name="sampling_strategy", kind=_SUMMARY, source="sampling_strategy"
     ),
-    # Grouping report — Phase 2 wiring (Phase 3+ will surface non-zero values).
     PipelineTaskOutputSpec(
         name="sample_count_before_filtering",
         kind=_SUMMARY,
@@ -266,9 +265,6 @@ DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
             order=2,
             job_type=JobType.VALIDATE_SCENE,
             depends_on_pipeline_task_ids=["register_scene"],
-            default_params={
-                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
-            },
             outputs=_VALIDATE_SCENE_OUTPUTS,
             quality_rules=_VALIDATE_SCENE_QUALITY_RULES,
         ),
@@ -322,6 +318,9 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             default_params={
                 "build_assets": True,
                 "build_world_state": False,
+                "sampling": {
+                    "missing_channel_policy": "keep_with_warning",
+                },
             },
             outputs=_BUILD_SCENES_OUTPUTS,
         ),
@@ -342,9 +341,6 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             order=2,
             job_type=JobType.VALIDATE_SCENE,
             depends_on_pipeline_task_ids=["register_scene"],
-            default_params={
-                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
-            },
             outputs=_VALIDATE_SCENE_OUTPUTS,
             quality_rules=_VALIDATE_SCENE_QUALITY_RULES,
         ),

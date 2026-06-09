@@ -1,10 +1,13 @@
-"""Tests for supported/experimental/implemented pipeline definition metadata."""
+"""Tests for pipeline definition metadata and task param contracts."""
 
 from __future__ import annotations
 
 import pytest
 
-from sceneops_core.pipelines.builtin import BUILTIN_PIPELINE_DEFINITIONS
+from sceneops_core.pipelines.builtin import (
+    BUILTIN_PIPELINE_DEFINITIONS,
+    RAW_LOG_SCENE_BUILDING_PIPELINE,
+)
 from sceneops_core.pipelines.schemas import PipelineType
 
 
@@ -40,6 +43,43 @@ class TestPipelineDefinitionMetadata:
             assert d.supported is False, f"{pipeline_type} should not be supported"
             assert d.implemented is False, f"{pipeline_type} should not be implemented"
             assert d.experimental is True, f"{pipeline_type} should be experimental"
+
+
+class TestBuildScenesTaskConfig:
+    """Verify build_scenes default_params: channels come from dataset, not hardcoded."""
+
+    def _get_task(self, task_id: str):
+        return next(
+            t
+            for t in RAW_LOG_SCENE_BUILDING_PIPELINE.tasks
+            if t.pipeline_task_id == task_id
+        )
+
+    def test_build_scenes_sampling_has_missing_channel_policy(self) -> None:
+        task = self._get_task("build_scenes")
+        sampling = task.default_params.get("sampling", {})
+        assert "missing_channel_policy" in sampling
+
+    def test_build_scenes_required_channels_not_hardcoded_in_default_params(
+        self,
+    ) -> None:
+        # required_channels must come from DatasetVersionRecord, not be hardcoded here.
+        task = self._get_task("build_scenes")
+        sampling = task.default_params.get("sampling", {})
+        assert "required_channels" not in sampling, (
+            "required_channels must not be hardcoded in build_scenes.default_params; "
+            "it is injected from DatasetVersionRecord by BuildScenesJobHandler"
+        )
+
+    def test_validate_scene_required_channels_not_hardcoded_in_default_params(
+        self,
+    ) -> None:
+        # require_target_channels must come from DatasetVersionRecord, not be hardcoded here.
+        task = self._get_task("validate_scene")
+        assert "require_target_channels" not in task.default_params, (
+            "require_target_channels must not be hardcoded in validate_scene.default_params; "
+            "it is injected from DatasetVersionRecord by ValidateSceneJobHandler"
+        )
 
 
 class TestPipelineServiceFilter:

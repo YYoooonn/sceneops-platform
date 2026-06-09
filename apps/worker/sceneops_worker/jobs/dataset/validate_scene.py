@@ -41,7 +41,7 @@ class ValidateSceneJobHandler(
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
         scene_manifest_uris = inputs.refs.get("scene_manifest_uris") or []
-        return {
+        params: JsonDict = {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
@@ -49,6 +49,11 @@ class ValidateSceneJobHandler(
             **inputs.params,
             "scene_manifest_uris": scene_manifest_uris,
         }
+        # Inject dataset required_channels as require_target_channels unless already set.
+        dataset_channels = inputs.dataset.required_channels if inputs.dataset else []
+        if dataset_channels and not params.get("require_target_channels"):
+            params["require_target_channels"] = dataset_channels
+        return params
 
     def build_initial_record(
         self,

@@ -109,6 +109,13 @@ class DatasetVersionModel(Base):
         server_default=text("'[]'::jsonb"),
     )
 
+    required_channels: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+
     source_dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source_dataset_version: Mapped[str | None] = mapped_column(
         String(128), nullable=True

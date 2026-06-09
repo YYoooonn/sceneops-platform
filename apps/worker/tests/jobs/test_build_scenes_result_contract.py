@@ -1,10 +1,11 @@
-"""Tests for Phase 2 wiring: BuildScenesJobResult + _BUILD_SCENES_OUTPUTS.
+"""Tests for grouping-report wiring: BuildScenesJobResult + _BUILD_SCENES_OUTPUTS.
 
 Verifies that:
-- BuildScenesJobResult carries the 6 new grouping-report fields
+- BuildScenesJobResult carries the 6 grouping-report fields
 - normalize_task_outputs places them in task.result.summary (not refs/artifacts)
 - Existing fields (scene_manifest_uris REF, diagnostic ARTIFACTs) are unchanged
 - missing_channel_counts_by_channel (a dict) is placed in summary, not elsewhere
+- Non-zero warned/dropped counts flow through correctly when policy takes effect
 """
 
 from __future__ import annotations
@@ -150,12 +151,14 @@ class TestBuildScenesOutputContract:
             == "s3://bucket/raw/frame_index.json"
         )
 
-    def test_before_equals_after_in_phase2(self) -> None:
-        """In Phase 2 (no policy enforcement), before == after == sample_count."""
+    def test_before_equals_after_when_no_drops(self) -> None:
+        """With KEEP_WITH_WARNING policy, no samples are dropped: before == after."""
         raw = _raw_result(
             sample_count=10,
             sample_count_before_filtering=10,
             sample_count_after_filtering=10,
+            warned_sample_count=2,
+            samples_with_missing_channels_count=2,
         )
         result = self._normalize(raw)
         assert (
@@ -163,3 +166,37 @@ class TestBuildScenesOutputContract:
             == result.summary["sample_count_after_filtering"]
             == result.summary["sample_count"]
         )
+
+    def test_non_zero_warned_counts_flow_through(self) -> None:
+        """Non-zero warned/missing counts surface when required_channels policy fires."""
+        raw = _raw_result(
+            sample_count=10,
+            sample_count_before_filtering=10,
+            sample_count_after_filtering=10,
+            warned_sample_count=3,
+            samples_with_missing_channels_count=3,
+            missing_channel_counts_by_channel={"LIDAR_TOP": 3},
+        )
+        result = self._normalize(raw)
+        assert result.summary["warned_sample_count"] == 3
+        assert result.summary["samples_with_missing_channels_count"] == 3
+        assert result.summary["missing_channel_counts_by_channel"] == {"LIDAR_TOP": 3}
+        assert (
+            result.summary["sample_count_before_filtering"]
+            == result.summary["sample_count_after_filtering"]
+        )
+
+    def test_non_zero_dropped_counts_flow_through(self) -> None:
+        """Dropped sample counts surface when DROP_SAMPLE policy fires."""
+        raw = _raw_result(
+            sample_count=7,
+            sample_count_before_filtering=10,
+            sample_count_after_filtering=7,
+            dropped_sample_count=3,
+            samples_with_missing_channels_count=3,
+            missing_channel_counts_by_channel={"LIDAR_TOP": 3},
+        )
+        result = self._normalize(raw)
+        assert result.summary["dropped_sample_count"] == 3
+        assert result.summary["sample_count_before_filtering"] == 10
+        assert result.summary["sample_count_after_filtering"] == 7

@@ -45,8 +45,7 @@ class BuildScenesJobResult(BaseJobResult):
     sampling_strategy: str | None = None
 
     # Sample grouping report — populated by SampleGrouper across all built segments.
-    # Phase 2: before == after == sample_count; drop/warn/missing counts are zero.
-    # Phase 3+: non-zero when missing_channel_policy takes effect.
+    # Non-zero drop/warn counts appear when required_channels triggers missing_channel_policy.
     sample_count_before_filtering: int = 0
     sample_count_after_filtering: int = 0
     dropped_sample_count: int = 0

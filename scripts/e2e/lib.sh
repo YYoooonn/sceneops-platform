@@ -176,7 +176,7 @@ upsert_dataset_version() {
     # Version exists — patch raw_source_root_uri in case it changed.
     curl -sS -X PATCH "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")" \
       -H "Content-Type: application/json" \
-      -d "{\"raw_source_root_uri\": \"$raw_source_root_uri\"}"
+      -d "{\"raw_source_root_uri\": \"$raw_source_root_uri\", \"required_channels\": ["CAM_FRONT", "LIDAR_TOP"]}"
     return 0
   fi
 

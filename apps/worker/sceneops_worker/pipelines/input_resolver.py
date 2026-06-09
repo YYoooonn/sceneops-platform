@@ -122,6 +122,7 @@ class PipelineInputResolver:
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
             manifest_uri=version.manifest_uri or None,
+            required_channels=version.required_channels,
             refs=refs,
             summary=summary,
         )

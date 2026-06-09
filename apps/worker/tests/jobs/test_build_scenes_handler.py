@@ -1,7 +1,8 @@
 """Unit tests for BuildScenesJobHandler private methods.
 
 Covers:
-- _build_result: all Phase 2 grouping-report fields flow into BuildScenesJobResult
+- _build_result: grouping-report fields flow into BuildScenesJobResult
+- build_job_params: dataset.required_channels injected into sampling
 - _resolve_raw_log_inputs: branch selection (load path vs adapter path)
 - _mark_dataset_version_ingested: correct counts forwarded to dataset store
 """
@@ -15,6 +16,11 @@ import pytest
 
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
 from sceneops_core.jobs.schemas import BuildScenesJobParams, BuildScenesJobResult
+from sceneops_core.pipelines.schemas import (
+    DatasetInputRef,
+    PipelineInputRef,
+    PipelineTaskInputs,
+)
 from sceneops_core.observations.schemas import (
     RawLogFrameIndex,
     RawLogManifest,
@@ -427,3 +433,78 @@ class TestMarkDatasetVersionIngested:
 
         saved = mock_store.save_version.call_args[0][0]
         assert saved.channels == ["CAM_BACK", "CAM_FRONT", "LIDAR_TOP"]
+
+
+# ── build_job_params: dataset.required_channels injection ─────────────────────
+
+
+def _make_pipeline_inputs(
+    *,
+    required_channels: list[str] | None = None,
+    params: dict | None = None,
+) -> PipelineTaskInputs:
+    return PipelineTaskInputs(
+        pipeline=PipelineInputRef(
+            pipeline_run_id="pr-001",
+            pipeline_type="raw_log_scene_building",
+            task_id="build_scenes",
+            pipeline_task_id="build_scenes",
+            pipeline_task_run_id="ptr-001",
+        ),
+        dataset=DatasetInputRef(
+            dataset_id="ds-001",
+            dataset_version="v1",
+            required_channels=required_channels or [],
+        ),
+        params=params or {},
+    )
+
+
+class TestBuildJobParams:
+    def test_dataset_required_channels_injected_into_sampling(self) -> None:
+        handler = _make_handler()
+        inputs = _make_pipeline_inputs(required_channels=["CAM_FRONT", "LIDAR_TOP"])
+        result = handler.build_job_params(inputs)
+        assert result["sampling"]["required_channels"] == ["CAM_FRONT", "LIDAR_TOP"]
+
+    def test_existing_sampling_required_channels_not_overridden(self) -> None:
+        handler = _make_handler()
+        inputs = _make_pipeline_inputs(
+            required_channels=["CAM_FRONT", "LIDAR_TOP"],
+            params={"sampling": {"required_channels": ["CAM_BACK"]}},
+        )
+        result = handler.build_job_params(inputs)
+        assert result["sampling"]["required_channels"] == ["CAM_BACK"]
+
+    def test_missing_channel_policy_preserved_when_channels_injected(self) -> None:
+        handler = _make_handler()
+        inputs = _make_pipeline_inputs(
+            required_channels=["CAM_FRONT"],
+            params={"sampling": {"missing_channel_policy": "drop_sample"}},
+        )
+        result = handler.build_job_params(inputs)
+        assert result["sampling"]["missing_channel_policy"] == "drop_sample"
+        assert result["sampling"]["required_channels"] == ["CAM_FRONT"]
+
+    def test_no_injection_when_dataset_has_no_required_channels(self) -> None:
+        handler = _make_handler()
+        inputs = _make_pipeline_inputs(required_channels=[])
+        result = handler.build_job_params(inputs)
+        sampling = result.get("sampling", {})
+        assert not sampling.get("required_channels")
+
+    def test_no_injection_when_dataset_is_none(self) -> None:
+        handler = _make_handler()
+        inputs = PipelineTaskInputs(
+            pipeline=PipelineInputRef(
+                pipeline_run_id="pr-001",
+                pipeline_type="raw_log_scene_building",
+                task_id="build_scenes",
+                pipeline_task_id="build_scenes",
+                pipeline_task_run_id="ptr-001",
+            ),
+            dataset=None,
+        )
+        result = handler.build_job_params(inputs)
+        sampling = result.get("sampling", {})
+        assert not sampling.get("required_channels")

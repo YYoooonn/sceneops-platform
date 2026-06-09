@@ -40,13 +40,11 @@ class DatasetVersionRecord(SceneOpsBaseModel):
 
     channels: list[str] = Field(default_factory=list)
 
+    required_channels: list[str] = Field(default_factory=list)
+
     source_dataset_id: str | None = None
     source_dataset_version: str | None = None
 
-    # Raw source location for build_scenes.
-    # NuScenes SDK expects the parent of the version directory as dataroot.
-    # Local:          /data/raw/nuscenes     (SDK joins "v1.0-mini" internally)
-    # Object storage: s3://sceneops/raw/nuscenes
     raw_source_root_uri: str | None = None
 
     # Latest dataset quality cache.

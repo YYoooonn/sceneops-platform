@@ -1,9 +1,9 @@
-"""Unit tests for SampleGrouper — Phase 1/2/3.
+"""Unit tests for SampleGrouper — Phase 1/2/3/4.
 
 Covers:
 - FRAME_ID strategy: grouping, fallback key resolution, sample_id format, ordering
 - TIME_BUCKET strategy: fixed buckets, sample_id format, edge cases, validation
-- NEAREST_TIMESTAMP: still raises NotImplementedError
+- NEAREST_TIMESTAMP strategy: reference-channel anchoring, sync_policy, edge cases
 - SampleGroupingReport: counts match samples, all filter counts are zero
 - Empty input: returns empty samples and zero-valued report
 """
@@ -17,6 +17,7 @@ from sceneops_core.scenes.schemas.sampling import (
     MissingChannelPolicy,
     SampleGroupingConfig,
     SampleGroupingStrategy,
+    SensorSyncPolicy,
 )
 from sceneops_core.sensors import SensorModality
 
@@ -226,16 +227,267 @@ class TestTimeBucketGrouper:
             grouper.group([_frame("f0", 0)], scene_id="sc")
 
 
-# ── NEAREST_TIMESTAMP (not yet implemented) ───────────────────────────────────
+# ── NEAREST_TIMESTAMP ─────────────────────────────────────────────────────────
 
 
-class TestNearestTimestamp:
-    def test_nearest_timestamp_still_not_implemented(self) -> None:
-        grouper = SampleGrouper(
-            SampleGroupingConfig(strategy=SampleGroupingStrategy.NEAREST_TIMESTAMP)
+def _nearest_ts_grouper(
+    reference_channel: str = "LIDAR_TOP",
+    sync_policy: SensorSyncPolicy = SensorSyncPolicy.BEST_EFFORT,
+    sync_tolerance_ms: float = 50.0,
+) -> SampleGrouper:
+    return SampleGrouper(
+        SampleGroupingConfig(
+            strategy=SampleGroupingStrategy.NEAREST_TIMESTAMP,
+            reference_channel=reference_channel,
+            sync_policy=sync_policy,
+            sync_tolerance_ms=sync_tolerance_ms,
         )
-        with pytest.raises(NotImplementedError, match="NEAREST_TIMESTAMP"):
+    )
+
+
+class TestNearestTimestampGrouper:
+    def test_basic_two_channel_grouping(self) -> None:
+        frames = [
+            _frame("lidar0", 0, "LIDAR_TOP"),
+            _frame("cam0", 10_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        assert len(samples) == 1
+        channels = {sf.channel for sf in samples[0].sensor_frames}
+        assert channels == {"LIDAR_TOP", "CAM_FRONT"}
+
+    def test_reference_frames_drive_sample_count(self) -> None:
+        # 3 lidar frames, 5 camera frames — should produce exactly 3 samples
+        frames = [_frame(f"lidar{i}", i * 100_000, "LIDAR_TOP") for i in range(3)] + [
+            _frame(f"cam{i}", i * 60_000, "CAM_FRONT") for i in range(5)
+        ]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        assert len(samples) == 3
+
+    def test_sample_id_format(self) -> None:
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("l1", 100_000, "LIDAR_TOP"),
+        ]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        assert samples[0].sample_id == "sc-sample-000000"
+        assert samples[1].sample_id == "sc-sample-000001"
+
+    def test_sample_timestamp_is_reference_timestamp(self) -> None:
+        frames = [
+            _frame("l0", 50_000, "LIDAR_TOP"),
+            _frame("c0", 75_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        assert samples[0].timestamp_us == 50_000
+
+    def test_frame_index_increments_sequentially(self) -> None:
+        frames = [_frame(f"l{i}", i * 100_000, "LIDAR_TOP") for i in range(4)]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        for idx, s in enumerate(samples):
+            assert s.frame_index == idx
+
+    def test_nearest_frame_selected_from_other_channel(self) -> None:
+        # Reference at t=500ms; cam at t=100ms and t=480ms — pick t=480ms (closer)
+        frames = [
+            _frame("l0", 500_000, "LIDAR_TOP"),
+            _frame("c0", 100_000, "CAM_FRONT"),
+            _frame("c1", 480_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        cam_frames = [
+            sf for sf in samples[0].sensor_frames if sf.channel == "CAM_FRONT"
+        ]
+        assert len(cam_frames) == 1
+        assert cam_frames[0].frame_id == "c1"
+
+    def test_empty_frames_returns_empty(self) -> None:
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, report = grouper.group([], scene_id="sc")
+        assert samples == []
+        assert report.total_samples_built == 0
+
+    def test_no_reference_channel_raises(self) -> None:
+        grouper = SampleGrouper(
+            SampleGroupingConfig(
+                strategy=SampleGroupingStrategy.NEAREST_TIMESTAMP,
+                reference_channel=None,
+            )
+        )
+        with pytest.raises(ValueError, match="reference_channel"):
             grouper.group([_frame("f0", 0)], scene_id="sc")
+
+    def test_missing_reference_frames_returns_empty(self) -> None:
+        # Only CAM_FRONT frames, but reference is LIDAR_TOP
+        frames = [_frame("c0", 0, "CAM_FRONT")]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, report = grouper.group(frames, scene_id="sc")
+        assert samples == []
+        assert report.total_samples_built == 0
+
+    def test_only_reference_channel_frames(self) -> None:
+        # No other channels — one sample per reference frame, each with one sensor_frame
+        frames = [_frame(f"l{i}", i * 100_000, "LIDAR_TOP") for i in range(3)]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        assert len(samples) == 3
+        for s in samples:
+            assert len(s.sensor_frames) == 1
+            assert s.sensor_frames[0].channel == "LIDAR_TOP"
+
+    def test_sensor_frame_metadata_preserved(self) -> None:
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("c0", 5_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, _ = grouper.group(frames, scene_id="sc")
+        cam_sf = next(
+            sf for sf in samples[0].sensor_frames if sf.channel == "CAM_FRONT"
+        )
+        assert cam_sf.frame_id == "c0"
+        assert cam_sf.timestamp_us == 5_000
+        assert cam_sf.uri == "s3://data/c0.jpg"
+
+
+class TestNearestTimestampSyncPolicy:
+    def test_best_effort_includes_all_nearest_regardless_of_distance(self) -> None:
+        # Camera is 1 second away — BEST_EFFORT still includes it
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("c0", 1_000_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(
+            reference_channel="LIDAR_TOP",
+            sync_policy=SensorSyncPolicy.BEST_EFFORT,
+            sync_tolerance_ms=50.0,
+        )
+        samples, _ = grouper.group(frames, scene_id="sc")
+        channels = {sf.channel for sf in samples[0].sensor_frames}
+        assert "CAM_FRONT" in channels
+
+    def test_within_tolerance_excludes_frames_outside_window(self) -> None:
+        # Camera is 100ms away, tolerance is 50ms — excluded
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("c0", 100_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(
+            reference_channel="LIDAR_TOP",
+            sync_policy=SensorSyncPolicy.WITHIN_TOLERANCE,
+            sync_tolerance_ms=50.0,
+        )
+        samples, _ = grouper.group(frames, scene_id="sc")
+        channels = {sf.channel for sf in samples[0].sensor_frames}
+        assert "CAM_FRONT" not in channels
+        assert "LIDAR_TOP" in channels
+
+    def test_within_tolerance_includes_frames_inside_window(self) -> None:
+        # Camera is 30ms away, tolerance is 50ms — included
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("c0", 30_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(
+            reference_channel="LIDAR_TOP",
+            sync_policy=SensorSyncPolicy.WITHIN_TOLERANCE,
+            sync_tolerance_ms=50.0,
+        )
+        samples, _ = grouper.group(frames, scene_id="sc")
+        channels = {sf.channel for sf in samples[0].sensor_frames}
+        assert "CAM_FRONT" in channels
+
+    def test_within_tolerance_exact_boundary_is_included(self) -> None:
+        # Exactly at tolerance boundary (<=) — included
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("c0", 50_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(
+            reference_channel="LIDAR_TOP",
+            sync_policy=SensorSyncPolicy.WITHIN_TOLERANCE,
+            sync_tolerance_ms=50.0,
+        )
+        samples, _ = grouper.group(frames, scene_id="sc")
+        channels = {sf.channel for sf in samples[0].sensor_frames}
+        assert "CAM_FRONT" in channels
+
+    def test_exact_policy_includes_same_timestamp(self) -> None:
+        frames = [
+            _frame("l0", 1_000_000, "LIDAR_TOP"),
+            _frame("c0", 1_000_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(
+            reference_channel="LIDAR_TOP",
+            sync_policy=SensorSyncPolicy.EXACT,
+        )
+        samples, _ = grouper.group(frames, scene_id="sc")
+        channels = {sf.channel for sf in samples[0].sensor_frames}
+        assert "CAM_FRONT" in channels
+
+    def test_exact_policy_excludes_non_exact_timestamp(self) -> None:
+        frames = [
+            _frame("l0", 1_000_000, "LIDAR_TOP"),
+            _frame("c0", 1_000_001, "CAM_FRONT"),  # 1µs off
+        ]
+        grouper = _nearest_ts_grouper(
+            reference_channel="LIDAR_TOP",
+            sync_policy=SensorSyncPolicy.EXACT,
+        )
+        samples, _ = grouper.group(frames, scene_id="sc")
+        channels = {sf.channel for sf in samples[0].sensor_frames}
+        assert "CAM_FRONT" not in channels
+
+    def test_sample_created_even_when_all_non_ref_channels_excluded(self) -> None:
+        # All non-reference frames out of tolerance — sample still created with only ref
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("c0", 500_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(
+            reference_channel="LIDAR_TOP",
+            sync_policy=SensorSyncPolicy.WITHIN_TOLERANCE,
+            sync_tolerance_ms=50.0,
+        )
+        samples, _ = grouper.group(frames, scene_id="sc")
+        assert len(samples) == 1
+        assert len(samples[0].sensor_frames) == 1
+        assert samples[0].sensor_frames[0].channel == "LIDAR_TOP"
+
+
+class TestNearestTimestampReport:
+    def test_report_counts_match_reference_frame_count(self) -> None:
+        frames = [_frame(f"l{i}", i * 100_000, "LIDAR_TOP") for i in range(4)]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        samples, report = grouper.group(frames, scene_id="sc")
+        assert report.total_samples_built == 4
+        assert report.sample_count_before_filtering == 4
+        assert report.sample_count_after_filtering == 4
+
+    def test_empty_report_when_no_reference_frames(self) -> None:
+        frames = [_frame("c0", 0, "CAM_FRONT")]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        _, report = grouper.group(frames, scene_id="sc")
+        assert report.total_samples_built == 0
+        assert report.sample_count_before_filtering == 0
+        assert report.sample_count_after_filtering == 0
+
+    def test_filter_counts_zero_without_required_channels(self) -> None:
+        frames = [
+            _frame("l0", 0, "LIDAR_TOP"),
+            _frame("c0", 10_000, "CAM_FRONT"),
+        ]
+        grouper = _nearest_ts_grouper(reference_channel="LIDAR_TOP")
+        _, report = grouper.group(frames, scene_id="sc")
+        assert report.dropped_sample_count == 0
+        assert report.warned_sample_count == 0
+        assert report.samples_with_missing_channels_count == 0
 
 
 # ── SampleGroupingReport ──────────────────────────────────────────────────────

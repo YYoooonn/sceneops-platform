@@ -61,13 +61,21 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
         return BuildScenesJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
+        params: JsonDict = {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
             else None,
             **inputs.params,
         }
+        # Inject dataset required_channels into sampling unless already overridden.
+        dataset_channels = inputs.dataset.required_channels if inputs.dataset else []
+        if dataset_channels:
+            sampling = dict(params.get("sampling") or {})
+            if not sampling.get("required_channels"):
+                sampling["required_channels"] = dataset_channels
+                params["sampling"] = sampling
+        return params
 
     # ── orchestration ──────────────────────────────────────────────────────────
 
