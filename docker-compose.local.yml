@@ -68,7 +68,7 @@ services:
         condition: service_healthy
     entrypoint: ["/bin/sh", "/scripts/init/minio_init.sh"]
     volumes:
-      - ./data:/data:ro
+      - ./data/raw:/data/raw:ro
       - ./scripts:/scripts:ro
     profiles:
       - minio

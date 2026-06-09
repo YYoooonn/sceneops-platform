@@ -13,13 +13,13 @@ mc alias set "$MINIO_ALIAS" "$MINIO_URL" "$MINIO_USER" "$MINIO_PASSWORD"
 mc mb "$MINIO_ALIAS/$BUCKET" --ignore-existing
 echo "bucket $BUCKET ready"
 
-if [ -d "$DATA_DIR" ] && [ -n "$(find "$DATA_DIR" -not -name '.DS_Store' -type f 2>/dev/null | head -1)" ]; then
-    echo "migrating $DATA_DIR → s3://$BUCKET ..."
+if [ -d "$DATA_DIR" ]; then
+    echo "migrating $DATA_DIR/raw → s3://$BUCKET/raw ..."
     mc mirror \
         --exclude "*.DS_Store" \
         --overwrite \
-        "$DATA_DIR" \
-        "$MINIO_ALIAS/$BUCKET"
+        "$DATA_DIR/raw" \
+        "$MINIO_ALIAS/$BUCKET/raw"
     echo "migration done"
 else
     echo "no local data to migrate"

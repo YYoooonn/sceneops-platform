@@ -374,12 +374,14 @@ worker-run-pipeline-task:
 
 .PHONY: minio-up
 minio-up:
-	docker compose -f $(COMPOSE_FILE) --profile minio up -d minio minio-init
+	docker compose -f $(COMPOSE_FILE) --profile minio up -d minio
 
 .PHONY: minio-down
 minio-down:
 	docker compose -f $(COMPOSE_FILE) --profile minio stop minio
-	docker compose -f $(COMPOSE_FILE) --profile minio rm -f minio minio-init
+
+minio-migrate:
+	docker compose -f $(COMPOSE_FILE) --profile minio run --rm minio-init
 
 .PHONY: minio-logs
 minio-logs:
