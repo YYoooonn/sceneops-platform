@@ -12,12 +12,13 @@
 #   bash scripts/e2e/e2e_raw_log_scene_building_time_window_celery.sh
 #
 # Env overrides:
-#   API_BASE_URL      (default: http://localhost:8000)
-#   DATASET_ID        (default: nuscenes)
-#   DATASET_VERSION   (default: v1.0-mini)
-#   SOURCE_ROOT_URI   (default: /data/raw/nuscenes)
-#   MAX_SEQUENCES     (default: 5)
-#   POLL_TIMEOUT      max poll attempts, 5s each (default: 60 = 5 min)
+#   API_BASE_URL        (default: http://localhost:8000)
+#   DATASET_ID          (default: nuscenes)
+#   DATASET_VERSION     (default: v1.0-mini)
+#   RAW_SOURCE_ROOT_URI NuScenes dataroot registered on the dataset version
+#                       (default: /data/raw/nuscenes)
+#   MAX_SEQUENCES       (default: 5)
+#   POLL_TIMEOUT        max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
 
@@ -27,20 +28,25 @@ source "$SCRIPT_DIR/lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 DATASET_ID="${DATASET_ID:-nuscenes}"
 DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
-MAX_SEQUENCES="${MAX_SEQUENCES:-1}"
+RAW_SOURCE_ROOT_URI="${RAW_SOURCE_ROOT_URI:-/data/raw/nuscenes}"
+MAX_SEQUENCES="${MAX_SEQUENCES:-10}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 echo "=== raw_log_scene_building (fixed_window + time_bucket) E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SEQUENCES=$MAX_SEQUENCES"
+echo "  RAW_SOURCE_ROOT_URI=$RAW_SOURCE_ROOT_URI  MAX_SEQUENCES=$MAX_SEQUENCES"
 echo ""
 
-# ── 1. Ensure dataset exists ──────────────────────────────────────────────────
+# ── 1. Ensure dataset and version exist ──────────────────────────────────────
 
 echo "--- 1. Upsert dataset ---"
 upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+echo ""
+
+echo "--- 1b. Upsert dataset version (with raw_source_root_uri) ---"
+upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$RAW_SOURCE_ROOT_URI" \
+  | jq '.version | {version, status, rawSourceRootUri}' 2>/dev/null || true
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────
@@ -55,7 +61,6 @@ PAYLOAD="$(cat <<JSON
     "build_scenes": {
       "source_type": "nuscenes_raw_log_mock",
       "source_format": "nuscenes",
-      "raw_root_uri": "$SOURCE_ROOT_URI",
       "max_source_sequences": $MAX_SEQUENCES,
       "required_channels": ["CAM_FRONT", "LIDAR_TOP"],
       "segmentation": {
@@ -150,7 +155,7 @@ echo "--- 7. Assert build_scenes ---"
 
 BUILD_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "build_scenes")')"
 
-SEGMENT_INDEX_URI="$(echo "$BUILD_TASK" | jq -r '.result.refs.scene_segment_index_uri // empty')"
+SEGMENT_INDEX_URI="$(echo "$BUILD_TASK" | jq -r '.result.artifacts.scene_segment_index_uri // empty')"
 SCENE_MANIFEST_URIS_COUNT="$(echo "$BUILD_TASK" | jq -r '.result.refs.scene_manifest_uris | length // 0')"
 SCENE_COUNT="$(echo "$BUILD_TASK" | jq -r '.result.summary.scene_count // 0')"
 SAMPLE_COUNT="$(echo "$BUILD_TASK" | jq -r '.result.summary.sample_count // 0')"
@@ -198,7 +203,7 @@ echo ""
 # ── 9. Assert build_scene_index refs ─────────────────────────────────────────
 
 echo "--- 9. Assert build_scene_index ---"
-SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.refs.scene_index_uri // empty')"
+SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.artifacts.scene_index_uri // empty')"
 echo "  scene_index_uri=$SCENE_INDEX_URI"
 [ -n "$SCENE_INDEX_URI" ] || { echo "❌ build_scene_index: missing scene_index_uri" >&2; exit 1; }
 echo "  OK"

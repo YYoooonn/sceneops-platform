@@ -1,14 +1,13 @@
-"""Unit tests for RawSceneBuilder segmentation and sampling strategies.
+"""Unit tests for RawSceneBuilder segmentation strategies.
 
 Covers:
 - sequence segmentation: groups by source_sequence_id / source_scene_id fallback,
   output sorted by start timestamp
 - fixed_window segmentation: true fixed buckets, -fw IDs, validation
-- frame_id sampling: groups by source_frame_id / source_sample_id fallback,
-  ordered by min timestamp, generates -sample- IDs
-- time_bucket sampling: true fixed buckets, -sample- IDs, validation
 - max_built_scenes: segment index contains only built segments
-- unsupported strategies raise NotImplementedError
+- unsupported segmentation strategies raise NotImplementedError
+
+Sampling strategy tests live in test_sample_grouper.py.
 """
 
 from __future__ import annotations
@@ -20,16 +19,9 @@ from sceneops_core.scenes.schemas.config import (
     SceneSegmentationConfig,
     SceneSegmentationStrategy,
 )
-from sceneops_core.scenes.schemas.sampling import (
-    SampleGroupingConfig,
-    SampleGroupingStrategy,
-)
 from sceneops_core.sensors import SensorModality
 
 from sceneops_worker.scenes.raw_scene_builder import (
-    _group_by_frame_id,
-    _group_by_time_bucket,
-    _group_samples,
     _segment_by_fixed_window,
     _segment_by_sequence,
     _segment_frames,
@@ -284,158 +276,6 @@ class TestFixedWindowSegmentation:
             _segment_by_fixed_window(
                 frames=[_frame("f0", 0)], config=config, raw_log_id="log"
             )
-
-
-# ── frame_id sampling ─────────────────────────────────────────────────────────
-
-
-class TestFrameIdSampling:
-    def test_sample_ids_use_sample_format(self) -> None:
-        frames = [
-            _frame(f"f{i}", i * 10_000, source_frame_id=f"grp-{i}") for i in range(4)
-        ]
-        samples = _group_by_frame_id(frames, scene_id="sc-001")
-        for s in samples:
-            assert (
-                "-sample-" in s.sample_id
-            ), f"expected '-sample-' in sample_id, got: {s.sample_id}"
-
-    def test_sample_id_format_is_six_digit_padded(self) -> None:
-        frames = [
-            _frame("f0", 0, source_frame_id="g0"),
-            _frame("f1", 1, source_frame_id="g1"),
-        ]
-        samples = _group_by_frame_id(frames, scene_id="sc")
-        assert samples[0].sample_id == "sc-sample-000000"
-        assert samples[1].sample_id == "sc-sample-000001"
-
-    def test_groups_by_source_frame_id(self) -> None:
-        frames = [
-            _frame(f"fa{i}", i * 10_000, source_frame_id="grp-A") for i in range(3)
-        ] + [_frame(f"fb{i}", i * 10_000, source_frame_id="grp-B") for i in range(2)]
-        samples = _group_by_frame_id(frames, scene_id="sc-001")
-        assert len(samples) == 2
-
-    def test_falls_back_to_source_sample_id(self) -> None:
-        frames = [
-            _frame(f"f{i}", i * 10_000, source_sample_id="samp-1") for i in range(3)
-        ]
-        samples = _group_by_frame_id(frames, scene_id="sc-001")
-        assert len(samples) == 1
-
-    def test_ordered_by_min_timestamp(self) -> None:
-        # grp-B has lower min timestamp than grp-A — should appear first
-        frames = [
-            _frame("fa0", 1_000_000, source_frame_id="grp-A"),
-            _frame("fa1", 2_000_000, source_frame_id="grp-A"),
-            _frame("fb0", 100_000, source_frame_id="grp-B"),
-            _frame("fb1", 200_000, source_frame_id="grp-B"),
-        ]
-        samples = _group_by_frame_id(frames, scene_id="sc")
-        assert samples[0].timestamp_us == 100_000  # grp-B is first
-        assert samples[1].timestamp_us == 1_000_000  # grp-A is second
-
-    def test_sample_ids_do_not_copy_source_frame_id(self) -> None:
-        source_ids = {f"sfid-{i}" for i in range(4)}
-        frames = [
-            _frame(f"f{i}", i * 10_000, source_frame_id=f"sfid-{i}") for i in range(4)
-        ]
-        samples = _group_by_frame_id(frames, scene_id="sc-001")
-        for s in samples:
-            assert s.sample_id not in source_ids
-
-    def test_returns_empty_for_no_frames(self) -> None:
-        assert _group_by_frame_id([], scene_id="sc-001") == []
-
-    def test_unsupported_strategy_raises(self) -> None:
-        config = SampleGroupingConfig(strategy=SampleGroupingStrategy.NEAREST_TIMESTAMP)
-        with pytest.raises(NotImplementedError, match="Unsupported sampling strategy"):
-            _group_samples([_frame("f0", 0)], config=config, scene_id="sc")
-
-
-# ── time_bucket sampling ──────────────────────────────────────────────────────
-
-
-class TestTimeBucketSampling:
-    def test_fixed_bucket_grouping(self) -> None:
-        # Frames at 0, 400ms, 1000ms, 1400ms with 1000ms window
-        # bucket 0: 0, 400ms; bucket 1: 1000ms, 1400ms
-        frames = [
-            _frame("f0", 0),
-            _frame("f1", 400_000),
-            _frame("f2", 1_000_000),
-            _frame("f3", 1_400_000),
-        ]
-        samples = _group_by_time_bucket(frames, scene_id="sc", window_ms=1000.0)
-        assert len(samples) == 2
-        frame_ids_0 = {sf.frame_id for sf in samples[0].sensor_frames}
-        frame_ids_1 = {sf.frame_id for sf in samples[1].sensor_frames}
-        assert frame_ids_0 == {"f0", "f1"}
-        assert frame_ids_1 == {"f2", "f3"}
-
-    def test_rolling_window_vs_fixed_bucket(self) -> None:
-        # With rolling window, 900ms-apart frames would all land together.
-        # With fixed buckets (1000ms), they should split correctly.
-        frames = [
-            _frame("f0", 0),
-            _frame("f1", 900_000),  # still in bucket 0
-            _frame("f2", 1_000_000),  # bucket 1
-            _frame("f3", 1_900_000),  # bucket 1
-        ]
-        samples = _group_by_time_bucket(frames, scene_id="sc", window_ms=1000.0)
-        assert len(samples) == 2
-        assert {sf.frame_id for sf in samples[0].sensor_frames} == {"f0", "f1"}
-        assert {sf.frame_id for sf in samples[1].sensor_frames} == {"f2", "f3"}
-
-    def test_sample_ids_use_sequential_format(self) -> None:
-        frames = [_frame(f"f{i:03d}", i * 600_000) for i in range(6)]
-        samples = _group_by_time_bucket(frames, scene_id="sc-001", window_ms=500.0)
-        for i, s in enumerate(samples):
-            assert s.sample_id == f"sc-001-sample-{i:06d}"
-
-    def test_sample_ids_do_not_copy_source_sample_id(self) -> None:
-        source_id = "ns-sample-aabb"
-        frames = [
-            _frame(f"f{i}", i * 600_000, source_sample_id=source_id) for i in range(6)
-        ]
-        samples = _group_by_time_bucket(frames, scene_id="sc-001", window_ms=500.0)
-        for s in samples:
-            assert source_id not in s.sample_id
-
-    def test_close_frames_land_in_single_bucket(self) -> None:
-        frames = [_frame(f"f{i}", i * 10_000) for i in range(5)]
-        samples = _group_by_time_bucket(frames, scene_id="sc", window_ms=500.0)
-        assert len(samples) == 1
-
-    def test_produces_multiple_samples_from_spread_frames(self) -> None:
-        frames = [_frame(f"f{i}", i * 600_000) for i in range(8)]
-        samples = _group_by_time_bucket(frames, scene_id="sc", window_ms=500.0)
-        assert len(samples) > 1
-
-    def test_returns_empty_for_no_frames(self) -> None:
-        assert _group_by_time_bucket([], scene_id="sc", window_ms=500.0) == []
-
-    def test_each_sample_has_sensor_frames(self) -> None:
-        frames = [_frame(f"f{i}", i * 600_000) for i in range(4)]
-        samples = _group_by_time_bucket(frames, scene_id="sc", window_ms=500.0)
-        for s in samples:
-            assert len(s.sensor_frames) >= 1
-
-    def test_none_window_raises(self) -> None:
-        config = SampleGroupingConfig(
-            strategy=SampleGroupingStrategy.TIME_BUCKET,
-            sample_time_window_ms=None,
-        )
-        with pytest.raises(ValueError, match="sample_time_window_ms"):
-            _group_samples([_frame("f0", 0)], config=config, scene_id="sc")
-
-    def test_zero_window_raises(self) -> None:
-        config = SampleGroupingConfig(
-            strategy=SampleGroupingStrategy.TIME_BUCKET,
-            sample_time_window_ms=0,
-        )
-        with pytest.raises(ValueError, match="sample_time_window_ms"):
-            _group_samples([_frame("f0", 0)], config=config, scene_id="sc")
 
 
 # ── max_built_scenes: segment index consistency ───────────────────────────────

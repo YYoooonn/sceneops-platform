@@ -42,6 +42,7 @@ class WorkerContext:
     session: AsyncSession
 
     artifact_store: ArtifactStore
+    raw_source_store: ArtifactStore
     dataset_artifact_store: DatasetArtifactStore
     scene_artifact_store: SceneArtifactStore
     run_artifact_store: RunArtifactStore

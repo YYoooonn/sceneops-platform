@@ -20,6 +20,7 @@ class UpdateDatasetVersionRequest(SceneOpsBaseModel):
 
     status: DatasetVersionStatus | None = None
     manifest_uri: str | None = None
+    raw_source_root_uri: str | None = None
     scene_count: int | None = None
     sample_count: int | None = None
     frame_count: int | None = None
@@ -36,6 +37,7 @@ class CreateDatasetVersionBody(SceneOpsBaseModel):
     version: str
     status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
     manifest_uri: str | None = None
+    raw_source_root_uri: str | None = None
     source_dataset_id: str | None = None
     source_dataset_version: str | None = None
     metadata: JsonDict = Field(default_factory=dict)

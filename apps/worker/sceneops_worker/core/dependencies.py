@@ -26,6 +26,7 @@ from sceneops_worker.stores.scenes import SceneStore
 
 
 _artifact_store: ArtifactStore | None = None
+_raw_source_store: ArtifactStore | None = None
 
 
 def _get_artifact_store(settings: WorkerSettings) -> ArtifactStore:
@@ -33,6 +34,13 @@ def _get_artifact_store(settings: WorkerSettings) -> ArtifactStore:
     if _artifact_store is None:
         _artifact_store = create_artifact_store(settings.artifact)
     return _artifact_store
+
+
+def _get_raw_source_store(settings: WorkerSettings) -> ArtifactStore:
+    global _raw_source_store
+    if _raw_source_store is None:
+        _raw_source_store = create_artifact_store(settings.raw_source)
+    return _raw_source_store
 
 
 def create_worker_context(
@@ -44,12 +52,14 @@ def create_worker_context(
     settings = settings or get_settings()
 
     artifact_store = _get_artifact_store(settings)
+    raw_source_store = _get_raw_source_store(settings)
 
     return WorkerContext(
         worker_id=worker_id or settings.worker_id,
         settings=settings,
         session=session,
         artifact_store=artifact_store,
+        raw_source_store=raw_source_store,
         dataset_artifact_store=DatasetArtifactStore(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,

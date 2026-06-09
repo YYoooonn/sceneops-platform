@@ -7,6 +7,7 @@ produced by a RawLogAdapter, and knows nothing about nuScenes or any other SDK.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 
 from sceneops_core.observations.schemas import (
     RawLogFrameIndex,
@@ -15,18 +16,27 @@ from sceneops_core.observations.schemas import (
 )
 from sceneops_core.scenes.schemas import (
     SampleGroupingConfig,
-    SampleGroupingStrategy,
     SceneSegmentationConfig,
     SceneSegmentationStrategy,
 )
-from sceneops_core.scenes.schemas.manifests import (
-    SceneManifest,
-    SceneSampleManifest,
-    SceneSensorFrameManifest,
-)
-from sceneops_core.scenes.schemas.segments import SceneSegment, SceneSegmentIndex  # noqa: F401
+from sceneops_core.scenes.schemas.manifests import SceneManifest
+from sceneops_core.scenes.schemas.segments import SceneSegment, SceneSegmentIndex
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
+from sceneops_worker.scenes.sample_grouping import SampleGrouper, SampleGroupingReport
+
+
+@dataclass
+class SceneBuildResult:
+    """Return value of RawSceneBuilder.build()."""
+
+    scene_ids: list[str]
+    scene_manifest_uris: list[str]
+    segment_index_uri: str
+    total_samples: int
+    total_frames: int
+    observation_count: int
+    grouping_report: SampleGroupingReport
 
 
 class RawSceneBuilder:
@@ -52,15 +62,11 @@ class RawSceneBuilder:
         segmentation: SceneSegmentationConfig,
         sampling: SampleGroupingConfig,
         max_built_scenes: int | None = None,
-    ) -> tuple[list[str], list[str], str, int, int, int]:
+    ) -> SceneBuildResult:
         """Build scenes from a raw frame index.
 
         Segments are computed first, then capped by max_built_scenes.
         The SceneSegmentIndex written to storage contains only the built segments.
-
-        Returns:
-            (scene_ids, scene_manifest_uris, segment_index_uri,
-             total_samples, total_frames, observation_count)
         """
         all_segments = _segment_frames(
             frames=frame_index.frames,
@@ -93,13 +99,15 @@ class RawSceneBuilder:
             f.frame_id: f for f in frame_index.frames
         }
 
+        grouper = SampleGrouper(config=sampling)
+        accumulated_report = SampleGroupingReport()
+
         for seg in built_segments:
             seg_frames = [
                 frame_lookup[fid] for fid in seg.frame_ids if fid in frame_lookup
             ]
-            samples = _group_samples(
-                seg_frames, config=sampling, scene_id=seg.segment_id
-            )
+            samples, seg_report = grouper.group(seg_frames, scene_id=seg.segment_id)
+            accumulated_report.merge(seg_report)
 
             scene_id = seg.segment_id
             all_channels: set[str] = set()
@@ -141,13 +149,14 @@ class RawSceneBuilder:
             uri=segment_index_uri, segment_index=segment_index
         )
 
-        return (
-            scene_ids,
-            scene_manifest_uris,
-            segment_index_uri,
-            total_samples,
-            total_frames,
-            len(frame_index.frames),
+        return SceneBuildResult(
+            scene_ids=scene_ids,
+            scene_manifest_uris=scene_manifest_uris,
+            segment_index_uri=segment_index_uri,
+            total_samples=total_samples,
+            total_frames=total_frames,
+            observation_count=len(frame_index.frames),
+            grouping_report=accumulated_report,
         )
 
 
@@ -304,126 +313,3 @@ def _make_segment(
         channels=channels,
         segmentation=config,
     )
-
-
-def _group_samples(
-    frames: list[RawSensorFrameManifest],
-    *,
-    config: SampleGroupingConfig,
-    scene_id: str,
-) -> list[SceneSampleManifest]:
-    strategy = config.strategy
-
-    if strategy == SampleGroupingStrategy.FRAME_ID:
-        return _group_by_frame_id(frames, scene_id=scene_id)
-    elif strategy == SampleGroupingStrategy.TIME_BUCKET:
-        if not config.sample_time_window_ms or config.sample_time_window_ms <= 0:
-            raise ValueError(
-                f"sample_time_window_ms must be a positive number for time_bucket "
-                f"strategy, got: {config.sample_time_window_ms!r}"
-            )
-        return _group_by_time_bucket(
-            frames, scene_id=scene_id, window_ms=config.sample_time_window_ms
-        )
-    else:
-        raise NotImplementedError(f"Unsupported sampling strategy: {strategy!r}")
-
-
-def _group_by_frame_id(
-    frames: list[RawSensorFrameManifest],
-    *,
-    scene_id: str,
-) -> list[SceneSampleManifest]:
-    """Group frames by frame hint (source_frame_id → source_sample_id → frame_id fallback).
-
-    Groups are ordered by the minimum timestamp of their frames.
-    """
-    grouped: dict[str, list[RawSensorFrameManifest]] = defaultdict(list)
-    for f in frames:
-        key = f.source_frame_id or f.source_sample_id or f.frame_id
-        grouped[key].append(f)
-
-    sorted_groups = sorted(
-        grouped.values(), key=lambda grp: min(f.timestamp_us for f in grp)
-    )
-
-    samples: list[SceneSampleManifest] = []
-    for idx, sample_frames in enumerate(sorted_groups):
-        sample_id = f"{scene_id}-sample-{idx:06d}"
-        ts = min(f.timestamp_us for f in sample_frames)
-
-        sensor_frames = [
-            SceneSensorFrameManifest(
-                frame_id=f.frame_id,
-                sample_id=sample_id,
-                timestamp_us=f.timestamp_us,
-                channel=f.channel,
-                modality=f.modality,
-                uri=f.uri,
-                metadata=f.metadata,
-            )
-            for f in sample_frames
-        ]
-
-        samples.append(
-            SceneSampleManifest(
-                sample_id=sample_id,
-                scene_id=scene_id,
-                timestamp_us=ts,
-                frame_index=idx,
-                sensor_frames=sensor_frames,
-            )
-        )
-
-    return samples
-
-
-def _group_by_time_bucket(
-    frames: list[RawSensorFrameManifest],
-    *,
-    scene_id: str,
-    window_ms: float,
-) -> list[SceneSampleManifest]:
-    """Group frames into fixed time buckets anchored at the first frame's timestamp."""
-    if not frames:
-        return []
-
-    window_us = int(window_ms * 1000)
-    sorted_frames = sorted(frames, key=lambda f: f.timestamp_us)
-    base_us = sorted_frames[0].timestamp_us
-
-    buckets: dict[int, list[RawSensorFrameManifest]] = defaultdict(list)
-    for f in sorted_frames:
-        bucket_idx = (f.timestamp_us - base_us) // window_us
-        buckets[bucket_idx].append(f)
-
-    samples: list[SceneSampleManifest] = []
-    for seq_idx, bucket_idx in enumerate(sorted(buckets)):
-        bucket_frames = buckets[bucket_idx]
-        sample_id = f"{scene_id}-sample-{seq_idx:06d}"
-        ts = min(f.timestamp_us for f in bucket_frames)
-
-        sensor_frames = [
-            SceneSensorFrameManifest(
-                frame_id=f.frame_id,
-                sample_id=sample_id,
-                timestamp_us=f.timestamp_us,
-                channel=f.channel,
-                modality=f.modality,
-                uri=f.uri,
-                metadata=f.metadata,
-            )
-            for f in bucket_frames
-        ]
-
-        samples.append(
-            SceneSampleManifest(
-                sample_id=sample_id,
-                scene_id=scene_id,
-                timestamp_us=ts,
-                frame_index=seq_idx,
-                sensor_frames=sensor_frames,
-            )
-        )
-
-    return samples

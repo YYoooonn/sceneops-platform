@@ -18,6 +18,9 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 API_PREFIX="${API_PREFIX:-/api/v1}"
 DATASET_ID="${DATASET_ID:-nuscenes}"
 DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
+# NuScenes SDK dataroot: parent directory of the version folder.
+# The SDK joins DATASET_VERSION internally, so this must NOT include it.
+RAW_SOURCE_ROOT_URI="${RAW_SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 url() { echo "${API_BASE_URL}${API_PREFIX}${1}"; }
 
@@ -36,6 +39,7 @@ http_post() {
 echo "=== register nuScenes dataset ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
+echo "  RAW_SOURCE_ROOT_URI=$RAW_SOURCE_ROOT_URI"
 echo ""
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
@@ -60,15 +64,18 @@ echo ""
 
 echo "--- dataset version ---"
 if [ "$(http_status "/datasets/$DATASET_ID/versions/$DATASET_VERSION")" = "200" ]; then
-  echo "  already exists"
-  curl -sS "$(url "/datasets/$DATASET_ID/versions/$DATASET_VERSION")" \
-    | jq '.version | {version, status, sceneCount, manifestUri}'
+  echo "  already exists — patching raw_source_root_uri..."
+  curl -sS -X PATCH "$(url "/datasets/$DATASET_ID/versions/$DATASET_VERSION")" \
+    -H "Content-Type: application/json" \
+    -d "{\"raw_source_root_uri\": \"$RAW_SOURCE_ROOT_URI\"}" \
+    | jq '.version | {version, status, rawSourceRootUri}'
 else
   echo "  creating..."
   http_post "/datasets/$DATASET_ID/versions" "{
     \"version\": \"$DATASET_VERSION\",
+    \"raw_source_root_uri\": \"$RAW_SOURCE_ROOT_URI\",
     \"metadata\": {}
-  }" | jq '.version | {version, status}'
+  }" | jq '.version | {version, status, rawSourceRootUri}'
 fi
 echo ""
 

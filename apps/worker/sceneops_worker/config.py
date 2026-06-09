@@ -10,6 +10,7 @@ from sceneops_core.config import (
     ArtifactSettings,
     DefaultDatasetSettings,
     ExecutionSettings,
+    RawSourceSettings,
     WorkerRuntimeSettings,
 )
 
@@ -27,6 +28,7 @@ class WorkerSettings(BaseSettings):
     )
 
     artifact: ArtifactSettings = Field(default_factory=ArtifactSettings)
+    raw_source: RawSourceSettings = Field(default_factory=RawSourceSettings)
     default_dataset: DefaultDatasetSettings = Field(
         default_factory=DefaultDatasetSettings,
     )
@@ -56,6 +58,10 @@ class WorkerSettings(BaseSettings):
     @property
     def model_root_uri(self) -> str:
         return self.artifact.model_root_uri
+
+    @property
+    def raw_source_root_uri(self) -> str:
+        return self.raw_source.root_uri
 
     @property
     def default_dataset_id(self) -> str:

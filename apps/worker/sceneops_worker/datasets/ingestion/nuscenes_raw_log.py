@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_core.observations.schemas import (
     RawLogFrameIndex,
     RawLogManifest,
@@ -12,6 +13,7 @@ from sceneops_core.sensors import SensorModality
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
 
 _TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
+_OBJECT_STORAGE_SCHEMES = ("s3://", "gs://", "gcs://", "minio://", "az://", "abfs://")
 
 
 class NuScenesRawLogMocker:
@@ -24,13 +26,20 @@ class NuScenesRawLogMocker:
     def __init__(
         self,
         *,
+        source_store: ArtifactStore,
         source_root_uri: str,
         observation_store: ObservationArtifactStore,
         required_channels: set[str] | None = None,
     ) -> None:
+        # replace NuScenes SDK local reads with source_store-backed reads.
+        self._source_store = source_store
         self._source_root_uri = source_root_uri
         self._observation_store = observation_store
         self._required_channels = required_channels or _TARGET_CHANNELS
+
+    @staticmethod
+    def _is_object_storage_uri(uri: str) -> bool:
+        return any(uri.startswith(scheme) for scheme in _OBJECT_STORAGE_SCHEMES)
 
     async def build_raw_log(
         self,
@@ -41,6 +50,13 @@ class NuScenesRawLogMocker:
         version_root_uri: str,
         params: dict,
     ) -> tuple[RawLogManifest, RawLogFrameIndex, str, str]:
+        if self._is_object_storage_uri(self._source_root_uri):
+            raise NotImplementedError(
+                "Storage-backed nuScenes raw source is not implemented yet. "
+                "NuScenesRawLogMocker currently requires a local filesystem dataroot. "
+                f"Received raw source root URI: {self._source_root_uri}"
+            )
+
         from nuscenes.nuscenes import NuScenes
 
         nusc = NuScenes(

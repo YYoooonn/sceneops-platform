@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 
 from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_core.common.schemas import ArtifactUri
-from sceneops_core.config import ArtifactSettings
+from sceneops_core.config import StorageSettings
 
 from sceneops_storage.exceptions import (
     ArtifactNotFoundError,
@@ -28,7 +28,7 @@ class S3ArtifactStore(ArtifactStore):
     ``endpoint_url`` at the MinIO service.
     """
 
-    def __init__(self, *, settings: ArtifactSettings) -> None:
+    def __init__(self, *, settings: StorageSettings) -> None:
         addressing_style = "path" if settings.endpoint_url else "auto"
         self._client = boto3.client(
             "s3",

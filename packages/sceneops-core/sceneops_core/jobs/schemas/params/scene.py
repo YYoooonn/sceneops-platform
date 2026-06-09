@@ -58,14 +58,14 @@ class BuildScenesJobParams(BaseJobParams):
     raw_log_manifest_uri: str | None = None
     raw_log_frame_index_uri: str | None = None
 
-    raw_root_uri: str | None = None
-
     dataset_id: str | None = None
     dataset_version: str | None = None
 
     # Raw-log source classification
     source_type: RawLogSourceType | None = None
     source_format: RawLogSourceFormat | None = None
+    # URI of the actual sensor record files (rosbag, MCAP, etc.) for real adapters.
+    # Not used as a raw source root; raw source root comes from DatasetVersionRecord.
     records_uri: str | None = None
 
     segmentation: SceneSegmentationConfig = Field(

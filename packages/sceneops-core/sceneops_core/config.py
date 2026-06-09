@@ -7,24 +7,30 @@ from sceneops_core.artifacts.schemas import ArtifactBackend
 from sceneops_core.constants.tasks import PIPELINE_QUEUE, JOB_QUEUE
 
 
-class ArtifactSettings(BaseModel):
-    backend: ArtifactBackend = ArtifactBackend.LOCAL
+class StorageSettings(BaseModel):
+    """Shared base for any storage backend configuration."""
 
-    # Local: /data or file:///data
-    # Object storage: s3://bucket/prefix, gs://bucket/prefix
-    root_uri: str = "/data"
+    backend: ArtifactBackend = ArtifactBackend.LOCAL
+    # Subclasses define their own default for root_uri.
+    root_uri: str
+    endpoint_url: str | None = None
+    region: str | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+
+
+class ArtifactSettings(StorageSettings):
+    # Local: /data/artifacts
+    # Object storage: s3://sceneops/artifacts
+    root_uri: str = "/data/artifacts"
 
     dataset_prefix: str = "datasets"
     run_prefix: str = "runs"
     model_prefix: str = "models"
 
-    # Object storage extension fields.
+    # Unused legacy fields — kept for backward compatibility only.
     bucket: str | None = None
     prefix: str | None = None
-    endpoint_url: str | None = None
-    region: str | None = None
-    access_key_id: str | None = None
-    secret_access_key: str | None = None
 
     @property
     def dataset_root_uri(self) -> str:
@@ -37,6 +43,19 @@ class ArtifactSettings(BaseModel):
     @property
     def model_root_uri(self) -> str:
         return join_uri(self.root_uri, self.model_prefix)
+
+
+class RawSourceSettings(StorageSettings):
+    """Configuration for the read-only raw dataset source.
+
+    Separate from ArtifactSettings so that raw input data and generated
+    artifacts can be configured, rooted, and backed independently.
+
+    Local:         /data/raw/nuscenes
+    Object storage: s3://sceneops/raw/nuscenes
+    """
+
+    root_uri: str = "/data/raw/nuscenes"
 
 
 class DefaultDatasetSettings(BaseModel):

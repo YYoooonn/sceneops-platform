@@ -163,6 +163,29 @@ upsert_dataset() {
 }
 
 
+upsert_dataset_version() {
+  local api_base_url="$1"
+  local dataset_id="$2"
+  local version="$3"
+  local raw_source_root_uri="$4"
+
+  local existing
+  existing="$(curl -sS "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")")"
+
+  if echo "$existing" | jq -e '.version' >/dev/null 2>&1; then
+    # Version exists — patch raw_source_root_uri in case it changed.
+    curl -sS -X PATCH "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")" \
+      -H "Content-Type: application/json" \
+      -d "{\"raw_source_root_uri\": \"$raw_source_root_uri\"}"
+    return 0
+  fi
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/datasets/$dataset_id/versions")" \
+    -H "Content-Type: application/json" \
+    -d "{\"version\": \"$version\", \"raw_source_root_uri\": \"$raw_source_root_uri\", \"metadata\": {}}"
+}
+
+
 upsert_model() {
   local api_base_url="$1"
   local model_id="$2"

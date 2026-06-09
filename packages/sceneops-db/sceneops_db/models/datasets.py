@@ -114,6 +114,8 @@ class DatasetVersionModel(Base):
         String(128), nullable=True
     )
 
+    raw_source_root_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     latest_validation_run_id: Mapped[str | None] = mapped_column(
         String(128),
         nullable=True,

@@ -120,6 +120,7 @@ class DatasetService:
                 version=body.version,
                 status=body.status,
                 manifest_uri=body.manifest_uri,
+                raw_source_root_uri=body.raw_source_root_uri,
                 source_dataset_id=body.source_dataset_id,
                 source_dataset_version=body.source_dataset_version,
                 metadata=body.metadata,

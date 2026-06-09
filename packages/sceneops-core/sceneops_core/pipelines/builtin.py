@@ -59,6 +59,33 @@ _BUILD_SCENES_OUTPUTS = [
     PipelineTaskOutputSpec(
         name="sampling_strategy", kind=_SUMMARY, source="sampling_strategy"
     ),
+    # Grouping report — Phase 2 wiring (Phase 3+ will surface non-zero values).
+    PipelineTaskOutputSpec(
+        name="sample_count_before_filtering",
+        kind=_SUMMARY,
+        source="sample_count_before_filtering",
+    ),
+    PipelineTaskOutputSpec(
+        name="sample_count_after_filtering",
+        kind=_SUMMARY,
+        source="sample_count_after_filtering",
+    ),
+    PipelineTaskOutputSpec(
+        name="dropped_sample_count", kind=_SUMMARY, source="dropped_sample_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="warned_sample_count", kind=_SUMMARY, source="warned_sample_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="samples_with_missing_channels_count",
+        kind=_SUMMARY,
+        source="samples_with_missing_channels_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="missing_channel_counts_by_channel",
+        kind=_SUMMARY,
+        source="missing_channel_counts_by_channel",
+    ),
 ]
 
 _REGISTER_SCENE_OUTPUTS = [
