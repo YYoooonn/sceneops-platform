@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 import inference_server.main as main_module
 from inference_server.config import InferenceServerSettings
 from inference_server.main import _ConcurrencyState, _WarmupState, app
-from tests.conftest import make_mock_model, make_settings
+from tests.conftest import make_mock_model, make_mock_resolver, make_settings
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -81,7 +81,9 @@ async def test_semaphore_serializes_concurrent_detect():
     active_snapshots: list[int] = []
     lock = threading.Lock()
 
-    def slow_detect(req):
+    def slow_detect(
+        image, *, prompt=None, box_threshold, text_threshold, max_image_size
+    ):
         with lock:
             active_snapshots.append(main_module._concurrency.active_requests)
         first_detect_started.set()
@@ -89,17 +91,19 @@ async def test_semaphore_serializes_concurrent_detect():
         return [], 100.0
 
     mock_model = make_mock_model()
-    mock_model.detect = MagicMock(side_effect=slow_detect)
+    mock_model.detect_image = MagicMock(side_effect=slow_detect)
+    mock_resolver = make_mock_resolver()
     settings = make_settings(enable_warmup=False, max_concurrent_inference_requests=1)
 
     # Manually bootstrap state (no lifespan with ASGITransport).
     main_module._model = mock_model
+    main_module._image_resolver = mock_resolver
     main_module._inference_sem = asyncio.Semaphore(1)
     main_module._concurrency = _ConcurrencyState(max_requests=1)
     main_module._warmup_state = _WarmupState(enabled=False)
 
     detect_payload = {
-        "image_path": "/fake/image.jpg",
+        "image_uri": "file:///fake/image.jpg",
         "box_threshold": 0.35,
         "text_threshold": 0.25,
         "max_image_size": 800,
@@ -131,8 +135,8 @@ async def test_semaphore_serializes_concurrent_detect():
                 # One event-loop tick: task2 reaches the semaphore and suspends.
                 await asyncio.sleep(0.05)
 
-                # Only the first call has entered detect so far.
-                assert mock_model.detect.call_count == 1
+                # Only the first call has entered detect_image so far.
+                assert mock_model.detect_image.call_count == 1
 
                 # Release first request.
                 first_detect_proceed.set()
@@ -141,11 +145,12 @@ async def test_semaphore_serializes_concurrent_detect():
 
                 assert r1.status_code == 200
                 assert r2.status_code == 200
-                assert mock_model.detect.call_count == 2
+                assert mock_model.detect_image.call_count == 2
                 # Each call saw active_requests == 1: never more than 1 at a time.
                 assert all(n == 1 for n in active_snapshots), active_snapshots
     finally:
         main_module._model = None
+        main_module._image_resolver = None
         main_module._inference_sem = None
         main_module._concurrency = None
         main_module._warmup_state = None
@@ -156,34 +161,36 @@ async def test_semaphore_serializes_concurrent_detect():
 
 def test_active_count_zero_after_successful_detect():
     """active_requests must be 0 after a completed detect call."""
-    mock_model = make_mock_model(detect_return=([], 50.0))
+    mock_model = make_mock_model(detect_image_return=([], 50.0))
+    mock_resolver = make_mock_resolver()
     settings = make_settings(enable_warmup=False)
     with (
         patch("inference_server.main.GroundingDinoModel", return_value=mock_model),
+        patch("inference_server.main.ImageResolver", return_value=mock_resolver),
         patch("inference_server.main.get_settings", return_value=settings),
     ):
         with TestClient(app, raise_server_exceptions=True) as client:
             resp = client.post(
                 "/v1/detect",
-                json={"image_path": "/fake.jpg"},
+                json={"image_uri": "file:///fake.jpg"},
             )
             assert resp.status_code == 200
-            # Active count must return to 0 after the request completes.
             assert main_module._concurrency.active_requests == 0
 
 
 def test_active_count_zero_after_detect_exception():
-    """active_requests must return to 0 even when model.detect raises."""
-    mock_model = make_mock_model(detect_raises=RuntimeError("CUDA OOM"))
+    """active_requests must return to 0 even when model.detect_image raises."""
+    mock_model = make_mock_model(detect_image_raises=RuntimeError("CUDA OOM"))
+    mock_resolver = make_mock_resolver()
     settings = make_settings(enable_warmup=False)
     with (
         patch("inference_server.main.GroundingDinoModel", return_value=mock_model),
+        patch("inference_server.main.ImageResolver", return_value=mock_resolver),
         patch("inference_server.main.get_settings", return_value=settings),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             # RuntimeError is unhandled → 500; we just care about state recovery.
-            client.post("/v1/detect", json={"image_path": "/fake.jpg"})
-            # Concurrency state is still live (inside lifespan context).
+            client.post("/v1/detect", json={"image_uri": "file:///fake.jpg"})
             assert main_module._concurrency.active_requests == 0
 
 
@@ -193,6 +200,6 @@ def test_active_count_zero_after_detect_exception():
 def test_detect_503_when_server_not_initialized(client_no_lifespan):
     resp = client_no_lifespan.post(
         "/v1/detect",
-        json={"image_path": "/fake.jpg"},
+        json={"image_uri": "file:///fake.jpg"},
     )
     assert resp.status_code == 503

@@ -6,12 +6,15 @@ from pydantic import BaseModel, Field
 
 
 class DetectRequest(BaseModel):
-    image_path: str
+    # Primary: file:// URI (or future s3://, gs://).
+    # The server resolves the URI to an image via ImageResolver.
+    image_uri: str
     # None → use server-side defaults from InferenceServerSettings
     prompt: str | None = Field(default=None)
     box_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     text_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     max_image_size: int | None = Field(default=None, ge=64, le=2048)
+    trace_id: str | None = Field(default=None)  # optional debug/logging field
 
 
 class Detection2D(BaseModel):

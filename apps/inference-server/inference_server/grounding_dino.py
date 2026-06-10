@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Any
 
 from inference_server.config import InferenceServerSettings, get_settings
-from inference_server.schemas import DetectRequest, Detection2D
+from inference_server.schemas import Detection2D
 
 # Maps GroundingDINO output phrase → nuScenes category name.
 # Extend this dict to support more categories without changing other code.
@@ -68,30 +67,30 @@ class GroundingDinoModel:
             text_threshold=self._settings.text_threshold,
         )
 
-    def detect(self, request: DetectRequest) -> tuple[list[Detection2D], float]:
-        """Run GroundingDINO on a single image.
+    def detect_image(
+        self,
+        image: Any,
+        *,
+        prompt: str | None = None,
+        box_threshold: float,
+        text_threshold: float,
+        max_image_size: int,
+    ) -> tuple[list[Detection2D], float]:
+        """Run GroundingDINO on a pre-loaded PIL Image.
 
         Returns (detections, inference_ms). Runs synchronously — call via
         asyncio.to_thread from async handlers.
 
-        TODO: accept MinIO/S3 image URIs for production deployments where
-        the GPU server cannot share a local volume with the worker.
+        The caller is responsible for resolving the image URI and loading the PIL
+        Image (e.g. via ImageResolver). This method only handles resizing and inference.
         """
-        from PIL import Image as PILImage
-
-        image_path = Path(request.image_path)
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-
-        image = PILImage.open(image_path).convert("RGB")
-        image = _resize_long_edge(image, request.max_image_size)
-
-        prompt = request.prompt or self._settings.detection_prompt
+        image = _resize_long_edge(image, max_image_size)
+        effective_prompt = prompt or self._settings.detection_prompt
         return self._infer(
             image=image,
-            prompt=prompt,
-            box_threshold=request.box_threshold,
-            text_threshold=request.text_threshold,
+            prompt=effective_prompt,
+            box_threshold=box_threshold,
+            text_threshold=text_threshold,
         )
 
     def _infer(

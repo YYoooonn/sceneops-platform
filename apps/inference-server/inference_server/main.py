@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from inference_server.config import InferenceServerSettings, get_settings
 from inference_server.grounding_dino import GroundingDinoModel
+from inference_server.image_resolver import ImageResolver
 from inference_server.schemas import (
     DetectRequest,
     DetectResponse,
@@ -22,6 +23,7 @@ from inference_server.schemas import (
 logger = logging.getLogger(__name__)
 
 _model: GroundingDinoModel | None = None
+_image_resolver: ImageResolver | None = None
 _warmup_state: _WarmupState | None = None
 _inference_sem: asyncio.Semaphore | None = None
 _concurrency: _ConcurrencyState | None = None
@@ -72,7 +74,7 @@ async def _do_warmup(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model, _warmup_state, _inference_sem, _concurrency
+    global _model, _image_resolver, _warmup_state, _inference_sem, _concurrency
     settings = get_settings()
     logger.info(
         "Loading %s (box_threshold=%.2f, text_threshold=%.2f, max_image_size=%d)",
@@ -84,6 +86,11 @@ async def lifespan(app: FastAPI):
     _model = GroundingDinoModel(settings=settings)
     await asyncio.to_thread(_model.load)
     logger.info("Model loaded on device: %s", _model.device)
+
+    _image_resolver = ImageResolver(allowed_roots=settings.allowed_file_roots)
+    logger.info(
+        "ImageResolver initialized (allowed_roots=%s)", settings.allowed_file_roots
+    )
 
     if settings.enable_warmup:
         _warmup_state = await _do_warmup(_model, settings)
@@ -103,6 +110,7 @@ async def lifespan(app: FastAPI):
     yield
 
     _model = None
+    _image_resolver = None
     _warmup_state = None
     _inference_sem = None
     _concurrency = None
@@ -180,25 +188,28 @@ async def readyz() -> ReadyResponse:
 async def detect(request: DetectRequest) -> DetectResponse:
     if _model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    if _inference_sem is None or _concurrency is None:
+    if _inference_sem is None or _concurrency is None or _image_resolver is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
 
     settings = get_settings()
-
-    # Apply server-side defaults for fields the caller left as None
-    filled = request.model_copy(
-        update={
-            "box_threshold": request.box_threshold
-            if request.box_threshold is not None
-            else settings.box_threshold,
-            "text_threshold": request.text_threshold
-            if request.text_threshold is not None
-            else settings.text_threshold,
-            "max_image_size": request.max_image_size
-            if request.max_image_size is not None
-            else settings.max_image_size,
-        }
+    box_threshold = (
+        request.box_threshold
+        if request.box_threshold is not None
+        else settings.box_threshold
     )
+    text_threshold = (
+        request.text_threshold
+        if request.text_threshold is not None
+        else settings.text_threshold
+    )
+    max_image_size = (
+        request.max_image_size
+        if request.max_image_size is not None
+        else settings.max_image_size
+    )
+
+    resolver = _image_resolver
+    model = _model
 
     async with _inference_sem:
         _concurrency.active_requests += 1
@@ -208,8 +219,41 @@ async def detect(request: DetectRequest) -> DetectResponse:
             _concurrency.max_requests,
         )
         try:
-            detections, inference_ms = await asyncio.to_thread(_model.detect, filled)
+
+            def _run() -> tuple:
+                image = resolver.resolve(request.image_uri)
+                return model.detect_image(
+                    image,
+                    prompt=request.prompt,
+                    box_threshold=box_threshold,
+                    text_threshold=text_threshold,
+                    max_image_size=max_image_size,
+                )
+
+            detections, inference_ms = await asyncio.to_thread(_run)
         except FileNotFoundError as exc:
+            logger.warning(
+                "Image not found uri=%r trace_id=%r: %s",
+                request.image_uri,
+                request.trace_id,
+                exc,
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except PermissionError as exc:
+            logger.warning(
+                "Image outside allowed roots uri=%r trace_id=%r: %s",
+                request.image_uri,
+                request.trace_id,
+                exc,
+            )
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            logger.warning(
+                "Invalid image URI uri=%r trace_id=%r: %s",
+                request.image_uri,
+                request.trace_id,
+                exc,
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         finally:
             _concurrency.active_requests -= 1
@@ -217,7 +261,7 @@ async def detect(request: DetectRequest) -> DetectResponse:
     return DetectResponse(
         detections=detections,
         inference_ms=round(inference_ms, 2),
-        device=_model.device,
+        device=model.device,
     )
 
 

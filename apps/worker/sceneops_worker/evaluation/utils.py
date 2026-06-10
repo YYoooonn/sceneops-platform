@@ -9,6 +9,15 @@ from sceneops_core.scenes.schemas.manifests import (
 )
 
 
+def is_evaluable_prediction(pred: dict[str, Any]) -> bool:
+    """Return False only for predictions explicitly marked as failed lifts.
+
+    Predictions without lifting_status (e.g. from mock backends) are treated
+    as evaluable to preserve backward compatibility.
+    """
+    return pred.get("lifting_status") != "failed"
+
+
 def evaluate_sample(
     *,
     sample: SceneSampleManifest,
@@ -19,11 +28,14 @@ def evaluate_sample(
 ) -> dict[str, Any]:
     gt_annotations = _filter_supported_gt(sample.annotations)
 
+    evaluable_predictions = [p for p in predictions if is_evaluable_prediction(p)]
+    lifting_failed_count = len(predictions) - len(evaluable_predictions)
+
     matched_gt_indices: set[int] = set()
     matched_prediction_indices: set[int] = set()
     matches: list[dict[str, Any]] = []
 
-    for pred_index, prediction in enumerate(predictions):
+    for pred_index, prediction in enumerate(evaluable_predictions):
         best_gt_index = None
         best_distance = float("inf")
 
@@ -55,13 +67,13 @@ def evaluate_sample(
             )
 
     tp = len(matches)
-    fp = len(predictions) - len(matched_prediction_indices)
+    fp = len(evaluable_predictions) - len(matched_prediction_indices)
     fn = len(gt_annotations) - len(matched_gt_indices)
     total_center_distance_error = sum(match["center_distance"] for match in matches)
 
     class_metrics = build_sample_class_metrics(
         gt_annotations=gt_annotations,
-        predictions=predictions,
+        predictions=evaluable_predictions,
         matches=matches,
         matched_gt_indices=matched_gt_indices,
         matched_prediction_indices=matched_prediction_indices,
@@ -85,6 +97,9 @@ def evaluate_sample(
         "recall": round(safe_div(tp, tp + fn), 6),
         "matches": matches,
         "class_metrics": class_metrics,
+        "prediction_count": len(predictions),
+        "evaluable_prediction_count": len(evaluable_predictions),
+        "lifting_failed_prediction_count": lifting_failed_count,
     }
 
 

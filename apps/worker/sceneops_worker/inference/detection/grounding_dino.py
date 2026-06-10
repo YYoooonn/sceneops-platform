@@ -1,45 +1,53 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
 from sceneops_core.datasets.schemas import DatasetManifest
-from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceRequest,
     DetectionInferenceResult,
+    DetectionSampleInput,
 )
 from sceneops_worker.inference.detection.frustum_lifting import frustum_lift
+from sceneops_worker.inference.detection.sample_selector import (
+    DetectionSampleSelector,
+    SampleSelectionConfig,
+)
 
-CAMERA_CHANNEL = "CAM_FRONT"
+logger = logging.getLogger(__name__)
+
+_DEFAULT_BOX_THRESHOLD = 0.35
+_DEFAULT_TEXT_THRESHOLD = 0.25
+_DEFAULT_MAX_IMAGE_SIZE = 800
+_DEFAULT_CAMERA_CHANNEL = "CAM_FRONT"
+_DEFAULT_HTTP_TIMEOUT = 120.0
 
 
 class GroundingDinoDetectionBackend:
-    """HTTP client that delegates 2D detection to the inference server.
+    """HTTP client that delegates 2D detection to the GroundingDINO inference server.
 
-    The inference server (apps/inference-server) runs GroundingDINO-T on GPU.
-    This backend sends image paths over HTTP and receives 2D bounding boxes.
-    Frustum-based 3D lifting (step 2) will be added here, running on CPU
-    using the LiDAR point cloud from the artifact store.
+    Sends image_uri (file:// or future remote URI) to the inference server.
+    The inference server resolves the URI and loads the image independently.
 
-    endpoint_url is read from DetectionInferenceInput.endpoint_url, which
-    comes from the job params or the model version registry.
+    Scene/sample selection is handled by DetectionSampleSelector — this backend
+    does not traverse manifests or build artifact paths; it only issues HTTP
+    requests and assembles prediction records.
     """
 
     def __init__(
         self,
         *,
-        box_threshold: float = 0.35,
-        text_threshold: float = 0.25,
-        max_image_size: int = 800,
-        camera_channel: str = CAMERA_CHANNEL,
-        http_timeout: float = 120.0,
+        box_threshold: float = _DEFAULT_BOX_THRESHOLD,
+        text_threshold: float = _DEFAULT_TEXT_THRESHOLD,
+        max_image_size: int = _DEFAULT_MAX_IMAGE_SIZE,
+        camera_channel: str = _DEFAULT_CAMERA_CHANNEL,
+        http_timeout: float = _DEFAULT_HTTP_TIMEOUT,
     ) -> None:
         self._box_threshold = box_threshold
         self._text_threshold = text_threshold
@@ -56,100 +64,146 @@ class GroundingDinoDetectionBackend:
         request: DetectionInferenceRequest,
     ) -> DetectionInferenceResult:
         inference_input = request.input
-        endpoint_url = (inference_input.config.endpoint_url or "").rstrip("/")
+        config = inference_input.config
+
+        endpoint_url = (config.endpoint_url or "").rstrip("/")
         if not endpoint_url:
             raise ValueError(
                 "GroundingDINO backend requires endpoint_url pointing to the "
-                "inference server (e.g. http://inference-server:8001). "
-                "Set it in the model version registry or job params."
+                "inference server (e.g. http://sceneops-inference:8001). "
+                "Set it via job params or model version registry."
             )
 
-        dataset_manifest = inference_input.dataset_manifest
-        run_id = inference_input.run_id
-        raw_root = dataset_manifest.uris.raw_root
-        if raw_root is None:
+        raw_source_root_uri = config.raw_source_root_uri
+        if not raw_source_root_uri:
             raise ValueError(
-                "GroundingDINO backend requires dataset_manifest.uris.raw_root "
-                "to locate raw image files."
+                "GroundingDINO backend requires raw_source_root_uri to resolve image URIs. "
+                "Ensure the dataset version has raw_source_root_uri set."
             )
 
-        sample_manifests: list[SceneSampleManifest] = []
-        async for sample in request.scene_artifact_store.iter_samples(
-            dataset_manifest,
-            max_samples=inference_input.config.max_samples,
-        ):
-            sample_manifests.append(sample)
+        # Config-driven inference params; fall back to constructor defaults if not set.
+        box_threshold = (
+            config.box_threshold
+            if config.box_threshold is not None
+            else self._box_threshold
+        )
+        text_threshold = (
+            config.text_threshold
+            if config.text_threshold is not None
+            else self._text_threshold
+        )
+        max_image_size = (
+            config.max_image_size
+            if config.max_image_size is not None
+            else self._max_image_size
+        )
+        camera_channel = config.camera_channel or self._camera_channel
+        enable_3d_lifting = config.enable_3d_lifting
 
+        # ── sample selection ───────────────────────────────────────────────────
+        selector = DetectionSampleSelector()
+        sample_inputs = await selector.select(
+            dataset_manifest=inference_input.dataset_manifest,
+            scene_artifact_store=request.scene_artifact_store,
+            config=SampleSelectionConfig(
+                dataset_id=inference_input.dataset_manifest.dataset_id,
+                dataset_version=inference_input.dataset_manifest.dataset_version,
+                camera_channel=camera_channel,
+                raw_source_root_uri=raw_source_root_uri,
+                scene_ids=config.scene_ids,
+                max_scenes=config.max_scenes,
+                max_samples=config.max_samples,
+                enable_3d_lifting=enable_3d_lifting,
+            ),
+        )
+
+        run_id = inference_input.run_id
+        scene_ids = {s.scene_id for s in sample_inputs}
         prediction_count = 0
+        lifting_succeeded_count = 0
+        lifting_failed_count = 0
+        lifting_not_applicable_count = 0
         latencies_ms: list[float] = []
 
+        # ── inference + prediction building ───────────────────────────────────
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-            for sample in sample_manifests:
-                sensor = sample.sensors.get(self._camera_channel)
-                if sensor is None:
-                    predictions: list[dict[str, Any]] = []
-                else:
-                    image_path = _resolve_raw_path(raw_root, sensor.filename)
-                    t0 = time.perf_counter()
-                    detections_2d = await _call_inference_server(
-                        client=client,
-                        endpoint_url=endpoint_url,
-                        image_path=image_path,
-                        box_threshold=self._box_threshold,
-                        text_threshold=self._text_threshold,
-                        max_image_size=self._max_image_size,
-                    )
-                    latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+            for sample_input in sample_inputs:
+                t0 = time.perf_counter()
+                detections_2d = await _call_inference_server(
+                    client=client,
+                    endpoint_url=endpoint_url,
+                    image_uri=sample_input.image_uri,
+                    box_threshold=box_threshold,
+                    text_threshold=text_threshold,
+                    max_image_size=max_image_size,
+                    detection_prompt=config.detection_prompt,
+                )
+                latencies_ms.append((time.perf_counter() - t0) * 1000.0)
 
-                    lidar_sensor = sample.sensors.get("LIDAR_TOP")
-                    predictions = _build_predictions(
-                        sample=sample,
-                        detections_2d=detections_2d,
-                        camera_sensor=sensor,
-                        lidar_sensor=lidar_sensor,
-                        raw_root=raw_root,
-                        max_image_size=self._max_image_size,
-                    )
+                predictions = _build_predictions(
+                    sample=sample_input,
+                    detections_2d=detections_2d,
+                    camera_sensor=sample_input.camera_sensor_frame,
+                    lidar_sensor=sample_input.lidar_sensor_frame,
+                    raw_root=raw_source_root_uri,
+                    max_image_size=max_image_size,
+                )
 
                 prediction_count += len(predictions)
+                for p in predictions:
+                    status = p.get("lifting_status", "not_applicable")
+                    if status == "succeeded":
+                        lifting_succeeded_count += 1
+                    elif status == "failed":
+                        lifting_failed_count += 1
+                    else:
+                        lifting_not_applicable_count += 1
+
                 await request.run_artifact_store.write_prediction_manifest(
                     run_id=run_id,
-                    sample_id=sample.sample_id,
+                    sample_id=sample_input.sample_id,
                     manifest=_prediction_manifest(
                         run_id=run_id,
-                        dataset_manifest=dataset_manifest,
-                        model_id=inference_input.config.model_id,
-                        model_version=inference_input.config.model_version,
-                        sample=sample,
+                        dataset_manifest=inference_input.dataset_manifest,
+                        model_id=config.model_id,
+                        model_version=config.model_version,
+                        sample_input=sample_input,
                         predictions=predictions,
-                        camera_channel=self._camera_channel,
                         endpoint_url=endpoint_url,
                     ),
                 )
 
+        # ── run manifest ───────────────────────────────────────────────────────
         run_manifest_uri = request.run_artifact_store.inference_run_manifest_uri(run_id)
         predictions_root_uri = (
             request.run_artifact_store.inference_predictions_root_uri(run_id)
         )
         avg_ms = sum(latencies_ms) / len(latencies_ms) if latencies_ms else 0.0
+        inference_request_count = len(latencies_ms)
 
         run_manifest = {
             "run_id": run_id,
             "run_type": "inference",
-            "dataset_id": dataset_manifest.dataset_id,
-            "dataset_version": dataset_manifest.dataset_version,
-            "model_id": inference_input.config.model_id,
-            "model_version": inference_input.config.model_version,
+            "dataset_id": inference_input.dataset_manifest.dataset_id,
+            "dataset_version": inference_input.dataset_manifest.dataset_version,
+            "model_id": config.model_id,
+            "model_version": config.model_version,
             "status": "succeeded",
             "backend": self.backend_type,
             "endpoint_url": endpoint_url,
-            "sample_count": len(sample_manifests),
+            "scene_count": len(scene_ids),
+            "sample_count": len(sample_inputs),
+            "inference_request_count": inference_request_count,
             "prediction_count": prediction_count,
             "prediction_manifest_uri": run_manifest_uri,
             "predictions_root_uri": predictions_root_uri,
             "metrics": {
                 "avg_roundtrip_ms": round(avg_ms, 2),
-                "camera_channel": self._camera_channel,
+                "camera_channel": camera_channel,
+                "lifting_succeeded_count": lifting_succeeded_count,
+                "lifting_failed_count": lifting_failed_count,
+                "lifting_not_applicable_count": lifting_not_applicable_count,
+                "evaluable_prediction_count": prediction_count - lifting_failed_count,
             },
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -163,7 +217,9 @@ class GroundingDinoDetectionBackend:
             run_id=run_id,
             run_manifest_uri=run_manifest_uri,
             predictions_root_uri=predictions_root_uri,
-            sample_count=len(sample_manifests),
+            scene_count=len(scene_ids),
+            sample_count=len(sample_inputs),
+            inference_request_count=inference_request_count,
             prediction_count=prediction_count,
             status="succeeded",
             metrics=run_manifest["metrics"],
@@ -171,43 +227,65 @@ class GroundingDinoDetectionBackend:
         )
 
 
+# ── private helpers ───────────────────────────────────────────────────────────
+
+
 async def _call_inference_server(
     *,
     client: httpx.AsyncClient,
     endpoint_url: str,
-    image_path: Path,
+    image_uri: str,
     box_threshold: float,
     text_threshold: float,
     max_image_size: int,
+    detection_prompt: str | None,
 ) -> list[dict[str, Any]]:
-    response = await client.post(
-        f"{endpoint_url}/v1/detect",
-        json={
-            "image_path": str(image_path),
-            "box_threshold": box_threshold,
-            "text_threshold": text_threshold,
-            "max_image_size": max_image_size,
-        },
-    )
+    """POST /v1/detect with image_uri payload.
+
+    The inference server resolves image_uri to actual image bytes.
+    Workers do not read the image.
+    """
+    payload: dict[str, Any] = {
+        "image_uri": image_uri,
+        "box_threshold": box_threshold,
+        "text_threshold": text_threshold,
+        "max_image_size": max_image_size,
+    }
+    if detection_prompt is not None:
+        payload["prompt"] = detection_prompt
+    response = await client.post(f"{endpoint_url}/v1/detect", json=payload)
     response.raise_for_status()
     return response.json()["detections"]
 
 
 def _build_predictions(
     *,
-    sample: SceneSampleManifest,
+    sample: Any,
     detections_2d: list[dict[str, Any]],
     camera_sensor: Any,
-    lidar_sensor: Any,
+    lidar_sensor: Any | None,
     raw_root: str,
     max_image_size: int,
 ) -> list[dict[str, Any]]:
+    """Build per-prediction records from 2D detections + frustum lifting.
+
+    NOTE: Frustum lifting currently fails with AttributeError because
+    SceneSensorFrameManifest does not yet carry calibrated_sensor / ego_pose.
+    When it fails, lifting_status="failed" is recorded; the prediction is kept
+    with a [0,0,0] placeholder translation so downstream evaluation can filter
+    it out via is_evaluable_prediction().
+    TODO: Bridge SceneSensorFrameManifest calibration data to frustum_lift().
+    """
     predictions: list[dict[str, Any]] = []
     for i, det in enumerate(detections_2d):
         bbox_2d: list[float] = det["bbox_2d"]
+        category = det.get("category_name", "unknown")
 
         lift: dict[str, Any] | None = None
-        if lidar_sensor is not None and lidar_sensor.filename:
+        lifting_status = "not_applicable"
+        lifting_error: str | None = None
+
+        if lidar_sensor is not None:
             try:
                 lift = frustum_lift(
                     bbox_2d=bbox_2d,
@@ -216,13 +294,22 @@ def _build_predictions(
                     raw_root=raw_root,
                     max_image_size=max_image_size,
                 )
-            except Exception:
-                pass  # keep placeholder on any lifting failure
+                lifting_status = "succeeded" if lift is not None else "not_applicable"
+            except Exception as exc:
+                lifting_status = "failed"
+                lifting_error = str(exc)
+                logger.warning(
+                    "frustum_lift failed sample=%s idx=%d category=%s: %s",
+                    sample.sample_id,
+                    i,
+                    category,
+                    exc,
+                )
 
         predictions.append(
             {
                 "prediction_id": f"{sample.sample_id}-gdino-{i:04d}",
-                "category_name": det["category_name"],
+                "category_name": category,
                 "translation": lift["translation"] if lift else [0.0, 0.0, 0.0],
                 "size": lift["size"] if lift else [1.0, 1.0, 1.0],
                 "rotation": lift["rotation"] if lift else [1.0, 0.0, 0.0, 0.0],
@@ -230,6 +317,8 @@ def _build_predictions(
                 "source_annotation_token": None,
                 "bbox_2d": bbox_2d,
                 "lifting_method": lift["lifting_method"] if lift else "none",
+                "lifting_status": lifting_status,
+                "lifting_error": lifting_error,
                 "cluster_point_count": lift.get("cluster_point_count")
                 if lift
                 else None,
@@ -244,9 +333,8 @@ def _prediction_manifest(
     dataset_manifest: DatasetManifest,
     model_id: str,
     model_version: str,
-    sample: SceneSampleManifest,
+    sample_input: DetectionSampleInput,
     predictions: list[dict[str, Any]],
-    camera_channel: str,
     endpoint_url: str,
 ) -> dict[str, Any]:
     return {
@@ -255,26 +343,13 @@ def _prediction_manifest(
         "dataset_version": dataset_manifest.dataset_version,
         "model_id": model_id,
         "model_version": model_version,
-        "scene_id": sample.scene_id,
-        "sample_id": sample.sample_id,
+        "scene_id": sample_input.scene_id,
+        "sample_id": sample_input.sample_id,
         "predictions": predictions,
         "metadata": {
             "backend": InferenceBackendType.GROUNDING_DINO.value,
-            "camera_channel": camera_channel,
+            "camera_channel": sample_input.camera_channel,
+            "image_uri": sample_input.image_uri,
             "endpoint_url": endpoint_url,
         },
     }
-
-
-def _resolve_raw_path(raw_root: str, filename: str) -> Path:
-    parsed = urlparse(raw_root)
-    if parsed.scheme == "file":
-        base = Path(parsed.path)
-    elif parsed.scheme == "":
-        base = Path(raw_root)
-    else:
-        raise ValueError(
-            f"GroundingDINO backend supports local raw_root only. Got: {raw_root!r}"
-            "\nTODO: add MinIO/S3 image download for remote deployments."
-        )
-    return base / filename

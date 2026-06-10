@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +37,18 @@ class InferenceServerSettings(BaseSettings):
 
     # Concurrency
     max_concurrent_inference_requests: int = Field(default=1, ge=1)
+
+    # Image URI security: file:// paths must be under one of these roots.
+    allowed_file_roots: list[str] = Field(
+        default_factory=lambda: ["/data/raw", "/data/artifacts"]
+    )
+
+    @field_validator("allowed_file_roots", mode="before")
+    @classmethod
+    def _parse_csv_roots(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [r.strip() for r in v.split(",") if r.strip()]
+        return v
 
 
 @lru_cache

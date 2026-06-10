@@ -108,6 +108,8 @@ async def _evaluate_center_distance_detection(
     total_fn = 0
     total_distance_error = 0.0
     matched_count = 0
+    total_raw_prediction_count = 0
+    total_lifting_failed_count = 0
     class_stats: dict[str, dict[str, float]] = {}
 
     for prediction_uri in prediction_uris:
@@ -136,6 +138,12 @@ async def _evaluate_center_distance_detection(
         total_fn += sample_eval["fn"]
         total_distance_error += sample_eval["total_center_distance_error"]
         matched_count += sample_eval["matched_count"]
+        total_raw_prediction_count += sample_eval.get(
+            "prediction_count", sample_eval["tp"] + sample_eval["fp"]
+        )
+        total_lifting_failed_count += sample_eval.get(
+            "lifting_failed_prediction_count", 0
+        )
 
         utils.merge_class_stats(class_stats, sample_eval["class_metrics"])
 
@@ -155,7 +163,8 @@ async def _evaluate_center_distance_detection(
     metrics_uri = run_artifact_store.evaluation_run_metrics_uri(evaluation_run_id)
     samples_root_uri = run_artifact_store.evaluation_samples_root_uri(evaluation_run_id)
 
-    prediction_count = total_tp + total_fp
+    evaluable_prediction_count = total_tp + total_fp
+    prediction_count = total_raw_prediction_count
     ground_truth_count = total_tp + total_fn
 
     metrics = {
@@ -165,6 +174,8 @@ async def _evaluate_center_distance_detection(
         "precision": round(precision, 6),
         "recall": round(recall, 6),
         "mean_center_distance_error": round(mean_center_distance_error, 6),
+        "evaluable_prediction_count": evaluable_prediction_count,
+        "lifting_failed_prediction_count": total_lifting_failed_count,
     }
 
     primary_metric_value = metrics.get("precision")
@@ -181,6 +192,8 @@ async def _evaluate_center_distance_detection(
         match_distance_m=match_distance_m,
         sample_count=len(prediction_uris),
         prediction_count=prediction_count,
+        evaluable_prediction_count=evaluable_prediction_count,
+        lifting_failed_prediction_count=total_lifting_failed_count,
         ground_truth_count=ground_truth_count,
         evaluation_unit="annotation",
         primary_metric_name=primary_metric_name,

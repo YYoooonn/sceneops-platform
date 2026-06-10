@@ -28,6 +28,7 @@ def make_settings(**overrides) -> InferenceServerSettings:
         warmup_image_size=64,
         warmup_text_prompt="car.",
         max_concurrent_inference_requests=1,
+        allowed_file_roots=["/data/raw", "/data/artifacts"],
     )
     defaults.update(overrides)
     return InferenceServerSettings.model_construct(**defaults)
@@ -36,8 +37,8 @@ def make_settings(**overrides) -> InferenceServerSettings:
 def make_mock_model(
     *,
     warmup_raises: Exception | None = None,
-    detect_raises: Exception | None = None,
-    detect_return: tuple = ([], 10.0),
+    detect_image_raises: Exception | None = None,
+    detect_image_return: tuple = ([], 10.0),
 ) -> MagicMock:
     m = MagicMock()
     m.device = "cpu"
@@ -46,11 +47,23 @@ def make_mock_model(
         side_effect=warmup_raises if warmup_raises is not None else None,
         return_value=None,
     )
-    if detect_raises is not None:
-        m.detect = MagicMock(side_effect=detect_raises)
+    if detect_image_raises is not None:
+        m.detect_image = MagicMock(side_effect=detect_image_raises)
     else:
-        m.detect = MagicMock(return_value=detect_return)
+        m.detect_image = MagicMock(return_value=detect_image_return)
     return m
+
+
+def make_mock_resolver(
+    *, resolve_return=None, resolve_raises: Exception | None = None
+) -> MagicMock:
+    """Build a mock ImageResolver."""
+    r = MagicMock()
+    if resolve_raises is not None:
+        r.resolve = MagicMock(side_effect=resolve_raises)
+    else:
+        r.resolve = MagicMock(return_value=resolve_return or MagicMock())
+    return r
 
 
 @pytest.fixture()

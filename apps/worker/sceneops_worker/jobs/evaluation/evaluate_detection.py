@@ -146,6 +146,10 @@ class EvaluateDetectionJobHandler(
         class_metrics = evaluation_manifest.class_metrics
         sample_count = evaluation_manifest.sample_count
         prediction_count = evaluation_manifest.prediction_count
+        evaluable_prediction_count = evaluation_manifest.evaluable_prediction_count
+        lifting_failed_prediction_count = (
+            evaluation_manifest.lifting_failed_prediction_count
+        )
         ground_truth_count = evaluation_manifest.ground_truth_count
         evaluation_unit = evaluation_manifest.evaluation_unit or "annotation"
         evaluation_manifest_uri = evaluation_manifest.evaluation_manifest_uri
@@ -219,6 +223,8 @@ class EvaluateDetectionJobHandler(
                     "status": evaluation_manifest.status,
                     "match_distance_m": evaluation_manifest.match_distance_m,
                     "samples_root_uri": evaluation_manifest.samples_root_uri,
+                    "evaluable_prediction_count": evaluable_prediction_count,
+                    "lifting_failed_prediction_count": lifting_failed_prediction_count,
                 },
                 "finished_at": utc_now(),
             }
@@ -235,6 +241,8 @@ class EvaluateDetectionJobHandler(
             inference_run_id=params.inference_run_id,
             sample_count=sample_count,
             prediction_count=prediction_count,
+            evaluable_prediction_count=evaluable_prediction_count,
+            lifting_failed_prediction_count=lifting_failed_prediction_count,
             ground_truth_count=ground_truth_count,
             evaluation_unit=evaluation_unit,
             primary_metric_name=primary_metric_name,
@@ -245,6 +253,8 @@ class EvaluateDetectionJobHandler(
                 "status": evaluation_manifest.status,
                 "match_distance_m": evaluation_manifest.match_distance_m,
                 "samples_root_uri": evaluation_manifest.samples_root_uri,
+                "evaluable_prediction_count": evaluable_prediction_count,
+                "lifting_failed_prediction_count": lifting_failed_prediction_count,
             },
             metadata={},
         )

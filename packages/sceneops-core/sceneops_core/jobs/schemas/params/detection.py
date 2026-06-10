@@ -22,10 +22,19 @@ class PredictDetectionJobParams(BaseJobParams):
 
     inference_run_id: str | None = None
 
+    max_scenes: int | None = None
     max_samples: int | None = None
 
-    model_uri: str | None = None
-    endpoint_url: str | None = None
+    # model_uri: str | None = None
+    # endpoint_url: str | None = None
+
+    # GroundingDINO / camera params (None → backend uses its own defaults)
+    camera_channel: str = "CAM_FRONT"
+    detection_prompt: str | None = None
+    box_threshold: float | None = None
+    text_threshold: float | None = None
+    max_image_size: int | None = None
+    enable_3d_lifting: bool = True
 
     metadata: JsonDict = Field(default_factory=dict)
 

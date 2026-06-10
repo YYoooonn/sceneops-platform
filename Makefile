@@ -13,6 +13,11 @@ MODEL_VERSION   ?= v1
 DATASET_ID      ?= nuscenes
 DATASET_VERSION ?= v1.0-mini
 
+GDINO_MODEL_ID      ?= grounding-dino
+GDINO_MODEL_VERSION ?= tiny
+INFERENCE_ENDPOINT_URL ?= http://sceneops-inference:8001
+MAX_SAMPLES     ?= 5
+
 .DEFAULT_GOAL := help
 
 # --------------------
@@ -89,6 +94,7 @@ help:
 	@echo "  make inference-local-down"
 	@echo "  make inference-local-logs"
 	@echo "  make check-inference-server"
+	@echo "  make check-inference-server-ready"
 	@echo ""
 	@echo "Inference (GPU):"
 	@echo "  make inference-gpu-build"
@@ -106,11 +112,14 @@ help:
 	@echo "  make register-nuscenes-dataset"
 	@echo ""
 	@echo "E2E:"
-	@echo "  make e2e                       Run all E2E tests"
+	@echo "  make e2e                                  Run all E2E tests (mock backend)"
 	@echo "  make e2e-api-smoke"
 	@echo "  make e2e-dataset-scene-ingestion"
 	@echo "  make e2e-detection-evaluation"
 	@echo "  make e2e-pipeline-contracts"
+	@echo "  make e2e-detection-evaluation-groundingdino        GroundingDINO (server must be up)"
+	@echo "  make e2e-detection-evaluation-groundingdino-local  Start CPU server then run E2E"
+	@echo "  make e2e-detection-evaluation-groundingdino-gpu   Start GPU server then run E2E"
 	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"
@@ -418,6 +427,10 @@ inference-local-logs:
 check-inference-server:
 	curl -sf http://localhost:8001/healthz | python3 -m json.tool
 
+.PHONY: check-inference-server-ready
+check-inference-server-ready:
+	curl -sf http://localhost:8001/readyz | python3 -m json.tool
+
 # --------------------
 # Inference (GPU)
 # --------------------
@@ -511,6 +524,28 @@ e2e-pipeline-contracts:
 	API_PREFIX=$(API_PREFIX) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_pipeline_contracts.sh
+
+# Runs the real GroundingDINO inference server (CPU profile by default).
+# Prerequisites: make local-up && make inference-local-up && make e2e-dataset-scene-ingestion
+.PHONY: e2e-detection-evaluation-groundingdino
+e2e-detection-evaluation-groundingdino:
+	chmod +x scripts/e2e/e2e_detection_evaluation_groundingdino.sh
+	API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	MODEL_ID=$(GDINO_MODEL_ID) MODEL_VERSION=$(GDINO_MODEL_VERSION) \
+	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) \
+	MAX_SAMPLES=$(MAX_SAMPLES) \
+	scripts/e2e/e2e_detection_evaluation_groundingdino.sh
+
+# Same as above but starts inference-server-local (CPU) first.
+.PHONY: e2e-detection-evaluation-groundingdino-local
+e2e-detection-evaluation-groundingdino-local: inference-local-up
+	$(MAKE) e2e-detection-evaluation-groundingdino
+
+# Same as above but starts inference-server (GPU) first.
+.PHONY: e2e-detection-evaluation-groundingdino-gpu
+e2e-detection-evaluation-groundingdino-gpu: inference-gpu-up
+	$(MAKE) e2e-detection-evaluation-groundingdino
 
 .PHONY: e2e
 e2e: e2e-api-smoke e2e-dataset-scene-ingestion e2e-detection-evaluation e2e-pipeline-contracts

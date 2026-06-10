@@ -208,3 +208,63 @@ upsert_model() {
     -H "Content-Type: application/json" \
     -d "{\"version\": \"$model_version\", \"backend\": \"mock\", \"metadata\": {}}"
 }
+
+upsert_model_with_backend() {
+  local api_base_url="$1"
+  local model_id="$2"
+  local model_version="$3"
+  local endpoint_url="$4"
+  local name="$5"
+  local backend="$6"
+
+  local existing
+  existing="$(curl -sS "$(api_url "$api_base_url" "/models/$model_id/versions/$model_version")")"
+  if echo "$existing" | jq -e '.version.endpointUrl' >/dev/null 2>&1; then
+    echo "$existing"
+    return 0
+  fi
+
+  local model_check
+  model_check="$(curl -sS "$(api_url "$api_base_url" "/models/$model_id")")"
+  if ! echo "$model_check" | jq -e '.model' >/dev/null 2>&1; then
+    curl -sS -X POST "$(api_url "$api_base_url" "/models")" \
+      -H "Content-Type: application/json" \
+      -d "{\"modelId\": \"$model_id\", \"name\": \"$name\", \"metadata\": {}}" \
+      > /dev/null
+  fi
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/models/$model_id/versions")" \
+    -H "Content-Type: application/json" \
+    -d "{\"version\": \"$model_version\", \"backend\": \"$backend\", \"endpoint_url\": \"$endpoint_url\", \"metadata\": {}}"
+}
+
+# ── Inference Server ──────────────────────────────────────────────────────────
+
+poll_inference_ready() {
+  local inference_url="$1"
+  local max_attempts="${2:-60}"
+  local sleep_seconds="${3:-2}"
+
+  local resp status model_loaded warmup_completed warmup_succeeded
+
+  for i in $(seq 1 "$max_attempts"); do
+    resp="$(curl -sf "${inference_url}/readyz" 2>/dev/null || echo '{}')"
+    status="$(echo "$resp" | jq -r '.status // empty' 2>/dev/null || true)"
+    model_loaded="$(echo "$resp" | jq -r '.model_loaded // false' 2>/dev/null || true)"
+    warmup_completed="$(echo "$resp" | jq -r '.warmup_completed // false' 2>/dev/null || true)"
+    warmup_succeeded="$(echo "$resp" | jq -r '.warmup_succeeded // null' 2>/dev/null || true)"
+
+    printf "  [%d/%d] status=%s model_loaded=%s warmup_completed=%s warmup_succeeded=%s\n" \
+      "$i" "$max_attempts" "$status" "$model_loaded" "$warmup_completed" "$warmup_succeeded" >&2
+
+    if [ "$status" = "ready" ] && [ "$model_loaded" = "true" ]; then
+      echo "$resp"
+      return 0
+    fi
+
+    sleep "$sleep_seconds"
+  done
+
+  echo "❌ Inference server did not become ready after $((max_attempts * sleep_seconds))s" >&2
+  exit 1
+}

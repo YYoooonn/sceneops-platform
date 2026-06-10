@@ -24,6 +24,8 @@ class DetectionEvaluationManifest(SceneOpsBaseModel):
 
     sample_count: int | None = None
     prediction_count: int | None = None
+    evaluable_prediction_count: int | None = None
+    lifting_failed_prediction_count: int | None = None
     ground_truth_count: int | None = None
     evaluation_unit: str | None = None
 

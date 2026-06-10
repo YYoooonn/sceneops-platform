@@ -17,8 +17,13 @@ class PredictDetectionJobResult(BaseJobResult):
     model_version: str | None = None
     inference_backend: str | None = None
 
+    scene_count: int = 0
     sample_count: int = 0
+    inference_request_count: int = 0
     prediction_count: int = 0
+    evaluable_prediction_count: int = 0
+    lifting_succeeded_count: int = 0
+    lifting_failed_count: int = 0
 
     metrics: JsonDict = Field(default_factory=dict)
     metadata: JsonDict = Field(default_factory=dict)
@@ -39,6 +44,8 @@ class EvaluateDetectionJobResult(BaseJobResult):
 
     sample_count: int | None = None
     prediction_count: int | None = None
+    evaluable_prediction_count: int | None = None
+    lifting_failed_prediction_count: int | None = None
     ground_truth_count: int | None = None
     evaluation_unit: str | None = None
 
