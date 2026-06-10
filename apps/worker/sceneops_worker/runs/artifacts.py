@@ -33,6 +33,12 @@ class RunArtifactStore:
             "run.json",
         )
 
+    def inference_prediction_manifest_uri(self, run_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.inference_run_root_uri(run_id),
+            "prediction_manifest.json",
+        )
+
     def inference_predictions_root_uri(self, run_id: str) -> str:
         return self.artifact_store.join_uri(
             self.inference_run_root_uri(run_id),
@@ -73,7 +79,16 @@ class RunArtifactStore:
 
         return DetectionPredictionManifest.model_validate(raw)
 
-    async def write_prediction_manifest(
+    async def load_inference_prediction_manifest(
+        self,
+        *,
+        run_id: str,
+    ) -> DetectionPredictionManifest:
+        uri = self.inference_prediction_manifest_uri(run_id)
+        payload = await self.artifact_store.read_json(uri)
+        return DetectionPredictionManifest.model_validate(payload)
+
+    async def write_sample_prediction_manifest(
         self,
         *,
         run_id: str,
@@ -87,6 +102,16 @@ class RunArtifactStore:
         await self.artifact_store.write_json(uri, manifest)
         return uri
 
+    async def write_inference_prediction_manifest(
+        self,
+        *,
+        run_id: str,
+        manifest: dict[str, Any],
+    ) -> str:
+        uri = self.inference_prediction_manifest_uri(run_id)
+        await self.artifact_store.write_json(uri, manifest)
+        return uri
+
     async def list_prediction_manifest_uris(
         self,
         *,
@@ -96,7 +121,7 @@ class RunArtifactStore:
             self.inference_predictions_root_uri(run_id)
         )
 
-    async def load_prediction_manifest(
+    async def load_sample_prediction_manifest(
         self,
         *,
         uri: str,

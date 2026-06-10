@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
+from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetManifest
 from sceneops_core.inference.enums import InferenceBackendType
+from sceneops_core.inference.schemas import DetectionPredictionManifest
+from sceneops_core.inference.schemas.manifests import DetectionPredictionShardRef
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceRequest,
     DetectionInferenceResult,
@@ -124,6 +126,7 @@ class GroundingDinoDetectionBackend:
         lifting_failed_count = 0
         lifting_not_applicable_count = 0
         latencies_ms: list[float] = []
+        sample_prediction_uris: list[dict[str, Any]] = []
 
         # ── inference + prediction building ───────────────────────────────────
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
@@ -159,27 +162,84 @@ class GroundingDinoDetectionBackend:
                     else:
                         lifting_not_applicable_count += 1
 
-                await request.run_artifact_store.write_prediction_manifest(
-                    run_id=run_id,
-                    sample_id=sample_input.sample_id,
-                    manifest=_prediction_manifest(
+                sample_prediction_uri = (
+                    await request.run_artifact_store.write_sample_prediction_manifest(
                         run_id=run_id,
-                        dataset_manifest=inference_input.dataset_manifest,
-                        model_id=config.model_id,
-                        model_version=config.model_version,
-                        sample_input=sample_input,
-                        predictions=predictions,
-                        endpoint_url=endpoint_url,
-                    ),
+                        sample_id=sample_input.sample_id,
+                        manifest=_sample_prediction_manifest(
+                            run_id=run_id,
+                            dataset_manifest=inference_input.dataset_manifest,
+                            model_id=config.model_id,
+                            model_version=config.model_version,
+                            sample_input=sample_input,
+                            predictions=predictions,
+                            endpoint_url=endpoint_url,
+                        ),
+                    )
+                )
+
+                sample_prediction_uris.append(
+                    {
+                        "scene_id": sample_input.scene_id,
+                        "sample_id": sample_input.sample_id,
+                        "uri": sample_prediction_uri,
+                        "prediction_count": len(predictions),
+                    }
                 )
 
         # ── run manifest ───────────────────────────────────────────────────────
-        run_manifest_uri = request.run_artifact_store.inference_run_manifest_uri(run_id)
+        created_at = utc_now()
+        evaluable_prediction_count = prediction_count - lifting_failed_count
+        avg_ms = sum(latencies_ms) / len(latencies_ms) if latencies_ms else 0.0
+        inference_request_count = len(latencies_ms)
+
         predictions_root_uri = (
             request.run_artifact_store.inference_predictions_root_uri(run_id)
         )
-        avg_ms = sum(latencies_ms) / len(latencies_ms) if latencies_ms else 0.0
-        inference_request_count = len(latencies_ms)
+        prediction_manifest_uri = (
+            request.run_artifact_store.inference_prediction_manifest_uri(run_id)
+        )
+        prediction_manifest = DetectionPredictionManifest(
+            inference_run_id=run_id,
+            dataset_id=inference_input.dataset_manifest.dataset_id,
+            dataset_version=inference_input.dataset_manifest.dataset_version,
+            model_id=config.model_id,
+            model_version=config.model_version,
+            inference_backend=self.backend_type,
+            status="succeeded",
+            scene_count=len(scene_ids),
+            sample_count=len(sample_inputs),
+            inference_request_count=inference_request_count,
+            prediction_count=prediction_count,
+            evaluable_prediction_count=evaluable_prediction_count,
+            lifting_succeeded_count=lifting_succeeded_count,
+            lifting_failed_count=lifting_failed_count,
+            lifting_not_applicable_count=lifting_not_applicable_count,
+            prediction_manifest_uri=prediction_manifest_uri,
+            predictions_root_uri=predictions_root_uri,
+            prediction_shards=[
+                DetectionPredictionShardRef.model_validate(item)
+                for item in sample_prediction_uris
+            ],
+            metrics={
+                "avg_roundtrip_ms": round(avg_ms, 2),
+                "camera_channel": camera_channel,
+                "box_threshold": box_threshold,
+                "text_threshold": text_threshold,
+                "max_image_size": max_image_size,
+            },
+            metadata={
+                "backend": self.backend_type,
+                "endpoint_url": endpoint_url,
+            },
+            created_at=utc_now(),
+        )
+        prediction_manifest_uri = (
+            await request.run_artifact_store.write_inference_prediction_manifest(
+                run_id=run_id,
+                manifest=prediction_manifest.to_artifact_dict(),
+            )
+        )
 
         run_manifest = {
             "run_id": run_id,
@@ -195,7 +255,10 @@ class GroundingDinoDetectionBackend:
             "sample_count": len(sample_inputs),
             "inference_request_count": inference_request_count,
             "prediction_count": prediction_count,
-            "prediction_manifest_uri": run_manifest_uri,
+            "evaluable_prediction_count": evaluable_prediction_count,
+            "lifting_succeeded_count": lifting_succeeded_count,
+            "lifting_failed_count": lifting_failed_count,
+            "prediction_manifest_uri": prediction_manifest_uri,
             "predictions_root_uri": predictions_root_uri,
             "metrics": {
                 "avg_roundtrip_ms": round(avg_ms, 2),
@@ -203,27 +266,36 @@ class GroundingDinoDetectionBackend:
                 "lifting_succeeded_count": lifting_succeeded_count,
                 "lifting_failed_count": lifting_failed_count,
                 "lifting_not_applicable_count": lifting_not_applicable_count,
-                "evaluable_prediction_count": prediction_count - lifting_failed_count,
+                "evaluable_prediction_count": evaluable_prediction_count,
             },
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": created_at.isoformat(),
         }
 
-        await request.run_artifact_store.write_inference_run_manifest(
-            run_id=run_id,
-            manifest=run_manifest,
+        run_manifest_uri = (
+            await request.run_artifact_store.write_inference_run_manifest(
+                run_id=run_id,
+                manifest=run_manifest,
+            )
         )
 
         return DetectionInferenceResult(
             run_id=run_id,
-            run_manifest_uri=run_manifest_uri,
+            prediction_manifest_uri=prediction_manifest_uri,
             predictions_root_uri=predictions_root_uri,
             scene_count=len(scene_ids),
             sample_count=len(sample_inputs),
             inference_request_count=inference_request_count,
             prediction_count=prediction_count,
+            evaluable_prediction_count=evaluable_prediction_count,
+            lifting_succeeded_count=lifting_succeeded_count,
+            lifting_failed_count=lifting_failed_count,
             status="succeeded",
             metrics=run_manifest["metrics"],
-            metadata={"backend": self.backend_type, "endpoint_url": endpoint_url},
+            metadata={
+                "backend": self.backend_type,
+                "endpoint_url": endpoint_url,
+                "run_manifest_uri": run_manifest_uri,
+            },
         )
 
 
@@ -327,7 +399,7 @@ def _build_predictions(
     return predictions
 
 
-def _prediction_manifest(
+def _sample_prediction_manifest(
     *,
     run_id: str,
     dataset_manifest: DatasetManifest,

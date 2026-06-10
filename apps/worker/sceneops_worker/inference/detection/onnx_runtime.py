@@ -10,16 +10,19 @@ import onnxruntime as ort
 from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import DatasetManifest
 from sceneops_core.inference.enums import InferenceBackendType
-from sceneops_core.inference.schemas.manifests import DetectionPredictionManifest
+from sceneops_core.inference.schemas.manifests import (
+    DetectionPredictionManifest,
+    DetectionPredictionShardRef,
+)
 from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
-from sceneops_worker.runs import RunArtifactStore
-from sceneops_worker.scenes import SceneArtifactStore
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
     DetectionInferenceRequest,
     DetectionInferenceResult,
 )
+from sceneops_worker.runs import RunArtifactStore
+from sceneops_worker.scenes import SceneArtifactStore
 
 
 class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
@@ -38,7 +41,7 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
                 f"model={inference_input.config.model_id}:{inference_input.config.model_version}"
             )
 
-        run_manifest = await self.generate_onnx_runtime_predictions(
+        prediction_manifest = await self.generate_onnx_runtime_predictions(
             dataset_manifest=inference_input.dataset_manifest,
             scene_artifact_store=request.scene_artifact_store,
             run_artifact_store=request.run_artifact_store,
@@ -51,16 +54,24 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
 
         return DetectionInferenceResult(
             run_id=inference_input.run_id,
-            run_manifest_uri=run_manifest.prediction_manifest_uri,
-            predictions_root_uri=run_manifest.predictions_root_uri,
-            sample_count=run_manifest.sample_count,
-            prediction_count=run_manifest.prediction_count,
-            status=run_manifest.status,
-            metrics=run_manifest.metrics,
+            prediction_manifest_uri=prediction_manifest.prediction_manifest_uri,
+            predictions_root_uri=prediction_manifest.predictions_root_uri,
+            scene_count=prediction_manifest.scene_count,
+            sample_count=prediction_manifest.sample_count,
+            inference_request_count=prediction_manifest.inference_request_count,
+            prediction_count=prediction_manifest.prediction_count,
+            evaluable_prediction_count=prediction_manifest.evaluable_prediction_count,
+            lifting_succeeded_count=prediction_manifest.lifting_succeeded_count,
+            lifting_failed_count=prediction_manifest.lifting_failed_count,
+            status=prediction_manifest.status,
+            metrics=prediction_manifest.metrics,
             metadata={
                 "backend": inference_input.config.inference_backend,
                 "model_uri": inference_input.config.model_uri,
                 "endpoint_url": inference_input.config.endpoint_url,
+                "run_manifest_uri": prediction_manifest.metadata.get(
+                    "run_manifest_uri"
+                ),
             },
         )
 
@@ -94,12 +105,12 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
 
         prediction_count = 0
         inference_latencies_ms: list[float] = []
+        prediction_shards: list[DetectionPredictionShardRef] = []
 
         for sample in sample_manifests:
             inference_started = time.perf_counter()
 
             # v1에서는 ONNX session load / runtime path 검증이 목적.
-            # 실제 detection model input pipeline은 다음 phase에서 붙인다.
             _try_warmup_session(session)
 
             inference_latency_ms = (time.perf_counter() - inference_started) * 1000.0
@@ -108,7 +119,7 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
             predictions = _build_contract_predictions_from_sample(sample)
             prediction_count += len(predictions)
 
-            prediction_manifest = {
+            sample_prediction_manifest = {
                 "run_id": run_id,
                 "dataset_id": dataset_manifest.dataset_id,
                 "dataset_version": dataset_manifest.dataset_version,
@@ -118,54 +129,124 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
                 "sample_id": sample.sample_id,
                 "predictions": predictions,
                 "metadata": {
-                    "backend": "onnx_runtime",
+                    "backend": InferenceBackendType.ONNX_RUNTIME.value,
                     "model_uri": model_uri,
                     "inference_latency_ms": round(inference_latency_ms, 4),
                 },
             }
 
-            await run_artifact_store.write_prediction_manifest(
-                run_id=run_id,
-                sample_id=sample.sample_id,
-                manifest=prediction_manifest,
+            sample_prediction_uri = (
+                await run_artifact_store.write_sample_prediction_manifest(
+                    run_id=run_id,
+                    sample_id=sample.sample_id,
+                    manifest=sample_prediction_manifest,
+                )
             )
 
-        inference_manifest_uri = run_artifact_store.inference_run_manifest_uri(run_id)
-        predictions_root_uri = run_artifact_store.inference_predictions_root_uri(run_id)
+            prediction_shards.append(
+                DetectionPredictionShardRef(
+                    scene_id=sample.scene_id,
+                    sample_id=sample.sample_id,
+                    uri=sample_prediction_uri,
+                    prediction_count=len(predictions),
+                )
+            )
+
+        scene_count = len({sample.scene_id for sample in sample_manifests})
+        sample_count = len(sample_manifests)
+        inference_request_count = sample_count
+
+        lifting_succeeded_count = 0
+        lifting_failed_count = 0
+        lifting_not_applicable_count = prediction_count
+        evaluable_prediction_count = prediction_count
 
         avg_latency_ms = _avg(inference_latencies_ms)
         max_latency_ms = max(inference_latencies_ms) if inference_latencies_ms else 0.0
 
-        run_manifest = DetectionPredictionManifest(
+        predictions_root_uri = run_artifact_store.inference_predictions_root_uri(run_id)
+        prediction_manifest_uri = run_artifact_store.inference_prediction_manifest_uri(
+            run_id
+        )
+        run_manifest_uri = run_artifact_store.inference_run_manifest_uri(run_id)
+
+        metrics = {
+            "model_load_ms": round(model_load_ms, 4),
+            "avg_inference_latency_ms": round(avg_latency_ms, 4),
+            "max_inference_latency_ms": round(max_latency_ms, 4),
+            "scene_count": scene_count,
+            "sample_count": sample_count,
+            "inference_request_count": inference_request_count,
+            "prediction_count": prediction_count,
+            "evaluable_prediction_count": evaluable_prediction_count,
+            "lifting_succeeded_count": lifting_succeeded_count,
+            "lifting_failed_count": lifting_failed_count,
+            "lifting_not_applicable_count": lifting_not_applicable_count,
+        }
+
+        created_at = utc_now()
+
+        prediction_manifest = DetectionPredictionManifest(
             inference_run_id=run_id,
             dataset_id=dataset_manifest.dataset_id,
             dataset_version=dataset_manifest.dataset_version,
             model_id=model_id,
             model_version=model_version,
-            inference_backend="onnx_runtime",
+            inference_backend=InferenceBackendType.ONNX_RUNTIME.value,
             status="succeeded",
-            sample_count=len(sample_manifests),
+            scene_count=scene_count,
+            sample_count=sample_count,
+            inference_request_count=inference_request_count,
             prediction_count=prediction_count,
-            prediction_manifest_uri=inference_manifest_uri,
+            evaluable_prediction_count=evaluable_prediction_count,
+            lifting_succeeded_count=lifting_succeeded_count,
+            lifting_failed_count=lifting_failed_count,
+            lifting_not_applicable_count=lifting_not_applicable_count,
+            prediction_manifest_uri=prediction_manifest_uri,
             predictions_root_uri=predictions_root_uri,
-            metrics={
-                "model_load_ms": round(model_load_ms, 4),
-                "avg_inference_latency_ms": round(avg_latency_ms, 4),
-                "max_inference_latency_ms": round(max_latency_ms, 4),
-            },
+            prediction_shards=prediction_shards,
+            metrics=metrics,
             metadata={
-                "backend": "onnx_runtime",
+                "backend": InferenceBackendType.ONNX_RUNTIME.value,
                 "model_uri": model_uri,
+                "run_manifest_uri": run_manifest_uri,
             },
-            created_at=utc_now(),
+            created_at=created_at,
+        )
+
+        await run_artifact_store.write_inference_prediction_manifest(
+            run_id=run_id,
+            manifest=prediction_manifest.to_artifact_dict(),
         )
 
         await run_artifact_store.write_inference_run_manifest(
             run_id=run_id,
-            manifest=run_manifest.model_dump(mode="json"),
+            manifest={
+                "run_id": run_id,
+                "run_type": "inference",
+                "dataset_id": dataset_manifest.dataset_id,
+                "dataset_version": dataset_manifest.dataset_version,
+                "model_id": model_id,
+                "model_version": model_version,
+                "status": "succeeded",
+                "backend": InferenceBackendType.ONNX_RUNTIME.value,
+                "model_uri": model_uri,
+                "scene_count": scene_count,
+                "sample_count": sample_count,
+                "inference_request_count": inference_request_count,
+                "prediction_count": prediction_count,
+                "evaluable_prediction_count": evaluable_prediction_count,
+                "lifting_succeeded_count": lifting_succeeded_count,
+                "lifting_failed_count": lifting_failed_count,
+                "lifting_not_applicable_count": lifting_not_applicable_count,
+                "prediction_manifest_uri": prediction_manifest_uri,
+                "predictions_root_uri": predictions_root_uri,
+                "metrics": metrics,
+                "created_at": created_at.isoformat(),
+            },
         )
 
-        return run_manifest
+        return prediction_manifest
 
 
 def _to_local_path(uri: str) -> Path:

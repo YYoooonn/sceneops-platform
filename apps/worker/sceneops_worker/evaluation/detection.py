@@ -85,12 +85,10 @@ async def _evaluate_center_distance_detection(
     evaluation_run_id = request.evaluation_run_id
     match_distance_m = request.match_distance_m
 
-    inference_run = await run_artifact_store.load_inference_run_manifest(
-        run_id=inference_run_id
-    )  # returns DetectionPredictionManifest
-    prediction_uris = await run_artifact_store.list_prediction_manifest_uris(
+    inference_manifest = await run_artifact_store.load_inference_prediction_manifest(
         run_id=inference_run_id
     )
+    prediction_shards = inference_manifest.prediction_shards
 
     # Build sample index from scene manifests (samples are embedded, not individual files)
     sample_index: dict[str, SceneSampleManifest] = {}
@@ -112,11 +110,11 @@ async def _evaluate_center_distance_detection(
     total_lifting_failed_count = 0
     class_stats: dict[str, dict[str, float]] = {}
 
-    for prediction_uri in prediction_uris:
-        prediction_manifest = await run_artifact_store.load_prediction_manifest(
-            uri=prediction_uri
+    for shard in prediction_shards:
+        sample_payload = await run_artifact_store.load_sample_prediction_manifest(
+            uri=shard.uri
         )
-        sample_id = prediction_manifest["sample_id"]
+        sample_id = sample_payload["sample_id"]
 
         sample_manifest = sample_index.get(sample_id)
 
@@ -127,10 +125,10 @@ async def _evaluate_center_distance_detection(
 
         sample_eval = utils.evaluate_sample(
             sample=sample_manifest,
-            predictions=prediction_manifest.get("predictions", []),
+            predictions=sample_payload.get("predictions", []),
             match_distance_m=match_distance_m,
-            dataset_id=prediction_manifest.get("dataset_id"),
-            dataset_version=prediction_manifest.get("dataset_version"),
+            dataset_id=sample_payload.get("dataset_id"),
+            dataset_version=sample_payload.get("dataset_version"),
         )
 
         total_tp += sample_eval["tp"]
@@ -186,11 +184,11 @@ async def _evaluate_center_distance_detection(
         inference_run_id=inference_run_id,
         dataset_id=dataset_manifest.dataset_id,
         dataset_version=dataset_manifest.dataset_version,
-        model_id=inference_run.model_id,
-        model_version=inference_run.model_version,
+        model_id=inference_manifest.model_id,
+        model_version=inference_manifest.model_version,
         status="succeeded",
         match_distance_m=match_distance_m,
-        sample_count=len(prediction_uris),
+        sample_count=len(prediction_shards),
         prediction_count=prediction_count,
         evaluable_prediction_count=evaluable_prediction_count,
         lifting_failed_prediction_count=total_lifting_failed_count,

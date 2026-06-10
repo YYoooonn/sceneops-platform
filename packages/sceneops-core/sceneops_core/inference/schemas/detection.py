@@ -43,13 +43,16 @@ class DetectionInferenceInput(SceneOpsBaseModel):
 class DetectionInferenceResult(SceneOpsBaseModel):
     run_id: str
 
-    run_manifest_uri: str | None = None
+    prediction_manifest_uri: str
     predictions_root_uri: str | None = None
 
     scene_count: int = 0
     sample_count: int = 0
     inference_request_count: int = 0
     prediction_count: int = 0
+    evaluable_prediction_count: int = 0
+    lifting_succeeded_count: int = 0
+    lifting_failed_count: int = 0
 
     status: str
 

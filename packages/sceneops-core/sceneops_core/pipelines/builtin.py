@@ -207,11 +207,20 @@ _EVALUATE_DETECTION_OUTPUTS = [
         name="evaluation_manifest_uri", kind=_ARTIFACT, source="evaluation_manifest_uri"
     ),
     PipelineTaskOutputSpec(name="metrics_uri", kind=_ARTIFACT, source="metrics_uri"),
-    PipelineTaskOutputSpec(
-        name="annotation_count", kind=_SUMMARY, source="annotation_count"
-    ),
+    # Counts / summary fields.
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
     PipelineTaskOutputSpec(
         name="prediction_count", kind=_SUMMARY, source="prediction_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="evaluable_prediction_count",
+        kind=_SUMMARY,
+        source="evaluable_prediction_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="lifting_failed_prediction_count",
+        kind=_SUMMARY,
+        source="lifting_failed_prediction_count",
     ),
     PipelineTaskOutputSpec(
         name="ground_truth_count", kind=_SUMMARY, source="ground_truth_count"

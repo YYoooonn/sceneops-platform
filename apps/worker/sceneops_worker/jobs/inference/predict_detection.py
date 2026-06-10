@@ -344,7 +344,7 @@ class PredictDetectionJobHandler(
         execution: PredictDetectionExecution,
         inference_result: DetectionInferenceResult,
     ) -> PredictDetectionArtifacts:
-        prediction_manifest_uri = inference_result.run_manifest_uri
+        prediction_manifest_uri = inference_result.prediction_manifest_uri
         predictions_root_uri = inference_result.predictions_root_uri
 
         context = execution.context
@@ -396,19 +396,14 @@ class PredictDetectionJobHandler(
     def _extract_prediction_counts(
         inference_result: DetectionInferenceResult,
     ) -> PredictionCounts:
-        m = inference_result.metrics
-        failed = m.get("lifting_failed_count", 0)
         return PredictionCounts(
             scene_count=inference_result.scene_count,
             sample_count=inference_result.sample_count,
             inference_request_count=inference_result.inference_request_count,
             prediction_count=inference_result.prediction_count,
-            evaluable_prediction_count=m.get(
-                "evaluable_prediction_count",
-                inference_result.prediction_count - failed,
-            ),
-            lifting_succeeded_count=m.get("lifting_succeeded_count", 0),
-            lifting_failed_count=failed,
+            evaluable_prediction_count=inference_result.evaluable_prediction_count,
+            lifting_succeeded_count=inference_result.lifting_succeeded_count,
+            lifting_failed_count=inference_result.lifting_failed_count,
         )
 
     @staticmethod

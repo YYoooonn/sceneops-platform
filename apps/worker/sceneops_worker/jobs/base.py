@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Generic, Protocol, TypeAlias, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
@@ -60,6 +61,11 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
     - initial upsert with RUNNING status
     - FAILED upsert with error on exception
     - started_at / finished_at timestamps
+
+    Subclass contract:
+    - ``execute`` should not call ``context.commit()`` or ``context.rollback()``
+    - ``execute`` should raise exceptions instead of swallowing them
+    - any artifact writes performed in ``execute`` may outlive a DB rollback
     """
 
     async def run(
@@ -92,26 +98,46 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
 
         except Exception as exc:
             await context.rollback()
-            failed_record = saved_initial.model_copy(
-                update={
-                    "status": RunStatus.FAILED,
-                    "error": ErrorInfo(
-                        type=type(exc).__name__,
-                        message=str(exc),
-                    ),
-                    "finished_at": utc_now(),
-                }
+            failed_record = self.build_failed_record(
+                job=job,
+                params=params,
+                context=context,
+                saved_initial=saved_initial,
+                exc=exc,
+                started_at=started_at,
             )
             await self._upsert(context, failed_record)
             await context.commit()
             raise
+
+    # pylint: disable=unused-argument
+    def build_failed_record(
+        self,
+        *,
+        job: JobManifest,
+        params: JobParamsT,
+        context: WorkerContext,
+        saved_initial: RunRecordT,
+        exc: Exception,
+        started_at: datetime,
+    ) -> RunRecordT:
+        return saved_initial.model_copy(
+            update={
+                "status": RunStatus.FAILED,
+                "error": ErrorInfo(
+                    type=type(exc).__name__,
+                    message=str(exc),
+                ),
+                "finished_at": utc_now(),
+            }
+        )
 
     def build_initial_record(
         self,
         *,
         job: JobManifest,
         params: JobParamsT,
-        started_at: Any,
+        started_at: datetime,
     ) -> RunRecordT:
         raise NotImplementedError
 
@@ -122,7 +148,7 @@ class RunRecordHandler(Generic[JobParamsT, JobResultT, RunRecordT]):
         params: JobParamsT,
         context: WorkerContext,
         initial_record: RunRecordT,
-        started_at: Any,
+        started_at: datetime,
     ) -> tuple[RunRecordT, JobResultT]:
         raise NotImplementedError
 
