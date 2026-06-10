@@ -63,20 +63,17 @@ def _model_version(backend: ModelBackend = ModelBackend.MOCK) -> ModelVersionRec
 def _inference_result(**overrides) -> DetectionInferenceResult:
     defaults = dict(
         run_id="infer-001",
-        run_manifest_uri="file:///pred_manifest.json",
+        prediction_manifest_uri="file:///pred_manifest.json",  # required
         predictions_root_uri="file:///preds/",
         scene_count=2,
         sample_count=5,
         inference_request_count=4,
         prediction_count=8,
+        evaluable_prediction_count=7,
+        lifting_succeeded_count=5,
+        lifting_failed_count=1,
         status="succeeded",
-        metrics={
-            "lifting_succeeded_count": 5,
-            "lifting_failed_count": 1,
-            "lifting_not_applicable_count": 2,
-            "evaluable_prediction_count": 7,
-            "avg_roundtrip_ms": 300.0,
-        },
+        metrics={"avg_roundtrip_ms": 300.0, "camera_channel": "CAM_FRONT"},
         metadata={"backend": "grounding_dino", "endpoint_url": "http://test:8001"},
     )
     defaults.update(overrides)
@@ -228,21 +225,26 @@ def test_extract_prediction_counts_full():
     assert counts.lifting_failed_count == 1
 
 
-def test_extract_prediction_counts_fallback():
-    """evaluable_prediction_count falls back to prediction_count - failed."""
+def test_extract_prediction_counts_from_direct_fields():
+    """Counts come from direct fields, not the metrics dict."""
     result = _inference_result(
         prediction_count=10,
-        metrics={"lifting_failed_count": 3},  # no evaluable_prediction_count key
+        evaluable_prediction_count=7,
+        lifting_failed_count=3,
     )
     counts = HANDLER._extract_prediction_counts(result)
-    assert counts.evaluable_prediction_count == 7  # 10 - 3
+    assert counts.evaluable_prediction_count == 7
+    assert counts.lifting_failed_count == 3
 
 
 def test_extract_prediction_counts_no_lifting():
-    """Mock backend: no lifting metrics → all zeros, evaluable == prediction_count."""
+    """Mock backend: lifting fields are 0, evaluable_prediction_count equals prediction_count."""
     result = _inference_result(
         prediction_count=5,
-        metrics={},  # no lifting keys
+        evaluable_prediction_count=5,
+        lifting_succeeded_count=0,
+        lifting_failed_count=0,
+        metrics={},
     )
     counts = HANDLER._extract_prediction_counts(result)
     assert counts.evaluable_prediction_count == 5

@@ -5,7 +5,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 
-from sceneops_worker.evaluation.utils import evaluate_sample, is_evaluable_prediction
+from sceneops_worker.evaluation.detection.utils import (
+    evaluate_sample,
+    is_evaluable_prediction,
+)
 
 
 # ── is_evaluable_prediction ───────────────────────────────────────────────────
