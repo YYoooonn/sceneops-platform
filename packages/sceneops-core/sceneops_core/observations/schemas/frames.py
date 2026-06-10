@@ -5,8 +5,6 @@ from pydantic import Field
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.sensors import SensorModality
 
-from .enums import SensorFrameRole
-
 
 class TimeRange(SceneOpsBaseModel):
     start_timestamp_us: int
@@ -18,21 +16,37 @@ class RawSensorFrameManifest(SceneOpsBaseModel):
     timestamp_us: int
 
     channel: str
-    modality: SensorModality = SensorModality.UNKNOWN
-    role: SensorFrameRole = SensorFrameRole.UNKNOWN
-
+    modality: SensorModality
     uri: str
 
-    source_sample_id: str | None = None
-    source_scene_id: str | None = None
-    ego_pose_ref: str | None = None
-    calibration_ref: str | None = None
-    annotation_refs: list[str] = Field(default_factory=list)
+    sequence_id: str | None = None
+    sensor_id: str | None = None
 
-    # Generic raw-log source identifiers
-    source_sequence_id: str | None = None
-    source_frame_id: str | None = None
-    source_sensor_id: str | None = None
-    duration_us: int | None = None
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class RawCalibrationManifest(SceneOpsBaseModel):
+    calibration_id: str
+    sensor_id: str
+
+    channel: str | None = None
+    modality: SensorModality | None = None
+
+    translation: list[float] | None = None
+    rotation: list[float] | None = None
+    rotation_format: str = "quaternion_wxyz"
+
+    camera_intrinsic: list[list[float]] | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class RawEgoPoseManifest(SceneOpsBaseModel):
+    ego_pose_id: str
+    timestamp_us: int
+
+    translation: list[float] | None = None
+    rotation: list[float] | None = None
+    rotation_format: str = "quaternion_wxyz"
 
     metadata: JsonDict = Field(default_factory=dict)

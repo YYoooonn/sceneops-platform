@@ -2,22 +2,25 @@ from __future__ import annotations
 
 from nuscenes.nuscenes import NuScenes
 
-from sceneops_core.sensors import SensorModality
+from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
+from sceneops_core.scenes.schemas.enums import (
+    SceneGenerationMethod,
+    SceneOriginType,
+    SceneStatus,
+)
 from sceneops_core.scenes.schemas.manifests import (
-    CalibratedSensorManifest,
-    EgoPoseManifest,
     SceneAnnotationManifest,
     SceneManifest,
     SceneSampleManifest,
     SceneSensorFrameManifest,
 )
 from sceneops_core.scenes.schemas.records import SceneRecord
-from sceneops_core.scenes.schemas.enums import (
-    SceneGenerationMethod,
-    SceneOriginType,
-    SceneStatus,
+from sceneops_core.sensors import SensorModality
+from sceneops_core.sensors.manifests import (
+    ImageMetadataManifest,
+    SensorCalibrationManifest,
+    EgoPoseManifest,
 )
-from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
 
 _TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
 
@@ -34,9 +37,22 @@ def build_scene_manifest(
     samples: list[SceneSampleManifest] = []
     all_channels: set[str] = set()
 
+    calibrated_sensors_by_id: dict[str, SensorCalibrationManifest] = {}
+    ego_poses_by_id: dict[str, EgoPoseManifest] = {}
+
+    min_ts: int | None = None
+    max_ts: int | None = None
+
     for idx, token in enumerate(sample_tokens):
         ns_sample = nusc.get("sample", token)
-        sample_manifest = _build_sample_manifest(
+        sample_ts = ns_sample["timestamp"]  # canonical sample timestamp
+
+        if min_ts is None or sample_ts < min_ts:
+            min_ts = sample_ts
+        if max_ts is None or sample_ts > max_ts:
+            max_ts = sample_ts
+
+        sample_manifest, cal_records, ego_records = _build_sample_manifest(
             nusc=nusc,
             scene_id=scene_id,
             sample_id=f"{scene_id}-s{idx:04d}",
@@ -44,6 +60,8 @@ def build_scene_manifest(
             frame_index=idx,
         )
         samples.append(sample_manifest)
+        calibrated_sensors_by_id.update(cal_records)
+        ego_poses_by_id.update(ego_records)
         for sf in sample_manifest.sensor_frames:
             all_channels.add(sf.channel)
 
@@ -51,10 +69,14 @@ def build_scene_manifest(
         scene_id=scene_id,
         dataset_id=dataset_id,
         dataset_version=dataset_version,
+        calibrated_sensors=list(calibrated_sensors_by_id.values()),
+        ego_poses=list(ego_poses_by_id.values()),
         samples=samples,
         sample_count=len(samples),
         frame_count=sum(len(s.sensor_frames) for s in samples),
         channels=sorted(all_channels),
+        start_timestamp_us=min_ts,
+        end_timestamp_us=max_ts,
         metadata={
             "source": "nuscenes",
             "nuscenes_scene_name": scene["name"],
@@ -119,56 +141,89 @@ def _build_sample_manifest(
     sample_id: str,
     sample: dict,
     frame_index: int,
-) -> SceneSampleManifest:
+) -> tuple[
+    SceneSampleManifest,
+    dict[str, SensorCalibrationManifest],
+    dict[str, EgoPoseManifest],
+]:
     sensor_frames: list[SceneSensorFrameManifest] = []
-    calibrations: list[CalibratedSensorManifest] = []
     annotations: list[SceneAnnotationManifest] = []
-    ego_pose_manifest: EgoPoseManifest | None = None
+    calibrated_sensors_by_id: dict[str, SensorCalibrationManifest] = {}
+    ego_poses_by_id: dict[str, EgoPoseManifest] = {}
 
     for channel, sample_data_token in sample["data"].items():
         if channel not in _TARGET_CHANNELS:
             continue
 
         sample_data = nusc.get("sample_data", sample_data_token)
-        cs = nusc.get("calibrated_sensor", sample_data["calibrated_sensor_token"])
-        ego_pose = nusc.get("ego_pose", sample_data["ego_pose_token"])
+        cs_token = sample_data["calibrated_sensor_token"]
+        ep_token = sample_data["ego_pose_token"]
 
-        frame_id = f"{sample_id}-{channel}"
+        cs = nusc.get("calibrated_sensor", cs_token)
+        ep = nusc.get("ego_pose", ep_token)
+        sensor = nusc.get("sensor", cs["sensor_token"])
+
+        nusc_modality: str = sensor.get("modality", "unknown")
+        try:
+            modality = SensorModality(nusc_modality)
+        except ValueError:
+            modality = _infer_modality(channel)
+
+        calibrated_sensor = SensorCalibrationManifest(
+            calibration_id=cs_token,
+            sensor_id=cs["sensor_token"],
+            channel=channel,
+            modality=modality,
+            translation=cs["translation"],
+            rotation=cs["rotation"],
+            rotation_format="quaternion_wxyz",
+            camera_intrinsic=cs.get("camera_intrinsic") or None,
+            metadata={
+                "nuscenes_sensor_token": cs["sensor_token"],
+                "nuscenes_calibrated_sensor_token": cs_token,
+            },
+        )
+        calibrated_sensors_by_id[cs_token] = calibrated_sensor
+
+        # ego_pose timestamp from ego_pose["timestamp"], not sample_data["timestamp"]
+        ego_pose = EgoPoseManifest(
+            ego_pose_id=ep_token,
+            timestamp_us=ep.get("timestamp"),
+            translation=ep["translation"],
+            rotation=ep["rotation"],
+            rotation_format="quaternion_wxyz",
+            metadata={
+                "nuscenes_ego_pose_token": ep_token,
+            },
+        )
+        ego_poses_by_id[ep_token] = ego_pose
+
+        image = (
+            ImageMetadataManifest(
+                width=sample_data.get("width") or None,
+                height=sample_data.get("height") or None,
+                fileformat=sample_data.get("fileformat"),
+            )
+            if nusc_modality == "camera"
+            else None
+        )
 
         sensor_frames.append(
             SceneSensorFrameManifest(
-                frame_id=frame_id,
+                frame_id=f"{sample_id}-{channel}",
                 sample_id=sample_id,
-                timestamp_us=sample_data["timestamp"],
+                timestamp_us=sample_data["timestamp"],  # sample_data timestamp
                 channel=channel,
-                modality=_infer_modality(channel),
+                modality=modality,
                 uri=sample_data["filename"],
+                calibrated_sensor_id=cs_token,
+                ego_pose_id=ep_token,
+                image=image,
                 metadata={
-                    "fileformat": sample_data.get("fileformat", ""),
                     "is_key_frame": sample_data.get("is_key_frame", False),
-                    "width": sample_data.get("width"),
-                    "height": sample_data.get("height"),
                 },
             )
         )
-
-        calibrations.append(
-            CalibratedSensorManifest(
-                calibration_id=f"{sample_id}-{channel}-calib",
-                channel=channel,
-                translation=cs["translation"],
-                rotation=cs["rotation"],
-                camera_intrinsic=cs.get("camera_intrinsic"),
-            )
-        )
-
-        if ego_pose_manifest is None:
-            ego_pose_manifest = EgoPoseManifest(
-                ego_pose_id=f"{sample_id}-ego",
-                timestamp_us=sample_data["timestamp"],
-                translation=ego_pose["translation"],
-                rotation=ego_pose["rotation"],
-            )
 
     for ann_token in sample.get("anns", []):
         ann = nusc.get("sample_annotation", ann_token)
@@ -190,15 +245,17 @@ def _build_sample_manifest(
             )
         )
 
-    return SceneSampleManifest(
-        sample_id=sample_id,
-        scene_id=scene_id,
-        timestamp_us=sample["timestamp"],
-        frame_index=frame_index,
-        sensor_frames=sensor_frames,
-        annotations=annotations,
-        ego_pose=ego_pose_manifest,
-        calibrations=calibrations,
+    return (
+        SceneSampleManifest(
+            sample_id=sample_id,
+            scene_id=scene_id,
+            timestamp_us=sample["timestamp"],  # canonical sample timestamp
+            frame_index=frame_index,
+            sensor_frames=sensor_frames,
+            annotations=annotations,
+        ),
+        calibrated_sensors_by_id,
+        ego_poses_by_id,
     )
 
 
