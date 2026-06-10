@@ -51,6 +51,23 @@ class GroundingDinoModel:
     def device(self) -> str:
         return self._device
 
+    def warmup(self, *, image_size: int, text_prompt: str) -> None:
+        """Run a dummy forward pass to warm up device kernels.
+
+        Creates an in-memory solid-gray image so no filesystem access is needed.
+        Exercises the same code path as detect(): preprocessing, forward pass,
+        postprocessing, and label filtering.
+        """
+        from PIL import Image as PILImage
+
+        dummy = PILImage.new("RGB", (image_size, image_size), color=(128, 128, 128))
+        self._infer(
+            image=dummy,
+            prompt=text_prompt,
+            box_threshold=self._settings.box_threshold,
+            text_threshold=self._settings.text_threshold,
+        )
+
     def detect(self, request: DetectRequest) -> tuple[list[Detection2D], float]:
         """Run GroundingDINO on a single image.
 
@@ -60,18 +77,35 @@ class GroundingDinoModel:
         TODO: accept MinIO/S3 image URIs for production deployments where
         the GPU server cannot share a local volume with the worker.
         """
-        import torch
-        from PIL import Image
+        from PIL import Image as PILImage
 
         image_path = Path(request.image_path)
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        image = Image.open(image_path).convert("RGB")
+        image = PILImage.open(image_path).convert("RGB")
         image = _resize_long_edge(image, request.max_image_size)
-        img_w, img_h = image.size
 
         prompt = request.prompt or self._settings.detection_prompt
+        return self._infer(
+            image=image,
+            prompt=prompt,
+            box_threshold=request.box_threshold,
+            text_threshold=request.text_threshold,
+        )
+
+    def _infer(
+        self,
+        *,
+        image: Any,
+        prompt: str,
+        box_threshold: float,
+        text_threshold: float,
+    ) -> tuple[list[Detection2D], float]:
+        """Core inference path shared by detect() and warmup()."""
+        import torch
+
+        img_w, img_h = image.size
         inputs = self._processor(
             images=image,
             text=prompt,
@@ -86,8 +120,8 @@ class GroundingDinoModel:
         # transformers >= 4.51 uses "text_labels" (str) instead of "labels" (int).
         results = self._processor.post_process_grounded_object_detection(
             outputs,
-            threshold=request.box_threshold,
-            text_threshold=request.text_threshold,
+            threshold=box_threshold,
+            text_threshold=text_threshold,
             target_sizes=[(img_h, img_w)],
         )[0]
 

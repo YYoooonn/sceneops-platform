@@ -170,6 +170,16 @@ services:
     volumes:
       - ./data:/data:ro
       - ./cache/hf:/cache/hf
+    networks:
+      default:
+        aliases:
+          - sceneops-inference
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
     deploy:
       resources:
         reservations:
@@ -196,6 +206,16 @@ services:
     volumes:
       - ./data:/data:ro
       - ./cache/hf:/cache/hf
+    networks:
+      default:
+        aliases:
+          - sceneops-inference
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
     profiles:
       - inference
 
