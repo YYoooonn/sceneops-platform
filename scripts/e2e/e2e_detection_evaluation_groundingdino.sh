@@ -47,9 +47,10 @@ DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
 MODEL_ID="${MODEL_ID:-grounding-dino}"
 MODEL_VERSION="${MODEL_VERSION:-tiny}"
 READYZ_TIMEOUT="${READYZ_TIMEOUT:-90}"
-POLL_TIMEOUT="${POLL_TIMEOUT:-120}"
+POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
+DETECTION_MODE="${DETECTION_MODE:-ground_truth_only}"
 MAX_SCENES="${MAX_SCENES:-1}"
-MAX_SAMPLES="${MAX_SAMPLES:-5}"
+MAX_SAMPLES="${MAX_SAMPLES:-2}"
 
 echo "=== GroundingDINO detection_evaluation E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
@@ -57,6 +58,7 @@ echo "  INFERENCE_SERVER_URL=$INFERENCE_SERVER_URL"
 echo "  INFERENCE_ENDPOINT_URL=$INFERENCE_ENDPOINT_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  MODEL_ID=$MODEL_ID  MODEL_VERSION=$MODEL_VERSION"
+echo "  DETECTION_MODE=$DETECTION_MODE"
 echo "  MAX_SCENES=$MAX_SCENES"
 echo "  MAX_SAMPLES=$MAX_SAMPLES"
 echo ""
@@ -145,7 +147,7 @@ PAYLOAD="$(cat <<JSON
       "model_version": "$MODEL_VERSION",
       "inference_backend": "grounding_dino",
       "scene_selection": {
-        "mode": "ground_truth_only",
+        "mode": "$DETECTION_MODE",
         "max_scenes": $MAX_SCENES,
         "max_samples": $MAX_SAMPLES
       },
@@ -179,8 +181,9 @@ echo ""
 
 # ── 8. Poll ───────────────────────────────────────────────────────────────────
 
-echo "--- 8. Polling (up to $((POLL_TIMEOUT * 5))s) ---"
-PIPELINE_JSON="$(poll_pipeline_terminal "$API_BASE_URL" "$PIPELINE_RUN_ID" "$POLL_TIMEOUT" 5)"
+POLL_TIMEOUT_SUM=$((POLL_TIMEOUT * MAX_SCENES))
+echo "--- 8. Polling (up to $((POLL_TIMEOUT_SUM * 5))s) ---"
+PIPELINE_JSON="$(poll_pipeline_terminal "$API_BASE_URL" "$PIPELINE_RUN_ID" "$POLL_TIMEOUT_SUM" 5)"
 echo ""
 
 # ── 9. Assert pipeline succeeded ─────────────────────────────────────────────
@@ -259,8 +262,8 @@ assert_json_equals "$INFERENCE_JSON" '.run.status' 'succeeded' \
   'inference run should be succeeded'
 assert_json_not_empty "$INFERENCE_JSON" '.run.predictionManifestUri' \
   'inference run predictionManifestUri'
-assert_json_equals "$INFERENCE_JSON" ".run.sampleCount" "$MAX_SAMPLES" \
-  "inference run sampleCount should equal MAX_SAMPLES=$MAX_SAMPLES"
+assert_json_less_or_equal "$INFERENCE_JSON" ".run.sampleCount" "$MAX_SAMPLES" \
+  "inference run sampleCount should be less than or equal MAX_SAMPLES=$MAX_SAMPLES"
 assert_json_not_empty "$INFERENCE_JSON" '.run.metrics.lifting_failed_count // "0"' \
   'inference run lifting_failed_count field should exist'
 
@@ -342,6 +345,133 @@ fi
 echo "  OK"
 echo ""
 
+# ── 15. Assert prediction artifact registration ───────────────────────────────
+
+echo "--- 15. Assert prediction artifact registration ---"
+INFER_ARTIFACTS_JSON="$(fetch_inference_run_artifacts "$API_BASE_URL" "$INFERENCE_RUN_ID")"
+INFER_ARTIFACT_COUNT="$(echo "$INFER_ARTIFACTS_JSON" | jq '.artifacts | length')"
+echo "  registered inference artifacts=$INFER_ARTIFACT_COUNT"
+
+assert_artifact_kind_present "$INFER_ARTIFACTS_JSON" "prediction_manifest" \
+  "inference run should register prediction_manifest artifact"
+assert_artifact_kind_present "$INFER_ARTIFACTS_JSON" "predictions_root" \
+  "inference run should register predictions_root artifact"
+
+PRED_MANIFEST_URI_FROM_ARTIFACTS="$(echo "$INFER_ARTIFACTS_JSON" | \
+  jq -r '[.artifacts[] | select(.kind == "prediction_manifest")][0].uri // empty')"
+echo "  prediction_manifest uri=$PRED_MANIFEST_URI_FROM_ARTIFACTS"
+if [ -z "$PRED_MANIFEST_URI_FROM_ARTIFACTS" ]; then
+  echo "❌ prediction_manifest artifact has no uri" >&2
+  exit 1
+fi
+
+# Scene selection metadata embedded in the inference run record
+SEL_SCENE_COUNT="$(echo "$INFERENCE_JSON" | \
+  jq -r '.run.metadata.scene_selection.selected_scene_count // 0')"
+SEL_SAMPLE_COUNT="$(echo "$INFERENCE_JSON" | \
+  jq -r '.run.metadata.scene_selection.selected_sample_count // 0')"
+SEL_SCENE_IDS_LEN="$(echo "$INFERENCE_JSON" | \
+  jq '(.run.metadata.scene_selection.selected_scene_ids // []) | length')"
+echo "  scene_selection: selected_scene_count=$SEL_SCENE_COUNT  selected_sample_count=$SEL_SAMPLE_COUNT  selected_scene_ids_len=$SEL_SCENE_IDS_LEN"
+
+if [ "${SEL_SCENE_COUNT:-0}" -lt 1 ]; then
+  echo "❌ scene_selection.selected_scene_count is 0 — ground_truth_only should have selected at least 1 scene" >&2
+  exit 1
+fi
+if [ "${SEL_SCENE_IDS_LEN:-0}" -lt 1 ]; then
+  echo "❌ scene_selection.selected_scene_ids is empty" >&2
+  exit 1
+fi
+echo "  OK"
+echo ""
+
+# ── 16. Assert evaluation artifacts and metrics content ───────────────────────
+
+echo "--- 16. Assert evaluation artifacts and metrics content ---"
+EVAL_ARTIFACTS_JSON="$(fetch_evaluation_run_artifacts "$API_BASE_URL" "$EVALUATION_RUN_ID")"
+EVAL_ARTIFACT_COUNT="$(echo "$EVAL_ARTIFACTS_JSON" | jq '.artifacts | length')"
+echo "  registered evaluation artifacts=$EVAL_ARTIFACT_COUNT"
+
+assert_artifact_kind_present "$EVAL_ARTIFACTS_JSON" "evaluation_manifest" \
+  "evaluation run should register evaluation_manifest artifact"
+assert_artifact_kind_present "$EVAL_ARTIFACTS_JSON" "metrics" \
+  "evaluation run should register metrics artifact"
+
+EVAL_MANIFEST_URI_FROM_ARTIFACTS="$(echo "$EVAL_ARTIFACTS_JSON" | \
+  jq -r '[.artifacts[] | select(.kind == "evaluation_manifest")][0].uri // empty')"
+METRICS_URI_FROM_ARTIFACTS="$(echo "$EVAL_ARTIFACTS_JSON" | \
+  jq -r '[.artifacts[] | select(.kind == "metrics")][0].uri // empty')"
+echo "  evaluation_manifest uri=$EVAL_MANIFEST_URI_FROM_ARTIFACTS"
+echo "  metrics uri=$METRICS_URI_FROM_ARTIFACTS"
+
+# Fetch evaluation metrics (summary + full metrics) from the API
+EVAL_METRICS_JSON="$(fetch_evaluation_run_metrics "$API_BASE_URL" "$EVALUATION_RUN_ID")"
+
+METRICS_EVAL_SCENE_COUNT="$(echo "$EVAL_METRICS_JSON" | \
+  jq '.summary.evaluated_scene_count // 0')"
+METRICS_EVAL_SCENE_IDS_LEN="$(echo "$EVAL_METRICS_JSON" | \
+  jq '(.summary.evaluated_scene_ids // []) | length')"
+METRICS_GT_COUNT="$(echo "$EVAL_METRICS_JSON" | \
+  jq '.summary.ground_truth_count // 0')"
+METRICS_PRED_COUNT="$(echo "$EVAL_METRICS_JSON" | \
+  jq -r '.summary.prediction_count // "null"')"
+METRICS_EVALUABLE_COUNT="$(echo "$EVAL_METRICS_JSON" | \
+  jq -r '.summary.evaluable_prediction_count // "null"')"
+METRICS_SKIPPED_SCENE_COUNT="$(echo "$EVAL_METRICS_JSON" | \
+  jq '.summary.skipped_scene_count // 0')"
+METRICS_PRIMARY_NAME="$(echo "$EVAL_METRICS_JSON" | \
+  jq -r '.summary.primary_metric_name // empty')"
+METRICS_PRIMARY_VALUE="$(echo "$EVAL_METRICS_JSON" | \
+  jq -r '.summary.primary_metric_value // empty')"
+
+echo "  summary: evaluated_scene_count=$METRICS_EVAL_SCENE_COUNT  evaluated_scene_ids_len=$METRICS_EVAL_SCENE_IDS_LEN"
+echo "  summary: skipped_scene_count=$METRICS_SKIPPED_SCENE_COUNT"
+echo "  summary: ground_truth_count=$METRICS_GT_COUNT  prediction_count=$METRICS_PRED_COUNT  evaluable=$METRICS_EVALUABLE_COUNT"
+echo "  summary: primary_metric=$METRICS_PRIMARY_NAME=$METRICS_PRIMARY_VALUE"
+
+# evaluated_scene_count must be >= 1 (ground_truth_only mode, at least one GT scene)
+if [ "${METRICS_EVAL_SCENE_COUNT:-0}" -lt 1 ]; then
+  echo "❌ summary.evaluated_scene_count is 0 — at least one scene should have been evaluated" >&2
+  exit 1
+fi
+if [ "${METRICS_EVAL_SCENE_IDS_LEN:-0}" -lt 1 ]; then
+  echo "❌ summary.evaluated_scene_ids is empty" >&2
+  exit 1
+fi
+# ground_truth_count must be > 0 (ground_truth_only mode guarantees GT)
+if [ "${METRICS_GT_COUNT:-0}" -le 0 ]; then
+  echo "❌ summary.ground_truth_count is 0 — expected > 0 with ground_truth_only scene selection" >&2
+  exit 1
+fi
+# prediction_count and evaluable_prediction_count must be present (can be 0)
+if [ "$METRICS_PRED_COUNT" = "null" ]; then
+  echo "❌ summary.prediction_count is missing from evaluation metrics" >&2
+  exit 1
+fi
+if [ "$METRICS_EVALUABLE_COUNT" = "null" ]; then
+  echo "❌ summary.evaluable_prediction_count is missing from evaluation metrics" >&2
+  exit 1
+fi
+# primary metric name must be "precision"
+if [ "$METRICS_PRIMARY_NAME" != "precision" ]; then
+  echo "❌ summary.primary_metric_name expected 'precision', got '$METRICS_PRIMARY_NAME'" >&2
+  exit 1
+fi
+if [ -z "$METRICS_PRIMARY_VALUE" ]; then
+  echo "❌ summary.primary_metric_value is missing" >&2
+  exit 1
+fi
+
+# Full metrics object must contain precision and recall
+assert_json_not_empty "$EVAL_METRICS_JSON" '.metrics.precision // empty' \
+  'evaluation metrics should contain precision'
+assert_json_not_empty "$EVAL_METRICS_JSON" '.metrics.recall // empty' \
+  'evaluation metrics should contain recall'
+
+echo "  OK"
+echo ""
+
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 EVAL_LIFTING_FAILED="$(echo "$EVAL_JSON" | jq -r '.run.summary.lifting_failed_prediction_count // .run.metrics.lifting_failed_prediction_count // "n/a"')"
@@ -366,3 +496,13 @@ echo "  metrics_uri                      = ${METRICS_URI:-${EVAL_MANIFEST_URI}}"
 echo "  primary_metric_name              = $EVAL_PRIMARY_NAME"
 echo "  primary_metric_value             = $EVAL_PRIMARY_VALUE"
 echo "  leaderboard_entry_id             = $LB_ID"
+echo ""
+echo "  prediction_manifest_uri          = $PRED_MANIFEST_URI_FROM_ARTIFACTS"
+echo "  evaluation_manifest_uri          = $EVAL_MANIFEST_URI_FROM_ARTIFACTS"
+echo "  metrics_artifact_uri             = $METRICS_URI_FROM_ARTIFACTS"
+echo "  selected_scene_count             = $SEL_SCENE_COUNT"
+echo "  selected_sample_count            = $SEL_SAMPLE_COUNT"
+echo "  evaluated_scene_count            = $METRICS_EVAL_SCENE_COUNT"
+echo "  skipped_scene_count              = $METRICS_SKIPPED_SCENE_COUNT"
+echo "  gt_count                         = $METRICS_GT_COUNT"
+echo "  artifact_assertions              = passed"

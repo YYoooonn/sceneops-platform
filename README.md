@@ -1,293 +1,347 @@
 # SceneOps Platform
 
-## Overview
-
-SceneOps Platform is a local-first MLOps and data platform for robotics and autonomous-driving scene data. It converts scene-aware sensor datasets into structured SceneOps scene manifests, runs validation and profiling pipelines, executes detection inference and evaluation pipelines, and tracks all metadata and artifacts through an API control plane and an asynchronous worker data plane.
-
-Managing sensor datasets for robotics and AV development involves more than storing files. Raw scene data needs to be ingested into a consistent schema, validated for quality, profiled for coverage and annotation statistics, and then tracked through the full inference and evaluation lifecycle.
-
-SceneOps Platform addresses this by separating concerns into:
-
-- A **control plane** (FastAPI API) that manages jobs, pipelines, metadata, and artifact records
-- A **data plane** (Celery workers) that executes pipelines and jobs, checkpoints run state, and writes artifacts
-- A **metadata store** (PostgreSQL) that persists all run records, artifact URIs, and leaderboard entries
-- An **artifact store** (S3-compatible MinIO locally) that stores scene manifests, evaluation outputs, and metric payloads outside the database
-
----
-
-## Current Validated Flows
-
-### 1. Dataset Scene Ingestion
-
-Pipeline: `dataset_scene_ingestion`
-
-```text
-ingest_scenes → register_scene → validate_scene → profile_scene → build_scene_index → build_dataset_manifest
-```
-
-Validated with nuScenes mini:
-
-```
-10 scenes ingested
-404 samples processed
-scene manifests created
-dataset manifest created
-validation and profile run records created
-validation and profile artifacts written
-dataset version ready
-```
-
-### 2. Detection Evaluation
-
-Pipeline: `detection_evaluation`
-
-```text
-predict_detection → evaluate_detection
-```
-
-Validated with mock detector:
-
-```
-predict_detection:         succeeded
-evaluate_detection:        succeeded
-prediction_count:          12544
-ground_truth_count:        14982
-primary_metric_name:       precision
-primary_metric_value:      ≈ 0.991948
-evaluation_unit:           annotation
-prediction manifest artifact created
-predictions root artifact created
-evaluation manifest artifact created
-metrics artifact created
-leaderboard entry created
-```
-
-> The mock detector validates orchestration, artifact tracking, run persistence, and metric aggregation. It is not a real model-quality benchmark.
+Local-first MLOps and data platform for robotics and autonomous-driving scene data. Converts raw sensor datasets into structured scene manifests, runs validation and profiling pipelines, and tracks detection inference and evaluation runs through an API control plane and asynchronous worker data plane.
 
 ---
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  API[FastAPI Control Plane] --> DB[(Postgres Metadata)]
-  API --> Redis[(Redis / Celery Broker)]
-  Redis --> PipelineWorker[Pipeline Worker]
-  Redis --> JobWorker[Job Worker]
-  PipelineWorker --> DB
-  JobWorker --> DB
-  JobWorker --> Store[(S3-compatible Artifact Store)]
-  Store --> Artifacts[Scene / Dataset / Run Artifacts]
+```
+Client
+  └─ FastAPI (API)        ─── Postgres (metadata + artifact URIs)
+       │
+       └─ Redis / Celery ──► Pipeline Worker  ─► Postgres
+                         └─► Job Worker       ─► Artifact Store (MinIO / local)
 ```
 
-### Control Plane: API
-
-`apps/api`
-
-The API server exposes a REST control plane for managing all platform resources.
-
-**Structure:**
-
-| Layer | Modules |
-|---|---|
-| `platform/` | `jobs`, `pipelines`, `executions`, `artifacts` |
-| `domains/` | `datasets`, `scenes`, `models`, `inference`, `evaluations`, `labels` |
-| `views/` | `operations`, `leaderboards` |
-
-**Responsibilities:**
-
-- Create, list, and read jobs and pipeline runs
-- Dispatch jobs and pipelines through the Celery execution backend
-- Expose dataset, scene, model, and run records
-- Expose artifact records (URIs, ownership, metadata)
-- Serve operations summaries and detection leaderboards
-
-### Data Plane: Worker
-
-`apps/worker`
-
-The worker data plane executes all pipeline and job work asynchronously via Celery.
-
-**Responsibilities:**
-
-- Execute jobs and pipelines inside a `WorkerContext` with session-scoped stores
-- Checkpoint job and pipeline state transitions (RUNNING → SUCCEEDED / FAILED)
-- Write artifacts to the artifact store
-- Handle scene ingestion, validation, profiling, detection inference, and evaluation
-
-**Pipeline execution architecture:**
-
-```
-PipelineRunner              (local Celery orchestrator)
-└── PipelineTaskRunner      (single task use case — also the Airflow task entry point)
-    ├── PipelineInputResolver   → resolves PipelineTaskInputs from DB records
-    ├── PipelineJobPlanner      → builds JobManifest from PipelineTaskInputs
-    ├── JobRunner               → executes the concrete job by job_id (pipeline-agnostic)
-    ├── PipelineTaskResultRecorder → persists normalized PipelineTaskResult to DB
-    ├── PipelineTaskResultBuilder  → splits raw handler output into refs/summary/raw_result
-    └── PipelineQualityGate     → validates result against task contract
-```
-
-Each pipeline task can be executed as a standalone invocation:
-
-```bash
-sceneops-worker run-pipeline-task \
-  --pipeline-run-id <id> \
-  --task-id <task_id>
-```
-
-This is the Airflow-compatible entry point. A future Airflow DAG, DockerOperator, or KubernetesPodOperator will call this command for each task — the container exit code reflects success (0) or failure (non-zero).
-
-**`PipelineTaskInputs` — compact reference envelope:**
-
-```
-PipelineTaskInputs
-  pipeline       — stable task-level identity (pipeline_run_id, task_id, ...)
-  dataset        — DatasetInputRef (identity + baseline quality-cache refs)
-  model          — ModelInputRef (identity + URI + backend + runtime)
-  upstream_tasks — PipelineUpstreamTaskRef per upstream task (refs/summary/raw_result)
-  refs           — merged URIs and IDs from upstream task results
-  summary        — merged counts, status flags, and metric summaries from upstream tasks
-  params         — explicit task-level params
-  extra          — caller-supplied overrides
-```
-
-`PipelineInputResolver` resolves this from DB records (DatasetVersionRecord, ModelVersionRecord, upstream PipelineTaskRun.result) — no in-memory context propagation.
-
-**`PipelineTaskResult` — normalized output:**
-
-```
-PipelineTaskResult
-  refs        — downstream-input-oriented IDs and URIs (read by PipelineInputResolver)
-  summary     — counts, status flags, metric summaries
-  raw_result  — full handler output for debugging
-```
-
-`PipelineTaskResultRecorder` splits the raw job handler output into these three buckets using `_REFS_KEYS` / `_SUMMARY_KEYS` and job-type-specific alias normalization (e.g., `report_uri → validation_report_uri` for `validate_scene`).
-
-**Implementation notes:**
-
-- Each Celery task spawns a fresh thread with an `AsyncRuntimeRunner` (`runtime/`) to isolate SQLAlchemy async event loops from Celery's prefork process model.
-- Worker sessions do not auto-commit; job and pipeline lifecycle checkpoints commit state transitions explicitly.
-- `RunRecordHandler` owns domain run record lifecycle: RUNNING → SUCCEEDED / FAILED.
-- `PipelineRunner` iterates `PipelineDefinition.tasks` (sorted by `task.order`) and delegates each task to `PipelineTaskRunner`. Final `PipelineRunResult` is aggregated from persisted `PipelineTaskRun.result` records — no in-memory value propagation.
-- `WorkerContext` and `RunStores` are defined in `core/` and injected into job handlers via `core/dependencies.py`.
-- Celery task wiring lives in `tasks/` (`jobs.py`, `pipelines.py`); Celery app factory and job dispatch/watch utilities live in `execution/`.
-
-### Core Contracts
-
-`packages/sceneops-core`
-
-Shared domain contracts used by both API and worker:
-
-- Records, manifests, run records
-- Job params and results
-- Pipeline definitions and results
-- Artifact refs and records
-- Enums and domain constants
-
-Does not include API-only response wrappers, operations dashboard wrappers, or leaderboard API wrappers.
-
-### Metadata Store
-
-`packages/sceneops-db`
-
-- SQLAlchemy 2.0 async models
-- Domain-owned run tables (no central generic runs table)
-- Postgres repository implementations with repository protocol interfaces
-- Alembic migrations
-- Artifact records stored separately from artifact content (DB stores URIs, summaries, and metadata only)
-
-### Artifact Storage
-
-`packages/sceneops-storage`
-
-- Storage abstraction supporting local filesystem and S3-compatible backends
-- Large artifact content (manifests, predictions, metrics) stored outside the DB
-- Backend switchable via `.env.local`:
-
-```bash
-# Local filesystem
-SCENEOPS_WORKER_ARTIFACT__BACKEND=local
-SCENEOPS_WORKER_ARTIFACT__ROOT_URI=/data
-
-# MinIO / S3
-SCENEOPS_WORKER_ARTIFACT__BACKEND=minio
-SCENEOPS_WORKER_ARTIFACT__ROOT_URI=s3://sceneops
-SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
-```
+| Layer | Package | Role |
+|---|---|---|
+| Control plane | `apps/api` | REST API — jobs, pipelines, datasets, evaluations, leaderboards |
+| Data plane | `apps/worker` | Celery workers — executes pipelines and jobs, writes artifacts |
+| Metadata store | `packages/sceneops-db` | SQLAlchemy 2.0 async ORM, Postgres, Alembic |
+| Artifact store | `packages/sceneops-storage` | `LocalArtifactStore` / `S3ArtifactStore` (MinIO-compatible) |
+| Domain contracts | `packages/sceneops-core` | Pydantic v2 schemas, enums, pipeline definitions |
+| Inference server | `apps/inference-server` | Optional GroundingDINO server (port 8001) |
 
 ---
 
-## Execution Model
+## Validated Pipelines
 
-### Local / Celery mode
+### 1. `dataset_scene_ingestion`
 
-Jobs and pipelines are dispatched from the API and executed on separate Celery queues:
+```
+ingest_scenes → register_scene → validate_scene → profile_scene
+             → build_scene_index → build_dataset_manifest
+```
 
-| Queue | Worker | Concurrency | Purpose |
+Validated with nuScenes mini (10 scenes, 404 samples). Produces scene manifests, validation/profile reports, and a dataset version record.
+
+### 2. `raw_log_scene_building`
+
+```
+build_scenes → register_scene → validate_scene → profile_scene
+            → build_scene_index → build_dataset_manifest
+```
+
+Two segmentation/sampling modes:
+
+| Mode | Segmentation | Sampling | When to use |
 |---|---|---|---|
-| `sceneops.pipeline_runs` | `worker-pipeline` | 1 (default) | Pipeline orchestration via `PipelineRunner` |
-| `sceneops.jobs` | `worker-jobs` | 4 (default) | Individual job execution via `JobRunner` |
+| sequence/frame-id | `sequence` — uses `source_sequence_id` hints | `frame_id` — uses `source_frame_id` hints | Source data carries scene/sample IDs (e.g. nuScenes tokens) |
+| fixed-window/time-bucket | `fixed_window` — equal-duration time windows | `time_bucket` — timestamp-bucketed samples | No source hints; reconstruct purely from timestamps |
 
-Concurrency is configurable via environment variables:
+Both modes write a `scene_segment_index` artifact. Params `max_source_sequences` and `max_built_scenes` cap the input and output counts.
 
-```bash
-SCENEOPS_WORKER_PIPELINE_CONCURRENCY=1
-SCENEOPS_WORKER_JOBS_CONCURRENCY=4
+### 3. `detection_evaluation`
+
+```
+predict_detection → evaluate_detection
 ```
 
-### Standalone task mode (Airflow-compatible)
+Validated backends:
 
-Each pipeline task can be executed independently using the worker CLI:
+| Backend | Purpose | Command |
+|---|---|---|
+| `mock` | Deterministic pipeline and evaluation-contract validation | `make e2e-detection-evaluation` |
+| `grounding_dino` | Real model inference integration path | `make e2e-detection-evaluation-groundingdino` |
 
-```bash
-sceneops-worker run-pipeline-task \
-  --pipeline-run-id <pipeline_run_id> \
-  --task-id <task_id>
+**Mock backend — nuScenes mini results:**
+
+```
+prediction_count:       12544
+ground_truth_count:     14982
+primary_metric:         precision ≈ 0.991948  (mock detector, not a real quality benchmark)
+evaluator:              center-distance  (2 m match threshold)
 ```
 
-This invokes `PipelineTaskRunner.run(pipeline_run_id, task_id)` directly. It resolves all inputs from DB records, executes the job, and writes the normalized result back to DB — with no dependency on in-memory context from other tasks.
+**GroundingDINO E2E validates:**
 
-The exit code is 0 on success and non-zero on failure, making it suitable as a DockerOperator or KubernetesPodOperator command in Airflow. A future Airflow DAG will call this command once per task, replacing the local `PipelineRunner` for cloud-scale orchestration.
+```
+GroundingDINO server readiness (/healthz + /readyz)
+→ predict_detection  backend=grounding_dino, scene_selection=ground_truth_only, CAM_FRONT
+→ prediction manifest / prediction shards written to artifact store
+→ evaluate_detection  center-distance, match_distance_m=2.0
+→ evaluation manifest + metrics artifact
+→ leaderboard entry created in DB
+```
+
+Prerequisites for the real E2E: `make local-up` + `make inference-local-up` (CPU) or `make inference-gpu-up` (GPU) + `make e2e-dataset-ingestion`.
+
+Current GroundingDINO metrics are integration/evaluation-contract signals, not production-grade 3D detection benchmark results.
+
+The GroundingDINO E2E also fetches and validates prediction/evaluation/metrics artifacts via the API, covering the full path from model-server inference to persisted evaluation artifacts and leaderboard entry.
+
+Artifacts written: prediction manifest, predictions root, evaluation manifest, metrics payload. Leaderboard entry created in DB.
+
+#### Detection run comparison
+
+After either E2E, SceneOps surfaces dataset quality and scene-level selection/evaluation metadata. The comparison script now starts with the compact dataset quality summary, so operators can verify evaluation readiness, GT coverage, selectable scene count, and exclusion reasons before inspecting scene-level prediction/evaluation results.
+
+- **Dataset quality**: readiness, scene/sample/annotation counts, selectable scene count, GT coverage, observed channels, exclusion reasons.
+- **Inference run** (`metadata.scene_selection`): selected scene IDs, skipped scenes with reasons, selected sample/annotation counts.
+- **Evaluation run** (`summary`): evaluated/skipped scene IDs and counts, GT/prediction/evaluable counts, primary metric.
+
+Inspect a completed run:
+
+```bash
+make compare-detection PIPELINE_RUN_ID=<pipeline_run_id>
+```
+
+Example output:
+
+```
+=== Dataset Quality ===
+  dataset                       : nuscenes / v1.0-mini
+  readiness                     : ready
+  scene_count                   : 10
+  sample_count                  : 404
+  frame_count                   : 808
+  annotation_count              : 14982
+  ready/warning/blocked/unknown : 10 / 0 / 0 / 0
+  selectable_for_detection      : 10
+  non_selectable_for_detection  : 0
+  ground_truth_scenes           : 10
+  annotated_scenes              : 10
+  gt_coverage_ratio             : 1.0
+  observed_channels             : CAM_FRONT, LIDAR_TOP
+  exclusion_reasons             : {}
+
+=== Detection Run Comparison ===
+  inference_run_id  : infer-abc123
+  evaluation_run_id : eval-def456
+
+--- Summary ---
+  selected_scene_count  : 10
+  selected_sample_count : 404
+  skipped_scene_count   : 0
+  evaluated_scene_count : 10
+  ground_truth_count    : 14982
+  prediction_count      : 12544
+  primary_metric        : precision = 0.991948
+
+--- Scene table ---
+scene_id                          selected    evaluated   skip_reason                     samples
+scene-001...                      yes         yes         -                                     -
+scene-002...                      no          no          scene_has_no_ground_truth            40
+```
 
 ---
 
-## Artifact Model
+### Scene quality summary
 
-Artifact content lives in the artifact store (local or MinIO). The database stores URIs, ownership, summaries, and metadata.
+SceneOps exposes scene-level quality because validation and profiling are performed per scene:
 
-**Current artifact stores:**
+```bash
+curl http://localhost:8000/api/v1/scenes/<scene_id>/quality
+```
 
-| Store | Artifacts |
+The response summarizes scene counts, GT availability, latest scene validation status (`should_block_pipeline`, issue/warning counts), observed channels, and whether the scene is selectable for detection evaluation. `exclusion_reasons` lists why a scene would be skipped by `predict_detection` (e.g. `missing_ground_truth`, `validation_blocked`).
+
+Scene quality uses GT metadata persisted on `SceneRecord` during `register_scene`, while profile runs provide additional measured summaries such as observed channels and asset/coverage details.
+
+Dataset quality is treated as an aggregate view over these scene-level summaries.
+
+### Dataset scene quality
+
+SceneOps can list scene-level quality summaries for a dataset version:
+
+```bash
+curl http://localhost:8000/api/v1/datasets/nuscenes/versions/v1.0-mini/scenes/quality
+```
+
+The response aggregates readiness buckets, GT coverage, selectable scene counts, and exclusion reasons while also returning paginated per-scene quality rows.
+
+### Dataset quality summary
+
+Dataset quality is a compact aggregate view over scene-level validation/profile/GT quality. It summarizes readiness buckets, GT coverage, selectable scene counts, observed channels, and exclusion reasons. For per-scene details, use `/datasets/{dataset_id}/versions/{version}/scenes/quality`.
+
+```bash
+curl http://localhost:8000/api/v1/datasets/nuscenes/versions/v1.0-mini/quality
+```
+
+The response includes:
+- `readiness` — `ready | warning | blocked | unknown` derived from scene aggregate
+- `counts` — scene, sample, frame, annotation, GT scene, and selectable scene counts
+- `sceneQuality` — readiness buckets, selectable counts, exclusion reason counts, observed channels
+- `groundTruth` — GT scene count, annotated scene count, annotation count, coverage ratio
+- `validation` — per-scene readiness bucket counts (not a single run record)
+- `profile` — observed channels union across all scene profile runs
+- `manifestUri` — dataset manifest artifact URI
+
+---
+
+## Demo: scene-first quality to detection evaluation
+
+SceneOps treats scenes as the primary operational unit. `SceneRecord` rows are the canonical source of scene membership, while `DatasetManifest` is a derived snapshot built from all registered scenes. Validation and profile results are persisted per scene, and dataset quality is computed as a scene aggregate — not as a property of a dataset-level validation run. Detection evaluation then uses the same scene-level view to show which scenes were selected, evaluated, or skipped.
+
+### 1. Ingest and register scenes
+
+```bash
+make e2e-dataset-ingestion        # dataset_scene_ingestion pipeline
+# optionally also:
+make e2e-raw-log-scene-building   # raw_log_scene_building pipeline (non-GT scenes)
+```
+
+Runs `ingest_scenes → register_scene → validate_scene → profile_scene → build_scene_index → build_dataset_manifest`. After completion each scene has a `SceneRecord` with GT/count fields and linked `SceneValidationRunRecord` / `SceneProfileRunRecord`. Running both pipelines produces a realistic mixed dataset with GT and non-GT scenes.
+
+### 2. Inspect scene quality
+
+```bash
+# Single scene
+curl -s http://localhost:8000/api/v1/scenes/<scene_id>/quality | jq
+
+# All scenes for a dataset version (paginated rows + global aggregate)
+curl -s http://localhost:8000/api/v1/datasets/nuscenes/versions/v1.0-mini/scenes/quality | jq
+```
+
+### 3. Inspect compact dataset quality
+
+```bash
+curl -s http://localhost:8000/api/v1/datasets/nuscenes/versions/v1.0-mini/quality | jq
+```
+
+Key fields: `readiness`, `counts.sceneCount`, `counts.selectableSceneCount`, `groundTruth.groundTruthCoverageRatio`, `sceneQuality.exclusionReasonCounts`.
+
+### 4. Run detection evaluation
+
+```bash
+make e2e-detection-evaluation               # mock backend (no inference server needed)
+make e2e-detection-evaluation-real          # real GroundingDINO (requires inference server)
+```
+
+### 5. Compare dataset quality and detection run
+
+```bash
+make compare-detection PIPELINE_RUN_ID=<pipeline_run_id>
+```
+
+Captured output (30-scene dataset: 10 nuScenes GT scenes + 20 raw-log non-GT scenes):
+
+```
+=== Dataset Quality ===
+  readiness                     : warning
+  scene_count                   : 30
+  sample_count                  : 808
+  annotation_count              : 18538
+  ready/warning/blocked/unknown : 30 / 0 / 0 / 0
+  selectable_for_detection      : 10
+  non_selectable_for_detection  : 20
+  ground_truth_scenes           : 10
+  gt_coverage_ratio             : 0.3333
+  exclusion_reasons             : {"missing_ground_truth":20}
+
+=== Detection Run Comparison ===
+  selected_scene_count  : 10
+  selected_sample_count : 404
+  skipped_scene_count   : 20
+  evaluated_scene_count : 10
+  ground_truth_count    : 14982
+  prediction_count      : 2340
+  primary_metric        : precision = 0.318803
+```
+
+The compact dataset quality summary predicts that 10 scenes are selectable for detection evaluation and 20 scenes are excluded because they have no GT. The detection comparison confirms the same behavior: 10 scenes are selected/evaluated and 20 scenes are skipped with `scene_has_no_ground_truth`. This connects data quality, scene selection, and evaluation metrics in one operator-facing flow.
+
+> **Note:** `annotation_count` (18538) is the dataset/SceneRecord count across GT scenes, while `ground_truth_count` (14982) is the evaluator-side GT count after evaluation-specific loading and filtering. They can differ.
+
+### 6. Check leaderboard
+
+```bash
+curl -s "http://localhost:8000/api/v1/leaderboards/evaluations?dataset_id=nuscenes&dataset_version=v1.0-mini" | jq
+```
+
+---
+
+## Key Components
+
+### Pipeline Execution (Worker)
+
+```
+PipelineRunner              ← Celery orchestrator (local) / Airflow DAG entry point (future)
+└── PipelineTaskRunner      ← single-task use case; also the standalone CLI entry point
+    ├── PipelineInputResolver    resolves PipelineTaskInputs from DB records (no in-memory propagation)
+    ├── PipelineJobPlanner       builds JobManifest from PipelineTaskInputs
+    ├── JobRunner                executes the concrete job by job_id
+    ├── PipelineTaskResultBuilder   splits handler output into refs / summary / raw_result
+    ├── PipelineTaskResultRecorder  persists normalized PipelineTaskResult to DB
+    └── PipelineQualityGate         validates result contract; can block pipeline on failure
+```
+
+Standalone task invocation (Airflow-compatible):
+```bash
+sceneops-worker run-pipeline-task --pipeline-run-id <id> --task-id <task_id>
+```
+
+Exit code 0 = success, non-zero = failure. Designed for future DockerOperator / KubernetesPodOperator.
+
+### Scene Manifest
+
+`SceneManifest` is the canonical scene artifact. Key fields:
+
+```
+scene_id, dataset_id/version
+lineage         ─ raw_log_id, segment_id, source provenance
+generation      ─ origin_type (real/synthetic), generation_method
+calibrated_sensors  ─ scene-level registry (deduplicated by calibration_id)
+ego_poses           ─ scene-level time-varying ego poses
+samples         ─ list[SceneSampleManifest]
+  └── frames    ─ list[SceneSensorFrameManifest] (references cal + ego_pose by ID)
+  └── annotations ─ list[SceneAnnotationManifest] (3D bbox, category, instance_id)
+annotation_count, has_ground_truth, ground_truth_source
+sample_count, frame_count, channels
+```
+
+### Detection Scene Selection
+
+`predict_detection` supports a `scene_selection` param (`DetectionSceneSelectionConfig`) with three modes:
+
+| Mode | Behaviour |
 |---|---|
-| `DatasetArtifactStore` | Dataset manifest, dataset-level artifacts |
-| `SceneArtifactStore` | Scene manifest, scene sample iteration |
-| `RunArtifactStore` | Prediction manifest, predictions root, evaluation manifest, metrics, validation report, profile report |
-| `ObservationArtifactStore` | Raw-log artifact scaffold (future use) |
+| `all` | All scenes in the dataset manifest |
+| `ground_truth_only` | Only scenes where `has_ground_truth=True` and `annotation_count >= min_annotation_count`; optional `ground_truth_sources` filter |
+| `explicit_scenes` | Explicit `scene_ids` list |
+
+Common caps: `max_scenes`, `max_samples`, `max_samples_per_scene`.
+
+### Center-Distance Evaluator
+
+`CenterDistanceDetectionEvaluator` (`evaluator_id: "center-distance"`):
+- Match threshold: `match_distance_m` (default 2.0 m)
+- Skips prediction shards for scenes without GT (`has_ground_truth=False`)
+- If the entire dataset has no GT annotations, returns a `skipped` evaluation manifest
+- `missing_gt_policy`: `skip` (default) or `fail`
+
+### Async Execution Isolation
+
+Each Celery task spawns a fresh thread with an `AsyncRuntimeRunner` to isolate SQLAlchemy async event loops from Celery's prefork process model. Worker sessions do not auto-commit; job and pipeline state transitions (`RUNNING → SUCCEEDED/FAILED`) are committed explicitly.
 
 ---
 
-## Pipelines and Jobs
+## Job Registry
 
-### Current built-in pipelines
+### Active (pipeline-wired)
 
-```
-dataset_scene_ingestion
-  ingest_scenes → register_scene → validate_scene → profile_scene
-  → build_scene_index → build_dataset_manifest
-
-raw_log_scene_building
-  build_scenes → register_scene → validate_scene → profile_scene
-  → build_scene_index → build_dataset_manifest
-
-detection_evaluation
-  predict_detection → evaluate_detection
-```
-
-### Validated active jobs
-
-| Job | Pipeline |
+| Job | Pipeline(s) |
 |---|---|
 | `ingest_scenes` | `dataset_scene_ingestion` |
 | `build_scenes` | `raw_log_scene_building` |
@@ -299,56 +353,11 @@ detection_evaluation
 | `predict_detection` | `detection_evaluation` |
 | `evaluate_detection` | `detection_evaluation` |
 
-### raw_log_scene_building modes
-
-`raw_log_scene_building` supports two segmentation/sampling modes:
-
-**1. Sequence / frame-id mode** (`segmentation.strategy=sequence`, `sampling.strategy=frame_id`)
-
-Uses `source_sequence_id` / `source_scene_id` hints to group raw frames into scene segments,
-and `source_frame_id` / `source_sample_id` hints to group frames into samples within each scene.
-In the local nuScenes mock, nuScenes scene and sample tokens are mapped into these generic
-sequence and frame hint fields — the public strategy names remain raw-log-agnostic.
-
-**2. Timestamp reconstruction mode** (`segmentation.strategy=fixed_window`, `sampling.strategy=time_bucket`)
-
-Reconstructs scenes and samples purely from raw sensor observation timestamps,
-without using any source scene/sample hints.
-
-- `fixed_window` splits frames into equal-duration time windows (e.g. 2 s).
-  The `scene_segment_index` artifact records all segment boundaries with
-  generated SceneOps IDs (`{raw_log_id}-fwXXXX`).
-- `time_bucket` groups frames within each segment into sample buckets by timestamp
-  (e.g. 500 ms), with generated sample IDs (`{scene_id}-sample-XXXXXX`).
-
-**Scene count params**
-
-- `max_source_sequences`: limits how many source sequences the adapter reads.
-- `max_built_scenes`: caps the number of output SceneOps scenes after segmentation.
-
-**Validation**
-
-Validation separates scene-level channel coverage (blocking by default) from sample-level
-missing channels. Set `sample_validation.block_on_sample_missing_channels: true` in
-`validate_scene` params to make sample-level missing channels blocking.
-
-### Planned pipelines (roadmap)
+### Planned
 
 ```
-scene_reconstruction           (defined, not yet implemented)
-scene_registration             (defined, not yet implemented)
-scenario_curation
-generated_dataset_preparation
-```
-
-### Planned jobs (roadmap)
-
-```
-compare_scenes
-mine_scenarios
-score_scenario_readiness
-auto_label_scene
-auto_label_dataset
+compare_scenes, mine_scenarios, score_scenario_readiness
+auto_label_scene, auto_label_dataset
 export_dataset
 ```
 
@@ -364,38 +373,36 @@ sceneops-platform/
 │   │       ├── platform/           # jobs, pipelines, executions, artifacts
 │   │       ├── domains/            # datasets, scenes, models, inference, evaluations, labels
 │   │       └── views/              # operations, leaderboards
-│   ├── inference-server/           # GroundingDINO inference server (FastAPI, port 8001)
-│   └── worker/                     # Celery execution runtime
+│   ├── inference-server/           # GroundingDINO server (FastAPI, port 8001; optional)
+│   └── worker/
 │       └── sceneops_worker/
-│           ├── pipelines/          # PipelineRunner, PipelineTaskRunner, InputResolver,
-│           │                       #   JobPlanner, ResultBuilder, ResultRecorder, QualityGate
-│           ├── jobs/               # job handlers by domain (dataset/, evaluation/,
-│           │                       #   inference/, labeling/, simulation/)
-│           ├── core/               # WorkerContext, RunStores, dependency injection
-│           ├── execution/          # Celery app factory, job dispatcher, job watcher
-│           ├── tasks/              # Celery task definitions (jobs.py, pipelines.py)
-│           ├── runtime/            # AsyncRuntimeRunner (async event-loop isolation)
-│           ├── scenes/             # scene validation, profiling, raw scene builder,
-│           │                       #   sample grouping, scene artifacts
-│           ├── stores/             # session-scoped data stores
+│           ├── pipelines/          # PipelineRunner, TaskRunner, InputResolver, JobPlanner,
+│           │                       #   ResultBuilder, ResultRecorder, QualityGate
+│           ├── jobs/               # handlers: dataset/, evaluation/, inference/
+│           ├── scenes/             # validator, profiler, raw scene builder, sample grouper,
+│           │                       #   selection filter, scene artifacts
+│           ├── evaluation/detection/  # CenterDistanceDetectionEvaluator, accumulator,
+│           │                          #   loading, artifacts
+│           ├── inference/          # mock / ONNX / GroundingDINO + frustum-lift backends
+│           ├── core/               # WorkerContext, RunStores, DI
+│           ├── execution/          # Celery app factory, job dispatcher
+│           ├── tasks/              # Celery task definitions
+│           ├── runtime/            # AsyncRuntimeRunner
 │           ├── datasets/           # nuScenes ingestion
-│           ├── inference/          # Mock / ONNX / GroundingDINO backends
-│           ├── evaluation/         # detection metrics
 │           ├── runs/               # run artifact I/O
-│           ├── tools/              # dataset/scene adapters and artifact utilities
-│           └── observations/       # raw-log observation artifact scaffold (future use)
+│           ├── tools/              # adapters and utilities
+│           └── tests/              # unit tests (scenes/, evaluation/, inference/, ...)
 ├── packages/
-│   ├── sceneops-core/              # domain contracts, Pydantic schemas, constants
-│   ├── sceneops-db/                # SQLAlchemy models, async repositories, migrations
+│   ├── sceneops-core/              # domain schemas, enums, pipeline definitions
+│   ├── sceneops-db/                # SQLAlchemy models, async repositories, Alembic
 │   └── sceneops-storage/           # LocalArtifactStore, S3ArtifactStore
-├── migrations/                     # Alembic migrations
+├── migrations/                     # Alembic versions
 ├── scripts/
 │   ├── e2e/                        # E2E test scripts
-│   ├── fixtures/                   # nuScenes dataset registration
-│   ├── checks/                     # environment and health checks
-│   ├── debug/                      # pipeline/job inspection scripts
-│   ├── dev/                        # local dev utilities (reset_local_state.sh)
-│   └── init/                       # MinIO initialization
+│   ├── fixtures/                   # dataset registration
+│   ├── checks/                     # env / health checks
+│   ├── debug/                      # pipeline/job inspection
+│   └── dev/                        # local dev utilities
 ├── docker-compose.local.yml
 ├── Makefile
 └── pyproject.toml                  # uv workspace (Python 3.11–3.12)
@@ -405,211 +412,110 @@ sceneops-platform/
 
 ## Quickstart
 
-**Requirements:**
-
-- Docker and Docker Compose
-- [uv](https://github.com/astral-sh/uv) (Python workspace manager)
-- Python 3.11 or 3.12
-- nuScenes mini data mounted under `./data/raw/nuscenes`
-
-**Setup:**
+**Requirements:** Docker + Docker Compose, [uv](https://github.com/astral-sh/uv), Python 3.11–3.12, nuScenes mini at `./data/raw/nuscenes`.
 
 ```bash
-# 1. Create .env.local (copy from .env.example and adjust as needed)
-cp .env.example .env.local
-
-# 2. Install dependencies and pre-commit hooks
-make setup
-
-# 3. Start full local stack (MinIO + DB migrations + API + workers)
-make local-up
-
-# 4. Register the nuScenes dataset
-make register-nuscenes-dataset
-
-# 5. Run all E2E tests
-make e2e
+cp .env.example .env.local          # configure storage backend, DB, Redis
+make setup                          # install deps + pre-commit hooks
+make local-up                       # MinIO + Postgres + Redis + API + workers
+make register-nuscenes-dataset      # register nuScenes fixture
+make e2e                            # run all E2E tests
 ```
 
-`make local-up` starts MinIO, then starts Postgres, Redis, the API, and both workers. Run `make db-migrate` separately before `make local-up` if the database has not been migrated yet.
-
-**Stop all services:**
+**Artifact storage backend** (`.env.local`):
 
 ```bash
-make local-down
+# local filesystem
+SCENEOPS_WORKER_ARTIFACT__BACKEND=local
+
+# MinIO / S3
+SCENEOPS_WORKER_ARTIFACT__BACKEND=minio
+SCENEOPS_WORKER_ARTIFACT__ROOT_URI=s3://sceneops
+SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
 ```
 
 ---
 
-## Makefile Commands
+## Common Commands
 
-### Setup / Quality
-
-| Command | Description |
-|---|---|
-| `make setup` | Install dependencies and pre-commit hooks |
-| `make uv-sync` | Sync all workspace packages |
-| `make uv-lock` | Update uv.lock |
-| `make check` | Run pre-commit on all files |
-| `make lint` | Run ruff check |
-| `make format` | Run ruff format |
-| `make test` | Run worker unit tests |
-
-### Stack management
+### Stack
 
 | Command | Description |
 |---|---|
-| `make local-up` | Start full local stack (MinIO + Postgres + Redis + API + workers) |
+| `make local-up` | Start full stack (MinIO + DB + Redis + API + workers) |
 | `make local-down` | Stop all services |
 | `make local-reset` | Wipe volumes and restart from scratch |
-| `make local-logs` | Follow logs for all main services |
-| `make local-ps` | Show service status |
-| `make reset-local` | Reset local state (artifacts + DB) without full volume wipe |
+| `make reset-local` | Reset artifacts + DB state without volume wipe |
+| `make db-migrate` | Run Alembic upgrade head |
+| `make db-revision MSG='...'` | Generate a new migration |
 
-### Database
-
-| Command | Description |
-|---|---|
-| `make db-migrate` | Build migrate image and run Alembic upgrade head |
-| `make db-revision MSG='...'` | Generate a new Alembic revision |
-| `make db-current` | Show current migration head |
-| `make db-history` | Show migration history |
-| `make db-reset` | Drop volumes and re-migrate |
-| `make db-shell` | Open psql shell |
-
-### API
+### Development
 
 | Command | Description |
 |---|---|
-| `make api-logs` | Follow API container logs |
-| `make api-shell` | Open shell in API container |
-| `make api-health` | Hit `/health` endpoint |
-| `make api-openapi` | Validate OpenAPI schema generation |
+| `make test` | Run worker unit tests |
+| `make lint` / `make format` | Ruff check / format |
+| `make check` | pre-commit on all files |
+| `make worker-imports` | Validate job registry imports |
+| `make api-health` | Hit `/health` |
 
-### Worker
-
-| Command | Description |
-|---|---|
-| `make worker-logs` | Follow pipeline and jobs worker logs |
-| `make worker-shell` | Open shell in worker-cli container |
-| `make worker-python` | Open Python REPL in worker-cli container |
-| `make worker-imports` | Validate worker package imports and job registry |
-| `make worker-cli` | Run worker CLI (help) |
-| `make worker-run-job JOB_ID=...` | Run a specific job directly |
-| `make worker-run-pipeline PIPELINE_RUN_ID=...` | Run a specific pipeline directly |
-| `make worker-run-pipeline-task PIPELINE_RUN_ID=... TASK_ID=...` | Run one pipeline task directly (Airflow-compatible entry point) |
-
-### Checks
+### Worker CLI
 
 | Command | Description |
 |---|---|
-| `make check-env` | Verify environment variables |
-| `make check-imports` | Validate Python package imports |
-| `make check-celery` | Check Celery broker connectivity |
-| `make check-minio` | Health check MinIO |
+| `make worker-run-job JOB_ID=...` | Run a job directly |
+| `make worker-run-pipeline PIPELINE_RUN_ID=...` | Run a full pipeline |
+| `make worker-run-pipeline-task PIPELINE_RUN_ID=... TASK_ID=...` | Run one pipeline task (Airflow entry point) |
 
 ### E2E
 
 | Command | Description |
 |---|---|
-| `make e2e` | Run all E2E tests (smoke + ingestion + detection + contracts) |
+| `make e2e` | All E2E tests (mock backend, no inference server required) |
 | `make e2e-api-smoke` | API smoke test |
-| `make e2e-dataset-scene-ingestion` | Dataset ingestion pipeline E2E |
-| `make e2e-detection-evaluation` | Detection evaluation pipeline E2E |
-| `make e2e-pipeline-contracts` | Pipeline contract validation E2E |
-| `make e2e-raw-log-scene-building` | Raw log scene building pipeline E2E (sequence/frame-id mode) |
-| `make e2e-raw-log-scene-building-time-window` | Raw log scene building E2E (fixed-window/time-bucket mode) |
-
-### Debug
-
-| Command | Description |
-|---|---|
-| `make show-runs` | List recent runs via API |
-| `make show-pipeline PIPELINE_RUN_ID=...` | Show pipeline run detail |
-| `make show-job-events JOB_ID=...` | Show job event log |
-| `make tail-worker-logs` | Tail combined worker logs |
-
-### MinIO
-
-| Command | Description |
-|---|---|
-| `make minio-up` | Start MinIO and run bucket init |
-| `make minio-down` | Stop and remove MinIO |
-| `make minio-logs` | Follow MinIO logs |
-| `make minio-console` | Print MinIO API and console URLs |
-| `make check-minio` | Health check MinIO |
+| `make e2e-dataset-ingestion` | Ingestion pipeline |
+| `make e2e-detection-evaluation` | Detection evaluation (mock detector) |
+| `make e2e-pipeline-contracts` | PipelineTaskInputs/Result contract validation |
+| `make e2e-raw-log-scene-building` | Raw log building (sequence/frame-id/time-bucket mode) |
+| `make e2e-detection-evaluation-real` | Detection evaluation with real GroundingDINO inference server |
+| `make compare-detection PIPELINE_RUN_ID=<id>` | Print dataset quality + scene comparison for a completed pipeline run |
 
 ---
 
-## E2E Validation
+## Limitations
 
-The E2E suite covers four flows:
-
-**1. API smoke (`e2e-api-smoke`)** — verifies the API is reachable and returns expected responses for core endpoints.
-
-**2. Dataset scene ingestion (`e2e-dataset-scene-ingestion`):**
-
-```mermaid
-flowchart LR
-  A[nuScenes mini] --> B[ingest_scenes]
-  B --> C[register_scene]
-  C --> D[validate_scene]
-  C --> E[profile_scene]
-  C --> F[build_scene_index]
-  F --> G[build_dataset_manifest]
-  G --> H[DatasetVersion Ready]
-```
-
-**3. Detection evaluation (`e2e-detection-evaluation`):**
-
-```mermaid
-flowchart LR
-  A[Dataset Manifest] --> B[predict_detection]
-  B --> C[Prediction Manifest]
-  C --> D[evaluate_detection]
-  D --> E[Evaluation Manifest]
-  D --> F[Metrics Artifact]
-  F --> G[Leaderboard]
-```
-
-**4. Pipeline contracts (`e2e-pipeline-contracts`)** — validates PipelineTaskInputs/PipelineTaskResult contract consistency across pipeline task runs for a given dataset version.
-
----
-
-## Current Limitations
-
-- The detection E2E uses a mock detector. It validates orchestration and metric plumbing, not real model quality.
-- Raw-log scene building is implemented and E2E-validated (sequence/frame-id and fixed-window/time-bucket modes). Scene reconstruction pipeline is defined but not yet implemented (`supported=False`).
-- Auto-labeling is intentionally disabled pending a `labeler_id`-based rewrite.
-- `ObservationArtifactStore` is scaffolded for future raw-log ingestion.
-- The inference server (GroundingDINO) is present but gated behind optional Docker Compose profiles (`inference` for CPU, `gpu` for NVIDIA GPU). It is not required for the validated E2E flows.
-- The platform is local-first and intended for architecture validation and portfolio demonstration.
+- The default detection E2E (`make e2e-detection-evaluation`) uses a mock detector for deterministic orchestration and evaluation-contract validation.
+- A GroundingDINO real-model E2E (`make e2e-detection-evaluation-real`) is available and validates the model-server → prediction artifact → evaluation → leaderboard path end-to-end.
+- Current GroundingDINO metrics are integration signals, not production-grade 3D detection benchmark results.
+- Scene reconstruction pipeline is defined but not implemented (`supported=False`).
+- Auto-labeling is disabled pending a `labeler_id`-based rewrite.
+- GroundingDINO inference server is optional (Docker Compose profiles `inference` / `gpu`); not required for mock E2E flows.
+- Platform is local-first, intended for architecture validation.
 
 ---
 
 ## Roadmap
 
-- Airflow DAG integration using `sceneops-worker run-pipeline-task` as the DockerOperator / KubernetesPodOperator command
-- Raw-log / ROS bag scene building pipeline
+- Airflow DAG integration using `run-pipeline-task` as DockerOperator/KubernetesPodOperator command
+- ROS bag / raw-log scene building via `ObservationArtifactStore`
 - Dataset sample index artifact
 - Scenario mining and readiness scoring
 - Auto-labeling with `labeler_id`-based `LabelerRegistry`
-- Real detector integration through inference server
-- Dataset export for generated and reconstructed scenes
-- Cloud object storage support beyond local MinIO
+- Broaden real detector evaluation scenarios and quality thresholds
+- Dataset export (generated/reconstructed scenes)
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
+| | |
 |---|---|
 | API | FastAPI, Pydantic v2, Uvicorn |
 | Task queue | Celery, Redis 7 |
-| Database | PostgreSQL 16, SQLAlchemy 2.0 (async), Alembic |
+| Database | PostgreSQL 16, SQLAlchemy 2.0 async, Alembic |
 | Artifact storage | MinIO (S3 API), boto3 |
-| Inference (optional) | GroundingDINO (HuggingFace Transformers), ONNX Runtime |
+| Inference (optional) | GroundingDINO, HuggingFace Transformers, ONNX Runtime |
 | Scene data | nuScenes DevKit |
-| Package management | uv workspace |
+| Package manager | uv workspace |
 | Code quality | Ruff, pre-commit |
 | Infra | Docker Compose |

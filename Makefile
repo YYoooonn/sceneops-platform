@@ -16,7 +16,6 @@ DATASET_VERSION ?= v1.0-mini
 GDINO_MODEL_ID      ?= grounding-dino
 GDINO_MODEL_VERSION ?= tiny
 INFERENCE_ENDPOINT_URL ?= http://sceneops-inference:8001
-MAX_SAMPLES     ?= 5
 
 .DEFAULT_GOAL := help
 
@@ -114,12 +113,10 @@ help:
 	@echo "E2E:"
 	@echo "  make e2e                                  Run all E2E tests (mock backend)"
 	@echo "  make e2e-api-smoke"
-	@echo "  make e2e-dataset-scene-ingestion"
+	@echo "  make e2e-dataset-ingestion"
 	@echo "  make e2e-detection-evaluation"
 	@echo "  make e2e-pipeline-contracts"
-	@echo "  make e2e-detection-evaluation-groundingdino        GroundingDINO (server must be up)"
-	@echo "  make e2e-detection-evaluation-groundingdino-local  Start CPU server then run E2E"
-	@echo "  make e2e-detection-evaluation-groundingdino-gpu   Start GPU server then run E2E"
+	@echo "  make e2e-detection-evaluation-real"
 	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"
@@ -164,7 +161,7 @@ check:
 
 .PHONY: test
 test:
-	uv run --package sceneops-worker pytest apps/worker/tests/ -v
+	uv run pytest apps/worker/tests/ apps/api/tests/ -v
 
 .PHONY: lint
 lint:
@@ -495,8 +492,8 @@ e2e-api-smoke:
 	chmod +x scripts/e2e/e2e_api_smoke.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_api_smoke.sh
 
-.PHONY: e2e-dataset-scene-ingestion
-e2e-dataset-scene-ingestion:
+.PHONY: e2e-dataset-ingestion
+e2e-dataset-ingestion:
 	chmod +x scripts/e2e/e2e_dataset_scene_ingestion.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_dataset_scene_ingestion.sh
 
@@ -520,8 +517,9 @@ e2e-pipeline-contracts:
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_pipeline_contracts.sh
 
-# Runs the real GroundingDINO inference server (CPU profile by default).
-# Prerequisites: make local-up && make inference-local-up && make e2e-dataset-scene-ingestion
+.PHONY: e2e-detection-evaluation-real
+e2e-detection-evaluation-real: e2e-detection-evaluation-groundingdino
+
 .PHONY: e2e-detection-evaluation-groundingdino
 e2e-detection-evaluation-groundingdino:
 	chmod +x scripts/e2e/e2e_detection_evaluation_groundingdino.sh
@@ -529,25 +527,10 @@ e2e-detection-evaluation-groundingdino:
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	MODEL_ID=$(GDINO_MODEL_ID) MODEL_VERSION=$(GDINO_MODEL_VERSION) \
 	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) \
-	MAX_SAMPLES=$(MAX_SAMPLES) \
 	scripts/e2e/e2e_detection_evaluation_groundingdino.sh
 
-# Same as above but starts inference-server-local (CPU) first.
-.PHONY: e2e-detection-evaluation-groundingdino-local
-e2e-detection-evaluation-groundingdino-local: inference-local-up
-	$(MAKE) e2e-detection-evaluation-groundingdino
-
-# Same as above but starts inference-server (GPU) first.
-.PHONY: e2e-detection-evaluation-groundingdino-gpu
-e2e-detection-evaluation-groundingdino-gpu: inference-gpu-up
-	$(MAKE) e2e-detection-evaluation-groundingdino
-
 .PHONY: e2e
-e2e: e2e-api-smoke e2e-dataset-scene-ingestion e2e-detection-evaluation e2e-pipeline-contracts
-
-# Backward-compatible alias
-.PHONY: e2e-dataset-ingest
-e2e-dataset-ingest: e2e-dataset-scene-ingestion
+e2e: e2e-api-smoke e2e-dataset-ingestion e2e-detection-evaluation e2e-pipeline-contracts
 
 # --------------------
 # Debug
@@ -580,3 +563,12 @@ show-job-events:
 tail-worker-logs:
 	chmod +x scripts/debug/tail_worker_logs.sh
 	scripts/debug/tail_worker_logs.sh
+
+.PHONY: compare-detection
+compare-detection:
+	@if [ -z "$(PIPELINE_RUN_ID)" ]; then \
+		echo "PIPELINE_RUN_ID is required. Usage: make show-pipeline PIPELINE_RUN_ID=pipe-xxx"; \
+		exit 1; \
+	fi
+	chmod +x scripts/debug/compare_detection_run.sh
+	API_PREFIX=$(API_PREFIX) PIPELINE_RUN_ID=$(PIPELINE_RUN_ID) scripts/debug/compare_detection_run.sh

@@ -44,6 +44,27 @@ assert_json_equals() {
   fi
 }
 
+assert_json_less_or_equal() {
+  local json="$1"
+  local jq_expr="$2"
+  local max_value="$3"
+  local message="$4"
+
+  local is_lte
+  is_lte=$(echo "$json" | jq "$jq_expr <= $max_value")
+
+  if [ "$is_lte" != "true" ]; then
+    local actual
+    actual=$(echo "$json" | jq -r "$jq_expr")
+
+    echo "❌ Assertion failed: $message" >&2
+    echo "  Expected actual value to be LESS THAN OR EQUAL TO $max_value, but got $actual" >&2
+    echo "  expr=$jq_expr" >&2
+    echo "$json" | jq . >&2
+    exit 1
+  fi
+}
+
 assert_json_not_empty() {
   local json="$1"
   local jq_expr="$2"
@@ -267,4 +288,42 @@ poll_inference_ready() {
 
   echo "❌ Inference server did not become ready after $((max_attempts * sleep_seconds))s" >&2
   exit 1
+}
+
+# ── Artifact API ──────────────────────────────────────────────────────────────
+
+fetch_inference_run_artifacts() {
+  local api_base_url="$1"
+  local inference_run_id="$2"
+  curl -sS "$(api_url "$api_base_url" "/inference/runs/$inference_run_id/artifacts")"
+}
+
+fetch_evaluation_run_artifacts() {
+  local api_base_url="$1"
+  local evaluation_run_id="$2"
+  curl -sS "$(api_url "$api_base_url" "/evaluations/runs/$evaluation_run_id/artifacts")"
+}
+
+fetch_evaluation_run_metrics() {
+  local api_base_url="$1"
+  local evaluation_run_id="$2"
+  curl -sS "$(api_url "$api_base_url" "/evaluations/runs/$evaluation_run_id/metrics")"
+}
+
+# Assert that at least one artifact of the given kind is present.
+# artifacts_json: response from fetch_*_run_artifacts
+# kind: ArtifactKind value, e.g. "prediction_manifest"
+assert_artifact_kind_present() {
+  local artifacts_json="$1"
+  local kind="$2"
+  local message="$3"
+
+  local count
+  count="$(echo "$artifacts_json" | jq --arg k "$kind" '[.artifacts[] | select(.kind == $k)] | length')"
+
+  if [ "${count:-0}" -lt 1 ]; then
+    echo "❌ Artifact kind '$kind' not registered: $message" >&2
+    echo "$artifacts_json" | jq . >&2
+    exit 1
+  fi
 }
