@@ -3,7 +3,11 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
-from sceneops_core.sensors import SensorModality
+from sceneops_core.sensors import EgoPoseManifest, SensorModality
+from sceneops_core.sensors.manifests import (
+    ImageMetadataManifest,
+    SensorCalibrationManifest,
+)
 
 from .enums import SceneAssetKind, SceneGenerationMethod, SceneOriginType
 from .world_state import WorldStateManifest
@@ -50,28 +54,6 @@ class SceneAssetRef(SceneOpsBaseModel):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class EgoPoseManifest(SceneOpsBaseModel):
-    ego_pose_id: str
-    timestamp_us: int
-
-    translation: list[float] = Field(default_factory=list)
-    rotation: list[float] = Field(default_factory=list)
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class CalibratedSensorManifest(SceneOpsBaseModel):
-    calibration_id: str
-    channel: str
-
-    translation: list[float] = Field(default_factory=list)
-    rotation: list[float] = Field(default_factory=list)
-
-    camera_intrinsic: list[list[float]] | None = None
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
 class SceneAnnotationManifest(SceneOpsBaseModel):
     annotation_id: str
     sample_id: str
@@ -91,6 +73,13 @@ class SceneAnnotationManifest(SceneOpsBaseModel):
 
 
 class SceneSensorFrameManifest(SceneOpsBaseModel):
+    """A single sensor observation within a sample.
+
+    Calibration and ego-pose are stored in the scene-level registries
+    (SceneManifest.calibrated_sensors / .ego_poses) and referenced here by ID.
+    Image metadata remains frame-local.
+    """
+
     frame_id: str
     sample_id: str
 
@@ -100,14 +89,18 @@ class SceneSensorFrameManifest(SceneOpsBaseModel):
 
     uri: str
 
-    ego_pose_id: str | None = None
     calibration_id: str | None = None
-    annotation_ids: list[str] = Field(default_factory=list)
+    ego_pose_id: str | None = None
 
+    image: ImageMetadataManifest | None = None
+
+    annotation_ids: list[str] = Field(default_factory=list)
     metadata: JsonDict = Field(default_factory=dict)
 
 
 class SceneSampleManifest(SceneOpsBaseModel):
+    """A keyframe grouping of sensor frames within a scene."""
+
     sample_id: str
     scene_id: str
 
@@ -117,13 +110,19 @@ class SceneSampleManifest(SceneOpsBaseModel):
     sensor_frames: list[SceneSensorFrameManifest] = Field(default_factory=list)
     annotations: list[SceneAnnotationManifest] = Field(default_factory=list)
 
-    ego_pose: EgoPoseManifest | None = None
-    calibrations: list[CalibratedSensorManifest] = Field(default_factory=list)
-
     metadata: JsonDict = Field(default_factory=dict)
 
 
 class SceneManifest(SceneOpsBaseModel):
+    """Full scene representation.
+
+    calibrated_sensors: scene-level registry of sensor calibration records,
+      deduplicated by calibration_id.  Frames reference these by calibrated_sensor_id.
+
+    ego_poses: scene-level time-varying ego-pose records,
+      referenced by frames via ego_pose_id.
+    """
+
     scene_id: str
 
     dataset_id: str | None = None
@@ -132,11 +131,18 @@ class SceneManifest(SceneOpsBaseModel):
     lineage: SceneLineage = Field(default_factory=SceneLineage)
     generation: SceneGenerationMetadata = Field(default_factory=SceneGenerationMetadata)
 
+    # Scene-level registries
+    calibrated_sensors: list[SensorCalibrationManifest] = Field(default_factory=list)
+    ego_poses: list[EgoPoseManifest] = Field(default_factory=list)
+
     samples: list[SceneSampleManifest] = Field(default_factory=list)
     assets: list[SceneAssetRef] = Field(default_factory=list)
 
     world_state: WorldStateManifest | None = None
     world_state_uri: str | None = None
+
+    start_timestamp_us: int | None = None
+    end_timestamp_us: int | None = None
 
     sample_count: int = 0
     frame_count: int = 0

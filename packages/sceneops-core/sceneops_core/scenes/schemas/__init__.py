@@ -1,9 +1,13 @@
-from .config import SceneSegmentationConfig, SceneSegmentationStrategy
+from .config import (
+    SceneSegmentationConfig,
+    SceneSegmentationStrategy,
+    MissingSequencePolicy,
+)
 from .sampling import (
-    MissingChannelPolicy,
     SampleGroupingConfig,
     SampleGroupingStrategy,
-    SensorSyncPolicy,
+    FrameAssociationStrategy,
+    EgoPoseResolveStrategy,
 )
 from .enums import (
     SceneAssetKind,
@@ -12,8 +16,6 @@ from .enums import (
     SceneStatus,
 )
 from .manifests import (
-    CalibratedSensorManifest,
-    EgoPoseManifest,
     SceneAnnotationManifest,
     SceneAssetRef,
     SceneGenerationMetadata,
@@ -47,9 +49,10 @@ __all__ = [
     "SceneAssetKind",
     "SceneSegmentationStrategy",
     "SceneSegmentationConfig",
+    "MissingSequencePolicy",
     "SampleGroupingStrategy",
-    "SensorSyncPolicy",
-    "MissingChannelPolicy",
+    "FrameAssociationStrategy",
+    "EgoPoseResolveStrategy",
     "SampleGroupingConfig",
     "SceneRecord",
     "SceneSampleRecord",
@@ -58,8 +61,6 @@ __all__ = [
     "SceneLineage",
     "SceneGenerationMetadata",
     "SceneAssetRef",
-    "EgoPoseManifest",
-    "CalibratedSensorManifest",
     "SceneAnnotationManifest",
     "SceneSensorFrameManifest",
     "SceneSampleManifest",

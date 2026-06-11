@@ -1,7 +1,5 @@
 from .schemas import (
     BuildScenesRequest,
-    CalibratedSensorManifest,
-    EgoPoseManifest,
     GetSceneRequest,
     PhysicsBodyType,
     SceneAnnotationManifest,
@@ -46,8 +44,6 @@ __all__ = [
     "SceneLineage",
     "SceneGenerationMetadata",
     "SceneAssetRef",
-    "EgoPoseManifest",
-    "CalibratedSensorManifest",
     "SceneAnnotationManifest",
     "SceneSensorFrameManifest",
     "SceneSampleManifest",
