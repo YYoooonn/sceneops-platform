@@ -8,6 +8,8 @@ from .detection import (
     EvaluateDetectionJobParams,
     PredictDetectionJobParams,
     MissingGroundTruthPolicy,
+    DetectionSceneSelectionConfig,
+    DetectionSceneSelectionMode,
 )
 from .scene import (
     AutoLabelSceneJobParams,
@@ -26,6 +28,8 @@ from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
 
 __all__ = [
     "BaseJobParams",
+    "DetectionSceneSelectionConfig",
+    "DetectionSceneSelectionMode",
     "IngestScenesJobParams",
     "BuildScenesJobParams",
     "BuildDatasetManifestJobParams",

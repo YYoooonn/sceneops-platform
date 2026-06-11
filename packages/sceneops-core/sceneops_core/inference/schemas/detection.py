@@ -22,6 +22,7 @@ class DetectionInferenceConfig(SceneOpsBaseModel):
     scene_ids: list[str] | None = None
     max_scenes: int | None = None
     max_samples: int | None = None
+    max_selection_per_scene: int | None = None
 
     # GroundingDINO / camera params (None → backend uses its own defaults)
     camera_channel: str = "CAM_FRONT"

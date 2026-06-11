@@ -3,10 +3,34 @@ from __future__ import annotations
 from enum import StrEnum
 from pydantic import Field
 
-from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.inference.enums import InferenceBackendType
 
 from .base import BaseJobParams
+
+
+class DetectionSceneSelectionMode(StrEnum):
+    ALL = "all"
+    GROUND_TRUTH_ONLY = "ground_truth_only"
+    EXPLICIT_SCENES = "explicit_scenes"
+
+
+class DetectionSceneSelectionConfig(SceneOpsBaseModel):
+    mode: DetectionSceneSelectionMode = DetectionSceneSelectionMode.ALL
+
+    # mode == explicit_scenes
+    scene_ids: list[str] = Field(default_factory=list)
+
+    # mode == ground_truth_only
+    min_annotation_count: int = 1
+    ground_truth_sources: list[str] = Field(default_factory=list)
+
+    # 공통 limit
+    max_scenes: int | None = None
+    max_samples: int | None = None
+    max_samples_per_scene: int | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
 
 
 class PredictDetectionJobParams(BaseJobParams):
@@ -23,8 +47,9 @@ class PredictDetectionJobParams(BaseJobParams):
 
     inference_run_id: str | None = None
 
-    max_scenes: int | None = None
-    max_samples: int | None = None
+    scene_selection: DetectionSceneSelectionConfig = Field(
+        default_factory=DetectionSceneSelectionConfig
+    )
 
     # model_uri: str | None = None
     # endpoint_url: str | None = None

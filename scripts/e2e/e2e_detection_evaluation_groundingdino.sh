@@ -46,9 +46,10 @@ DATASET_ID="${DATASET_ID:-nuscenes}"
 DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
 MODEL_ID="${MODEL_ID:-grounding-dino}"
 MODEL_VERSION="${MODEL_VERSION:-tiny}"
-MAX_SAMPLES="${MAX_SAMPLES:-5}"
 READYZ_TIMEOUT="${READYZ_TIMEOUT:-90}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-120}"
+MAX_SCENES="${MAX_SCENES:-1}"
+MAX_SAMPLES="${MAX_SAMPLES:-5}"
 
 echo "=== GroundingDINO detection_evaluation E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
@@ -56,6 +57,7 @@ echo "  INFERENCE_SERVER_URL=$INFERENCE_SERVER_URL"
 echo "  INFERENCE_ENDPOINT_URL=$INFERENCE_ENDPOINT_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  MODEL_ID=$MODEL_ID  MODEL_VERSION=$MODEL_VERSION"
+echo "  MAX_SCENES=$MAX_SCENES"
 echo "  MAX_SAMPLES=$MAX_SAMPLES"
 echo ""
 
@@ -142,7 +144,12 @@ PAYLOAD="$(cat <<JSON
       "model_id": "$MODEL_ID",
       "model_version": "$MODEL_VERSION",
       "inference_backend": "grounding_dino",
-      "max_samples": $MAX_SAMPLES
+      "scene_selection": {
+        "mode": "ground_truth_only",
+        "max_scenes": $MAX_SCENES,
+        "max_samples": $MAX_SAMPLES
+      },
+      "camera_channel": "CAM_FRONT"
     },
     "evaluate_detection": {
       "evaluator_id": "center-distance",

@@ -32,6 +32,7 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.inference.detection import create_detection_inference_backend
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
+from sceneops_worker.scenes.selection import select_detection_scenes
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,8 @@ class PredictDetectionInputs:
 
     dataset_manifest: DatasetManifest
     dataset_manifest_uri: str
+    selected_scene_ids: list[str]
+    scene_selection_metadata: JsonDict
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,7 @@ class PredictDetectionJobHandler(
             execution=execution,
             inference_result=inference_result,
             artifacts=artifacts,
+            inputs=inputs,
         )
         job_result = self._build_result(
             execution=execution,
@@ -284,9 +288,16 @@ class PredictDetectionJobHandler(
                 version.manifest_uri
             )
         )
+        selection_result = await select_detection_scenes(
+            dataset_manifest=dataset_manifest,
+            scene_artifact_store=execution.context.scene_artifact_store,
+            selection=execution.params.scene_selection,
+        )
         return PredictDetectionInputs(
             dataset_manifest=dataset_manifest,
             dataset_manifest_uri=version.manifest_uri,
+            selected_scene_ids=selection_result["selected_scene_ids"],
+            scene_selection_metadata=selection_result,
         )
 
     # ── inference ─────────────────────────────────────────────────────────────
@@ -301,9 +312,12 @@ class PredictDetectionJobHandler(
         return await backend.run(request)
 
     def _build_inference_config(
-        self, execution: PredictDetectionExecution
+        self,
+        execution: PredictDetectionExecution,
+        inputs: PredictDetectionInputs,
     ) -> DetectionInferenceConfig:
         params = execution.params
+        selection = params.scene_selection
         return DetectionInferenceConfig(
             model_id=params.model_id,
             model_version=params.model_version,
@@ -311,9 +325,10 @@ class PredictDetectionJobHandler(
             model_uri=execution.model_uri,
             endpoint_url=execution.endpoint_url,
             raw_source_root_uri=execution.dataset_version_record.raw_source_root_uri,
-            scene_ids=params.scene_ids,
-            max_scenes=params.max_scenes,
-            max_samples=params.max_samples,
+            scene_ids=inputs.selected_scene_ids,
+            max_scenes=None,
+            max_samples=selection.max_samples,
+            # max_samples_per_scene=selection.max_samples_per_scene,
             camera_channel=params.camera_channel,
             detection_prompt=params.detection_prompt,
             box_threshold=params.box_threshold,
@@ -330,7 +345,7 @@ class PredictDetectionJobHandler(
         return DetectionInferenceRequest(
             input=DetectionInferenceInput(
                 run_id=execution.inference_run_id,
-                config=self._build_inference_config(execution),
+                config=self._build_inference_config(execution, inputs),
                 dataset_manifest=inputs.dataset_manifest,
             ),
             scene_artifact_store=execution.context.scene_artifact_store,
@@ -413,6 +428,7 @@ class PredictDetectionJobHandler(
         execution: PredictDetectionExecution,
         inference_result: DetectionInferenceResult,
         artifacts: PredictDetectionArtifacts,
+        inputs: PredictDetectionInputs,
     ) -> InferenceRunRecord:
         return initial_record.model_copy(
             update={
@@ -425,6 +441,7 @@ class PredictDetectionJobHandler(
                 "metadata": {
                     "model_uri": execution.model_uri,
                     "endpoint_url": execution.endpoint_url,
+                    "scene_selection": inputs.scene_selection_metadata,
                     **inference_result.metadata,
                 },
                 "finished_at": utc_now(),
