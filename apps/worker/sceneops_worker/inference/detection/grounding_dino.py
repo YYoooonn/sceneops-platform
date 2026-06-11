@@ -148,6 +148,8 @@ class GroundingDinoDetectionBackend:
                     detections_2d=detections_2d,
                     camera_sensor=sample_input.camera_sensor_frame,
                     lidar_sensor=sample_input.lidar_sensor_frame,
+                    calibrated_sensor_index=sample_input.calibrated_sensor_index,
+                    ego_pose_index=sample_input.ego_pose_index,
                     raw_root=raw_source_root_uri,
                     max_image_size=max_image_size,
                 )
@@ -336,17 +338,15 @@ def _build_predictions(
     detections_2d: list[dict[str, Any]],
     camera_sensor: Any,
     lidar_sensor: Any | None,
+    calibrated_sensor_index: dict,
+    ego_pose_index: dict,
     raw_root: str,
     max_image_size: int,
 ) -> list[dict[str, Any]]:
     """Build per-prediction records from 2D detections + frustum lifting.
 
-    NOTE: Frustum lifting currently fails with AttributeError because
-    SceneSensorFrameManifest does not yet carry calibrated_sensor / ego_pose.
-    When it fails, lifting_status="failed" is recorded; the prediction is kept
-    with a [0,0,0] placeholder translation so downstream evaluation can filter
-    it out via is_evaluable_prediction().
-    TODO: Bridge SceneSensorFrameManifest calibration data to frustum_lift().
+    Calibration and ego-pose are resolved from scene-level registry indexes
+    rather than being embedded inline on the sensor frame manifests.
     """
     predictions: list[dict[str, Any]] = []
     for i, det in enumerate(detections_2d):
@@ -361,8 +361,10 @@ def _build_predictions(
             try:
                 lift = frustum_lift(
                     bbox_2d=bbox_2d,
-                    camera_sensor=camera_sensor,
-                    lidar_sensor=lidar_sensor,
+                    camera_frame=camera_sensor,
+                    lidar_frame=lidar_sensor,
+                    calibrated_sensor_index=calibrated_sensor_index,
+                    ego_pose_index=ego_pose_index,
                     raw_root=raw_root,
                     max_image_size=max_image_size,
                 )

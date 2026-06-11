@@ -94,6 +94,12 @@ class DetectionSampleSelector:
                 )
                 continue
 
+            # Build scene-level registry indexes once per scene manifest
+            calibrated_sensor_index = {
+                c.calibration_id: c for c in scene_manifest.calibrated_sensors
+            }
+            ego_pose_index = {p.ego_pose_id: p for p in scene_manifest.ego_poses}
+
             for sample in scene_manifest.samples:
                 if (
                     config.max_samples is not None
@@ -138,6 +144,8 @@ class DetectionSampleSelector:
                         camera_sensor_frame=camera_sf,
                         lidar_sensor_frame=lidar_sf,
                         scene_manifest_uri=scene_entry.scene_manifest_uri,
+                        calibrated_sensor_index=calibrated_sensor_index,
+                        ego_pose_index=ego_pose_index,
                     )
                 )
 

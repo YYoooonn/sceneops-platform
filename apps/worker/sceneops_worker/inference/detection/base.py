@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
 from sceneops_core.inference.contracts import InferenceBackend
@@ -8,6 +8,7 @@ from sceneops_core.inference.schemas import (
     DetectionInferenceInput,
     DetectionInferenceResult,
 )
+from sceneops_core.sensors.manifests import SensorCalibrationManifest, EgoPoseManifest
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.scenes import SceneArtifactStore
 
@@ -20,6 +21,11 @@ class DetectionSampleInput:
     The inference server resolves this URI to the actual image bytes.
     Workers must not read the image themselves — they only construct and pass
     the URI.
+
+    calibrated_sensor_index / ego_pose_index:
+        Scene-level lookup tables built from SceneManifest.calibrated_sensors
+        and .ego_poses. Used by frustum lifting to resolve frame ID references
+        without embedding inline objects in the persisted manifest.
     """
 
     dataset_id: str
@@ -30,12 +36,17 @@ class DetectionSampleInput:
     image_uri: str  # file:// URI (or future s3://, gs://)
 
     timestamp_us: int | None = None
-    lidar_uri: str | None = None  # for 3D frustum lifting
-    # Raw sensor frame objects for frustum lifting calibration data.
-    # NOTE: frustum lifting is pending a schema migration (see frustum_lifting.py).
+    lidar_uri: str | None = None
     camera_sensor_frame: Any | None = None  # SceneSensorFrameManifest
     lidar_sensor_frame: Any | None = None  # SceneSensorFrameManifest
     scene_manifest_uri: str | None = None
+
+    # Scene-level registry indexes for lifting (not persisted to manifests)
+    calibrated_sensor_index: dict[str, SensorCalibrationManifest] = field(
+        default_factory=dict
+    )
+    ego_pose_index: dict[str, EgoPoseManifest] = field(default_factory=dict)
+
     metadata: dict[str, Any] | None = None
 
 

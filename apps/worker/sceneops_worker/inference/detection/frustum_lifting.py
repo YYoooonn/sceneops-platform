@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import numpy as np
 
 from sceneops_core.scenes.schemas.manifests import SceneSensorFrameManifest
+from sceneops_core.sensors.manifests import SensorCalibrationManifest, EgoPoseManifest
 
 MIN_FRUSTUM_POINTS = 3  # fewer → skip lifting, keep placeholder
 MIN_CLUSTER_POINTS = 5  # fewer → use all frustum points (no DBSCAN pruning)
@@ -15,14 +16,20 @@ MIN_CLUSTER_POINTS = 5  # fewer → use all frustum points (no DBSCAN pruning)
 def frustum_lift(
     *,
     bbox_2d: list[float],
-    camera_sensor: SceneSensorFrameManifest,
-    lidar_sensor: SceneSensorFrameManifest,
+    camera_frame: SceneSensorFrameManifest,
+    lidar_frame: SceneSensorFrameManifest,
+    calibrated_sensor_index: dict[str, SensorCalibrationManifest],
+    ego_pose_index: dict[str, EgoPoseManifest],
     raw_root: str,
     max_image_size: int = 800,
     dbscan_eps: float = 0.5,
     dbscan_min_samples: int = 3,
 ) -> dict[str, Any] | None:
     """Lift a 2D bbox to 3D using the LIDAR_TOP point cloud (frustum projection).
+
+    Calibration and ego-pose are resolved from scene-level registries via
+    calibrated_sensor_index / ego_pose_index — they are not embedded inline on
+    SceneSensorFrameManifest.
 
     Pipeline:
       1. Load LIDAR_TOP .pcd.bin
@@ -38,57 +45,67 @@ def frustum_lift(
 
     Returns None when fewer than MIN_FRUSTUM_POINTS points fall inside the frustum.
     """
-    # ── 0. Load and parse inputs ──────────────────────────────────────────
+    # ── 0. Resolve calibration and ego-pose from scene-level indexes ──────
+    camera_cal = (
+        calibrated_sensor_index.get(camera_frame.calibration_id)
+        if camera_frame.calibration_id
+        else None
+    )
+    lidar_cal = (
+        calibrated_sensor_index.get(lidar_frame.calibration_id)
+        if lidar_frame.calibration_id
+        else None
+    )
+    camera_ego = (
+        ego_pose_index.get(camera_frame.ego_pose_id)
+        if camera_frame.ego_pose_id
+        else None
+    )
+
+    if camera_cal is None or lidar_cal is None:
+        return None
+    if camera_ego is None:
+        return None
+    if camera_cal.camera_intrinsic is None:
+        return None
+
     if (
-        camera_sensor.calibrated_sensor is None
-        or lidar_sensor.calibrated_sensor is None
+        camera_frame.image is None
+        or camera_frame.image.width is None
+        or camera_frame.image.height is None
     ):
         return None
-    if camera_sensor.ego_pose is None:
-        return None
 
-    lidar_path = _resolve_path(raw_root, lidar_sensor.uri)
+    lidar_path = _resolve_path(raw_root, lidar_frame.uri)
     pts_lidar = _load_lidar(lidar_path)  # (N, 3)
 
-    cam_cal = camera_sensor.calibrated_sensor
-    if cam_cal.camera_intrinsic is None:
-        return None
-
-    K = np.array(cam_cal.camera_intrinsic, dtype=np.float64)
-    orig_w = camera_sensor.width or int(K[0, 2] * 2)
-    orig_h = camera_sensor.height or int(K[1, 2] * 2)
+    K = np.array(camera_cal.camera_intrinsic, dtype=np.float64)
+    orig_w = camera_frame.image.width
+    orig_h = camera_frame.image.height
 
     # ── 1. Scale bbox: resized image coords → original image coords ───────
-    # GroundingDINO runs on a resized image (long edge = max_image_size).
-    # K is calibrated for the original resolution, so we invert the resize.
     scale = min(max_image_size / max(orig_w, orig_h), 1.0)
     x1, y1, x2, y2 = [c / scale for c in bbox_2d]
 
     # ── 2. LiDAR → ego frame ─────────────────────────────────────────────
-    R_l2e = _quat_to_rot(lidar_sensor.calibrated_sensor.rotation)
-    t_l2e = np.array(lidar_sensor.calibrated_sensor.translation, dtype=np.float64)
+    R_l2e = _quat_to_rot(lidar_cal.rotation)
+    t_l2e = np.array(lidar_cal.translation, dtype=np.float64)
     pts_ego = (R_l2e @ pts_lidar.T).T + t_l2e  # (N, 3)
 
     # ── 3. Ego → camera frame ─────────────────────────────────────────────
-    # calibrated_sensor gives us T_cam→ego, so T_ego→cam = T_cam→ego^{-1}
-    R_c2e = _quat_to_rot(cam_cal.rotation)
-    t_c2e = np.array(cam_cal.translation, dtype=np.float64)
-    R_e2c = R_c2e.T  # rotation inverse
+    R_c2e = _quat_to_rot(camera_cal.rotation)
+    t_c2e = np.array(camera_cal.translation, dtype=np.float64)
+    R_e2c = R_c2e.T
     pts_cam = (R_e2c @ (pts_ego - t_c2e).T).T  # (N, 3)
 
     # ── 4. Frustum filter ─────────────────────────────────────────────────
-    in_front = pts_cam[:, 2] > 0.1  # z > 0: in front of camera
+    in_front = pts_cam[:, 2] > 0.1
     pts_cam_fwd = pts_cam[in_front]
     pts_ego_fwd = pts_ego[in_front]
 
     if pts_cam_fwd.shape[0] == 0:
         return None
 
-    # Ground plane removal: road surface sits at z≈-0.5 to 0m in ego frame
-    # (ego origin = vehicle body; LiDAR at z=+1.84m). Car/pedestrian centers
-    # are typically at z > 0. Threshold of 0.0 keeps object returns while
-    # rejecting most asphalt points. Works best for objects within ~30m where
-    # LiDAR density is sufficient to separate object from ground cluster.
     above_ground = pts_ego_fwd[:, 2] > 0.0
     pts_cam_fwd = pts_cam_fwd[above_ground]
     pts_ego_fwd = pts_ego_fwd[above_ground]
@@ -115,17 +132,12 @@ def frustum_lift(
     centroid_ego = cluster_pts.mean(axis=0)
     size = (cluster_pts.max(axis=0) - cluster_pts.min(axis=0)).tolist()
 
-    # Yaw: principal axis of x-y distribution via PCA.
-    # TODO: replace with oriented bounding box (e.g. min-area rectangle) for
-    # better heading accuracy, especially for elongated objects like buses.
     yaw = _pca_yaw(cluster_pts[:, :2])
     rotation = _yaw_to_quat(yaw)
 
     # ── 7. Ego → global frame ─────────────────────────────────────────────
-    # Use CAM_FRONT ego_pose (same keyframe timestamp; vehicle frame is shared).
-    # ego_pose is guaranteed non-None by the guard at the top of the function.
-    R_e2g = _quat_to_rot(camera_sensor.ego_pose.rotation)  # type: ignore[union-attr]
-    t_e2g = np.array(camera_sensor.ego_pose.translation, dtype=np.float64)  # type: ignore[union-attr]
+    R_e2g = _quat_to_rot(camera_ego.rotation)
+    t_e2g = np.array(camera_ego.translation, dtype=np.float64)
     centroid_global = (R_e2g @ centroid_ego) + t_e2g
 
     return {
@@ -138,7 +150,7 @@ def frustum_lift(
     }
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _load_lidar(path: Path) -> np.ndarray:
@@ -182,7 +194,7 @@ def _pca_yaw(pts_xy: np.ndarray) -> float:
         return 0.0
     centered = pts_xy - pts_xy.mean(axis=0)
     _, vecs = np.linalg.eigh(centered.T @ centered)
-    principal = vecs[:, -1]  # largest eigenvector
+    principal = vecs[:, -1]
     return float(np.arctan2(principal[1], principal[0]))
 
 
