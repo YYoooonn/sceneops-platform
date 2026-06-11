@@ -5,7 +5,11 @@ from fastapi import APIRouter
 from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.domains.scenes.dependencies import SceneServiceDep
-from app.domains.scenes.schemas import SceneDetailResponse, SceneListResponse
+from app.domains.scenes.schemas import (
+    SceneDetailResponse,
+    SceneListResponse,
+    SceneQualityResponse,
+)
 from app.platform.artifacts.schemas import ArtifactListResponse
 from sceneops_core.scenes.schemas import (
     SceneGenerationMethod,
@@ -41,6 +45,16 @@ async def list_scenes(
 @router.get("/{scene_id}", response_model=SceneDetailResponse)
 async def get_scene(scene_id: str, service: SceneServiceDep) -> SceneDetailResponse:
     result = await service.get_scene(scene_id)
+    if result is None:
+        raise_not_found("Scene", scene_id)
+    return result
+
+
+@router.get("/{scene_id}/quality", response_model=SceneQualityResponse)
+async def get_scene_quality(
+    scene_id: str, service: SceneServiceDep
+) -> SceneQualityResponse:
+    result = await service.get_scene_quality(scene_id)
     if result is None:
         raise_not_found("Scene", scene_id)
     return result

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.datasets.schemas.enums import DatasetType, DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
-from sceneops_core.datasets.schemas.validation import DatasetValidationStatus
+from app.domains.scenes.schemas import SceneQualityResponse
 
 
 class UpdateDatasetRequest(SceneOpsBaseModel):
@@ -63,14 +65,113 @@ class DatasetVersionListResponse(SceneOpsBaseModel):
     count: int
 
 
+# ── Dataset quality summary response (scene-aggregate based) ──────────────────
+
+
+class DatasetQualityReadiness(StrEnum):
+    READY = "ready"
+    WARNING = "warning"
+    BLOCKED = "blocked"
+    UNKNOWN = "unknown"
+
+
+class DatasetVersionQualityCounts(SceneOpsBaseModel):
+    scene_count: int = 0
+    sample_count: int = 0
+    frame_count: int = 0
+    annotation_count: int = 0
+    ground_truth_scene_count: int = 0
+    selectable_scene_count: int = 0
+
+
+class DatasetSceneQualitySectionSummary(SceneOpsBaseModel):
+    """Readiness and selectability buckets aggregated over all scenes."""
+
+    ready_scene_count: int = 0
+    warning_scene_count: int = 0
+    blocked_scene_count: int = 0
+    unknown_scene_count: int = 0
+    selectable_for_detection_count: int = 0
+    non_selectable_for_detection_count: int = 0
+    exclusion_reason_counts: dict[str, int] = Field(default_factory=dict)
+    observed_channels: list[str] = Field(default_factory=list)
+
+
+class DatasetGroundTruthSummary(SceneOpsBaseModel):
+    has_ground_truth: bool = False
+    ground_truth_scene_count: int = 0
+    annotated_scene_count: int = 0
+    annotation_count: int = 0
+    ground_truth_coverage_ratio: float = 0.0
+
+
+class DatasetValidationSummary(SceneOpsBaseModel):
+    """Per-scene validation readiness aggregate — not a single run record."""
+
+    ready_scene_count: int = 0
+    warning_scene_count: int = 0
+    blocked_scene_count: int = 0
+    unknown_scene_count: int = 0
+
+
+class DatasetProfileSummary(SceneOpsBaseModel):
+    """Observed channels union across all scene profile runs."""
+
+    observed_channels: list[str] = Field(default_factory=list)
+
+
 class DatasetVersionQualityResponse(SceneOpsBaseModel):
+    """Compact operator-facing dataset quality summary derived from scene aggregate."""
+
     dataset_id: str
     version: str
-    latest_validation_run_id: str | None = None
-    validation_status: DatasetValidationStatus | None = None
-    should_block_pipeline: bool | None = None
-    validation_report_uri: str | None = None
-    latest_profile_run_id: str | None = None
-    profile_report_uri: str | None = None
-    latest_distribution_run_id: str | None = None
-    distribution_report_uri: str | None = None
+    status: str
+    readiness: DatasetQualityReadiness = DatasetQualityReadiness.UNKNOWN
+
+    counts: DatasetVersionQualityCounts = Field(
+        default_factory=DatasetVersionQualityCounts
+    )
+    scene_quality: DatasetSceneQualitySectionSummary = Field(
+        default_factory=DatasetSceneQualitySectionSummary
+    )
+    ground_truth: DatasetGroundTruthSummary = Field(
+        default_factory=DatasetGroundTruthSummary
+    )
+    validation: DatasetValidationSummary = Field(
+        default_factory=DatasetValidationSummary
+    )
+    profile: DatasetProfileSummary = Field(default_factory=DatasetProfileSummary)
+    manifest_uri: str | None = None
+
+
+# ── Dataset scene quality list + aggregate response ───────────────────────────
+
+
+class DatasetSceneQualityAggregateSummary(SceneOpsBaseModel):
+    scene_count: int = 0
+    ready_scene_count: int = 0
+    warning_scene_count: int = 0
+    blocked_scene_count: int = 0
+    unknown_scene_count: int = 0
+
+    selectable_for_detection_count: int = 0
+    non_selectable_for_detection_count: int = 0
+
+    ground_truth_scene_count: int = 0
+    annotated_scene_count: int = 0
+    total_sample_count: int = 0
+    total_frame_count: int = 0
+    total_annotation_count: int = 0
+
+    exclusion_reason_counts: dict[str, int] = Field(default_factory=dict)
+    observed_channels: list[str] = Field(default_factory=list)
+
+
+class DatasetSceneQualityListResponse(SceneOpsBaseModel):
+    dataset_id: str
+    version: str
+    count: int
+    limit: int
+    offset: int
+    summary: DatasetSceneQualityAggregateSummary
+    scenes: list[SceneQualityResponse]

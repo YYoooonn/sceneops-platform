@@ -16,7 +16,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["apps/worker/tests", "packages/sceneops-core/tests"]
+testpaths = ["apps/worker/tests", "apps/api/tests"]
 
 [tool.uv]
 package = false

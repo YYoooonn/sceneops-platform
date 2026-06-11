@@ -9,6 +9,7 @@ from app.domains.datasets.schemas import (
     CreateDatasetVersionBody,
     DatasetDetailResponse,
     DatasetListResponse,
+    DatasetSceneQualityListResponse,
     DatasetVersionDetailResponse,
     DatasetVersionListResponse,
     DatasetVersionQualityResponse,
@@ -131,6 +132,27 @@ async def get_dataset_version_quality(
     dataset_id: str, version: str, service: DatasetServiceDep
 ) -> DatasetVersionQualityResponse:
     result = await service.get_dataset_version_quality(dataset_id, version)
+    if result is None:
+        raise_not_found("Dataset version", f"{dataset_id}:{version}")
+    return result
+
+
+@router.get(
+    "/{dataset_id}/versions/{version}/scenes/quality",
+    response_model=DatasetSceneQualityListResponse,
+)
+async def list_dataset_scene_quality(
+    dataset_id: str,
+    version: str,
+    service: DatasetServiceDep,
+    pagination: PaginationDep,
+) -> DatasetSceneQualityListResponse:
+    result = await service.list_scene_quality(
+        dataset_id=dataset_id,
+        version=version,
+        limit=pagination.limit,
+        offset=pagination.offset,
+    )
     if result is None:
         raise_not_found("Dataset version", f"{dataset_id}:{version}")
     return result

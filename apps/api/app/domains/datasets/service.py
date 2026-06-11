@@ -7,26 +7,31 @@ from sceneops_core.datasets.schemas import (
     DatasetVersionRecord,
 )
 from sceneops_core.datasets.schemas.enums import DatasetStatus, DatasetType
-from app.domains.datasets.schemas import (
-    DatasetDetailResponse,
-    DatasetListResponse,
-    DatasetVersionDetailResponse,
-    DatasetVersionListResponse,
-)
-from app.domains.scenes.schemas import SceneListResponse
+from sceneops_core.runs.schemas import RunType
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.datasets import (
     DatasetRepository,
     DatasetVersionRepository,
 )
-from sceneops_db.repositories.scenes import SceneRepository
+from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
 
+from app.domains.datasets.quality import (
+    build_dataset_scene_quality_aggregate,
+    build_dataset_version_quality_from_aggregate,
+)
 from app.domains.datasets.schemas import (
     CreateDatasetVersionBody,
+    DatasetDetailResponse,
+    DatasetListResponse,
+    DatasetSceneQualityListResponse,
+    DatasetVersionDetailResponse,
+    DatasetVersionListResponse,
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
     UpdateDatasetVersionRequest,
 )
+from app.domains.scenes.quality import build_scene_quality
+from app.domains.scenes.schemas import SceneListResponse, SceneQualityResponse
 
 
 class DatasetService:
@@ -36,11 +41,13 @@ class DatasetService:
         repository: DatasetRepository,
         version_repository: DatasetVersionRepository,
         scene_repository: SceneRepository,
+        scene_run_repository: SceneRunRepository,
         artifact_repository: ArtifactRepository,
     ) -> None:
         self._repository = repository
         self._version_repository = version_repository
         self._scene_repository = scene_repository
+        self._scene_run_repository = scene_run_repository
         self._artifact_repository = artifact_repository
 
     async def list_datasets(
@@ -161,17 +168,15 @@ class DatasetService:
         )
         if record is None:
             return None
-        return DatasetVersionQualityResponse(
-            dataset_id=dataset_id,
-            version=version,
-            latest_validation_run_id=record.latest_validation_run_id,
-            validation_status=record.validation_status,
-            should_block_pipeline=record.should_block_pipeline,
-            validation_report_uri=record.validation_report_uri,
-            latest_profile_run_id=record.latest_profile_run_id,
-            profile_report_uri=record.profile_report_uri,
-            latest_distribution_run_id=record.latest_distribution_run_id,
-            distribution_report_uri=record.distribution_report_uri,
+
+        all_quality = await self._fetch_all_scene_quality(
+            dataset_id=dataset_id, version=version
+        )
+        summary = build_dataset_scene_quality_aggregate(all_quality)
+
+        return build_dataset_version_quality_from_aggregate(
+            version=record,
+            summary=summary,
         )
 
     async def list_dataset_version_scenes(
@@ -187,6 +192,36 @@ class DatasetService:
         )
         return SceneListResponse(scenes=scenes, count=len(scenes))
 
+    async def list_scene_quality(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
+        limit: int,
+        offset: int,
+    ) -> DatasetSceneQualityListResponse | None:
+        record = await self._version_repository.get(
+            dataset_id=dataset_id, version=version
+        )
+        if record is None:
+            return None
+
+        all_quality = await self._fetch_all_scene_quality(
+            dataset_id=dataset_id, version=version
+        )
+        summary = build_dataset_scene_quality_aggregate(all_quality)
+        paginated = all_quality[offset : offset + limit]
+
+        return DatasetSceneQualityListResponse(
+            dataset_id=dataset_id,
+            version=version,
+            count=len(all_quality),
+            limit=limit,
+            offset=offset,
+            summary=summary,
+            scenes=paginated,
+        )
+
     async def list_dataset_version_artifacts(
         self, dataset_id: str, version: str, *, limit: int = 100, offset: int = 0
     ) -> list[ArtifactRecord] | None:
@@ -198,3 +233,40 @@ class DatasetService:
         return await self._artifact_repository.list(
             dataset_id=dataset_id, dataset_version=version, limit=limit, offset=offset
         )
+
+    async def _fetch_all_scene_quality(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
+    ) -> list[SceneQualityResponse]:
+        """Fetch all scene quality rows for a dataset version (3 DB queries).
+
+        Shared by get_dataset_version_quality and list_scene_quality so both
+        endpoints produce consistent counts from the same data.
+        """
+        all_scenes = await self._scene_repository.list(
+            dataset_id=dataset_id, dataset_version=version, limit=10000, offset=0
+        )
+        latest_validation = (
+            await self._scene_run_repository.list_latest_by_dataset_version(
+                dataset_id=dataset_id,
+                dataset_version=version,
+                run_type=RunType.SCENE_VALIDATION,
+            )
+        )
+        latest_profile = (
+            await self._scene_run_repository.list_latest_by_dataset_version(
+                dataset_id=dataset_id,
+                dataset_version=version,
+                run_type=RunType.SCENE_PROFILE,
+            )
+        )
+        return [
+            build_scene_quality(
+                scene=s,
+                validation_run=latest_validation.get(s.scene_id),
+                profile_run=latest_profile.get(s.scene_id),
+            )
+            for s in all_scenes
+        ]

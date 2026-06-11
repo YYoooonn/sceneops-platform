@@ -55,6 +55,8 @@ def test_build_predictions_lifting_succeeded():
             detections_2d=[_det()],
             camera_sensor=MagicMock(),
             lidar_sensor=lidar,
+            calibrated_sensor_index={},
+            ego_pose_index={},
             raw_root="/data",
             max_image_size=800,
         )
@@ -84,6 +86,8 @@ def test_build_predictions_lifting_failed(caplog):
                 detections_2d=[_det()],
                 camera_sensor=MagicMock(),
                 lidar_sensor=lidar,
+                calibrated_sensor_index={},
+                ego_pose_index={},
                 raw_root="/data",
                 max_image_size=800,
             )
@@ -106,6 +110,8 @@ def test_build_predictions_no_lidar():
         detections_2d=[_det()],
         camera_sensor=MagicMock(),
         lidar_sensor=None,
+        calibrated_sensor_index={},
+        ego_pose_index={},
         raw_root="/data",
         max_image_size=800,
     )
@@ -131,6 +137,8 @@ def test_build_predictions_frustum_returns_none():
             detections_2d=[_det()],
             camera_sensor=MagicMock(),
             lidar_sensor=lidar,
+            calibrated_sensor_index={},
+            ego_pose_index={},
             raw_root="/data",
             max_image_size=800,
         )
@@ -163,6 +171,8 @@ def test_build_predictions_mixed_status():
             detections_2d=[_det(), _det("human.pedestrian.adult")],
             camera_sensor=MagicMock(),
             lidar_sensor=lidar,
+            calibrated_sensor_index={},
+            ego_pose_index={},
             raw_root="/data",
             max_image_size=800,
         )
