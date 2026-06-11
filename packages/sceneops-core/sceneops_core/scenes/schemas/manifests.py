@@ -59,15 +59,26 @@ class SceneAnnotationManifest(SceneOpsBaseModel):
     sample_id: str
 
     source_annotation_id: str | None = None
+    source_sample_id: str | None = None
 
     category: str | None = None
     instance_id: str | None = None
 
+    timestamp_us: int | None = None
+
+    coordinate_frame: str = "world"
+
     translation: list[float] = Field(default_factory=list)
     size: list[float] = Field(default_factory=list)
     rotation: list[float] = Field(default_factory=list)
+    rotation_format: str = "quaternion_wxyz"
 
     velocity: list[float] | None = None
+
+    attributes: list[str] = Field(default_factory=list)
+
+    num_lidar_points: int | None = None
+    num_radar_points: int | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -146,6 +157,11 @@ class SceneManifest(SceneOpsBaseModel):
 
     sample_count: int = 0
     frame_count: int = 0
+    annotation_count: int = 0
+
     channels: list[str] = Field(default_factory=list)
+
+    has_ground_truth: bool = False
+    ground_truth_source: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

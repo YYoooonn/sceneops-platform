@@ -42,6 +42,7 @@ def build_scene_manifest(
 
     min_ts: int | None = None
     max_ts: int | None = None
+    annotation_count: int = 0
 
     for idx, token in enumerate(sample_tokens):
         ns_sample = nusc.get("sample", token)
@@ -62,6 +63,7 @@ def build_scene_manifest(
         samples.append(sample_manifest)
         calibrated_sensors_by_id.update(cal_records)
         ego_poses_by_id.update(ego_records)
+        annotation_count += len(sample_manifest.annotations)
         for sf in sample_manifest.sensor_frames:
             all_channels.add(sf.channel)
 
@@ -74,6 +76,9 @@ def build_scene_manifest(
         samples=samples,
         sample_count=len(samples),
         frame_count=sum(len(s.sensor_frames) for s in samples),
+        annotation_count=annotation_count,
+        has_ground_truth=annotation_count > 0,
+        ground_truth_source="nuscenes" if annotation_count > 0 else None,
         channels=sorted(all_channels),
         start_timestamp_us=min_ts,
         end_timestamp_us=max_ts,
@@ -82,6 +87,8 @@ def build_scene_manifest(
             "nuscenes_scene_name": scene["name"],
             "nuscenes_scene_token": scene["token"],
             "description": scene.get("description", ""),
+            "sample_source": "nuscenes_sample",
+            "annotation_count": annotation_count,
         },
     )
 
@@ -134,20 +141,97 @@ def _collect_sample_tokens(nusc: NuScenes, first_token: str) -> list[str]:
     return tokens
 
 
-def _build_sample_manifest(
+def _resolve_attribute_names(
     *,
     nusc: NuScenes,
-    scene_id: str,
-    sample_id: str,
+    ann: dict,
+) -> list[str]:
+    names: list[str] = []
+
+    for token in ann.get("attribute_tokens", []):
+        try:
+            attr = nusc.get("attribute", token)
+            name = attr.get("name")
+            if name:
+                names.append(name)
+        except Exception:
+            continue
+
+    return names
+
+
+def _safe_box_velocity(
+    *,
+    nusc: NuScenes,
+    annotation_token: str,
+) -> list[float] | None:
+    try:
+        velocity = nusc.box_velocity(annotation_token)
+    except Exception:
+        return None
+
+    if velocity is None:
+        return None
+
+    values = [float(v) for v in velocity]
+    if any(v != v for v in values):  # NaN check
+        return None
+
+    return values
+
+
+def _build_sample_annotations(
+    *,
+    nusc: NuScenes,
     sample: dict,
-    frame_index: int,
+    sample_id: str,
+) -> list[SceneAnnotationManifest]:
+    annotations: list[SceneAnnotationManifest] = []
+
+    for ann_token in sample.get("anns", []):
+        ann = nusc.get("sample_annotation", ann_token)
+
+        annotations.append(
+            SceneAnnotationManifest(
+                annotation_id=ann_token,
+                sample_id=sample_id,
+                source_annotation_id=ann_token,
+                source_sample_id=sample["token"],
+                category=ann["category_name"],
+                instance_id=ann["instance_token"],
+                timestamp_us=sample["timestamp"],
+                coordinate_frame="world",
+                translation=ann["translation"],
+                size=ann["size"],
+                rotation=ann["rotation"],
+                rotation_format="quaternion_wxyz",
+                velocity=_safe_box_velocity(nusc=nusc, annotation_token=ann_token),
+                attributes=_resolve_attribute_names(nusc=nusc, ann=ann),
+                num_lidar_points=ann.get("num_lidar_pts", 0),
+                num_radar_points=ann.get("num_radar_pts", 0),
+                metadata={
+                    "source": "nuscenes",
+                    "visibility_token": ann.get("visibility_token", ""),
+                    "attribute_tokens": ann.get("attribute_tokens", []),
+                },
+            )
+        )
+
+    return annotations
+
+
+def _build_sample_sensor_frames(
+    *,
+    nusc: NuScenes,
+    sample: dict,
+    sample_id: str,
+    annotation_ids: list[str],
 ) -> tuple[
-    SceneSampleManifest,
+    list[SceneSensorFrameManifest],
     dict[str, SensorCalibrationManifest],
     dict[str, EgoPoseManifest],
 ]:
     sensor_frames: list[SceneSensorFrameManifest] = []
-    annotations: list[SceneAnnotationManifest] = []
     calibrated_sensors_by_id: dict[str, SensorCalibrationManifest] = {}
     ego_poses_by_id: dict[str, EgoPoseManifest] = {}
 
@@ -163,13 +247,12 @@ def _build_sample_manifest(
         ep = nusc.get("ego_pose", ep_token)
         sensor = nusc.get("sensor", cs["sensor_token"])
 
-        nusc_modality: str = sensor.get("modality", "unknown")
-        try:
-            modality = SensorModality(nusc_modality)
-        except ValueError:
-            modality = _infer_modality(channel)
+        modality = _to_sensor_modality(
+            raw_modality=sensor.get("modality", "unknown"),
+            channel=channel,
+        )
 
-        calibrated_sensor = SensorCalibrationManifest(
+        calibrated_sensors_by_id[cs_token] = SensorCalibrationManifest(
             calibration_id=cs_token,
             sensor_id=cs["sensor_token"],
             channel=channel,
@@ -179,24 +262,23 @@ def _build_sample_manifest(
             rotation_format="quaternion_wxyz",
             camera_intrinsic=cs.get("camera_intrinsic") or None,
             metadata={
+                "source": "nuscenes",
                 "nuscenes_sensor_token": cs["sensor_token"],
                 "nuscenes_calibrated_sensor_token": cs_token,
             },
         )
-        calibrated_sensors_by_id[cs_token] = calibrated_sensor
 
-        # ego_pose timestamp from ego_pose["timestamp"], not sample_data["timestamp"]
-        ego_pose = EgoPoseManifest(
+        ego_poses_by_id[ep_token] = EgoPoseManifest(
             ego_pose_id=ep_token,
             timestamp_us=ep.get("timestamp"),
             translation=ep["translation"],
             rotation=ep["rotation"],
             rotation_format="quaternion_wxyz",
             metadata={
+                "source": "nuscenes",
                 "nuscenes_ego_pose_token": ep_token,
             },
         )
-        ego_poses_by_id[ep_token] = ego_pose
 
         image = (
             ImageMetadataManifest(
@@ -204,66 +286,89 @@ def _build_sample_manifest(
                 height=sample_data.get("height") or None,
                 fileformat=sample_data.get("fileformat"),
             )
-            if nusc_modality == "camera"
+            if modality == SensorModality.CAMERA
             else None
         )
 
         sensor_frames.append(
             SceneSensorFrameManifest(
-                frame_id=f"{sample_id}-{channel}",
+                frame_id=sample_data_token,
                 sample_id=sample_id,
-                timestamp_us=sample_data["timestamp"],  # sample_data timestamp
+                timestamp_us=sample_data["timestamp"],
                 channel=channel,
                 modality=modality,
                 uri=sample_data["filename"],
                 calibration_id=cs_token,
                 ego_pose_id=ep_token,
                 image=image,
+                annotation_ids=annotation_ids,
                 metadata={
+                    "source": "nuscenes",
+                    "source_sample_id": sample["token"],
+                    "source_sample_data_id": sample_data_token,
                     "is_key_frame": sample_data.get("is_key_frame", False),
                 },
             )
         )
 
-    for ann_token in sample.get("anns", []):
-        ann = nusc.get("sample_annotation", ann_token)
-        annotations.append(
-            SceneAnnotationManifest(
-                annotation_id=ann_token,
-                sample_id=sample_id,
-                source_annotation_id=ann_token,
-                category=ann["category_name"],
-                instance_id=ann["instance_token"],
-                translation=ann["translation"],
-                size=ann["size"],
-                rotation=ann["rotation"],
-                metadata={
-                    "num_lidar_pts": ann.get("num_lidar_pts", 0),
-                    "num_radar_pts": ann.get("num_radar_pts", 0),
-                    "visibility_token": ann.get("visibility_token", ""),
-                },
-            )
-        )
+    return sensor_frames, calibrated_sensors_by_id, ego_poses_by_id
 
+
+def _build_sample_manifest(
+    *,
+    nusc: NuScenes,
+    scene_id: str,
+    sample_id: str,
+    sample: dict,
+    frame_index: int,
+) -> tuple[
+    SceneSampleManifest,
+    dict[str, SensorCalibrationManifest],
+    dict[str, EgoPoseManifest],
+]:
+    annotations = _build_sample_annotations(
+        nusc=nusc,
+        sample=sample,
+        sample_id=sample_id,
+    )
+    annotation_ids = [ann.annotation_id for ann in annotations]
+
+    sensor_frames, calibrated_sensors_by_id, ego_poses_by_id = (
+        _build_sample_sensor_frames(
+            nusc=nusc, sample=sample, sample_id=sample_id, annotation_ids=annotation_ids
+        )
+    )
     return (
         SceneSampleManifest(
             sample_id=sample_id,
             scene_id=scene_id,
-            timestamp_us=sample["timestamp"],  # canonical sample timestamp
+            timestamp_us=sample["timestamp"],
             frame_index=frame_index,
             sensor_frames=sensor_frames,
             annotations=annotations,
+            metadata={
+                "source": "nuscenes",
+                "source_sample_id": sample["token"],
+                "source_sample_timestamp_us": sample["timestamp"],
+            },
         ),
         calibrated_sensors_by_id,
         ego_poses_by_id,
     )
 
 
-def _infer_modality(channel: str) -> SensorModality:
-    if channel.startswith("CAM"):
-        return SensorModality.CAMERA
-    if channel.startswith("LIDAR"):
-        return SensorModality.LIDAR
-    if channel.startswith("RADAR"):
-        return SensorModality.RADAR
-    return SensorModality.UNKNOWN
+def _to_sensor_modality(
+    *,
+    raw_modality: str,
+    channel: str,
+) -> SensorModality:
+    try:
+        return SensorModality(raw_modality)
+    except ValueError:
+        if channel.startswith("CAM"):
+            return SensorModality.CAMERA
+        if channel.startswith("LIDAR"):
+            return SensorModality.LIDAR
+        if channel.startswith("RADAR"):
+            return SensorModality.RADAR
+        return SensorModality.UNKNOWN

@@ -327,6 +327,7 @@ class EvaluateDetectionJobHandler(
                 inference_run_id=params.inference_run_id,
                 evaluation_run_id=execution.evaluation_run_id,
                 match_distance_m=params.match_distance_m,
+                missing_gt_policy=params.missing_gt_policy,
             )
         )
 
@@ -520,6 +521,7 @@ class EvaluateDetectionJobHandler(
             metadata={
                 "evaluator_id": params.evaluator_id,
                 "match_distance_m": params.match_distance_m,
+                "missing_gt_policy": params.missing_gt_policy,
             },
         )
 
@@ -539,6 +541,9 @@ def _build_evaluation_summary(
     evaluation_manifest: DetectionEvaluationManifest,
     counts: EvaluationCounts,
 ) -> JsonDict:
+    metadata = evaluation_manifest.metadata or {}
+
+    evaluated_scene_ids = metadata.get("evaluated_scene_ids", [])
     return {
         "status": evaluation_manifest.status,
         "match_distance_m": evaluation_manifest.match_distance_m,
@@ -550,4 +555,6 @@ def _build_evaluation_summary(
         "evaluation_unit": counts.evaluation_unit,
         "primary_metric_name": counts.primary_metric_name,
         "primary_metric_value": counts.primary_metric_value,
+        "evaluated_scene_ids": evaluated_scene_ids[:50],
+        "evaluated_scene_count": len(evaluated_scene_ids),
     }

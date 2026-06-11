@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict
@@ -39,6 +40,11 @@ class PredictDetectionJobParams(BaseJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
+class MissingGroundTruthPolicy(StrEnum):
+    FAIL = "fail"
+    SKIP = "skip"
+
+
 class EvaluateDetectionJobParams(BaseJobParams):
     dataset_id: str
     dataset_version: str
@@ -49,5 +55,7 @@ class EvaluateDetectionJobParams(BaseJobParams):
 
     evaluator_id: str = "center-distance"
     match_distance_m: float = 2.0
+
+    missing_gt_policy: MissingGroundTruthPolicy = MissingGroundTruthPolicy.SKIP
 
     metadata: JsonDict = Field(default_factory=dict)

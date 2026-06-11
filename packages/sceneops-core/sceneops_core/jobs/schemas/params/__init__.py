@@ -4,7 +4,11 @@ from .dataset import (
     CheckDistributionJobParams,
     ExportDatasetJobParams,
 )
-from .detection import EvaluateDetectionJobParams, PredictDetectionJobParams
+from .detection import (
+    EvaluateDetectionJobParams,
+    PredictDetectionJobParams,
+    MissingGroundTruthPolicy,
+)
 from .scene import (
     AutoLabelSceneJobParams,
     BuildDatasetManifestJobParams,
@@ -25,6 +29,7 @@ __all__ = [
     "IngestScenesJobParams",
     "BuildScenesJobParams",
     "BuildDatasetManifestJobParams",
+    "MissingGroundTruthPolicy",
     "BuildSceneIndexJobParams",
     "ValidateSceneJobParams",
     "ProfileSceneJobParams",

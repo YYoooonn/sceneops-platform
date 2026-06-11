@@ -31,6 +31,34 @@ async def write_sample_evaluation(
     )
 
 
+async def write_skipped_evaluation_manifest(
+    *,
+    request: DetectionEvaluationRequest,
+    prediction_manifest: DetectionPredictionManifest,
+    reason: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    evaluation_manifest = DetectionEvaluationManifest(
+        evaluation_run_id=request.evaluation_run_id,
+        inference_run_id=request.inference_run_id,
+        dataset_id=request.dataset_manifest.dataset_id,
+        dataset_version=request.dataset_manifest.dataset_version,
+        model_id=prediction_manifest.model_id,
+        model_version=prediction_manifest.model_version,
+        status="skipped",
+        match_distance_m=request.match_distance_m,
+        created_at=utc_now(),
+        metadata={**metadata, "reason": reason} if metadata else {"reason": reason},
+    )
+
+    await request.run_artifact_store.write_evaluation_run_manifest(
+        evaluation_run_id=request.evaluation_run_id,
+        manifest=evaluation_manifest.model_dump(mode="json"),
+    )
+
+    return evaluation_manifest
+
+
 async def write_final_evaluation_manifest(
     *,
     request: DetectionEvaluationRequest,
@@ -38,6 +66,7 @@ async def write_final_evaluation_manifest(
     accumulator: EvaluationAccumulator,
     evaluated_sample_count: int,
     evaluation_unit: str = "annotation",
+    metadata: dict[str, Any] | None = None,
 ) -> DetectionEvaluationManifest:
     """Assemble and persist the run-level DetectionEvaluationManifest.
 
@@ -81,6 +110,7 @@ async def write_final_evaluation_manifest(
         metrics=metrics,
         class_metrics=accumulator.build_class_metrics(),
         created_at=utc_now(),
+        metadata=metadata if metadata else {},
     )
 
     await request.run_artifact_store.write_evaluation_run_manifest(
