@@ -146,10 +146,10 @@ _PROFILE_SCENE_OUTPUTS = [
     PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
     PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
     PipelineTaskOutputSpec(
-        name="observed_channels", kind=_SUMMARY, source="observed_channels"
+        name="annotation_count", kind=_SUMMARY, source="annotation_count"
     ),
     PipelineTaskOutputSpec(
-        name="sensor_coverage_ratio", kind=_METRIC, source="sensor_coverage_ratio"
+        name="observed_channels", kind=_SUMMARY, source="observed_channels"
     ),
 ]
 

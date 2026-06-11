@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.scenes.schemas.enums import SceneStatus
 from sceneops_core.scenes.schemas.runs import SceneProfileRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
@@ -78,6 +80,8 @@ class ProfileSceneJobHandler(
     ) -> tuple[SceneProfileRunRecord, ProfileSceneJobResult]:
         run_id = initial_record.run_id
         uris = _resolve_scene_manifest_uris(params)
+        dataset_id = job.params.get("dataset_id")
+        dataset_version = job.params.get("dataset_version")
 
         if not uris:
             raise ValueError("profile_scene requires at least one scene manifest URI.")
@@ -109,6 +113,83 @@ class ProfileSceneJobHandler(
                     "annotation_count": result.annotation_count,
                 }
             )
+
+            # Store coverage metrics in asset_summary for later retrieval
+            coverage_summary: JsonDict = {
+                "calibration_coverage": result.calibration_coverage,
+                "ego_pose_coverage": result.ego_pose_coverage,
+                "camera_intrinsic_coverage": result.camera_intrinsic_coverage,
+                "image_size_coverage": result.image_size_coverage,
+                "category_distribution": result.category_distribution,
+            }
+
+            scene_id = result.scene_id
+            per_scene_run_id = _per_scene_profile_run_id(job.job_id, scene_id)
+            per_scene_report_uri = context.artifact_store.join_uri(
+                context.settings.run_root_uri,
+                "scene_profiles",
+                per_scene_run_id,
+                "report.json",
+            )
+            per_scene_report = {
+                "run_id": per_scene_run_id,
+                "job_id": job.job_id,
+                "scene_id": scene_id,
+                "scene_count": 1,
+                "sample_count": result.sample_count,
+                "frame_count": result.frame_count,
+                "annotation_count": result.annotation_count,
+                "observed_channels": result.channels,
+                "coverage": coverage_summary,
+                "created_at": utc_now().isoformat(),
+            }
+            await context.artifact_store.write_json(
+                per_scene_report_uri, per_scene_report
+            )
+
+            await context.artifact_record_store.create(
+                artifact_id=generate_artifact_id(),
+                ref=ArtifactRef(
+                    kind=ArtifactKind.DATASET_PROFILE_REPORT,
+                    uri=per_scene_report_uri,
+                    media_type="application/json",
+                ),
+                owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
+                owner_id=per_scene_run_id,
+                scene_id=scene_id,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                run_id=per_scene_run_id,
+                job_id=job.job_id,
+                pipeline_run_id=job.pipeline_run_id,
+            )
+
+            per_scene_record = SceneProfileRunRecord(
+                run_id=per_scene_run_id,
+                scene_id=scene_id,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                status=RunStatus.SUCCEEDED,
+                sample_count=result.sample_count,
+                frame_count=result.frame_count,
+                annotation_count=result.annotation_count,
+                observed_channels=result.channels,
+                profile_report_uri=per_scene_report_uri,
+                asset_summary=coverage_summary,
+                pipeline_run_id=job.pipeline_run_id,
+                pipeline_task_run_id=job.pipeline_task_run_id,
+                job_id=job.job_id,
+                started_at=started_at,
+                finished_at=utc_now(),
+            )
+            await context.runs.scene_runs.upsert(per_scene_record)
+
+            # Update SceneRecord status to PROFILED
+            scene_record = await context.scene_store.get(scene_id)
+            if scene_record is not None:
+                await context.scene_store.upsert(
+                    scene_record.model_copy(update={"status": SceneStatus.PROFILED})
+                )
 
         observed_channels = sorted(all_channels)
 
@@ -143,15 +224,13 @@ class ProfileSceneJobHandler(
                 ),
                 owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
                 owner_id=run_id,
-                dataset_id=job.params.get("dataset_id"),
-                dataset_version=job.params.get("dataset_version"),
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
                 run_id=run_id,
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
             )
 
-        dataset_id = job.params.get("dataset_id")
-        dataset_version = job.params.get("dataset_version")
         if dataset_id and dataset_version:
             await context.dataset_store.update_quality_cache(
                 dataset_id=dataset_id,
@@ -176,6 +255,7 @@ class ProfileSceneJobHandler(
             scene_count=len(scene_profiles),
             sample_count=total_samples,
             frame_count=total_frames,
+            annotation_count=total_annotations,
             observed_channels=observed_channels,
             profile_run_id=run_id,
             report_uri=report_uri,
@@ -193,3 +273,8 @@ def _resolve_scene_manifest_uris(params: ProfileSceneJobParams) -> list[str]:
     if params.scene_manifest_uri:
         return [params.scene_manifest_uri]
     return []
+
+
+def _per_scene_profile_run_id(job_id: str, scene_id: str) -> str:
+    digest = hashlib.sha256(f"{job_id}:{scene_id}".encode()).hexdigest()[:12]
+    return f"profile-scene-{digest}"

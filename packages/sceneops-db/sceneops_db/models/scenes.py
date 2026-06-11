@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,9 +42,16 @@ class SceneModel(Base):
     frame_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    annotation_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     channels: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    has_ground_truth: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    ground_truth_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

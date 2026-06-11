@@ -70,3 +70,11 @@ class SceneRunRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[SceneRunRecord]: ...
+
+    async def list_latest_by_dataset_version(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        run_type: RunType,
+    ) -> dict[str, SceneRunRecord]: ...

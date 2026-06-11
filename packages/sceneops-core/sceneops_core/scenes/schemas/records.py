@@ -26,7 +26,11 @@ class SceneRecord(SceneOpsBaseModel):
 
     sample_count: int = 0
     frame_count: int = 0
+    annotation_count: int = 0
     channels: list[str] = Field(default_factory=list)
+
+    has_ground_truth: bool = False
+    ground_truth_source: str | None = None
 
     started_at: datetime | None = None
     ended_at: datetime | None = None

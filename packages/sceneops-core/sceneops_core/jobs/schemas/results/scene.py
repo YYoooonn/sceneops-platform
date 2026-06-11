@@ -86,6 +86,7 @@ class ProfileSceneJobResult(BaseJobResult):
     scene_count: int = 0
     sample_count: int = 0
     frame_count: int = 0
+    annotation_count: int = 0
 
     observed_channels: list[str] = Field(default_factory=list)
     asset_summary: JsonDict = Field(default_factory=dict)

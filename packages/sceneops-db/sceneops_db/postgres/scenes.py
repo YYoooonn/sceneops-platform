@@ -153,3 +153,25 @@ class PostgresSceneRunRepository:
         )
         result = await self._session.execute(stmt)
         return [scene_run_model_to_record(m) for m in result.scalars().all()]
+
+    async def list_latest_by_dataset_version(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        run_type: RunType,
+    ) -> dict[str, SceneRunRecord]:
+        stmt = (
+            select(SceneRunRecordModel)
+            .where(SceneRunRecordModel.dataset_id == dataset_id)
+            .where(SceneRunRecordModel.dataset_version == dataset_version)
+            .where(SceneRunRecordModel.type == enum_value(run_type))
+            .order_by(SceneRunRecordModel.created_at.desc())
+        )
+        result = await self._session.execute(stmt)
+        latest: dict[str, SceneRunRecord] = {}
+        for model in result.scalars().all():
+            record = scene_run_model_to_record(model)
+            if record.scene_id and record.scene_id not in latest:
+                latest[record.scene_id] = record
+        return latest

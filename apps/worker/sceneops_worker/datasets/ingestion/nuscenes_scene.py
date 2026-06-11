@@ -2,19 +2,12 @@ from __future__ import annotations
 
 from nuscenes.nuscenes import NuScenes
 
-from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
-from sceneops_core.scenes.schemas.enums import (
-    SceneGenerationMethod,
-    SceneOriginType,
-    SceneStatus,
-)
 from sceneops_core.scenes.schemas.manifests import (
     SceneAnnotationManifest,
     SceneManifest,
     SceneSampleManifest,
     SceneSensorFrameManifest,
 )
-from sceneops_core.scenes.schemas.records import SceneRecord
 from sceneops_core.sensors import SensorModality
 from sceneops_core.sensors.manifests import (
     ImageMetadataManifest,
@@ -90,44 +83,6 @@ def build_scene_manifest(
             "sample_source": "nuscenes_sample",
             "annotation_count": annotation_count,
         },
-    )
-
-
-def build_scene_record(
-    *,
-    scene_id: str,
-    dataset_id: str,
-    dataset_version: str,
-    manifest: SceneManifest,
-    scene_manifest_uri: str,
-) -> SceneRecord:
-    return SceneRecord(
-        scene_id=scene_id,
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        status=SceneStatus.BUILT,
-        origin_type=SceneOriginType.REAL,
-        generation_method=SceneGenerationMethod.UNKNOWN,
-        scene_manifest_uri=scene_manifest_uri,
-        sample_count=manifest.sample_count,
-        frame_count=manifest.frame_count,
-        channels=manifest.channels,
-        metadata=manifest.metadata,
-    )
-
-
-def build_scene_index_entry(
-    *,
-    scene_id: str,
-    scene_manifest_uri: str,
-    manifest: SceneManifest,
-) -> DatasetSceneIndexEntry:
-    return DatasetSceneIndexEntry(
-        scene_id=scene_id,
-        scene_manifest_uri=scene_manifest_uri,
-        sample_count=manifest.sample_count,
-        frame_count=manifest.frame_count,
-        channels=manifest.channels,
     )
 
 

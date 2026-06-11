@@ -23,6 +23,7 @@ async def select_detection_scenes(
     total_scene_count = 0
     inspected_scene_count = 0
     selected_annotation_count = 0
+    selected_sample_count = 0
 
     for scene_entry in dataset_manifest.scenes:
         total_scene_count += 1
@@ -53,6 +54,7 @@ async def select_detection_scenes(
         inspected_scene_count += 1
 
         annotation_count = int(scene_manifest.annotation_count or 0)
+        sample_count = int(scene_manifest.sample_count or len(scene_manifest.samples))
         has_ground_truth = bool(scene_manifest.has_ground_truth) or annotation_count > 0
 
         if selection.mode == DetectionSceneSelectionMode.GROUND_TRUTH_ONLY:
@@ -65,6 +67,7 @@ async def select_detection_scenes(
                         "reason": "scene_has_no_ground_truth",
                         "annotation_count": annotation_count,
                         "has_ground_truth": has_ground_truth,
+                        "sample_count": sample_count,
                     }
                 )
                 continue
@@ -80,12 +83,14 @@ async def select_detection_scenes(
                             "allowed_ground_truth_sources": list(
                                 selection.ground_truth_sources
                             ),
+                            "sample_count": sample_count,
                         }
                     )
                     continue
 
         selected_scene_ids.append(scene_manifest.scene_id)
         selected_annotation_count += annotation_count
+        selected_sample_count += sample_count
 
         if selection.max_scenes is not None:
             if len(selected_scene_ids) >= selection.max_scenes:
@@ -93,9 +98,11 @@ async def select_detection_scenes(
 
     return {
         "mode": getattr(selection.mode, "value", selection.mode),
+        "requested_scene_count": len(requested_scene_ids),
         "requested_scene_ids": sorted(requested_scene_ids),
         "selected_scene_ids": selected_scene_ids,
         "selected_scene_count": len(selected_scene_ids),
+        "selected_sample_count": selected_sample_count,
         "selected_annotation_count": selected_annotation_count,
         "total_scene_count": total_scene_count,
         "inspected_scene_count": inspected_scene_count,

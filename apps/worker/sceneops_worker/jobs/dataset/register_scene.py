@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from sceneops_core.artifacts.schemas.enums import ArtifactKind
+from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
+from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import (
     JobType,
@@ -7,8 +11,8 @@ from sceneops_core.jobs.schemas import (
     RegisterSceneJobResult,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
+from sceneops_core.scenes.schemas import SceneManifest, SceneStatus
 from sceneops_core.scenes.schemas.records import SceneRecord
-from sceneops_worker.datasets.ingestion.nuscenes_scene import build_scene_record
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
@@ -41,6 +45,7 @@ class RegisterSceneJobHandler(
     ) -> RegisterSceneJobResult:
         params = request.params
         context = request.context
+        job = request.job
 
         dataset_id = params.dataset_id
         dataset_version = params.dataset_version
@@ -80,6 +85,24 @@ class RegisterSceneJobHandler(
 
             await context.scene_store.upsert(record)
 
+            # Register the scene manifest as an artifact record so it is
+            # discoverable via GET /scenes/{scene_id}/artifacts.
+            await context.artifact_record_store.create(
+                artifact_id=generate_artifact_id(),
+                ref=ArtifactRef(
+                    kind=ArtifactKind.SCENE_MANIFEST,
+                    uri=uri,
+                    media_type="application/json",
+                ),
+                owner_type=ArtifactOwnerType.SCENE,
+                owner_id=scene_id,
+                scene_id=scene_id,
+                dataset_id=ds_id,
+                dataset_version=ds_version,
+                job_id=job.job_id,
+                pipeline_run_id=job.pipeline_run_id,
+            )
+
             registered_ids.append(scene_id)
             registered_uris.append(uri)
 
@@ -105,38 +128,22 @@ def _build_scene_record_from_manifest(
     dataset_id: str | None,
     dataset_version: str | None,
     manifest_uri: str,
-    manifest: object,
+    manifest: SceneManifest,
     params: RegisterSceneJobParams,
 ) -> SceneRecord:
-    # Use the existing helper when manifest is a SceneManifest produced by ingest_scenes
-    try:
-        record = build_scene_record(
-            scene_id=scene_id,
-            dataset_id=dataset_id or "",
-            dataset_version=dataset_version or "",
-            manifest=manifest,  # type: ignore[arg-type]
-            scene_manifest_uri=manifest_uri,
-        )
-        # Apply origin/generation from params if explicitly set away from defaults
-        return record.model_copy(
-            update={
-                "dataset_id": dataset_id,
-                "dataset_version": dataset_version,
-            }
-        )
-    except Exception:
-        # Fallback: build a minimal SceneRecord from whatever manifest provides
-        sample_count = getattr(manifest, "sample_count", 0)
-        frame_count = getattr(manifest, "frame_count", 0)
-        channels = getattr(manifest, "channels", [])
-        return SceneRecord(
-            scene_id=scene_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            scene_manifest_uri=manifest_uri,
-            origin_type=params.origin_type,
-            generation_method=params.generation_method,
-            sample_count=sample_count,
-            frame_count=frame_count,
-            channels=channels,
-        )
+    return SceneRecord(
+        scene_id=scene_id,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        status=SceneStatus.BUILT,
+        origin_type=params.origin_type,
+        generation_method=params.generation_method,
+        scene_manifest_uri=manifest_uri,
+        sample_count=manifest.sample_count,
+        frame_count=manifest.frame_count,
+        annotation_count=manifest.annotation_count,
+        channels=manifest.channels,
+        has_ground_truth=manifest.has_ground_truth,
+        ground_truth_source=manifest.ground_truth_source,
+        metadata=manifest.metadata,
+    )

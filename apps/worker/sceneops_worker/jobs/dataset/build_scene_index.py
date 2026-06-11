@@ -23,14 +23,12 @@ class BuildSceneIndexJobHandler(
         return BuildSceneIndexJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        scene_manifest_uris = inputs.refs.get("scene_manifest_uris") or []
         return {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
             else None,
             **inputs.params,
-            "scene_manifest_uris": scene_manifest_uris,
         }
 
     async def run(
@@ -43,11 +41,25 @@ class BuildSceneIndexJobHandler(
         dataset_id = params.dataset_id
         dataset_version = params.dataset_version
 
-        uris = list(params.scene_manifest_uris)
+        # DatasetManifest is a derived snapshot of SceneRecord rows.
+        # Always query all registered scenes — never build from pipeline batch input only.
+        all_scene_records = await context.scene_store.list(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            limit=10_000,
+        )
+
+        uris = [
+            s.scene_manifest_uri
+            for s in all_scene_records
+            if s.scene_manifest_uri is not None
+        ]
 
         if not uris:
             raise ValueError(
-                "build_scene_index requires at least one scene manifest URI."
+                f"build_scene_index: no registered scenes found for "
+                f"dataset_id={dataset_id!r}, dataset_version={dataset_version!r}. "
+                "Ensure register_scene has completed before building the index."
             )
 
         entries: list[DatasetSceneIndexEntry] = []

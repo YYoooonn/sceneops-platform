@@ -70,7 +70,10 @@ def scene_model_to_record(model: SceneModel) -> SceneRecord:
         scene_manifest_uri=model.scene_manifest_uri,
         sample_count=model.sample_count,
         frame_count=model.frame_count,
+        annotation_count=model.annotation_count,
         channels=list(model.channels or []),
+        has_ground_truth=bool(model.has_ground_truth),
+        ground_truth_source=model.ground_truth_source,
         started_at=model.started_at,
         ended_at=model.ended_at,
         metadata={**base_meta, **db_extras} if db_extras else base_meta,
@@ -91,7 +94,10 @@ def scene_record_to_values(record: SceneRecord) -> dict[str, Any]:
         "scene_manifest_uri": record.scene_manifest_uri,
         "sample_count": record.sample_count,
         "frame_count": record.frame_count,
+        "annotation_count": record.annotation_count,
         "channels": list(record.channels or []),
+        "has_ground_truth": record.has_ground_truth,
+        "ground_truth_source": record.ground_truth_source,
         "metadata_": meta,
     }
     # Restore DB-only fields that were stashed in metadata by scene_model_to_record.

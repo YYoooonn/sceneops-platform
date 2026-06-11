@@ -191,6 +191,10 @@ async def evaluate_center_distance_detection(
             sample_eval=sample_eval,
         )
 
+    skipped_scene_ids = sorted(
+        {s["scene_id"] for s in skipped_shards if s.get("scene_id")}
+    )
+
     if evaluated_sample_count == 0:
         return await _handle_no_evaluable_shards(
             request=request,
@@ -199,6 +203,7 @@ async def evaluate_center_distance_detection(
             skipped_shard_count=skipped_shard_count,
             skipped_prediction_count=skipped_prediction_count,
             skipped_shards=skipped_shards,
+            skipped_scene_ids=skipped_scene_ids,
             warnings=warnings,
         )
 
@@ -214,6 +219,7 @@ async def evaluate_center_distance_detection(
             "skipped_shard_count": skipped_shard_count,
             "skipped_prediction_count": skipped_prediction_count,
             "skipped_shards": skipped_shards[:100],
+            "skipped_scene_ids": skipped_scene_ids,
             "warnings": warnings[:100],
             "evaluated_scene_ids": sorted(evaluated_scene_ids),
         },
@@ -286,6 +292,7 @@ async def _handle_no_evaluable_shards(
     skipped_shard_count: int,
     skipped_prediction_count: int,
     skipped_shards: list[dict[str, Any]],
+    skipped_scene_ids: list[str],
     warnings: list[dict[str, Any]],
 ) -> DetectionEvaluationResult:
     reason = (
@@ -308,6 +315,7 @@ async def _handle_no_evaluable_shards(
             "skipped_shard_count": skipped_shard_count,
             "skipped_prediction_count": skipped_prediction_count,
             "skipped_shards": skipped_shards[:100],
+            "skipped_scene_ids": skipped_scene_ids,
             "warnings": warnings[:100],
         },
     )

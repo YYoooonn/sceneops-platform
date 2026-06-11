@@ -37,7 +37,11 @@ async def write_skipped_evaluation_manifest(
     prediction_manifest: DetectionPredictionManifest,
     reason: str,
     metadata: dict[str, Any] | None = None,
-) -> None:
+) -> DetectionEvaluationManifest:
+    evaluation_manifest_uri = request.run_artifact_store.evaluation_run_manifest_uri(
+        request.evaluation_run_id
+    )
+
     evaluation_manifest = DetectionEvaluationManifest(
         evaluation_run_id=request.evaluation_run_id,
         inference_run_id=request.inference_run_id,
@@ -47,6 +51,7 @@ async def write_skipped_evaluation_manifest(
         model_version=prediction_manifest.model_version,
         status="skipped",
         match_distance_m=request.match_distance_m,
+        evaluation_manifest_uri=evaluation_manifest_uri,
         created_at=utc_now(),
         metadata={**metadata, "reason": reason} if metadata else {"reason": reason},
     )

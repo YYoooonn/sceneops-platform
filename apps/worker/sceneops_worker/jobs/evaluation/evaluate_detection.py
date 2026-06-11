@@ -427,9 +427,22 @@ class EvaluateDetectionJobHandler(
             evaluation_manifest=evaluation_manifest,
             counts=counts,
         )
+
+        evaluation_manifest_uri = evaluation_manifest.evaluation_manifest_uri
+        if not evaluation_manifest_uri:
+            raise ValueError(
+                f"evaluate_detection succeeded without evaluation_manifest_uri "
+                f"(evaluation_run_id={execution.evaluation_run_id})"
+            )
+        if not metrics_uri:
+            raise ValueError(
+                f"evaluate_detection succeeded without metrics_uri "
+                f"(evaluation_run_id={execution.evaluation_run_id})"
+            )
+
         return await self._register_artifacts(
             execution=execution,
-            evaluation_manifest_uri=evaluation_manifest.evaluation_manifest_uri,
+            evaluation_manifest_uri=evaluation_manifest_uri,
             metrics_uri=metrics_uri,
         )
 
@@ -544,8 +557,13 @@ def _build_evaluation_summary(
     metadata = evaluation_manifest.metadata or {}
 
     evaluated_scene_ids = metadata.get("evaluated_scene_ids", [])
+    skipped_scene_ids = metadata.get("skipped_scene_ids", [])
+    is_skipped = evaluation_manifest.status == "skipped"
+
     return {
         "status": evaluation_manifest.status,
+        "skipped": is_skipped,
+        "warning": metadata.get("reason") if is_skipped else None,
         "match_distance_m": evaluation_manifest.match_distance_m,
         "samples_root_uri": evaluation_manifest.samples_root_uri,
         "prediction_count": counts.prediction_count,
@@ -557,4 +575,6 @@ def _build_evaluation_summary(
         "primary_metric_value": counts.primary_metric_value,
         "evaluated_scene_ids": evaluated_scene_ids[:50],
         "evaluated_scene_count": len(evaluated_scene_ids),
+        "skipped_scene_ids": skipped_scene_ids[:50],
+        "skipped_scene_count": len(skipped_scene_ids),
     }
