@@ -25,7 +25,7 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
 from sceneops_worker.observations.adapters.factory import RawLogAdapterFactory
-from sceneops_worker.scenes.raw_scene_builder import RawSceneBuilder, SceneBuildResult
+from sceneops_worker.scenes.building import SceneBuilder, SceneBuildResult
 
 
 @dataclass(frozen=True)
@@ -335,7 +335,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
         raw_inputs: BuildScenesRawInputs,
     ) -> SceneBuildResult:
         version_record = execution.dataset_version_record
-        builder = RawSceneBuilder(
+        builder = SceneBuilder(
             scene_artifact_store=execution.context.scene_artifact_store,
             observation_artifact_store=execution.obs_store,
         )
