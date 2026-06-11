@@ -216,7 +216,7 @@ def _build_sample_manifest(
                 channel=channel,
                 modality=modality,
                 uri=sample_data["filename"],
-                calibrated_sensor_id=cs_token,
+                calibration_id=cs_token,
                 ego_pose_id=ep_token,
                 image=image,
                 metadata={

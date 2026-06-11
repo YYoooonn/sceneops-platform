@@ -6,7 +6,6 @@ from sceneops_worker.evaluation.detection.base import (
 )
 from sceneops_worker.evaluation.detection.center_distance import (
     CenterDistanceDetectionEvaluator,
-    evaluate_detection_run,
 )
 
 __all__ = [
@@ -15,5 +14,4 @@ __all__ = [
     "DetectionEvaluationResult",
     "DetectionEvaluator",
     "CenterDistanceDetectionEvaluator",
-    "evaluate_detection_run",
 ]

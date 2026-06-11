@@ -136,6 +136,7 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
     )
 
     if model.type == RunType.SCENE_VALIDATION.value:
+        s = model.summary or {}
         return SceneValidationRunRecord(
             **base,
             scene_id=model.scene_id,
@@ -143,9 +144,19 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
             dataset_id=model.dataset_id,
             dataset_version=model.dataset_version,
             validation_report_uri=model.report_uri,
-            summary=model.summary or {},
+            validation_status=s.get("validation_status"),
+            should_block_pipeline=s.get("should_block_pipeline", False),
+            checked_sample_count=s.get("checked_sample_count"),
+            checked_frame_count=s.get("checked_frame_count"),
+            issue_count=s.get("issue_count"),
+            error_count=s.get("error_count"),
+            warning_count=s.get("warning_count"),
+            missing_channel_count=s.get("missing_channel_count"),
+            missing_artifact_count=s.get("missing_artifact_count"),
+            summary=s,
         )
     elif model.type == RunType.SCENE_PROFILE.value:
+        s = model.summary or {}
         return SceneProfileRunRecord(
             **base,
             scene_id=model.scene_id,
@@ -153,6 +164,14 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
             dataset_id=model.dataset_id,
             dataset_version=model.dataset_version,
             profile_report_uri=model.report_uri,
+            sample_count=s.get("sample_count"),
+            frame_count=s.get("frame_count"),
+            asset_count=s.get("asset_count"),
+            annotation_count=s.get("annotation_count"),
+            observed_channels=s.get("observed_channels", []),
+            asset_summary=s.get("asset_summary", {}),
+            world_state_summary=s.get("world_state_summary", {}),
+            annotation_summary=s.get("annotation_summary", {}),
         )
     elif model.type == RunType.SCENE_COMPARISON.value:
         return SceneComparisonRunRecord(
@@ -187,6 +206,18 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
     base = base_run_to_values(record)
 
     if isinstance(record, SceneValidationRunRecord):
+        summary = {
+            **(record.summary or {}),
+            "validation_status": record.validation_status,
+            "should_block_pipeline": record.should_block_pipeline,
+            "checked_sample_count": record.checked_sample_count,
+            "checked_frame_count": record.checked_frame_count,
+            "issue_count": record.issue_count,
+            "error_count": record.error_count,
+            "warning_count": record.warning_count,
+            "missing_channel_count": record.missing_channel_count,
+            "missing_artifact_count": record.missing_artifact_count,
+        }
         return {
             **base,
             "scene_id": record.scene_id,
@@ -194,9 +225,19 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
             "dataset_id": record.dataset_id,
             "dataset_version": record.dataset_version,
             "report_uri": record.validation_report_uri,
-            "summary": record.summary or {},
+            "summary": summary,
         }
     elif isinstance(record, SceneProfileRunRecord):
+        summary = {
+            "sample_count": record.sample_count,
+            "frame_count": record.frame_count,
+            "asset_count": record.asset_count,
+            "annotation_count": record.annotation_count,
+            "observed_channels": record.observed_channels,
+            "asset_summary": record.asset_summary,
+            "world_state_summary": record.world_state_summary,
+            "annotation_summary": record.annotation_summary,
+        }
         return {
             **base,
             "scene_id": record.scene_id,
@@ -204,6 +245,7 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
             "dataset_id": record.dataset_id,
             "dataset_version": record.dataset_version,
             "report_uri": record.profile_report_uri,
+            "summary": summary,
         }
     elif isinstance(record, SceneComparisonRunRecord):
         return {

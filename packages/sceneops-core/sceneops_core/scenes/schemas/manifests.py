@@ -117,7 +117,7 @@ class SceneManifest(SceneOpsBaseModel):
     """Full scene representation.
 
     calibrated_sensors: scene-level registry of sensor calibration records,
-      deduplicated by calibration_id.  Frames reference these by calibrated_sensor_id.
+      deduplicated by calibration_id.  Frames reference these by calibration_id.
 
     ego_poses: scene-level time-varying ego-pose records,
       referenced by frames via ego_pose_id.

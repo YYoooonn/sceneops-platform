@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from sceneops_core.datasets.schemas import DatasetManifest
-from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
 from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.artifacts import (
@@ -23,7 +21,6 @@ from sceneops_worker.evaluation.detection.artifacts import (
     write_sample_evaluation,
 )
 from sceneops_worker.evaluation.detection.base import (
-    DEFAULT_MATCH_DISTANCE_M,
     DetectionEvaluationRequest,
     DetectionEvaluationResult,
     DetectionEvaluator,
@@ -33,8 +30,6 @@ from sceneops_worker.evaluation.detection.loading import (
     load_prediction_manifest,
     load_sample_prediction_payload,
 )
-from sceneops_worker.runs import RunArtifactStore
-from sceneops_worker.scenes import SceneArtifactStore
 
 from . import utils
 
@@ -49,32 +44,6 @@ class CenterDistanceDetectionEvaluator(DetectionEvaluator):
         request: DetectionEvaluationRequest,
     ) -> DetectionEvaluationResult:
         return await evaluate_center_distance_detection(request)
-
-
-async def evaluate_detection_run(
-    *,
-    dataset_manifest: DatasetManifest,
-    scene_artifact_store: SceneArtifactStore,
-    run_artifact_store: RunArtifactStore,
-    inference_run_id: str,
-    evaluation_run_id: str,
-    match_distance_m: float = DEFAULT_MATCH_DISTANCE_M,
-) -> DetectionEvaluationManifest:
-    """Compatibility wrapper for older call sites.
-
-    New code should prefer CenterDistanceDetectionEvaluator.run().
-    """
-    evaluator = CenterDistanceDetectionEvaluator()
-    return await evaluator.run(
-        DetectionEvaluationRequest(
-            dataset_manifest=dataset_manifest,
-            scene_artifact_store=scene_artifact_store,
-            run_artifact_store=run_artifact_store,
-            inference_run_id=inference_run_id,
-            evaluation_run_id=evaluation_run_id,
-            match_distance_m=match_distance_m,
-        )
-    )
 
 
 async def evaluate_center_distance_detection(
