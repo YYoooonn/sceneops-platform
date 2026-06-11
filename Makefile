@@ -505,11 +505,6 @@ e2e-raw-log-scene-building:
 	chmod +x scripts/e2e/e2e_raw_log_scene_building.sh
 	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_raw_log_scene_building.sh
 
-.PHONY: e2e-raw-log-scene-building-time-window
-e2e-raw-log-scene-building-time-window:
-	chmod +x scripts/e2e/e2e_raw_log_scene_building_time_window_celery.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_raw_log_scene_building_time_window_celery.sh
-
 .PHONY: e2e-detection-evaluation
 e2e-detection-evaluation:
 	chmod +x scripts/e2e/e2e_detection_evaluation.sh

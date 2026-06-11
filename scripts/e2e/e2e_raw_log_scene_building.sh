@@ -62,13 +62,17 @@ PAYLOAD="$(cat <<JSON
       "source_format": "nuscenes",
       "max_source_sequences": $MAX_SEQUENCES,
       "segmentation": {
-        "strategy": "sequence"
+        "strategy": "fixed_window",
+        "respect_sequence_id": true,
+        "fixed_window_duration_ms": 10000,
+        "min_duration_ms": 500
       },
       "sampling": {
-        "strategy": "frame_id",
-        "sync_policy": "best_effort",
+        "strategy": "anchor_channel",
+        "anchor_channel": "LIDAR_TOP",
         "missing_channel_policy": "keep_with_warning",
-        "required_channels": ["CAM_FRONT", "LIDAR_TOP"]
+        "required_channels": ["CAM_FRONT", "LIDAR_TOP"],
+        "association_strategy": "nearest"
       }
     },
     "register_scene": {
@@ -118,6 +122,10 @@ FINAL_STATUS="$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.status')"
 echo "  status=$FINAL_STATUS"
 
 if [ "$FINAL_STATUS" = "failed" ]; then
+  echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
+fi
+
+if [ "$FINAL_STATUS" = "blocked" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 

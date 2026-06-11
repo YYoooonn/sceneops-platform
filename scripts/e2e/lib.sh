@@ -123,7 +123,7 @@ poll_pipeline_terminal() {
     echo "  [$i/$max_attempts] status=$status" >&2
 
     case "$status" in
-      succeeded|failed|cancelled)
+      succeeded|failed|cancelled|blocked)
         echo "$pipeline_json"
         return 0
         ;;
