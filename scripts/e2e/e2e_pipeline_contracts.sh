@@ -41,7 +41,6 @@ SUPPORTED_PIPELINE_TYPES=(
 UNSUPPORTED_PIPELINE_TYPES=(
   "scene_reconstruction"
   "scene_registration"
-  "scenario_curation"
   "generated_dataset_preparation"
 )
 

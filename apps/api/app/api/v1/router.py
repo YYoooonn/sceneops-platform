@@ -27,7 +27,7 @@ api_router.include_router(artifacts_router, prefix="/artifacts", tags=["artifact
 # domains — core resources
 api_router.include_router(datasets_router, prefix="/datasets", tags=["datasets"])
 api_router.include_router(scenes_router, prefix="/scenes", tags=["scenes"])
-api_router.include_router(scenarios_router, prefix="/scenario-sets", tags=["scenarios"])
+api_router.include_router(scenarios_router, prefix="/scenarios", tags=["scenarios"])
 api_router.include_router(models_router, prefix="/models", tags=["models"])
 
 # domains — ML workflow results

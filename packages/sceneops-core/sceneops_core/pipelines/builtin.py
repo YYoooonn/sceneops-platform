@@ -488,23 +488,159 @@ SCENE_REGISTRATION_PIPELINE = PipelineDefinition(
     ],
 )
 
+_MINE_SCENARIOS_OUTPUTS = [
+    # REF: consumed by score_scenario_readiness / exposed as pipeline outputs
+    PipelineTaskOutputSpec(name="scenario_set_id", kind=_REF, source="scenario_set_id"),
+    PipelineTaskOutputSpec(
+        name="scenario_set_uri", kind=_REF, source="scenario_set_uri"
+    ),
+    PipelineTaskOutputSpec(name="mining_run_id", kind=_REF, source="mining_run_id"),
+    # ARTIFACT: lineage
+    PipelineTaskOutputSpec(
+        name="mining_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="mining_report_uri",
+    ),
+    # SUMMARY: task-level human-readable summary
+    PipelineTaskOutputSpec(
+        name="candidate_count_summary",
+        kind=_SUMMARY,
+        source="candidate_count",
+        target="candidate_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="selected_count_summary",
+        kind=_SUMMARY,
+        source="selected_count",
+        target="selected_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="rejected_count_summary",
+        kind=_SUMMARY,
+        source="rejected_count",
+        target="rejected_count",
+    ),
+    # METRIC: pipeline-level numeric contract
+    PipelineTaskOutputSpec(
+        name="candidate_count_metric",
+        kind=_METRIC,
+        source="candidate_count",
+        target="candidate_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="selected_count_metric",
+        kind=_METRIC,
+        source="selected_count",
+        target="selected_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="rejected_count_metric",
+        kind=_METRIC,
+        source="rejected_count",
+        target="rejected_count",
+    ),
+]
+
+_SCORE_SCENARIO_READINESS_OUTPUTS = [
+    # REF
+    PipelineTaskOutputSpec(
+        name="readiness_run_id", kind=_REF, source="readiness_run_id"
+    ),
+    # ARTIFACT
+    PipelineTaskOutputSpec(
+        name="readiness_report_uri",
+        kind=_ARTIFACT,
+        source="readiness_report_uri",
+    ),
+    # SUMMARY
+    PipelineTaskOutputSpec(
+        name="scored_scene_count_summary",
+        kind=_SUMMARY,
+        source="scored_scene_count",
+        target="scored_scene_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="ready_count_summary",
+        kind=_SUMMARY,
+        source="ready_count",
+        target="ready_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="warning_count_summary",
+        kind=_SUMMARY,
+        source="warning_count",
+        target="warning_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="blocked_count_summary",
+        kind=_SUMMARY,
+        source="blocked_count",
+        target="blocked_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="average_score_summary",
+        kind=_SUMMARY,
+        source="average_score",
+        target="average_score",
+    ),
+    # METRIC
+    PipelineTaskOutputSpec(
+        name="scored_scene_count_metric",
+        kind=_METRIC,
+        source="scored_scene_count",
+        target="scored_scene_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="ready_count_metric",
+        kind=_METRIC,
+        source="ready_count",
+        target="ready_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="warning_count_metric",
+        kind=_METRIC,
+        source="warning_count",
+        target="warning_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="blocked_count_metric",
+        kind=_METRIC,
+        source="blocked_count",
+        target="blocked_count",
+    ),
+    PipelineTaskOutputSpec(
+        name="average_score_metric",
+        kind=_METRIC,
+        source="average_score",
+        target="average_score",
+    ),
+    # Optional: small downstream refs
+    PipelineTaskOutputSpec(
+        name="top_scene_ids",
+        kind=_REF,
+        source="top_scene_ids",
+    ),
+]
+
 
 SCENARIO_CURATION_PIPELINE = PipelineDefinition(
     type=PipelineType.SCENARIO_CURATION,
     name="Scenario Curation",
     description=(
-        "Mine scenario candidates from a dataset and score their reconstruction "
+        "Mine scenario candidates from scenes and score their reconstruction "
         "or evaluation readiness."
     ),
-    supported=False,
+    supported=True,
     experimental=True,
-    implemented=False,
+    implemented=True,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="mine_scenarios",
             name="Mine scenarios",
             order=0,
             job_type=JobType.MINE_SCENARIOS,
+            outputs=_MINE_SCENARIOS_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="score_scenario_readiness",
@@ -512,6 +648,7 @@ SCENARIO_CURATION_PIPELINE = PipelineDefinition(
             order=1,
             job_type=JobType.SCORE_SCENARIO_READINESS,
             depends_on_pipeline_task_ids=["mine_scenarios"],
+            outputs=_SCORE_SCENARIO_READINESS_OUTPUTS,
         ),
     ],
 )

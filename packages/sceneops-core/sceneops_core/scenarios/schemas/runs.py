@@ -22,8 +22,7 @@ class ScenarioMiningRunRecord(BaseRunRecord):
     selected_count: int = 0
     rejected_count: int = 0
 
-    predicate_summary: JsonDict = Field(default_factory=dict)
-    score_summary: JsonDict = Field(default_factory=dict)
+    summary: JsonDict = Field(default_factory=dict)
 
 
 class ScenarioReadinessRunRecord(BaseRunRecord):

@@ -91,3 +91,13 @@ def default_profile_run_id(job_id: str) -> str:
 def default_auto_label_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"al-{suffix}"
+
+
+def default_mining_run_id(job_id: str) -> str:
+    suffix = job_id.removeprefix("job-")
+    return f"mining-{suffix}"
+
+
+def default_readiness_run_id(job_id: str) -> str:
+    suffix = job_id.removeprefix("job-")
+    return f"readiness-{suffix}"

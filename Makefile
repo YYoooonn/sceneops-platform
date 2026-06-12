@@ -529,6 +529,13 @@ e2e-detection-evaluation-groundingdino:
 	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) \
 	scripts/e2e/e2e_detection_evaluation_groundingdino.sh
 
+.PHONY: e2e-scenario-curation
+e2e-scenario-curation:
+	chmod +x scripts/e2e/e2e_scenario_curation.sh
+	API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	scripts/e2e/e2e_scenario_curation.sh
+
 .PHONY: e2e
 e2e: e2e-api-smoke e2e-dataset-ingestion e2e-detection-evaluation e2e-pipeline-contracts
 

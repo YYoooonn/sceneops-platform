@@ -7,8 +7,10 @@ import pytest
 from sceneops_core.pipelines.builtin import (
     BUILTIN_PIPELINE_DEFINITIONS,
     RAW_LOG_SCENE_BUILDING_PIPELINE,
+    SCENARIO_CURATION_PIPELINE,
 )
 from sceneops_core.pipelines.schemas import PipelineType
+from sceneops_core.jobs.schemas import JobType
 
 
 _SUPPORTED_TYPES = {
@@ -17,10 +19,15 @@ _SUPPORTED_TYPES = {
     PipelineType.DETECTION_EVALUATION,
 }
 
+# Experimental pipelines: supported=True, implemented=True, experimental=True.
+# They can be created/run but are hidden from default API listing.
+_EXPERIMENTAL_SUPPORTED_TYPES = {
+    PipelineType.SCENARIO_CURATION,
+}
+
 _UNSUPPORTED_TYPES = {
     PipelineType.SCENE_RECONSTRUCTION,
     PipelineType.SCENE_REGISTRATION,
-    PipelineType.SCENARIO_CURATION,
     PipelineType.GENERATED_DATASET_PREPARATION,
 }
 
@@ -35,6 +42,16 @@ class TestPipelineDefinitionMetadata:
             assert (
                 d.experimental is False
             ), f"{pipeline_type} should not be experimental"
+
+    def test_experimental_supported_pipelines_are_supported_and_implemented(
+        self,
+    ) -> None:
+        by_type = {d.type: d for d in BUILTIN_PIPELINE_DEFINITIONS}
+        for pipeline_type in _EXPERIMENTAL_SUPPORTED_TYPES:
+            d = by_type[pipeline_type]
+            assert d.supported is True, f"{pipeline_type} should be supported"
+            assert d.implemented is True, f"{pipeline_type} should be implemented"
+            assert d.experimental is True, f"{pipeline_type} should be experimental"
 
     def test_unsupported_pipelines_are_marked_correctly(self) -> None:
         by_type = {d.type: d for d in BUILTIN_PIPELINE_DEFINITIONS}
@@ -94,15 +111,26 @@ class TestPipelineServiceFilter:
             and (include_experimental or not d.experimental)
         ]
 
-    def test_default_listing_only_returns_supported(self) -> None:
+    def test_default_listing_only_returns_non_experimental_supported(self) -> None:
         result = self._list_supported()
         types = {d.type for d in result}
         assert types == _SUPPORTED_TYPES
+
+    def test_experimental_listing_includes_scenario_curation(self) -> None:
+        result = self._list_supported(include_experimental=True)
+        types = {d.type for d in result}
+        assert _SUPPORTED_TYPES | _EXPERIMENTAL_SUPPORTED_TYPES <= types
 
     def test_unsupported_pipelines_absent_from_default_listing(self) -> None:
         result = self._list_supported()
         types = {d.type for d in result}
         for pipeline_type in _UNSUPPORTED_TYPES:
+            assert pipeline_type not in types
+
+    def test_experimental_supported_pipelines_absent_from_default_listing(self) -> None:
+        result = self._list_supported()
+        types = {d.type for d in result}
+        for pipeline_type in _EXPERIMENTAL_SUPPORTED_TYPES:
             assert pipeline_type not in types
 
     def test_create_run_raises_for_unsupported(self) -> None:
@@ -115,3 +143,30 @@ class TestPipelineServiceFilter:
                         f"Pipeline '{d.type}' is not currently supported because it "
                         "contains unimplemented tasks."
                     )
+
+    def test_scenario_curation_pipeline_is_supported_and_implemented(self) -> None:
+        assert SCENARIO_CURATION_PIPELINE.supported is True
+        assert SCENARIO_CURATION_PIPELINE.implemented is True
+        assert SCENARIO_CURATION_PIPELINE.experimental is True
+
+    def test_scenario_curation_tasks(self) -> None:
+        tasks = {t.pipeline_task_id: t for t in SCENARIO_CURATION_PIPELINE.tasks}
+        assert "mine_scenarios" in tasks
+        assert "score_scenario_readiness" in tasks
+        assert tasks["mine_scenarios"].job_type == JobType.MINE_SCENARIOS
+        assert (
+            tasks["score_scenario_readiness"].job_type
+            == JobType.SCORE_SCENARIO_READINESS
+        )
+        assert tasks["mine_scenarios"].order < tasks["score_scenario_readiness"].order
+        assert (
+            "mine_scenarios"
+            in tasks["score_scenario_readiness"].depends_on_pipeline_task_ids
+        )
+
+    def test_scenario_curation_mine_outputs_scenario_set_ref(self) -> None:
+        tasks = {t.pipeline_task_id: t for t in SCENARIO_CURATION_PIPELINE.tasks}
+        mine_task = tasks["mine_scenarios"]
+        output_names = {o.name for o in mine_task.outputs}
+        assert "scenario_set_id" in output_names
+        assert "scenario_set_uri" in output_names
