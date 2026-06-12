@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from sceneops_core.executions.schemas import ExecutionDispatchResult
+from sceneops_db.postgres.executions import PostgresExecutionRecordRepository
+from sceneops_db.postgres.jobs import PostgresJobEventRepository, PostgresJobRepository
+
+from app.platform.executions.backends.base import JobExecutionBackend
+from app.platform.executions.service import ExecutionService
+from app.platform.jobs.service import JobService
+
+
+class JobDispatchFacade:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        job_backend: JobExecutionBackend,
+        default_dataset_id: str,
+        default_dataset_version: str,
+    ) -> None:
+        self._session_factory = session_factory
+        self._job_backend = job_backend
+        self._default_dataset_id = default_dataset_id
+        self._default_dataset_version = default_dataset_version
+
+    async def dispatch(self, job_id: str) -> ExecutionDispatchResult:
+        # commit-before-backend-dispatch prevents worker RUNNING/SUCCEEDED state
+        # from being overwritten by delayed API QUEUED commits. If backend dispatch
+        # fails after commit, the job intentionally remains QUEUED and can be
+        # redispatched.
+        async with self._session_factory() as session:
+            job_service = JobService(
+                repository=PostgresJobRepository(session),
+                event_repository=PostgresJobEventRepository(session),
+                default_dataset_id=self._default_dataset_id,
+                default_dataset_version=self._default_dataset_version,
+            )
+            execution_service = ExecutionService(
+                job_backend=self._job_backend,
+                record_repository=PostgresExecutionRecordRepository(session),
+            )
+
+            await job_service.mark_queued(job_id)
+            await session.commit()
+
+            execution = await execution_service.dispatch_job(job_id)
+            await session.commit()
+
+            return execution

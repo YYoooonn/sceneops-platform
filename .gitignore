@@ -79,12 +79,12 @@ pgdata/
 # Dataset / Large Files
 # =========================
 data/
-datasets/
-nuscenes/
-v1.0-mini/
-samples/
-sweeps/
-maps/
+# datasets/
+# nuscenes/
+# v1.0-mini/
+# samples/
+# sweeps/
+# maps/
 
 # nuScenes / sensor files
 *.pcd
@@ -106,7 +106,7 @@ maps/
 # Generated Artifacts
 # =========================
 outputs/
-artifacts/
+# artifacts/
 reports/
 quality_reports/
 projection_outputs/
@@ -139,6 +139,11 @@ logs/
 .cache/
 
 # =========================
+# Model Cache
+# =========================
+cache/
+
+# =========================
 # Secrets / Credentials
 # =========================
 *.pem
@@ -156,3 +161,5 @@ infra/helm/charts/sceneops-db/templates/*
 
 infra/values/local/*
 !infra/values/local/*.example.yaml
+
+.claude

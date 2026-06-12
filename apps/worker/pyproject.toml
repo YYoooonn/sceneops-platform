@@ -1,0 +1,41 @@
+[project]
+name = "sceneops-worker"
+version = "0.1.0"
+description = "SceneOps worker"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "sceneops-core",
+    "sceneops-db",
+    "sceneops-storage",
+    "nuscenes-devkit",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "typer>=0.12",
+    "celery[redis]>=5.4",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    # GroundingDINO HTTP client + frustum lifting (CPU-only, no torch/transformers)
+    "httpx>=0.27",
+    "scikit-learn>=1.3",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = [
+  "onnx>=1.16",
+]
+
+[project.scripts]
+sceneops-worker = "sceneops_worker.main:app"
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-db = { workspace = true }
+sceneops-storage = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_worker"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

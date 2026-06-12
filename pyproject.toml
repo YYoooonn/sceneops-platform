@@ -1,0 +1,39 @@
+[project]
+name = "sceneops-platform"
+version = "0.1.0"
+requires-python = ">=3.11,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pre-commit",
+  "ruff>=0.8",
+  "black",
+  "mypy>=1.10",
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["apps/worker/tests", "apps/api/tests"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+  "packages/sceneops-core",
+  "packages/sceneops-db",
+  "packages/sceneops-storage",
+  "apps/api",
+  "apps/worker",
+  "apps/inference-server",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-db = { workspace = true }
+sceneops-storage = { workspace = true }
+sceneops-api = { workspace = true }
+sceneops-worker = { workspace = true }

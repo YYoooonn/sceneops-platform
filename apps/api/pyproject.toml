@@ -1,0 +1,31 @@
+[project]
+name = "sceneops-api"
+version = "0.1.0"
+description = "SceneOps Platform API server"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "sceneops-core",
+    "sceneops-db",
+    "sceneops-storage",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "celery[redis]>=5.4",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+sceneops-api = "app.main:main"
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-db = { workspace = true }
+sceneops-storage = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

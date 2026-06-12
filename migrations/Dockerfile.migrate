@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+WORKDIR /workspace
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV UV_PROJECT_ENVIRONMENT=/workspace/.venv
+ENV PATH="/workspace/.venv/bin:$PATH"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+
+COPY packages/sceneops-core ./packages/sceneops-core
+COPY packages/sceneops-db ./packages/sceneops-db
+
+COPY migrations/__init__.py ./migrations/__init__.py
+COPY migrations/alembic.ini ./migrations/alembic.ini
+COPY migrations/env.py ./migrations/env.py
+COPY migrations/script.py.mako ./migrations/script.py.mako
+
+RUN uv sync --package sceneops-db --frozen --no-dev
+
+CMD ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
