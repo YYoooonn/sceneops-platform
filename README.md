@@ -39,12 +39,12 @@ SceneOps Platform currently implements a local-first, production-shaped data and
 
 The current platform demonstrates three end-to-end workflows:
 
-1. **Scene-first dataset quality**
-  Scene-level validation/profile/GT signals are aggregated into dataset readiness.
+1. **Scene-first dataset quality → scenario curation → detection evaluation**
+  Scene-level quality signals drive scenario curation, which constrains detection evaluation to a curated ScenarioSet.
 2. **Real detection evaluation**
-  GroundingDINO predictions are stored, evaluated, and recorded in the leaderboard.
+  GroundingDINO evaluates only scenes selected by the ScenarioSet, with full lineage recorded in inference and evaluation run metadata.
 3. **Scenario curation**
-  Scene quality signals are converted into scenario candidates and readiness scores.
+  Scene quality signals are converted into scenario candidates and readiness scores, producing a ScenarioSet artifact.
 
 ---
 
@@ -85,9 +85,12 @@ It summarizes readiness, selectable scenes, excluded scenes, GT coverage, observ
 
 ### Detection Evaluation
 
-Detection evaluation runs model predictions against selectable scenes.
+Detection evaluation runs model predictions against a scene selection.
 
-Scene quality determines which scenes are evaluated and which scenes are skipped, making evaluation results explainable.
+When a `ScenarioSet` is provided, detection evaluates only scenes selected by that ScenarioSet.
+Within the selected scenes, existing scene-quality filters (validation status, GT availability, annotation count) still apply.
+Scenes outside the ScenarioSet are skipped with reason `not_in_scenario_set`.
+ScenarioSet lineage is recorded in both inference and evaluation run metadata, making evaluation results explainable.
 
 ### Scenario
 
@@ -191,11 +194,15 @@ tasks[].rawResult ← debug detail
 
 ---
 
-## Demo 1: scene-first quality → detection evaluation
+## Demo 1: scene-first quality → scenario curation → detection evaluation
 
 SceneOps treats `SceneRecord` as the canonical source.
-Dataset quality is an aggregate over scene-level signals, not a single dataset-level run.
-Detection evaluation reads the same scene-level view to show which scenes were selected, evaluated, or skipped.
+Dataset quality aggregates scene-level validation, profile, and GT signals into a readiness view.
+Scenario curation converts those signals into a `ScenarioSet` — a curated selection artifact over registered `SceneRecord`s.
+Detection evaluation then runs only on scenes selected by the ScenarioSet, while existing scene-quality filters (GT availability, annotation count) still apply within that set.
+ScenarioSet lineage is recorded in both inference and evaluation run metadata.
+
+> A ScenarioSet is not a new raw data unit. It is a curated selection artifact over existing SceneRecords.
 
 ### Quickstart
 
@@ -203,13 +210,31 @@ Detection evaluation reads the same scene-level view to show which scenes were s
 make e2e-dataset-ingestion        # dataset_scene_ingestion pipeline (10 nuScenes GT scenes)
 make e2e-raw-log-scene-building   # raw_log_scene_building pipeline (20 non-GT scenes)
 make inference-local-up
-make e2e-detection-evaluation-real     # grounding-dino inference server detection evaluation
-make compare-detection PIPELINE_RUN_ID=<id>
+make e2e-scenario-curation        # prints scenario_set_id and scenario curation pipeline_run_id
+make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...
+make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>
 ```
 
-### Captured output - 30-scene dataset: 10 GT(nuscenes) + 20 non-GT(raw-log-style scenes)
+Or pass the ScenarioSet ID directly:
+
+```bash
+make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...
+```
+
+> `SCENARIO_CURATION_PIPELINE_RUN_ID` is the pipeline run ID printed by `e2e-scenario-curation`.
+> `PIPELINE_RUN_ID` in `compare-detection` is the detection-evaluation pipeline run ID — a different run.
+
+### Example output — 30-scene dataset: 10 GT (nuScenes) + 20 non-GT (raw-log-style)
+
+Scenario curation mines the 10 GT scenes into a ScenarioSet (candidate_count=10, rejected_count=20).
+Detection evaluation uses that ScenarioSet to constrain scene selection.
 
 ```
+=== Scenario Curation Result ===
+  pipeline_run_id : pipe-...
+  scenario_set_id : scset-...
+  candidate_count=10  ready=8  warning=2  blocked=0
+
 === Dataset Quality ===
   readiness                     : warning
   scene_count                   : 30
@@ -223,6 +248,15 @@ make compare-detection PIPELINE_RUN_ID=<id>
   gt_coverage_ratio             : 0.3333
   observed_channels             : CAM_FRONT, LIDAR_TOP
   exclusion_reasons             : {"missing_ground_truth":20}
+
+=== ScenarioSet Lineage ===
+  scenario_set_id          : scset-...
+  scenario_candidate_count : 10
+  scenario_selected_count  : 10
+  scenario_rejected_count  : 20
+  not_in_scenario_set      : 20
+  lineage_consistency      : ok
+  flow                     : 10 scenario candidates → 10 selected scenes → 10 ev
 
 === Detection Run Comparison ===
   selected_scene_count  : 10
@@ -239,10 +273,13 @@ make compare-detection PIPELINE_RUN_ID=<id>
 **Consistency check:**
 
 ```
-selectable_for_detection = 10  →  selected_scene_count = 10
-non_selectable = 20            →  skipped_scene_count  = 20
-missing_ground_truth = 20      →  20 scenes skipped with scene_has_no_ground_truth
-selected scenes = 10           →  evaluated scenes     = 10
+ScenarioSet candidates constrain prediction scene selection.
+Scenes outside the ScenarioSet are skipped with not_in_scenario_set.
+Scenes inside the ScenarioSet pass through existing GT/quality filters.
+scenario_set_id is recorded in both inference and evaluation run metadata.
+
+ScenarioSet candidates → selected scenes → evaluated scenes
+10 scenario candidates → 10 selected scenes → 10 evaluated scenes
 ```
 
 `readiness=warning` is expected when only 10/30 scenes are selectable for detection.
@@ -251,17 +288,21 @@ selected scenes = 10           →  evaluated scenes     = 10
 `ground_truth_count` (14982) is the evaluator-side count after evaluation-specific loading and filtering
 — these values can differ.
 
+The precision value (0.318803) reflects real GroundingDINO detections on this limited nuScenes mini sample, not a production benchmark.
+
 ---
 
 ## Demo 2: real GroundingDINO detection evaluation
 
 SceneOps supports both a fast mock backend and a real GroundingDINO backend.
+The real E2E target requires a ScenarioSet — either a direct ID or a scenario curation pipeline run ID.
 
 ```bash
 make local-up
 make inference-local-up   # or make inference-gpu-up for GPU
 make e2e-dataset-ingestion
-make e2e-detection-evaluation-real
+make e2e-scenario-curation
+make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...
 ```
 
 **Validated flow:**
@@ -308,6 +349,17 @@ Scenario curation converts scene-level quality signals into a data-selection wor
 ```bash
 make e2e-dataset-ingestion
 make e2e-scenario-curation
+```
+
+The script prints both `pipeline_run_id` and `scenario_set_id` on completion.
+Either can be passed directly to real detection evaluation:
+
+```bash
+# Use the printed pipeline_run_id:
+make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...
+
+# Or use the printed scenario_set_id directly:
+make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...
 ```
 
 **Pipeline result shape:**
@@ -448,17 +500,18 @@ SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
 ### E2E
 
 
-| Command                                       | Description                                |
-| --------------------------------------------- | ------------------------------------------ |
-| `make e2e`                                    | All E2E tests (mock backend)               |
-| `make e2e-api-smoke`                          | API smoke                                  |
-| `make e2e-dataset-ingestion`                  | Ingestion pipeline                         |
-| `make e2e-raw-log-scene-building`             | Raw log scene building                     |
-| `make e2e-detection-evaluation`               | Detection evaluation (mock)                |
-| `make e2e-detection-evaluation-real`          | Detection evaluation (real GroundingDINO)  |
-| `make e2e-pipeline-contracts`                 | Pipeline contract validation               |
-| `make e2e-scenario-curation`                  | Scenario curation pipeline                 |
-| `make compare-detection PIPELINE_RUN_ID=<id>` | Dataset quality + detection run comparison |
+|  Command | Description |
+| --- | --- |
+| `make e2e` | All E2E tests (mock backend) |
+| `make e2e-api-smoke` | API smoke |
+| `make e2e-dataset-ingestion` | Ingestion pipeline |
+| `make e2e-raw-log-scene-building` | Raw log scene building |
+| `make e2e-detection-evaluation` | Detection evaluation (mock) |
+| `make e2e-scenario-curation` | Scenario curation pipeline; prints `scenario_set_id` and `pipeline_run_id` |
+| `make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...` | Detection evaluation with real GroundingDINO; requires `SCENARIO_SET_ID` or `SCENARIO_CURATION_PIPELINE_RUN_ID` |
+| `make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...` | Same as above; resolves ScenarioSet from the curation pipeline run |
+| `make e2e-pipeline-contracts` | Pipeline contract validation  |
+| `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Dataset quality + detection run comparison; includes ScenarioSet lineage when available |
 
 
 ---

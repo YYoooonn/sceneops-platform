@@ -157,8 +157,8 @@ evaluation_run_id = sys.argv[2]
 # Read pre-fetched JSON from stdin
 infer_raw = open("/dev/stdin").read() if False else None  # handled below
 PYEOF
-# Pass both JSON blobs to Python via environment variables to avoid subshell issues
-export INFER_JSON EVAL_JSON
+# Pass JSON blobs and pipeline run ID to Python via environment variables
+export INFER_JSON EVAL_JSON PIPELINE_RUN_ID
 
 python3 - "$INFERENCE_RUN_ID" "$EVALUATION_RUN_ID" <<'PYEOF'
 import sys
@@ -167,6 +167,7 @@ import os
 
 inference_run_id = sys.argv[1]
 evaluation_run_id = sys.argv[2]
+pipeline_run_id = os.environ.get("PIPELINE_RUN_ID", "")
 
 infer_data = json.loads(os.environ["INFER_JSON"])
 eval_data  = json.loads(os.environ["EVAL_JSON"])
@@ -175,6 +176,7 @@ infer_run = infer_data.get("run", {})
 eval_run  = eval_data.get("run", {})
 
 infer_meta   = infer_run.get("metadata", {}) or {}
+eval_meta    = eval_run.get("metadata", {}) or {}
 eval_summary = eval_run.get("summary", {}) or {}
 
 scene_sel = infer_meta.get("sceneSelection") or infer_meta.get("scene_selection") or {}
@@ -207,7 +209,56 @@ all_scene_ids = (
 )
 all_scene_ids.discard("")
 
+# ── ScenarioSet lineage ───────────────────────────────────────────────────────
+
+# Prefer inference run as primary source; fall back to evaluation run.
+scenario_set_id          = infer_meta.get("scenario_set_id")          or eval_meta.get("scenario_set_id")
+scenario_set_uri         = infer_meta.get("scenario_set_uri")         or eval_meta.get("scenario_set_uri")
+scenario_candidate_count = infer_meta.get("scenario_candidate_count") or eval_meta.get("scenario_candidate_count")
+scenario_selected_count  = infer_meta.get("scenario_selected_count")  or eval_meta.get("scenario_selected_count")
+scenario_rejected_count  = infer_meta.get("scenario_rejected_count")  or eval_meta.get("scenario_rejected_count")
+
+not_in_scenario_set_count = sum(
+    1 for item in skipped_sel
+    if item.get("reason") == "not_in_scenario_set"
+)
+
+infer_ss_id = infer_meta.get("scenario_set_id")
+eval_ss_id  = eval_meta.get("scenario_set_id")
+lineage_ok = True
+lineage_consistency = "-"
+if infer_ss_id and eval_ss_id:
+    if infer_ss_id == eval_ss_id:
+        lineage_consistency = "ok"
+    else:
+        lineage_consistency = f"MISMATCH (inference={infer_ss_id!r}, evaluation={eval_ss_id!r})"
+        lineage_ok = False
+elif infer_ss_id or eval_ss_id:
+    lineage_consistency = "partial (only one side has scenario_set_id)"
+
 print("")
+print("=== ScenarioSet Lineage ===")
+if scenario_set_id:
+    selected_scene_count  = scene_sel.get("selected_scene_count") or scene_sel.get("selectedSceneCount") or len(selected_ids)
+    evaluated_scene_count = eval_summary.get("evaluated_scene_count") or eval_summary.get("evaluatedSceneCount") or len(evaluated_ids)
+    cand  = scenario_candidate_count if scenario_candidate_count is not None else "-"
+    sel   = scenario_selected_count  if scenario_selected_count  is not None else "-"
+    rej   = scenario_rejected_count  if scenario_rejected_count  is not None else "-"
+    print(f"  scenario_set_id          : {scenario_set_id}")
+    print(f"  scenario_set_uri         : {scenario_set_uri or '-'}")
+    print(f"  scenario_candidate_count : {cand}")
+    print(f"  scenario_selected_count  : {sel}")
+    print(f"  scenario_rejected_count  : {rej}")
+    print(f"  not_in_scenario_set      : {not_in_scenario_set_count}")
+    print(f"  lineage_consistency      : {lineage_consistency}")
+    print(f"  flow                     : {sel} scenario candidates → {selected_scene_count} selected scenes → {evaluated_scene_count} evaluated scenes")
+else:
+    print("  scenario_set_id          : -")
+    print("  mode                     : dataset-wide detection evaluation")
+print("")
+
+# ── Detection Run Comparison ──────────────────────────────────────────────────
+
 print("=== Detection Run Comparison ===")
 print(f"  inference_run_id  : {inference_run_id}")
 print(f"  evaluation_run_id : {evaluation_run_id}")
@@ -260,4 +311,13 @@ for scene_id in sorted(all_scene_ids):
 if not all_scene_ids:
     print("  (no scene data found in run metadata — check that the run completed successfully)")
 print("")
+
+# Fail non-zero on lineage mismatch so the caller can detect it.
+if not lineage_ok:
+    print("ERROR: ScenarioSet lineage mismatch — comparison results are not trustworthy.", file=sys.stderr)
+    print(f"  inference  scenario_set_id : {infer_ss_id}", file=sys.stderr)
+    print(f"  evaluation scenario_set_id : {eval_ss_id}", file=sys.stderr)
+    if pipeline_run_id:
+        print(f"  detection pipeline_run_id  : {pipeline_run_id}", file=sys.stderr)
+    sys.exit(1)
 PYEOF

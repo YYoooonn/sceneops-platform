@@ -339,3 +339,137 @@ async def test_result_contains_all_expected_keys():
         "ground_truth_sources",
     }
     assert expected_keys.issubset(result.keys())
+
+
+# ── scenario_set_scene_ids filter ─────────────────────────────────────────────
+
+
+async def test_scenario_set_none_preserves_existing_behavior():
+    """Passing scenario_set_scene_ids=None must not change any result value."""
+    manifests = {
+        "scene-001": _scene_manifest("scene-001", sample_count=5),
+        "scene-002": _scene_manifest("scene-002", sample_count=8),
+    }
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(["scene-001", "scene-002"]),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(mode=DetectionSceneSelectionMode.ALL),
+        scenario_set_scene_ids=None,
+    )
+    assert result["selected_scene_count"] == 2
+    assert result["skipped_scene_count"] == 0
+
+
+async def test_scenario_set_non_member_scenes_skipped_with_correct_reason():
+    manifests = {
+        "scene-a": _scene_manifest("scene-a", sample_count=5),
+        "scene-b": _scene_manifest("scene-b", sample_count=8),
+    }
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(["scene-a", "scene-b"]),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(mode=DetectionSceneSelectionMode.ALL),
+        scenario_set_scene_ids={"scene-a"},
+    )
+    assert result["selected_scene_count"] == 1
+    assert result["selected_scene_ids"] == ["scene-a"]
+    assert result["skipped_scene_count"] == 1
+    assert result["skipped_scenes"][0]["scene_id"] == "scene-b"
+    assert result["skipped_scenes"][0]["reason"] == "not_in_scenario_set"
+
+
+async def test_empty_scenario_set_selects_zero_scenes():
+    manifests = {
+        "scene-001": _scene_manifest("scene-001", sample_count=5),
+        "scene-002": _scene_manifest("scene-002", sample_count=8),
+    }
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(["scene-001", "scene-002"]),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(mode=DetectionSceneSelectionMode.ALL),
+        scenario_set_scene_ids=set(),
+    )
+    assert result["selected_scene_count"] == 0
+    assert result["skipped_scene_count"] == 2
+    assert all(s["reason"] == "not_in_scenario_set" for s in result["skipped_scenes"])
+
+
+async def test_scenario_set_intersects_with_gt_only_selection():
+    """Only scenes that are both in the ScenarioSet AND have GT are selected."""
+    manifests = {
+        "scene-gt-in": _scene_manifest(
+            "scene-gt-in", annotation_count=10, sample_count=20
+        ),
+        "scene-no-gt": _scene_manifest(
+            "scene-no-gt", annotation_count=0, sample_count=5
+        ),
+        "scene-gt-out": _scene_manifest(
+            "scene-gt-out", annotation_count=8, sample_count=15
+        ),
+    }
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(
+            ["scene-gt-in", "scene-no-gt", "scene-gt-out"]
+        ),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(mode=DetectionSceneSelectionMode.GROUND_TRUTH_ONLY),
+        scenario_set_scene_ids={"scene-gt-in", "scene-no-gt"},
+    )
+    # scene-gt-out: not in scenario_set → not_in_scenario_set
+    # scene-no-gt:  in scenario_set but no GT → scene_has_no_ground_truth
+    # scene-gt-in:  in scenario_set + has GT → selected
+    assert result["selected_scene_count"] == 1
+    assert result["selected_scene_ids"] == ["scene-gt-in"]
+    reasons = {s["reason"] for s in result["skipped_scenes"]}
+    assert "not_in_scenario_set" in reasons
+    assert "scene_has_no_ground_truth" in reasons
+
+
+async def test_scenario_set_ids_not_in_manifest_are_ignored():
+    """Extra scene IDs in the ScenarioSet that do not appear in the manifest
+    do not cause errors — they are simply never encountered during iteration."""
+    manifests = {
+        "scene-001": _scene_manifest("scene-001", sample_count=5),
+    }
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(["scene-001"]),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(mode=DetectionSceneSelectionMode.ALL),
+        scenario_set_scene_ids={"scene-001", "scene-does-not-exist"},
+    )
+    assert result["selected_scene_count"] == 1
+    assert result["skipped_scene_count"] == 0
+
+
+async def test_scenario_set_filter_applied_before_gt_filter():
+    """A scene not in the ScenarioSet gets reason=not_in_scenario_set even if
+    it would also fail the GT filter — ScenarioSet filter runs first."""
+    manifests = {
+        "scene-no-gt-not-in-set": _scene_manifest(
+            "scene-no-gt-not-in-set", annotation_count=0, sample_count=3
+        ),
+    }
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(["scene-no-gt-not-in-set"]),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(mode=DetectionSceneSelectionMode.GROUND_TRUTH_ONLY),
+        scenario_set_scene_ids={"scene-other"},  # scene-no-gt-not-in-set not included
+    )
+    assert result["skipped_scenes"][0]["reason"] == "not_in_scenario_set"
+
+
+async def test_scenario_set_member_without_gt_gets_gt_skip_reason():
+    """A scene that IS in the ScenarioSet but fails GT check is skipped with
+    the existing scene_has_no_ground_truth reason, not not_in_scenario_set."""
+    manifests = {
+        "scene-no-gt": _scene_manifest(
+            "scene-no-gt", annotation_count=0, sample_count=5
+        ),
+    }
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(["scene-no-gt"]),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(mode=DetectionSceneSelectionMode.GROUND_TRUTH_ONLY),
+        scenario_set_scene_ids={"scene-no-gt"},  # in set but no GT
+    )
+    assert result["skipped_scenes"][0]["reason"] == "scene_has_no_ground_truth"

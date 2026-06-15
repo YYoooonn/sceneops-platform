@@ -196,6 +196,10 @@ class EvaluateDetectionJobHandler(
             dataset_id=params.dataset_id,
             dataset_version=params.dataset_version,
         )
+        self._validate_scenario_set_lineage(
+            params=params,
+            inference_run=inference_run,
+        )
         return EvaluateDetectionExecution(
             job=job,
             params=params,
@@ -266,6 +270,50 @@ class EvaluateDetectionJobHandler(
                 f"{inference_run.dataset_id}/{inference_run.dataset_version}, "
                 f"but evaluation params request {dataset_id}/{dataset_version}"
             )
+
+    @staticmethod
+    def _validate_scenario_set_lineage(
+        *,
+        params: EvaluateDetectionJobParams,
+        inference_run: InferenceRunRecord,
+    ) -> None:
+        requested = params.scenario_set_id
+        if not requested:
+            return
+        inference_metadata = inference_run.metadata or {}
+        inference_scenario_set_id = inference_metadata.get("scenario_set_id")
+        if not inference_scenario_set_id:
+            raise ValueError(
+                f"scenario_set_id={requested!r} was requested but inference run "
+                f"{inference_run.run_id!r} does not contain scenario_set_id in its "
+                f"metadata. Ensure predict_detection was run with the same scenario_set_id."
+            )
+        if inference_scenario_set_id != requested:
+            raise ValueError(
+                f"ScenarioSet mismatch: requested scenario_set_id={requested!r} but "
+                f"inference run {inference_run.run_id!r} was produced with "
+                f"scenario_set_id={inference_scenario_set_id!r}."
+            )
+
+    @staticmethod
+    def _build_scenario_set_metadata(
+        *,
+        params: EvaluateDetectionJobParams,
+        inference_run: InferenceRunRecord,
+    ) -> JsonDict:
+        if not params.scenario_set_id:
+            return {}
+        inference_metadata = inference_run.metadata or {}
+        metadata: JsonDict = {"scenario_set_id": params.scenario_set_id}
+        for key in (
+            "scenario_set_uri",
+            "scenario_candidate_count",
+            "scenario_selected_count",
+            "scenario_rejected_count",
+        ):
+            if key in inference_metadata:
+                metadata[key] = inference_metadata[key]
+        return metadata
 
     # ── input resolution ───────────────────────────────────────────────────────
 
@@ -475,6 +523,10 @@ class EvaluateDetectionJobHandler(
         counts: EvaluationCounts,
     ) -> EvaluationRunRecord:
         inference_run = execution.inference_run_record
+        scenario_metadata = self._build_scenario_set_metadata(
+            params=execution.params,
+            inference_run=inference_run,
+        )
         return initial_record.model_copy(
             update={
                 "model_id": inference_run.model_id,
@@ -494,6 +546,7 @@ class EvaluateDetectionJobHandler(
                     evaluation_manifest=evaluation_manifest,
                     counts=counts,
                 ),
+                "metadata": {**(initial_record.metadata or {}), **scenario_metadata},
                 "finished_at": utc_now(),
             }
         )

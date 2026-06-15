@@ -32,6 +32,10 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.inference.detection import create_detection_inference_backend
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
+from sceneops_worker.scenarios.resolver import (
+    ResolvedScenarioSet,
+    ScenarioSetSceneResolver,
+)
 from sceneops_worker.scenes.selection import select_detection_scenes
 
 
@@ -57,6 +61,7 @@ class PredictDetectionInputs:
     dataset_manifest_uri: str
     selected_scene_ids: list[str]
     scene_selection_metadata: JsonDict
+    resolved_scenario_set: ResolvedScenarioSet | None = None
 
 
 @dataclass(frozen=True)
@@ -288,16 +293,31 @@ class PredictDetectionJobHandler(
                 version.manifest_uri
             )
         )
+
+        resolved_scenario_set: ResolvedScenarioSet | None = None
+        scenario_set_scene_ids: set[str] | None = None
+        if execution.params.scenario_set_id:
+            resolver = ScenarioSetSceneResolver(
+                scenario_store=execution.context.scenario_store,
+                artifact_store=execution.context.artifact_store,
+            )
+            resolved_scenario_set = await resolver.resolve(
+                execution.params.scenario_set_id
+            )
+            scenario_set_scene_ids = set(resolved_scenario_set.selected_scene_ids)
+
         selection_result = await select_detection_scenes(
             dataset_manifest=dataset_manifest,
             scene_artifact_store=execution.context.scene_artifact_store,
             selection=execution.params.scene_selection,
+            scenario_set_scene_ids=scenario_set_scene_ids,
         )
         return PredictDetectionInputs(
             dataset_manifest=dataset_manifest,
             dataset_manifest_uri=version.manifest_uri,
             selected_scene_ids=selection_result["selected_scene_ids"],
             scene_selection_metadata=selection_result,
+            resolved_scenario_set=resolved_scenario_set,
         )
 
     # ── inference ─────────────────────────────────────────────────────────────
@@ -430,6 +450,16 @@ class PredictDetectionJobHandler(
         artifacts: PredictDetectionArtifacts,
         inputs: PredictDetectionInputs,
     ) -> InferenceRunRecord:
+        scenario_set_metadata: JsonDict = {}
+        if inputs.resolved_scenario_set is not None:
+            rss = inputs.resolved_scenario_set
+            scenario_set_metadata = {
+                "scenario_set_id": rss.scenario_set_id,
+                "scenario_set_uri": rss.scenario_set_uri,
+                "scenario_candidate_count": rss.candidate_count,
+                "scenario_selected_count": rss.selected_count,
+                "scenario_rejected_count": rss.rejected_count,
+            }
         return initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
@@ -441,6 +471,7 @@ class PredictDetectionJobHandler(
                 "metadata": {
                     "model_uri": execution.model_uri,
                     "endpoint_url": execution.endpoint_url,
+                    **scenario_set_metadata,
                     "scene_selection": inputs.scene_selection_metadata,
                     **inference_result.metadata,
                 },

@@ -14,6 +14,7 @@ async def select_detection_scenes(
     dataset_manifest: DatasetManifest,
     scene_artifact_store: SceneArtifactStore,
     selection: DetectionSceneSelectionConfig,
+    scenario_set_scene_ids: set[str] | None = None,
 ) -> JsonDict:
     requested_scene_ids = set(selection.scene_ids)
 
@@ -29,6 +30,18 @@ async def select_detection_scenes(
         total_scene_count += 1
 
         scene_id = scene_entry.scene_id
+
+        if (
+            scenario_set_scene_ids is not None
+            and scene_id not in scenario_set_scene_ids
+        ):
+            skipped_scenes.append(
+                {
+                    "scene_id": scene_id,
+                    "reason": "not_in_scenario_set",
+                }
+            )
+            continue
 
         if requested_scene_ids and scene_id not in requested_scene_ids:
             skipped_scenes.append(
