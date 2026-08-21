@@ -15,6 +15,7 @@ from .params import (
     CheckDistributionJobParams,
     CompareScenesJobParams,
     EvaluateDetectionJobParams,
+    ExportAnalyticsSnapshotJobParams,
     ExportDatasetJobParams,
     ExportScenePackageJobParams,
     IngestScenesJobParams,
@@ -35,6 +36,7 @@ from .results import (
     CheckDistributionJobResult,
     CompareScenesJobResult,
     EvaluateDetectionJobResult,
+    ExportAnalyticsSnapshotJobResult,
     ExportDatasetJobResult,
     ExportScenePackageJobResult,
     IngestScenesJobResult,
@@ -65,6 +67,7 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.AUTO_LABEL_DATASET: AutoLabelDatasetJobParams,
     JobType.CHECK_DISTRIBUTION: CheckDistributionJobParams,
     JobType.EXPORT_DATASET: ExportDatasetJobParams,
+    JobType.EXPORT_ANALYTICS_SNAPSHOT: ExportAnalyticsSnapshotJobParams,
     JobType.PREDICT_DETECTION: PredictDetectionJobParams,
     JobType.EVALUATE_DETECTION: EvaluateDetectionJobParams,
 }
@@ -85,6 +88,7 @@ JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.AUTO_LABEL_DATASET: AutoLabelDatasetJobResult,
     JobType.CHECK_DISTRIBUTION: CheckDistributionJobResult,
     JobType.EXPORT_DATASET: ExportDatasetJobResult,
+    JobType.EXPORT_ANALYTICS_SNAPSHOT: ExportAnalyticsSnapshotJobResult,
     JobType.PREDICT_DETECTION: PredictDetectionJobResult,
     JobType.EVALUATE_DETECTION: EvaluateDetectionJobResult,
 }

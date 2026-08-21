@@ -16,7 +16,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["apps/worker/tests", "apps/api/tests"]
+testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests"]
 
 [tool.uv]
 package = false
@@ -26,6 +26,7 @@ members = [
   "packages/sceneops-core",
   "packages/sceneops-db",
   "packages/sceneops-storage",
+  "packages/sceneops-analytics",
   "apps/api",
   "apps/worker",
   "apps/inference-server",
@@ -35,5 +36,6 @@ members = [
 sceneops-core = { workspace = true }
 sceneops-db = { workspace = true }
 sceneops-storage = { workspace = true }
+sceneops-analytics = { workspace = true }
 sceneops-api = { workspace = true }
 sceneops-worker = { workspace = true }

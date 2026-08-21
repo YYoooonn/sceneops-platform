@@ -161,7 +161,7 @@ check:
 
 .PHONY: test
 test:
-	uv run pytest apps/worker/tests/ apps/api/tests/ -v
+	uv run pytest apps/worker/tests/ apps/api/tests/ packages/sceneops-analytics/tests/ -v
 
 .PHONY: lint
 lint:
@@ -384,7 +384,7 @@ minio-up:
 
 .PHONY: minio-down
 minio-down:
-	docker compose -f $(COMPOSE_FILE) --profile minio stop minio
+	docker compose -f $(COMPOSE_FILE) --profile minio down minio
 
 minio-migrate:
 	docker compose -f $(COMPOSE_FILE) --profile minio run --rm minio-init
@@ -538,6 +538,13 @@ e2e-scenario-curation:
 	API_PREFIX=$(API_PREFIX) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_scenario_curation.sh
+
+.PHONY: e2e-analytics-export
+e2e-analytics-export:
+	chmod +x scripts/e2e/e2e_analytics_export.sh
+	API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	scripts/e2e/e2e_analytics_export.sh
 
 .PHONY: e2e
 e2e: e2e-api-smoke e2e-dataset-ingestion e2e-detection-evaluation e2e-pipeline-contracts

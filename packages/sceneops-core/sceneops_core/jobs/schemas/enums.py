@@ -28,6 +28,7 @@ class JobType(StrEnum):
     AUTO_LABEL_DATASET = "auto_label_dataset"
     CHECK_DISTRIBUTION = "check_distribution"
     EXPORT_DATASET = "export_dataset"
+    EXPORT_ANALYTICS_SNAPSHOT = "export_analytics_snapshot"
 
     # ── detection ──
     PREDICT_DETECTION = "predict_detection"

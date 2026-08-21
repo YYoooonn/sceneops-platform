@@ -2,6 +2,7 @@ from .base import BaseJobParams
 from .dataset import (
     AutoLabelDatasetJobParams,
     CheckDistributionJobParams,
+    ExportAnalyticsSnapshotJobParams,
     ExportDatasetJobParams,
 )
 from .detection import (
@@ -47,6 +48,7 @@ __all__ = [
     "AutoLabelDatasetJobParams",
     "CheckDistributionJobParams",
     "ExportDatasetJobParams",
+    "ExportAnalyticsSnapshotJobParams",
     "PredictDetectionJobParams",
     "EvaluateDetectionJobParams",
 ]

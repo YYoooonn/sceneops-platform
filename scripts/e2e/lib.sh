@@ -163,6 +163,67 @@ assert_pipeline_succeeded() {
   assert_json_equals "$pipeline_json" '.pipelineRun.status' 'succeeded' "$message"
 }
 
+# ── Job API (standalone jobs, not part of a pipeline) ──────────────────────────
+
+create_job() {
+  local api_base_url="$1"
+  local payload="$2"
+  curl -sS -X POST "$(api_url "$api_base_url" "/jobs")" \
+    -H "Content-Type: application/json" \
+    -d "$payload"
+}
+
+execute_job() {
+  local api_base_url="$1"
+  local job_id="$2"
+  curl -sS -X POST "$(api_url "$api_base_url" "/jobs/$job_id/execute")"
+}
+
+fetch_job() {
+  local api_base_url="$1"
+  local job_id="$2"
+  curl -sS "$(api_url "$api_base_url" "/jobs/$job_id")"
+}
+
+extract_job_id() {
+  local json="$1"
+  require_json_field "$json" '.job.jobId' 'jobId'
+}
+
+poll_job_terminal() {
+  local api_base_url="$1"
+  local job_id="$2"
+  local max_attempts="${3:-60}"
+  local sleep_seconds="${4:-5}"
+
+  local job_json status
+
+  for i in $(seq 1 "$max_attempts"); do
+    job_json="$(fetch_job "$api_base_url" "$job_id")"
+    status="$(echo "$job_json" | jq -r '.job.status // empty')"
+
+    echo "  [$i/$max_attempts] status=$status" >&2
+
+    case "$status" in
+      succeeded|failed|cancelled|skipped)
+        echo "$job_json"
+        return 0
+        ;;
+    esac
+
+    sleep "$sleep_seconds"
+  done
+
+  echo "❌ Job did not reach terminal state after $max_attempts attempts: $job_id" >&2
+  exit 1
+}
+
+assert_job_succeeded() {
+  local job_json="$1"
+  local message="${2:-job should succeed}"
+  assert_json_equals "$job_json" '.job.status' 'succeeded' "$message"
+}
+
 # ── Dataset / Scene API ───────────────────────────────────────────────────────
 
 upsert_dataset() {

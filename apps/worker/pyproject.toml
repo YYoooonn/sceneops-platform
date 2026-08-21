@@ -7,6 +7,7 @@ dependencies = [
     "sceneops-core",
     "sceneops-db",
     "sceneops-storage",
+    "sceneops-analytics",
     "nuscenes-devkit",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
@@ -32,6 +33,7 @@ sceneops-worker = "sceneops_worker.main:app"
 sceneops-core = { workspace = true }
 sceneops-db = { workspace = true }
 sceneops-storage = { workspace = true }
+sceneops-analytics = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["sceneops_worker"]

@@ -114,6 +114,12 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("collect_dataset_artifacts", "Collect dataset artifacts"),
         step("write_dataset_export", "Write dataset export"),
     ],
+    JobType.EXPORT_ANALYTICS_SNAPSHOT: [
+        step("load_scene_records", "Load scene records"),
+        step("load_scene_manifests", "Load scene manifests"),
+        step("build_analytics_tables", "Build analytics tables"),
+        step("write_parquet_tables", "Write parquet tables"),
+    ],
     JobType.PREDICT_DETECTION: [
         step("load_dataset_manifest", "Load dataset manifest"),
         step("load_model", "Load model"),

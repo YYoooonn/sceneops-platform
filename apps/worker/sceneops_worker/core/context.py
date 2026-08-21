@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sceneops_analytics import AnalyticsTableWriter
 from sceneops_storage import ArtifactStore
 
 from sceneops_worker.config import WorkerSettings
@@ -46,6 +47,7 @@ class WorkerContext:
     dataset_artifact_store: DatasetArtifactStore
     scene_artifact_store: SceneArtifactStore
     run_artifact_store: RunArtifactStore
+    analytics_writer: AnalyticsTableWriter
 
     job_store: JobStore
     job_event_store: JobEventStore

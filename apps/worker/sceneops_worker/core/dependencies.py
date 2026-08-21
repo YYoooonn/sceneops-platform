@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sceneops_analytics import AnalyticsTableWriter
 from sceneops_storage import ArtifactStore, create_artifact_store
 
 from sceneops_worker.config import WorkerSettings, get_settings
@@ -71,6 +72,10 @@ def create_worker_context(
         run_artifact_store=RunArtifactStore(
             artifact_store=artifact_store,
             runs_root_uri=settings.run_root_uri,
+        ),
+        analytics_writer=AnalyticsTableWriter(
+            artifact_store=artifact_store,
+            root_uri=settings.analytics_root_uri,
         ),
         job_store=JobStore(session),
         job_event_store=JobEventStore(session),

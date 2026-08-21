@@ -37,3 +37,15 @@ class ExportDatasetJobResult(BaseJobResult):
     exported_sample_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class ExportAnalyticsSnapshotJobResult(BaseJobResult):
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    table_uris: dict[str, str] = Field(default_factory=dict)
+    row_counts: dict[str, int] = Field(default_factory=dict)
+
+    scene_count: int = 0
+
+    metadata: JsonDict = Field(default_factory=dict)

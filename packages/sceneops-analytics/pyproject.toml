@@ -1,0 +1,21 @@
+[project]
+name = "sceneops-analytics"
+version = "0.1.0"
+description = "Columnar analytical export layer (Postgres/ArtifactStore -> Parquet) for SceneOps"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+  "polars>=1.0",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-storage = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_analytics"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -2,6 +2,7 @@ from .base import BaseJobResult
 from .dataset import (
     AutoLabelDatasetJobResult,
     CheckDistributionJobResult,
+    ExportAnalyticsSnapshotJobResult,
     ExportDatasetJobResult,
 )
 from .detection import EvaluateDetectionJobResult, PredictDetectionJobResult
@@ -36,6 +37,7 @@ __all__ = [
     "AutoLabelDatasetJobResult",
     "CheckDistributionJobResult",
     "ExportDatasetJobResult",
+    "ExportAnalyticsSnapshotJobResult",
     "PredictDetectionJobResult",
     "EvaluateDetectionJobResult",
 ]

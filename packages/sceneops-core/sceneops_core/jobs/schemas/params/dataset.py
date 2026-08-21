@@ -60,3 +60,13 @@ class ExportDatasetJobParams(BaseJobParams):
     include_predictions: bool = False
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class ExportAnalyticsSnapshotJobParams(BaseJobParams):
+    dataset_id: str
+    dataset_version: str
+
+    # None → export all known tables (scenes, samples, sensor_frames, annotations)
+    tables: list[str] | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
