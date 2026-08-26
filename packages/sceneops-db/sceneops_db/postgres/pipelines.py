@@ -93,6 +93,23 @@ class PostgresPipelineRunRepository:
         result = await self._session.execute(stmt)
         return {row[0]: row[1] for row in result.all()}
 
+    async def find_by_execution_key(
+        self,
+        execution_key: str,
+        *,
+        statuses: set[PipelineRunStatus],
+    ) -> PipelineRunManifest | None:
+        stmt = (
+            select(PipelineRunModel)
+            .where(PipelineRunModel.execution_key == execution_key)
+            .where(PipelineRunModel.status.in_([enum_value(s) for s in statuses]))
+            .order_by(PipelineRunModel.created_at.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return pipeline_run_model_to_manifest(model) if model is not None else None
+
 
 class PostgresPipelineTaskRunRepository:
     def __init__(self, session: AsyncSession) -> None:

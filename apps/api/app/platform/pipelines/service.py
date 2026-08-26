@@ -5,6 +5,7 @@ from sceneops_core.common.ids import (
     generate_pipeline_task_run_id,
 )
 from sceneops_core.common.time import utc_now
+from sceneops_core.executions import compute_execution_key
 from sceneops_core.pipelines.builtin import (
     BUILTIN_PIPELINE_DEFINITIONS,
     get_pipeline_definition,
@@ -28,6 +29,13 @@ from sceneops_db.repositories.pipelines import (
     PipelineRunRepository,
     PipelineTaskRunRepository,
 )
+
+_DEDUP_STATUSES = {
+    PipelineRunStatus.PENDING,
+    PipelineRunStatus.QUEUED,
+    PipelineRunStatus.RUNNING,
+    PipelineRunStatus.SUCCEEDED,
+}
 
 
 class PipelineService:
@@ -82,15 +90,41 @@ class PipelineService:
                 "contains unimplemented tasks."
             )
 
+        dataset_id = request.dataset_id or self._default_dataset_id
+        dataset_version = request.dataset_version or self._default_dataset_version
+
+        execution_key = compute_execution_key(
+            kind="pipeline_run",
+            type=request.type.value,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            model_id=request.model_id,
+            model_version=request.model_version,
+            params=request.params,
+        )
+
+        if not request.force:
+            existing = await self._pipeline_repository.find_by_execution_key(
+                execution_key, statuses=_DEDUP_STATUSES
+            )
+            if existing is not None:
+                existing_tasks = await self._task_repository.list_for_pipeline_run(
+                    existing.pipeline_run_id
+                )
+                return PipelineRunDetailResponse(
+                    pipeline_run=existing, tasks=existing_tasks
+                )
+
         pipeline_run = PipelineRunManifest(
             pipeline_run_id=generate_pipeline_run_id(),
             type=request.type,
             status=PipelineRunStatus.PENDING,
-            dataset_id=request.dataset_id or self._default_dataset_id,
-            dataset_version=request.dataset_version or self._default_dataset_version,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
             model_id=request.model_id,
             model_version=request.model_version,
             params=request.params,
+            execution_key=execution_key,
             created_at=now,
             updated_at=now,
         )

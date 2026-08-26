@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sceneops_core.common.ids import generate_job_event_id, generate_job_id
 from sceneops_core.common.time import utc_now
+from sceneops_core.executions import compute_execution_key
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
@@ -14,6 +15,13 @@ from sceneops_core.jobs.schemas import (
 )
 from app.platform.jobs.schemas import JobEventListResponse, JobListResponse
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
+
+_DEDUP_STATUSES = {
+    JobStatus.PENDING,
+    JobStatus.QUEUED,
+    JobStatus.RUNNING,
+    JobStatus.SUCCEEDED,
+}
 
 
 class JobService:
@@ -42,6 +50,22 @@ class JobService:
             "dataset_version": dataset_version,
         }
         validated_params = parse_job_params(request.type, raw_params)
+        validated_params_dump = validated_params.model_dump()
+
+        execution_key = compute_execution_key(
+            kind="job",
+            type=request.type.value,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            params=validated_params_dump,
+        )
+
+        if not request.force:
+            existing = await self._repository.find_by_execution_key(
+                execution_key, statuses=_DEDUP_STATUSES
+            )
+            if existing is not None:
+                return existing
 
         job = JobManifest(
             job_id=generate_job_id(),
@@ -52,10 +76,11 @@ class JobService:
             pipeline_run_id=request.pipeline_run_id,
             pipeline_task_run_id=request.pipeline_task_run_id,
             pipeline_task_id=request.pipeline_task_id,
-            params=validated_params.model_dump(),
+            params=validated_params_dump,
             steps=create_initial_job_steps(request.type),
             retry_count=0,
             max_retries=request.max_retries,
+            execution_key=execution_key,
             queued_at=now,
             created_at=now,
             updated_at=now,
@@ -128,9 +153,19 @@ class JobService:
     async def mark_queued(self, job_id: str) -> JobManifest:
         job = await self.validate_executable(job_id)
 
+        update: dict[str, object] = {}
+        if job.status == JobStatus.FAILED:
+            if job.retry_count >= job.max_retries:
+                raise ValueError(
+                    f"Job has exhausted retries: job_id={job_id}, "
+                    f"retry_count={job.retry_count}, max_retries={job.max_retries}"
+                )
+            update["retry_count"] = job.retry_count + 1
+
         now = utc_now()
         job = job.model_copy(
             update={
+                **update,
                 "status": JobStatus.QUEUED,
                 "queued_at": now,
                 "updated_at": now,

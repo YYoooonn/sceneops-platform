@@ -161,7 +161,7 @@ check:
 
 .PHONY: test
 test:
-	uv run pytest apps/worker/tests/ apps/api/tests/ packages/sceneops-analytics/tests/ -v
+	uv run pytest apps/worker/tests/ apps/api/tests/ packages/sceneops-analytics/tests/ packages/sceneops-core/tests/ -v
 
 .PHONY: lint
 lint:
@@ -545,6 +545,13 @@ e2e-analytics-export:
 	API_PREFIX=$(API_PREFIX) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_analytics_export.sh
+
+.PHONY: e2e-reliability
+e2e-reliability:
+	chmod +x scripts/e2e/e2e_reliability.sh
+	API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	scripts/e2e/e2e_reliability.sh
 
 .PHONY: e2e
 e2e: e2e-api-smoke e2e-dataset-ingestion e2e-detection-evaluation e2e-pipeline-contracts

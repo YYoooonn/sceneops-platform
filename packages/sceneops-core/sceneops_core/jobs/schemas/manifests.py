@@ -32,6 +32,7 @@ class JobManifest(SceneOpsBaseModel):
     # Orchestration fields.
     retry_count: int = 0
     max_retries: int = 0
+    execution_key: str | None = None
 
     worker_id: str | None = None
 

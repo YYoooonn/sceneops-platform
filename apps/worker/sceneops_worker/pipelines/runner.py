@@ -98,10 +98,12 @@ class PipelineRunner:
                 f"Pipeline run is cancelled: {pipeline_run.pipeline_run_id}"
             )
 
-        if pipeline_run.status == PipelineRunStatus.BLOCKED:
-            raise RuntimeError(
-                f"Pipeline run is already blocked: {pipeline_run.pipeline_run_id}"
-            )
+        # BLOCKED is intentionally retryable: it means a quality gate stopped
+        # the pipeline (e.g. validate_scene), not that the pipeline failed to
+        # run. Once the underlying issue is fixed, redispatching should
+        # re-evaluate the blocking task. The API layer's
+        # PipelineService.validate_executable already allows this; this check
+        # used to be inconsistent with it.
 
     # ── execution ────────────────────────────────────────────────────────────
 
@@ -258,6 +260,5 @@ class PipelineRunner:
             return task_run.error.message
 
         return (
-            "Pipeline blocked by quality gate at task "
-            f"'{task_run.pipeline_task_id}'."
+            f"Pipeline blocked by quality gate at task '{task_run.pipeline_task_id}'."
         )

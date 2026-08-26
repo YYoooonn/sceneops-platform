@@ -16,7 +16,8 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests"]
+addopts = "--import-mode=importlib"
+testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests", "packages/sceneops-core/tests"]
 
 [tool.uv]
 package = false

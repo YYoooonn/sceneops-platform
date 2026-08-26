@@ -35,6 +35,13 @@ class JobRepository(Protocol):
 
     async def count_by_status(self) -> dict[str, int]: ...
 
+    async def find_by_execution_key(
+        self,
+        execution_key: str,
+        *,
+        statuses: set[JobStatus],
+    ) -> JobManifest | None: ...
+
 
 @runtime_checkable
 class JobEventRepository(Protocol):

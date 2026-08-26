@@ -29,6 +29,8 @@ class PipelineRunModel(Base):
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
+    execution_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -123,6 +125,7 @@ Index(
     PipelineRunModel.status,
     PipelineRunModel.created_at,
 )
+Index("ix_pipeline_runs_execution_key", PipelineRunModel.execution_key)
 
 Index(
     "ix_pipeline_task_runs_pipeline_run_order",
