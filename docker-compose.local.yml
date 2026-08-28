@@ -14,6 +14,32 @@ x-worker-common: &worker-common
     - ./data:/data
     - ./scripts:/workspace/scripts:ro
 
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow
+    dockerfile: Dockerfile
+  image: sceneops-platform/airflow:local
+  env_file:
+    - .env.local
+    - .env.airflow.local
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    HOST_DATA_DIR: ${PWD}/data
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+  profiles:
+    - airflow
+
+networks:
+  default:
+    name: sceneops-network
+
 services:
   postgres:
     image: postgres:16
@@ -219,7 +245,71 @@ services:
     profiles:
       - inference
 
+  airflow-postgres:
+    image: postgres:16
+    container_name: sceneops-airflow-postgres
+    env_file:
+      - .env.airflow.local
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles:
+      - airflow
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: sceneops-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      # $$VAR (not ${VAR}) is intentional: this runs as a shell script
+      # inside the container, so it should resolve from the container's own
+      # env (loaded via env_file: .env.airflow.local above), not from
+      # compose-level ${VAR} substitution on the host.
+      - >-
+        airflow db migrate &&
+        airflow users create --username "$$AIRFLOW_ADMIN_USERNAME"
+        --password "$$AIRFLOW_ADMIN_PASSWORD"
+        --firstname Scene --lastname Ops --role Admin
+        --email airflow@sceneops.local || true
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: sceneops-airflow-webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: webserver
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: sceneops-airflow-scheduler
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: scheduler
+
 volumes:
   sceneops_postgres_data:
   redis-data:
   minio-data:
+  airflow_postgres_data:
