@@ -12,6 +12,12 @@ from .jobs import JobEventRepository, JobRepository
 from .labels import LabelRunRecord, LabelRunRepository
 from .model_registry import ModelRepository, ModelVersionRepository
 from .pipelines import PipelineRunRepository, PipelineTaskRunRepository
+from .robots import (
+    MissionRepository,
+    RobotRepository,
+    RobotRunRepository,
+    RobotStateRepository,
+)
 from .scenarios import ScenarioRunRecord, ScenarioRunRepository, ScenarioSetRepository
 from .scenes import SceneRepository, SceneRunRecord, SceneRunRepository
 
@@ -33,6 +39,11 @@ __all__ = [
     "SceneRepository",
     "SceneRunRepository",
     "SceneRunRecord",
+    # robots
+    "RobotRepository",
+    "RobotRunRepository",
+    "MissionRepository",
+    "RobotStateRepository",
     # scenarios
     "ScenarioSetRepository",
     "ScenarioRunRepository",

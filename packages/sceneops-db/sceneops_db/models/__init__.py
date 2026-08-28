@@ -7,6 +7,7 @@ from .jobs import JobEventModel, JobModel
 from .labels import LabelRunModel
 from .model_registry import ModelModel, ModelVersionModel
 from .pipelines import PipelineRunModel, PipelineTaskRunModel
+from .robots import MissionModel, RobotModel, RobotRunModel, RobotStateModel
 from .scenarios import ScenarioRunRecordModel, ScenarioSetModel
 from .scenes import SceneModel, SceneRunRecordModel
 
@@ -26,6 +27,11 @@ __all__ = [
     # scenes
     "SceneModel",
     "SceneRunRecordModel",
+    # robots
+    "RobotModel",
+    "RobotRunModel",
+    "MissionModel",
+    "RobotStateModel",
     # scenarios
     "ScenarioSetModel",
     "ScenarioRunRecordModel",

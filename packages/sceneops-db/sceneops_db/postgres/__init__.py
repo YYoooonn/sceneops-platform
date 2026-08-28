@@ -11,6 +11,12 @@ from .jobs import PostgresJobEventRepository, PostgresJobRepository
 from .labels import PostgresLabelRunRepository
 from .model_registry import PostgresModelRepository, PostgresModelVersionRepository
 from .pipelines import PostgresPipelineRunRepository, PostgresPipelineTaskRunRepository
+from .robots import (
+    PostgresMissionRepository,
+    PostgresRobotRepository,
+    PostgresRobotRunRepository,
+    PostgresRobotStateRepository,
+)
 from .scenarios import PostgresScenarioRunRepository, PostgresScenarioSetRepository
 from .scenes import PostgresSceneRepository, PostgresSceneRunRepository
 
@@ -25,6 +31,10 @@ __all__ = [
     "PostgresDatasetRunRepository",
     "PostgresSceneRepository",
     "PostgresSceneRunRepository",
+    "PostgresRobotRepository",
+    "PostgresRobotRunRepository",
+    "PostgresMissionRepository",
+    "PostgresRobotStateRepository",
     "PostgresScenarioSetRepository",
     "PostgresScenarioRunRepository",
     "PostgresInferenceRunRepository",
