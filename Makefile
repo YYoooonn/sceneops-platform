@@ -7,6 +7,7 @@ JOB_ID          ?=
 PIPELINE_RUN_ID ?=
 TASK_ID         ?=
 MSG             ?=
+ROS2_CMD        ?=
 
 MODEL_ID        ?= dummy-detector
 MODEL_VERSION   ?= v1
@@ -118,6 +119,14 @@ help:
 	@echo "  make e2e-pipeline-contracts"
 	@echo "  make e2e-detection-evaluation-real"
 	@echo ""
+	@echo "ROS2 (Jazzy dev sandbox):"
+	@echo "  make ros2-up"
+	@echo "  make ros2-down"
+	@echo "  make ros2-shell"
+	@echo "  make ros2-run ROS2_CMD='ros2 topic list'"
+	@echo "  make ros2-check"
+	@echo "  make ros2-logs"
+	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"
 	@echo "  make show-pipeline PIPELINE_RUN_ID=pipe-xxx"
@@ -138,6 +147,7 @@ include makefiles/setup.mk
 include makefiles/cleanup.mk
 include makefiles/local.mk
 include makefiles/airflow.mk
+include makefiles/ros2.mk
 include makefiles/compose.mk
 include makefiles/db.mk
 include makefiles/api.mk

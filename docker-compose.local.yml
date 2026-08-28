@@ -308,6 +308,18 @@ services:
         condition: service_completed_successfully
     command: scheduler
 
+  ros2:
+    build:
+      context: ./ros2
+      dockerfile: Dockerfile
+    image: sceneops-platform/ros2:local
+    container_name: sceneops-ros2
+    volumes:
+      - ./data:/data
+      - ./ros2/nodes:/workspace/nodes:ro
+    profiles:
+      - ros2
+
 volumes:
   sceneops_postgres_data:
   redis-data:
