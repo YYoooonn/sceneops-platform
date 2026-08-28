@@ -16,6 +16,7 @@ from sceneops_worker.stores.datasets import DatasetStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
+from sceneops_worker.stores.robots import RobotStore
 from sceneops_worker.stores.runs import (
     DatasetRunStore,
     EvaluationRunStore,
@@ -54,6 +55,7 @@ class WorkerContext:
     pipeline_store: PipelineStore
 
     dataset_store: DatasetStore
+    robot_store: RobotStore
     scene_store: SceneStore
     scenario_store: ScenarioStore
     model_store: ModelStore

@@ -3,6 +3,7 @@ from .datasets import DatasetStore
 from .jobs import JobEventStore, JobStore
 from .models import ModelStore
 from .pipelines import PipelineStore
+from .robots import RobotStore
 from .runs import (
     DatasetRunStore,
     EvaluationRunStore,
@@ -18,6 +19,7 @@ __all__ = [
     "JobEventStore",
     "PipelineStore",
     "DatasetStore",
+    "RobotStore",
     "SceneStore",
     "ScenarioStore",
     "ModelStore",

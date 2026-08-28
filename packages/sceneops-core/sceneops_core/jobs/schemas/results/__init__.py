@@ -18,10 +18,12 @@ from .scene import (
     RegisterSceneJobResult,
     ValidateSceneJobResult,
 )
+from .robots import IngestRobotStatesJobResult
 from .scenario import MineScenariosJobResult, ScoreScenarioReadinessJobResult
 
 __all__ = [
     "BaseJobResult",
+    "IngestRobotStatesJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
     "BuildDatasetManifestJobResult",

@@ -34,6 +34,9 @@ class JobType(StrEnum):
     PREDICT_DETECTION = "predict_detection"
     EVALUATE_DETECTION = "evaluate_detection"
 
+    # ── robot runtime ──
+    INGEST_ROBOT_STATES = "ingest_robot_states"
+
 
 class JobStatus(StrEnum):
     PENDING = "pending"

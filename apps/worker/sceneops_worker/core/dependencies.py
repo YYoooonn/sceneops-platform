@@ -15,6 +15,7 @@ from sceneops_worker.stores.datasets import DatasetStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
+from sceneops_worker.stores.robots import RobotStore
 from sceneops_worker.stores.runs import (
     DatasetRunStore,
     EvaluationRunStore,
@@ -81,6 +82,7 @@ def create_worker_context(
         job_event_store=JobEventStore(session),
         pipeline_store=PipelineStore(session),
         dataset_store=DatasetStore(session),
+        robot_store=RobotStore(session),
         scene_store=SceneStore(session),
         scenario_store=ScenarioStore(session),
         model_store=ModelStore(session),

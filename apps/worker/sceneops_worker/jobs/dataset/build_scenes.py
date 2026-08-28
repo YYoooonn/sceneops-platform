@@ -305,6 +305,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
         from sceneops_worker.datasets.ingestion.nuscenes_raw_log import (
             NuScenesRawLogMocker,
         )
+        from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 
         factory = RawLogAdapterFactory()
 
@@ -321,6 +322,14 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
                 source_root_uri=version_record.raw_source_root_uri,
                 observation_store=obs_store,
                 required_channels=required_channels,
+            ),
+        )
+        factory.register(
+            RawLogSourceType.REAL_ROBOT_LOG,
+            RosbagAdapter(
+                source_store=execution.context.raw_source_store,
+                source_root_uri=version_record.raw_source_root_uri,
+                observation_store=obs_store,
             ),
         )
 
