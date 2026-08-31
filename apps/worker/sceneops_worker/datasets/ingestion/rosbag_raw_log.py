@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from mcap.reader import make_reader
+from mcap.records import Channel, Message, Schema
+from mcap.well_known import MessageEncoding
+from mcap_ros2.decoder import DecoderFactory as Ros2DecoderFactory
 
 from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_core.observations.schemas import (
@@ -46,6 +50,69 @@ _ROBOT_STATE_FIELDS = (
 )
 
 
+def _decoded_message_to_dict(value: Any) -> Any:
+    """Recursively convert a mcap_ros2 dynamic message object into plain dicts/lists.
+
+    Dynamic message classes (``mcap_ros2._dynamic``) expose their ROS2 field
+    names via ``__slots__`` — that's the only generic hook available (they
+    don't populate ``__dict__``), so this walks ``__slots__`` instead of
+    hardcoding a schema-specific reader for every ROS2 message type.
+    """
+    slots = getattr(type(value), "__slots__", None)
+    if slots:
+        return {slot: _decoded_message_to_dict(getattr(value, slot)) for slot in slots}
+    if isinstance(value, (list, tuple)):
+        return [_decoded_message_to_dict(v) for v in value]
+    return value
+
+
+def _flatten_odometry(payload: dict[str, Any]) -> dict[str, Any]:
+    position = payload["pose"]["pose"]["position"]
+    orientation = payload["pose"]["pose"]["orientation"]
+    linear_velocity = payload["twist"]["twist"]["linear"]
+    return {
+        "position": [position["x"], position["y"], position["z"]],
+        "orientation": [
+            orientation["x"],
+            orientation["y"],
+            orientation["z"],
+            orientation["w"],
+        ],
+        "velocity": [linear_velocity["x"], linear_velocity["y"], linear_velocity["z"]],
+    }
+
+
+def _flatten_imu(payload: dict[str, Any]) -> dict[str, Any]:
+    orientation = payload["orientation"]
+    acceleration = payload["linear_acceleration"]
+    return {
+        "orientation": [
+            orientation["x"],
+            orientation["y"],
+            orientation["z"],
+            orientation["w"],
+        ],
+        "acceleration": [acceleration["x"], acceleration["y"], acceleration["z"]],
+    }
+
+
+def _flatten_battery_state(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"battery": payload.get("percentage")}
+
+
+# Standard ROS2 message schema name -> translator into this module's flat
+# RobotState field shape (roadmap §10.1 calls for using these standard
+# messages where possible). Messages not listed here (including SceneOps
+# custom messages like a future /vehicle/control type) are assumed to already
+# use flat field names matching _ROBOT_STATE_FIELDS and pass through as-is —
+# see extract_robot_states().
+_ROS2_ROBOT_STATE_FLATTENERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "nav_msgs/msg/Odometry": _flatten_odometry,
+    "sensor_msgs/msg/Imu": _flatten_imu,
+    "sensor_msgs/msg/BatteryState": _flatten_battery_state,
+}
+
+
 @dataclass(frozen=True)
 class _BagContents:
     frames: list[RawSensorFrameManifest]
@@ -64,13 +131,24 @@ class RosbagAdapter:
     rosbag identically to any other raw log source — no changes needed to the
     scene-building pipeline itself (docs/robot-data-model.md §4).
 
-    v1 only decodes ``message_encoding="json"`` channels. Real ROS2 bags record
-    CDR-encoded messages, which need the message schema (nav_msgs/Odometry etc.)
-    to decode — that requires either rclpy or ``mcap-ros2-support``, neither of
-    which is wired up yet because no ROS2 recorder exists in this repo to
-    produce a real bag to test against (Phase 4's CanReplayNode). JSON-encoded
-    channels are what this adapter's own test fixtures use, and are a reasonable
-    bridge format until a real CDR-encoded bag exists to decode.
+    Decodes two message encodings:
+
+    - ``cdr``: real ROS2 messages, decoded via ``mcap-ros2-support`` using the
+      schema text embedded in the MCAP file itself — no ``rclpy``/ROS2
+      install needed to read a bag. Verified against real bags recorded with
+      ``ros2 bag record --storage mcap`` (see the ``ros2`` Docker sandbox and
+      this module's test fixtures). Standard messages with nested nav_msgs/
+      sensor_msgs shapes (Odometry, Imu, BatteryState) are flattened into this
+      module's flat field names; anything else (including future custom
+      messages like ``/vehicle/control``) is assumed already flat.
+    - ``json``: a bridge format used by this adapter's own synthetic test
+      fixtures, kept because it requires no ROS2 tooling at all to produce.
+
+    Not yet implemented: binary sensor payloads (``sensor_msgs/Image``,
+    ``PointCloud2``) aren't written out to files — a CDR-decoded camera/lidar
+    frame currently gets an empty ``uri`` and its raw decoded structure in
+    ``metadata`` only. Writing those to ArtifactStore is follow-up work once a
+    real sensor-publishing node exists.
     """
 
     def __init__(
@@ -87,6 +165,7 @@ class RosbagAdapter:
         self._observation_store = observation_store
         self._sensor_topics = sensor_topics or _DEFAULT_SENSOR_TOPICS
         self._robot_state_topics = robot_state_topics or _DEFAULT_ROBOT_STATE_TOPICS
+        self._ros2_decoder_factory = Ros2DecoderFactory()
 
     async def build_raw_log(
         self,
@@ -169,6 +248,24 @@ class RosbagAdapter:
             )
         return records
 
+    def _decode_message(
+        self,
+        schema: Schema | None,
+        channel: Channel,
+        message: Message,
+    ) -> dict[str, Any] | None:
+        """Decode one message's payload into a plain dict, or None if it can't be."""
+        if channel.message_encoding == MessageEncoding.JSON:
+            return json.loads(message.data)
+        if channel.message_encoding == MessageEncoding.CDR:
+            decoder = self._ros2_decoder_factory.decoder_for(
+                channel.message_encoding, schema
+            )
+            if decoder is None:
+                return None  # not a valid ros2msg schema — can't decode
+            return _decoded_message_to_dict(decoder(message.data))
+        return None  # unrecognized encoding (protobuf, flatbuffer, ...)
+
     def _read_bag(self) -> _BagContents:
         frames: list[RawSensorFrameManifest] = []
         channels: set[str] = set()
@@ -179,9 +276,10 @@ class RosbagAdapter:
 
         with open(self._source_root_uri, "rb") as stream:
             reader = make_reader(stream)
-            for _schema, channel, message in reader.iter_messages():
-                if channel.message_encoding != "json":
-                    continue  # CDR decoding not yet supported, see class docstring
+            for schema, channel, message in reader.iter_messages():
+                payload = self._decode_message(schema, channel, message)
+                if payload is None:
+                    continue
 
                 timestamp_us = message.log_time // 1000
                 if min_ts is None or timestamp_us < min_ts:
@@ -192,7 +290,6 @@ class RosbagAdapter:
                 sensor_topic = self._sensor_topics.get(channel.topic)
                 if sensor_topic is not None:
                     modality, channel_name = sensor_topic
-                    payload = json.loads(message.data)
                     frames.append(
                         RawSensorFrameManifest(
                             frame_id=f"{channel.topic}-{message.sequence}",
@@ -208,8 +305,12 @@ class RosbagAdapter:
                     continue
 
                 if channel.topic in self._robot_state_topics:
-                    payload = json.loads(message.data)
-                    robot_state_payloads.setdefault(timestamp_us, {}).update(payload)
+                    schema_name = schema.name if schema is not None else None
+                    flattener = _ROS2_ROBOT_STATE_FLATTENERS.get(schema_name or "")
+                    flat_payload = flattener(payload) if flattener else payload
+                    robot_state_payloads.setdefault(timestamp_us, {}).update(
+                        flat_payload
+                    )
 
         return _BagContents(
             frames=frames,

@@ -928,6 +928,18 @@ wheels = [
 ]
 
 [[package]]
+name = "mcap-ros2-support"
+version = "0.5.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mcap" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/0d/f6da01d8e4b73861dba17fd2ebd9a78d2fd4fa582ad348cf18d16a79a7e1/mcap_ros2_support-0.5.7.tar.gz", hash = "sha256:8ddb67e452a6e2963664e29bc8868e61d7011b72feb2b62832ed444e27ca3ab8", size = 23295, upload-time = "2025-12-24T21:25:37.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/c5/8e8636099c180031436a011908a22216c25e6cb7790ba748212e203317c4/mcap_ros2_support-0.5.7-py3-none-any.whl", hash = "sha256:349f0e0f7af8ebeb516003e801ea5c5de5b4b65359ce4a17a8d98b25a9cea260", size = 22086, upload-time = "2025-12-24T21:25:36.425Z" },
+]
+
+[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1975,6 +1987,7 @@ dependencies = [
     { name = "celery", extra = ["redis"] },
     { name = "httpx" },
     { name = "mcap" },
+    { name = "mcap-ros2-support" },
     { name = "numpy" },
     { name = "nuscenes-devkit" },
     { name = "onnx" },
@@ -1999,6 +2012,7 @@ requires-dist = [
     { name = "celery", extras = ["redis"], specifier = ">=5.4" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mcap", specifier = ">=1.4" },
+    { name = "mcap-ros2-support", specifier = ">=0.5" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "nuscenes-devkit" },
     { name = "onnx", specifier = ">=1.16" },

@@ -4,14 +4,20 @@ Covers:
 - build_raw_log: sensor topics (json-encoded) become RawSensorFrameManifest
   entries with correct channel/modality/timestamp, aggregated into a manifest
 - build_raw_log: non-sensor, non-robot-state topics are ignored
-- build_raw_log: non-json channels are skipped (CDR not supported yet)
+- build_raw_log / extract_robot_states: unrecognized encodings and
+  undecodable CDR schemas are skipped without raising
 - extract_robot_states: robot-state topics are merged by timestamp into
-  RobotStateRecord rows
+  RobotStateRecord rows (json bridge format, and real CDR nav_msgs/Odometry)
+- real-fixture tests (fixtures/rosbag/*.mcap) were recorded with an actual
+  `ros2 bag record --storage mcap` inside the ros2 Docker sandbox — not
+  hand-crafted — to prove CDR decoding against genuine ROS2 output, not just
+  bytes this test suite made up itself.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,6 +25,8 @@ from mcap.writer import Writer
 
 from sceneops_core.sensors import SensorModality
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
+
+_FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "rosbag"
 
 
 def _write_mcap(path: str, messages: list[tuple[str, int, dict, str]]) -> None:
@@ -132,12 +140,12 @@ class TestBuildRawLogSensorFrames:
         assert frame_index.frames == []
 
     @pytest.mark.asyncio
-    async def test_non_json_channels_are_skipped(self, tmp_path) -> None:
+    async def test_unrecognized_encoding_is_skipped(self, tmp_path) -> None:
         bag_path = str(tmp_path / "run.mcap")
         _write_mcap(
             bag_path,
             [
-                ("/camera/front/image", 1_000_000_000, {}, "cdr"),
+                ("/camera/front/image", 1_000_000_000, {}, "protobuf"),
                 (
                     "/lidar/top/points",
                     1_050_000_000,
@@ -154,6 +162,24 @@ class TestBuildRawLogSensorFrames:
 
         assert manifest.frame_count == 1
         assert frame_index.frames[0].channel == "LIDAR_TOP"
+
+    @pytest.mark.asyncio
+    async def test_cdr_without_schema_is_skipped(self, tmp_path) -> None:
+        """A cdr channel with no registered schema can't be decoded (no ros2msg
+        text to parse) — decoder_for returns None, message is skipped, not raised."""
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [("/camera/front/image", 1_000_000_000, {}, "cdr")],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        manifest, frame_index, _, _ = await adapter.build_raw_log(
+            **_BUILD_RAW_LOG_KWARGS
+        )
+
+        assert manifest.frame_count == 0
+        assert frame_index.frames == []
 
 
 class TestExtractRobotStates:
@@ -207,4 +233,44 @@ class TestExtractRobotStates:
         )
         adapter, _ = _make_adapter(bag_path)
 
+        assert adapter.extract_robot_states(robot_id="robot-1") == []
+
+
+class TestRealCdrFixtures:
+    """Exercises decoding against bags recorded by an actual `ros2 bag record
+    --storage mcap`, not bytes fabricated by this test suite."""
+
+    def test_real_odometry_bag_flattens_into_robot_state(self) -> None:
+        adapter, _ = _make_adapter(str(_FIXTURES_DIR / "nav_msgs_odometry.mcap"))
+
+        states = adapter.extract_robot_states(robot_id="robot-1", robot_run_id="run-1")
+
+        assert len(states) == 3
+        # Published with x = 1.0, 2.0, 3.0; y/z, orientation, and velocity held
+        # constant — see the record used to generate this fixture.
+        assert [s.position[0] for s in states] == [1.0, 2.0, 3.0]
+        for state in states:
+            assert state.position[1:] == [2.0, 0.0]
+            assert state.orientation == [0.0, 0.0, 0.0, 1.0]
+            assert state.velocity == [0.5, 0.0, 0.0]
+            assert state.robot_id == "robot-1"
+            assert state.robot_run_id == "run-1"
+        # timestamps strictly increasing and already in microseconds
+        assert states[0].timestamp_us < states[1].timestamp_us < states[2].timestamp_us
+
+    @pytest.mark.asyncio
+    async def test_real_string_bag_decodes_without_crashing_but_is_ignored(
+        self,
+    ) -> None:
+        """/chatter (std_msgs/String) isn't a sensor or robot-state topic — it
+        should decode cleanly (proving generic CDR decoding doesn't blow up on
+        an arbitrary message type) but contribute no frames or states."""
+        adapter, _ = _make_adapter(str(_FIXTURES_DIR / "std_msgs_string.mcap"))
+
+        manifest, frame_index, _, _ = await adapter.build_raw_log(
+            **_BUILD_RAW_LOG_KWARGS
+        )
+
+        assert manifest.frame_count == 0
+        assert frame_index.frames == []
         assert adapter.extract_robot_states(robot_id="robot-1") == []
