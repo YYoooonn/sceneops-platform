@@ -17,6 +17,7 @@ from .params import (
     EvaluateDetectionJobParams,
     ExportAnalyticsSnapshotJobParams,
     ExportDatasetJobParams,
+    ExportRobotAnalyticsSnapshotJobParams,
     ExportScenePackageJobParams,
     IngestScenesJobParams,
     MineScenariosJobParams,
@@ -39,6 +40,7 @@ from .results import (
     EvaluateDetectionJobResult,
     ExportAnalyticsSnapshotJobResult,
     ExportDatasetJobResult,
+    ExportRobotAnalyticsSnapshotJobResult,
     ExportScenePackageJobResult,
     IngestRobotStatesJobResult,
     IngestScenesJobResult,
@@ -73,6 +75,7 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.PREDICT_DETECTION: PredictDetectionJobParams,
     JobType.EVALUATE_DETECTION: EvaluateDetectionJobParams,
     JobType.INGEST_ROBOT_STATES: IngestRobotStatesJobParams,
+    JobType.EXPORT_ROBOT_ANALYTICS_SNAPSHOT: ExportRobotAnalyticsSnapshotJobParams,
 }
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
@@ -95,6 +98,7 @@ JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.PREDICT_DETECTION: PredictDetectionJobResult,
     JobType.EVALUATE_DETECTION: EvaluateDetectionJobResult,
     JobType.INGEST_ROBOT_STATES: IngestRobotStatesJobResult,
+    JobType.EXPORT_ROBOT_ANALYTICS_SNAPSHOT: ExportRobotAnalyticsSnapshotJobResult,
 }
 
 

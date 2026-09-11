@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from sceneops_core.robots.schemas import MissionRecord, RobotStateRecord
 from sceneops_core.scenes.schemas import SceneManifest, SceneRecord
 
 SCENES_SCHEMA: dict[str, pl.PolarsDataType] = {
@@ -180,3 +181,73 @@ def build_annotations_table(
 
 
 TABLE_BUILDERS = ("scenes", "samples", "sensor_frames", "annotations")
+
+
+# ── Robot analytics tables (roadmap §7.4: robot_telemetry.parquet, missions.parquet) ──
+
+ROBOT_TELEMETRY_SCHEMA: dict[str, pl.PolarsDataType] = {
+    "robot_id": pl.Utf8,
+    "robot_run_id": pl.Utf8,
+    "mission_id": pl.Utf8,
+    "scene_id": pl.Utf8,
+    "timestamp_us": pl.Int64,
+    "position": pl.List(pl.Float64),
+    "orientation": pl.List(pl.Float64),
+    "velocity": pl.List(pl.Float64),
+    "acceleration": pl.List(pl.Float64),
+    "steering": pl.Float64,
+    "throttle": pl.Float64,
+    "brake": pl.Float64,
+    "battery": pl.Float64,
+    "operation_state": pl.Utf8,
+}
+
+MISSIONS_SCHEMA: dict[str, pl.PolarsDataType] = {
+    "mission_id": pl.Utf8,
+    "robot_id": pl.Utf8,
+    "robot_run_id": pl.Utf8,
+    "status": pl.Utf8,
+    "started_at": pl.Datetime("us", "UTC"),
+    "ended_at": pl.Datetime("us", "UTC"),
+}
+
+
+def build_robot_telemetry_table(states: list[RobotStateRecord]) -> pl.DataFrame:
+    rows = [
+        {
+            "robot_id": s.robot_id,
+            "robot_run_id": s.robot_run_id,
+            "mission_id": s.mission_id,
+            "scene_id": s.scene_id,
+            "timestamp_us": s.timestamp_us,
+            "position": s.position,
+            "orientation": s.orientation,
+            "velocity": s.velocity,
+            "acceleration": s.acceleration,
+            "steering": s.steering,
+            "throttle": s.throttle,
+            "brake": s.brake,
+            "battery": s.battery,
+            "operation_state": str(s.operation_state) if s.operation_state else None,
+        }
+        for s in states
+    ]
+    return pl.DataFrame(rows, schema=ROBOT_TELEMETRY_SCHEMA)
+
+
+def build_missions_table(missions: list[MissionRecord]) -> pl.DataFrame:
+    rows = [
+        {
+            "mission_id": m.mission_id,
+            "robot_id": m.robot_id,
+            "robot_run_id": m.robot_run_id,
+            "status": str(m.status),
+            "started_at": m.started_at,
+            "ended_at": m.ended_at,
+        }
+        for m in missions
+    ]
+    return pl.DataFrame(rows, schema=MISSIONS_SCHEMA)
+
+
+ROBOT_TABLE_BUILDERS = ("robot_telemetry", "missions")

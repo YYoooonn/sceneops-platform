@@ -13,7 +13,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord, RobotRunStatus
+from sceneops_core.robots.schemas import (
+    MissionRecord,
+    MissionStatus,
+    RobotRecord,
+    RobotRunRecord,
+    RobotRunStatus,
+)
 from sceneops_worker.jobs.robots.ingest_robot_states import (
     IngestRobotStatesJobHandler,
 )
@@ -83,7 +89,16 @@ def _context(
     ctx.robot_store.get_run = AsyncMock(return_value=robot_run)
     ctx.robot_store.save_run = AsyncMock(side_effect=lambda run: run)
     ctx.robot_store.create_states = AsyncMock(side_effect=lambda states: states)
+    ctx.robot_store.upsert_mission = AsyncMock(side_effect=lambda mission: mission)
     return ctx
+
+
+def _mock_adapter(MockAdapter, *, states=None, missions=None) -> None:
+    """extract_missions is sync (not awaited), so its mock return value must
+    be a plain list — a bare MagicMock() would break `len()`/iteration in
+    the handler, unlike AsyncMock-based methods elsewhere in this file."""
+    MockAdapter.return_value.extract_robot_states.return_value = states or []
+    MockAdapter.return_value.extract_missions.return_value = missions or []
 
 
 class TestIngestRobotStatesJobHandler:
@@ -118,7 +133,7 @@ class TestIngestRobotStatesJobHandler:
         with patch(
             "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
         ) as MockAdapter:
-            MockAdapter.return_value.extract_robot_states.return_value = fake_states
+            _mock_adapter(MockAdapter, states=fake_states)
 
             result = await handler.run(_request(_params(), ctx))
 
@@ -143,7 +158,7 @@ class TestIngestRobotStatesJobHandler:
         with patch(
             "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
         ) as MockAdapter:
-            MockAdapter.return_value.extract_robot_states.return_value = []
+            _mock_adapter(MockAdapter)
             await handler.run(_request(_params(), ctx))
 
             _, kwargs = MockAdapter.call_args
@@ -157,7 +172,7 @@ class TestIngestRobotStatesJobHandler:
         with patch(
             "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
         ) as MockAdapter:
-            MockAdapter.return_value.extract_robot_states.return_value = []
+            _mock_adapter(MockAdapter)
             await handler.run(
                 _request(_params(mcap_uri="/explicit/override.mcap"), ctx)
             )
@@ -172,7 +187,7 @@ class TestIngestRobotStatesJobHandler:
         with patch(
             "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
         ) as MockAdapter:
-            MockAdapter.return_value.extract_robot_states.return_value = []
+            _mock_adapter(MockAdapter)
             result = await handler.run(
                 _request(_params(robot_run_id=None, mcap_uri="/standalone.mcap"), ctx)
             )
@@ -182,3 +197,40 @@ class TestIngestRobotStatesJobHandler:
         assert result.state_count == 0
         assert result.start_timestamp_us is None
         assert result.end_timestamp_us is None
+
+    async def test_ingests_missions_via_upsert(self) -> None:
+        robot_run = _robot_run()
+        ctx = _context(robot=_robot(), robot_run=robot_run)
+        handler = IngestRobotStatesJobHandler()
+
+        fake_missions = [
+            MissionRecord(
+                mission_id="mission-1",
+                robot_id="robot-1",
+                robot_run_id="run-1",
+                status=MissionStatus.COMPLETED,
+            )
+        ]
+        with patch(
+            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
+        ) as MockAdapter:
+            _mock_adapter(MockAdapter, missions=fake_missions)
+
+            result = await handler.run(_request(_params(), ctx))
+
+        ctx.robot_store.upsert_mission.assert_awaited_once_with(fake_missions[0])
+        assert result.mission_count == 1
+
+    async def test_no_missions_found_upserts_nothing(self) -> None:
+        robot_run = _robot_run()
+        ctx = _context(robot=_robot(), robot_run=robot_run)
+        handler = IngestRobotStatesJobHandler()
+
+        with patch(
+            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
+        ) as MockAdapter:
+            _mock_adapter(MockAdapter)
+            result = await handler.run(_request(_params(), ctx))
+
+        ctx.robot_store.upsert_mission.assert_not_called()
+        assert result.mission_count == 0

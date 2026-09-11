@@ -138,6 +138,12 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("extract_robot_states", "Extract robot states"),
         step("save_robot_states", "Save robot states"),
     ],
+    JobType.EXPORT_ROBOT_ANALYTICS_SNAPSHOT: [
+        step("load_robot_states", "Load robot states"),
+        step("load_missions", "Load missions"),
+        step("build_analytics_tables", "Build analytics tables"),
+        step("write_parquet_tables", "Write parquet tables"),
+    ],
 }
 
 

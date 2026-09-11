@@ -44,6 +44,21 @@ class RobotStore:
     async def upsert_mission(self, mission: MissionRecord) -> MissionRecord:
         return await self._missions.upsert(mission)
 
+    async def list_missions(
+        self,
+        *,
+        robot_id: str | None = None,
+        robot_run_id: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[MissionRecord]:
+        return await self._missions.list(
+            robot_id=robot_id,
+            robot_run_id=robot_run_id,
+            limit=limit,
+            offset=offset,
+        )
+
     async def create_states(
         self, states: list[RobotStateRecord]
     ) -> list[RobotStateRecord]:

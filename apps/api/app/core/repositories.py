@@ -24,6 +24,12 @@ from sceneops_db.repositories.pipelines import (
     PipelineRunRepository,
     PipelineTaskRunRepository,
 )
+from sceneops_db.repositories.robots import (
+    MissionRepository,
+    RobotRepository,
+    RobotRunRepository,
+    RobotStateRepository,
+)
 from sceneops_db.repositories.scenarios import (
     ScenarioRunRepository,
     ScenarioSetRepository,
@@ -48,6 +54,12 @@ from sceneops_db.postgres.model_registry import (
 from sceneops_db.postgres.pipelines import (
     PostgresPipelineRunRepository,
     PostgresPipelineTaskRunRepository,
+)
+from sceneops_db.postgres.robots import (
+    PostgresMissionRepository,
+    PostgresRobotRepository,
+    PostgresRobotRunRepository,
+    PostgresRobotStateRepository,
 )
 from sceneops_db.postgres.scenarios import (
     PostgresScenarioRunRepository,
@@ -224,3 +236,30 @@ def get_label_run_repository(session: DbSessionDep) -> LabelRunRepository:
 
 
 LabelRunRepositoryDep = Annotated[LabelRunRepository, Depends(get_label_run_repository)]
+
+
+# --- domains: robots ---
+
+
+def get_robot_repository(session: DbSessionDep) -> RobotRepository:
+    return PostgresRobotRepository(session)
+
+
+def get_robot_run_repository(session: DbSessionDep) -> RobotRunRepository:
+    return PostgresRobotRunRepository(session)
+
+
+def get_mission_repository(session: DbSessionDep) -> MissionRepository:
+    return PostgresMissionRepository(session)
+
+
+def get_robot_state_repository(session: DbSessionDep) -> RobotStateRepository:
+    return PostgresRobotStateRepository(session)
+
+
+RobotRepositoryDep = Annotated[RobotRepository, Depends(get_robot_repository)]
+RobotRunRepositoryDep = Annotated[RobotRunRepository, Depends(get_robot_run_repository)]
+MissionRepositoryDep = Annotated[MissionRepository, Depends(get_mission_repository)]
+RobotStateRepositoryDep = Annotated[
+    RobotStateRepository, Depends(get_robot_state_repository)
+]

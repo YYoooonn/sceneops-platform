@@ -2,10 +2,17 @@
 
 > **이 문서는 다른 `docs/*.md`와 성격이 다르다.** `architecture.md`/`data-model.md`/
 > `pipeline-lifecycle.md`/`storage-layout.md`는 "현재 코드가 실제로 어떻게 동작하는가"를
-> 기록하는 Phase 0 문서인 반면, 이 문서는 **아직 구현되지 않은 로드맵 Phase 4(ROS2 Robot Data
-> Source)의 설계**를 로드맵 §10과 기존 코드의 확장 지점(extension point)에 맞춰 미리 정리한
-> forward design 문서다. 여기 적힌 내용은 코드가 아니라 계획이며, Phase 4 착수 시 실제 구현
-> 경험에 따라 바뀔 수 있다. 관련 결정: [ADR-005](./adr/005-ros2-vs-kafka-boundary.md).
+> 기록하는 Phase 0 문서인 반면, 이 문서는 로드맵 Phase 4(ROS2 Robot Data Source)의 설계를
+> 로드맵 §10과 기존 코드의 확장 지점(extension point)에 맞춰 정리한 문서다. 관련 결정:
+> [ADR-005](./adr/005-ros2-vs-kafka-boundary.md).
+>
+> **구현 현황 (최초 작성 이후 갱신)**: §2(RobotState 스키마/DB), §3(CanReplayNode),
+> §4(RosbagAdapter)는 이제 실제로 구현되어 있다 — 아래 각 절에 실제 코드 경로를 표시해뒀다.
+> 실제 nuScenes CAN bus 데이터로 `ros2 bag record`를 돌려 만든 real MCAP까지 이 adapter에
+> 통과시켜 로드맵 §10의 "nuScenes CAN replay → ROS2 pub/sub → rosbag2/MCAP → RosbagAdapter
+> ingestion" 체인 전체를 실제로 검증했다 (`apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap`).
+> 남은 미구현 항목은 §6 참고. 이 아래 나머지 설계 서술은 여전히 유효하지만, "아직 코드가
+> 없다"는 전제로 쓰인 문장들은 더 이상 정확하지 않다.
 
 ## 1. 왜 생각보다 갭이 작은가
 
@@ -77,22 +84,44 @@ metadata: JsonDict              # RawEgoPoseManifest.metadata와 동일 패턴
 가깝다. `RobotState`를 `RawEgoPoseManifest`의 상위 확장으로 볼지, 완전히 별도 엔티티로 둘지는
 Phase 4 착수 시 실제 rosbag 데이터로 검증 후 결정한다.
 
-## 3. ROS2 Topics & CAN Replay (로드맵 §10.1)
+## 3. ROS2 Topics & CAN Replay (로드맵 §10.1) — 구현됨: `ros2/nodes/can_replay_node.py`
 
 ```text
-nuScenes CAN → CanReplayNode → ROS2 Topics
+nuScenes CAN (data/raw/nuscenes/can_bus/) → CanReplayNode → ROS2 Topics
 
-/vehicle/odom      (nav_msgs/Odometry)       → position, orientation, velocity
-/vehicle/imu       (sensor_msgs/Imu)          → orientation, acceleration
-/vehicle/control   (custom)                   → steering, throttle, brake
-/vehicle/status    (sensor_msgs/BatteryState) → battery
-/mission/status    (custom)                   → mission_id, operation_state
+/vehicle/odom      (nav_msgs/Odometry)       ← CAN 'pose'             → position, orientation, velocity
+/vehicle/imu       (sensor_msgs/Imu)          ← CAN 'ms_imu'           → orientation, acceleration
+/vehicle/control   (std_msgs/String, JSON)    ← CAN 'vehicle_monitor'  → steering, throttle, brake
+/vehicle/status    (sensor_msgs/BatteryState) ← CAN 'vehicle_monitor'  → battery
+/mission/status    (std_msgs/String, JSON)    ← synthetic (replay start/end) → Mission 엔티티 몫, RobotState 아님
 ```
 
-Standard message(`nav_msgs`, `sensor_msgs`, `diagnostic_msgs`)를 우선 사용하고, SceneOps 고유
-정보(mission 연결, scene 연결)만 custom message로 정의한다 — 로드맵 원칙 그대로.
+Standard message(`nav_msgs`, `sensor_msgs`)를 우선 사용한다는 로드맵 원칙대로 구현했다.
+`/vehicle/control`은 steering+throttle+brake 조합에 맞는 표준 ROS2 메시지가 없고, 커스텀
+`.msg` 패키지를 만들려면 colcon build 단계가 필요해 이 replay node 범위 밖으로 미뤘다 —
+대신 `std_msgs/String`에 flat JSON을 실어 보내는 브릿지 포맷을 쓴다 (`RosbagAdapter`가
+`std_msgs/msg/String` 스키마를 인식해서 `.data`를 다시 JSON으로 파싱하도록 되어 있다 —
+§4 참고).
 
-## 4. rosbag2/MCAP → SceneOps 적재 흐름 (로드맵 §10.3, §10.4)
+**중요한 정정**: 원래 이 표는 `/mission/status`가 `RobotState.operation_state`를 채운다고
+적었지만 실제로 구현하면서 깨졌다 — CanReplayNode가 보내는 `operation_state` 값
+("running"/"completed")은 `MissionStatus` 값이지 `RobotOperationState`
+(idle/running/error/emergency_stop) 값이 아니라서, `RobotStateRecord`에 그대로 넣으면
+pydantic validation이 "completed"를 거부한다. 그래서 `RosbagAdapter`는 `/mission/status`를
+`extract_robot_states()` 대상 토픽에서 의도적으로 제외했다 — 이 토픽은 §5의 `Mission`
+엔티티가 담당해야 할 몫이고, `RosbagAdapter.extract_missions()`가 그 소비 경로다: 같은
+`mission_id`로 온 여러 상태 업데이트(시작/종료)를 하나의 `MissionRecord`로 합치고,
+`operation_state` 문자열을 `MissionStatus` enum으로 매핑한다 (모르는 값은 `PENDING`으로
+안전하게 fallback). `IngestRobotStatesJobHandler`가 `extract_robot_states()`와 같은 pass에서
+호출해 `RobotStore.upsert_mission()`으로 저장한다 — 같은 bag을 두 번 열 필요가 없어서 별도
+Job으로 안 만들었다.
+
+nuScenes CAN bus 쿼터니언은 `(w, x, y, z)` 순서이고(같은 scene의 `ego_pose['rotation']`과
+수치 비교로 확인), ROS2 `geometry_msgs/Quaternion`은 `(x, y, z, w)` 순서라 재정렬이 필요하다
+— `can_replay_node.py`의 `_quat_wxyz_to_ros()`.
+
+## 4. rosbag2/MCAP → SceneOps 적재 흐름 (로드맵 §10.3, §10.4) — 구현됨:
+`apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`
 
 ```text
 ROS2 Topics
@@ -107,21 +136,34 @@ RobotState 시계열                              [신규 테이블, §2]
      └ scene_id로 SceneRecord와 연결
 ```
 
-`RosbagAdapter`는 `RawLogAdapter` Protocol을 구현한다:
+`RosbagAdapter`는 `RawLogAdapter` Protocol을 구현한다. 실제 구현은 이 문서가 처음 예상한
+것보다 인코딩 처리가 하나 더 필요했다 — 실제 ROS2 bag은 CDR로 인코딩되기 때문에, `mcap`
+라이브러리로 채널/메시지를 열람하는 것 외에 `mcap-ros2-support`(`rclpy` 불필요, MCAP 파일에
+내장된 스키마 텍스트만으로 디코딩)로 CDR 페이로드를 실제 dict로 바꾸는 단계가 필요했다:
 
 ```python
 class RosbagAdapter:
     async def build_raw_log(
         self, *, dataset_id, dataset_version, raw_log_id, version_root_uri, params
     ) -> tuple[RawLogManifest, RawLogFrameIndex, str, str]:
-        # 1. rosbag2/MCAP 파일 열기 (mcap 라이브러리)
-        # 2. 토픽 discovery → SensorModality 매핑 (camera/lidar/imu 등)
-        # 3. 타임스탬프 정렬 → RawSensorFrameManifest 리스트 생성
-        # 4. RobotState 관련 토픽(odom/imu/control/status)은 별도로 RobotState 레코드로 추출
-        #    (frame_index가 아니라 §2의 RobotState 테이블로)
-        # 5. RawLogManifest/RawLogFrameIndex 조립 + ArtifactStore에 기록
+        # 1. rosbag2/MCAP 파일 열기 (mcap.reader.make_reader)
+        # 2. 메시지 인코딩별 디코딩:
+        #    - cdr: mcap_ros2.decoder.DecoderFactory로 실제 ROS2 메시지 디코딩,
+        #      __slots__ 재귀 순회로 일반 dict 변환. nav_msgs/Odometry,
+        #      sensor_msgs/Imu, sensor_msgs/BatteryState는 flat 필드로 재매핑;
+        #      std_msgs/String은 .data를 다시 JSON 파싱 (§3의 브릿지 포맷)
+        #    - json: 테스트 픽스처용 브릿지 포맷, 그대로 dict
+        # 3. 토픽 discovery → SensorModality 매핑 (camera/lidar 등)
+        # 4. 타임스탬프 정렬 → RawSensorFrameManifest 리스트 생성
+        # 5. RobotState 관련 토픽(odom/imu/control/status)은 별도로 RobotState 레코드로 추출
+        #    (frame_index가 아니라 §2의 RobotState 테이블로) — extract_robot_states()
+        # 6. RawLogManifest/RawLogFrameIndex 조립 + ArtifactStore에 기록
         ...
 ```
+
+미구현: 카메라/LiDAR 같은 바이너리 센서 페이로드(`sensor_msgs/Image`, `PointCloud2`)는 CDR
+디코딩까지는 되지만 파일로 안 써서(`RawSensorFrameManifest.uri`가 빈 문자열로 남음) 완전한
+scene 등록까지는 못 간다 — 실제 카메라/LiDAR 퍼블리셔가 생기면 처리할 후속 작업.
 
 이후 `build_scenes.py`의 `_build_adapter_factory`에 한 줄 추가로 등록한다:
 
@@ -156,14 +198,30 @@ Mission      mission_id, robot_id, status, RobotState.mission_id가 참조
   요구하는 robotics-specific validation과 정확히 겹치고, `validate_scene` task의
   `PipelineTaskQualityRule` 메커니즘에 새 rule을 추가하는 것만으로 확장된다.
 
-## 6. Phase 4 착수 시 확인해야 할 것
+## 6. 남은 gap (구현하면서 확인/정정된 목록)
 
-- `RawLogAdapter.build_raw_log()`가 반환하는 `RawLogFrameIndex`가 카메라/LiDAR처럼 "프레임"
-  단위 데이터에 최적화되어 있는데, IMU/odom처럼 훨씬 높은 주파수(수십~수백 Hz)의 시계열을
-  같은 구조에 넣는 게 적절한지 — 위 §2 제안대로 `RobotState`를 별도 테이블/Parquet으로 분리하는
-  근거가 여기서 나온다.
-- `SensorModality`(`packages/sceneops-core/sceneops_core/sensors/enums.py`)에 로봇 상태류를
-  담을 값이 없다 (`CAMERA`/`LIDAR`/`RADAR`/`EGO_POSE`/`CALIBRATION`/`ANNOTATION`/`UNKNOWN`뿐) —
-  `TELEMETRY` 또는 `ROBOT_STATE` 추가 여부 결정 필요.
-- `RawLogSourceFormat.ROSBAG`을 실제로 어디서 쓸지 — `RawLogManifest.source_format`에 채워
-  넣는 용도로 그대로 쓰면 될 것으로 보이나 미검증.
+해결됨:
+
+- ~~`RawLogFrameIndex`에 고주파 시계열을 넣는 게 적절한지~~ — `RobotState`를 별도 테이블로
+  분리하는 것으로 확정, `RawLogFrameIndex`는 프레임 데이터 전용으로 유지
+- ~~`RawLogSourceFormat.ROSBAG`을 어디서 쓸지~~ — `RawLogManifest.source_format`에 그대로 사용
+- ~~`SensorModality`에 로봇 상태류 값이 없는 문제~~ — `RobotState`는 애초에 `RawSensorFrameManifest`/
+  `SensorModality`를 전혀 쓰지 않는 별도 스키마라서 해당 없음으로 판명
+- ~~`/mission/status` → `Mission` 엔티티 소비 경로 없음~~ — `RosbagAdapter.extract_missions()` +
+  `IngestRobotStatesJobHandler`의 `RobotStore.upsert_mission()` 호출로 구현. 같은 `mission_id`의
+  여러 상태 업데이트를 하나의 row로 합치는 로직까지 포함 (§3 참고)
+
+아직 남음:
+
+- **바이너리 센서 페이로드 미기록** — §4의 "미구현" 참고. `sensor_msgs/Image`/`PointCloud2`를
+  ArtifactStore에 파일로 쓰는 경로가 없음. 실제 카메라/LiDAR 퍼블리셔가 없어서 지금은 검증
+  불가 (합성 데이터로 만들 수는 있지만 실효성이 낮다고 판단해 보류)
+- **`Robot`/`RobotRun` 사전 등록 흐름 없음** — `IngestRobotStatesJobHandler`는 `Robot`/
+  `RobotRun`이 이미 DB에 있다고 가정한다. CAN replay를 실행하기 전에 이 둘을 등록하는 API나
+  CLI가 아직 없어서, 지금은 테스트에서 직접 레코드를 만들어 우회하고 있다
+- **CAN replay 속도/커스텀 메시지 트레이드오프** — `/vehicle/control`이 정식 `.msg` 패키지가
+  아니라 `std_msgs/String` JSON 브릿지인 것은 의도적 스코프 축소였다 (colcon build 없이 가는
+  선택) — 나중에 실물 로봇 연동이 필요해지면 재검토
+- **커밋된 테스트 픽스처가 실물 데이터** — `apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap`은
+  손으로 만든 바이트가 아니라 `ros2 bag record`가 실제로 만든 파일 (1.4MB) — 이후 CAN
+  replay 로직이 바뀌면 이 픽스처를 재생성해야 값이 안 맞을 수 있음

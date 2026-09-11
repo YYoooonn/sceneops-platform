@@ -10,7 +10,10 @@ from sceneops_storage import ArtifactStore
 class AnalyticsTableWriter:
     """Writes Polars tables as Parquet artifacts under an ArtifactStore root.
 
-    Layout: ``{root_uri}/{dataset_id}/{dataset_version}/{table_name}.parquet``.
+    Two scoping schemes, one underlying writer:
+      - dataset-scoped:  ``{root_uri}/{dataset_id}/{dataset_version}/{table_name}.parquet``
+      - robot-run-scoped: ``{root_uri}/robot_runs/{robot_run_id}/{table_name}.parquet``
+
     A rebuild overwrites the same URI (same idempotent-rebuild pattern as
     ``DatasetArtifactStore.write_dataset_manifest``) rather than versioning
     each write.
@@ -47,10 +50,29 @@ class AnalyticsTableWriter:
             dataset_version=dataset_version,
             table_name=table_name,
         )
+        return await self._write_parquet(uri, df)
 
+    def robot_run_table_uri(self, *, robot_run_id: str, table_name: str) -> str:
+        return self.artifact_store.join_uri(
+            self.root_uri,
+            "robot_runs",
+            robot_run_id,
+            f"{table_name}.parquet",
+        )
+
+    async def write_robot_run_table(
+        self,
+        table_name: str,
+        df: pl.DataFrame,
+        *,
+        robot_run_id: str,
+    ) -> str:
+        uri = self.robot_run_table_uri(robot_run_id=robot_run_id, table_name=table_name)
+        return await self._write_parquet(uri, df)
+
+    async def _write_parquet(self, uri: str, df: pl.DataFrame) -> str:
         buffer = io.BytesIO()
         df.write_parquet(buffer)
-
         await self.artifact_store.write_bytes(uri, buffer.getvalue())
         return uri
 

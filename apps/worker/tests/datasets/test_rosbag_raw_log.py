@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from mcap.writer import Writer
 
+from sceneops_core.robots.schemas import MissionStatus
 from sceneops_core.sensors import SensorModality
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 
@@ -236,6 +237,109 @@ class TestExtractRobotStates:
         assert adapter.extract_robot_states(robot_id="robot-1") == []
 
 
+class TestExtractMissions:
+    def test_consolidates_start_and_end_into_one_record(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [
+                (
+                    "/mission/status",
+                    1_000_000_000,
+                    {"mission_id": "mission-1", "operation_state": "running"},
+                    "json",
+                ),
+                (
+                    "/mission/status",
+                    1_500_000_000,
+                    {"mission_id": "mission-1", "operation_state": "completed"},
+                    "json",
+                ),
+            ],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        missions = adapter.extract_missions(robot_id="robot-1", robot_run_id="run-1")
+
+        assert len(missions) == 1
+        mission = missions[0]
+        assert mission.mission_id == "mission-1"
+        assert mission.status == MissionStatus.COMPLETED
+        assert mission.robot_id == "robot-1"
+        assert mission.robot_run_id == "run-1"
+        assert mission.started_at < mission.ended_at
+
+    def test_non_terminal_status_has_no_ended_at(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [
+                (
+                    "/mission/status",
+                    1_000_000_000,
+                    {"mission_id": "mission-1", "operation_state": "running"},
+                    "json",
+                )
+            ],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        mission = adapter.extract_missions(robot_id="robot-1")[0]
+        assert mission.status == MissionStatus.RUNNING
+        assert mission.ended_at is None
+
+    def test_unrecognized_operation_state_defaults_to_pending(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [
+                (
+                    "/mission/status",
+                    1_000_000_000,
+                    {
+                        "mission_id": "mission-1",
+                        "operation_state": "some_unknown_value",
+                    },
+                    "json",
+                )
+            ],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        mission = adapter.extract_missions(robot_id="robot-1")[0]
+        assert mission.status == MissionStatus.PENDING
+
+    def test_no_mission_topics_returns_empty(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [("/camera/front/image", 1_000_000_000, {"uri": "x"}, "json")],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        assert adapter.extract_missions(robot_id="robot-1") == []
+
+    def test_mission_status_does_not_leak_into_robot_states(self, tmp_path) -> None:
+        """/mission/status must stay out of extract_robot_states() — its
+        operation_state values are MissionStatus, not RobotOperationState,
+        and would fail RobotStateRecord validation if merged in."""
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [
+                (
+                    "/mission/status",
+                    1_000_000_000,
+                    {"mission_id": "mission-1", "operation_state": "completed"},
+                    "json",
+                )
+            ],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        assert adapter.extract_robot_states(robot_id="robot-1") == []
+
+
 class TestRealCdrFixtures:
     """Exercises decoding against bags recorded by an actual `ros2 bag record
     --storage mcap`, not bytes fabricated by this test suite."""
@@ -274,3 +378,46 @@ class TestRealCdrFixtures:
         assert manifest.frame_count == 0
         assert frame_index.frames == []
         assert adapter.extract_robot_states(robot_id="robot-1") == []
+
+    def test_real_can_replay_bag_closes_the_full_phase4_loop(self) -> None:
+        """This fixture is the actual output of the full roadmap Phase 4 chain:
+        nuScenes CAN bus data -> ros2/nodes/can_replay_node.py (real rclpy
+        publisher, run inside the ros2 Docker sandbox) -> `ros2 bag record
+        --storage mcap` on /vehicle/odom, /vehicle/imu, /vehicle/status,
+        /vehicle/control, /mission/status -> this adapter. Counts match the
+        scene-0061 CAN bus data exactly (938 pose, 1899 ms_imu, 38
+        vehicle_monitor messages)."""
+        adapter, _ = _make_adapter(str(_FIXTURES_DIR / "can_replay_scene_0061.mcap"))
+
+        states = adapter.extract_robot_states(
+            robot_id="robot-nuscenes-01", robot_run_id="run-scene-0061"
+        )
+
+        has = lambda field: sum(1 for s in states if getattr(s, field) is not None)  # noqa: E731
+        assert has("position") == 938
+        assert has("velocity") == 938
+        assert has("orientation") > 0  # contributed by both pose and ms_imu
+        assert has("acceleration") == 1899
+        assert has("battery") == 38
+        assert has("steering") == 38
+        assert has("throttle") == 38
+        assert has("brake") == 38
+        # /mission/status is deliberately excluded — see
+        # _DEFAULT_ROBOT_STATE_TOPICS's comment on the operation_state
+        # semantic mismatch with MissionStatus.
+        assert has("operation_state") == 0
+
+        control_state = next(s for s in states if s.steering is not None)
+        assert control_state.robot_id == "robot-nuscenes-01"
+        assert control_state.robot_run_id == "run-scene-0061"
+
+        # /mission/status was excluded from robot states above, but it's a
+        # real topic in this bag (start + end) — extract_missions() is its
+        # actual consumer.
+        missions = adapter.extract_missions(
+            robot_id="robot-nuscenes-01", robot_run_id="run-scene-0061"
+        )
+        assert len(missions) == 1
+        assert missions[0].mission_id == "mission-scene-0061"
+        assert missions[0].status == MissionStatus.COMPLETED
+        assert missions[0].started_at < missions[0].ended_at

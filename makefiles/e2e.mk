@@ -75,5 +75,13 @@ e2e-airflow-pipeline:
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_airflow_pipeline.sh
 
+.PHONY: e2e-robot-can-replay
+e2e-robot-can-replay:
+	chmod +x scripts/e2e/e2e_robot_can_replay.sh
+	API_BASE_URL=$(API_HOST) \
+	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
+	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
+	scripts/e2e/e2e_robot_can_replay.sh
+
 .PHONY: e2e
 e2e: e2e-api-smoke e2e-dataset-ingestion e2e-detection-evaluation e2e-pipeline-contracts

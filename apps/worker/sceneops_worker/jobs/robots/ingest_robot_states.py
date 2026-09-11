@@ -16,7 +16,12 @@ from sceneops_worker.observations.artifacts import ObservationArtifactStore
 class IngestRobotStatesJobHandler(
     JobHandler[IngestRobotStatesJobParams, IngestRobotStatesJobResult]
 ):
-    """Reads robot-state topics from a rosbag2/MCAP file and persists them.
+    """Reads robot-state and mission-status topics from a rosbag2/MCAP file
+    and persists both.
+
+    Ingests missions in the same pass rather than as a separate job type:
+    they come from the same bag, so a second job would just mean opening and
+    decoding the same file twice for no benefit.
 
     Not part of any named SceneOps pipeline (dataset ingestion pipelines are a
     separate concept from RobotRun — docs/robot-data-model.md §5). Dispatched
@@ -78,6 +83,13 @@ class IngestRobotStatesJobHandler(
         )
         saved_states = await context.robot_store.create_states(states)
 
+        missions = adapter.extract_missions(
+            robot_id=params.robot_id,
+            robot_run_id=params.robot_run_id,
+        )
+        for mission in missions:
+            await context.robot_store.upsert_mission(mission)
+
         if robot_run is not None:
             await context.robot_store.save_run(
                 robot_run.model_copy(update={"status": RobotRunStatus.INGESTED})
@@ -87,6 +99,7 @@ class IngestRobotStatesJobHandler(
             robot_id=params.robot_id,
             robot_run_id=params.robot_run_id,
             state_count=len(saved_states),
+            mission_count=len(missions),
             start_timestamp_us=(saved_states[0].timestamp_us if saved_states else None),
             end_timestamp_us=(saved_states[-1].timestamp_us if saved_states else None),
         )

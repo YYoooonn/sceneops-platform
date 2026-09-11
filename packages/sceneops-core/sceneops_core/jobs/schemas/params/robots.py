@@ -21,3 +21,19 @@ class IngestRobotStatesJobParams(BaseJobParams):
     mcap_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class ExportRobotAnalyticsSnapshotJobParams(BaseJobParams):
+    """Export RobotState/Mission rows for one RobotRun to Parquet.
+
+    Mirrors ExportAnalyticsSnapshotJobParams (dataset-scoped) but scoped by
+    robot_run_id instead — Robot/RobotRun is a separate domain from
+    Dataset/DatasetVersion (docs/robot-data-model.md §5).
+    """
+
+    robot_run_id: str
+
+    # None → export all known tables (robot_telemetry, missions)
+    tables: list[str] | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)

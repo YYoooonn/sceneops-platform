@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from mcap.reader import make_reader
@@ -19,7 +20,7 @@ from sceneops_core.observations.schemas import (
     RawSensorFrameManifest,
     TimeRange,
 )
-from sceneops_core.robots.schemas import RobotStateRecord
+from sceneops_core.robots.schemas import MissionRecord, MissionStatus, RobotStateRecord
 from sceneops_core.sensors import SensorModality
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
 
@@ -36,6 +37,22 @@ _DEFAULT_ROBOT_STATE_TOPICS = {
     "/vehicle/control",
     "/vehicle/status",
 }
+
+# /mission/status is deliberately NOT in _DEFAULT_ROBOT_STATE_TOPICS — its
+# operation_state values ("running"/"completed") are MissionStatus lifecycle
+# states, not RobotOperationState values, and mixing the two crashes
+# RobotStateRecord validation. It's a separate topic set consumed by
+# extract_missions() instead of extract_robot_states().
+_DEFAULT_MISSION_TOPICS = {"/mission/status"}
+
+_MISSION_STATUS_BY_OPERATION_STATE: dict[str, MissionStatus] = {
+    "running": MissionStatus.RUNNING,
+    "completed": MissionStatus.COMPLETED,
+    "failed": MissionStatus.FAILED,
+    "aborted": MissionStatus.ABORTED,
+}
+
+_STD_MSGS_STRING_SCHEMA = "std_msgs/msg/String"
 
 _ROBOT_STATE_FIELDS = (
     "position",
@@ -100,6 +117,14 @@ def _flatten_battery_state(payload: dict[str, Any]) -> dict[str, Any]:
     return {"battery": payload.get("percentage")}
 
 
+def _us_to_datetime(timestamp_us: int) -> datetime:
+    """message.log_time is real wall-clock time (rclpy's system clock, not a
+    simulated one), so treating it as a genuine UTC timestamp is valid here —
+    unlike RobotState.timestamp_us, which stays a raw int throughout since it
+    represents "when in the recording", not "when was this row created"."""
+    return datetime.fromtimestamp(timestamp_us / 1_000_000, tz=timezone.utc)
+
+
 # Standard ROS2 message schema name -> translator into this module's flat
 # RobotState field shape (roadmap §10.1 calls for using these standard
 # messages where possible). Messages not listed here (including SceneOps
@@ -121,6 +146,10 @@ class _BagContents:
     min_timestamp_us: int | None
     max_timestamp_us: int | None
     robot_state_payloads: dict[int, dict[str, Any]] = field(default_factory=dict)
+    # Chronological (timestamp_us, payload) pairs — unlike robot_state_payloads
+    # this isn't merged by timestamp, since multiple distinct status updates
+    # for the same mission_id are expected (e.g. start and end).
+    mission_updates: list[tuple[int, dict[str, Any]]] = field(default_factory=list)
 
 
 class RosbagAdapter:
@@ -135,14 +164,20 @@ class RosbagAdapter:
 
     - ``cdr``: real ROS2 messages, decoded via ``mcap-ros2-support`` using the
       schema text embedded in the MCAP file itself — no ``rclpy``/ROS2
-      install needed to read a bag. Verified against real bags recorded with
+      install needed to read a bag. Verified end-to-end against
+      ``ros2/nodes/can_replay_node.py`` output recorded with
       ``ros2 bag record --storage mcap`` (see the ``ros2`` Docker sandbox and
       this module's test fixtures). Standard messages with nested nav_msgs/
       sensor_msgs shapes (Odometry, Imu, BatteryState) are flattened into this
-      module's flat field names; anything else (including future custom
-      messages like ``/vehicle/control``) is assumed already flat.
-    - ``json``: a bridge format used by this adapter's own synthetic test
-      fixtures, kept because it requires no ROS2 tooling at all to produce.
+      module's flat field names. Topics with no matching standard ROS2
+      message (e.g. ``/vehicle/control``, ``/mission/status``) are published
+      by CanReplayNode as ``std_msgs/String`` carrying a flat JSON object in
+      ``.data`` — recognized by schema name and unwrapped/parsed here, not
+      just passed through as ``{"data": "<json>"}``.
+    - ``json``: the same flat bridge format, but message-encoded as
+      ``json`` directly instead of CDR-wrapped ``std_msgs/String`` — used by
+      this adapter's own synthetic test fixtures since it requires no ROS2
+      tooling at all to produce.
 
     Not yet implemented: binary sensor payloads (``sensor_msgs/Image``,
     ``PointCloud2``) aren't written out to files — a CDR-decoded camera/lidar
@@ -159,12 +194,14 @@ class RosbagAdapter:
         observation_store: ObservationArtifactStore,
         sensor_topics: dict[str, tuple[SensorModality, str]] | None = None,
         robot_state_topics: set[str] | None = None,
+        mission_topics: set[str] | None = None,
     ) -> None:
         self._source_store = source_store
         self._source_root_uri = source_root_uri
         self._observation_store = observation_store
         self._sensor_topics = sensor_topics or _DEFAULT_SENSOR_TOPICS
         self._robot_state_topics = robot_state_topics or _DEFAULT_ROBOT_STATE_TOPICS
+        self._mission_topics = mission_topics or _DEFAULT_MISSION_TOPICS
         self._ros2_decoder_factory = Ros2DecoderFactory()
 
     async def build_raw_log(
@@ -248,6 +285,64 @@ class RosbagAdapter:
             )
         return records
 
+    def extract_missions(
+        self,
+        *,
+        robot_id: str,
+        robot_run_id: str | None = None,
+    ) -> list[MissionRecord]:
+        """Read /mission/status updates into one MissionRecord per mission_id.
+
+        Multiple status updates for the same mission (e.g. start/end) are
+        consolidated into a single row: status comes from the
+        chronologically last update, started_at/ended_at from the first/last
+        message timestamps seen for that mission_id. Pure read — does not
+        persist, matching extract_robot_states().
+        """
+        bag = self._read_bag()
+
+        by_mission: dict[str, dict[str, Any]] = {}
+        for timestamp_us, payload in bag.mission_updates:
+            mission_id = payload.get("mission_id")
+            if mission_id is None:
+                continue
+            entry = by_mission.setdefault(
+                mission_id,
+                {
+                    "started_us": timestamp_us,
+                    "latest_us": timestamp_us,
+                    "operation_state": None,
+                },
+            )
+            entry["started_us"] = min(entry["started_us"], timestamp_us)
+            if timestamp_us >= entry["latest_us"]:
+                entry["latest_us"] = timestamp_us
+                entry["operation_state"] = payload.get("operation_state")
+
+        records: list[MissionRecord] = []
+        for mission_id, entry in by_mission.items():
+            status = _MISSION_STATUS_BY_OPERATION_STATE.get(
+                entry["operation_state"], MissionStatus.PENDING
+            )
+            is_terminal = status in (
+                MissionStatus.COMPLETED,
+                MissionStatus.FAILED,
+                MissionStatus.ABORTED,
+            )
+            records.append(
+                MissionRecord(
+                    mission_id=mission_id,
+                    robot_id=robot_id,
+                    robot_run_id=robot_run_id,
+                    status=status,
+                    started_at=_us_to_datetime(entry["started_us"]),
+                    ended_at=_us_to_datetime(entry["latest_us"])
+                    if is_terminal
+                    else None,
+                )
+            )
+        return records
+
     def _decode_message(
         self,
         schema: Schema | None,
@@ -263,7 +358,17 @@ class RosbagAdapter:
             )
             if decoder is None:
                 return None  # not a valid ros2msg schema — can't decode
-            return _decoded_message_to_dict(decoder(message.data))
+            decoded = _decoded_message_to_dict(decoder(message.data))
+            if schema is not None and schema.name == _STD_MSGS_STRING_SCHEMA:
+                # SceneOps JSON-over-String bridge (used by CanReplayNode for
+                # topics with no standard ROS2 shape, e.g. /vehicle/control,
+                # /mission/status): the real payload is JSON text inside the
+                # String's `data` field, not the {"data": ...} wrapper itself.
+                try:
+                    return json.loads(decoded["data"])
+                except (json.JSONDecodeError, TypeError):
+                    return decoded  # plain text string, not our bridge convention
+            return decoded
         return None  # unrecognized encoding (protobuf, flatbuffer, ...)
 
     def _read_bag(self) -> _BagContents:
@@ -273,6 +378,7 @@ class RosbagAdapter:
         min_ts: int | None = None
         max_ts: int | None = None
         robot_state_payloads: dict[int, dict[str, Any]] = {}
+        mission_updates: list[tuple[int, dict[str, Any]]] = []
 
         with open(self._source_root_uri, "rb") as stream:
             reader = make_reader(stream)
@@ -311,6 +417,10 @@ class RosbagAdapter:
                     robot_state_payloads.setdefault(timestamp_us, {}).update(
                         flat_payload
                     )
+                    continue
+
+                if channel.topic in self._mission_topics:
+                    mission_updates.append((timestamp_us, payload))
 
         return _BagContents(
             frames=frames,
@@ -319,4 +429,5 @@ class RosbagAdapter:
             min_timestamp_us=min_ts,
             max_timestamp_us=max_ts,
             robot_state_payloads=robot_state_payloads,
+            mission_updates=mission_updates,
         )

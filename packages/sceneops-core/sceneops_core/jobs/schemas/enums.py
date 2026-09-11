@@ -36,6 +36,7 @@ class JobType(StrEnum):
 
     # ── robot runtime ──
     INGEST_ROBOT_STATES = "ingest_robot_states"
+    EXPORT_ROBOT_ANALYTICS_SNAPSHOT = "export_robot_analytics_snapshot"
 
 
 class JobStatus(StrEnum):

@@ -62,6 +62,10 @@ S3/MinIO: `s3://sceneops/artifacts/{datasets,runs,models,analytical}/...`
 `sceneops-analytics`의 `AnalyticsTableWriter`를 통해 기록한다. 재실행 시 같은 URI를
 덮어쓴다 (`build_dataset_manifest`의 idempotent-rebuild 패턴과 동일 — §4 참고).
 
+Robot 도메인은 Dataset와 별도 scope라서 같은 writer가 두 번째 경로 스킴을 갖는다:
+`analytical/robot_runs/{robot_run_id}/{table_name}.parquet` (`robot_telemetry`/`missions`,
+`EXPORT_ROBOT_ANALYTICS_SNAPSHOT` job — `docs/robot-data-model.md` §4 참고).
+
 원본 데이터(raw dataset)는 별도 `RawSourceSettings`로 완전히 독립적으로 설정된다
 (읽기 전용, 별도 root):
 
@@ -107,6 +111,17 @@ worker 모듈의 실제 하위 경로 조합은 `sceneops_worker/*/artifacts.py`
   `EXPORT_ANALYTICS_SNAPSHOT` job으로 v1 구현 완료 (`scenes`/`samples`/
   `sensor_frames`/`annotations`, `analytical/` prefix). `predictions.parquet`는
   prediction shard enumeration이 별도로 필요해 fast-follow로 남겨둠.
+- ~~Parquet 레이어를 쓰기만 하고 실제로 쿼리(Polars/DuckDB)해본 적이 없음~~ —
+  `sceneops_analytics.query_parquet()`가 실제 DuckDB로 로컬 Parquet 파일에 SQL 쿼리를
+  실행한다 (view 등록 + JOIN까지 검증). MinIO(S3)에 쓰인 파일은 DuckDB의 httpfs/S3
+  확장 없이는 직접 못 읽어서, 로컬로 내려받은 뒤 쿼리하는 경로만 지원 — 실제로
+  `boto3`로 내려받아 `robot_telemetry` × `missions` JOIN 쿼리까지 돌려서 검증함.
+  PyArrow도 이 DuckDB↔Polars 변환 경로에서 처음으로 실제 사용되기 시작함 (그 전까진
+  의존성만 선언되고 코드에서 쓰인 적이 없었음).
+- ~~로봇 데이터는 Parquet 분석 레이어에 없었음~~ — `robot_telemetry.parquet`/
+  `missions.parquet` (로드맵 §7.4가 원래 요구하던 이름) 추가, `robot_id`가 아니라
+  `robot_run_id`로 scope (Dataset처럼 버전 개념이 없어서).
 - `Artifact` 테이블의 `checksum`/`size_bytes`가 쓰기 경로에서 실제로 채워지는지 미검증
-  (data-model.md 8절 참고) — `ExportAnalyticsSnapshotJobHandler`가 기록하는
-  `analytics_table` artifact도 이 두 필드는 채우지 않는다.
+  (data-model.md 8절 참고) — `ExportAnalyticsSnapshotJobHandler`/
+  `ExportRobotAnalyticsSnapshotJobHandler`가 기록하는 `analytics_table` artifact도 이
+  두 필드는 채우지 않는다.

@@ -25,12 +25,13 @@ from .scene import (
     SceneSampleValidationConfig,
     ValidateSceneJobParams,
 )
-from .robots import IngestRobotStatesJobParams
+from .robots import ExportRobotAnalyticsSnapshotJobParams, IngestRobotStatesJobParams
 from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
 
 __all__ = [
     "BaseJobParams",
     "IngestRobotStatesJobParams",
+    "ExportRobotAnalyticsSnapshotJobParams",
     "DetectionSceneSelectionConfig",
     "DetectionSceneSelectionMode",
     "IngestScenesJobParams",

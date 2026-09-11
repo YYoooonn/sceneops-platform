@@ -8,6 +8,12 @@ PIPELINE_RUN_ID ?=
 TASK_ID         ?=
 MSG             ?=
 ROS2_CMD        ?=
+SCENE           ?=
+RATE            ?=
+DURATION        ?=
+ROBOT_ID        ?=
+RUN_ID          ?=
+MCAP_URI        ?=
 
 MODEL_ID        ?= dummy-detector
 MODEL_VERSION   ?= v1
@@ -87,6 +93,7 @@ help:
 	@echo "  make worker-cli"
 	@echo "  make worker-run-job JOB_ID=job-xxx"
 	@echo "  make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"
+	@echo "  make worker-register-robot-run ROBOT_ID=.. RUN_ID=.. MCAP_URI=.."
 	@echo ""
 	@echo "Inference (local CPU):"
 	@echo "  make inference-local-build"
@@ -118,6 +125,7 @@ help:
 	@echo "  make e2e-detection-evaluation"
 	@echo "  make e2e-pipeline-contracts"
 	@echo "  make e2e-detection-evaluation-real"
+	@echo "  make e2e-robot-can-replay                 nuScenes CAN -> ROS2 -> rosbag2/MCAP -> RobotState/Mission"
 	@echo ""
 	@echo "ROS2 (Jazzy dev sandbox):"
 	@echo "  make ros2-up"
@@ -126,6 +134,8 @@ help:
 	@echo "  make ros2-run ROS2_CMD='ros2 topic list'"
 	@echo "  make ros2-check"
 	@echo "  make ros2-logs"
+	@echo "  make ros2-can-replay SCENE=scene-0061 RATE=1.0"
+	@echo "  make ros2-can-replay-record SCENE=scene-0061 RATE=5.0   (records to data/raw/rosbag/<scene>)"
 	@echo ""
 	@echo "Debug:"
 	@echo "  make show-runs"

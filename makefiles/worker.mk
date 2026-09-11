@@ -50,3 +50,12 @@ worker-run-pipeline-task:
 	fi
 	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli \
 		sceneops-worker run-pipeline-task --pipeline-run-id $(PIPELINE_RUN_ID) --task-id $(TASK_ID)
+
+.PHONY: worker-register-robot-run
+worker-register-robot-run:
+	@if [ -z "$(ROBOT_ID)" ] || [ -z "$(RUN_ID)" ] || [ -z "$(MCAP_URI)" ]; then \
+		echo "Usage: make worker-register-robot-run ROBOT_ID=robot-1 RUN_ID=run-1 MCAP_URI=/data/raw/rosbag/scene-0061/scene-0061_0.mcap"; \
+		exit 1; \
+	fi
+	docker compose -f $(COMPOSE_FILE) --profile debug run --rm worker-cli \
+		sceneops-worker robots register-run --robot-id $(ROBOT_ID) --run-id $(RUN_ID) --mcap-uri $(MCAP_URI)

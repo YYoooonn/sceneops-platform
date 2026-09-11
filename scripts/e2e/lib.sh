@@ -224,6 +224,58 @@ assert_job_succeeded() {
   assert_json_equals "$job_json" '.job.status' 'succeeded' "$message"
 }
 
+# ── Robot / RobotRun API ────────────────────────────────────────────────────
+
+upsert_robot() {
+  local api_base_url="$1"
+  local robot_id="$2"
+  local platform="$3"
+
+  local existing
+  existing="$(curl -sS "$(api_url "$api_base_url" "/robots/$robot_id")")"
+
+  if echo "$existing" | jq -e '.robot' >/dev/null 2>&1; then
+    echo "$existing"
+    return 0
+  fi
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/robots")" \
+    -H "Content-Type: application/json" \
+    -d "{\"robot_id\": \"$robot_id\", \"platform\": \"$platform\"}"
+}
+
+upsert_robot_run() {
+  local api_base_url="$1"
+  local run_id="$2"
+  local robot_id="$3"
+  local mcap_uri="$4"
+
+  local existing
+  existing="$(curl -sS "$(api_url "$api_base_url" "/robot-runs/$run_id")")"
+
+  if echo "$existing" | jq -e '.robotRun' >/dev/null 2>&1; then
+    echo "$existing"
+    return 0
+  fi
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/robot-runs")" \
+    -H "Content-Type: application/json" \
+    -d "{\"run_id\": \"$run_id\", \"robot_id\": \"$robot_id\", \"mcap_uri\": \"$mcap_uri\"}"
+}
+
+fetch_missions() {
+  local api_base_url="$1"
+  local robot_run_id="$2"
+  curl -sS "$(api_url "$api_base_url" "/missions?robot_run_id=$robot_run_id")"
+}
+
+fetch_robot_states() {
+  local api_base_url="$1"
+  local robot_run_id="$2"
+  local limit="${3:-1}"
+  curl -sS "$(api_url "$api_base_url" "/robot-states?robot_run_id=$robot_run_id&limit=$limit")"
+}
+
 # ── Dataset / Scene API ───────────────────────────────────────────────────────
 
 upsert_dataset() {
