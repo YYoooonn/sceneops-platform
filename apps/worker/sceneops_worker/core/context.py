@@ -9,10 +9,12 @@ from sceneops_storage import ArtifactStore
 
 from sceneops_worker.config import WorkerSettings
 from sceneops_worker.datasets.artifacts import DatasetArtifactStore
+from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 from sceneops_worker.stores.datasets import DatasetStore
+from sceneops_worker.stores.episodes import EpisodeStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
@@ -47,6 +49,7 @@ class WorkerContext:
     raw_source_store: ArtifactStore
     dataset_artifact_store: DatasetArtifactStore
     scene_artifact_store: SceneArtifactStore
+    episode_artifact_store: EpisodeArtifactStore
     run_artifact_store: RunArtifactStore
     analytics_writer: AnalyticsTableWriter
 
@@ -57,6 +60,7 @@ class WorkerContext:
     dataset_store: DatasetStore
     robot_store: RobotStore
     scene_store: SceneStore
+    episode_store: EpisodeStore
     scenario_store: ScenarioStore
     model_store: ModelStore
     artifact_record_store: ArtifactRecordStore

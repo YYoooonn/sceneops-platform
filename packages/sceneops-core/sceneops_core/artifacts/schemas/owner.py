@@ -8,6 +8,7 @@ class ArtifactOwnerType(StrEnum):
     DATASET = "dataset"
     DATASET_VERSION = "dataset_version"
     SCENE = "scene"
+    EPISODE = "episode"
     SCENARIO_SET = "scenario_set"
     MODEL = "model"
     MODEL_VERSION = "model_version"

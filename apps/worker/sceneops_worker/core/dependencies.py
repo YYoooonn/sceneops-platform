@@ -8,10 +8,12 @@ from sceneops_storage import ArtifactStore, create_artifact_store
 from sceneops_worker.config import WorkerSettings, get_settings
 from sceneops_worker.core.context import RunStores, WorkerContext
 from sceneops_worker.datasets.artifacts import DatasetArtifactStore
+from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 from sceneops_worker.stores.datasets import DatasetStore
+from sceneops_worker.stores.episodes import EpisodeStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
@@ -70,6 +72,10 @@ def create_worker_context(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,
         ),
+        episode_artifact_store=EpisodeArtifactStore(
+            artifact_store=artifact_store,
+            dataset_root_uri=settings.dataset_root_uri,
+        ),
         run_artifact_store=RunArtifactStore(
             artifact_store=artifact_store,
             runs_root_uri=settings.run_root_uri,
@@ -84,6 +90,7 @@ def create_worker_context(
         dataset_store=DatasetStore(session),
         robot_store=RobotStore(session),
         scene_store=SceneStore(session),
+        episode_store=EpisodeStore(session),
         scenario_store=ScenarioStore(session),
         model_store=ModelStore(session),
         artifact_record_store=ArtifactRecordStore(session),

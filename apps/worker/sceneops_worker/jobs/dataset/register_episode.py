@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from sceneops_core.artifacts.schemas.enums import ArtifactKind
+from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
+from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.ids import generate_artifact_id
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeRecord, EpisodeStatus
+from sceneops_core.jobs.schemas import (
+    JobType,
+    RegisterEpisodeJobParams,
+    RegisterEpisodeJobResult,
+)
+from sceneops_core.pipelines.schemas import PipelineTaskInputs
+from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+
+
+class RegisterEpisodeJobHandler(
+    JobHandler[RegisterEpisodeJobParams, RegisterEpisodeJobResult]
+):
+    @property
+    def job_type(self) -> JobType:
+        return JobType.REGISTER_EPISODE
+
+    @property
+    def params_model(self) -> type[RegisterEpisodeJobParams]:
+        return RegisterEpisodeJobParams
+
+    def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
+        episode_manifest_uris = inputs.refs.get("episode_manifest_uris") or []
+        return {
+            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
+            "dataset_version": inputs.dataset.dataset_version
+            if inputs.dataset
+            else None,
+            **inputs.params,
+            "episode_manifest_uris": episode_manifest_uris,
+        }
+
+    async def run(
+        self,
+        request: JobHandlerRequest[RegisterEpisodeJobParams],
+    ) -> RegisterEpisodeJobResult:
+        params = request.params
+        context = request.context
+        job = request.job
+
+        dataset_id = params.dataset_id
+        dataset_version = params.dataset_version
+
+        registered_ids: list[str] = []
+        registered_uris: list[str] = []
+
+        for uri in params.episode_manifest_uris:
+            manifest = await context.episode_artifact_store.load_episode_manifest(uri)
+            if manifest is None:
+                continue
+
+            episode_id = manifest.episode_id
+            ds_id = dataset_id or manifest.dataset_id
+            ds_version = dataset_version or manifest.dataset_version
+
+            record = _build_episode_record_from_manifest(
+                episode_id=episode_id,
+                dataset_id=ds_id,
+                dataset_version=ds_version,
+                manifest_uri=uri,
+                manifest=manifest,
+            )
+
+            existing = await context.episode_store.get(episode_id)
+
+            if existing is not None and not params.replace_existing:
+                registered_ids.append(episode_id)
+                registered_uris.append(uri)
+                continue
+
+            await context.episode_store.upsert(record)
+
+            # Register the episode manifest as an artifact record so it is
+            # discoverable via GET /episodes/{episode_id}/artifacts.
+            await context.artifact_record_store.create(
+                artifact_id=generate_artifact_id(),
+                ref=ArtifactRef(
+                    kind=ArtifactKind.EPISODE_MANIFEST,
+                    uri=uri,
+                    media_type="application/json",
+                ),
+                owner_type=ArtifactOwnerType.EPISODE,
+                owner_id=episode_id,
+                dataset_id=ds_id,
+                dataset_version=ds_version,
+                job_id=job.job_id,
+                pipeline_run_id=job.pipeline_run_id,
+            )
+
+            registered_ids.append(episode_id)
+            registered_uris.append(uri)
+
+        await context.commit()
+
+        registered_count = len(registered_ids)
+
+        return RegisterEpisodeJobResult(
+            episode_ids=registered_ids,
+            episode_manifest_uris=registered_uris,
+            registered_episode_count=registered_count,
+            registered=registered_count > 0,
+        )
+
+
+def _build_episode_record_from_manifest(
+    *,
+    episode_id: str,
+    dataset_id: str | None,
+    dataset_version: str | None,
+    manifest_uri: str,
+    manifest: EpisodeManifest,
+) -> EpisodeRecord:
+    return EpisodeRecord(
+        episode_id=episode_id,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        raw_log_id=manifest.lineage.raw_log_id,
+        robot_id=manifest.lineage.robot_id,
+        robot_run_id=manifest.lineage.robot_run_id,
+        mission_id=manifest.lineage.mission_id,
+        status=EpisodeStatus.REGISTERED,
+        task=manifest.task,
+        outcome=manifest.outcome,
+        episode_manifest_uri=manifest_uri,
+        observation_channels=manifest.observation_channels,
+        action_channels=manifest.action_channels,
+        control_frequency_hz=manifest.control_frequency_hz,
+        frame_count=manifest.frame_count,
+        metadata=manifest.metadata,
+    )

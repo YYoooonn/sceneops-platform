@@ -24,6 +24,9 @@ class ArtifactKind(StrEnum):
     WORLD_STATE_MANIFEST = "world_state_manifest"
     SCENE_PACKAGE = "scene_package"
 
+    # Episode-level
+    EPISODE_MANIFEST = "episode_manifest"
+
     # Dataset-level
     DATASET_MANIFEST = "dataset_manifest"
     DATASET_VALIDATION_REPORT = "dataset_validation_report"

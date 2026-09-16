@@ -38,6 +38,10 @@ class JobType(StrEnum):
     INGEST_ROBOT_STATES = "ingest_robot_states"
     EXPORT_ROBOT_ANALYTICS_SNAPSHOT = "export_robot_analytics_snapshot"
 
+    # ── robot rosbag / MCAP → SceneOps episodes ──
+    BUILD_EPISODES = "build_episodes"
+    REGISTER_EPISODE = "register_episode"
+
 
 class JobStatus(StrEnum):
     PENDING = "pending"

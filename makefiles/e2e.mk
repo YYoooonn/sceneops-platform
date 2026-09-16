@@ -83,5 +83,14 @@ e2e-robot-can-replay:
 	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
 	scripts/e2e/e2e_robot_can_replay.sh
 
+.PHONY: e2e-episode-building
+e2e-episode-building:
+	chmod +x scripts/e2e/e2e_episode_building.sh
+	API_BASE_URL=$(API_HOST) \
+	SCENE=$(or $(SCENE),scene-0061) \
+	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
+	DATASET_ID=$(or $(DATASET_ID),episodes-e2e) DATASET_VERSION=$(or $(DATASET_VERSION),v1) \
+	scripts/e2e/e2e_episode_building.sh
+
 .PHONY: e2e
 e2e: e2e-api-smoke e2e-dataset-ingestion e2e-detection-evaluation e2e-pipeline-contracts

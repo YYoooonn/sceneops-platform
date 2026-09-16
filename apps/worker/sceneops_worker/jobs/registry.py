@@ -6,11 +6,13 @@ from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
 from sceneops_worker.jobs.dataset import (
     BuildDatasetManifestJobHandler,
+    BuildEpisodesJobHandler,
     BuildSceneIndexJobHandler,
     BuildScenesJobHandler,
     ExportAnalyticsSnapshotJobHandler,
     IngestScenesJobHandler,
     ProfileSceneJobHandler,
+    RegisterEpisodeJobHandler,
     RegisterSceneJobHandler,
     ValidateSceneJobHandler,
 )
@@ -68,5 +70,7 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
             ScoreScenarioReadinessJobHandler(),
             IngestRobotStatesJobHandler(),
             ExportRobotAnalyticsSnapshotJobHandler(),
+            BuildEpisodesJobHandler(),
+            RegisterEpisodeJobHandler(),
         ]
     )
