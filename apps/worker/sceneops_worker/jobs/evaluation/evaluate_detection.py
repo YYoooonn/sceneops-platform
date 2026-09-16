@@ -10,7 +10,6 @@ from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import default_evaluation_run_id, generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
-from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
 from sceneops_core.evaluations.schemas import EvaluationTaskType
 from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
@@ -185,7 +184,7 @@ class EvaluateDetectionJobHandler(
         context: WorkerContext,
         initial_record: EvaluationRunRecord,
     ) -> EvaluateDetectionExecution:
-        dataset_version = await self._require_ready_dataset_version(
+        dataset_version = await self._require_scene_dataset_ready(
             context, params.dataset_id, params.dataset_version
         )
         inference_run = await self._require_inference_run(
@@ -210,11 +209,17 @@ class EvaluateDetectionJobHandler(
         )
 
     @staticmethod
-    async def _require_ready_dataset_version(
+    async def _require_scene_dataset_ready(
         context: WorkerContext,
         dataset_id: str,
         dataset_version: str,
     ) -> DatasetVersionRecord:
+        """Is this Scene dataset ready for detection evaluation?
+
+        SceneOps V2 Request 05: replaces the old generic
+        ``version.status == READY`` gate with explicit Scene prerequisites —
+        see PredictDetectionJobHandler._require_scene_dataset_ready.
+        """
         version = await context.dataset_store.get_version(
             dataset_id=dataset_id,
             version=dataset_version,
@@ -223,14 +228,18 @@ class EvaluateDetectionJobHandler(
             raise ValueError(
                 f"Dataset version not found: {dataset_id}:{dataset_version}"
             )
-        if version.status != DatasetVersionStatus.READY:
+        if version.scene is None:
             raise ValueError(
-                f"Dataset version is not usable for evaluation: "
-                f"{dataset_id}:{dataset_version}, status={version.status}"
+                f"Dataset version has no Scene data: {dataset_id}:{dataset_version}"
             )
-        if version.manifest_uri is None:
+        if not version.scene.manifest_uri:
             raise ValueError(
                 f"Dataset version has no manifest_uri: {dataset_id}:{dataset_version}"
+            )
+        if version.scene.should_block_pipeline:
+            raise ValueError(
+                f"Dataset version Scene validation blocked downstream use: "
+                f"{dataset_id}:{dataset_version}"
             )
         return version
 
@@ -322,14 +331,17 @@ class EvaluateDetectionJobHandler(
         execution: EvaluateDetectionExecution,
     ) -> EvaluateDetectionInputs:
         version = execution.dataset_version_record
+        # _require_scene_dataset_ready already guaranteed version.scene and
+        # its manifest_uri are set before this runs.
+        manifest_uri = version.scene.manifest_uri
         dataset_manifest = (
             await execution.context.dataset_artifact_store.load_dataset_manifest(
-                version.manifest_uri
+                manifest_uri
             )
         )
         return EvaluateDetectionInputs(
             dataset_manifest=dataset_manifest,
-            dataset_manifest_uri=version.manifest_uri,
+            dataset_manifest_uri=manifest_uri,
         )
 
     # ── record patch ───────────────────────────────────────────────────────────

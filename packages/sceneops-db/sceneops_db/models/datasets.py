@@ -29,7 +29,6 @@ class DatasetModel(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     type: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
 
     default_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
@@ -96,6 +95,12 @@ class DatasetVersionModel(Base):
         server_default=text("0"),
     )
     frame_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    episode_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         default=0,

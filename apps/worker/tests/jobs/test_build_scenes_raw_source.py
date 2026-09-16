@@ -7,20 +7,18 @@ Covers:
 - execution.dataset_version_record.raw_source_root_uri carries the resolved URI
 - _build_adapter_factory reads raw_source_root_uri from dataset_version_record
 - _build_adapter_factory passes context.raw_source_store to the adapter
-- _mark_dataset_version_ingesting: no auto-create; uses version from execution
-- raw_source_root_uri preserved on DatasetVersionRecord after status update
+- build_scenes never calls create_version (DatasetVersion must pre-exist)
 - no hardcoded /data/raw/nuscenes in handler source
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.datasets.schemas.summaries import SceneVersionSummary
 from sceneops_core.jobs.schemas import BuildScenesJobParams
 from sceneops_worker.jobs.dataset.build_scenes import (
     BuildScenesExecution,
@@ -46,8 +44,10 @@ def _make_version(
     return DatasetVersionRecord(
         dataset_id=dataset_id,
         version=version,
-        raw_source_root_uri=raw_source_root_uri,
         status=status,
+        scene=SceneVersionSummary(raw_source_root_uri=raw_source_root_uri)
+        if raw_source_root_uri
+        else None,
     )
 
 
@@ -134,7 +134,8 @@ class TestExecutionVersionRecordSourceUri:
     def test_raw_source_root_uri_on_version_record(self) -> None:
         execution = _make_execution(raw_source_root_uri="/data/raw/nuscenes")
         assert (
-            execution.dataset_version_record.raw_source_root_uri == "/data/raw/nuscenes"
+            execution.dataset_version_record.scene.raw_source_root_uri
+            == "/data/raw/nuscenes"
         )
 
     def test_version_record_carries_dataset_id(self) -> None:
@@ -144,7 +145,7 @@ class TestExecutionVersionRecordSourceUri:
     def test_s3_raw_source_root_uri_on_version_record(self) -> None:
         execution = _make_execution(raw_source_root_uri="s3://sceneops/raw/nuscenes")
         assert (
-            execution.dataset_version_record.raw_source_root_uri
+            execution.dataset_version_record.scene.raw_source_root_uri
             == "s3://sceneops/raw/nuscenes"
         )
 
@@ -209,54 +210,31 @@ class TestAdapterFactoryUsesExecutionUri:
         assert call_kwargs["source_root_uri"] == "/override/path"
 
 
-# ── _mark_dataset_version_ingesting: no auto-create ──────────────────────────
+# ── build_scenes never auto-creates or mutates DatasetVersion.status ─────────
+# SceneOps V2 Request 05: build_scenes no longer has a
+# _mark_dataset_version_ingesting step at all — DatasetVersion.status is
+# generic now, and _require_version_with_source already requires the version
+# to pre-exist (raises otherwise), so there was never a create_version path
+# to test here either.
 
 
-class TestMarkDatasetVersionIngesting:
-    @pytest.mark.asyncio
-    async def test_updates_status_to_ingesting(self) -> None:
-        handler = _make_handler()
-        version_record = _make_version(status="registered")
-        ctx = MagicMock()
-        ctx.dataset_store = AsyncMock()
-        ctx.dataset_store.save_version = AsyncMock(side_effect=lambda v: v)
-        execution = _make_execution(context=ctx)
-        execution = replace(execution, dataset_version_record=version_record)
-
-        result = await handler._mark_dataset_version_ingesting(execution)
-
-        ctx.dataset_store.save_version.assert_called_once()
-        assert result.status == DatasetVersionStatus.INGESTING
-
+class TestNoDatasetVersionAutoCreate:
     @pytest.mark.asyncio
     async def test_does_not_call_create_version(self) -> None:
         handler = _make_handler()
         ctx = MagicMock()
         ctx.dataset_store = AsyncMock()
-        ctx.dataset_store.save_version = AsyncMock(side_effect=lambda v: v)
         ctx.dataset_store.create_version = AsyncMock()
         execution = _make_execution(context=ctx)
 
-        await handler._mark_dataset_version_ingesting(execution)
+        await handler._update_scene_summary_after_build(
+            execution=execution,
+            raw_inputs=MagicMock(raw_manifest=MagicMock(channels=[])),
+            scene_build_result=MagicMock(scene_ids=[], total_samples=0, total_frames=0),
+        )
 
         ctx.dataset_store.create_version.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_preserves_raw_source_root_uri_through_status_update(self) -> None:
-        handler = _make_handler()
-        version_record = _make_version(
-            raw_source_root_uri="/data/raw/nuscenes", status="registered"
-        )
-        ctx = MagicMock()
-        ctx.dataset_store = AsyncMock()
-        ctx.dataset_store.save_version = AsyncMock(side_effect=lambda v: v)
-        execution = _make_execution(context=ctx)
-        execution = replace(execution, dataset_version_record=version_record)
-
-        result = await handler._mark_dataset_version_ingesting(execution)
-
-        assert result.raw_source_root_uri == "/data/raw/nuscenes"
-        assert result.status == DatasetVersionStatus.INGESTING
+        ctx.dataset_store.update_scene_summary.assert_called_once()
 
 
 # ── no hardcoded path in handler module ──────────────────────────────────────

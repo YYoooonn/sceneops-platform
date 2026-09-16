@@ -7,7 +7,6 @@ from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
 from sceneops_core.jobs.schemas import (
     BuildScenesJobParams,
@@ -94,8 +93,6 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
 
         execution = self._prepare_execution(request, version_record=version_record)
 
-        version = await self._mark_dataset_version_ingesting(execution)
-
         raw_inputs = await self._resolve_raw_log_inputs(execution)
 
         scene_build_result = await self._build_raw_scenes(
@@ -108,9 +105,8 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             scene_build_result=scene_build_result,
         )
 
-        await self._mark_dataset_version_ingested(
+        await self._update_scene_summary_after_build(
             execution=execution,
-            version=version,
             raw_inputs=raw_inputs,
             scene_build_result=scene_build_result,
         )
@@ -137,7 +133,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             raise ValueError(
                 f"Dataset version not registered: {dataset_id}/{dataset_version}"
             )
-        if not version.raw_source_root_uri:
+        if version.scene is None or not version.scene.raw_source_root_uri:
             raise ValueError(
                 f"Dataset version has no raw source root URI: "
                 f"{dataset_id}/{dataset_version}"
@@ -193,36 +189,28 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             dataset_id=dataset_id, dataset_version=dataset_version
         )
 
-    # ── dataset version lifecycle ──────────────────────────────────────────────
+    # ── dataset version scene summary ───────────────────────────────────────────
+    # SceneOps V2 Request 05: build_scenes no longer mutates
+    # DatasetVersion.status (INGESTING/INGESTED tracked Scene workflow
+    # progress, which now belongs to Pipeline/Job/Run execution records, not
+    # generic DatasetVersion state).
 
-    async def _mark_dataset_version_ingesting(
-        self, execution: BuildScenesExecution
-    ) -> DatasetVersionRecord:
-        return await execution.context.dataset_store.save_version(
-            execution.dataset_version_record.model_copy(
-                update={"status": DatasetVersionStatus.INGESTING}
-            )
-        )
-
-    async def _mark_dataset_version_ingested(
+    async def _update_scene_summary_after_build(
         self,
         *,
         execution: BuildScenesExecution,
-        version: DatasetVersionRecord,
         raw_inputs: BuildScenesRawInputs,
         scene_build_result: SceneBuildResult,
     ) -> None:
         channels = sorted(raw_inputs.raw_manifest.channels)
-        await execution.context.dataset_store.save_version(
-            version.model_copy(
-                update={
-                    "status": DatasetVersionStatus.INGESTED,
-                    "scene_count": len(scene_build_result.scene_ids),
-                    "sample_count": scene_build_result.total_samples,
-                    "frame_count": scene_build_result.total_frames,
-                    "channels": channels,
-                }
-            )
+        version = execution.dataset_version_record
+        await execution.context.dataset_store.update_scene_summary(
+            dataset_id=version.dataset_id,
+            version=version.version,
+            scene_count=len(scene_build_result.scene_ids),
+            sample_count=scene_build_result.total_samples,
+            frame_count=scene_build_result.total_frames,
+            channels=channels,
         )
 
     # ── raw log resolution ─────────────────────────────────────────────────────
@@ -300,6 +288,9 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
     ) -> RawLogAdapterFactory:
         params = execution.params
         version_record = execution.dataset_version_record
+        # _require_version_with_source already guaranteed version.scene and
+        # its raw_source_root_uri are set before this runs.
+        source_root_uri = version_record.scene.raw_source_root_uri
 
         # pylint: disable=import-outside-toplevel
         from sceneops_worker.datasets.ingestion.nuscenes_raw_log import (
@@ -319,7 +310,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             RawLogSourceType.NUSCENES_RAW_LOG_MOCK,
             NuScenesRawLogMocker(
                 source_store=execution.context.raw_source_store,
-                source_root_uri=version_record.raw_source_root_uri,
+                source_root_uri=source_root_uri,
                 observation_store=obs_store,
                 required_channels=required_channels,
             ),
@@ -328,7 +319,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             RawLogSourceType.REAL_ROBOT_LOG,
             RosbagAdapter(
                 source_store=execution.context.raw_source_store,
-                source_root_uri=version_record.raw_source_root_uri,
+                source_root_uri=source_root_uri,
                 observation_store=obs_store,
             ),
         )

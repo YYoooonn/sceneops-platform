@@ -9,7 +9,6 @@ from .schemas import (
     DatasetRecord,
     DatasetSceneIndexEntry,
     DatasetSplit,
-    DatasetStatus,
     DatasetType,
     DatasetValidationCheckType,
     DatasetValidationIssue,
@@ -29,7 +28,6 @@ from .schemas import (
 
 __all__ = [
     "DatasetType",
-    "DatasetStatus",
     "DatasetVersionStatus",
     "DatasetManifestStatus",
     "DatasetIngestMode",

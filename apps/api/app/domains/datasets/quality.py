@@ -96,7 +96,7 @@ def build_dataset_version_quality_from_aggregate(
         profile=DatasetProfileSummary(
             observed_channels=summary.observed_channels,
         ),
-        manifest_uri=version.manifest_uri,
+        manifest_uri=version.scene.manifest_uri if version.scene is not None else None,
     )
 
 

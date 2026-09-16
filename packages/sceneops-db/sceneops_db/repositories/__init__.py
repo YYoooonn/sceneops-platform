@@ -5,6 +5,7 @@ from .datasets import (
     DatasetRunRepository,
     DatasetVersionRepository,
 )
+from .episodes import EpisodeRepository
 from .evaluations import EvaluationRunRepository
 from .executions import ExecutionRecordRepository
 from .inference import InferenceRunRepository
@@ -39,6 +40,8 @@ __all__ = [
     "SceneRepository",
     "SceneRunRepository",
     "SceneRunRecord",
+    # episodes
+    "EpisodeRepository",
     # robots
     "RobotRepository",
     "RobotRunRepository",

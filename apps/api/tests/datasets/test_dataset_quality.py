@@ -24,6 +24,7 @@ Covers:
 from __future__ import annotations
 
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.datasets.schemas.summaries import SceneVersionSummary
 from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 
 from app.domains.datasets.quality import (
@@ -40,14 +41,16 @@ from app.domains.datasets.schemas import (
 
 
 def _version(
-    status: DatasetVersionStatus = DatasetVersionStatus.READY,
+    status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED,
     manifest_uri: str | None = "file:///dataset.json",
 ) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_id="nuscenes",
         version="v1.0-mini",
         status=status,
-        manifest_uri=manifest_uri,
+        scene=SceneVersionSummary(manifest_uri=manifest_uri)
+        if manifest_uri is not None
+        else None,
     )
 
 
@@ -350,7 +353,7 @@ def test_response_identity_fields():
     )
     assert result.dataset_id == "nuscenes"
     assert result.version == "v1.0-mini"
-    assert result.status == "ready"
+    assert result.status == "registered"
 
 
 def test_manifest_uri_from_version_record():
@@ -361,12 +364,16 @@ def test_manifest_uri_from_version_record():
     assert result.manifest_uri == "file:///manifests/dataset.json"
 
 
-def test_ingesting_version_status_reflected():
+def test_readiness_reflects_scene_aggregate_not_generic_status():
+    """Readiness comes entirely from the scene-quality aggregate (scene_count,
+    readiness buckets) — DatasetVersionRecord.status (SceneOps V2 Request 05:
+    a generic, domain-agnostic field with no Scene-workflow meaning) is only
+    ever echoed through, never consulted for readiness."""
     result = build_dataset_version_quality_from_aggregate(
-        version=_version(status=DatasetVersionStatus.INGESTING),
+        version=_version(status=DatasetVersionStatus.REGISTERED),
         summary=_summary(scene_count=0),
     )
-    assert result.status == "ingesting"
+    assert result.status == "registered"
     assert result.readiness == DatasetQualityReadiness.UNKNOWN
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
-from sceneops_core.datasets.schemas.enums import DatasetStatus, DatasetType
+from sceneops_core.datasets.schemas.enums import DatasetType
 from sceneops_core.datasets.schemas.runs import (
     DatasetDistributionRunRecord,
     DatasetExportRunRecord,
@@ -35,7 +35,6 @@ class DatasetRepository(Protocol):
         self,
         *,
         type: DatasetType | None = None,
-        status: DatasetStatus | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DatasetRecord]: ...
@@ -56,26 +55,38 @@ class DatasetVersionRepository(Protocol):
 
     async def update(self, version: DatasetVersionRecord) -> DatasetVersionRecord: ...
 
-    async def update_quality_cache(
+    async def update_scene_summary(
         self,
         *,
         dataset_id: str,
         version: str,
+        scene_count: int | None = None,
+        sample_count: int | None = None,
+        frame_count: int | None = None,
+        channels: list[str] | None = None,
+        required_channels: list[str] | None = None,
+        manifest_uri: str | None = None,
+        raw_source_root_uri: str | None = None,
         latest_validation_run_id: str | None = None,
         validation_status: DatasetValidationStatus | None = None,
         should_block_pipeline: bool | None = None,
         validation_report_uri: str | None = None,
         latest_profile_run_id: str | None = None,
         profile_report_uri: str | None = None,
-        latest_distribution_run_id: str | None = None,
-        distribution_report_uri: str | None = None,
+    ) -> DatasetVersionRecord: ...
+
+    async def update_episode_summary(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
+        episode_count: int | None = None,
     ) -> DatasetVersionRecord: ...
 
     async def list(
         self,
         *,
         dataset_id: str | None = None,
-        status: DatasetStatus | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DatasetVersionRecord]: ...

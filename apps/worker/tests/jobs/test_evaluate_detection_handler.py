@@ -2,7 +2,7 @@
 
 Tests cover:
 - build_job_params validation
-- _require_ready_dataset_version
+- _require_scene_dataset_ready
 - _require_inference_run
 - _validate_inference_run_matches_dataset
 - _extract_evaluation_counts
@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.datasets.schemas.summaries import SceneVersionSummary
 from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
 from sceneops_core.evaluations.schemas.runs import EvaluationRunRecord
 from sceneops_core.inference.schemas.runs import InferenceRunRecord
@@ -44,14 +44,16 @@ EVALUATION_RUN_ID = "eval-001"
 
 
 def _dataset_version(
-    status: DatasetVersionStatus = DatasetVersionStatus.READY,
     manifest_uri: str | None = "file:///manifest.json",
+    should_block_pipeline: bool = False,
 ) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_id=DATASET_ID,
         version=DATASET_VERSION,
-        status=status,
-        manifest_uri=manifest_uri,
+        scene=SceneVersionSummary(
+            manifest_uri=manifest_uri,
+            should_block_pipeline=should_block_pipeline,
+        ),
     )
 
 
@@ -149,25 +151,24 @@ def test_build_job_params_includes_inference_run_id():
     assert result["inference_run_id"] == "infer-xyz"
 
 
-# ── _require_ready_dataset_version ────────────────────────────────────────────
+# ── _require_scene_dataset_ready ───────────────────────────────────────────────
 
 
 async def test_require_dataset_version_not_found():
     context = MagicMock()
     context.dataset_store.get_version = AsyncMock(return_value=None)
     with pytest.raises(ValueError, match="not found"):
-        await EvaluateDetectionJobHandler._require_ready_dataset_version(
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
             context, DATASET_ID, DATASET_VERSION
         )
 
 
-async def test_require_dataset_version_not_ready():
+async def test_require_dataset_version_no_scene():
     context = MagicMock()
-    context.dataset_store.get_version = AsyncMock(
-        return_value=_dataset_version(status=DatasetVersionStatus.INGESTING)
-    )
-    with pytest.raises(ValueError, match="not usable"):
-        await EvaluateDetectionJobHandler._require_ready_dataset_version(
+    version = DatasetVersionRecord(dataset_id=DATASET_ID, version=DATASET_VERSION)
+    context.dataset_store.get_version = AsyncMock(return_value=version)
+    with pytest.raises(ValueError, match="no Scene data"):
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
             context, DATASET_ID, DATASET_VERSION
         )
 
@@ -178,7 +179,18 @@ async def test_require_dataset_version_no_manifest_uri():
         return_value=_dataset_version(manifest_uri=None)
     )
     with pytest.raises(ValueError, match="manifest_uri"):
-        await EvaluateDetectionJobHandler._require_ready_dataset_version(
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
+            context, DATASET_ID, DATASET_VERSION
+        )
+
+
+async def test_require_dataset_version_blocked_by_validation():
+    context = MagicMock()
+    context.dataset_store.get_version = AsyncMock(
+        return_value=_dataset_version(should_block_pipeline=True)
+    )
+    with pytest.raises(ValueError, match="blocked"):
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
             context, DATASET_ID, DATASET_VERSION
         )
 
@@ -186,7 +198,7 @@ async def test_require_dataset_version_no_manifest_uri():
 async def test_require_dataset_version_ok():
     context = MagicMock()
     context.dataset_store.get_version = AsyncMock(return_value=_dataset_version())
-    result = await EvaluateDetectionJobHandler._require_ready_dataset_version(
+    result = await EvaluateDetectionJobHandler._require_scene_dataset_ready(
         context, DATASET_ID, DATASET_VERSION
     )
     assert result.dataset_id == DATASET_ID

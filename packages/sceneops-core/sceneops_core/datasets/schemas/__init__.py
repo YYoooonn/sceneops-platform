@@ -2,13 +2,13 @@ from .enums import (
     DatasetIngestMode,
     DatasetManifestStatus,
     DatasetSplit,
-    DatasetStatus,
     DatasetType,
     DatasetVersionStatus,
 )
 from .manifests import DatasetManifest, DatasetSceneIndexEntry
 from .profile import DatasetChannelProfile, DatasetProfileReport, DatasetProfileScope
 from .records import DatasetRecord, DatasetVersionRecord
+from .summaries import EpisodeVersionSummary, SceneVersionSummary
 from .requests import (
     CreateDatasetRequest,
     CreateDatasetVersionRequest,
@@ -33,7 +33,6 @@ from .validation import (
 
 __all__ = [
     "DatasetType",
-    "DatasetStatus",
     "DatasetVersionStatus",
     "DatasetManifestStatus",
     "DatasetIngestMode",
@@ -41,6 +40,8 @@ __all__ = [
     "DatasetProfileScope",
     "DatasetRecord",
     "DatasetVersionRecord",
+    "SceneVersionSummary",
+    "EpisodeVersionSummary",
     "DatasetSceneIndexEntry",
     "DatasetManifest",
     "DatasetValidationStatus",

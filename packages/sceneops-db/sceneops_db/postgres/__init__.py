@@ -4,6 +4,7 @@ from .datasets import (
     PostgresDatasetRunRepository,
     PostgresDatasetVersionRepository,
 )
+from .episodes import PostgresEpisodeRepository
 from .evaluations import PostgresEvaluationRunRepository
 from .executions import PostgresExecutionRecordRepository
 from .inference import PostgresInferenceRunRepository
@@ -31,6 +32,7 @@ __all__ = [
     "PostgresDatasetRunRepository",
     "PostgresSceneRepository",
     "PostgresSceneRunRepository",
+    "PostgresEpisodeRepository",
     "PostgresRobotRepository",
     "PostgresRobotRunRepository",
     "PostgresMissionRepository",

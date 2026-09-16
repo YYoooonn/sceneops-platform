@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.datasets.schemas.summaries import SceneVersionSummary
 from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_core.inference.schemas.detection import DetectionInferenceResult
 from sceneops_core.inference.schemas.runs import InferenceRunRecord
@@ -45,14 +45,16 @@ HANDLER = PredictDetectionJobHandler()
 
 
 def _dataset_version(
-    status: DatasetVersionStatus = DatasetVersionStatus.READY,
     manifest_uri: str | None = "file:///manifest.json",
+    should_block_pipeline: bool = False,
 ) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_id="nuscenes",
         version="v1.0-mini",
-        status=status,
-        manifest_uri=manifest_uri,
+        scene=SceneVersionSummary(
+            manifest_uri=manifest_uri,
+            should_block_pipeline=should_block_pipeline,
+        ),
     )
 
 
@@ -158,13 +160,13 @@ def test_validate_backend_inputs_mock_both_optional():
     )
 
 
-# ── _require_ready_dataset_version ────────────────────────────────────────────
+# ── _require_scene_dataset_ready ───────────────────────────────────────────────
 
 
 async def _require_dataset_version(version: DatasetVersionRecord):
     context = MagicMock()
     context.dataset_store.get_version = AsyncMock(return_value=version)
-    return await PredictDetectionJobHandler._require_ready_dataset_version(
+    return await PredictDetectionJobHandler._require_scene_dataset_ready(
         context, "nuscenes", "v1.0-mini"
     )
 
@@ -173,21 +175,26 @@ async def test_require_dataset_version_not_found():
     context = MagicMock()
     context.dataset_store.get_version = AsyncMock(return_value=None)
     with pytest.raises(ValueError, match="not found"):
-        await PredictDetectionJobHandler._require_ready_dataset_version(
+        await PredictDetectionJobHandler._require_scene_dataset_ready(
             context, "nuscenes", "v1.0-mini"
         )
 
 
-async def test_require_dataset_version_not_ready():
-    with pytest.raises(ValueError, match="not usable"):
-        await _require_dataset_version(
-            _dataset_version(status=DatasetVersionStatus.INGESTING)
-        )
+async def test_require_dataset_version_no_scene():
+    version = DatasetVersionRecord(dataset_id="nuscenes", version="v1.0-mini")
+    assert version.scene is None
+    with pytest.raises(ValueError, match="no Scene data"):
+        await _require_dataset_version(version)
 
 
 async def test_require_dataset_version_no_manifest_uri():
     with pytest.raises(ValueError, match="manifest_uri"):
         await _require_dataset_version(_dataset_version(manifest_uri=None))
+
+
+async def test_require_dataset_version_blocked_by_validation():
+    with pytest.raises(ValueError, match="blocked"):
+        await _require_dataset_version(_dataset_version(should_block_pipeline=True))
 
 
 async def test_require_dataset_version_ready_ok():

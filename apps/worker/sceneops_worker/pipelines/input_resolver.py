@@ -94,35 +94,44 @@ class PipelineInputResolver:
                 dataset_version=pipeline_run.dataset_version,
             )
 
+        # Scene-owned fields live on version.scene (SceneOps V2 Request 02).
+        # A DatasetVersion with no Scene activity has scene=None — e.g. an
+        # episode-only version — and this must still resolve to a valid,
+        # if mostly-empty, DatasetInputRef rather than raising or assuming
+        # Scene fields exist.
+        scene = version.scene
+
         refs: JsonDict = {}
-        if version.validation_report_uri:
-            refs["validation_report_uri"] = version.validation_report_uri
-        if version.profile_report_uri:
-            refs["profile_report_uri"] = version.profile_report_uri
+        if scene is not None:
+            if scene.validation_report_uri:
+                refs["validation_report_uri"] = scene.validation_report_uri
+            if scene.profile_report_uri:
+                refs["profile_report_uri"] = scene.profile_report_uri
 
         summary: JsonDict = {}
-        if version.scene_count:
-            summary["scene_count"] = version.scene_count
-        if version.sample_count:
-            summary["sample_count"] = version.sample_count
-        if version.frame_count:
-            summary["frame_count"] = version.frame_count
-        if version.channels:
-            summary["channels"] = version.channels
-        if version.latest_validation_run_id:
-            summary["validation_run_id"] = version.latest_validation_run_id
-        if version.validation_status is not None:
-            summary["validation_status"] = str(version.validation_status)
-        if version.should_block_pipeline is not None:
-            summary["should_block_pipeline"] = version.should_block_pipeline
-        if version.latest_profile_run_id:
-            summary["profile_run_id"] = version.latest_profile_run_id
+        if scene is not None:
+            if scene.scene_count:
+                summary["scene_count"] = scene.scene_count
+            if scene.sample_count:
+                summary["sample_count"] = scene.sample_count
+            if scene.frame_count:
+                summary["frame_count"] = scene.frame_count
+            if scene.channels:
+                summary["channels"] = scene.channels
+            if scene.latest_validation_run_id:
+                summary["validation_run_id"] = scene.latest_validation_run_id
+            if scene.validation_status is not None:
+                summary["validation_status"] = str(scene.validation_status)
+            if scene.should_block_pipeline is not None:
+                summary["should_block_pipeline"] = scene.should_block_pipeline
+            if scene.latest_profile_run_id:
+                summary["profile_run_id"] = scene.latest_profile_run_id
 
         return DatasetInputRef(
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
-            manifest_uri=version.manifest_uri or None,
-            required_channels=version.required_channels,
+            manifest_uri=(scene.manifest_uri if scene is not None else None) or None,
+            required_channels=scene.required_channels if scene is not None else [],
             refs=refs,
             summary=summary,
         )

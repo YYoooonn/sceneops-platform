@@ -142,7 +142,7 @@ def _context(
     ctx.settings.run_root_uri = "file:///runs"
 
     ctx.dataset_store = MagicMock()
-    ctx.dataset_store.update_quality_cache = AsyncMock()
+    ctx.dataset_store.update_scene_summary = AsyncMock()
 
     ctx.commit = AsyncMock()
 

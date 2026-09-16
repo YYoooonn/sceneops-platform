@@ -232,7 +232,7 @@ class ProfileSceneJobHandler(
             )
 
         if dataset_id and dataset_version:
-            await context.dataset_store.update_quality_cache(
+            await context.dataset_store.update_scene_summary(
                 dataset_id=dataset_id,
                 version=dataset_version,
                 latest_profile_run_id=run_id,

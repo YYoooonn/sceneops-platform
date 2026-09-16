@@ -6,7 +6,6 @@ from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
-from sceneops_core.datasets.schemas import DatasetVersionStatus
 from sceneops_core.datasets.schemas.manifests import (
     DatasetManifest,
     DatasetSceneIndexEntry,
@@ -119,21 +118,22 @@ class BuildDatasetManifestJobHandler(
             )
         )
 
+        # SceneOps V2 Request 05: no longer flips DatasetVersion.status to
+        # READY — Scene readiness for downstream operations (prediction/
+        # evaluation) is now determined by explicit Scene prerequisites
+        # (manifest_uri set, validation not blocking), not a generic status.
         version = await context.dataset_store.get_version(
             dataset_id=dataset_id, version=dataset_version
         )
         if version is not None:
-            await context.dataset_store.save_version(
-                version.model_copy(
-                    update={
-                        "status": DatasetVersionStatus.READY,
-                        "manifest_uri": dataset_manifest_uri,
-                        "scene_count": len(scenes),
-                        "sample_count": total_samples,
-                        "frame_count": total_frames,
-                        "channels": channels,
-                    }
-                )
+            await context.dataset_store.update_scene_summary(
+                dataset_id=dataset_id,
+                version=dataset_version,
+                manifest_uri=dataset_manifest_uri,
+                scene_count=len(scenes),
+                sample_count=total_samples,
+                frame_count=total_frames,
+                channels=channels,
             )
 
         await context.artifact_record_store.create(
