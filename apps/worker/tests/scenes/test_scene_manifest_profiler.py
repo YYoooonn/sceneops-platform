@@ -77,7 +77,7 @@ def _frame(
         channel=channel,
         modality=modality,
         uri=f"/data/{frame_id}",
-        calibrated_sensor_id=cal_id,
+        calibration_id=cal_id,
         ego_pose_id=pose_id,
         image=image,
     )
