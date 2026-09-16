@@ -301,22 +301,38 @@ upsert_dataset_version() {
   local api_base_url="$1"
   local dataset_id="$2"
   local version="$3"
-  local raw_source_root_uri="$4"
+  # raw_source_root_uri is Scene-owned (SceneOps V2 Request 04) — Episode
+  # dataset versions have no use for it (their source is RobotRun.mcap_uri),
+  # so it's optional here. Omit it to create/patch a version with no Scene
+  # raw-source config at all.
+  local raw_source_root_uri="${4:-}"
 
   local existing
   existing="$(curl -sS "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")")"
 
+  if [ -n "$raw_source_root_uri" ]; then
+    patch_body="{\"raw_source_root_uri\": \"$raw_source_root_uri\", \"required_channels\": [\"CAM_FRONT\", \"LIDAR_TOP\"]}"
+    create_body="{\"version\": \"$version\", \"raw_source_root_uri\": \"$raw_source_root_uri\", \"metadata\": {}}"
+  else
+    patch_body=""
+    create_body="{\"version\": \"$version\", \"metadata\": {}}"
+  fi
+
   if echo "$existing" | jq -e '.version' >/dev/null 2>&1; then
-    # Version exists — patch raw_source_root_uri in case it changed.
+    if [ -z "$patch_body" ]; then
+      # Nothing Scene-specific to patch — the version already exists as-is.
+      echo "$existing"
+      return 0
+    fi
     curl -sS -X PATCH "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")" \
       -H "Content-Type: application/json" \
-      -d "{\"raw_source_root_uri\": \"$raw_source_root_uri\", \"required_channels\": ["CAM_FRONT", "LIDAR_TOP"]}"
+      -d "$patch_body"
     return 0
   fi
 
   curl -sS -X POST "$(api_url "$api_base_url" "/datasets/$dataset_id/versions")" \
     -H "Content-Type: application/json" \
-    -d "{\"version\": \"$version\", \"raw_source_root_uri\": \"$raw_source_root_uri\", \"metadata\": {}}"
+    -d "$create_body"
 }
 
 

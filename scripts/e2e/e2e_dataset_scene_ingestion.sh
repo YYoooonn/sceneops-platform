@@ -37,7 +37,7 @@ echo ""
 # ── 1. Ensure dataset exists ──────────────────────────────────────────────────
 
 echo "--- 1. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────
@@ -179,16 +179,17 @@ echo ""
 echo "--- 8. Assert dataset version ---"
 VERSION_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
 VERSION_STATUS="$(echo "$VERSION_JSON" | jq -r '.version.status')"
-MANIFEST_URI="$(echo "$VERSION_JSON" | jq -r '.version.manifestUri // empty')"
-VERSION_SCENE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.sceneCount // 0')"
-SAMPLE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.sampleCount // 0')"
+MANIFEST_URI="$(echo "$VERSION_JSON" | jq -r '.version.scene.manifestUri // empty')"
+VERSION_SCENE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.scene.sceneCount // 0')"
+SAMPLE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.scene.sampleCount // 0')"
 
 echo "  status=$VERSION_STATUS"
 echo "  sceneCount=$VERSION_SCENE_COUNT  sampleCount=$SAMPLE_COUNT"
 echo "  manifestUri=$MANIFEST_URI"
 
-assert_json_equals "$VERSION_JSON" '.version.status' 'ready' 'dataset version should be ready'
-assert_json_not_empty "$VERSION_JSON" '.version.manifestUri' 'dataset version manifestUri'
+# DatasetVersion.status no longer tracks Scene workflow progress (SceneOps V2
+# Request 05) — Scene readiness is the presence of a built manifest instead.
+assert_json_not_empty "$VERSION_JSON" '.version.scene.manifestUri' 'dataset version scene.manifestUri'
 echo "  OK"
 echo ""
 

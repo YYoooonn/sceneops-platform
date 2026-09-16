@@ -23,12 +23,11 @@ _SUPPORTED_TYPES = {
 # They can be created/run but are hidden from default API listing.
 _EXPERIMENTAL_SUPPORTED_TYPES = {
     PipelineType.SCENARIO_CURATION,
+    PipelineType.RAW_LOG_EPISODE_BUILDING,
 }
 
 _UNSUPPORTED_TYPES = {
-    PipelineType.SCENE_RECONSTRUCTION,
     PipelineType.SCENE_REGISTRATION,
-    PipelineType.GENERATED_DATASET_PREPARATION,
 }
 
 

@@ -19,7 +19,7 @@ API는 Job을 단독으로도, Pipeline으로 묶어서도 dispatch할 수 있�
 ## 2. 내장 Pipeline 정의 (`PipelineType` → task 체인)
 
 로드맵 섹션 2의 8개 operation(INGEST/BUILD/REGISTER/VALIDATE/PROFILE/CURATE/PREDICT/
-EVALUATE)은 실제로는 7개의 named pipeline으로 조합되어 있다:
+EVALUATE)은 실제로는 5개의 named pipeline으로 조합되어 있다:
 
 ```text
 DATASET_SCENE_INGESTION
@@ -30,18 +30,11 @@ RAW_LOG_SCENE_BUILDING
   build_scenes → register_scene → validate_scene → profile_scene
   → build_scene_index → build_dataset_manifest
 
-SCENE_RECONSTRUCTION
-  build_scenes → validate_scene → profile_scene → export_scene_package
-
 SCENE_REGISTRATION
-  register_scene → validate_scene → profile_scene → compare_scenes
+  register_scene → validate_scene → profile_scene
 
 SCENARIO_CURATION
   mine_scenarios → score_scenario_readiness
-
-GENERATED_DATASET_PREPARATION
-  register_scene → compare_scenes → auto_label_scene
-  → build_dataset_manifest → check_distribution → export_dataset
 
 DETECTION_EVALUATION
   predict_detection → evaluate_detection

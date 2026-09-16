@@ -8,14 +8,12 @@ from app.core.dependencies import DbSessionDep
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.datasets import (
     DatasetRepository,
-    DatasetRunRepository,
     DatasetVersionRepository,
 )
 from sceneops_db.repositories.evaluations import EvaluationRunRepository
 from sceneops_db.repositories.executions import ExecutionRecordRepository
 from sceneops_db.repositories.inference import InferenceRunRepository
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
-from sceneops_db.repositories.labels import LabelRunRepository
 from sceneops_db.repositories.model_registry import (
     ModelRepository,
     ModelVersionRepository,
@@ -39,14 +37,12 @@ from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.datasets import (
     PostgresDatasetRepository,
-    PostgresDatasetRunRepository,
     PostgresDatasetVersionRepository,
 )
 from sceneops_db.postgres.evaluations import PostgresEvaluationRunRepository
 from sceneops_db.postgres.executions import PostgresExecutionRecordRepository
 from sceneops_db.postgres.inference import PostgresInferenceRunRepository
 from sceneops_db.postgres.jobs import PostgresJobEventRepository, PostgresJobRepository
-from sceneops_db.postgres.labels import PostgresLabelRunRepository
 from sceneops_db.postgres.model_registry import (
     PostgresModelRepository,
     PostgresModelVersionRepository,
@@ -140,16 +136,9 @@ def get_dataset_version_repository(session: DbSessionDep) -> DatasetVersionRepos
     return PostgresDatasetVersionRepository(session)
 
 
-def get_dataset_run_repository(session: DbSessionDep) -> DatasetRunRepository:
-    return PostgresDatasetRunRepository(session)
-
-
 DatasetRepositoryDep = Annotated[DatasetRepository, Depends(get_dataset_repository)]
 DatasetVersionRepositoryDep = Annotated[
     DatasetVersionRepository, Depends(get_dataset_version_repository)
-]
-DatasetRunRepositoryDep = Annotated[
-    DatasetRunRepository, Depends(get_dataset_run_repository)
 ]
 
 
@@ -226,16 +215,6 @@ def get_evaluation_run_repository(session: DbSessionDep) -> EvaluationRunReposit
 EvaluationRunRepositoryDep = Annotated[
     EvaluationRunRepository, Depends(get_evaluation_run_repository)
 ]
-
-
-# --- domains: labels ---
-
-
-def get_label_run_repository(session: DbSessionDep) -> LabelRunRepository:
-    return PostgresLabelRunRepository(session)
-
-
-LabelRunRepositoryDep = Annotated[LabelRunRepository, Depends(get_label_run_repository)]
 
 
 # --- domains: robots ---

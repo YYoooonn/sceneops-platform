@@ -1,24 +1,10 @@
 from __future__ import annotations
 
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
 from sceneops_core.datasets.schemas.enums import DatasetType
-from sceneops_core.datasets.schemas.runs import (
-    DatasetDistributionRunRecord,
-    DatasetExportRunRecord,
-    DatasetProfileRunRecord,
-    DatasetValidationRunRecord,
-)
 from sceneops_core.datasets.schemas.validation import DatasetValidationStatus
-from sceneops_core.runs.schemas import RunStatus, RunType
-
-DatasetRunRecord: TypeAlias = (
-    DatasetValidationRunRecord
-    | DatasetProfileRunRecord
-    | DatasetDistributionRunRecord
-    | DatasetExportRunRecord
-)
 
 
 @runtime_checkable
@@ -90,25 +76,3 @@ class DatasetVersionRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[DatasetVersionRecord]: ...
-
-
-@runtime_checkable
-class DatasetRunRepository(Protocol):
-    async def create(self, run: DatasetRunRecord) -> DatasetRunRecord: ...
-
-    async def get(self, run_id: str) -> DatasetRunRecord | None: ...
-
-    async def update(self, run: DatasetRunRecord) -> DatasetRunRecord: ...
-
-    async def list(
-        self,
-        *,
-        type: RunType | None = None,
-        status: RunStatus | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
-        job_id: str | None = None,
-        pipeline_run_id: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[DatasetRunRecord]: ...

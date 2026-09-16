@@ -6,23 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
 from sceneops_core.datasets.schemas.enums import DatasetType
 from sceneops_core.datasets.schemas.validation import DatasetValidationStatus
-from sceneops_core.runs.schemas import RunStatus, RunType
 
 from sceneops_db.converters.datasets import (
-    DatasetRunRecord,
     dataset_model_to_record,
     dataset_record_to_values,
-    dataset_run_model_to_record,
-    dataset_run_record_to_values,
     dataset_version_model_to_record,
     dataset_version_record_to_values,
     make_dataset_version_id,
 )
-from sceneops_db.models.datasets import (
-    DatasetModel,
-    DatasetRunRecordModel,
-    DatasetVersionModel,
-)
+from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
 
 from ._utils import apply_pagination, apply_values, enum_value, values_without_none
 
@@ -221,69 +213,3 @@ class PostgresDatasetVersionRepository:
         )
         result = await self._session.execute(stmt)
         return [dataset_version_model_to_record(m) for m in result.scalars().all()]
-
-
-class PostgresDatasetRunRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def create(self, run: DatasetRunRecord) -> DatasetRunRecord:
-        model = DatasetRunRecordModel(**dataset_run_record_to_values(run))
-        self._session.add(model)
-        await self._session.flush()
-        await self._session.refresh(model)
-        return dataset_run_model_to_record(model)
-
-    async def get(self, run_id: str) -> DatasetRunRecord | None:
-        stmt = select(DatasetRunRecordModel).where(
-            DatasetRunRecordModel.run_id == run_id
-        )
-        result = await self._session.execute(stmt)
-        model = result.scalar_one_or_none()
-        return dataset_run_model_to_record(model) if model is not None else None
-
-    async def update(self, run: DatasetRunRecord) -> DatasetRunRecord:
-        stmt = select(DatasetRunRecordModel).where(
-            DatasetRunRecordModel.run_id == run.run_id
-        )
-        result = await self._session.execute(stmt)
-        model = result.scalar_one_or_none()
-        if model is None:
-            raise ValueError(f"DatasetRun not found: {run.run_id}")
-        apply_values(model, dataset_run_record_to_values(run))
-        await self._session.flush()
-        await self._session.refresh(model)
-        return dataset_run_model_to_record(model)
-
-    async def list(
-        self,
-        *,
-        type: RunType | None = None,
-        status: RunStatus | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
-        job_id: str | None = None,
-        pipeline_run_id: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[DatasetRunRecord]:
-        stmt = select(DatasetRunRecordModel)
-        if type is not None:
-            stmt = stmt.where(DatasetRunRecordModel.type == enum_value(type))
-        if status is not None:
-            stmt = stmt.where(DatasetRunRecordModel.status == enum_value(status))
-        if dataset_id is not None:
-            stmt = stmt.where(DatasetRunRecordModel.dataset_id == dataset_id)
-        if dataset_version is not None:
-            stmt = stmt.where(DatasetRunRecordModel.dataset_version == dataset_version)
-        if job_id is not None:
-            stmt = stmt.where(DatasetRunRecordModel.job_id == job_id)
-        if pipeline_run_id is not None:
-            stmt = stmt.where(DatasetRunRecordModel.pipeline_run_id == pipeline_run_id)
-        stmt = apply_pagination(
-            stmt.order_by(DatasetRunRecordModel.created_at.desc()),
-            limit=limit,
-            offset=offset,
-        )
-        result = await self._session.execute(stmt)
-        return [dataset_run_model_to_record(m) for m in result.scalars().all()]

@@ -50,7 +50,7 @@ echo ""
 # ── 1. Ensure dataset exists ──────────────────────────────────────────────────
 
 echo "--- 1. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────

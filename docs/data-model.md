@@ -9,10 +9,9 @@
 ```text
 Dataset
  └─ DatasetVersion
-     └─ DatasetRunRecord (validation / profile / distribution / export)
 
 SceneRecord (scenes 테이블)
- └─ SceneRunRecord (validation / profile / comparison / reconstruction / package_export)
+ └─ SceneRunRecord (validation / profile)
 
 ScenarioSet
  └─ ScenarioRunRecord (mining / readiness)
@@ -48,17 +47,14 @@ Artifact          (모든 리소스가 참조하는 바이너리/JSON 산출물 
 - `manifest_uri`, `raw_source_root_uri`: ArtifactStore 참조
 - `latest_validation_run_id` / `validation_status` / `should_block_pipeline` /
   `validation_report_uri`: 최신 VALIDATE 결과를 역참조 캐시로 보관
-- `latest_profile_run_id` / `profile_report_uri`, `latest_distribution_run_id` /
-  `distribution_report_uri`: 동일 패턴으로 PROFILE, distribution 결과 캐시
+- `latest_profile_run_id` / `profile_report_uri`: 동일 패턴으로 PROFILE 결과 캐시
 
 즉 `DatasetVersion`은 최신 quality run의 결과를 스스로 캐싱해서, 매번
-`dataset_run_records`를 조인하지 않고도 "이 버전은 지금 사용 가능한가?"에 즉시 답할 수
-있게 설계되어 있다.
-
-`dataset_run_records` — dataset 범위 run을 `type` 컬럼으로 통합한 테이블
-(`dataset_validation` / `dataset_profile` / `dataset_distribution` / `dataset_export`).
-공통 필드: `params`/`result`/`error`/`summary`/`metrics` (모두 JSONB),
-`pipeline_run_id`/`pipeline_task_run_id`/`job_id`로 실행 계보 연결.
+`scene_run_records`를 조인하지 않고도 "이 버전은 지금 사용 가능한가?"에 즉시 답할 수
+있게 설계되어 있다. 실제 validate/profile 실행 기록은 dataset 범위가 아니라 scene 범위
+run(`scene_run_records`, §3)에만 존재한다 — dataset 범위의 `dataset_validation`/
+`dataset_profile` run 타입은 한 번도 실제로 쓰인 적이 없어 제거되었다
+(SceneOps V2 Request 09).
 
 ## 3. SceneRecord
 
@@ -73,9 +69,7 @@ Artifact          (모든 리소스가 참조하는 바이너리/JSON 산출물 
 - `has_ground_truth` / `ground_truth_source`: GT 존재 여부와 출처
 - `sample_count` / `frame_count` / `annotation_count` / `channels`: scene 통계
 
-`scene_run_records` — scene 범위 run 통합 테이블 (`scene_validation` / `scene_profile` /
-`scene_comparison` / `scene_reconstruction` / `scene_package_export`). `source_scene_id`/
-`target_scene_id` 필드가 있어 scene 간 비교·재구성 run도 같은 테이블로 표현한다.
+`scene_run_records` — scene 범위 run 통합 테이블 (`scene_validation` / `scene_profile`).
 
 ## 4. ScenarioSet
 
@@ -90,9 +84,8 @@ readiness run은 `ready_count`/`blocked_count`/`warning_count`/`average_score` �
 ## 5. PipelineRun / PipelineTaskRun
 
 `pipeline_runs` — 하나의 파이프라인 실행. `type`은 `PipelineType` enum
-(`dataset_scene_ingestion`, `raw_log_scene_building`, `scene_reconstruction`,
-`scene_registration`, `scenario_curation`, `generated_dataset_preparation`,
-`detection_evaluation`).
+(`dataset_scene_ingestion`, `raw_log_scene_building`, `raw_log_episode_building`,
+`scene_registration`, `scenario_curation`, `detection_evaluation`).
 
 `pipeline_task_runs` — 파이프라인 내 개별 태스크. `task_order`로 순서,
 `depends_on_task_ids`(JSONB)로 의존성을 표현하지만, 현재 `PipelineRunner`는 이 의존성
@@ -112,9 +105,9 @@ failed | cancelled)`. `blocked`는 quality gate가 막은 경우로, 로드맵�
 INGEST_SCENES, BUILD_SCENES                        # 원본 → scene
 BUILD_DATASET_MANIFEST, BUILD_SCENE_INDEX           # dataset 레벨 집계
 VALIDATE_SCENE, PROFILE_SCENE, REGISTER_SCENE,
-COMPARE_SCENES, AUTO_LABEL_SCENE, EXPORT_SCENE_PACKAGE   # scene 레벨
+EXPORT_SCENE_PACKAGE                                # scene 레벨
 MINE_SCENARIOS, SCORE_SCENARIO_READINESS            # scenario 레벨
-AUTO_LABEL_DATASET, CHECK_DISTRIBUTION, EXPORT_DATASET   # dataset version 레벨
+EXPORT_ANALYTICS_SNAPSHOT                           # dataset version 레벨
 PREDICT_DETECTION, EVALUATE_DETECTION               # detection
 ```
 

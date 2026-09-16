@@ -40,12 +40,12 @@ echo ""
 # ── 1. Ensure dataset and version exist ──────────────────────────────────────
 
 echo "--- 1. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
 echo ""
 
 echo "--- 1b. Upsert dataset version (with raw_source_root_uri) ---"
 upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$RAW_SOURCE_ROOT_URI" \
-  | jq '.version | {version, status, rawSourceRootUri}' 2>/dev/null || true
+  | jq '.version | {version, status, scene}' 2>/dev/null || true
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────

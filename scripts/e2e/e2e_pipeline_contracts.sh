@@ -39,9 +39,7 @@ SUPPORTED_PIPELINE_TYPES=(
 )
 
 UNSUPPORTED_PIPELINE_TYPES=(
-  "scene_reconstruction"
   "scene_registration"
-  "generated_dataset_preparation"
 )
 
 echo "=== pipeline contracts E2E ==="
@@ -112,7 +110,7 @@ echo ""
 # ── 3. Ensure dataset and version exist ───────────────────────────────────────
 
 echo "--- 3. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
 echo ""
 
 # ── 4. Create pipeline run with explicit validate_scene + profile_scene ───────
@@ -281,73 +279,68 @@ fi
 echo "  OK"
 echo ""
 
-# ── 11. Assert dataset version quality cache ──────────────────────────────────
+# ── 11. Assert dataset version quality (aggregate) + scene summary cache ──────
+# The /quality endpoint reports a per-scene readiness AGGREGATE (Dataset
+# Quality API), not single-run pointers — those live on
+# DatasetVersionRecord.scene (SceneVersionSummary), fetched separately below.
 
-echo "--- 11. Assert dataset version quality cache ---"
+echo "--- 11. Assert dataset version quality ---"
 QUALITY_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION/quality")")"
 
 echo "$QUALITY_JSON" | jq '{
+  readiness,
+  counts,
+  sceneQuality,
+  groundTruth,
+  validation,
+  profile,
+  manifestUri
+}' 2>/dev/null || echo "$QUALITY_JSON"
+
+assert_json_equals "$QUALITY_JSON" '.readiness' "ready" "quality readiness should be ready"
+assert_json_gt "$QUALITY_JSON" '.counts.sceneCount' 0 "quality counts.sceneCount should be > 0"
+assert_json_gt "$QUALITY_JSON" '.counts.annotationCount' 0 "quality counts.annotationCount should be > 0"
+assert_json_gt "$QUALITY_JSON" '.validation.readySceneCount' 0 "quality validation.readySceneCount should be > 0"
+assert_json_equals "$QUALITY_JSON" '.validation.blockedSceneCount' "0" "quality validation.blockedSceneCount should be 0"
+assert_json_not_empty "$QUALITY_JSON" '.sceneQuality.observedChannels[0]' "quality sceneQuality.observedChannels should be non-empty"
+assert_json_equals "$QUALITY_JSON" '.groundTruth.hasGroundTruth' "true" "quality groundTruth.hasGroundTruth should be true"
+assert_json_gt "$QUALITY_JSON" '.groundTruth.annotationCount' 0 "quality groundTruth.annotationCount should be > 0"
+assert_json_not_empty "$QUALITY_JSON" '.profile.observedChannels[0]' "quality profile.observedChannels should be non-empty"
+assert_json_not_empty "$QUALITY_JSON" '.manifestUri' "quality manifestUri should be non-empty"
+echo "  All quality aggregate checks: OK"
+echo ""
+
+echo "--- 11b. Assert dataset version scene summary (single-run pointers) ---"
+VERSION_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
+
+echo "$VERSION_JSON" | jq '.version.scene | {
   latestValidationRunId,
   validationStatus,
   shouldBlockPipeline,
   validationReportUri,
   latestProfileRunId,
   profileReportUri
-}' 2>/dev/null || echo "$QUALITY_JSON"
+}' 2>/dev/null || echo "$VERSION_JSON"
 
-QUAL_VALIDATION_RUN_ID="$(echo "$QUALITY_JSON" | jq -r '.latestValidationRunId // empty')"
-QUAL_VALIDATION_STATUS="$(echo "$QUALITY_JSON" | jq -r '.validationStatus // empty')"
-QUAL_SHOULD_BLOCK="$(echo "$QUALITY_JSON" | jq -r '.shouldBlockPipeline // empty')"
-QUAL_VALIDATION_REPORT_URI="$(echo "$QUALITY_JSON" | jq -r '.validationReportUri // empty')"
-QUAL_PROFILE_RUN_ID="$(echo "$QUALITY_JSON" | jq -r '.latestProfileRunId // empty')"
-QUAL_PROFILE_REPORT_URI="$(echo "$QUALITY_JSON" | jq -r '.profileReportUri // empty')"
+assert_json_not_empty "$VERSION_JSON" '.version.scene.latestValidationRunId' "scene summary latestValidationRunId should be non-empty"
+assert_json_not_empty "$VERSION_JSON" '.version.scene.validationStatus' "scene summary validationStatus should be non-empty"
+assert_json_equals "$VERSION_JSON" '.version.scene.shouldBlockPipeline' "false" "scene summary shouldBlockPipeline should be false"
+assert_json_not_empty "$VERSION_JSON" '.version.scene.validationReportUri' "scene summary validationReportUri should be non-empty"
+assert_json_not_empty "$VERSION_JSON" '.version.scene.latestProfileRunId' "scene summary latestProfileRunId should be non-empty"
+assert_json_not_empty "$VERSION_JSON" '.version.scene.profileReportUri' "scene summary profileReportUri should be non-empty"
 
-if [ -z "$QUAL_VALIDATION_RUN_ID" ]; then
-  echo "❌ quality cache: latestValidationRunId is empty" >&2
-  echo "$QUALITY_JSON" | jq . >&2
-  exit 1
-fi
-echo "  latestValidationRunId=$QUAL_VALIDATION_RUN_ID  OK"
+# Cross-check: run IDs on the dataset version match the task result refs.
+QUAL_VALIDATION_RUN_ID="$(echo "$VERSION_JSON" | jq -r '.version.scene.latestValidationRunId // empty')"
+QUAL_PROFILE_RUN_ID="$(echo "$VERSION_JSON" | jq -r '.version.scene.latestProfileRunId // empty')"
 
-if [ -z "$QUAL_VALIDATION_STATUS" ]; then
-  echo "❌ quality cache: validationStatus is empty" >&2
-  exit 1
-fi
-echo "  validationStatus=$QUAL_VALIDATION_STATUS  OK"
-
-if [ "$QUAL_SHOULD_BLOCK" = "null" ] || [ -z "$QUAL_SHOULD_BLOCK" ]; then
-  echo "❌ quality cache: shouldBlockPipeline is missing" >&2
-  exit 1
-fi
-echo "  shouldBlockPipeline=$QUAL_SHOULD_BLOCK  OK"
-
-if [ -z "$QUAL_VALIDATION_REPORT_URI" ]; then
-  echo "❌ quality cache: validationReportUri is empty" >&2
-  exit 1
-fi
-echo "  validationReportUri=$QUAL_VALIDATION_REPORT_URI  OK"
-
-if [ -z "$QUAL_PROFILE_RUN_ID" ]; then
-  echo "❌ quality cache: latestProfileRunId is empty" >&2
-  exit 1
-fi
-echo "  latestProfileRunId=$QUAL_PROFILE_RUN_ID  OK"
-
-if [ -z "$QUAL_PROFILE_REPORT_URI" ]; then
-  echo "❌ quality cache: profileReportUri is empty" >&2
-  exit 1
-fi
-echo "  profileReportUri=$QUAL_PROFILE_REPORT_URI  OK"
-
-# Cross-check: run IDs in quality cache match the task result refs.
 if [ "$QUAL_VALIDATION_RUN_ID" != "$VALIDATION_RUN_ID" ]; then
-  echo "❌ quality cache latestValidationRunId ($QUAL_VALIDATION_RUN_ID) does not match task result ($VALIDATION_RUN_ID)" >&2
+  echo "❌ scene summary latestValidationRunId ($QUAL_VALIDATION_RUN_ID) does not match task result ($VALIDATION_RUN_ID)" >&2
   exit 1
 fi
 echo "  latestValidationRunId cross-check: OK"
 
 if [ "$QUAL_PROFILE_RUN_ID" != "$PROFILE_RUN_ID" ]; then
-  echo "❌ quality cache latestProfileRunId ($QUAL_PROFILE_RUN_ID) does not match task result ($PROFILE_RUN_ID)" >&2
+  echo "❌ scene summary latestProfileRunId ($QUAL_PROFILE_RUN_ID) does not match task result ($PROFILE_RUN_ID)" >&2
   exit 1
 fi
 echo "  latestProfileRunId cross-check: OK"
@@ -359,11 +352,18 @@ echo ""
 # confirm optional tasks are marked SKIPPED and do not block the pipeline.
 
 echo "--- 12. Verify optional task skip (no validate/profile params) ---"
+# ingest_scenes passes dataset_version straight to the NuScenes SDK as the
+# on-disk version folder name (dataroot/<dataset_version>) — it must be a
+# real nuScenes version, not an arbitrary suffix. Isolate this run from the
+# main dataset via a separate dataset_id instead, reusing the real version.
+SKIP_TEST_DATASET_ID="${DATASET_ID}-skip-test"
+upsert_dataset "$API_BASE_URL" "$SKIP_TEST_DATASET_ID" "nuScenes (skip-test)" >/dev/null 2>&1 || true
+
 SKIP_PAYLOAD="$(cat <<JSON
 {
   "type": "dataset_scene_ingestion",
-  "dataset_id": "$DATASET_ID",
-  "dataset_version": "${DATASET_VERSION}-skip-test",
+  "dataset_id": "$SKIP_TEST_DATASET_ID",
+  "dataset_version": "$DATASET_VERSION",
   "params": {
     "ingest_scenes": {
       "source_format": "nuscenes",
@@ -400,8 +400,11 @@ assert_pipeline_succeeded "$SKIP_PIPELINE_JSON" 'skip-test pipeline should succe
 SKIP_TASKS_JSON="$(fetch_pipeline_tasks "$API_BASE_URL" "$SKIP_RUN_ID")"
 echo "$SKIP_TASKS_JSON" | jq -r '.tasks[] | "  \(.pipelineTaskId): \(.status)"'
 
-# validate_scene and profile_scene must be SKIPPED (no params provided).
-for task_id in validate_scene profile_scene; do
+# profile_scene is the only optional task in this pipeline (optional=True,
+# no caller params provided) — it must be SKIPPED. validate_scene has no
+# `optional` flag in DATASET_SCENE_INGESTION_PIPELINE, so it always runs
+# (with empty params) regardless of whether the caller supplies any.
+for task_id in profile_scene; do
   SKIP_TASK_STATUS="$(echo "$SKIP_TASKS_JSON" | jq -r --arg t "$task_id" '.tasks[] | select(.pipelineTaskId == $t) | .status // empty')"
   if [ "$SKIP_TASK_STATUS" != "skipped" ]; then
     echo "❌ Task '$task_id' expected skipped (no params), got '$SKIP_TASK_STATUS'" >&2
@@ -410,8 +413,8 @@ for task_id in validate_scene profile_scene; do
   echo "  $task_id: skipped OK"
 done
 
-# Required tasks must succeed despite optional tasks being skipped.
-for task_id in ingest_scenes register_scene build_scene_index build_dataset_manifest; do
+# Required tasks must succeed despite the optional task being skipped.
+for task_id in ingest_scenes register_scene validate_scene build_scene_index build_dataset_manifest; do
   SKIP_TASK_STATUS="$(echo "$SKIP_TASKS_JSON" | jq -r --arg t "$task_id" '.tasks[] | select(.pipelineTaskId == $t) | .status // empty')"
   if [ "$SKIP_TASK_STATUS" != "succeeded" ]; then
     echo "❌ Required task '$task_id' expected succeeded after optional skip, got '$SKIP_TASK_STATUS'" >&2
@@ -428,5 +431,5 @@ echo "=== PASSED ==="
 echo "  pipeline_run_id=$PIPELINE_RUN_ID"
 echo "  validation_run_id=$VALIDATION_RUN_ID"
 echo "  profile_run_id=$PROFILE_RUN_ID"
-echo "  quality_cache: validationStatus=$QUAL_VALIDATION_STATUS shouldBlockPipeline=$QUAL_SHOULD_BLOCK"
+echo "  quality: readiness=$(echo "$QUALITY_JSON" | jq -r '.readiness') shouldBlockPipeline=$(echo "$VERSION_JSON" | jq -r '.version.scene.shouldBlockPipeline')"
 echo "  skip pipeline_run_id=$SKIP_RUN_ID"

@@ -191,14 +191,8 @@ Pipeline
 
 #### Planned pipeline definitions
 
-`scene_reconstruction`
-  build_scenes → validate_scene → profile_scene → export_scene_package
-
 `scene_registration`
-  register_scene → validate_scene → profile_scene → compare_scenes
-
-`generated_dataset_preparation`
-  register_scene → compare_scenes → auto_label_scene → build_dataset_manifest → check_distribution → export_dataset
+  register_scene → validate_scene → profile_scene
 
 #### Standalone robot jobs (v2)
 

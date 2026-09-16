@@ -20,10 +20,8 @@ from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
 from sceneops_worker.stores.robots import RobotStore
 from sceneops_worker.stores.runs import (
-    DatasetRunStore,
     EvaluationRunStore,
     InferenceRunStore,
-    LabelRunStore,
     SceneRunStore,
 )
 from sceneops_worker.stores.scenarios import ScenarioStore
@@ -34,9 +32,7 @@ from sceneops_worker.stores.scenes import SceneStore
 class RunStores:
     inference: InferenceRunStore
     evaluations: EvaluationRunStore
-    labels: LabelRunStore
     scene_runs: SceneRunStore
-    dataset_runs: DatasetRunStore
 
 
 @dataclass(frozen=True)

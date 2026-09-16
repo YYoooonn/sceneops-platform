@@ -8,7 +8,6 @@ from app.platform.pipelines.router import router as pipelines_router
 from app.domains.datasets.router import router as datasets_router
 from app.domains.evaluations.router import router as evaluations_router
 from app.domains.inference.router import router as inference_router
-from app.domains.labels.router import router as labels_router
 from app.domains.models.router import router as models_router
 from app.domains.robots.router import (
     missions_router,
@@ -45,7 +44,6 @@ api_router.include_router(inference_router, prefix="/inference", tags=["inferenc
 api_router.include_router(
     evaluations_router, prefix="/evaluations", tags=["evaluations"]
 )
-api_router.include_router(labels_router, prefix="/labels", tags=["labels"])
 
 # views
 api_router.include_router(operations_router, prefix="/operations", tags=["operations"])

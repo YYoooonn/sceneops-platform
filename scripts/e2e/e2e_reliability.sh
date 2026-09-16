@@ -37,7 +37,7 @@ echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo ""
 
 echo "--- 0. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
 echo ""
 
 # ── Part A: Job execution_key idempotency ────────────────────────────────────

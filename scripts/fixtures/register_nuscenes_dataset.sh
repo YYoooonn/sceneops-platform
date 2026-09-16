@@ -47,7 +47,7 @@ echo ""
 echo "--- dataset ---"
 if [ "$(http_status "/datasets/$DATASET_ID")" = "200" ]; then
   echo "  already exists"
-  curl -sS "$(url "/datasets/$DATASET_ID")" | jq '.dataset | {datasetId, type, status}'
+  curl -sS "$(url "/datasets/$DATASET_ID")" | jq '.dataset | {datasetId, type}'
 else
   echo "  creating..."
   http_post "/datasets" "{
@@ -56,7 +56,7 @@ else
     \"description\": \"nuScenes autonomous driving dataset\",
     \"type\": \"nuscenes\",
     \"metadata\": {}
-  }" | jq '.dataset | {datasetId, type, status}'
+  }" | jq '.dataset | {datasetId, type}'
 fi
 echo ""
 
@@ -68,14 +68,14 @@ if [ "$(http_status "/datasets/$DATASET_ID/versions/$DATASET_VERSION")" = "200" 
   curl -sS -X PATCH "$(url "/datasets/$DATASET_ID/versions/$DATASET_VERSION")" \
     -H "Content-Type: application/json" \
     -d "{\"raw_source_root_uri\": \"$RAW_SOURCE_ROOT_URI\"}" \
-    | jq '.version | {version, status, rawSourceRootUri}'
+    | jq '.version | {version, status, scene}'
 else
   echo "  creating..."
   http_post "/datasets/$DATASET_ID/versions" "{
     \"version\": \"$DATASET_VERSION\",
     \"raw_source_root_uri\": \"$RAW_SOURCE_ROOT_URI\",
     \"metadata\": {}
-  }" | jq '.version | {version, status, rawSourceRootUri}'
+  }" | jq '.version | {version, status, scene}'
 fi
 echo ""
 

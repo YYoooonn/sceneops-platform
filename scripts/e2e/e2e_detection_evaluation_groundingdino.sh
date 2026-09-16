@@ -157,11 +157,14 @@ echo ""
 
 echo "--- 4. Dataset version status ---"
 DATASET_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
-DATASET_STATUS="$(echo "$DATASET_JSON" | jq -r '.version.status // empty')"
-echo "  $DATASET_ID/$DATASET_VERSION: status=$DATASET_STATUS"
+# DatasetVersion.status no longer tracks Scene workflow progress (SceneOps V2
+# Request 05) — Scene readiness for detection is the presence of a built
+# manifest instead (mirrors _require_scene_dataset_ready in the worker).
+SCENE_MANIFEST_URI="$(echo "$DATASET_JSON" | jq -r '.version.scene.manifestUri // empty')"
+echo "  $DATASET_ID/$DATASET_VERSION: scene.manifestUri=$SCENE_MANIFEST_URI"
 
-if [ "$DATASET_STATUS" != "ready" ]; then
-  echo "❌ Dataset version is not ready (status='$DATASET_STATUS')" >&2
+if [ -z "$SCENE_MANIFEST_URI" ]; then
+  echo "❌ Dataset version has no Scene manifest yet" >&2
   echo "  Run dataset ingestion first: make e2e-dataset-scene-ingestion" >&2
   exit 1
 fi

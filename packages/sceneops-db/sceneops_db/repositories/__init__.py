@@ -1,16 +1,10 @@
 from .artifacts import ArtifactRepository
-from .datasets import (
-    DatasetRepository,
-    DatasetRunRecord,
-    DatasetRunRepository,
-    DatasetVersionRepository,
-)
+from .datasets import DatasetRepository, DatasetVersionRepository
 from .episodes import EpisodeRepository
 from .evaluations import EvaluationRunRepository
 from .executions import ExecutionRecordRepository
 from .inference import InferenceRunRepository
 from .jobs import JobEventRepository, JobRepository
-from .labels import LabelRunRecord, LabelRunRepository
 from .model_registry import ModelRepository, ModelVersionRepository
 from .pipelines import PipelineRunRepository, PipelineTaskRunRepository
 from .robots import (
@@ -34,8 +28,6 @@ __all__ = [
     # datasets
     "DatasetRepository",
     "DatasetVersionRepository",
-    "DatasetRunRepository",
-    "DatasetRunRecord",
     # scenes
     "SceneRepository",
     "SceneRunRepository",
@@ -55,9 +47,6 @@ __all__ = [
     "InferenceRunRepository",
     # evaluations
     "EvaluationRunRepository",
-    # labels
-    "LabelRunRepository",
-    "LabelRunRecord",
     # model registry
     "ModelRepository",
     "ModelVersionRepository",

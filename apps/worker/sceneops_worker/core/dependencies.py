@@ -19,10 +19,8 @@ from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
 from sceneops_worker.stores.robots import RobotStore
 from sceneops_worker.stores.runs import (
-    DatasetRunStore,
     EvaluationRunStore,
     InferenceRunStore,
-    LabelRunStore,
     SceneRunStore,
 )
 from sceneops_worker.stores.scenarios import ScenarioStore
@@ -97,9 +95,7 @@ def create_worker_context(
         runs=RunStores(
             inference=InferenceRunStore(session),
             evaluations=EvaluationRunStore(session),
-            labels=LabelRunStore(session),
             scene_runs=SceneRunStore(session),
-            dataset_runs=DatasetRunStore(session),
         ),
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,

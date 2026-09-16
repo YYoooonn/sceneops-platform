@@ -5,10 +5,8 @@ from .models import ModelStore
 from .pipelines import PipelineStore
 from .robots import RobotStore
 from .runs import (
-    DatasetRunStore,
     EvaluationRunStore,
     InferenceRunStore,
-    LabelRunStore,
     SceneRunStore,
 )
 from .scenarios import ScenarioStore
@@ -26,7 +24,5 @@ __all__ = [
     "ArtifactRecordStore",
     "InferenceRunStore",
     "EvaluationRunStore",
-    "LabelRunStore",
     "SceneRunStore",
-    "DatasetRunStore",
 ]
