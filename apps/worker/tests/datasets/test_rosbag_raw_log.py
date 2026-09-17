@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mcap.writer import Writer
@@ -338,6 +338,115 @@ class TestExtractMissions:
         adapter, _ = _make_adapter(bag_path)
 
         assert adapter.extract_robot_states(robot_id="robot-1") == []
+
+
+class TestExtractEpisodeSource:
+    """Episode-domain extraction (SceneOps V2 Request 12) — a single-read
+    counterpart to build_raw_log() that never touches ObservationArtifactStore
+    or produces RawLogManifest/RawLogFrameIndex."""
+
+    def test_no_observation_store_required(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [("/vehicle/odom", 1_000_000_000, {"position": [1.0, 0.0, 0.0]}, "json")],
+        )
+        # Deliberately no observation_store — proves the Episode path has no
+        # Scene-domain collaborator dependency.
+        adapter = RosbagAdapter(source_store=MagicMock(), source_root_uri=bag_path)
+
+        source = adapter.extract_episode_source(robot_id="robot-1")
+
+        assert len(source.robot_states) == 1
+        assert source.robot_states[0].position == [1.0, 0.0, 0.0]
+
+    @pytest.mark.asyncio
+    async def test_build_raw_log_without_observation_store_raises(
+        self, tmp_path
+    ) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(bag_path, [("/camera/front/image", 1_000_000_000, {}, "json")])
+        adapter = RosbagAdapter(source_store=MagicMock(), source_root_uri=bag_path)
+
+        with pytest.raises(ValueError, match="observation_store"):
+            await adapter.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
+
+    def test_combines_frames_states_and_missions_from_one_bag(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [
+                (
+                    "/camera/front/image",
+                    1_000_000_000,
+                    {"uri": "s3://bucket/img1.jpg"},
+                    "json",
+                ),
+                (
+                    "/vehicle/odom",
+                    1_000_000_000,
+                    {"position": [1.0, 2.0, 0.0]},
+                    "json",
+                ),
+                (
+                    "/mission/status",
+                    1_000_000_000,
+                    {"mission_id": "mission-1", "operation_state": "running"},
+                    "json",
+                ),
+                (
+                    "/mission/status",
+                    1_500_000_000,
+                    {"mission_id": "mission-1", "operation_state": "completed"},
+                    "json",
+                ),
+            ],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        source = adapter.extract_episode_source(
+            robot_id="robot-1", robot_run_id="run-1"
+        )
+
+        assert len(source.frames) == 1
+        assert source.frames[0].channel == "CAM_FRONT"
+        assert len(source.robot_states) == 1
+        assert source.robot_states[0].position == [1.0, 2.0, 0.0]
+        assert len(source.missions) == 1
+        assert source.missions[0].mission_id == "mission-1"
+        assert source.missions[0].status == MissionStatus.COMPLETED
+
+    def test_reads_bag_exactly_once(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [("/vehicle/odom", 1_000_000_000, {"position": [1.0, 0.0, 0.0]}, "json")],
+        )
+        adapter, _ = _make_adapter(bag_path)
+
+        with patch.object(RosbagAdapter, "_read_bag", wraps=adapter._read_bag) as spy:
+            adapter.extract_episode_source(robot_id="robot-1")
+
+        assert spy.call_count == 1
+
+    def test_real_can_replay_bag_matches_individual_extractors(self) -> None:
+        """Cross-check against the separately-verified extract_robot_states()/
+        extract_missions() counts in TestRealCdrFixtures below."""
+        bag_path = str(_FIXTURES_DIR / "can_replay_scene_0061.mcap")
+        adapter, _ = _make_adapter(bag_path)
+
+        source = adapter.extract_episode_source(
+            robot_id="robot-nuscenes-01", robot_run_id="run-scene-0061"
+        )
+
+        assert len(source.robot_states) == len(
+            adapter.extract_robot_states(
+                robot_id="robot-nuscenes-01", robot_run_id="run-scene-0061"
+            )
+        )
+        assert len(source.missions) == 1
+        assert source.missions[0].mission_id == "mission-scene-0061"
+        assert source.frames == []  # CAN replay publishes no camera/lidar topics
 
 
 class TestRealCdrFixtures:

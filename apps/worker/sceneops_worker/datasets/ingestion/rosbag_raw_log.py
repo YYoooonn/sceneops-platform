@@ -12,6 +12,7 @@ from mcap.well_known import MessageEncoding
 from mcap_ros2.decoder import DecoderFactory as Ros2DecoderFactory
 
 from sceneops_core.artifacts.contracts import ArtifactStore
+from sceneops_core.episodes.schemas import EpisodeSource
 from sceneops_core.observations.schemas import (
     RawLogFrameIndex,
     RawLogManifest,
@@ -184,6 +185,18 @@ class RosbagAdapter:
     frame currently gets an empty ``uri`` and its raw decoded structure in
     ``metadata`` only. Writing those to ArtifactStore is follow-up work once a
     real sensor-publishing node exists.
+
+    Two extraction paths read the same bag for two different domains:
+
+    - ``build_raw_log()`` (Scene path): persists ``RawLogManifest``/
+      ``RawLogFrameIndex`` to ``ObservationArtifactStore`` — used by
+      ``BuildScenesJobHandler``.
+    - ``extract_episode_source()`` (Episode path): returns an in-memory
+      ``EpisodeSource`` (frames + robot states + missions), no persistence,
+      no ``ObservationArtifactStore`` dependency — used by
+      ``BuildEpisodesJobHandler``. See SceneOps V2 Request 12: Episode build
+      previously called ``build_raw_log()`` too, which wrote Scene-owned raw
+      log artifacts as a side effect of getting the sensor frame list.
     """
 
     def __init__(
@@ -191,7 +204,7 @@ class RosbagAdapter:
         *,
         source_store: ArtifactStore,
         source_root_uri: str,
-        observation_store: ObservationArtifactStore,
+        observation_store: ObservationArtifactStore | None = None,
         sensor_topics: dict[str, tuple[SensorModality, str]] | None = None,
         robot_state_topics: set[str] | None = None,
         mission_topics: set[str] | None = None,
@@ -213,6 +226,12 @@ class RosbagAdapter:
         version_root_uri: str,
         params: dict,
     ) -> tuple[RawLogManifest, RawLogFrameIndex, str, str]:
+        if self._observation_store is None:
+            raise ValueError(
+                "build_raw_log() requires observation_store — pass one to "
+                "RosbagAdapter.__init__, or use extract_episode_source() if "
+                "you only need Episode-domain data."
+            )
         bag = self._read_bag()
 
         frame_index_uri = self._observation_store.raw_frame_index_uri(version_root_uri)
@@ -270,20 +289,9 @@ class RosbagAdapter:
         than adapters (e.g. IngestScenesJobHandler, BuildScenesJobHandler).
         """
         bag = self._read_bag()
-
-        records: list[RobotStateRecord] = []
-        for timestamp_us in sorted(bag.robot_state_payloads):
-            payload = bag.robot_state_payloads[timestamp_us]
-            records.append(
-                RobotStateRecord(
-                    state_id=f"{robot_run_id or robot_id}-{timestamp_us}",
-                    robot_id=robot_id,
-                    robot_run_id=robot_run_id,
-                    timestamp_us=timestamp_us,
-                    **{k: payload.get(k) for k in _ROBOT_STATE_FIELDS},
-                )
-            )
-        return records
+        return self._robot_states_from_bag(
+            bag, robot_id=robot_id, robot_run_id=robot_run_id
+        )
 
     def extract_missions(
         self,
@@ -300,7 +308,65 @@ class RosbagAdapter:
         persist, matching extract_robot_states().
         """
         bag = self._read_bag()
+        return self._missions_from_bag(
+            bag, robot_id=robot_id, robot_run_id=robot_run_id
+        )
 
+    def extract_episode_source(
+        self,
+        *,
+        robot_id: str,
+        robot_run_id: str | None = None,
+    ) -> EpisodeSource:
+        """Episode-domain read of the bag: sensor frames + robot states +
+        missions from a single pass over the file.
+
+        The Episode-path counterpart to ``build_raw_log()`` — reads the same
+        underlying topics as ``extract_robot_states()``/``extract_missions()``
+        but in one ``_read_bag()`` call instead of two, and returns sensor
+        frames too (``bag.frames``, otherwise only available through
+        ``build_raw_log()``'s ``RawLogFrameIndex``) without persisting any
+        Scene-owned ``RawLogManifest``/``RawLogFrameIndex`` artifact.
+        """
+        bag = self._read_bag()
+        return EpisodeSource(
+            frames=bag.frames,
+            robot_states=self._robot_states_from_bag(
+                bag, robot_id=robot_id, robot_run_id=robot_run_id
+            ),
+            missions=self._missions_from_bag(
+                bag, robot_id=robot_id, robot_run_id=robot_run_id
+            ),
+        )
+
+    @staticmethod
+    def _robot_states_from_bag(
+        bag: _BagContents,
+        *,
+        robot_id: str,
+        robot_run_id: str | None,
+    ) -> list[RobotStateRecord]:
+        records: list[RobotStateRecord] = []
+        for timestamp_us in sorted(bag.robot_state_payloads):
+            payload = bag.robot_state_payloads[timestamp_us]
+            records.append(
+                RobotStateRecord(
+                    state_id=f"{robot_run_id or robot_id}-{timestamp_us}",
+                    robot_id=robot_id,
+                    robot_run_id=robot_run_id,
+                    timestamp_us=timestamp_us,
+                    **{k: payload.get(k) for k in _ROBOT_STATE_FIELDS},
+                )
+            )
+        return records
+
+    @staticmethod
+    def _missions_from_bag(
+        bag: _BagContents,
+        *,
+        robot_id: str,
+        robot_run_id: str | None,
+    ) -> list[MissionRecord]:
         by_mission: dict[str, dict[str, Any]] = {}
         for timestamp_us, payload in bag.mission_updates:
             mission_id = payload.get("mission_id")

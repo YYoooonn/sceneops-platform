@@ -6,6 +6,7 @@ from .manifests import (
     EpisodeObservationFrame,
 )
 from .records import EpisodeRecord
+from .source import EpisodeSource
 
 __all__ = [
     "EpisodeStatus",
@@ -15,4 +16,5 @@ __all__ = [
     "EpisodeObservationFrame",
     "EpisodeActionFrame",
     "EpisodeManifest",
+    "EpisodeSource",
 ]

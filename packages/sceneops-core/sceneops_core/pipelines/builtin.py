@@ -181,13 +181,6 @@ _BUILD_EPISODES_OUTPUTS = [
     PipelineTaskOutputSpec(
         name="episode_manifest_uris", kind=_REF, source="episode_manifest_uris"
     ),
-    # Diagnostic/archival URIs not consumed by downstream tasks → ARTIFACT.
-    PipelineTaskOutputSpec(
-        name="raw_log_manifest_uri", kind=_ARTIFACT, source="raw_log_manifest_uri"
-    ),
-    PipelineTaskOutputSpec(
-        name="raw_log_frame_index_uri", kind=_ARTIFACT, source="raw_log_frame_index_uri"
-    ),
     PipelineTaskOutputSpec(name="episode_count", kind=_SUMMARY, source="episode_count"),
     PipelineTaskOutputSpec(
         name="observation_frame_count", kind=_SUMMARY, source="observation_frame_count"

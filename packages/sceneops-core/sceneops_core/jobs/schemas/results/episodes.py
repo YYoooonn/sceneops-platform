@@ -17,9 +17,6 @@ class BuildEpisodesJobResult(BaseJobResult):
     observation_frame_count: int = 0
     action_frame_count: int = 0
 
-    raw_log_manifest_uri: str | None = None
-    raw_log_frame_index_uri: str | None = None
-
     channels: list[str] = Field(default_factory=list)
 
     metadata: JsonDict = Field(default_factory=dict)

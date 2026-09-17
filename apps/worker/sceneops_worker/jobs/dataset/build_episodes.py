@@ -21,7 +21,6 @@ from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
 from sceneops_worker.episodes.building import EpisodeBuildResult, EpisodeBuilder
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
-from sceneops_worker.observations.artifacts import ObservationArtifactStore
 
 
 @dataclass(frozen=True)
@@ -34,10 +33,8 @@ class BuildEpisodesExecution:
     raw_log_id: str
     mcap_uri: str
     robot_run: RobotRunRecord | None
-    obs_store: ObservationArtifactStore
     episode_artifact_store: EpisodeArtifactStore
     dataset_version_record: DatasetVersionRecord
-    version_root_uri: str
 
 
 class BuildEpisodesJobHandler(
@@ -52,6 +49,12 @@ class BuildEpisodesJobHandler(
     (see EpisodeBuilder). Both handlers construct their own independent
     RosbagAdapter instance; reading the same MCAP file twice for two
     different purposes is intentional, not a bug.
+
+    Uses ``RosbagAdapter.extract_episode_source()`` (one bag read, in-memory
+    only) rather than ``build_raw_log()`` — this handler never needed the
+    persisted Scene-owned ``RawLogManifest``/``RawLogFrameIndex`` artifacts
+    that ``build_raw_log()`` produces, only the sensor frame list inside them
+    (see SceneOps V2 Request 12).
     """
 
     @property
@@ -98,25 +101,9 @@ class BuildEpisodesJobHandler(
         adapter = RosbagAdapter(
             source_store=context.raw_source_store,
             source_root_uri=execution.mcap_uri,
-            observation_store=execution.obs_store,
         )
 
-        (
-            _,
-            frame_index,
-            raw_manifest_uri,
-            raw_frame_index_uri,
-        ) = await adapter.build_raw_log(
-            dataset_id=version_record.dataset_id,
-            dataset_version=version_record.version,
-            raw_log_id=execution.raw_log_id,
-            version_root_uri=execution.version_root_uri,
-            params={},
-        )
-        robot_states = adapter.extract_robot_states(
-            robot_id=params.robot_id, robot_run_id=params.robot_run_id
-        )
-        missions = adapter.extract_missions(
+        source = adapter.extract_episode_source(
             robot_id=params.robot_id, robot_run_id=params.robot_run_id
         )
 
@@ -126,9 +113,7 @@ class BuildEpisodesJobHandler(
             raw_log_id=execution.raw_log_id,
             robot_id=params.robot_id,
             robot_run_id=params.robot_run_id,
-            frame_index=frame_index,
-            robot_states=robot_states,
-            missions=missions,
+            source=source,
         )
 
         episode_manifest_uris = await self._write_episode_manifests(
@@ -157,9 +142,7 @@ class BuildEpisodesJobHandler(
             episode_count=build_result.episode_count,
             observation_frame_count=build_result.observation_frame_count,
             action_frame_count=build_result.action_frame_count,
-            raw_log_manifest_uri=raw_manifest_uri,
-            raw_log_frame_index_uri=raw_frame_index_uri,
-            channels=sorted({frame.channel for frame in frame_index.frames}),
+            channels=sorted({frame.channel for frame in source.frames}),
         )
 
     # ── version / source resolution ────────────────────────────────────────────
@@ -211,17 +194,9 @@ class BuildEpisodesJobHandler(
         context = request.context
         params = request.params
 
-        obs_store = ObservationArtifactStore(
-            artifact_store=context.artifact_store,
-            dataset_root_uri=context.settings.dataset_root_uri,
-        )
         raw_log_id = (
             params.raw_log_id
             or f"{version_record.dataset_id}-{version_record.version}-episodes"
-        )
-        version_root_uri = context.dataset_artifact_store.dataset_version_root_uri(
-            dataset_id=version_record.dataset_id,
-            dataset_version=version_record.version,
         )
 
         return BuildEpisodesExecution(
@@ -231,10 +206,8 @@ class BuildEpisodesJobHandler(
             raw_log_id=raw_log_id,
             mcap_uri=mcap_uri,
             robot_run=robot_run,
-            obs_store=obs_store,
             episode_artifact_store=context.episode_artifact_store,
             dataset_version_record=version_record,
-            version_root_uri=version_root_uri,
         )
 
     # ── episode manifest persistence ────────────────────────────────────────────

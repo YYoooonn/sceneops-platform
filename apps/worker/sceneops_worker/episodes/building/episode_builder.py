@@ -8,8 +8,9 @@ from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeObservationFrame,
     EpisodeOutcome,
+    EpisodeSource,
 )
-from sceneops_core.observations.schemas import RawLogFrameIndex
+from sceneops_core.observations.schemas import RawSensorFrameManifest
 from sceneops_core.robots.schemas import MissionRecord, MissionStatus, RobotStateRecord
 
 # RobotState fields that represent observations vs. actions
@@ -67,8 +68,10 @@ class EpisodeBuilder:
     raw log with no missions becomes a single episode spanning the whole log
     (fallback for bags recorded without ``/mission/status``).
 
-    Sensor frames come from ``RawLogFrameIndex`` (built by ``RosbagAdapter``,
-    unchanged); robot state samples classify into observation vs. action
+    Sensor frames, robot state samples, and mission boundaries all come from
+    one ``EpisodeSource`` (built by ``RosbagAdapter.extract_episode_source()``
+    — the Episode-domain counterpart to ``build_raw_log()``, see SceneOps V2
+    Request 12). Robot state samples classify into observation vs. action
     fields per ``docs/robot-data-model.md`` §2 — position/orientation/
     velocity/acceleration/battery are observations, steering/throttle/brake
     are actions.
@@ -82,12 +85,10 @@ class EpisodeBuilder:
         raw_log_id: str,
         robot_id: str,
         robot_run_id: str | None,
-        frame_index: RawLogFrameIndex,
-        robot_states: list[RobotStateRecord],
-        missions: list[MissionRecord],
+        source: EpisodeSource,
         task: str | None = None,
     ) -> EpisodeBuildResult:
-        windows = self._resolve_windows(missions)
+        windows = self._resolve_windows(source.missions)
 
         episodes: list[EpisodeManifest] = []
         observation_frame_count = 0
@@ -101,8 +102,8 @@ class EpisodeBuilder:
                 robot_run_id=robot_run_id,
                 episode_index=index,
                 window=window,
-                frame_index=frame_index,
-                robot_states=robot_states,
+                frames=source.frames,
+                robot_states=source.robot_states,
                 task=task,
             )
             if manifest.frame_count == 0:
@@ -147,7 +148,7 @@ class EpisodeBuilder:
         robot_run_id: str | None,
         episode_index: int,
         window: _EpisodeWindow,
-        frame_index: RawLogFrameIndex,
+        frames: list[RawSensorFrameManifest],
         robot_states: list[RobotStateRecord],
         task: str | None,
     ) -> EpisodeManifest:
@@ -159,7 +160,7 @@ class EpisodeBuilder:
         )
 
         observation_frames: list[EpisodeObservationFrame] = []
-        for frame in frame_index.frames:
+        for frame in frames:
             if not self._in_window(frame.timestamp_us, window):
                 continue
             observation_frames.append(

@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 
-from sceneops_core.episodes.schemas import EpisodeOutcome
-from sceneops_core.observations.schemas import RawLogFrameIndex, RawSensorFrameManifest
+from sceneops_core.episodes.schemas import EpisodeOutcome, EpisodeSource
+from sceneops_core.observations.schemas import RawSensorFrameManifest
 from sceneops_core.robots.schemas import MissionRecord, MissionStatus, RobotStateRecord
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.episodes.building import EpisodeBuilder
@@ -48,27 +48,22 @@ def _mission(
 
 class TestSyntheticSegmentation:
     def test_splits_by_mission_boundaries_and_classifies_fields(self) -> None:
-        frame_index = RawLogFrameIndex(
-            raw_log_id="rl1",
-            dataset_id="d1",
-            dataset_version="v1",
-            frames=[
-                RawSensorFrameManifest(
-                    frame_id="f1",
-                    timestamp_us=1_000_000,
-                    channel="CAM_FRONT",
-                    modality="camera",
-                    uri="s3://x/1.jpg",
-                ),
-                RawSensorFrameManifest(
-                    frame_id="f2",
-                    timestamp_us=5_000_000,
-                    channel="CAM_FRONT",
-                    modality="camera",
-                    uri="s3://x/2.jpg",
-                ),
-            ],
-        )
+        frames = [
+            RawSensorFrameManifest(
+                frame_id="f1",
+                timestamp_us=1_000_000,
+                channel="CAM_FRONT",
+                modality="camera",
+                uri="s3://x/1.jpg",
+            ),
+            RawSensorFrameManifest(
+                frame_id="f2",
+                timestamp_us=5_000_000,
+                channel="CAM_FRONT",
+                modality="camera",
+                uri="s3://x/2.jpg",
+            ),
+        ]
         states = [
             _state(1_000_000, position=[0.0, 0.0, 0.0], steering=0.1),
             _state(2_000_000, position=[1.0, 0.0, 0.0], steering=0.2),
@@ -78,6 +73,7 @@ class TestSyntheticSegmentation:
             _mission("m1", start_s=1.0, end_s=3.0, status=MissionStatus.COMPLETED),
             _mission("m2", start_s=5.0, end_s=7.0, status=MissionStatus.FAILED),
         ]
+        source = EpisodeSource(frames=frames, robot_states=states, missions=missions)
 
         result = EpisodeBuilder().build(
             dataset_id="d1",
@@ -85,9 +81,7 @@ class TestSyntheticSegmentation:
             raw_log_id="rl1",
             robot_id="r1",
             robot_run_id="rr1",
-            frame_index=frame_index,
-            robot_states=states,
-            missions=missions,
+            source=source,
         )
 
         assert result.episode_count == 2
@@ -110,10 +104,8 @@ class TestSyntheticSegmentation:
         )
 
     def test_no_missions_falls_back_to_single_episode(self) -> None:
-        frame_index = RawLogFrameIndex(
-            raw_log_id="rl1", dataset_id="d1", dataset_version="v1", frames=[]
-        )
         states = [_state(1_000_000, battery=90.0)]
+        source = EpisodeSource(frames=[], robot_states=states, missions=[])
 
         result = EpisodeBuilder().build(
             dataset_id="d1",
@@ -121,9 +113,7 @@ class TestSyntheticSegmentation:
             raw_log_id="rl1",
             robot_id="r1",
             robot_run_id=None,
-            frame_index=frame_index,
-            robot_states=states,
-            missions=[],
+            source=source,
         )
 
         assert result.episode_count == 1
@@ -134,12 +124,10 @@ class TestSyntheticSegmentation:
         assert episode.observation_channels == ["state.battery"]
 
     def test_empty_window_is_dropped(self) -> None:
-        frame_index = RawLogFrameIndex(
-            raw_log_id="rl1", dataset_id="d1", dataset_version="v1", frames=[]
-        )
         missions = [
             _mission("m1", start_s=1.0, end_s=2.0, status=MissionStatus.COMPLETED)
         ]
+        source = EpisodeSource(frames=[], robot_states=[], missions=missions)
 
         result = EpisodeBuilder().build(
             dataset_id="d1",
@@ -147,9 +135,7 @@ class TestSyntheticSegmentation:
             raw_log_id="rl1",
             robot_id="r1",
             robot_run_id=None,
-            frame_index=frame_index,
-            robot_states=[],
-            missions=missions,
+            source=source,
         )
 
         assert result.episode_count == 0
@@ -161,24 +147,16 @@ class TestRealFixture:
     fixture used for RosbagAdapter's own tests."""
 
     def test_can_replay_bag_becomes_one_successful_episode(self) -> None:
+        """No ObservationArtifactStore constructed at all — proves the
+        Episode path no longer depends on the Scene-domain collaborator."""
         bag_path = str(_FIXTURES_DIR / "can_replay_scene_0061.mcap")
-        obs_store = AsyncMock()
-        obs_store.raw_log_manifest_uri = MagicMock(return_value="mem://manifest.json")
-        obs_store.raw_frame_index_uri = MagicMock(return_value="mem://frames.json")
         adapter = RosbagAdapter(
             source_store=MagicMock(),
             source_root_uri=bag_path,
-            observation_store=obs_store,
         )
 
-        robot_states = adapter.extract_robot_states(
+        source = adapter.extract_episode_source(
             robot_id="robot-nuscenes-01", robot_run_id="run-scene-0061"
-        )
-        missions = adapter.extract_missions(
-            robot_id="robot-nuscenes-01", robot_run_id="run-scene-0061"
-        )
-        frame_index = RawLogFrameIndex(
-            raw_log_id="rl-scene-0061", dataset_id="d1", dataset_version="v1", frames=[]
         )
 
         result = EpisodeBuilder().build(
@@ -187,9 +165,7 @@ class TestRealFixture:
             raw_log_id="rl-scene-0061",
             robot_id="robot-nuscenes-01",
             robot_run_id="run-scene-0061",
-            frame_index=frame_index,
-            robot_states=robot_states,
-            missions=missions,
+            source=source,
         )
 
         assert result.episode_count == 1
