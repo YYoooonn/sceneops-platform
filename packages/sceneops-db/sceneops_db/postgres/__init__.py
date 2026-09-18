@@ -1,6 +1,6 @@
 from .artifacts import PostgresArtifactRefRepository
 from .datasets import PostgresDatasetRepository, PostgresDatasetVersionRepository
-from .episodes import PostgresEpisodeRepository
+from .episodes import PostgresEpisodeRepository, PostgresEpisodeRunRepository
 from .evaluations import PostgresEvaluationRunRepository
 from .executions import PostgresExecutionRecordRepository
 from .inference import PostgresInferenceRunRepository
@@ -27,6 +27,7 @@ __all__ = [
     "PostgresSceneRepository",
     "PostgresSceneRunRepository",
     "PostgresEpisodeRepository",
+    "PostgresEpisodeRunRepository",
     "PostgresRobotRepository",
     "PostgresRobotRunRepository",
     "PostgresMissionRepository",

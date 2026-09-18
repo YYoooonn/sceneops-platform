@@ -55,3 +55,31 @@ class RegisterEpisodeJobParams(BaseJobParams):
     replace_existing: bool = False
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class ValidateEpisodeJobParams(BaseJobParams):
+    """EpisodeRecord + EpisodeManifest -> structural usability check.
+
+    Keyed by episode_id (not manifest URI) — unlike build_episodes/
+    register_episode, this runs after register_episode, so EpisodeRecord
+    already exists and carries its own episode_manifest_uri; there's no need
+    to thread manifest URIs through separately (see SceneOps V2 Request 17).
+    """
+
+    episode_id: str | None = None
+    episode_ids: list[str] = Field(default_factory=list)
+
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class ProfileEpisodeJobParams(BaseJobParams):
+    episode_id: str | None = None
+    episode_ids: list[str] = Field(default_factory=list)
+
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)

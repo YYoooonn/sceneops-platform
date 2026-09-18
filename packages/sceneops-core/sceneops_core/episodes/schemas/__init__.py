@@ -7,6 +7,7 @@ from .manifests import (
     EpisodeObservationFrame,
 )
 from .records import EpisodeRecord
+from .runs import EpisodeProfileRunRecord, EpisodeValidationRunRecord
 from .source import EpisodeSource
 
 __all__ = [
@@ -20,4 +21,6 @@ __all__ = [
     "EpisodeSource",
     "EpisodeSegmentationStrategy",
     "EpisodeSegmentationConfig",
+    "EpisodeValidationRunRecord",
+    "EpisodeProfileRunRecord",
 ]

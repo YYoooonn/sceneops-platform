@@ -22,6 +22,9 @@ class ArtifactOwnerType(StrEnum):
     SCENE_COMPARISON_RUN = "scene_comparison_run"
     SCENE_EXPORT_RUN = "scene_export_run"
     SCENE_AUTO_LABEL_RUN = "scene_auto_label_run"
+    # episode-level runs
+    EPISODE_VALIDATION_RUN = "episode_validation_run"
+    EPISODE_PROFILE_RUN = "episode_profile_run"
     # dataset-level runs
     DATASET_DISTRIBUTION_RUN = "dataset_distribution_run"
     DATASET_EXPORT_RUN = "dataset_export_run"

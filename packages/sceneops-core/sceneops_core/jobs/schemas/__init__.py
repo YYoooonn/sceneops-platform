@@ -20,10 +20,12 @@ from .params import (
     IngestScenesJobParams,
     MineScenariosJobParams,
     PredictDetectionJobParams,
+    ProfileEpisodeJobParams,
     ProfileSceneJobParams,
     RegisterEpisodeJobParams,
     RegisterSceneJobParams,
     ScoreScenarioReadinessJobParams,
+    ValidateEpisodeJobParams,
     ValidateSceneJobParams,
 )
 from .registry import (
@@ -52,10 +54,12 @@ from .results import (
     IngestScenesJobResult,
     MineScenariosJobResult,
     PredictDetectionJobResult,
+    ProfileEpisodeJobResult,
     ProfileSceneJobResult,
     RegisterEpisodeJobResult,
     RegisterSceneJobResult,
     ScoreScenarioReadinessJobResult,
+    ValidateEpisodeJobResult,
     ValidateSceneJobResult,
 )
 from .step_registry import (
@@ -96,6 +100,8 @@ __all__ = [
     "ExportRobotAnalyticsSnapshotJobParams",
     "BuildEpisodesJobParams",
     "RegisterEpisodeJobParams",
+    "ValidateEpisodeJobParams",
+    "ProfileEpisodeJobParams",
     "BaseJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
@@ -119,6 +125,8 @@ __all__ = [
     "ExportRobotAnalyticsSnapshotJobResult",
     "BuildEpisodesJobResult",
     "RegisterEpisodeJobResult",
+    "ValidateEpisodeJobResult",
+    "ProfileEpisodeJobResult",
     "JOB_PARAM_SCHEMA_BY_TYPE",
     "JOB_RESULT_SCHEMA_BY_TYPE",
     "parse_job_params",

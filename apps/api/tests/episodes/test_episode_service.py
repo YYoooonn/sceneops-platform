@@ -16,7 +16,13 @@ from __future__ import annotations
 import pytest
 
 from sceneops_core.episodes.schemas import EpisodeRecord, EpisodeStatus
+from sceneops_core.episodes.schemas.runs import (
+    EpisodeProfileRunRecord,
+    EpisodeValidationRunRecord,
+)
+from sceneops_core.runs.schemas import RunStatus, RunType
 
+from app.domains.episodes.schemas import EpisodeQualityReadiness
 from app.domains.episodes.service import EpisodeService
 
 
@@ -219,3 +225,170 @@ class TestGetEpisode:
 
         assert result is not None
         assert result.episode.mission_id is None
+
+
+class FakeEpisodeRunRepository:
+    """Append-only fake — .create() always adds a new row, matching the
+    real run-record table's insert-only semantics. .list() returns rows
+    newest-first, matching PostgresEpisodeRunRepository's created_at DESC
+    ordering, so 'latest' is always runs[0]."""
+
+    def __init__(self) -> None:
+        self.runs: list[EpisodeValidationRunRecord | EpisodeProfileRunRecord] = []
+
+    async def create(self, run):
+        self.runs.insert(0, run)
+        return run
+
+    async def get(self, run_id: str):
+        return next((r for r in self.runs if r.run_id == run_id), None)
+
+    async def update(self, run):
+        for i, existing in enumerate(self.runs):
+            if existing.run_id == run.run_id:
+                self.runs[i] = run
+                return run
+        raise ValueError(f"not found: {run.run_id}")
+
+    async def list(
+        self,
+        *,
+        type: RunType | None = None,
+        status: RunStatus | None = None,
+        episode_id: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        job_id: str | None = None,
+        pipeline_run_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        results = self.runs
+        if type is not None:
+            results = [r for r in results if r.type == type]
+        if episode_id is not None:
+            results = [r for r in results if r.episode_id == episode_id]
+        return results[offset : offset + limit]
+
+
+def _validation_run(
+    run_id: str, episode_id: str, *, validation_status: str, should_block: bool = False
+) -> EpisodeValidationRunRecord:
+    return EpisodeValidationRunRecord(
+        run_id=run_id,
+        status=RunStatus.SUCCEEDED,
+        episode_id=episode_id,
+        validation_status=validation_status,
+        should_block_pipeline=should_block,
+    )
+
+
+class TestGetEpisodeQuality:
+    @pytest.mark.asyncio
+    async def test_unknown_before_any_validation_run(self) -> None:
+        repo = FakeEpisodeRepository([_episode("ep-1")])
+        service = EpisodeService(
+            repository=repo, run_repository=FakeEpisodeRunRepository()
+        )
+
+        result = await service.get_episode_quality("ep-1")
+
+        assert result is not None
+        assert result.readiness == EpisodeQualityReadiness.UNKNOWN
+
+    @pytest.mark.asyncio
+    async def test_ready_for_valid_episode(self) -> None:
+        repo = FakeEpisodeRepository([_episode("ep-1")])
+        run_repo = FakeEpisodeRunRepository()
+        await run_repo.create(
+            _validation_run("val-1", "ep-1", validation_status="ready")
+        )
+        service = EpisodeService(repository=repo, run_repository=run_repo)
+
+        result = await service.get_episode_quality("ep-1")
+
+        assert result is not None
+        assert result.readiness == EpisodeQualityReadiness.READY
+
+    @pytest.mark.asyncio
+    async def test_blocked_for_blocking_issue(self) -> None:
+        repo = FakeEpisodeRepository([_episode("ep-1")])
+        run_repo = FakeEpisodeRunRepository()
+        await run_repo.create(
+            _validation_run(
+                "val-1", "ep-1", validation_status="failed", should_block=True
+            )
+        )
+        service = EpisodeService(repository=repo, run_repository=run_repo)
+
+        result = await service.get_episode_quality("ep-1")
+
+        assert result is not None
+        assert result.readiness == EpisodeQualityReadiness.BLOCKED
+
+    @pytest.mark.asyncio
+    async def test_missing_episode_returns_none(self) -> None:
+        service = EpisodeService(
+            repository=FakeEpisodeRepository(),
+            run_repository=FakeEpisodeRunRepository(),
+        )
+
+        result = await service.get_episode_quality("does-not-exist")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_multiple_validation_runs_remain_queryable(self) -> None:
+        repo = FakeEpisodeRepository([_episode("ep-1")])
+        run_repo = FakeEpisodeRunRepository()
+        await run_repo.create(
+            _validation_run(
+                "val-1", "ep-1", validation_status="failed", should_block=True
+            )
+        )
+        await run_repo.create(
+            _validation_run("val-2", "ep-1", validation_status="ready")
+        )
+        service = EpisodeService(repository=repo, run_repository=run_repo)
+
+        # Both runs are still in the append-only history...
+        all_runs = await run_repo.list(
+            type=RunType.EPISODE_VALIDATION, episode_id="ep-1"
+        )
+        assert len(all_runs) == 2
+
+        # ...but quality reflects only the latest one.
+        result = await service.get_episode_quality("ep-1")
+        assert result is not None
+        assert result.readiness == EpisodeQualityReadiness.READY
+        assert result.validation.run_id == "val-2"
+
+    @pytest.mark.asyncio
+    async def test_multiple_profile_runs_remain_queryable_latest_wins(self) -> None:
+        repo = FakeEpisodeRepository([_episode("ep-1")])
+        run_repo = FakeEpisodeRunRepository()
+        await run_repo.create(
+            EpisodeProfileRunRecord(
+                run_id="profile-1",
+                status=RunStatus.SUCCEEDED,
+                episode_id="ep-1",
+                frame_count=5,
+            )
+        )
+        await run_repo.create(
+            EpisodeProfileRunRecord(
+                run_id="profile-2",
+                status=RunStatus.SUCCEEDED,
+                episode_id="ep-1",
+                frame_count=99,
+            )
+        )
+        service = EpisodeService(repository=repo, run_repository=run_repo)
+
+        all_runs = await run_repo.list(type=RunType.EPISODE_PROFILE, episode_id="ep-1")
+        assert len(all_runs) == 2
+
+        result = await service.get_episode_quality("ep-1")
+        assert result is not None
+        assert result.profile.run_id == "profile-2"
+        assert result.profile.frame_count == 99

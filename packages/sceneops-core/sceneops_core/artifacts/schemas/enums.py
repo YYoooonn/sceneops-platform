@@ -26,6 +26,8 @@ class ArtifactKind(StrEnum):
 
     # Episode-level
     EPISODE_MANIFEST = "episode_manifest"
+    EPISODE_VALIDATION_REPORT = "episode_validation_report"
+    EPISODE_PROFILE_REPORT = "episode_profile_report"
 
     # Dataset-level
     DATASET_MANIFEST = "dataset_manifest"

@@ -134,6 +134,9 @@ PAYLOAD="$(cat <<JSON
     },
     "register_episode": {
       "replace_existing": true
+    },
+    "profile_episode": {
+      "triggered": true
     }
   }
 }
@@ -219,6 +222,39 @@ assert_json_gt "$REGISTER_TASK" '.result.summary.registered_episode_count' 0 \
   'expected registered_episode_count > 0'
 [ "$REGISTERED_COUNT" = "$EPISODE_COUNT" ] || {
   echo "❌ registered_episode_count ($REGISTERED_COUNT) != episode_count ($EPISODE_COUNT)" >&2
+  exit 1
+}
+echo "  OK"
+echo ""
+
+# ── 8b. Assert validate_episode outputs (SceneOps V2 Request 17) ────────────
+
+echo "--- 8b. Assert validate_episode outputs ---"
+VALIDATE_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "validate_episode")')"
+VALIDATION_STATUS="$(echo "$VALIDATE_TASK" | jq -r '.result.summary.validation_status // empty')"
+# NOTE: jq's `//` treats `false` as falsy too, so `// empty` would silently
+# turn a correct `false` into an empty string here — read it directly.
+VALIDATION_SHOULD_BLOCK="$(echo "$VALIDATE_TASK" | jq -r '.result.summary.should_block_pipeline')"
+echo "  validation_status=$VALIDATION_STATUS  should_block_pipeline=$VALIDATION_SHOULD_BLOCK"
+assert_json_equals "$VALIDATE_TASK" '.result.summary.checked_episode_count' \
+  "$EPISODE_COUNT" 'validate_episode should have checked every episode from this build'
+[ "$VALIDATION_SHOULD_BLOCK" = "false" ] || {
+  echo "❌ Expected validate_episode not to block a well-formed build" >&2
+  exit 1
+}
+echo "  OK"
+echo ""
+
+# ── 8c. Assert profile_episode outputs ───────────────────────────────────────
+
+echo "--- 8c. Assert profile_episode outputs ---"
+PROFILE_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "profile_episode")')"
+PROFILE_FRAME_COUNT="$(echo "$PROFILE_TASK" | jq -r '.result.summary.frame_count // 0')"
+echo "  profile frame_count=$PROFILE_FRAME_COUNT"
+assert_json_equals "$PROFILE_TASK" '.result.summary.checked_episode_count' \
+  "$EPISODE_COUNT" 'profile_episode should have profiled every episode from this build'
+[ "${PROFILE_FRAME_COUNT:-0}" -gt 0 ] || {
+  echo "❌ Expected profile_episode frame_count > 0" >&2
   exit 1
 }
 echo "  OK"
@@ -354,11 +390,32 @@ for EPISODE_ID in $(echo "$EPISODE_IDS" | jq -r '.[]'); do
     echo "❌ EpisodeRecord.episodeManifestUri ($MANIFEST_URI_FROM_RECORD) != artifact uri ($MANIFEST_URI_FROM_ARTIFACT)" >&2
     exit 1
   }
+
+  # ── Quality (SceneOps V2 Request 17): never BLOCKED/UNKNOWN for a
+  # successfully-built, successfully-validated episode — READY if it has
+  # both observation and action data (e.g. the scene-0061 fixture, which has
+  # steering/throttle/brake), WARNING if it's missing non-blocking data like
+  # action channels (e.g. a synthetic fixture with only /vehicle/odom) —
+  # both are legitimate outcomes of the same validator, not a failure.
+  QUALITY_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes/$EPISODE_ID/quality")")"
+  echo "$QUALITY_JSON" | jq '{readiness, validation: .validation.validationStatus, profile: .profile.frameCount}'
+  READINESS="$(echo "$QUALITY_JSON" | jq -r '.readiness')"
+  case "$READINESS" in
+    ready|warning) ;;
+    *)
+      echo "❌ episode $EPISODE_ID readiness should be ready or warning after a successful build, got $READINESS" >&2
+      exit 1
+      ;;
+  esac
+  assert_json_not_empty "$QUALITY_JSON" '.validation.runId' \
+    "episode $EPISODE_ID quality should expose a validation run"
+  assert_json_not_empty "$QUALITY_JSON" '.profile.runId' \
+    "episode $EPISODE_ID quality should expose a profile run"
 done
-echo "  OK — all $EPISODE_COUNT episode(s) from this build verified (detail + RobotRun + artifact)"
+echo "  OK — all $EPISODE_COUNT episode(s) from this build verified (detail + RobotRun + artifact + quality)"
 echo ""
 
-# ── 13. GET /episodes/{missing} → 404 ────────────────────────────────────────
+# ── 13. GET /episodes/{missing} → 404 (detail and quality) ──────────────────
 
 echo "--- 13. GET /episodes/{missing-id} -> 404 ---"
 MISSING_HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
@@ -366,6 +423,12 @@ MISSING_HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
 echo "  http_code=$MISSING_HTTP_CODE"
 [ "$MISSING_HTTP_CODE" = "404" ] || {
   echo "❌ Expected 404 for a missing episode_id, got $MISSING_HTTP_CODE" >&2
+  exit 1
+}
+MISSING_QUALITY_HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$(api_url "$API_BASE_URL" "/episodes/does-not-exist-$PIPELINE_RUN_ID/quality")")"
+[ "$MISSING_QUALITY_HTTP_CODE" = "404" ] || {
+  echo "❌ Expected 404 for /quality on a missing episode_id, got $MISSING_QUALITY_HTTP_CODE" >&2
   exit 1
 }
 echo "  OK"

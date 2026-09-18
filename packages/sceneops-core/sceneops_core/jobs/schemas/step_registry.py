@@ -122,6 +122,18 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("validate_registration", "Validate registration"),
         step("upsert_episode_record", "Upsert episode record"),
     ],
+    JobType.VALIDATE_EPISODE: [
+        step("load_episode_record", "Load episode record"),
+        step("load_episode_manifest", "Load episode manifest"),
+        step("validate_episode_structure", "Validate episode structure"),
+        step("save_validation_report", "Save validation report"),
+    ],
+    JobType.PROFILE_EPISODE: [
+        step("load_episode_record", "Load episode record"),
+        step("load_episode_manifest", "Load episode manifest"),
+        step("profile_episode", "Profile episode"),
+        step("save_profile_report", "Save profile report"),
+    ],
 }
 
 

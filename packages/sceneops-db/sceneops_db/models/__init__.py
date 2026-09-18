@@ -1,6 +1,6 @@
 from .artifacts import ArtifactModel
 from .datasets import DatasetModel, DatasetVersionModel
-from .episodes import EpisodeModel
+from .episodes import EpisodeModel, EpisodeRunRecordModel
 from .evaluations import EvaluationRunModel
 from .executions import ExecutionRecordModel
 from .inference import InferenceRunModel
@@ -28,6 +28,7 @@ __all__ = [
     "SceneRunRecordModel",
     # episodes
     "EpisodeModel",
+    "EpisodeRunRecordModel",
     # robots
     "RobotModel",
     "RobotRunModel",

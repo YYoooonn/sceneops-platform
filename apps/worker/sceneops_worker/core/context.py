@@ -20,6 +20,7 @@ from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
 from sceneops_worker.stores.robots import RobotStore
 from sceneops_worker.stores.runs import (
+    EpisodeRunStore,
     EvaluationRunStore,
     InferenceRunStore,
     SceneRunStore,
@@ -33,6 +34,7 @@ class RunStores:
     inference: InferenceRunStore
     evaluations: EvaluationRunStore
     scene_runs: SceneRunStore
+    episode_runs: EpisodeRunStore
 
 
 @dataclass(frozen=True)

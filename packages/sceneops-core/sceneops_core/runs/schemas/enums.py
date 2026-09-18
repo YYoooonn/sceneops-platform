@@ -20,6 +20,10 @@ class RunType(StrEnum):
     SCENE_VALIDATION = "scene_validation"
     SCENE_PROFILE = "scene_profile"
 
+    # Episode-level
+    EPISODE_VALIDATION = "episode_validation"
+    EPISODE_PROFILE = "episode_profile"
+
     # Scenario-level
     SCENARIO_MINING = "scenario_mining"
     SCENARIO_READINESS = "scenario_readiness"

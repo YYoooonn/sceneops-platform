@@ -5,7 +5,11 @@ from fastapi import APIRouter
 from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.domains.episodes.dependencies import EpisodeServiceDep
-from app.domains.episodes.schemas import EpisodeDetailResponse, EpisodeListResponse
+from app.domains.episodes.schemas import (
+    EpisodeDetailResponse,
+    EpisodeListResponse,
+    EpisodeQualityResponse,
+)
 
 # No /{episode_id}/artifacts or /{episode_id}/manifest endpoint here — see
 # SceneOps V2 Request 16. Unlike ArtifactModel.scene_id (a dedicated indexed
@@ -15,6 +19,11 @@ from app.domains.episodes.schemas import EpisodeDetailResponse, EpisodeListRespo
 # "what artifacts does this episode own" with no new code, and
 # EpisodeRecord.episode_manifest_uri already answers "where is the
 # manifest" directly on the detail response.
+#
+# /{episode_id}/quality (SceneOps V2 Request 17) is read-only, same as every
+# other endpoint here — validate_episode/profile_episode are triggered
+# through Jobs/Pipelines (e.g. the raw_log_episode_building pipeline), never
+# through this API.
 
 router = APIRouter()
 
@@ -44,6 +53,16 @@ async def get_episode(
     episode_id: str, service: EpisodeServiceDep
 ) -> EpisodeDetailResponse:
     result = await service.get_episode(episode_id)
+    if result is None:
+        raise_not_found("Episode", episode_id)
+    return result
+
+
+@router.get("/{episode_id}/quality", response_model=EpisodeQualityResponse)
+async def get_episode_quality(
+    episode_id: str, service: EpisodeServiceDep
+) -> EpisodeQualityResponse:
+    result = await service.get_episode_quality(episode_id)
     if result is None:
         raise_not_found("Episode", episode_id)
     return result

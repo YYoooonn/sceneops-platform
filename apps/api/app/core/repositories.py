@@ -10,7 +10,7 @@ from sceneops_db.repositories.datasets import (
     DatasetRepository,
     DatasetVersionRepository,
 )
-from sceneops_db.repositories.episodes import EpisodeRepository
+from sceneops_db.repositories.episodes import EpisodeRepository, EpisodeRunRepository
 from sceneops_db.repositories.evaluations import EvaluationRunRepository
 from sceneops_db.repositories.executions import ExecutionRecordRepository
 from sceneops_db.repositories.inference import InferenceRunRepository
@@ -40,7 +40,10 @@ from sceneops_db.postgres.datasets import (
     PostgresDatasetRepository,
     PostgresDatasetVersionRepository,
 )
-from sceneops_db.postgres.episodes import PostgresEpisodeRepository
+from sceneops_db.postgres.episodes import (
+    PostgresEpisodeRepository,
+    PostgresEpisodeRunRepository,
+)
 from sceneops_db.postgres.evaluations import PostgresEvaluationRunRepository
 from sceneops_db.postgres.executions import PostgresExecutionRecordRepository
 from sceneops_db.postgres.inference import PostgresInferenceRunRepository
@@ -166,7 +169,14 @@ def get_episode_repository(session: DbSessionDep) -> EpisodeRepository:
     return PostgresEpisodeRepository(session)
 
 
+def get_episode_run_repository(session: DbSessionDep) -> EpisodeRunRepository:
+    return PostgresEpisodeRunRepository(session)
+
+
 EpisodeRepositoryDep = Annotated[EpisodeRepository, Depends(get_episode_repository)]
+EpisodeRunRepositoryDep = Annotated[
+    EpisodeRunRepository, Depends(get_episode_run_repository)
+]
 
 
 # --- domains: scenarios ---

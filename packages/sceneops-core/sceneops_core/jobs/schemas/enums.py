@@ -42,6 +42,10 @@ class JobType(StrEnum):
     BUILD_EPISODES = "build_episodes"
     REGISTER_EPISODE = "register_episode"
 
+    # ── episode-level jobs ──
+    VALIDATE_EPISODE = "validate_episode"
+    PROFILE_EPISODE = "profile_episode"
+
 
 class JobStatus(StrEnum):
     PENDING = "pending"

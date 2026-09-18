@@ -197,11 +197,67 @@ _REGISTER_EPISODE_OUTPUTS = [
     PipelineTaskOutputSpec(
         name="episode_manifest_uris", kind=_REF, source="episode_manifest_uris"
     ),
+    # episode_ids consumed by validate_episode/profile_episode → REF. Already
+    # produced by RegisterEpisodeJobResult.episode_ids, just not previously
+    # declared as a pipeline output (SceneOps V2 Request 17).
+    PipelineTaskOutputSpec(name="episode_ids", kind=_REF, source="episode_ids"),
     PipelineTaskOutputSpec(
         name="registered_episode_count",
         kind=_SUMMARY,
         source="registered_episode_count",
     ),
+]
+
+_VALIDATE_EPISODE_OUTPUTS = [
+    PipelineTaskOutputSpec(
+        name="validation_run_id", kind=_REF, source="validation_run_id"
+    ),
+    PipelineTaskOutputSpec(
+        name="validation_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="validation_report_uri",
+    ),
+    PipelineTaskOutputSpec(
+        name="validation_status",
+        kind=_SUMMARY,
+        source="status",
+        target="validation_status",
+    ),
+    PipelineTaskOutputSpec(
+        name="should_block_pipeline", kind=_SUMMARY, source="should_block_pipeline"
+    ),
+    PipelineTaskOutputSpec(
+        name="checked_episode_count", kind=_SUMMARY, source="checked_episode_count"
+    ),
+    PipelineTaskOutputSpec(name="issue_count", kind=_SUMMARY, source="issue_count"),
+]
+
+_VALIDATE_EPISODE_QUALITY_RULES = [
+    PipelineTaskQualityRule(
+        rule_type=PipelineTaskQualityRuleType.BLOCK_IF_TRUE,
+        source="summary.should_block_pipeline",
+        message="Episode validation blocked pipeline",
+        code="validate_episode_blocked",
+    ),
+]
+
+_PROFILE_EPISODE_OUTPUTS = [
+    PipelineTaskOutputSpec(name="profile_run_id", kind=_REF, source="profile_run_id"),
+    PipelineTaskOutputSpec(
+        name="profile_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="profile_report_uri",
+    ),
+    PipelineTaskOutputSpec(
+        name="checked_episode_count", kind=_SUMMARY, source="checked_episode_count"
+    ),
+    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+    PipelineTaskOutputSpec(
+        name="observation_count", kind=_SUMMARY, source="observation_count"
+    ),
+    PipelineTaskOutputSpec(name="action_count", kind=_SUMMARY, source="action_count"),
 ]
 
 _PREDICT_DETECTION_OUTPUTS = [
@@ -440,6 +496,24 @@ RAW_LOG_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
                 "replace_existing": True,
             },
             outputs=_REGISTER_EPISODE_OUTPUTS,
+        ),
+        PipelineTaskDefinition(
+            pipeline_task_id="validate_episode",
+            name="Validate episode",
+            order=2,
+            job_type=JobType.VALIDATE_EPISODE,
+            depends_on_pipeline_task_ids=["register_episode"],
+            outputs=_VALIDATE_EPISODE_OUTPUTS,
+            quality_rules=_VALIDATE_EPISODE_QUALITY_RULES,
+        ),
+        PipelineTaskDefinition(
+            pipeline_task_id="profile_episode",
+            name="Profile episode",
+            order=3,
+            job_type=JobType.PROFILE_EPISODE,
+            depends_on_pipeline_task_ids=["register_episode"],
+            optional=True,
+            outputs=_PROFILE_EPISODE_OUTPUTS,
         ),
     ],
 )
