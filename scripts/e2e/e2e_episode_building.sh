@@ -22,13 +22,18 @@
 # e2e_robot_can_replay.sh (data/raw/rosbag/<scene>/<scene>_0.mcap) rather
 # than re-running the ROS2 recording step, to keep this test focused.
 #
-# There is no dedicated /episodes API surface yet (out of scope for this
-# pass) — verification goes through pipeline task results, the generic
-# /artifacts API (owner_type=episode), and the dataset version's episode
-# summary. build_episodes is the sole registrar of the EPISODE_MANIFEST
-# ArtifactRecord (SceneOps V2 Request 15 removed register_episode's
-# duplicate registration of the same manifest URI) — step 10 below asserts
-# exactly one artifact per episode, not two.
+# Steps 1-10 are orchestration checks (pipeline/task status, job result
+# summaries). Steps 11+ (SceneOps V2 Request 16) use the real GET /episodes
+# and GET /episodes/{id} resource API as the canonical way to inspect what
+# actually got persisted — not just pipeline task JSON. There is still no
+# dedicated /episodes/{id}/artifacts or /episodes/{id}/manifest endpoint
+# (see app/domains/episodes/router.py's module docstring for why) — artifact
+# verification goes through the generic /artifacts API (owner_type=episode),
+# and the RobotRun relationship goes through the existing
+# GET /robot-runs/{run_id}. build_episodes is the sole registrar of the
+# EPISODE_MANIFEST ArtifactRecord (SceneOps V2 Request 15 removed
+# register_episode's duplicate registration of the same manifest URI) —
+# step 10 below asserts exactly one artifact per episode, not two.
 #
 # force:true on pipeline-run creation (not a new mechanism — the same
 # CreatePipelineRunRequest.force already used by other E2E scripts) makes
@@ -252,6 +257,120 @@ echo "  episode artifacts registered under this pipeline_run_id=$ARTIFACT_COUNT"
 echo "  OK"
 echo ""
 
+# ── 11. GET /episodes — the canonical resource-inspection path from here ────
+#
+# This build's own episode_ids come from build_episodes' rawResult, not from
+# GET /episodes itself — dataset_id/dataset_version is a shared identifier
+# that legitimately accumulates episodes across every build ever run against
+# it (e.g. nuscenes/v1.0-mini, reused by many pipelines), so list count and
+# "exactly these episodes" are two different assertions.
+
+EPISODE_IDS="$(echo "$BUILD_TASK" | jq -c '.result.rawResult.episode_ids')"
+echo "--- 11. GET /episodes (filtered by dataset_id + dataset_version) ---"
+EPISODES_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=200")")"
+API_EPISODE_COUNT="$(echo "$EPISODES_JSON" | jq -r '.count // 0')"
+echo "  GET /episodes count=$API_EPISODE_COUNT (this build contributed $EPISODE_COUNT)"
+[ "${API_EPISODE_COUNT:-0}" -ge "$EPISODE_COUNT" ] || {
+  echo "❌ GET /episodes count ($API_EPISODE_COUNT) < this build's episode_count ($EPISODE_COUNT)" >&2
+  exit 1
+}
+LISTED_IDS="$(echo "$EPISODES_JSON" | jq -c '[.episodes[].episodeId]')"
+MISSING_FROM_LIST="$(jq -n --argjson want "$EPISODE_IDS" --argjson have "$LISTED_IDS" \
+  '$want - $have')"
+[ "$(echo "$MISSING_FROM_LIST" | jq 'length')" = "0" ] || {
+  echo "❌ episode_ids missing from GET /episodes: $MISSING_FROM_LIST" >&2
+  exit 1
+}
+echo "  episode_ids=$EPISODE_IDS (all present in the list)"
+echo "  OK"
+echo ""
+
+echo "--- 11b. GET /episodes filtered by robot_run_id ---"
+BY_RUN_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes?robot_run_id=$RUN_ID&limit=100")")"
+BY_RUN_COUNT="$(echo "$BY_RUN_JSON" | jq -r '.count // 0')"
+echo "  GET /episodes?robot_run_id=$RUN_ID count=$BY_RUN_COUNT"
+[ "${BY_RUN_COUNT:-0}" -ge "$EPISODE_COUNT" ] || {
+  echo "❌ Expected at least $EPISODE_COUNT episodes for robot_run_id=$RUN_ID, got $BY_RUN_COUNT" >&2
+  exit 1
+}
+echo "  OK"
+echo ""
+
+# ── 12. GET /episodes/{id} — detail + relationships ──────────────────────────
+
+echo "--- 12. GET /episodes/{id} for every episode from this build ---"
+for EPISODE_ID in $(echo "$EPISODE_IDS" | jq -r '.[]'); do
+  DETAIL_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes/$EPISODE_ID")")"
+  echo "$DETAIL_JSON" | jq '.episode | {episodeId, datasetId, datasetVersion, robotId, robotRunId, missionId, outcome, status, episodeManifestUri, frameCount}'
+
+  assert_json_equals "$DETAIL_JSON" '.episode.episodeId' "$EPISODE_ID" \
+    "episode detail episodeId should match"
+  assert_json_equals "$DETAIL_JSON" '.episode.datasetId' "$DATASET_ID" \
+    "episode detail datasetId should match"
+  assert_json_equals "$DETAIL_JSON" '.episode.datasetVersion' "$DATASET_VERSION" \
+    "episode detail datasetVersion should match"
+  assert_json_equals "$DETAIL_JSON" '.episode.robotRunId' "$RUN_ID" \
+    "episode detail robotRunId should match the RobotRun this build used"
+  assert_json_not_empty "$DETAIL_JSON" '.episode.episodeManifestUri' \
+    "episode detail should expose episodeManifestUri"
+
+  # mission_boundary episodes have a missionId; whole_run/fixed_window ones
+  # don't — the API must return whichever is actually persisted, with no
+  # special-casing per strategy.
+  MISSION_ID="$(echo "$DETAIL_JSON" | jq -r '.episode.missionId // empty')"
+  if [ "$SEGMENTATION_STRATEGY" = "mission_boundary" ]; then
+    [ -n "$MISSION_ID" ] || {
+      echo "❌ mission_boundary episode $EPISODE_ID has no missionId" >&2
+      exit 1
+    }
+  fi
+
+  # ── RobotRun relationship (Request 16 §5): stable robot_run_id reference,
+  # resolved through the existing GET /robot-runs/{id} boundary — no nested
+  # RobotRun object embedded in the Episode response.
+  ROBOT_RUN_DETAIL="$(curl -sS "$(api_url "$API_BASE_URL" "/robot-runs/$RUN_ID")")"
+  echo "$ROBOT_RUN_DETAIL" | jq -e '.robotRun.runId' >/dev/null || {
+    echo "❌ GET /robot-runs/$RUN_ID (referenced by episode $EPISODE_ID) did not resolve" >&2
+    exit 1
+  }
+
+  # ── Artifact relationship (Request 16 §7): no dedicated
+  # /episodes/{id}/artifacts endpoint — the generic Artifact API resolves the
+  # manifest by owner. Scoped to this pipeline_run_id too, not just owner_id:
+  # episode_id is deterministic (raw_log_id + mission_id), so a dataset that
+  # has had this exact episode built before (e.g. repeated scene-0061 runs
+  # against nuscenes/v1.0-mini) legitimately has more than one historical
+  # artifact row for the same owner_id — the Request 15 invariant is "one
+  # artifact per write event", i.e. exactly one *for this run*.
+  EPISODE_ARTIFACTS="$(curl -sS "$(api_url "$API_BASE_URL" "/artifacts?owner_type=episode&owner_id=$EPISODE_ID&pipeline_run_id=$PIPELINE_RUN_ID")")"
+  EPISODE_ARTIFACT_COUNT="$(echo "$EPISODE_ARTIFACTS" | jq -r '.count // 0')"
+  [ "$EPISODE_ARTIFACT_COUNT" = "1" ] || {
+    echo "❌ Expected exactly 1 artifact for episode $EPISODE_ID from this pipeline_run_id, got $EPISODE_ARTIFACT_COUNT" >&2
+    exit 1
+  }
+  MANIFEST_URI_FROM_RECORD="$(echo "$DETAIL_JSON" | jq -r '.episode.episodeManifestUri')"
+  MANIFEST_URI_FROM_ARTIFACT="$(echo "$EPISODE_ARTIFACTS" | jq -r '.artifacts[0].uri')"
+  [ "$MANIFEST_URI_FROM_RECORD" = "$MANIFEST_URI_FROM_ARTIFACT" ] || {
+    echo "❌ EpisodeRecord.episodeManifestUri ($MANIFEST_URI_FROM_RECORD) != artifact uri ($MANIFEST_URI_FROM_ARTIFACT)" >&2
+    exit 1
+  }
+done
+echo "  OK — all $EPISODE_COUNT episode(s) from this build verified (detail + RobotRun + artifact)"
+echo ""
+
+# ── 13. GET /episodes/{missing} → 404 ────────────────────────────────────────
+
+echo "--- 13. GET /episodes/{missing-id} -> 404 ---"
+MISSING_HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$(api_url "$API_BASE_URL" "/episodes/does-not-exist-$PIPELINE_RUN_ID")")"
+echo "  http_code=$MISSING_HTTP_CODE"
+[ "$MISSING_HTTP_CODE" = "404" ] || {
+  echo "❌ Expected 404 for a missing episode_id, got $MISSING_HTTP_CODE" >&2
+  exit 1
+}
+echo "  OK"
+echo ""
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo "=== PASSED ==="
@@ -260,3 +379,4 @@ echo "  robot_id=$ROBOT_ID  run_id=$RUN_ID"
 echo "  segmentation_strategy=$SEGMENTATION_STRATEGY_OUT"
 echo "  episode_count=$EPISODE_COUNT  registered_episode_count=$REGISTERED_COUNT"
 echo "  dataset_version.episode.episodeCount=$VERSION_EPISODE_COUNT"
+echo "  episode_ids=$EPISODE_IDS"

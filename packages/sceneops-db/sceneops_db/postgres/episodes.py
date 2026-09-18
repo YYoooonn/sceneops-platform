@@ -56,6 +56,7 @@ class PostgresEpisodeRepository:
         status: EpisodeStatus | None = None,
         robot_id: str | None = None,
         robot_run_id: str | None = None,
+        mission_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRecord]:
@@ -70,6 +71,8 @@ class PostgresEpisodeRepository:
             stmt = stmt.where(EpisodeModel.robot_id == robot_id)
         if robot_run_id is not None:
             stmt = stmt.where(EpisodeModel.robot_run_id == robot_run_id)
+        if mission_id is not None:
+            stmt = stmt.where(EpisodeModel.mission_id == mission_id)
         stmt = apply_pagination(
             stmt.order_by(EpisodeModel.created_at.desc()), limit=limit, offset=offset
         )

@@ -23,6 +23,7 @@ class EpisodeRepository(Protocol):
         status: EpisodeStatus | None = None,
         robot_id: str | None = None,
         robot_run_id: str | None = None,
+        mission_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRecord]: ...

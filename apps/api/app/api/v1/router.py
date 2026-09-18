@@ -6,6 +6,7 @@ from app.platform.jobs.router import router as jobs_router
 from app.platform.pipelines.router import router as pipelines_router
 
 from app.domains.datasets.router import router as datasets_router
+from app.domains.episodes.router import router as episodes_router
 from app.domains.evaluations.router import router as evaluations_router
 from app.domains.inference.router import router as inference_router
 from app.domains.models.router import router as models_router
@@ -32,6 +33,7 @@ api_router.include_router(artifacts_router, prefix="/artifacts", tags=["artifact
 # domains — core resources
 api_router.include_router(datasets_router, prefix="/datasets", tags=["datasets"])
 api_router.include_router(scenes_router, prefix="/scenes", tags=["scenes"])
+api_router.include_router(episodes_router, prefix="/episodes", tags=["episodes"])
 api_router.include_router(scenarios_router, prefix="/scenarios", tags=["scenarios"])
 api_router.include_router(models_router, prefix="/models", tags=["models"])
 api_router.include_router(robots_router, prefix="/robots", tags=["robots"])
