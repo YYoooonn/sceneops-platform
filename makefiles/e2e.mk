@@ -11,7 +11,7 @@
 # (nuScenes mini, and — for e2e-episode-building specifically — the CAN-
 # replay MCAP recording from at least one prior `make e2e-robot-can-replay`
 # run). That's a one-time data precondition, not a service dependency; see
-# docs/local-development.md.
+# docs/development/local-development.md.
 # --------------------
 
 .PHONY: e2e

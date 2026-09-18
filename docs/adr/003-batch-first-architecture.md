@@ -19,7 +19,7 @@ Phase 8 Debezium)는 streaming 구성 요소를 목표로 명시하고 있어, �
 구체적으로:
 
 - 파이프라인 실행 단위는 항상 `(dataset_id, dataset_version)` 같은 명시적 scope를 갖는 1회성
-  batch job이다 — 현재 `PipelineRunner`(순차 task 실행, [pipeline-lifecycle.md](../pipeline-lifecycle.md))와
+  batch job이다 — 현재 `PipelineRunner`(순차 task 실행, [jobs and pipelines](../architecture/jobs-and-pipelines.md))와
   Airflow PoC(DAG 1회 트리거)가 이미 이 형태로 구현되어 있다.
 - Kafka/Debezium 같은 streaming 구성 요소는 "실제 robot이 실시간으로 telemetry를 쏘기 시작하는
   시점"(로드맵 Phase 7)에만 도입한다. 그 전까지 batch 파이프라인의 신뢰성(retry/idempotency/
@@ -32,6 +32,6 @@ Phase 8 Debezium)는 streaming 구성 요소를 목표로 명시하고 있어, �
 - 로드맵 Phase 2(Airflow)까지는 "언제 실행되는가"를 스케줄러가 아니라 API dispatch가 결정한다 —
   cron 기반 스케줄, backfill 같은 시간 파티션 개념이 아직 없다 (실제로 로드맵 Phase 2 completion
   criteria에서 backfill을 "새 pipeline_run을 하나 더 dispatch하는 것과 동일하다"고 판단해 별도
-  구현을 생략했다 — [pipeline-lifecycle.md](../pipeline-lifecycle.md) §6).
+  구현을 생략했다 — [jobs and pipelines](../architecture/jobs-and-pipelines.md) §8).
 - 향후 Kafka를 도입할 때도 batch 파이프라인을 완전히 대체하는 게 아니라, robot telemetry처럼
   실시간성이 실제로 필요한 데이터 소스에만 부분 적용한다.

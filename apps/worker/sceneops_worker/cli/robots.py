@@ -24,7 +24,7 @@ def register_run_command(
     """Upsert a Robot + RobotRun so ingest_robot_states has something to attach to.
 
     Stopgap CLI, not a REST API — Robot/RobotRun registration doesn't have
-    one yet (docs/robot-data-model.md §6 lists this as an open gap). This is
+    one yet (docs/workflows/robot-run-and-mcap.md §6 lists this as an open gap). This is
     the fastest way to get a row in place before dispatching
     ingest_robot_states against a recorded bag.
     """

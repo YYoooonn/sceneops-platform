@@ -27,7 +27,7 @@ class RobotRunRecord(SceneOpsBaseModel):
 
     Distinct from ``PipelineRun`` (a SceneOps-internal processing execution) — a
     RobotRun is the real-world execution that produces the raw data a pipeline
-    later ingests. See docs/robot-data-model.md §5.
+    later ingests. See docs/architecture/data-model.md §5.
     """
 
     run_id: str
@@ -68,7 +68,7 @@ class MissionRecord(SceneOpsBaseModel):
 
 
 class RobotStateRecord(SceneOpsBaseModel):
-    """Canonical robot runtime state sample (docs/robot-data-model.md §2).
+    """Canonical robot runtime state sample (docs/architecture/data-model.md §5).
 
     Field names/shapes intentionally mirror ``RawEgoPoseManifest``
     (sceneops_core.observations.schemas.frames) since ego_pose is a subset of

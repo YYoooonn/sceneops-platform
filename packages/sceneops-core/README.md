@@ -13,6 +13,7 @@ sceneops_core/
   config.py           ← runtime settings (ArtifactSettings, ExecutionSettings .etc)
   constants/          ← platform constants (sensor name, queue name)
   datasets/           ← dataset domain (Record, Manifest, Run, Validation schema)
+  episodes/           ← Episode domain (v2 — Record, Manifest, segmentation config, Run schema)
   evaluations/        ← evaluation comain (Metric, Leaderboard, History schema)
   executions/         ← Execution Backend schema (Celery / Airflow)
   inference/          ← Inference domain (Detection 스키마, 백엔드 타입)
@@ -21,8 +22,8 @@ sceneops_core/
   models/             ← Model Registry Schema (Record, Artifact)
   observations/       ← Raw Observation domain (RawLog, frame, sensor frame)
   operations/         ← Operations schema
-  paths/              ← URI generation pure functions
   pipelines/          ← Pipeline domain (definitions, manifests, pipeline steps)
+  robots/             ← Robot domain (v2 — Robot, RobotRun, Mission, RobotState schema)
   runs/               ← Common Run Schema (RunStatus, RunType, RunRef)
   scenarios/          ← Scenario Domain (Candidates, Predicates, Mining schema)
   scenes/             ← Scene Domain (Manifest, WorldState, Segment schema)

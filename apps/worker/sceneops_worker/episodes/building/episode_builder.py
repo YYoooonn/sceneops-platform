@@ -16,7 +16,7 @@ from sceneops_core.robots.schemas import MissionStatus, RobotStateRecord
 from sceneops_worker.episodes.building.segmentation import EpisodeWindow
 
 # RobotState fields that represent observations vs. actions
-# (docs/robot-data-model.md §2). Fields not listed here (e.g. rotation_format)
+# (docs/architecture/data-model.md §5). Fields not listed here (e.g. rotation_format)
 # are not per-timestep signal and are skipped.
 _OBSERVATION_STATE_FIELDS = (
     "position",
@@ -56,7 +56,7 @@ class EpisodeBuilder:
     one ``EpisodeSource`` (built by ``RosbagAdapter.extract_episode_source()``
     — the Episode-domain counterpart to ``build_raw_log()``, see SceneOps V2
     Request 12). Robot state samples classify into observation vs. action
-    fields per ``docs/robot-data-model.md`` §2 — position/orientation/
+    fields per ``docs/architecture/data-model.md`` §5 — position/orientation/
     velocity/acceleration/battery are observations, steering/throttle/brake
     are actions.
     """

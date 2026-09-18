@@ -14,7 +14,7 @@ scene 하나를 재검증하는 것)까지 Airflow로 보내면 스케줄러 오
 
 ## Decision
 
-역할을 명시적으로 분리한다 ([architecture.md](../architecture.md) §3):
+역할을 명시적으로 분리한다 ([architecture overview](../architecture/overview.md) §3):
 
 ```text
 Airflow → scheduled / long-running workflow (Pipeline)
@@ -35,13 +35,13 @@ Airflow 경로에서는 `PipelineRunner.run()`이 한 프로세스에서 전체�
 `sceneops-worker run-pipeline-task`를 별도 컨테이너로 실행한다. Task 실행과 quality gate 판정
 로직(`PipelineTaskRunner.run()`)은 두 백엔드에서 완전히 동일한 코드를 쓰고, pipeline 레벨 상태
 전이만 진입점이 다르다 — Celery는 순차 루프 안에서, Airflow는 DAG의 `start`/`finalize`
-task(`trigger_rule=all_done`)에서 처리한다 ([pipeline-lifecycle.md](../pipeline-lifecycle.md) §8).
+task(`trigger_rule=all_done`)에서 처리한다 ([jobs and pipelines](../architecture/jobs-and-pipelines.md) §10).
 
 두 백엔드 모두 `ExecutionRecord`에 `execution_backend` 컬럼으로 구분되어 기록되므로, API/UI
 조회 경로는 백엔드와 무관하게 동일하다 ([ADR-001](./001-postgresql-operational-metadata.md)).
 
 Reliability 요구사항은 Airflow 도입 여부와 독립적으로, Celery 경로에도 이미 구현했다
-([pipeline-lifecycle.md](../pipeline-lifecycle.md) §6):
+([jobs and pipelines](../architecture/jobs-and-pipelines.md) §8):
 
 - **Idempotency**: `execution_key = sha256(kind, type, dataset_id, dataset_version, model_id,
   model_version, params)` — 동일 키의 진행 중/완료 레코드가 있으면 재생성하지 않는다.
@@ -59,4 +59,4 @@ Reliability 요구사항은 Airflow 도입 여부와 독립적으로, Celery 경
   한다. 이 PoC 범위 밖.
 - `JobDispatchFacade`가 강제하는 "DB에 QUEUED 커밋 → 백엔드 dispatch" 순서(worker의 late
   overwrite 방지)는 Airflow 경로에도 동일하게 적용해야 하는 제약으로 남는다
-  ([pipeline-lifecycle.md](../pipeline-lifecycle.md) §7).
+  ([jobs and pipelines](../architecture/jobs-and-pipelines.md) §9).

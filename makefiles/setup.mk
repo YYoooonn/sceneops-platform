@@ -43,7 +43,7 @@ test:
 # is used to select these — packages/sceneops-db/tests and
 # packages/sceneops-storage/tests are dedicated directories never included
 # in `make test`'s testpaths, so directory separation alone is enough (see
-# docs/local-development.md).
+# docs/development/local-development.md).
 test-integration:
 	SCENEOPS_DATABASE_URL="postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$${POSTGRES_PORT:-5432}/$(POSTGRES_DB)" \
 	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \

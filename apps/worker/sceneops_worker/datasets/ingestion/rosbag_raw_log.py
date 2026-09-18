@@ -31,7 +31,7 @@ _DEFAULT_SENSOR_TOPICS: dict[str, tuple[SensorModality, str]] = {
     "/lidar/top/points": (SensorModality.LIDAR, "LIDAR_TOP"),
 }
 
-# Robot runtime state topics (docs/robot-data-model.md §3).
+# Robot runtime state topics (docs/workflows/robot-run-and-mcap.md §2).
 _DEFAULT_ROBOT_STATE_TOPICS = {
     "/vehicle/odom",
     "/vehicle/imu",
@@ -159,7 +159,7 @@ class RosbagAdapter:
     Implements the same ``RawLogAdapter`` interface as ``NuScenesRawLogMocker``
     (see ``base.RawLogAdapter``) so ``BuildScenesJobHandler`` treats a robot
     rosbag identically to any other raw log source — no changes needed to the
-    scene-building pipeline itself (docs/robot-data-model.md §4).
+    scene-building pipeline itself (docs/workflows/robot-run-and-mcap.md §3).
 
     Decodes two message encodings:
 

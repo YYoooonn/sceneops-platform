@@ -7,7 +7,7 @@ via the Airflow REST API, with `conf={"pipeline_run_id": ...}` and a custom
 Each task shells out to the `sceneops-worker` CLI (already built into the
 existing worker image) via DockerOperator, so this DAG has no SceneOps
 Python dependencies of its own. See docs/adr/004-airflow-vs-celery.md and
-docs/pipeline-lifecycle.md for why the pipeline-level status transition is
+docs/architecture/jobs-and-pipelines.md §10 for why the pipeline-level status transition is
 split into explicit `start`/`finalize` tasks rather than living inside each
 per-task invocation.
 

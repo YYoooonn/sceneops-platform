@@ -1,7 +1,9 @@
 # Local development
 
 The canonical way to run SceneOps locally. `make help` is the quick
-reference; this doc explains the *why* behind it.
+reference; this doc explains the *why* behind it. See
+[../architecture/overview.md](../architecture/overview.md) for what the
+platform actually does once it's running.
 
 ## Bootstrap
 
@@ -124,6 +126,14 @@ required services are provided by `make local-up` alone:
 `api-smoke`, `pipeline-contracts`, `dataset-ingestion`,
 `raw-log-scene-building`, `episode-building`, `scenario-curation`,
 `detection-evaluation` (mock backend), `analytics-export`, `reliability`.
+
+`e2e-episode-building` reuses the committed MCAP fixture from
+`e2e-robot-can-replay` (`apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap`)
+rather than needing a live ROS2 sandbox — it runs the
+`raw_log_episode_building` pipeline directly against that fixture through
+`RosbagAdapter`, so it stays in the default suite despite exercising the
+same decode path robot ingestion uses. See
+[../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md).
 
 Not included — each needs infrastructure beyond `make local-up`:
 - `e2e-airflow-pipeline` — needs `make airflow-up` + the `api` service

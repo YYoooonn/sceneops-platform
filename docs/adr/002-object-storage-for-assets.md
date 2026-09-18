@@ -15,14 +15,14 @@ Scene manifest, validation/profile report, prediction/evaluation 결과, 향후 
 
 `sceneops_core.artifacts.contracts.ArtifactStore` Protocol 하나로 스토리지 인터페이스를
 고정하고, 구현체는 `LocalArtifactStore` / `S3ArtifactStore` 두 가지를 제공한다
-([storage-layout.md](../storage-layout.md) §1-2). 인터페이스는 JSON과 binary를 구분한
+([storage layout](../architecture/storage-layout.md) §1-2). 인터페이스는 JSON과 binary를 구분한
 `read_json`/`write_json`/`read_bytes`/`write_bytes`, 그리고 `join_uri`/`exists`/`list_json`/
 `delete_prefix`/`public_url`로 구성되며 전부 `async`다.
 
 백엔드 선택은 `create_artifact_store(settings)` 팩토리가 `ArtifactBackend` 설정값
 (`LOCAL`/`S3`/`MINIO`)으로 결정한다. `MINIO`도 `endpoint_url`만 다른 `S3ArtifactStore`로
 매핑되므로, 로컬 개발 시 MinIO를 쓰다가 AWS S3로 옮길 때 `endpoint_url`을 비우고 자격 증명만
-바꾸면 된다 — 코드 변경이 필요 없다 ([storage-layout.md](../storage-layout.md) §5).
+바꾸면 된다 — 코드 변경이 필요 없다 ([storage layout](../architecture/storage-layout.md) §5).
 
 ## Consequences
 
@@ -32,4 +32,4 @@ Scene manifest, validation/profile report, prediction/evaluation 결과, 향후 
   코드를 감싼 형태다 — 성능상 이득은 없지만 S3 구현체와 동일한 호출 시그니처를 강제해서
   백엔드 전환 시 호출부 수정이 0줄이 되는 이득을 우선했다.
 - URI 조합(`join_uri`)이 백엔드 구현이 아니라 `sceneops_storage.uri` 공용 함수에 있어서,
-  경로 레이아웃 규칙(§3 [storage-layout.md](../storage-layout.md))을 바꿀 때 한 곳만 고치면 된다.
+  경로 레이아웃 규칙(§3 [storage layout](../architecture/storage-layout.md))을 바꿀 때 한 곳만 고치면 된다.

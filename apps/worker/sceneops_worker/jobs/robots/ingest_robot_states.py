@@ -24,7 +24,7 @@ class IngestRobotStatesJobHandler(
     decoding the same file twice for no benefit.
 
     Not part of any named SceneOps pipeline (dataset ingestion pipelines are a
-    separate concept from RobotRun — docs/robot-data-model.md §5). Dispatched
+    separate concept from RobotRun — docs/architecture/data-model.md §5). Dispatched
     as a standalone Job, typically against a RobotRun that already has
     mcap_uri/rosbag_uri set by whatever recorded it.
     """

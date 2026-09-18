@@ -11,7 +11,7 @@ class IngestRobotStatesJobParams(BaseJobParams):
     """Read robot runtime state topics from a rosbag2/MCAP file into RobotState rows.
 
     Not tied to a Dataset/DatasetVersion — RobotRun is a separate domain from
-    SceneOps' dataset ingestion pipelines (docs/robot-data-model.md §5).
+    SceneOps' dataset ingestion pipelines (docs/architecture/data-model.md §5).
     """
 
     robot_id: str
@@ -28,7 +28,7 @@ class ExportRobotAnalyticsSnapshotJobParams(BaseJobParams):
 
     Mirrors ExportAnalyticsSnapshotJobParams (dataset-scoped) but scoped by
     robot_run_id instead — Robot/RobotRun is a separate domain from
-    Dataset/DatasetVersion (docs/robot-data-model.md §5).
+    Dataset/DatasetVersion (docs/architecture/data-model.md §5).
     """
 
     robot_run_id: str

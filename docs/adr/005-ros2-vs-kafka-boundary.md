@@ -2,9 +2,14 @@
 
 ## Status
 
-Proposed — 아직 어느 쪽 코드도 구현되지 않았다 (ROS2: 로드맵 Phase 4, Kafka: Phase 7 둘 다 미착수).
-이 ADR은 두 로드맵 항목이 착수되기 전에 경계를 먼저 명시해두기 위한 forward-looking 결정이며,
-Phase 4/Phase 7 착수 시점에 실제 구현 경험을 반영해 재검토한다.
+Partially implemented — ROS2 쪽(로드맵 Phase 4)은 실제로 구현되었다: `CanReplayNode`가 real
+`rclpy`로 nuScenes CAN 데이터를 ROS2 토픽으로 replay하고, `ros2 bag record`가 real MCAP 파일로
+기록하며, `RosbagAdapter`가 실제 CDR 인코딩을 디코딩해 `RobotState`/`Mission`/`EpisodeRecord`로
+적재한다 — 자세한 내용은 [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) 참고. Kafka
+쪽(Phase 7, ROS2 Data Gateway)은 여전히 미착수다. 이 ADR이 설계한 경계(로봇 내부 통신=ROS2,
+데이터 플랫폼 이벤트 스트림=Kafka)는 ROS2 구현을 통해 아직 검증되지 않았다 — 지금 구현된 경로는
+순수 batch(replay → record → decode → ingest)이고 Data Gateway 자체는 아직 존재하지 않기
+때문이다. Kafka 쪽 착수 시점에 이 경계를 실제 구현 경험으로 재검토한다.
 
 ## Context
 

@@ -19,7 +19,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 # Row-count cap for a single robot_run's analytics export. RobotState is a
-# high-frequency time series (see docs/robot-data-model.md §6) — this bound
+# high-frequency time series (see docs/workflows/robot-run-and-mcap.md §6) — this bound
 # just needs to comfortably exceed one run's message count (~3k for a
 # ~6s/10x-rate nuScenes CAN replay); revisit if runs get much longer.
 _MAX_ROWS_PER_TABLE = 200_000
@@ -36,7 +36,7 @@ class ExportRobotAnalyticsSnapshotJobHandler(
     RobotStore instead of scene_store/scene_artifact_store, and writes under
     AnalyticsTableWriter's robot-run scope instead of the dataset scope —
     Robot/RobotRun is a separate domain from Dataset/DatasetVersion
-    (docs/robot-data-model.md §5).
+    (docs/architecture/data-model.md §5).
     """
 
     @property

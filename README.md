@@ -8,7 +8,9 @@ It uses nuScenes mini as a realistic autonomous-driving dataset and implements p
 >
 > SceneOps explores this problem as a small but production-shaped platform.
 
-**v2** extends the platform toward a general robotics data source: a real ROS2 (Jazzy) sandbox replays nuScenes CAN bus data as ROS2 topics, records it with `rosbag2`/MCAP, and an adapter decodes the resulting bag (real CDR encoding, not a mock) into `RobotState`/`Mission` rows — with a REST API, a Parquet analytics export, and DuckDB query support on top. See [Demo 4](#demo-4-robot-data-ingestion-ros2--can-replay--rosbag2mcap) and `docs/robot-data-model.md`.
+**v2** extends the platform toward a general robotics data source: a real ROS2 (Jazzy) sandbox replays nuScenes CAN bus data as ROS2 topics, records it with `rosbag2`/MCAP, and an adapter decodes the resulting bag (real CDR encoding, not a mock) into `RobotState`/`Mission` rows and, through a dedicated pipeline, task-oriented `Episode` records — with a REST API, a Parquet analytics export, and DuckDB query support on top. See [Demo 4](#demo-4-robot-data-ingestion-ros2--can-replay--rosbag2mcap) and [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md).
+
+For the full documentation set (architecture, data model, Scene/Episode domain flow, jobs/pipelines, storage, quality, reserved architecture), start at [`docs/architecture/overview.md`](docs/architecture/overview.md).
 
 ---
 
@@ -24,11 +26,14 @@ SceneOps Platform currently implements a local-first, production-shaped data and
 | Artifact storage           | ✅              | Local/S3-compatible artifact URIs              |
 | Async execution            | ✅              | Celery + Redis workers                         |
 | Dataset registry           | ✅              | Dataset/version metadata                       |
-| Scene registry             | ✅              | Canonical `SceneRecord` catalog                |
-| Dataset manifest           | ✅              | DB-backed derived manifest                     |
-| Scene validation/profile   | ✅              | Per-scene quality runs                         |
-| Dataset quality            | ✅              | Scene-quality aggregate                        |
-| Scene quality APIs         | ✅              | Scene and dataset-version quality views        |
+| Scene registry              | ✅              | Canonical `SceneRecord` catalog                |
+| Dataset manifest            | ✅              | DB-backed derived manifest                     |
+| Scene validation/profile    | ✅              | Per-scene quality runs                         |
+| Dataset quality             | ✅              | Scene-quality aggregate                        |
+| Scene quality APIs          | ✅              | Scene and dataset-version quality views        |
+| **Episode domain (v2)**    | ✅              | Robot rosbag/MCAP → task-oriented `EpisodeRecord`, segmented by mission boundaries |
+| **Episode validation/profile (v2)** | ✅     | Per-episode quality runs, same pattern as Scene |
+| **Episode quality API (v2)** | ✅            | `GET /episodes/{id}/quality`, derived from run records, not status |
 | Mock detection             | ✅              | Fast contract-test backend                     |
 | Real detection             | ✅              | GroundingDINO inference backend                |
 | Detection evaluation       | ✅              | Metrics, artifacts, leaderboard                |
@@ -44,7 +49,7 @@ SceneOps Platform currently implements a local-first, production-shaped data and
 | **ROS2 robot data ingestion (v2)** | ✅      | CAN replay → real ROS2 topics → rosbag2/MCAP → `RobotState`/`Mission` |
 | **Robot domain API (v2)**  | ✅              | `Robot`/`RobotRun` REST registration, `Mission`/`RobotState` query    |
 
-The current platform demonstrates four end-to-end workflows:
+The current platform demonstrates five end-to-end workflows:
 
 1. **Scene-first dataset quality → scenario curation → detection evaluation**
   Scene-level quality signals drive scenario curation, which constrains detection evaluation to a curated ScenarioSet.
@@ -54,6 +59,8 @@ The current platform demonstrates four end-to-end workflows:
   Scene quality signals are converted into scenario candidates and readiness scores, producing a ScenarioSet artifact.
 4. **Robot data ingestion (v2)**
   A real ROS2 node replays nuScenes CAN bus data as ROS2 topics, records it as a rosbag2/MCAP file, and an adapter decodes it (real CDR messages, not a synthetic fixture) into `RobotState`/`Mission` rows queryable through a REST API and a Parquet+DuckDB analytics export.
+5. **Episode building (v2)**
+  The same decoded rosbag/MCAP recording is independently segmented into task-oriented `Episode` records (observation+action windows, split at mission boundaries by default), registered, validated, and profiled — a separate pipeline and record type from both Scene and RobotState. See [Demo 5](#demo-5-episode-building-from-a-robot-recording).
 
 ---
 
@@ -126,6 +133,12 @@ RobotState   a robot-runtime-state time series (position, orientation, velocity,
 
 `Robot`/`RobotRun` are registered directly (POST, no Job involved — same tier as Dataset registration). `Mission`/`RobotState` are populated by the `ingest_robot_states` Job, which reads a rosbag2/MCAP file through `RosbagAdapter`.
 
+### Episode (v2)
+
+An `Episode` is a task-oriented observation+action window segmented out of a robot recording — a separate domain from Scene (snapshot-style sensor observation) and from RobotState (raw runtime time series). `EpisodeRecord` is the canonical unit, built by the `raw_log_episode_building` pipeline (`build_episodes → register_episode → validate_episode → profile_episode`) from the same rosbag/MCAP recording `RosbagAdapter` decodes for robot ingestion.
+
+`EpisodeStatus` deliberately stays a registration-only lifecycle (`created`/`registered`) — quality/readiness is always derived live from the latest validation/profile run record, never cached on the record's own status. See [`docs/architecture/episode-domain.md`](docs/architecture/episode-domain.md).
+
 ---
 
 ## Architecture
@@ -189,10 +202,12 @@ Pipeline
 `scenario_curation`
   mine_scenarios → score_scenario_readiness
 
-#### Planned pipeline definitions
+`raw_log_episode_building` (v2)
+  build_episodes → register_episode → validate_episode → profile_episode
 
 `scene_registration`
   register_scene → validate_scene → profile_scene
+  (same tail as the two pipelines above, without a build/ingest head — for scenes a generated/reconstructed/simulated process already produced a manifest for)
 
 #### Standalone robot jobs (v2)
 
@@ -447,7 +462,7 @@ make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...
 
 Unlike Demos 1–3, this path doesn't start from a pre-recorded dataset. A real ROS2 node replays nuScenes CAN bus messages (`pose`, `ms_imu`, `vehicle_monitor`) as ROS2 topics in real time, `ros2 bag record` captures them into a genuine MCAP file, and `RosbagAdapter` decodes that file — real CDR-encoded ROS2 messages, using the schema embedded in the MCAP file itself, no `rclpy` required to read it back.
 
-> Requires the nuScenes CAN bus expansion at `data/raw/nuscenes/can_bus/` (separate download from nuScenes mini itself — see `docs/robot-data-model.md`).
+> Requires the nuScenes CAN bus expansion at `data/raw/nuscenes/can_bus/` (separate download from nuScenes mini itself — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)).
 
 ### Quickstart
 
@@ -498,6 +513,41 @@ mission-scene-0061    completed   2913                 0.91
 - `/vehicle/control` and `/mission/status` use a `std_msgs/String` + JSON bridge instead of a proper custom `.msg` package (would need a `colcon` build step)
 - No live robot control — this is batch ingestion of a recording, not real-time command/control (see `docs/adr/005-ros2-vs-kafka-boundary.md`)
 
+See [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) for the full ingestion flow and current limitations.
+
+---
+
+## Demo 5: episode building from a robot recording
+
+The same decoded rosbag/MCAP recording that feeds `ingest_robot_states` also feeds a separate pipeline, `raw_log_episode_building`, which segments it into task-oriented `Episode` records instead of a raw telemetry time series. Segmentation defaults to one Episode per dated Mission (`EpisodeSegmentationStrategy.MISSION_BOUNDARY`); `WHOLE_RUN` and `FIXED_WINDOW` are also supported.
+
+```bash
+make local-up
+make ros2-up
+make e2e-episode-building   # reuses the committed MCAP fixture from e2e-robot-can-replay — no live ROS2 sandbox required
+```
+
+**Pipeline:** `build_episodes → register_episode → validate_episode → profile_episode`
+
+**Example output:**
+
+```
+=== build_episodes job result ===
+episode_count : 1
+
+=== register_episode job result ===
+registered_episode_count : 1
+
+=== GET /episodes/{episode_id}/quality ===
+status     : registered
+readiness  : ready
+frame_count: 2913
+observation_channels : [position, orientation, velocity, battery]
+action_channels       : [steering, throttle, brake]
+```
+
+`status=registered` never encodes quality — `readiness` is always derived live from the latest validation run, not cached on the Episode record itself. See [`docs/architecture/episode-domain.md`](docs/architecture/episode-domain.md).
+
 ---
 
 ## API overview
@@ -508,7 +558,7 @@ SceneOps exposes APIs across five main surfaces:
 
 | Surface          | Areas                                       | Purpose                                                      |
 | ---------------- | ------------------------------------------- | ------------------------------------------------------------ |
-| Data catalog     | Datasets, Scenes, Scenarios, Models, Labels | Register and inspect data/model resources                    |
+| Data catalog     | Datasets, Scenes, Episodes, Scenarios, Models, Labels | Register and inspect data/model resources           |
 | Robots (v2)      | Robots, RobotRuns, Missions, RobotStates    | Register robots/runs; query ingested telemetry and mission history |
 | Execution        | Pipelines, Jobs, Executions                 | Create, run, and monitor asynchronous workflows              |
 | Runs & artifacts | Inference, Evaluations, Artifacts           | Track model runs, metrics, outputs, and artifact lineage     |
@@ -523,6 +573,8 @@ GET  /health
 GET  /api/v1/datasets
 GET  /api/v1/datasets/{id}/versions/{v}/quality
 GET  /api/v1/scenes/{scene_id}/quality
+GET  /api/v1/episodes                                  # filter by dataset_id/robot_run_id/mission_id
+GET  /api/v1/episodes/{episode_id}/quality
 GET  /api/v1/scenarios/{scenario_set_id}/artifacts
 GET  /api/v1/models/{model_id}/versions/{v}
 
@@ -569,10 +621,10 @@ make local-up                       # idempotent: Postgres + Redis + MinIO + mig
 make register-nuscenes-dataset      # register nuScenes fixture
 make test                           # infrastructure-independent unit tests
 make test-integration               # real Postgres + MinIO tests
-make e2e                            # full default-stack E2E suite (mock backend) -- see docs/local-development.md
+make e2e                            # full default-stack E2E suite (mock backend) -- see [docs/development/local-development.md](docs/development/local-development.md)
 ```
 
-**Robot data ingestion (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see `docs/robot-data-model.md`). Everything else is self-contained in the `ros2/` Docker image.
+**Robot data ingestion (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)). Everything else is self-contained in the `ros2/` Docker image.
 
 ```bash
 make ros2-up                        # ROS2 Jazzy sandbox
@@ -597,7 +649,7 @@ SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
 
 ### Stack
 
-See [`docs/local-development.md`](docs/local-development.md) for the full bootstrap/reset/env-file model.
+See [`docs/development/local-development.md`](docs/development/local-development.md) for the full bootstrap/reset/env-file model.
 
 | Command             | Description                                           |
 | ------------------ | ----------------------------------------------------- |
@@ -621,7 +673,7 @@ See [`docs/local-development.md`](docs/local-development.md) for the full bootst
 
 ### E2E
 
-`make e2e` runs the full default-stack suite (see `docs/local-development.md`) — every E2E whose services are covered by `make local-up` alone. Airflow/ROS2/real-inference E2Es need extra setup and stay outside it.
+`make e2e` runs the full default-stack suite (see [docs/development/local-development.md](docs/development/local-development.md)) — every E2E whose services are covered by `make local-up` alone. Airflow/ROS2/real-inference E2Es need extra setup and stay outside it.
 
 |  Command | Description |
 | --- | --- |
@@ -665,14 +717,15 @@ sceneops-platform/
 │   ├── api/                        # FastAPI control plane
 │   │   └── app/
 │   │       ├── platform/           # jobs, pipelines, executions, artifacts
-│   │       ├── domains/            # datasets, scenes, models, scenarios, inference, evaluations, robots (v2)
+│   │       ├── domains/            # datasets, scenes, episodes (v2), models, scenarios, inference, evaluations, robots (v2)
 │   │       └── views/              # operations, leaderboards
 │   ├── inference-server/           # GroundingDINO server (FastAPI, port 8001; optional)
 │   └── worker/
 │       └── sceneops_worker/
 │           ├── pipelines/          # PipelineRunner, TaskRunner, InputResolver, Planner,
 │           │                       #   ResultBuilder, ResultRecorder, QualityGate
-│           ├── jobs/               # handlers: dataset/, evaluation/, inference/, scenarios/, robots/ (v2)
+│           ├── jobs/dataset/       # handlers: scene + episode (v2) build/register/validate/profile, dataset aggregation
+│           ├── jobs/               # evaluation/, inference/, scenarios/, robots/ (v2)
 │           ├── scenes/             # validator, profiler, raw scene builder, selection filter
 │           ├── datasets/ingestion/ # NuScenesRawLogMocker, RosbagAdapter (v2, real CDR decoding)
 │           ├── evaluation/detection/  # CenterDistanceDetectionEvaluator, accumulator
@@ -683,7 +736,7 @@ sceneops-platform/
 │           ├── execution/          # Celery app factory, job dispatcher
 │           └── tests/              # unit tests
 ├── packages/
-│   ├── sceneops-core/              # domain schemas, enums, pipeline definitions (incl. robots/ — v2)
+│   ├── sceneops-core/              # domain schemas, enums, pipeline definitions (incl. episodes/, robots/ — v2)
 │   ├── sceneops-db/                # SQLAlchemy models, async repositories, Alembic
 │   ├── sceneops-storage/           # LocalArtifactStore, S3ArtifactStore
 │   └── sceneops-analytics/         # Parquet table builders, DuckDB query helper (v2 adds robot tables)
@@ -692,11 +745,15 @@ sceneops-platform/
 │   └── nodes/can_replay_node.py    #   CanReplayNode — nuScenes CAN → real ROS2 topics
 ├── migrations/                     # Alembic versions
 ├── scripts/
-│   ├── e2e/                        # E2E scripts (incl. e2e_robot_can_replay.sh — v2)
+│   ├── e2e/                        # E2E scripts (incl. e2e_robot_can_replay.sh, e2e_episode_building.sh — v2)
 │   ├── fixtures/                   # dataset registration
 │   └── debug/                      # pipeline/job inspection
-├── docs/                           # architecture, data-model, pipeline-lifecycle, storage-layout,
-│                                   #   robot-data-model (v2), adr/
+├── docs/
+│   ├── architecture/               # overview, data-model, scene-domain, episode-domain (v2),
+│   │                                #   jobs-and-pipelines, storage-layout, quality-and-runs, reserved-and-limitations
+│   ├── workflows/                  # robot-run-and-mcap.md (v2)
+│   ├── development/                # local-development.md
+│   └── adr/                        # architecture decision records
 ├── docker-compose.local.yml
 ├── Makefile
 └── pyproject.toml                  # uv workspace (Python 3.11–3.12)
@@ -706,9 +763,12 @@ sceneops-platform/
 
 ## Limitations and roadmap
 
+See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved-and-limitations.md) for the full, code-verified list, including intentionally reserved architecture (unimplemented-but-retained JobTypes, `WORLD_STATE`, `JOB_STEP_DEFINITIONS_BY_TYPE`) that looks unwired but isn't dead code.
+
 ### Current limitations
 
 * The default local dataset is nuScenes mini.
+* **(v2)** Episode has no `DatasetManifest`-equivalent index and no Parquet analytics table, and no `selectable_for_*` concept the way Scene has for detection evaluation.
 * The platform is local-first and optimized for architecture validation, not large-scale production throughput.
 * GroundingDINO evaluation results are integration signals, not production model benchmarks.
 * Scenario curation is implemented but still marked `experimental=True`.

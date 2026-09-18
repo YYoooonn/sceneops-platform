@@ -16,7 +16,7 @@ def query_parquet(views: dict[str, str], sql: str) -> pl.DataFrame:
     normal table.
 
     Local debugging/exploration only, matching the role split in
-    docs/storage-layout.md (PyArrow -> schema/Parquet IO, Polars ->
+    docs/architecture/storage-layout.md (PyArrow -> schema/Parquet IO, Polars ->
     filter/join/aggregation, DuckDB -> local SQL). Object-storage-backed
     ArtifactStores (S3/MinIO) aren't supported here — that would need
     DuckDB's own httpfs/S3 extension configured with credentials, which this

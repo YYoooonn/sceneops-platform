@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CanReplayNode: replays nuScenes CAN bus data as ROS2 topics.
 
-Roadmap docs/robot-data-model.md §3 target topics:
+docs/workflows/robot-run-and-mcap.md §2 target topics:
 
     /vehicle/odom      nav_msgs/msg/Odometry        <- CAN 'pose' messages
     /vehicle/imu       sensor_msgs/msg/Imu           <- CAN 'ms_imu' messages
