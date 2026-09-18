@@ -234,7 +234,9 @@ class RosbagAdapter:
             )
         bag = self._read_bag()
 
-        frame_index_uri = self._observation_store.raw_frame_index_uri(version_root_uri)
+        frame_index_uri = self._observation_store.raw_frame_index_uri(
+            version_root_uri, raw_log_id
+        )
         frame_index = RawLogFrameIndex(
             raw_log_id=raw_log_id,
             dataset_id=dataset_id,
@@ -265,7 +267,9 @@ class RosbagAdapter:
             frame_index_uri=frame_index_uri,
         )
 
-        manifest_uri = self._observation_store.raw_log_manifest_uri(version_root_uri)
+        manifest_uri = self._observation_store.raw_log_manifest_uri(
+            version_root_uri, raw_log_id
+        )
         await self._observation_store.save_raw_log_manifest(
             uri=manifest_uri, manifest=manifest
         )

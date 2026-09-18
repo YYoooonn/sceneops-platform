@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from sceneops_core.artifacts.schemas.enums import ArtifactKind
-from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import (
     JobType,
@@ -45,7 +41,6 @@ class RegisterSceneJobHandler(
     ) -> RegisterSceneJobResult:
         params = request.params
         context = request.context
-        job = request.job
 
         dataset_id = params.dataset_id
         dataset_version = params.dataset_version
@@ -85,23 +80,15 @@ class RegisterSceneJobHandler(
 
             await context.scene_store.upsert(record)
 
-            # Register the scene manifest as an artifact record so it is
-            # discoverable via GET /scenes/{scene_id}/artifacts.
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.SCENE_MANIFEST,
-                    uri=uri,
-                    media_type="application/json",
-                ),
-                owner_type=ArtifactOwnerType.SCENE,
-                owner_id=scene_id,
-                scene_id=scene_id,
-                dataset_id=ds_id,
-                dataset_version=ds_version,
-                job_id=job.job_id,
-                pipeline_run_id=job.pipeline_run_id,
-            )
+            # The SCENE_MANIFEST ArtifactRecord is registered by whichever job
+            # physically produced the manifest (build_scenes / ingest_scenes),
+            # with that job's own execution lineage (job_id/pipeline_run_id).
+            # register_scene only consumes the manifest to upsert the
+            # canonical SceneRecord — it must not create a second
+            # ArtifactRecord for a manifest it did not produce (SceneOps V2
+            # Request 22 / F-03). It is discoverable via
+            # GET /scenes/{scene_id}/artifacts regardless, since that endpoint
+            # is a generic owner_type=scene/owner_id=scene_id query.
 
             registered_ids.append(scene_id)
             registered_uris.append(uri)
