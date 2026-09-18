@@ -5,6 +5,7 @@ from pydantic import Field
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.sensors import SensorModality
 
+from .config import EpisodeSegmentationStrategy
 from .enums import EpisodeOutcome
 
 
@@ -17,6 +18,13 @@ class EpisodeLineage(SceneOpsBaseModel):
 
     source_dataset_id: str | None = None
     source_dataset_version: str | None = None
+
+    # Segmentation provenance (SceneOps V2 Request 13) — answers "why did this
+    # Episode have these boundaries?" alongside start_timestamp_us/
+    # end_timestamp_us on EpisodeManifest itself, which already record the
+    # actual boundary timestamps without duplicating them here.
+    segmentation_strategy: EpisodeSegmentationStrategy | None = None
+    segment_index: int | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

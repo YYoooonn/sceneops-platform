@@ -1,3 +1,4 @@
+from .config import EpisodeSegmentationConfig, EpisodeSegmentationStrategy
 from .enums import EpisodeOutcome, EpisodeStatus
 from .manifests import (
     EpisodeActionFrame,
@@ -17,4 +18,6 @@ __all__ = [
     "EpisodeActionFrame",
     "EpisodeManifest",
     "EpisodeSource",
+    "EpisodeSegmentationStrategy",
+    "EpisodeSegmentationConfig",
 ]

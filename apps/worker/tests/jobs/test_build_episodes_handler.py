@@ -1,9 +1,14 @@
-"""Domain-isolation tests for BuildEpisodesJobHandler (SceneOps V2 Request 12).
+"""Domain-isolation tests for BuildEpisodesJobHandler.
 
-Runs the handler end-to-end against a real (tmp-written) MCAP file with a
-mocked WorkerContext, and asserts it never touches anything Scene-owned:
-no ObservationArtifactStore/dataset_artifact_store call, no
-RawLogManifest/RawLogFrameIndex written, no SCENE-owned artifact registered.
+SceneOps V2 Request 12: runs the handler end-to-end against a real
+(tmp-written) MCAP file with a mocked WorkerContext, and asserts it never
+touches anything Scene-owned: no ObservationArtifactStore/
+dataset_artifact_store call, no RawLogManifest/RawLogFrameIndex written, no
+SCENE-owned artifact registered.
+
+SceneOps V2 Request 13: also exercises segmentation-strategy selection via
+job params (default mission_boundary vs. explicit fixed_window), confirming
+domain isolation holds regardless of which EpisodeSegmenter strategy runs.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from mcap.writer import Writer
 
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.episodes.schemas import EpisodeSegmentationConfig
 from sceneops_core.jobs.schemas import (
     BuildEpisodesJobParams,
     JobManifest,
@@ -120,3 +126,42 @@ class TestBuildEpisodesDomainIsolation:
 
         context.dataset_store.update_episode_summary.assert_awaited_once()
         context.commit.assert_awaited_once()
+        assert result.segmentation_strategy == "mission_boundary"
+
+    @pytest.mark.asyncio
+    async def test_fixed_window_strategy_selected_via_params(self, tmp_path) -> None:
+        bag_path = str(tmp_path / "run.mcap")
+        _write_mcap(
+            bag_path,
+            [
+                ("/vehicle/odom", 0, {"position": [0.0, 0.0, 0.0]}, "json"),
+                (
+                    "/vehicle/odom",
+                    35_000_000_000,
+                    {"position": [1.0, 0.0, 0.0]},
+                    "json",
+                ),
+            ],
+        )
+
+        context = _make_context()
+        job = JobManifest(
+            job_id="job-2", type=JobType.BUILD_EPISODES, status=JobStatus.RUNNING
+        )
+        params = BuildEpisodesJobParams(
+            dataset_id="d1",
+            dataset_version="v1",
+            robot_id="robot-1",
+            mcap_uri=bag_path,
+            segmentation=EpisodeSegmentationConfig(
+                strategy="fixed_window", fixed_window_duration_ms=30_000
+            ),
+        )
+        request = JobHandlerRequest(job=job, params=params, context=context)
+
+        result = await BuildEpisodesJobHandler().run(request)
+
+        assert result.episode_count == 2
+        assert result.segmentation_strategy == "fixed_window"
+        context.dataset_artifact_store.dataset_version_root_uri.assert_not_called()
+        context.artifact_store.write_json.assert_not_called()

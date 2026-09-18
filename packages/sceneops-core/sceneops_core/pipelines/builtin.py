@@ -188,6 +188,9 @@ _BUILD_EPISODES_OUTPUTS = [
     PipelineTaskOutputSpec(
         name="action_frame_count", kind=_SUMMARY, source="action_frame_count"
     ),
+    PipelineTaskOutputSpec(
+        name="segmentation_strategy", kind=_SUMMARY, source="segmentation_strategy"
+    ),
 ]
 
 _REGISTER_EPISODE_OUTPUTS = [

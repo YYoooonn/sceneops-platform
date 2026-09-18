@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict
+from sceneops_core.episodes.schemas import EpisodeSegmentationConfig
 
 from .base import BaseJobParams
 
@@ -13,9 +14,9 @@ class BuildEpisodesJobParams(BaseJobParams):
     Mirrors ``BuildScenesJobParams`` (raw log -> scenes), but the source
     adapter is always ``RosbagAdapter`` (registered under
     ``RawLogSourceType.REAL_ROBOT_LOG`` in this job's own adapter factory,
-    separate from ``build_scenes``'s) and segmentation is driven by Mission
-    boundaries rather than a generic gap/anchor scene segmenter — see
-    ``EpisodeBuilder``.
+    separate from ``build_scenes``'s) and segmentation is driven by
+    ``EpisodeSegmenter`` (see ``segmentation`` below) rather than a generic
+    gap/anchor scene segmenter.
     """
 
     dataset_id: str
@@ -29,6 +30,13 @@ class BuildEpisodesJobParams(BaseJobParams):
     mcap_uri: str | None = None
 
     raw_log_id: str | None = None
+
+    # Default (mission_boundary, falling back to whole_run when no dated
+    # Mission exists) preserves pre-Request-13 EpisodeBuilder behavior
+    # exactly — see SceneOps V2 Request 13.
+    segmentation: EpisodeSegmentationConfig = Field(
+        default_factory=EpisodeSegmentationConfig
+    )
 
     max_built_episodes: int | None = None
 

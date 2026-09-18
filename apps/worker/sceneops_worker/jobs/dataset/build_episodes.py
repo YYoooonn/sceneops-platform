@@ -19,7 +19,11 @@ from sceneops_core.robots.schemas import RobotRunRecord, RobotRunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
-from sceneops_worker.episodes.building import EpisodeBuildResult, EpisodeBuilder
+from sceneops_worker.episodes.building import (
+    EpisodeBuildResult,
+    EpisodeBuilder,
+    EpisodeSegmenter,
+)
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 
@@ -55,6 +59,10 @@ class BuildEpisodesJobHandler(
     persisted Scene-owned ``RawLogManifest``/``RawLogFrameIndex`` artifacts
     that ``build_raw_log()`` produces, only the sensor frame list inside them
     (see SceneOps V2 Request 12).
+
+    Segmentation strategy is decided by ``EpisodeSegmenter`` from
+    ``params.segmentation``, not by this handler or by ``EpisodeBuilder``
+    (see SceneOps V2 Request 13).
     """
 
     @property
@@ -107,6 +115,8 @@ class BuildEpisodesJobHandler(
             robot_id=params.robot_id, robot_run_id=params.robot_run_id
         )
 
+        windows = EpisodeSegmenter().segment(source=source, config=params.segmentation)
+
         build_result = EpisodeBuilder().build(
             dataset_id=version_record.dataset_id,
             dataset_version=version_record.version,
@@ -114,6 +124,8 @@ class BuildEpisodesJobHandler(
             robot_id=params.robot_id,
             robot_run_id=params.robot_run_id,
             source=source,
+            windows=windows,
+            strategy=params.segmentation.strategy,
         )
 
         episode_manifest_uris = await self._write_episode_manifests(
@@ -142,6 +154,7 @@ class BuildEpisodesJobHandler(
             episode_count=build_result.episode_count,
             observation_frame_count=build_result.observation_frame_count,
             action_frame_count=build_result.action_frame_count,
+            segmentation_strategy=params.segmentation.strategy.value,
             channels=sorted({frame.channel for frame in source.frames}),
         )
 

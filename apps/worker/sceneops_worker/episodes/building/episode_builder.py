@@ -8,10 +8,12 @@ from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeObservationFrame,
     EpisodeOutcome,
+    EpisodeSegmentationStrategy,
     EpisodeSource,
 )
 from sceneops_core.observations.schemas import RawSensorFrameManifest
-from sceneops_core.robots.schemas import MissionRecord, MissionStatus, RobotStateRecord
+from sceneops_core.robots.schemas import MissionStatus, RobotStateRecord
+from sceneops_worker.episodes.building.segmentation import EpisodeWindow
 
 # RobotState fields that represent observations vs. actions
 # (docs/robot-data-model.md §2). Fields not listed here (e.g. rotation_format)
@@ -33,19 +35,6 @@ _OUTCOME_BY_MISSION_STATUS: dict[MissionStatus, EpisodeOutcome] = {
 
 
 @dataclass(frozen=True)
-class _EpisodeWindow:
-    """A [start_us, end_us) time window that becomes one episode.
-
-    end_us is None for an in-progress mission with no ended_at yet — treated
-    as "open", i.e. extends to the end of the raw log.
-    """
-
-    mission: MissionRecord | None
-    start_us: int
-    end_us: int | None
-
-
-@dataclass(frozen=True)
 class EpisodeBuildResult:
     episodes: list[EpisodeManifest]
     episode_count: int
@@ -53,20 +42,15 @@ class EpisodeBuildResult:
     action_frame_count: int
 
 
-def _datetime_to_us(value) -> int:  # noqa: ANN001 - datetime, kept loose to avoid an import-only-for-typing
-    return int(value.timestamp() * 1_000_000)
-
-
 class EpisodeBuilder:
-    """Assembles ``EpisodeManifest``s from one raw log's sensor frames, robot
-    state samples, and mission boundaries.
+    """Materializes ``EpisodeManifest``s inside a set of already-decided
+    ``EpisodeWindow``s.
 
     Plays the same role ``SceneBuilder`` plays for Scene (raw inputs -> domain
-    manifest), but segmentation is driven by ``Mission`` start/end boundaries
-    rather than a generic gap/anchor scene segmenter — a Mission already *is*
-    a task-execution window, which is exactly what an Episode represents. A
-    raw log with no missions becomes a single episode spanning the whole log
-    (fallback for bags recorded without ``/mission/status``).
+    manifest). Segmentation itself — deciding where each window begins/ends —
+    is ``EpisodeSegmenter``'s job (SceneOps V2 Request 13); this class no
+    longer chooses a strategy, it only turns windows + an ``EpisodeSource``
+    into observation/action frames, lineage, and outcome.
 
     Sensor frames, robot state samples, and mission boundaries all come from
     one ``EpisodeSource`` (built by ``RosbagAdapter.extract_episode_source()``
@@ -86,22 +70,22 @@ class EpisodeBuilder:
         robot_id: str,
         robot_run_id: str | None,
         source: EpisodeSource,
+        windows: list[EpisodeWindow],
+        strategy: EpisodeSegmentationStrategy,
         task: str | None = None,
     ) -> EpisodeBuildResult:
-        windows = self._resolve_windows(source.missions)
-
         episodes: list[EpisodeManifest] = []
         observation_frame_count = 0
         action_frame_count = 0
-        for index, window in enumerate(windows):
+        for window in windows:
             manifest = self._build_episode(
                 dataset_id=dataset_id,
                 dataset_version=dataset_version,
                 raw_log_id=raw_log_id,
                 robot_id=robot_id,
                 robot_run_id=robot_run_id,
-                episode_index=index,
                 window=window,
+                strategy=strategy,
                 frames=source.frames,
                 robot_states=source.robot_states,
                 task=task,
@@ -119,25 +103,6 @@ class EpisodeBuilder:
             action_frame_count=action_frame_count,
         )
 
-    def _resolve_windows(self, missions: list[MissionRecord]) -> list[_EpisodeWindow]:
-        dated_missions = [m for m in missions if m.started_at is not None]
-        if not dated_missions:
-            # Fallback: no mission boundaries available — treat the whole raw
-            # log as a single episode.
-            return [_EpisodeWindow(mission=None, start_us=0, end_us=None)]
-
-        dated_missions.sort(key=lambda m: m.started_at)
-        return [
-            _EpisodeWindow(
-                mission=mission,
-                start_us=_datetime_to_us(mission.started_at),
-                end_us=_datetime_to_us(mission.ended_at)
-                if mission.ended_at is not None
-                else None,
-            )
-            for mission in dated_missions
-        ]
-
     def _build_episode(
         self,
         *,
@@ -146,8 +111,8 @@ class EpisodeBuilder:
         raw_log_id: str,
         robot_id: str,
         robot_run_id: str | None,
-        episode_index: int,
-        window: _EpisodeWindow,
+        window: EpisodeWindow,
+        strategy: EpisodeSegmentationStrategy,
         frames: list[RawSensorFrameManifest],
         robot_states: list[RobotStateRecord],
         task: str | None,
@@ -156,7 +121,7 @@ class EpisodeBuilder:
         episode_id = (
             f"{raw_log_id}-{mission.mission_id}"
             if mission is not None
-            else f"{raw_log_id}-episode{episode_index:04d}"
+            else f"{raw_log_id}-episode{window.segment_index:04d}"
         )
 
         observation_frames: list[EpisodeObservationFrame] = []
@@ -243,6 +208,8 @@ class EpisodeBuilder:
                 mission_id=mission.mission_id if mission is not None else None,
                 source_dataset_id=dataset_id,
                 source_dataset_version=dataset_version,
+                segmentation_strategy=strategy,
+                segment_index=window.segment_index,
             ),
             task=task,
             outcome=outcome,
@@ -257,7 +224,7 @@ class EpisodeBuilder:
         )
 
     @staticmethod
-    def _in_window(timestamp_us: int, window: _EpisodeWindow) -> bool:
+    def _in_window(timestamp_us: int, window: EpisodeWindow) -> bool:
         if timestamp_us < window.start_us:
             return False
         if window.end_us is not None and timestamp_us >= window.end_us:

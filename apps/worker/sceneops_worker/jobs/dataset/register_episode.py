@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from sceneops_core.artifacts.schemas.enums import ArtifactKind
-from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeRecord, EpisodeStatus
 from sceneops_core.jobs.schemas import (
@@ -18,6 +14,15 @@ from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 class RegisterEpisodeJobHandler(
     JobHandler[RegisterEpisodeJobParams, RegisterEpisodeJobResult]
 ):
+    """Manifest -> EpisodeRecord.
+
+    Does not register an ArtifactRecord for the manifest — that's
+    ``BuildEpisodesJobHandler``'s job, since it's the one that physically
+    writes the manifest file and has the producing job_id/pipeline_run_id
+    (see SceneOps V2 Request 15). This handler is a pure consumer: read the
+    manifest, upsert EpisodeRecord, respect replace_existing.
+    """
+
     @property
     def job_type(self) -> JobType:
         return JobType.REGISTER_EPISODE
@@ -43,7 +48,6 @@ class RegisterEpisodeJobHandler(
     ) -> RegisterEpisodeJobResult:
         params = request.params
         context = request.context
-        job = request.job
 
         dataset_id = params.dataset_id
         dataset_version = params.dataset_version
@@ -76,23 +80,6 @@ class RegisterEpisodeJobHandler(
                 continue
 
             await context.episode_store.upsert(record)
-
-            # Register the episode manifest as an artifact record so it is
-            # discoverable via GET /episodes/{episode_id}/artifacts.
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.EPISODE_MANIFEST,
-                    uri=uri,
-                    media_type="application/json",
-                ),
-                owner_type=ArtifactOwnerType.EPISODE,
-                owner_id=episode_id,
-                dataset_id=ds_id,
-                dataset_version=ds_version,
-                job_id=job.job_id,
-                pipeline_run_id=job.pipeline_run_id,
-            )
 
             registered_ids.append(episode_id)
             registered_uris.append(uri)

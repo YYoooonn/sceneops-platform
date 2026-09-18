@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sceneops_core.episodes.schemas import (
     EpisodeActionFrame,
     EpisodeLineage,
@@ -7,6 +9,8 @@ from sceneops_core.episodes.schemas import (
     EpisodeObservationFrame,
     EpisodeOutcome,
     EpisodeRecord,
+    EpisodeSegmentationConfig,
+    EpisodeSegmentationStrategy,
     EpisodeStatus,
 )
 
@@ -85,3 +89,34 @@ def test_episode_observation_frame_defaults_have_no_uri_or_values():
     assert frame.modality is None
     assert frame.uri is None
     assert frame.values is None
+
+
+def test_episode_segmentation_config_defaults_to_mission_boundary():
+    config = EpisodeSegmentationConfig()
+    assert config.strategy == EpisodeSegmentationStrategy.MISSION_BOUNDARY
+    assert config.fixed_window_duration_ms is None
+
+
+def test_episode_segmentation_config_fixed_window_requires_duration():
+    with pytest.raises(ValueError, match="fixed_window_duration_ms"):
+        EpisodeSegmentationConfig(strategy=EpisodeSegmentationStrategy.FIXED_WINDOW)
+
+
+def test_episode_segmentation_config_fixed_window_rejects_non_positive_duration():
+    with pytest.raises(ValueError, match="fixed_window_duration_ms"):
+        EpisodeSegmentationConfig(
+            strategy=EpisodeSegmentationStrategy.FIXED_WINDOW,
+            fixed_window_duration_ms=0,
+        )
+
+
+def test_episode_lineage_json_round_trip_with_segmentation_provenance():
+    lineage = EpisodeLineage(
+        raw_log_id="rl1",
+        mission_id="m1",
+        segmentation_strategy=EpisodeSegmentationStrategy.MISSION_BOUNDARY,
+        segment_index=0,
+    )
+    dumped = lineage.model_dump(mode="json")
+    restored = EpisodeLineage.model_validate(dumped)
+    assert restored == lineage
