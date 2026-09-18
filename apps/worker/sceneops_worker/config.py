@@ -17,7 +17,7 @@ from sceneops_core.config import (
 
 class WorkerSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[".env.local", ".env"],
         env_prefix="SCENEOPS_WORKER_",
         env_nested_delimiter="__",
         extra="ignore",

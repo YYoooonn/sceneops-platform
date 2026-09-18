@@ -18,7 +18,6 @@ clean-python:
 	find . -name ".mypy_cache" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 	find . -name ".ruff_cache" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
-.PHONY: reset-local
-reset-local:
-	chmod +x scripts/dev/reset_local_state.sh
-	scripts/dev/reset_local_state.sh
+# Destructive local-state reset lives at `make local-reset` (makefiles/local.mk)
+# — this used to be a second, differently-behaved target here under a
+# near-identical name (reset-local vs local-reset). Consolidated to one.

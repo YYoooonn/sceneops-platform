@@ -88,7 +88,10 @@ class TestWorkerSettingsRawSource:
         assert s.raw_source.backend == ArtifactBackend.MINIO
 
     def test_artifact_root_uri_default(self):
-        s = WorkerSettings()
+        # _env_file=None: this asserts the schema's declared default, not
+        # whatever this developer's real .env.local happens to contain
+        # (WorkerSettings reads .env.local by design — see config.py).
+        s = WorkerSettings(_env_file=None)
         assert s.artifact.root_uri == "/data/artifacts"
 
     def test_artifact_root_uri_unchanged_by_raw_source(self):

@@ -5,12 +5,16 @@
 .PHONY: migrate-build
 migrate-build:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build migrate
+	$(COMPOSE) build migrate
 
 .PHONY: db-migrate
-db-migrate: migrate-build
-	docker compose -f $(COMPOSE_FILE) up -d postgres
-	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate
+# Does not depend on migrate-build — compose builds the `migrate` image
+# on first run and reuses it after, so repeated `make local-up` calls
+# don't pay a rebuild + `uv lock` cost every time. Run `make migrate-build`
+# explicitly after changing migration dependencies.
+db-migrate:
+	$(COMPOSE) up -d --wait postgres
+	$(COMPOSE) --profile tools run --rm migrate
 
 .PHONY: db-revision
 db-revision: migrate-build
@@ -18,24 +22,29 @@ db-revision: migrate-build
 		echo "MSG is required. Usage: make db-revision MSG='create table'"; \
 		exit 1; \
 	fi
-	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
+	$(COMPOSE) --profile tools run --rm migrate \
 		alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$(MSG)"
 
 .PHONY: db-current
 db-current:
-	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
+	$(COMPOSE) --profile tools run --rm migrate \
 		alembic -c $(ALEMBIC_CONFIG) current
 
 .PHONY: db-history
 db-history:
-	docker compose -f $(COMPOSE_FILE) --profile tools run --rm migrate \
+	$(COMPOSE) --profile tools run --rm migrate \
 		alembic -c $(ALEMBIC_CONFIG) history
 
 .PHONY: db-reset
+# Scoped to Postgres only — does NOT touch Redis/MinIO data (unlike a bare
+# `compose down -v`, which would since minio is a default, non-profiled
+# service now). Use `make local-reset` to wipe the whole local stack.
 db-reset:
-	docker compose -f $(COMPOSE_FILE) down -v
+	$(COMPOSE) stop postgres
+	$(COMPOSE) rm -f postgres
+	docker volume rm -f $$(docker volume ls -q --filter label=com.docker.compose.volume=sceneops_postgres_data)
 	$(MAKE) db-migrate
 
 .PHONY: db-shell
 db-shell:
-	docker compose -f $(COMPOSE_FILE) exec postgres psql -U sceneops -d sceneops
+	$(COMPOSE) exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB)

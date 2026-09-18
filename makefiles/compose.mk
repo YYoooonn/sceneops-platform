@@ -1,33 +1,29 @@
 # --------------------
-# Docker Compose (raw)
+# Docker Compose (raw escape hatches)
+#
+# For normal local development use `make local-up` / `local-down` /
+# `local-reset` / `status` / `logs` instead — these exist for cases those
+# don't cover (rebuilding images, inspecting a service outside the default
+# profile set).
 # --------------------
 
 .PHONY: compose-build
+# worker-pipeline and worker-jobs share one image (sceneops-platform/worker:local,
+# see x-worker-common in docker-compose.local.yml) — building worker-pipeline
+# builds it for both.
 compose-build:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build api worker-pipeline
+	$(COMPOSE) build api worker-pipeline
 
 .PHONY: compose-build-no-cache
 compose-build-no-cache:
 	uv lock
-	docker compose -f $(COMPOSE_FILE) build --no-cache api worker-pipeline
-
-.PHONY: compose-up
-compose-up: prepare-data minio-up
-	docker compose -f $(COMPOSE_FILE) up -d postgres redis api worker-pipeline worker-jobs
-
-.PHONY: compose-down
-compose-down:
-	docker compose -f $(COMPOSE_FILE) down
-
-.PHONY: compose-down-volumes
-compose-down-volumes:
-	docker compose -f $(COMPOSE_FILE) down -v
+	$(COMPOSE) build --no-cache api worker-pipeline
 
 .PHONY: compose-logs
 compose-logs:
-	docker compose -f $(COMPOSE_FILE) logs -f postgres redis api worker-pipeline worker-jobs
+	$(COMPOSE) --profile worker --profile tools --profile debug logs -f
 
 .PHONY: compose-ps
 compose-ps:
-	docker compose -f $(COMPOSE_FILE) ps
+	$(COMPOSE) --profile worker --profile tools --profile debug ps

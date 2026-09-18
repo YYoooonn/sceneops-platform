@@ -565,9 +565,9 @@ curl http://localhost:8000/openapi.json | jq '.paths | keys[]'
 ```bash
 cp .env.example .env.local          # configure storage backend, DB, Redis
 make setup                          # install deps + pre-commit hooks
-make local-up                       # MinIO + Postgres + Redis + API + workers
+make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
 make register-nuscenes-dataset      # register nuScenes fixture
-make e2e                            # all E2E tests (mock backend)
+make e2e                            # default E2E subset (mock backend) -- see docs/local-development.md
 ```
 
 **Robot data ingestion (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see `docs/robot-data-model.md`). Everything else is self-contained in the `ros2/` Docker image.
@@ -595,13 +595,15 @@ SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
 
 ### Stack
 
+See [`docs/local-development.md`](docs/local-development.md) for the full bootstrap/reset/env-file model.
 
-| Command            | Description                                           |
+| Command             | Description                                           |
 | ------------------ | ----------------------------------------------------- |
-| `make local-up`    | Start full stack (MinIO + DB + Redis + API + workers) |
-| `make local-down`  | Stop all services                                     |
-| `make local-reset` | Wipe volumes and restart                              |
-| `make db-migrate`  | Run Alembic upgrade head                              |
+| `make local-up`    | Idempotent bootstrap: infra → health → MinIO buckets → migrate → API + workers |
+| `make local-down`  | Stop services, **preserve** Postgres/Redis/MinIO data  |
+| `make local-reset` | **Destructive** — wipe all local data, rebuild clean   |
+| `make status` / `make logs` | Service status / follow logs                 |
+| `make db-migrate`  | Run Alembic upgrade head (also run by `local-up`)      |
 
 
 ### Development
@@ -609,17 +611,18 @@ SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
 
 | Command                     | Description                   |
 | --------------------------- | ----------------------------- |
-| `make test`                 | Run worker unit tests         |
+| `make test`                 | Run worker + api + sceneops-core + sceneops-analytics unit tests |
 | `make lint` / `make format` | Ruff check / format           |
 | `make worker-imports`       | Validate job registry imports |
 
 
 ### E2E
 
+`make e2e` runs a subset (see `docs/local-development.md`), not every E2E script — the rest are still directly invokable.
 
 |  Command | Description |
 | --- | --- |
-| `make e2e` | All E2E tests (mock backend) |
+| `make e2e` | Subset only: api-smoke + dataset-ingestion + detection-evaluation + pipeline-contracts (mock backend) |
 | `make e2e-api-smoke` | API smoke |
 | `make e2e-dataset-ingestion` | Ingestion pipeline |
 | `make e2e-raw-log-scene-building` | Raw log scene building |
@@ -628,6 +631,10 @@ SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL=http://minio:9000
 | `make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...` | Detection evaluation with real GroundingDINO; requires `SCENARIO_SET_ID` or `SCENARIO_CURATION_PIPELINE_RUN_ID` |
 | `make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...` | Same as above; resolves ScenarioSet from the curation pipeline run |
 | `make e2e-pipeline-contracts` | Pipeline contract validation  |
+| `make e2e-episode-building` | Episode domain build → register → validate → profile pipeline |
+| `make e2e-analytics-export` | Analytics snapshot export |
+| `make e2e-reliability` | Asserts pipeline execution-key dedup/force semantics |
+| `make e2e-airflow-pipeline` | Same pipeline, dispatched via Airflow — requires `make airflow-up` |
 | `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Dataset quality + detection run comparison; includes ScenarioSet lineage when available |
 | `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0` | Robot data ingestion (v2): CAN replay → record → register → ingest → verify via API |
 

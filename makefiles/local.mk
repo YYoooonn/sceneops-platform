@@ -1,27 +1,44 @@
 # --------------------
 # Local stack
+#
+# local-up    — idempotent bootstrap: infra -> health -> bucket init ->
+#                migrate -> api/workers. Safe to run repeatedly.
+# local-down  — stop services, PRESERVE all data (Postgres/Redis/MinIO).
+# local-reset — DESTRUCTIVE: delete all local data, rebuild clean.
 # --------------------
 
 .PHONY: local-up
-local-up: prepare-data minio-up
-	docker compose -f $(COMPOSE_FILE) up -d postgres redis
-	docker compose -f $(COMPOSE_FILE) up -d api worker-pipeline worker-jobs
+local-up: prepare-data
+	@echo "--- starting infra (postgres, redis, minio) ---"
+	$(COMPOSE) up -d --wait postgres redis minio
+	@echo "--- initializing MinIO buckets (idempotent) ---"
+	$(COMPOSE) --profile tools run --rm minio-init
+	@echo "--- running migrations (idempotent) ---"
+	$(MAKE) db-migrate
+	@echo "--- starting api + workers ---"
+	$(COMPOSE) up -d --wait api
+	$(COMPOSE) up -d worker-pipeline worker-jobs
+	@echo "--- local-up complete ---"
 
 .PHONY: local-down
-local-down: minio-down
-	docker compose -f $(COMPOSE_FILE) down api worker-pipeline worker-jobs
-	docker compose -f $(COMPOSE_FILE) down postgres redis
+local-down:
+	$(COMPOSE) --profile worker stop api worker-pipeline worker-jobs postgres redis minio
+	$(COMPOSE) --profile worker rm -f api worker-pipeline worker-jobs postgres redis minio
+	@echo "Services stopped. Postgres/Redis/MinIO data preserved."
+	@echo "Use 'make local-reset' to delete local data instead."
 
 .PHONY: local-reset
+# DESTRUCTIVE — deletes Postgres/Redis/MinIO volumes and generated ./data
+# artifacts, then rebuilds a clean stack. Interactive confirmation unless
+# FORCE=1. See scripts/dev/reset_local_state.sh for the exact steps.
 local-reset:
-	docker compose -f $(COMPOSE_FILE) --profile minio down -v
-	$(MAKE) clean-artifacts
-	$(MAKE) local-up
+	chmod +x scripts/dev/reset_local_state.sh
+	COMPOSE_FILE=$(COMPOSE_FILE) ENV_FILE=$(ENV_FILE) scripts/dev/reset_local_state.sh
 
-.PHONY: local-logs
-local-logs:
-	docker compose -f $(COMPOSE_FILE) logs -f postgres redis minio api worker-pipeline worker-jobs
+.PHONY: logs
+logs:
+	$(COMPOSE) --profile worker logs -f postgres redis minio api worker-pipeline worker-jobs
 
-.PHONY: local-ps
-local-ps:
-	docker compose -f $(COMPOSE_FILE) --profile worker --profile minio ps
+.PHONY: status
+status:
+	$(COMPOSE) --profile worker --profile tools --profile debug ps

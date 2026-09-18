@@ -9,7 +9,9 @@ x-worker-common: &worker-common
     postgres:
       condition: service_healthy
     redis:
-      condition: service_started
+      condition: service_healthy
+    minio:
+      condition: service_healthy
   volumes:
     - ./data:/data
     - ./scripts:/workspace/scripts:ro
@@ -47,11 +49,11 @@ services:
     env_file:
       - .env.local
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - sceneops_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sceneops -d sceneops"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sceneops} -d ${POSTGRES_DB:-sceneops}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -60,10 +62,15 @@ services:
     image: redis:7-alpine
     container_name: sceneops-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
     image: minio/minio:RELEASE.2024-11-07T00-52-20Z
@@ -72,8 +79,8 @@ services:
     env_file:
       - .env.local
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -81,9 +88,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    profiles:
-      - minio
 
+  # One-shot, idempotent bucket bootstrap (mc mb --ignore-existing) — the
+  # MinIO-side counterpart to the `migrate` service. Grouped under `tools`
+  # like `migrate`, not `minio`, since it's an action you run once per
+  # bootstrap, not a long-running dependency of anything.
   minio-init:
     image: minio/mc:RELEASE.2024-11-17T19-35-25Z
     container_name: sceneops-minio-init
@@ -97,7 +106,7 @@ services:
       - ./data/raw:/data/raw:ro
       - ./scripts:/scripts:ro
     profiles:
-      - minio
+      - tools
 
   api:
     build:
@@ -108,14 +117,16 @@ services:
     env_file:
       - .env.local
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     volumes:
       - ./data:/data
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -192,7 +203,7 @@ services:
       HF_HOME: /cache/hf
       SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
     ports:
-      - "8001:8001"
+      - "${INFERENCE_PORT:-8001}:8001"
     volumes:
       - ./data:/data:ro
       - ./cache/hf:/cache/hf
@@ -228,7 +239,7 @@ services:
       HF_HOME: /cache/hf
       SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
     ports:
-      - "8001:8001"
+      - "${INFERENCE_PORT:-8001}:8001"
     volumes:
       - ./data:/data:ro
       - ./cache/hf:/cache/hf
@@ -281,7 +292,7 @@ services:
     <<: *airflow-common
     container_name: sceneops-airflow-webserver
     ports:
-      - "8080:8080"
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
     depends_on:
       airflow-postgres:
         condition: service_healthy
