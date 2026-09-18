@@ -410,6 +410,13 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             job_type=JobType.BUILD_SCENES,
             default_params={
                 "build_assets": True,
+                # Reserved, currently a no-op: no handler branches on this
+                # flag anywhere (build_scenes.py never reads it), no
+                # persisted scene has world_state_manifest_uri set, and
+                # WorldStateManifest (scenes/schemas/world_state.py) has no
+                # writer. Kept as an explicit False default rather than
+                # removed — see that module's docstring (Stabilization
+                # Request 5 audit) for the retain-vs-remove reasoning.
                 "build_world_state": False,
                 "sampling": {
                     "missing_channel_policy": "keep_with_warning",

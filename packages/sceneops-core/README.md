@@ -67,21 +67,6 @@ from sceneops_core.artifacts.contracts import ArtifactStore
 # 구체 구현은 sceneops-storage 참고
 ```
 
-### paths — URI generation pure functions
-
-아티팩트 경로를 일관되게 생성하는 무상태 함수 모음.
-
-```python
-from sceneops_core.paths import (
-    dataset_manifest_uri,
-    scene_manifest_uri,
-    inference_run_manifest_uri,
-)
-
-uri = dataset_manifest_uri(root_uri, dataset_id, dataset_version)
-# → "{root_uri}/datasets/{dataset_id}/versions/{dataset_version}/manifest.json"
-```
-
 ### ArtifactRef
 
 타입이 있는 아티팩트 참조. URI에 `ArtifactKind`, 크기, 체크섬, 미디어 타입을 추가로 기록

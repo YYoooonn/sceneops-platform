@@ -4,14 +4,22 @@ from enum import StrEnum
 
 
 class SceneStatus(StrEnum):
+    """Scene build/validation/profile lifecycle. Unlike EpisodeStatus, Scene's
+    architecture does fold validation/profile outcomes into this field
+    (BUILT -> VALIDATED/FAILED -> PROFILED) — see validate_scene.py /
+    profile_scene.py. VALIDATING/PROFILING (transitional "in progress"
+    states) and DEPRECATED (a soft-delete marker) were removed in
+    Stabilization Request 5: zero write sites, zero persisted rows, and
+    in-progress signaling is already covered by
+    SceneValidationRunRecord/SceneProfileRunRecord's own RunStatus.RUNNING —
+    the same reasoning that already removed DatasetVersionStatus's
+    equivalent transitional values (see datasets/schemas/enums.py)."""
+
     CREATED = "created"
     BUILT = "built"
-    VALIDATING = "validating"
     VALIDATED = "validated"
-    PROFILING = "profiling"
     PROFILED = "profiled"
     FAILED = "failed"
-    DEPRECATED = "deprecated"
 
 
 class SceneOriginType(StrEnum):

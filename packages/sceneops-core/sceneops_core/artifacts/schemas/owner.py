@@ -26,7 +26,10 @@ class ArtifactOwnerType(StrEnum):
     EPISODE_VALIDATION_RUN = "episode_validation_run"
     EPISODE_PROFILE_RUN = "episode_profile_run"
     # dataset-level runs
-    DATASET_DISTRIBUTION_RUN = "dataset_distribution_run"
+    # (DATASET_DISTRIBUTION_RUN removed in Stabilization Request 5 alongside
+    # JobType.CHECK_DISTRIBUTION — see that enum's history: its DatasetVersion
+    # pointer fields were already dropped as dead in migration
+    # b5f4b88342e2, and this owner type had zero other usage.)
     DATASET_EXPORT_RUN = "dataset_export_run"
     DATASET_AUTO_LABEL_RUN = "dataset_auto_label_run"
     # scenario-level runs

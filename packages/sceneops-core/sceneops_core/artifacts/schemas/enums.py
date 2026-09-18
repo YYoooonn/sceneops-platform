@@ -33,7 +33,6 @@ class ArtifactKind(StrEnum):
     DATASET_MANIFEST = "dataset_manifest"
     DATASET_VALIDATION_REPORT = "dataset_validation_report"
     DATASET_PROFILE_REPORT = "dataset_profile_report"
-    DISTRIBUTION_REPORT = "distribution_report"
     ANALYTICS_TABLE = "analytics_table"
 
     # Scenario-level
