@@ -62,6 +62,7 @@ PAYLOAD="$(cat <<JSON
   "type": "export_analytics_snapshot",
   "dataset_id": "$DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "dataset_id": "$DATASET_ID",
     "dataset_version": "$DATASET_VERSION"

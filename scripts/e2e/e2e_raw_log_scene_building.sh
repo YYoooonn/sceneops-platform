@@ -56,6 +56,7 @@ PAYLOAD="$(cat <<JSON
   "type": "raw_log_scene_building",
   "dataset_id": "$DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "build_scenes": {
       "source_type": "nuscenes_raw_log_mock",
@@ -129,7 +130,7 @@ if [ "$FINAL_STATUS" = "blocked" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'raw_log_scene_building pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'raw_log_scene_building pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 

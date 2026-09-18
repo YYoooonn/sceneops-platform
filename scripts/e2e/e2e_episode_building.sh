@@ -172,7 +172,7 @@ echo "  status=$FINAL_STATUS"
 if [ "$FINAL_STATUS" != "succeeded" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
-assert_pipeline_succeeded "$PIPELINE_JSON" 'raw_log_episode_building pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'raw_log_episode_building pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 

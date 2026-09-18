@@ -128,7 +128,7 @@ if [ "$FINAL_STATUS" != "succeeded" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'Airflow-dispatched dataset_scene_ingestion pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'Airflow-dispatched dataset_scene_ingestion pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 

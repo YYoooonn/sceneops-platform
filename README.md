@@ -567,7 +567,9 @@ cp .env.example .env.local          # configure storage backend, DB, Redis
 make setup                          # install deps + pre-commit hooks
 make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
 make register-nuscenes-dataset      # register nuScenes fixture
-make e2e                            # default E2E subset (mock backend) -- see docs/local-development.md
+make test                           # infrastructure-independent unit tests
+make test-integration               # real Postgres + MinIO tests
+make e2e                            # full default-stack E2E suite (mock backend) -- see docs/local-development.md
 ```
 
 **Robot data ingestion (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see `docs/robot-data-model.md`). Everything else is self-contained in the `ros2/` Docker image.
@@ -611,32 +613,33 @@ See [`docs/local-development.md`](docs/local-development.md) for the full bootst
 
 | Command                     | Description                   |
 | --------------------------- | ----------------------------- |
-| `make test`                 | Run worker + api + sceneops-core + sceneops-analytics unit tests |
+| `make test`                 | worker + api + sceneops-core + sceneops-analytics + inference-server unit tests — no infra needed |
+| `make test-integration`     | sceneops-db (real Postgres) + sceneops-storage (real MinIO) — requires `make local-up` |
 | `make lint` / `make format` | Ruff check / format           |
 | `make worker-imports`       | Validate job registry imports |
 
 
 ### E2E
 
-`make e2e` runs a subset (see `docs/local-development.md`), not every E2E script — the rest are still directly invokable.
+`make e2e` runs the full default-stack suite (see `docs/local-development.md`) — every E2E whose services are covered by `make local-up` alone. Airflow/ROS2/real-inference E2Es need extra setup and stay outside it.
 
 |  Command | Description |
 | --- | --- |
-| `make e2e` | Subset only: api-smoke + dataset-ingestion + detection-evaluation + pipeline-contracts (mock backend) |
+| `make e2e` | Full default-stack suite: api-smoke + pipeline-contracts + dataset-ingestion + raw-log-scene-building + episode-building + scenario-curation + detection-evaluation (mock) + analytics-export + reliability |
 | `make e2e-api-smoke` | API smoke |
 | `make e2e-dataset-ingestion` | Ingestion pipeline |
 | `make e2e-raw-log-scene-building` | Raw log scene building |
 | `make e2e-detection-evaluation` | Detection evaluation (mock) |
 | `make e2e-scenario-curation` | Scenario curation pipeline; prints `scenario_set_id` and `pipeline_run_id` |
-| `make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...` | Detection evaluation with real GroundingDINO; requires `SCENARIO_SET_ID` or `SCENARIO_CURATION_PIPELINE_RUN_ID` |
+| `make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...` | *(optional environment)* Detection evaluation with real GroundingDINO; requires `make inference-local-up`/`inference-gpu-up` and `SCENARIO_SET_ID` or `SCENARIO_CURATION_PIPELINE_RUN_ID` |
 | `make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...` | Same as above; resolves ScenarioSet from the curation pipeline run |
 | `make e2e-pipeline-contracts` | Pipeline contract validation  |
 | `make e2e-episode-building` | Episode domain build → register → validate → profile pipeline |
 | `make e2e-analytics-export` | Analytics snapshot export |
 | `make e2e-reliability` | Asserts pipeline execution-key dedup/force semantics |
-| `make e2e-airflow-pipeline` | Same pipeline, dispatched via Airflow — requires `make airflow-up` |
+| `make e2e-airflow-pipeline` | *(optional environment)* Same pipeline, dispatched via Airflow — requires `make airflow-up` |
 | `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Dataset quality + detection run comparison; includes ScenarioSet lineage when available |
-| `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0` | Robot data ingestion (v2): CAN replay → record → register → ingest → verify via API |
+| `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0` | *(optional environment, ROS2)* Robot data ingestion (v2): CAN replay → record → register → ingest → verify via API |
 
 
 ### ROS2 / Robot (v2)

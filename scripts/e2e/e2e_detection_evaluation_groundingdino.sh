@@ -189,6 +189,7 @@ PAYLOAD="$(cat <<JSON
   "dataset_version": "$DATASET_VERSION",
   "model_id": "$MODEL_ID",
   "model_version": "$MODEL_VERSION",
+  "force": true,
   "params": {
     "predict_detection": {
       "scenario_set_id": "$SCENARIO_SET_ID",
@@ -246,7 +247,7 @@ if [ "$FINAL_STATUS" = "failed" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'detection_evaluation (groundingdino) pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'detection_evaluation (groundingdino) pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 
@@ -374,8 +375,13 @@ fi
 LB_ENTRY="$(echo "$LB_JSON" | jq --arg eid "$EVALUATION_RUN_ID" \
   '.entries[] | select(.evaluationRunId == $eid)')"
 if [ -z "$LB_ENTRY" ]; then
-  echo "  (evaluation_run_id not matched, using first entry)"
-  LB_ENTRY="$(echo "$LB_JSON" | jq '.entries[0]')"
+  # Persistent local stack: do NOT fall back to entries[0] — under
+  # accumulated history that would silently validate a DIFFERENT,
+  # unrelated historical run instead of catching that this run's own
+  # leaderboard entry is missing.
+  echo "❌ No leaderboard entry found for this run's evaluation_run_id=$EVALUATION_RUN_ID" >&2
+  echo "$LB_JSON" | jq '.entries[] | {evaluationRunId, primaryMetricName, primaryMetricValue}' >&2
+  exit 1
 fi
 
 LB_ID="$(echo "$LB_ENTRY" | jq -r '.id // .leaderboardEntryId // empty')"

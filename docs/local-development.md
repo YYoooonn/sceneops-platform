@@ -90,13 +90,57 @@ store backend), not an optional extra, so `api`/`worker-*` can
 `depends_on: minio: condition: service_healthy` directly, and a plain
 `docker compose down -v` actually reaches `minio-data`.
 
+## Testing
+
+```
+make test              infrastructure-independent, run anywhere, no prerequisites
+make test-integration  real Postgres + MinIO, requires `make local-up` first
+make e2e               full default-stack workflow suite, requires `make local-up` first
+```
+
+- `make test` covers `apps/worker`, `apps/api`, `apps/inference-server`,
+  `packages/sceneops-core`, `packages/sceneops-analytics`. Every
+  `inference-server` test mocks `GroundingDinoModel`/`ImageResolver` — none
+  of it needs GPU, model weights, or a running inference server (confirmed
+  during Stabilization Request 4's audit).
+- `make test-integration` covers `packages/sceneops-db/tests` (real
+  Postgres) and `packages/sceneops-storage/tests` (real MinIO). No pytest
+  marker is used to select these — they live in dedicated test directories
+  that `make test`'s testpaths never touch, which is sufficient selection on
+  its own. Each test gets a fresh session/engine and either rolls back
+  (`sceneops-db`, transactional isolation — nothing is ever committed) or
+  deletes what it wrote (`sceneops-storage`, via `delete_prefix` under a
+  dedicated `_test-integration/` key prefix) — safe to run against the same
+  persistent local stack you're developing against.
+- On Apple Silicon hosts, running `sceneops-db`'s async engine outside
+  Docker requires `greenlet`, which `sqlalchemy`'s own platform-marker-gated
+  extra silently excludes there (`aarch64` is listed, macOS's `arm64` isn't)
+  — `packages/sceneops-db` now depends on it directly, unconditionally.
+
 ## E2E scope
 
-`make e2e` runs 4 scripts (`api-smoke`, `dataset-ingestion`,
-`detection-evaluation`, `pipeline-contracts`) — **not** the full E2E surface.
-`e2e-raw-log-scene-building`, `e2e-episode-building`, `e2e-scenario-curation`,
-`e2e-analytics-export`, `e2e-reliability`, `e2e-airflow-pipeline`,
-`e2e-robot-can-replay` are real, separately-invokable targets not included
-in the default `make e2e` aggregate. Expanding that aggregate to match is
-tracked as a later stabilization request — this doc and `make help`
-describe the current, true scope rather than the aspirational one.
+`make e2e` runs the full default-stack suite — every workflow E2E whose
+required services are provided by `make local-up` alone:
+`api-smoke`, `pipeline-contracts`, `dataset-ingestion`,
+`raw-log-scene-building`, `episode-building`, `scenario-curation`,
+`detection-evaluation` (mock backend), `analytics-export`, `reliability`.
+
+Not included — each needs infrastructure beyond `make local-up`:
+- `e2e-airflow-pipeline` — needs `make airflow-up` + the `api` service
+  restarted with `SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow`.
+- `e2e-robot-can-replay` — needs the ROS2 sandbox (`--profile ros2`).
+- `e2e-detection-evaluation-groundingdino` / `e2e-detection-evaluation-real`
+  — needs a real inference server (`make inference-local-up` for CPU or
+  `make inference-gpu-up` for GPU); same script either way.
+
+All pipeline-run-creating scripts in the default suite pass `force: true`,
+so re-running `make e2e` against an already-populated persistent stack
+genuinely re-executes every pipeline rather than silently returning an old
+run via execution-key dedup. `e2e-reliability` is the one deliberate
+exception — dedup/force *is* what it's testing, so its pipeline-run
+creation intentionally omits `force` in the parts that assert dedup/resume
+behavior. Assertions throughout are scoped to values returned by the
+current run (`pipeline_run_id`, `run_id`s, etc.), not global counts, so they
+hold up under a persistent stack's accumulated history — see
+`scripts/e2e/e2e_episode_building.sh` or `scripts/e2e/e2e_reliability.sh`
+for the clearest examples.

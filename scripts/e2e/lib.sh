@@ -160,7 +160,29 @@ poll_pipeline_terminal() {
 assert_pipeline_succeeded() {
   local pipeline_json="$1"
   local message="${2:-pipeline should succeed}"
-  assert_json_equals "$pipeline_json" '.pipelineRun.status' 'succeeded' "$message"
+  # Optional — when provided, a failure also prints per-task statuses so a
+  # failing E2E run doesn't require a second manual API call to see which
+  # task actually broke.
+  local api_base_url="${3:-}"
+  local pipeline_run_id="${4:-}"
+
+  local status
+  status="$(echo "$pipeline_json" | jq -r '.pipelineRun.status')"
+  if [ "$status" = "succeeded" ]; then
+    return 0
+  fi
+
+  echo "❌ Assertion failed: $message" >&2
+  echo "  pipeline_run_id=${pipeline_run_id:-$(echo "$pipeline_json" | jq -r '.pipelineRun.pipelineRunId // "unknown"')}" >&2
+  echo "  status=$status" >&2
+  echo "  error=$(echo "$pipeline_json" | jq -r '.pipelineRun.error.message // "none"')" >&2
+  if [ -n "$api_base_url" ] && [ -n "$pipeline_run_id" ]; then
+    echo "  task statuses:" >&2
+    fetch_pipeline_tasks "$api_base_url" "$pipeline_run_id" 2>/dev/null \
+      | jq -r '.tasks[] | "    \(.pipelineTaskId): \(.status)" + (if .error then "  error=\(.error.message // .error)" else "" end)' >&2 \
+      || echo "    (failed to fetch task statuses)" >&2
+  fi
+  exit 1
 }
 
 # ── Job API (standalone jobs, not part of a pipeline) ──────────────────────────
@@ -221,7 +243,18 @@ poll_job_terminal() {
 assert_job_succeeded() {
   local job_json="$1"
   local message="${2:-job should succeed}"
-  assert_json_equals "$job_json" '.job.status' 'succeeded' "$message"
+
+  local status
+  status="$(echo "$job_json" | jq -r '.job.status')"
+  if [ "$status" = "succeeded" ]; then
+    return 0
+  fi
+
+  echo "❌ Assertion failed: $message" >&2
+  echo "  job_id=$(echo "$job_json" | jq -r '.job.jobId // "unknown"')" >&2
+  echo "  status=$status" >&2
+  echo "  error=$(echo "$job_json" | jq -r '.job.error.message // .job.error // "none"')" >&2
+  exit 1
 }
 
 # ── Robot / RobotRun API ────────────────────────────────────────────────────

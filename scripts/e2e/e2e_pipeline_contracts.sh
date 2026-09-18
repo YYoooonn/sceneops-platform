@@ -121,6 +121,7 @@ PAYLOAD="$(cat <<JSON
   "type": "dataset_scene_ingestion",
   "dataset_id": "$DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "ingest_scenes": {
       "source_format": "nuscenes",
@@ -178,7 +179,7 @@ if [ "$FINAL_STATUS" = "failed" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'dataset_scene_ingestion pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'dataset_scene_ingestion pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 
@@ -364,6 +365,7 @@ SKIP_PAYLOAD="$(cat <<JSON
   "type": "dataset_scene_ingestion",
   "dataset_id": "$SKIP_TEST_DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "ingest_scenes": {
       "source_format": "nuscenes",
@@ -395,7 +397,7 @@ fi
 
 echo "  Polling skip run..."
 SKIP_PIPELINE_JSON="$(poll_pipeline_terminal "$API_BASE_URL" "$SKIP_RUN_ID" "$POLL_TIMEOUT" 5)"
-assert_pipeline_succeeded "$SKIP_PIPELINE_JSON" 'skip-test pipeline should succeed'
+assert_pipeline_succeeded "$SKIP_PIPELINE_JSON" 'skip-test pipeline should succeed' "$API_BASE_URL" "$SKIP_RUN_ID"
 
 SKIP_TASKS_JSON="$(fetch_pipeline_tasks "$API_BASE_URL" "$SKIP_RUN_ID")"
 echo "$SKIP_TASKS_JSON" | jq -r '.tasks[] | "  \(.pipelineTaskId): \(.status)"'

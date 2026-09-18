@@ -86,6 +86,7 @@ echo "--- 3. Create job ---"
 PAYLOAD="$(cat <<JSON
 {
   "type": "ingest_robot_states",
+  "force": true,
   "params": {
     "robot_id": "$ROBOT_ID",
     "robot_run_id": "$RUN_ID"

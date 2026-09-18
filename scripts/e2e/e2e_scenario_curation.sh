@@ -38,6 +38,7 @@ CREATE_PAYLOAD="$(cat <<EOF
   "type": "scenario_curation",
   "dataset_id": "$DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "mine_scenarios": {
       "candidate_profile": "detection_ready",
@@ -76,7 +77,7 @@ echo "$PIPELINE_JSON" | jq '.pipelineRun | {status, result}'
 
 echo ""
 echo "--- 4. Assertions ---"
-assert_pipeline_succeeded "$PIPELINE_JSON" "scenario_curation pipeline should succeed"
+assert_pipeline_succeeded "$PIPELINE_JSON" "scenario_curation pipeline should succeed" "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  ✓ pipeline status=succeeded"
 
 # scenario_set_id must be non-empty

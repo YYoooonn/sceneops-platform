@@ -48,6 +48,7 @@ PAYLOAD="$(cat <<JSON
   "type": "dataset_scene_ingestion",
   "dataset_id": "$DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "ingest_scenes": {
       "source_format": "nuscenes",
@@ -105,7 +106,7 @@ if [ "$FINAL_STATUS" = "failed" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'dataset_scene_ingestion pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'dataset_scene_ingestion pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 
