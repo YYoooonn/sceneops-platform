@@ -140,6 +140,18 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("run_alignment", "Run temporal alignment"),
         step("save_aligned_episode", "Save aligned episode artifact"),
     ],
+    JobType.VALIDATE_ALIGNED_EPISODE: [
+        step("resolve_aligned_artifact", "Resolve aligned episode artifact"),
+        step("verify_aligned_checksum", "Verify aligned artifact checksum"),
+        step("run_validation", "Run structural validation"),
+        step("save_validation_report", "Save validation report"),
+    ],
+    JobType.PROFILE_ALIGNED_EPISODE: [
+        step("resolve_aligned_artifact", "Resolve aligned episode artifact"),
+        step("verify_aligned_checksum", "Verify aligned artifact checksum"),
+        step("run_profiling", "Run descriptive profiling"),
+        step("save_profile_report", "Save profile report"),
+    ],
 }
 
 

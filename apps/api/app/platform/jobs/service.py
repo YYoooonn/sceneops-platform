@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.common.ids import generate_job_event_id, generate_job_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
@@ -62,6 +63,11 @@ class JobService:
             raw_params = await self._resolve_align_episode_source(
                 raw_params, dataset_id=dataset_id, dataset_version=dataset_version
             )
+        elif request.type in (
+            JobType.VALIDATE_ALIGNED_EPISODE,
+            JobType.PROFILE_ALIGNED_EPISODE,
+        ):
+            raw_params = await self._resolve_aligned_artifact_checksum(raw_params)
 
         validated_params = parse_job_params(request.type, raw_params)
         validated_params_dump = validated_params.model_dump()
@@ -175,6 +181,49 @@ class JobService:
             **raw_params,
             "source_artifact_id": record.artifact_id,
             "source_manifest_sha256": record.checksum.removeprefix("sha256:"),
+        }
+
+    async def _resolve_aligned_artifact_checksum(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """SceneOps V2 Request 2.4 §33/§34: shared by
+        VALIDATE_ALIGNED_EPISODE/PROFILE_ALIGNED_EPISODE.
+
+        Unlike ALIGN_EPISODE's source resolution, aligned_artifact_id is
+        always required and caller-pinned (there is no sensible "current
+        aligned artifact" for one episode, which can legitimately have many).
+        Resolving its checksum is therefore a simple 1:1 ArtifactRecord.get()
+        lookup, not a "latest" selection -- no ambiguity, no ordering
+        assumption. A caller-supplied aligned_artifact_checksum is left
+        untouched, matching ALIGN_EPISODE's pin-always-wins behavior.
+        """
+        if raw_params.get("aligned_artifact_checksum") is not None:
+            return raw_params
+
+        aligned_artifact_id = raw_params.get("aligned_artifact_id")
+        if not aligned_artifact_id:
+            # Let normal Pydantic param validation raise its own clear
+            # "aligned_artifact_id required" error.
+            return raw_params
+
+        record = await self._artifact_repository.get(aligned_artifact_id)
+        if record is None or record.kind != ArtifactKind.ALIGNED_EPISODE_MANIFEST.value:
+            raise ValueError(
+                f"aligned_artifact_id={aligned_artifact_id!r} is not a valid "
+                "ALIGNED_EPISODE_MANIFEST artifact — align_episode must run "
+                "before validation/profiling can be dispatched."
+            )
+        if record.checksum is None:
+            raise ValueError(
+                f"ALIGNED_EPISODE_MANIFEST artifact {aligned_artifact_id!r} has "
+                "no checksum -- this should not happen for any artifact "
+                "written by align_episode; re-run align_episode to produce a "
+                "checksummed artifact."
+            )
+
+        return {
+            **raw_params,
+            "aligned_artifact_checksum": record.checksum.removeprefix("sha256:"),
         }
 
     async def list_jobs(

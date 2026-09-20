@@ -179,6 +179,7 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
             episode_id=params.episode_id,
             aligned_artifact_id=aligned_artifact_id,
             aligned_artifact_uri=write_result.uri,
+            aligned_artifact_checksum=write_result.checksum,
             source_artifact_id=source_artifact_id,
             source_manifest_sha256=computed_sha256,
             source_checksum_verified=source_checksum_verified,

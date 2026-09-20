@@ -34,22 +34,42 @@ from .persistence import (
     EpisodeSourceRevision,
     alignment_key,
 )
+from .profiling import (
+    ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
+    AlignedEpisodeProfile,
+    AlignedEpisodeProfiler,
+    ChannelCoverageProfile,
+)
 from .schemas import AlignedEpisode, AlignedSignal, AlignedValue, LearningStep
 from .semantics import ALIGNMENT_SEMANTICS_VERSION
 from .timeline import Timeline, generate_fixed_frequency_timeline, quantize_period_us
+from .validation import (
+    ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION,
+    AlignedEpisodeValidationIssue,
+    AlignedEpisodeValidationReport,
+    AlignedEpisodeValidator,
+)
 
 __all__ = [
     "ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION",
+    "ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION",
+    "ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION",
     "ALIGNMENT_SEMANTICS_VERSION",
     "MCAP_LOG_TIME_CLOCK",
     "AlignedEpisode",
     "AlignedEpisodeArtifact",
+    "AlignedEpisodeProfile",
+    "AlignedEpisodeProfiler",
+    "AlignedEpisodeValidationIssue",
+    "AlignedEpisodeValidationReport",
+    "AlignedEpisodeValidator",
     "AlignedSignal",
     "AlignedSignalStatus",
     "AlignedValue",
     "AlignedValueKind",
     "AlignmentError",
     "AssociationPolicy",
+    "ChannelCoverageProfile",
     "ChannelNamespace",
     "ChannelPolicyConfig",
     "ChannelSample",

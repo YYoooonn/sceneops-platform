@@ -5,10 +5,12 @@ from .build_scene_index import BuildSceneIndexJobHandler
 from .build_scenes import BuildScenesJobHandler
 from .export_analytics_snapshot import ExportAnalyticsSnapshotJobHandler
 from .ingest_scenes import IngestScenesJobHandler
+from .profile_aligned_episode import ProfileAlignedEpisodeJobHandler
 from .profile_episode import ProfileEpisodeJobHandler
 from .profile_scene import ProfileSceneJobHandler
 from .register_episode import RegisterEpisodeJobHandler
 from .register_scene import RegisterSceneJobHandler
+from .validate_aligned_episode import ValidateAlignedEpisodeJobHandler
 from .validate_episode import ValidateEpisodeJobHandler
 from .validate_scene import ValidateSceneJobHandler
 
@@ -26,4 +28,6 @@ __all__ = [
     "RegisterEpisodeJobHandler",
     "ValidateEpisodeJobHandler",
     "ProfileEpisodeJobHandler",
+    "ValidateAlignedEpisodeJobHandler",
+    "ProfileAlignedEpisodeJobHandler",
 ]

@@ -31,6 +31,11 @@ class ArtifactKind(StrEnum):
     # SceneOps V2 Request 2.3: persisted AlignedEpisodeArtifact envelope.
     # Owner stays ArtifactOwnerType.EPISODE — no new owner type needed.
     ALIGNED_EPISODE_MANIFEST = "aligned_episode_manifest"
+    # SceneOps V2 Request 2.4: structural validation / descriptive profile
+    # reports over one ALIGNED_EPISODE_MANIFEST revision. Owner stays
+    # ArtifactOwnerType.EPISODE, same as the two kinds above.
+    ALIGNED_EPISODE_VALIDATION_REPORT = "aligned_episode_validation_report"
+    ALIGNED_EPISODE_PROFILE_REPORT = "aligned_episode_profile_report"
 
     # Dataset-level
     DATASET_MANIFEST = "dataset_manifest"

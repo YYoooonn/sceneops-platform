@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from sceneops_core.common.schemas import SceneOpsBaseModel
 from sceneops_core.episodes.alignment import AlignedEpisodeArtifact
 from sceneops_core.episodes.schemas import EpisodeManifest
 from sceneops_storage import ArtifactStore
@@ -163,6 +164,72 @@ class EpisodeArtifactStore:
             alignment_key=alignment_key,
         )
         data = _canonical_bytes(artifact.to_artifact_dict())
+        await self.artifact_store.write_bytes(uri, data)
+        return EpisodeArtifactWriteResult(
+            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
+        )
+
+    async def read_aligned_episode_bytes(self, uri: str) -> bytes | None:
+        """Raw bytes, for callers (VALIDATE_ALIGNED_EPISODE/
+        PROFILE_ALIGNED_EPISODE) that need to hash the exact aligned-artifact
+        content before parsing it -- SceneOps V2 Request 2.4 §37, mirroring
+        read_episode_manifest_bytes's role for Request 2.3."""
+        if not await self.artifact_store.exists(uri):
+            return None
+        return await self.artifact_store.read_bytes(uri)
+
+    # ------------------------------------------------------------------
+    # Aligned episode analysis report I/O (SceneOps V2 Request 2.4)
+    # ------------------------------------------------------------------
+
+    def aligned_episode_report_uri(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        episode_id: str,
+        source_manifest_sha256: str,
+        alignment_key: str,
+        report_kind: str,
+    ) -> str:
+        """Sibling of the aligned artifact's own URI -- same two identity
+        segments (source hash, alignment key), suffixed by report_kind
+        ("validation" | "profile") rather than nested under the aligned
+        artifact's own ``.json`` file, so a listing of the ``aligned/{hash}/``
+        prefix shows the artifact and its analyses grouped together by name
+        (SceneOps V2 Request 2.4 §30)."""
+        version_root = self._version_root_uri(
+            dataset_id=dataset_id, dataset_version=dataset_version
+        )
+        return self.artifact_store.join_uri(
+            version_root,
+            "episodes",
+            episode_id,
+            "aligned",
+            source_manifest_sha256[:16],
+            f"{alignment_key[:16]}.{report_kind}.json",
+        )
+
+    async def write_aligned_episode_report(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        episode_id: str,
+        source_manifest_sha256: str,
+        alignment_key: str,
+        report_kind: str,
+        report: SceneOpsBaseModel,
+    ) -> EpisodeArtifactWriteResult:
+        uri = self.aligned_episode_report_uri(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            episode_id=episode_id,
+            source_manifest_sha256=source_manifest_sha256,
+            alignment_key=alignment_key,
+            report_kind=report_kind,
+        )
+        data = _canonical_bytes(report.to_artifact_dict())
         await self.artifact_store.write_bytes(uri, data)
         return EpisodeArtifactWriteResult(
             uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)

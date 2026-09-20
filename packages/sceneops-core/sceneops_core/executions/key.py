@@ -8,13 +8,17 @@ from sceneops_core.jobs.schemas.enums import JobType
 
 # JobType values whose execution identity must exclude one or more keys
 # present in their full/normalized params dict -- SceneOps V2 Request 2.3A
-# §16/§31. Currently only ALIGN_EPISODE: source_artifact_id is lineage/
-# provenance metadata (which producer execution wrote the bytes), not
-# content identity -- two producer executions can write byte-identical
-# EpisodeManifest content under different random artifact_ids and must
-# still resolve to the same execution identity (Request 2.3 §18).
+# §16/§31. In every case here, an *_artifact_id field is lineage/provenance
+# metadata (which producer execution wrote the bytes), not content identity
+# -- two producer executions can write byte-identical content under
+# different random artifact_ids (ALIGN_EPISODE re-runs at the same
+# deterministic URI, Request 2.3 §18; the same is equally true of
+# VALIDATE_ALIGNED_EPISODE/PROFILE_ALIGNED_EPISODE's aligned_artifact_id,
+# Request 2.4 §30) and must still resolve to the same execution identity.
 _EXECUTION_KEY_EXCLUDED_PARAMS: dict[JobType, frozenset[str]] = {
     JobType.ALIGN_EPISODE: frozenset({"source_artifact_id"}),
+    JobType.VALIDATE_ALIGNED_EPISODE: frozenset({"aligned_artifact_id"}),
+    JobType.PROFILE_ALIGNED_EPISODE: frozenset({"aligned_artifact_id"}),
 }
 
 

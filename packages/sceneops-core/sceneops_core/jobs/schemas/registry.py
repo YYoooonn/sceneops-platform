@@ -19,11 +19,13 @@ from .params import (
     MineScenariosJobParams,
     IngestRobotStatesJobParams,
     PredictDetectionJobParams,
+    ProfileAlignedEpisodeJobParams,
     ProfileEpisodeJobParams,
     ProfileSceneJobParams,
     RegisterEpisodeJobParams,
     RegisterSceneJobParams,
     ScoreScenarioReadinessJobParams,
+    ValidateAlignedEpisodeJobParams,
     ValidateEpisodeJobParams,
     ValidateSceneJobParams,
 )
@@ -41,11 +43,13 @@ from .results import (
     IngestScenesJobResult,
     MineScenariosJobResult,
     PredictDetectionJobResult,
+    ProfileAlignedEpisodeJobResult,
     ProfileEpisodeJobResult,
     ProfileSceneJobResult,
     RegisterEpisodeJobResult,
     RegisterSceneJobResult,
     ScoreScenarioReadinessJobResult,
+    ValidateAlignedEpisodeJobResult,
     ValidateEpisodeJobResult,
     ValidateSceneJobResult,
 )
@@ -73,6 +77,8 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.VALIDATE_EPISODE: ValidateEpisodeJobParams,
     JobType.PROFILE_EPISODE: ProfileEpisodeJobParams,
     JobType.ALIGN_EPISODE: AlignEpisodeJobParams,
+    JobType.VALIDATE_ALIGNED_EPISODE: ValidateAlignedEpisodeJobParams,
+    JobType.PROFILE_ALIGNED_EPISODE: ProfileAlignedEpisodeJobParams,
 }
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
@@ -95,6 +101,8 @@ JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.VALIDATE_EPISODE: ValidateEpisodeJobResult,
     JobType.PROFILE_EPISODE: ProfileEpisodeJobResult,
     JobType.ALIGN_EPISODE: AlignEpisodeJobResult,
+    JobType.VALIDATE_ALIGNED_EPISODE: ValidateAlignedEpisodeJobResult,
+    JobType.PROFILE_ALIGNED_EPISODE: ProfileAlignedEpisodeJobResult,
 }
 
 

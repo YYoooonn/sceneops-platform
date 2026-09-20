@@ -132,3 +132,37 @@ class AlignEpisodeJobParams(BaseJobParams):
                 "provided to pin a source revision, or both left unset"
             )
         return self
+
+
+class _PinnedAlignedArtifactJobParams(BaseJobParams):
+    """Shared shape for VALIDATE_ALIGNED_EPISODE/PROFILE_ALIGNED_EPISODE
+    (SceneOps V2 Request 2.4 §33/§34).
+
+    Unlike ALIGN_EPISODE's source resolution, this is always explicitly
+    pinned -- one Episode can legitimately have many ALIGNED_EPISODE_MANIFEST
+    artifacts (different source revisions, different configs, different
+    semantics versions), so there is no sensible "current aligned artifact"
+    to resolve unpinned. aligned_artifact_id is required; its checksum is
+    resolved by a simple 1:1 ArtifactRecord.get() lookup (not a "latest"
+    selection) before execution-key computation, reusing the Request 2.3A
+    lesson without reintroducing its ambiguity.
+    """
+
+    episode_id: str
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    aligned_artifact_id: str
+    aligned_artifact_checksum: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class ValidateAlignedEpisodeJobParams(_PinnedAlignedArtifactJobParams):
+    """AlignedEpisodeArtifact -> structural ValidationReport (SceneOps V2
+    Request 2.4)."""
+
+
+class ProfileAlignedEpisodeJobParams(_PinnedAlignedArtifactJobParams):
+    """AlignedEpisodeArtifact -> descriptive AlignedEpisodeProfile (SceneOps
+    V2 Request 2.4)."""
