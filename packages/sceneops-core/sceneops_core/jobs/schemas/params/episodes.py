@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from sceneops_core.common.schemas import JsonDict
+from sceneops_core.episodes.alignment import (
+    TemporalAlignmentConfig,
+    TemporalSourceContext,
+)
 from sceneops_core.episodes.schemas import EpisodeSegmentationConfig
 
 from .base import BaseJobParams
@@ -83,3 +87,48 @@ class ProfileEpisodeJobParams(BaseJobParams):
     dataset_version: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class AlignEpisodeJobParams(BaseJobParams):
+    """Episode + explicit TemporalAlignmentConfig -> AlignedEpisodeArtifact
+    (SceneOps V2 Request 2.3).
+
+    The source EPISODE_MANIFEST ArtifactRecord is resolved internally at
+    execution time (latest by created_at, matching this platform's existing
+    "latest wins" convention) unless source_artifact_id/
+    source_manifest_sha256 are both pinned explicitly (Request 2.3 §7/§20).
+
+    Pinning is also the only way for a specific source revision to
+    participate in this Job's execution-key dedup identity (Request 2.3
+    §17): the API computes the execution key from these params at
+    Job-creation time, before the worker has read any source bytes, so an
+    unpinned dispatch dedups at (episode_id, alignment_config,
+    alignment_semantics_version) granularity only -- the same idempotency
+    behavior every other job type already has, and force=true is available
+    for a caller that specifically needs a fresh execution.
+    """
+
+    episode_id: str
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    alignment_config: TemporalAlignmentConfig
+    source_context: TemporalSourceContext | None = None
+
+    source_artifact_id: str | None = None
+    source_manifest_sha256: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_pin_pair(self) -> AlignEpisodeJobParams:
+        pinned = (
+            self.source_artifact_id is not None,
+            self.source_manifest_sha256 is not None,
+        )
+        if any(pinned) and not all(pinned):
+            raise ValueError(
+                "source_artifact_id and source_manifest_sha256 must both be "
+                "provided to pin a source revision, or both left unset"
+            )
+        return self

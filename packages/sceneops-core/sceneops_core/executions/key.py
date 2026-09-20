@@ -4,6 +4,36 @@ import hashlib
 import json
 from typing import Any
 
+from sceneops_core.jobs.schemas.enums import JobType
+
+# JobType values whose execution identity must exclude one or more keys
+# present in their full/normalized params dict -- SceneOps V2 Request 2.3A
+# §16/§31. Currently only ALIGN_EPISODE: source_artifact_id is lineage/
+# provenance metadata (which producer execution wrote the bytes), not
+# content identity -- two producer executions can write byte-identical
+# EpisodeManifest content under different random artifact_ids and must
+# still resolve to the same execution identity (Request 2.3 §18).
+_EXECUTION_KEY_EXCLUDED_PARAMS: dict[JobType, frozenset[str]] = {
+    JobType.ALIGN_EPISODE: frozenset({"source_artifact_id"}),
+}
+
+
+def params_for_execution_key(
+    job_type: JobType, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Generic JobType-dispatched transform from "full normalized job
+    params" to "the subset that defines execution identity". Default is a
+    no-op (identity) for every JobType -- only ALIGN_EPISODE currently
+    excludes anything. Keeps compute_execution_key() itself a pure hash over
+    whatever params dict it's given; this function is where the "which
+    params are semantic identity vs. incidental provenance" judgment call
+    lives (Request 2.3A §12/§31).
+    """
+    excluded = _EXECUTION_KEY_EXCLUDED_PARAMS.get(job_type)
+    if not excluded:
+        return params
+    return {k: v for k, v in params.items() if k not in excluded}
+
 
 def compute_execution_key(
     *,

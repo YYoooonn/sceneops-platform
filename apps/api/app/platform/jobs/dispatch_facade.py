@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from sceneops_core.executions.schemas import ExecutionDispatchResult
+from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.executions import PostgresExecutionRecordRepository
 from sceneops_db.postgres.jobs import PostgresJobEventRepository, PostgresJobRepository
 
@@ -34,6 +35,7 @@ class JobDispatchFacade:
             job_service = JobService(
                 repository=PostgresJobRepository(session),
                 event_repository=PostgresJobEventRepository(session),
+                artifact_repository=PostgresArtifactRefRepository(session),
                 default_dataset_id=self._default_dataset_id,
                 default_dataset_version=self._default_dataset_version,
             )

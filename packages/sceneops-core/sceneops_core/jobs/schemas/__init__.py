@@ -2,6 +2,7 @@ from .enums import JobEventType, JobStatus, JobType, JobStepStatus, JobEventLeve
 from .events import JobEvent
 from .manifests import JobManifest
 from .params import (
+    AlignEpisodeJobParams,
     AutoLabelDatasetJobParams,
     AutoLabelSceneJobParams,
     BaseJobParams,
@@ -36,6 +37,7 @@ from .registry import (
 )
 from .requests import CreateJobRequest
 from .results import (
+    AlignEpisodeJobResult,
     AutoLabelDatasetJobResult,
     AutoLabelSceneJobResult,
     BaseJobResult,
@@ -102,6 +104,7 @@ __all__ = [
     "RegisterEpisodeJobParams",
     "ValidateEpisodeJobParams",
     "ProfileEpisodeJobParams",
+    "AlignEpisodeJobParams",
     "BaseJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
@@ -127,6 +130,7 @@ __all__ = [
     "RegisterEpisodeJobResult",
     "ValidateEpisodeJobResult",
     "ProfileEpisodeJobResult",
+    "AlignEpisodeJobResult",
     "JOB_PARAM_SCHEMA_BY_TYPE",
     "JOB_RESULT_SCHEMA_BY_TYPE",
     "parse_job_params",

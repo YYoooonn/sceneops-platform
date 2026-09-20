@@ -29,6 +29,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.episodes.artifacts import EpisodeArtifactWriteResult
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.build_episodes import BuildEpisodesJobHandler
 
@@ -63,7 +64,11 @@ def _make_context() -> WorkerContext:
         return_value=DatasetVersionRecord(dataset_id="d1", version="v1")
     )
     context.episode_artifact_store.write_episode_manifest = AsyncMock(
-        side_effect=lambda **kw: f"mem://episodes/{kw['episode_id']}.json"
+        side_effect=lambda **kw: EpisodeArtifactWriteResult(
+            uri=f"mem://episodes/{kw['episode_id']}.json",
+            checksum="sha256:deadbeef",
+            size_bytes=123,
+        )
     )
     context.artifact_record_store.create = AsyncMock()
     context.dataset_store.update_episode_summary = AsyncMock()
@@ -123,6 +128,13 @@ class TestBuildEpisodesDomainIsolation:
         # Only EPISODE-owned artifacts were registered.
         for call in context.artifact_record_store.create.await_args_list:
             assert call.kwargs["owner_type"] == ArtifactOwnerType.EPISODE
+
+        # SceneOps V2 Request 2.3 §3/§34: checksum/size_bytes populated on
+        # the EPISODE_MANIFEST ArtifactRecord from the exact bytes written.
+        for call in context.artifact_record_store.create.await_args_list:
+            ref = call.kwargs["ref"]
+            assert ref.checksum == "sha256:deadbeef"
+            assert ref.size_bytes == 123
 
         context.dataset_store.update_episode_summary.assert_awaited_once()
         context.commit.assert_awaited_once()

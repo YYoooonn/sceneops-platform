@@ -18,7 +18,10 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.robots.schemas import RobotRunRecord, RobotRunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
-from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
+from sceneops_worker.episodes.artifacts import (
+    EpisodeArtifactStore,
+    EpisodeArtifactWriteResult,
+)
 from sceneops_worker.episodes.building import (
     EpisodeBuildResult,
     EpisodeBuilder,
@@ -128,13 +131,10 @@ class BuildEpisodesJobHandler(
             strategy=params.segmentation.strategy,
         )
 
-        episode_manifest_uris = await self._write_episode_manifests(
-            execution, build_result
-        )
+        write_results = await self._write_episode_manifests(execution, build_result)
+        episode_manifest_uris = [r.uri for r in write_results]
 
-        await self._register_episode_artifacts(
-            execution, build_result, episode_manifest_uris
-        )
+        await self._register_episode_artifacts(execution, build_result, write_results)
 
         await self._update_dataset_version_episode_count(execution, build_result)
 
@@ -229,33 +229,39 @@ class BuildEpisodesJobHandler(
     async def _write_episode_manifests(
         execution: BuildEpisodesExecution,
         build_result: EpisodeBuildResult,
-    ) -> list[str]:
-        uris: list[str] = []
+    ) -> list[EpisodeArtifactWriteResult]:
+        results: list[EpisodeArtifactWriteResult] = []
         for manifest in build_result.episodes:
-            uri = await execution.episode_artifact_store.write_episode_manifest(
+            result = await execution.episode_artifact_store.write_episode_manifest(
                 dataset_id=execution.dataset_version_record.dataset_id,
                 dataset_version=execution.dataset_version_record.version,
                 episode_id=manifest.episode_id,
                 manifest=manifest,
             )
-            uris.append(uri)
-        return uris
+            results.append(result)
+        return results
 
     async def _register_episode_artifacts(
         self,
         execution: BuildEpisodesExecution,
         build_result: EpisodeBuildResult,
-        episode_manifest_uris: list[str],
+        write_results: list[EpisodeArtifactWriteResult],
     ) -> None:
+        # SceneOps V2 Request 2.3 §3: checksum/size_bytes now populated for
+        # every EPISODE_MANIFEST ArtifactRecord, computed over the exact
+        # bytes physically written (EpisodeArtifactStore._canonical_bytes),
+        # not an independently re-serialized object.
         context = execution.context
         version_record = execution.dataset_version_record
-        for manifest, uri in zip(build_result.episodes, episode_manifest_uris):
+        for manifest, write_result in zip(build_result.episodes, write_results):
             await context.artifact_record_store.create(
                 artifact_id=generate_artifact_id(),
                 ref=ArtifactRef(
                     kind=ArtifactKind.EPISODE_MANIFEST,
-                    uri=uri,
+                    uri=write_result.uri,
                     media_type="application/json",
+                    checksum=write_result.checksum,
+                    size_bytes=write_result.size_bytes,
                 ),
                 owner_type=ArtifactOwnerType.EPISODE,
                 owner_id=manifest.episode_id,

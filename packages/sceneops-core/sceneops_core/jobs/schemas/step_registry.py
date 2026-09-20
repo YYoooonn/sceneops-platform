@@ -134,6 +134,12 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("profile_episode", "Profile episode"),
         step("save_profile_report", "Save profile report"),
     ],
+    JobType.ALIGN_EPISODE: [
+        step("resolve_source_manifest", "Resolve source episode manifest"),
+        step("verify_source_checksum", "Verify source manifest checksum"),
+        step("run_alignment", "Run temporal alignment"),
+        step("save_aligned_episode", "Save aligned episode artifact"),
+    ],
 }
 
 

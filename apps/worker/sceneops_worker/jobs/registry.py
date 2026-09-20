@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
 from sceneops_worker.jobs.dataset import (
+    AlignEpisodeJobHandler,
     BuildDatasetManifestJobHandler,
     BuildEpisodesJobHandler,
     BuildSceneIndexJobHandler,
@@ -76,5 +77,6 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
             RegisterEpisodeJobHandler(),
             ValidateEpisodeJobHandler(),
             ProfileEpisodeJobHandler(),
+            AlignEpisodeJobHandler(),
         ]
     )

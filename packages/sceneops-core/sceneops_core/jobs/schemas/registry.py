@@ -6,6 +6,7 @@ from sceneops_core.common.schemas import JsonDict
 
 from .enums import JobType
 from .params import (
+    AlignEpisodeJobParams,
     BaseJobParams,
     BuildDatasetManifestJobParams,
     BuildEpisodesJobParams,
@@ -27,6 +28,7 @@ from .params import (
     ValidateSceneJobParams,
 )
 from .results import (
+    AlignEpisodeJobResult,
     BaseJobResult,
     BuildDatasetManifestJobResult,
     BuildEpisodesJobResult,
@@ -70,6 +72,7 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.REGISTER_EPISODE: RegisterEpisodeJobParams,
     JobType.VALIDATE_EPISODE: ValidateEpisodeJobParams,
     JobType.PROFILE_EPISODE: ProfileEpisodeJobParams,
+    JobType.ALIGN_EPISODE: AlignEpisodeJobParams,
 }
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
@@ -91,6 +94,7 @@ JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.REGISTER_EPISODE: RegisterEpisodeJobResult,
     JobType.VALIDATE_EPISODE: ValidateEpisodeJobResult,
     JobType.PROFILE_EPISODE: ProfileEpisodeJobResult,
+    JobType.ALIGN_EPISODE: AlignEpisodeJobResult,
 }
 
 

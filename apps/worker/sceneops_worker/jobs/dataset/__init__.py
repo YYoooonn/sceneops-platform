@@ -1,3 +1,4 @@
+from .align_episode import AlignEpisodeJobHandler
 from .build_dataset_manifest import BuildDatasetManifestJobHandler
 from .build_episodes import BuildEpisodesJobHandler
 from .build_scene_index import BuildSceneIndexJobHandler
@@ -12,6 +13,7 @@ from .validate_episode import ValidateEpisodeJobHandler
 from .validate_scene import ValidateSceneJobHandler
 
 __all__ = [
+    "AlignEpisodeJobHandler",
     "IngestScenesJobHandler",
     "RegisterSceneJobHandler",
     "ValidateSceneJobHandler",

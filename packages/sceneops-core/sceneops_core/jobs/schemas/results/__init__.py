@@ -20,6 +20,7 @@ from .scene import (
 )
 from .robots import ExportRobotAnalyticsSnapshotJobResult, IngestRobotStatesJobResult
 from .episodes import (
+    AlignEpisodeJobResult,
     BuildEpisodesJobResult,
     ProfileEpisodeJobResult,
     RegisterEpisodeJobResult,
@@ -35,6 +36,7 @@ __all__ = [
     "RegisterEpisodeJobResult",
     "ValidateEpisodeJobResult",
     "ProfileEpisodeJobResult",
+    "AlignEpisodeJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
     "BuildDatasetManifestJobResult",

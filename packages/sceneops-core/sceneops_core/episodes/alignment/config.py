@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from pydantic import Field, model_validator
@@ -99,3 +101,15 @@ def canonical_config_dict(config: TemporalAlignmentConfig) -> dict[str, Any]:
     not compute the execution key itself.
     """
     return config.model_dump(mode="json", exclude_none=True)
+
+
+def alignment_config_hash(config: TemporalAlignmentConfig) -> str:
+    """Deterministic sha256 over the config's canonical representation
+    (SceneOps V2 Request 2.3 §15) -- reuses canonical_config_dict() rather
+    than duplicating serialization/rounding semantics. Same config
+    (regardless of channel_policies insertion order or omitted-vs-explicit-
+    None) always hashes identically; any semantic difference changes it."""
+    canonical = json.dumps(
+        canonical_config_dict(config), sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

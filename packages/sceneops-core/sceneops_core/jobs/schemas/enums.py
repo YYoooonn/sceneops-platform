@@ -53,6 +53,9 @@ class JobType(StrEnum):
     VALIDATE_EPISODE = "validate_episode"
     PROFILE_EPISODE = "profile_episode"
 
+    # ── episode temporal alignment (SceneOps V2 Request 2.3) ──
+    ALIGN_EPISODE = "align_episode"
+
 
 class JobStatus(StrEnum):
     PENDING = "pending"
