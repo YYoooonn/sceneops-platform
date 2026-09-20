@@ -105,6 +105,7 @@ def _context(scene_records: list[SceneRecord]) -> MagicMock:
     ctx.dataset_store = MagicMock()
     ctx.dataset_store.get_version = AsyncMock(return_value=mock_version)
     ctx.dataset_store.save_version = AsyncMock(return_value=mock_version)
+    ctx.dataset_store.update_scene_summary = AsyncMock(return_value=mock_version)
 
     ctx.artifact_record_store = MagicMock()
     ctx.artifact_record_store.create = AsyncMock(return_value=MagicMock())
@@ -240,8 +241,10 @@ async def test_manifest_scene_count_reflects_full_registered_set():
     result = await handler.run(request)
 
     assert result.scene_count == 5
-    # save_version called with scene_count=5
-    ctx.dataset_store.save_version.assert_called_once()
+    # SceneOps V2 Request 05: build_dataset_manifest no longer touches
+    # DatasetVersion.status — only the Scene summary (scene_count=5) updates.
+    ctx.dataset_store.update_scene_summary.assert_called_once()
+    assert ctx.dataset_store.update_scene_summary.call_args.kwargs["scene_count"] == 5
 
 
 async def test_manifest_raises_if_no_registered_scenes():

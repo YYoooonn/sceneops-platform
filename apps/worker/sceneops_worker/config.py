@@ -17,7 +17,7 @@ from sceneops_core.config import (
 
 class WorkerSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[".env.local", ".env"],
         env_prefix="SCENEOPS_WORKER_",
         env_nested_delimiter="__",
         extra="ignore",
@@ -58,6 +58,10 @@ class WorkerSettings(BaseSettings):
     @property
     def model_root_uri(self) -> str:
         return self.artifact.model_root_uri
+
+    @property
+    def analytics_root_uri(self) -> str:
+        return self.artifact.analytics_root_uri
 
     @property
     def raw_source_root_uri(self) -> str:

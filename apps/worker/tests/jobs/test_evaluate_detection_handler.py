@@ -2,7 +2,7 @@
 
 Tests cover:
 - build_job_params validation
-- _require_ready_dataset_version
+- _require_scene_dataset_ready
 - _require_inference_run
 - _validate_inference_run_matches_dataset
 - _extract_evaluation_counts
@@ -19,13 +19,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.datasets.schemas.summaries import SceneVersionSummary
 from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
 from sceneops_core.evaluations.schemas.runs import EvaluationRunRecord
 from sceneops_core.inference.schemas.runs import InferenceRunRecord
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.jobs.schemas.params.detection import EvaluateDetectionJobParams
 from sceneops_worker.jobs.evaluation.evaluate_detection import (
     EvaluateDetectionArtifacts,
     EvaluateDetectionJobHandler,
@@ -43,14 +44,16 @@ EVALUATION_RUN_ID = "eval-001"
 
 
 def _dataset_version(
-    status: DatasetVersionStatus = DatasetVersionStatus.READY,
     manifest_uri: str | None = "file:///manifest.json",
+    should_block_pipeline: bool = False,
 ) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_id=DATASET_ID,
         version=DATASET_VERSION,
-        status=status,
-        manifest_uri=manifest_uri,
+        scene=SceneVersionSummary(
+            manifest_uri=manifest_uri,
+            should_block_pipeline=should_block_pipeline,
+        ),
     )
 
 
@@ -59,6 +62,7 @@ def _inference_run(
     dataset_id: str = DATASET_ID,
     dataset_version: str = DATASET_VERSION,
     prediction_manifest_uri: str | None = "file:///pred_manifest.json",
+    metadata: dict | None = None,
 ) -> InferenceRunRecord:
     return InferenceRunRecord(
         run_id=INFERENCE_RUN_ID,
@@ -69,6 +73,7 @@ def _inference_run(
         inference_backend="grounding_dino",
         status=status,
         prediction_manifest_uri=prediction_manifest_uri,
+        metadata=metadata or {},
     )
 
 
@@ -146,25 +151,24 @@ def test_build_job_params_includes_inference_run_id():
     assert result["inference_run_id"] == "infer-xyz"
 
 
-# ── _require_ready_dataset_version ────────────────────────────────────────────
+# ── _require_scene_dataset_ready ───────────────────────────────────────────────
 
 
 async def test_require_dataset_version_not_found():
     context = MagicMock()
     context.dataset_store.get_version = AsyncMock(return_value=None)
     with pytest.raises(ValueError, match="not found"):
-        await EvaluateDetectionJobHandler._require_ready_dataset_version(
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
             context, DATASET_ID, DATASET_VERSION
         )
 
 
-async def test_require_dataset_version_not_ready():
+async def test_require_dataset_version_no_scene():
     context = MagicMock()
-    context.dataset_store.get_version = AsyncMock(
-        return_value=_dataset_version(status=DatasetVersionStatus.INGESTING)
-    )
-    with pytest.raises(ValueError, match="not usable"):
-        await EvaluateDetectionJobHandler._require_ready_dataset_version(
+    version = DatasetVersionRecord(dataset_id=DATASET_ID, version=DATASET_VERSION)
+    context.dataset_store.get_version = AsyncMock(return_value=version)
+    with pytest.raises(ValueError, match="no Scene data"):
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
             context, DATASET_ID, DATASET_VERSION
         )
 
@@ -175,7 +179,18 @@ async def test_require_dataset_version_no_manifest_uri():
         return_value=_dataset_version(manifest_uri=None)
     )
     with pytest.raises(ValueError, match="manifest_uri"):
-        await EvaluateDetectionJobHandler._require_ready_dataset_version(
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
+            context, DATASET_ID, DATASET_VERSION
+        )
+
+
+async def test_require_dataset_version_blocked_by_validation():
+    context = MagicMock()
+    context.dataset_store.get_version = AsyncMock(
+        return_value=_dataset_version(should_block_pipeline=True)
+    )
+    with pytest.raises(ValueError, match="blocked"):
+        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
             context, DATASET_ID, DATASET_VERSION
         )
 
@@ -183,7 +198,7 @@ async def test_require_dataset_version_no_manifest_uri():
 async def test_require_dataset_version_ok():
     context = MagicMock()
     context.dataset_store.get_version = AsyncMock(return_value=_dataset_version())
-    result = await EvaluateDetectionJobHandler._require_ready_dataset_version(
+    result = await EvaluateDetectionJobHandler._require_scene_dataset_ready(
         context, DATASET_ID, DATASET_VERSION
     )
     assert result.dataset_id == DATASET_ID
@@ -567,3 +582,171 @@ def test_pipeline_output_spec_sources_exist_on_job_result():
             f"Pipeline output spec source={spec.source!r} not found in "
             f"EvaluateDetectionJobResult fields: {sorted(result_fields)}"
         )
+
+
+# ── ScenarioSet lineage and consistency guard ─────────────────────────────────
+
+
+def _params_with_scenario_set(
+    scenario_set_id: str | None,
+) -> EvaluateDetectionJobParams:
+    return EvaluateDetectionJobParams(
+        dataset_id=DATASET_ID,
+        dataset_version=DATASET_VERSION,
+        inference_run_id=INFERENCE_RUN_ID,
+        scenario_set_id=scenario_set_id,
+    )
+
+
+def _inference_run_with_scenario_metadata(scenario_set_id: str) -> InferenceRunRecord:
+    return _inference_run(
+        metadata={
+            "scenario_set_id": scenario_set_id,
+            "scenario_set_uri": "s3://bucket/candidates.json",
+            "scenario_candidate_count": 10,
+            "scenario_selected_count": 10,
+            "scenario_rejected_count": 5,
+        }
+    )
+
+
+# _validate_scenario_set_lineage
+
+
+def test_validate_scenario_set_lineage_no_scenario_set_id_skips():
+    """When params.scenario_set_id is None, the guard is a no-op."""
+    EvaluateDetectionJobHandler._validate_scenario_set_lineage(
+        params=_params_with_scenario_set(None),
+        inference_run=_inference_run(),
+    )
+
+
+def test_validate_scenario_set_lineage_matching_ids_passes():
+    EvaluateDetectionJobHandler._validate_scenario_set_lineage(
+        params=_params_with_scenario_set("scset-001"),
+        inference_run=_inference_run_with_scenario_metadata("scset-001"),
+    )
+
+
+def test_validate_scenario_set_lineage_mismatched_ids_fails():
+    with pytest.raises(ValueError, match="ScenarioSet mismatch"):
+        EvaluateDetectionJobHandler._validate_scenario_set_lineage(
+            params=_params_with_scenario_set("scset-001"),
+            inference_run=_inference_run_with_scenario_metadata("scset-DIFFERENT"),
+        )
+
+
+def test_validate_scenario_set_lineage_missing_inference_metadata_fails():
+    """scenario_set_id requested but inference run has no scenario metadata."""
+    with pytest.raises(ValueError, match="does not contain scenario_set_id"):
+        EvaluateDetectionJobHandler._validate_scenario_set_lineage(
+            params=_params_with_scenario_set("scset-001"),
+            inference_run=_inference_run(),  # no metadata
+        )
+
+
+def test_validate_scenario_set_lineage_no_params_id_but_inference_has_metadata_passes():
+    """If params has no scenario_set_id, never fail even if inference metadata exists."""
+    EvaluateDetectionJobHandler._validate_scenario_set_lineage(
+        params=_params_with_scenario_set(None),
+        inference_run=_inference_run_with_scenario_metadata("scset-001"),
+    )
+
+
+# _build_scenario_set_metadata
+
+
+def test_build_scenario_set_metadata_no_scenario_set_id_returns_empty():
+    result = EvaluateDetectionJobHandler._build_scenario_set_metadata(
+        params=_params_with_scenario_set(None),
+        inference_run=_inference_run(),
+    )
+    assert result == {}
+
+
+def test_build_scenario_set_metadata_mirrors_lineage_fields():
+    params = _params_with_scenario_set("scset-001")
+    inference_run = _inference_run_with_scenario_metadata("scset-001")
+    result = EvaluateDetectionJobHandler._build_scenario_set_metadata(
+        params=params,
+        inference_run=inference_run,
+    )
+    assert result["scenario_set_id"] == "scset-001"
+    assert result["scenario_set_uri"] == "s3://bucket/candidates.json"
+    assert result["scenario_candidate_count"] == 10
+    assert result["scenario_selected_count"] == 10
+    assert result["scenario_rejected_count"] == 5
+
+
+def test_build_scenario_set_metadata_missing_optional_fields_excluded():
+    """If inference metadata lacks uri/count fields, they are not set to None."""
+    params = _params_with_scenario_set("scset-001")
+    inference_run = _inference_run(metadata={"scenario_set_id": "scset-001"})
+    result = EvaluateDetectionJobHandler._build_scenario_set_metadata(
+        params=params,
+        inference_run=inference_run,
+    )
+    assert result["scenario_set_id"] == "scset-001"
+    assert "scenario_set_uri" not in result
+    assert "scenario_candidate_count" not in result
+
+
+# _build_succeeded_record — scenario metadata integration
+
+
+def test_build_succeeded_record_no_scenario_set_preserves_existing_metadata():
+    # Build initial record that already has match_distance_m, as build_initial_record() would.
+    initial = _initial_record().model_copy(
+        update={"metadata": {"match_distance_m": 2.0}}
+    )
+    exe = _execution()
+    exe.params.scenario_set_id = None
+    manifest = _evaluation_manifest()
+    artifacts = EvaluateDetectionArtifacts(
+        evaluation_manifest_uri="file:///eval_manifest.json",
+        metrics_uri="file:///metrics.json",
+    )
+    counts = HANDLER._extract_evaluation_counts(manifest)
+
+    record = HANDLER._build_succeeded_record(
+        initial_record=initial,
+        execution=exe,
+        evaluation_manifest=manifest,
+        artifacts=artifacts,
+        counts=counts,
+    )
+    assert "scenario_set_id" not in (record.metadata or {})
+    # match_distance_m from initial_record.metadata is preserved
+    assert record.metadata.get("match_distance_m") == 2.0
+
+
+def test_build_succeeded_record_with_scenario_set_includes_lineage():
+    # Build initial record that already has match_distance_m, as build_initial_record() would.
+    initial = _initial_record().model_copy(
+        update={"metadata": {"match_distance_m": 2.0}}
+    )
+    inference_run = _inference_run_with_scenario_metadata("scset-001")
+    exe = _execution(inference_run=inference_run)
+    exe.params.scenario_set_id = "scset-001"
+    manifest = _evaluation_manifest()
+    artifacts = EvaluateDetectionArtifacts(
+        evaluation_manifest_uri="file:///eval_manifest.json",
+        metrics_uri="file:///metrics.json",
+    )
+    counts = HANDLER._extract_evaluation_counts(manifest)
+
+    record = HANDLER._build_succeeded_record(
+        initial_record=initial,
+        execution=exe,
+        evaluation_manifest=manifest,
+        artifacts=artifacts,
+        counts=counts,
+    )
+    meta = record.metadata or {}
+    assert meta["scenario_set_id"] == "scset-001"
+    assert meta["scenario_set_uri"] == "s3://bucket/candidates.json"
+    assert meta["scenario_candidate_count"] == 10
+    assert meta["scenario_selected_count"] == 10
+    assert meta["scenario_rejected_count"] == 5
+    # existing match_distance_m from initial_record.metadata is preserved
+    assert meta.get("match_distance_m") == 2.0

@@ -60,7 +60,7 @@ class TestSceneSensorFrameSerialisation:
             channel="CAM_FRONT",
             modality=SensorModality.CAMERA,
             uri="file:///tmp/image.jpg",
-            calibrated_sensor_id="cs-001",
+            calibration_id="cs-001",
             ego_pose_id="ep-001",
             image=_img(),
         )
@@ -68,7 +68,7 @@ class TestSceneSensorFrameSerialisation:
         restored = SceneSensorFrameManifest.model_validate(dumped)
 
         assert restored.frame_id == "f1"
-        assert restored.calibrated_sensor_id == "cs-001"
+        assert restored.calibration_id == "cs-001"
         assert restored.ego_pose_id == "ep-001"
         assert restored.image is not None
         assert restored.image.width == 1600
@@ -86,7 +86,7 @@ class TestSceneSensorFrameSerialisation:
         )
         dumped = frame.model_dump(mode="json")
         restored = SceneSensorFrameManifest.model_validate(dumped)
-        assert restored.calibrated_sensor_id is None
+        assert restored.calibration_id is None
         assert restored.ego_pose_id is None
         assert restored.image is None
 
@@ -99,20 +99,19 @@ class TestSceneSensorFrameSerialisation:
         assert "ego_pose" not in dumped
 
     def test_old_id_fields_from_previous_schema_not_present(self) -> None:
-        """ego_pose_id / calibration_id were on the old SceneSensorFrameManifest
-        before it was refactored.  Now they are correct: calibrated_sensor_id and
-        ego_pose_id are the canonical names."""
+        """calibration_id / ego_pose_id are the canonical names on the current
+        SceneSensorFrameManifest."""
         frame = SceneSensorFrameManifest(
             frame_id="f1",
             sample_id="s1",
             timestamp_us=0,
             channel="CAM_FRONT",
             uri="a",
-            calibrated_sensor_id="cs-abc",
+            calibration_id="cs-abc",
             ego_pose_id="ep-xyz",
         )
         dumped = frame.model_dump(mode="json")
-        assert dumped["calibrated_sensor_id"] == "cs-abc"
+        assert dumped["calibration_id"] == "cs-abc"
         assert dumped["ego_pose_id"] == "ep-xyz"
 
 
@@ -125,7 +124,7 @@ class TestSceneManifestWithRegistriesSerialisation:
             channel="CAM_FRONT",
             modality=SensorModality.CAMERA,
             uri="/img/f1.jpg",
-            calibrated_sensor_id="cs-001",
+            calibration_id="cs-001",
             ego_pose_id="ep-001",
             image=_img(),
         )
@@ -158,7 +157,7 @@ class TestSceneManifestWithRegistriesSerialisation:
         assert restored.ego_poses[0].timestamp_us == 1_200_000
         assert len(restored.samples) == 1
         sf = restored.samples[0].sensor_frames[0]
-        assert sf.calibrated_sensor_id == "cs-001"
+        assert sf.calibration_id == "cs-001"
         assert sf.ego_pose_id == "ep-001"
         assert sf.image is not None
 
@@ -179,41 +178,43 @@ class TestSceneSampleManifestSerialisation:
 
 
 class TestRawSensorFrameSerialisation:
-    def test_raw_frame_with_ids_and_inline_objects_round_trip(self) -> None:
+    def test_raw_frame_with_sequence_and_sensor_id_round_trip(self) -> None:
+        # RawSensorFrameManifest is pre-registry: it carries sequence_id/
+        # sensor_id (raw source identifiers), not resolved calibration/
+        # ego-pose ID refs — those only exist on SceneSensorFrameManifest,
+        # built later once calibration/pose registries are assembled.
         frame = RawSensorFrameManifest(
             frame_id="rf1",
             timestamp_us=1100,
-            source_sample_timestamp_us=1000,
             channel="CAM_FRONT",
             modality=SensorModality.CAMERA,
             uri="samples/CAM_FRONT/img.jpg",
-            calibrated_sensor_id="cs-001",
-            ego_pose_id="ep-001",
-            calibrated_sensor=_cal("cs-001"),
-            ego_pose=_pose("ep-001"),
-            image=_img(),
+            sequence_id="scene-0061",
+            sensor_id="cam-front-token",
+            metadata={"source": "nuscenes"},
         )
         dumped = frame.model_dump(mode="json")
         restored = RawSensorFrameManifest.model_validate(dumped)
 
-        assert restored.calibrated_sensor_id == "cs-001"
-        assert restored.ego_pose_id == "ep-001"
-        assert restored.source_sample_timestamp_us == 1000
+        assert restored.frame_id == "rf1"
         assert restored.timestamp_us == 1100
-        # Inline objects are preserved (used during building)
-        assert restored.calibrated_sensor is not None
-        assert restored.calibrated_sensor.calibration_id == "cs-001"
-        assert restored.ego_pose is not None
-        assert restored.ego_pose.ego_pose_id == "ep-001"
-        assert restored.image is not None
+        assert restored.sequence_id == "scene-0061"
+        assert restored.sensor_id == "cam-front-token"
+        assert restored.metadata == {"source": "nuscenes"}
 
     def test_old_removed_fields_not_in_dump(self) -> None:
         frame = RawSensorFrameManifest(
-            frame_id="rf1", timestamp_us=0, channel="CAM_FRONT", uri="a"
+            frame_id="rf1",
+            timestamp_us=0,
+            channel="CAM_FRONT",
+            modality=SensorModality.CAMERA,
+            uri="a",
         )
         dumped = frame.model_dump(mode="json")
         assert "ego_pose_ref" not in dumped
         assert "calibration_ref" not in dumped
+        assert "calibrated_sensor_id" not in dumped
+        assert "ego_pose_id" not in dumped
 
 
 class TestSensorCalibrationManifestSerialisation:

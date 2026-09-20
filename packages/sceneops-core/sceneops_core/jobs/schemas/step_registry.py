@@ -67,25 +67,6 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("validate_registration", "Validate registration"),
         step("upsert_scene_record", "Upsert scene record"),
     ],
-    JobType.COMPARE_SCENES: [
-        step("load_source_scene", "Load source scene"),
-        step("load_target_scene", "Load target scene"),
-        step("compare_geometry", "Compare geometry", optional=True),
-        step("compare_annotations", "Compare annotations", optional=True),
-        step("compare_trajectories", "Compare trajectories", optional=True),
-        step("save_comparison_report", "Save comparison report"),
-    ],
-    JobType.AUTO_LABEL_SCENE: [
-        step("load_scene_manifest", "Load scene manifest"),
-        step("run_labeler", "Run labeler"),
-        step("merge_labels", "Merge labels"),
-        step("save_labeled_scene", "Save labeled scene"),
-    ],
-    JobType.EXPORT_SCENE_PACKAGE: [
-        step("load_scene_manifest", "Load scene manifest"),
-        step("collect_scene_artifacts", "Collect scene artifacts"),
-        step("write_scene_package", "Write scene package"),
-    ],
     JobType.MINE_SCENARIOS: [
         step("load_dataset_manifest", "Load dataset manifest"),
         step("load_scene_manifests", "Load scene manifests"),
@@ -98,21 +79,11 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("score_scenarios", "Score scenarios"),
         step("save_readiness_report", "Save readiness report"),
     ],
-    JobType.AUTO_LABEL_DATASET: [
-        step("load_dataset_manifest", "Load dataset manifest"),
-        step("run_scene_labeling", "Run scene labeling"),
-        step("build_labeled_dataset_manifest", "Build labeled dataset manifest"),
-    ],
-    JobType.CHECK_DISTRIBUTION: [
-        step("load_dataset_manifest", "Load dataset manifest"),
-        step("compute_distribution", "Compute distribution"),
-        step("compare_distribution", "Compare distribution", optional=True),
-        step("save_distribution_report", "Save distribution report"),
-    ],
-    JobType.EXPORT_DATASET: [
-        step("load_dataset_manifest", "Load dataset manifest"),
-        step("collect_dataset_artifacts", "Collect dataset artifacts"),
-        step("write_dataset_export", "Write dataset export"),
+    JobType.EXPORT_ANALYTICS_SNAPSHOT: [
+        step("load_scene_records", "Load scene records"),
+        step("load_scene_manifests", "Load scene manifests"),
+        step("build_analytics_tables", "Build analytics tables"),
+        step("write_parquet_tables", "Write parquet tables"),
     ],
     JobType.PREDICT_DETECTION: [
         step("load_dataset_manifest", "Load dataset manifest"),
@@ -126,6 +97,42 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("match_detections", "Match detections"),
         step("compute_metrics", "Compute metrics"),
         step("save_metrics", "Save metrics"),
+    ],
+    JobType.INGEST_ROBOT_STATES: [
+        step("load_rosbag", "Load rosbag/MCAP file"),
+        step("extract_robot_states", "Extract robot states"),
+        step("save_robot_states", "Save robot states"),
+    ],
+    JobType.EXPORT_ROBOT_ANALYTICS_SNAPSHOT: [
+        step("load_robot_states", "Load robot states"),
+        step("load_missions", "Load missions"),
+        step("build_analytics_tables", "Build analytics tables"),
+        step("write_parquet_tables", "Write parquet tables"),
+    ],
+    JobType.BUILD_EPISODES: [
+        step("load_rosbag", "Load rosbag/MCAP file"),
+        step("extract_robot_states", "Extract robot states"),
+        step("extract_missions", "Extract missions"),
+        step("segment_episodes", "Segment episodes by mission boundaries"),
+        step("compose_episode_manifests", "Compose episode manifests"),
+        step("save_episode_manifests", "Save episode manifests"),
+    ],
+    JobType.REGISTER_EPISODE: [
+        step("load_episode_manifest", "Load episode manifest"),
+        step("validate_registration", "Validate registration"),
+        step("upsert_episode_record", "Upsert episode record"),
+    ],
+    JobType.VALIDATE_EPISODE: [
+        step("load_episode_record", "Load episode record"),
+        step("load_episode_manifest", "Load episode manifest"),
+        step("validate_episode_structure", "Validate episode structure"),
+        step("save_validation_report", "Save validation report"),
+    ],
+    JobType.PROFILE_EPISODE: [
+        step("load_episode_record", "Load episode record"),
+        step("load_episode_manifest", "Load episode manifest"),
+        step("profile_episode", "Profile episode"),
+        step("save_profile_report", "Save profile report"),
     ],
 }
 

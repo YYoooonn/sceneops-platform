@@ -85,7 +85,7 @@ def _frame(
         channel=channel,
         modality=modality,
         uri=f"/data/{frame_id}",
-        calibrated_sensor_id=cal_id,
+        calibration_id=cal_id,
         ego_pose_id=pose_id,
         image=image,
     )
@@ -357,7 +357,7 @@ class TestModalityBasedDetection:
             channel="SENSOR_RGB",  # non-standard channel name
             modality=SensorModality.CAMERA,  # but modality is CAMERA
             uri="/data/fx",
-            calibrated_sensor_id="cs-1",
+            calibration_id="cs-1",
             ego_pose_id="ep-1",
             image=None,  # triggers missing_image_size
         )
@@ -378,7 +378,7 @@ class TestModalityBasedDetection:
             channel="CAM_WEIRD_LIDAR",  # starts with CAM
             modality=SensorModality.LIDAR,  # but modality is LIDAR
             uri="/data/fx",
-            calibrated_sensor_id="cs-lidar",
+            calibration_id="cs-lidar",
             ego_pose_id="ep-1",
         )
         manifest = _scene(

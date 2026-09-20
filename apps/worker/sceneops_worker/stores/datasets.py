@@ -48,29 +48,52 @@ class DatasetStore:
     ) -> DatasetVersionRecord:
         return await self._versions.upsert(version)
 
-    async def update_quality_cache(
+    async def update_scene_summary(
         self,
         *,
         dataset_id: str,
         version: str,
+        scene_count: int | None = None,
+        sample_count: int | None = None,
+        frame_count: int | None = None,
+        channels: list[str] | None = None,
+        required_channels: list[str] | None = None,
+        manifest_uri: str | None = None,
+        raw_source_root_uri: str | None = None,
         latest_validation_run_id: str | None = None,
         validation_status: DatasetValidationStatus | None = None,
         should_block_pipeline: bool | None = None,
         validation_report_uri: str | None = None,
         latest_profile_run_id: str | None = None,
         profile_report_uri: str | None = None,
-        latest_distribution_run_id: str | None = None,
-        distribution_report_uri: str | None = None,
     ) -> DatasetVersionRecord:
-        return await self._versions.update_quality_cache(
+        return await self._versions.update_scene_summary(
             dataset_id=dataset_id,
             version=version,
+            scene_count=scene_count,
+            sample_count=sample_count,
+            frame_count=frame_count,
+            channels=channels,
+            required_channels=required_channels,
+            manifest_uri=manifest_uri,
+            raw_source_root_uri=raw_source_root_uri,
             latest_validation_run_id=latest_validation_run_id,
             validation_status=validation_status,
             should_block_pipeline=should_block_pipeline,
             validation_report_uri=validation_report_uri,
             latest_profile_run_id=latest_profile_run_id,
             profile_report_uri=profile_report_uri,
-            latest_distribution_run_id=latest_distribution_run_id,
-            distribution_report_uri=distribution_report_uri,
+        )
+
+    async def update_episode_summary(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
+        episode_count: int | None = None,
+    ) -> DatasetVersionRecord:
+        return await self._versions.update_episode_summary(
+            dataset_id=dataset_id,
+            version=version,
+            episode_count=episode_count,
         )

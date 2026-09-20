@@ -78,9 +78,7 @@ class SceneModel(Base):
 class SceneRunRecordModel(Base):
     """Unified run record for scene-scoped run types.
 
-    Covers: scene_validation, scene_profile, scene_comparison,
-    scene_reconstruction, scene_package_export.
-    Use ``type`` to discriminate.
+    Covers: scene_validation, scene_profile. Use ``type`` to discriminate.
     """
 
     __tablename__ = "scene_run_records"
@@ -94,13 +92,6 @@ class SceneRunRecordModel(Base):
 
     dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     dataset_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
-
-    source_scene_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    target_scene_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-
-    raw_log_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    raw_log_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-    raw_log_frame_index_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_task_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -116,8 +107,6 @@ class SceneRunRecordModel(Base):
     manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     report_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-    package_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-    world_state_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     summary: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
@@ -164,9 +153,6 @@ Index(
     SceneRunRecordModel.dataset_id,
     SceneRunRecordModel.dataset_version,
 )
-Index("ix_scene_run_records_source_scene_id", SceneRunRecordModel.source_scene_id)
-Index("ix_scene_run_records_target_scene_id", SceneRunRecordModel.target_scene_id)
-Index("ix_scene_run_records_raw_log_id", SceneRunRecordModel.raw_log_id)
 Index("ix_scene_run_records_job_id", SceneRunRecordModel.job_id)
 Index("ix_scene_run_records_pipeline_run_id", SceneRunRecordModel.pipeline_run_id)
 Index("ix_scene_run_records_created_at", SceneRunRecordModel.created_at)

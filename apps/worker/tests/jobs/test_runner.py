@@ -67,6 +67,17 @@ def _make_context(job: JobManifest) -> MagicMock:
     ctx.job_store = MagicMock()
     ctx.job_store.get = AsyncMock(return_value=job)
     ctx.job_store.save = AsyncMock(side_effect=lambda j: j)
+
+    async def _claim_for_run(
+        job_id: str, *, worker_id: str, runnable_statuses: set[JobStatus]
+    ) -> JobManifest | None:
+        # Mirrors the real repository contract: a claim only succeeds when the
+        # job's current status is one of the runnable statuses; otherwise the
+        # runner falls back to _load_job()/_validate_runnable() for the
+        # specific "already succeeded/running/cancelled" error.
+        return job if job.status in runnable_statuses else None
+
+    ctx.job_store.claim_for_run = AsyncMock(side_effect=_claim_for_run)
     ctx.job_event_store = MagicMock()
     ctx.job_event_store.append = AsyncMock()
     return ctx
@@ -291,6 +302,9 @@ class TestJobRunnerValidation:
 
     async def test_job_not_found_raises(self) -> None:
         ctx = _make_context(_make_job())
+        # No job exists at all: claim fails (no matching row) and the
+        # fallback lookup also finds nothing.
+        ctx.job_store.claim_for_run = AsyncMock(return_value=None)
         ctx.job_store.get = AsyncMock(return_value=None)
         runner = JobRunner(ctx, handler_registry=MagicMock(spec=JobHandlerRegistry))
 

@@ -35,10 +35,7 @@ from .world_state import (
     WorldStateManifest,
 )
 from .runs import (
-    SceneComparisonRunRecord,
-    ScenePackageExportRunRecord,
     SceneProfileRunRecord,
-    SceneReconstructionRunRecord,
     SceneValidationRunRecord,
 )
 
@@ -72,9 +69,6 @@ __all__ = [
     "WorldStateManifest",
     "BuildScenesRequest",
     "GetSceneRequest",
-    "SceneComparisonRunRecord",
-    "ScenePackageExportRunRecord",
     "SceneProfileRunRecord",
-    "SceneReconstructionRunRecord",
     "SceneValidationRunRecord",
 ]

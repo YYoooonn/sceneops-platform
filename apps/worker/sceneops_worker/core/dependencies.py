@@ -2,23 +2,26 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sceneops_analytics import AnalyticsTableWriter
 from sceneops_storage import ArtifactStore, create_artifact_store
 
 from sceneops_worker.config import WorkerSettings, get_settings
 from sceneops_worker.core.context import RunStores, WorkerContext
 from sceneops_worker.datasets.artifacts import DatasetArtifactStore
+from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 from sceneops_worker.stores.datasets import DatasetStore
+from sceneops_worker.stores.episodes import EpisodeStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
+from sceneops_worker.stores.robots import RobotStore
 from sceneops_worker.stores.runs import (
-    DatasetRunStore,
+    EpisodeRunStore,
     EvaluationRunStore,
     InferenceRunStore,
-    LabelRunStore,
     SceneRunStore,
 )
 from sceneops_worker.stores.scenarios import ScenarioStore
@@ -68,24 +71,33 @@ def create_worker_context(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,
         ),
+        episode_artifact_store=EpisodeArtifactStore(
+            artifact_store=artifact_store,
+            dataset_root_uri=settings.dataset_root_uri,
+        ),
         run_artifact_store=RunArtifactStore(
             artifact_store=artifact_store,
             runs_root_uri=settings.run_root_uri,
+        ),
+        analytics_writer=AnalyticsTableWriter(
+            artifact_store=artifact_store,
+            root_uri=settings.analytics_root_uri,
         ),
         job_store=JobStore(session),
         job_event_store=JobEventStore(session),
         pipeline_store=PipelineStore(session),
         dataset_store=DatasetStore(session),
+        robot_store=RobotStore(session),
         scene_store=SceneStore(session),
+        episode_store=EpisodeStore(session),
         scenario_store=ScenarioStore(session),
         model_store=ModelStore(session),
         artifact_record_store=ArtifactRecordStore(session),
         runs=RunStores(
             inference=InferenceRunStore(session),
             evaluations=EvaluationRunStore(session),
-            labels=LabelRunStore(session),
             scene_runs=SceneRunStore(session),
-            dataset_runs=DatasetRunStore(session),
+            episode_runs=EpisodeRunStore(session),
         ),
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,

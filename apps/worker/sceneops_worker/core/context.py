@@ -4,22 +4,25 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sceneops_analytics import AnalyticsTableWriter
 from sceneops_storage import ArtifactStore
 
 from sceneops_worker.config import WorkerSettings
 from sceneops_worker.datasets.artifacts import DatasetArtifactStore
+from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 from sceneops_worker.stores.datasets import DatasetStore
+from sceneops_worker.stores.episodes import EpisodeStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
+from sceneops_worker.stores.robots import RobotStore
 from sceneops_worker.stores.runs import (
-    DatasetRunStore,
+    EpisodeRunStore,
     EvaluationRunStore,
     InferenceRunStore,
-    LabelRunStore,
     SceneRunStore,
 )
 from sceneops_worker.stores.scenarios import ScenarioStore
@@ -30,9 +33,8 @@ from sceneops_worker.stores.scenes import SceneStore
 class RunStores:
     inference: InferenceRunStore
     evaluations: EvaluationRunStore
-    labels: LabelRunStore
     scene_runs: SceneRunStore
-    dataset_runs: DatasetRunStore
+    episode_runs: EpisodeRunStore
 
 
 @dataclass(frozen=True)
@@ -45,14 +47,18 @@ class WorkerContext:
     raw_source_store: ArtifactStore
     dataset_artifact_store: DatasetArtifactStore
     scene_artifact_store: SceneArtifactStore
+    episode_artifact_store: EpisodeArtifactStore
     run_artifact_store: RunArtifactStore
+    analytics_writer: AnalyticsTableWriter
 
     job_store: JobStore
     job_event_store: JobEventStore
     pipeline_store: PipelineStore
 
     dataset_store: DatasetStore
+    robot_store: RobotStore
     scene_store: SceneStore
+    episode_store: EpisodeStore
     scenario_store: ScenarioStore
     model_store: ModelStore
     artifact_record_store: ArtifactRecordStore

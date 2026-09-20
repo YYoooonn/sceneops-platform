@@ -40,12 +40,12 @@ echo ""
 # ── 1. Ensure dataset and version exist ──────────────────────────────────────
 
 echo "--- 1. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
 echo ""
 
 echo "--- 1b. Upsert dataset version (with raw_source_root_uri) ---"
 upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$RAW_SOURCE_ROOT_URI" \
-  | jq '.version | {version, status, rawSourceRootUri}' 2>/dev/null || true
+  | jq '.version | {version, status, scene}' 2>/dev/null || true
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────
@@ -56,6 +56,7 @@ PAYLOAD="$(cat <<JSON
   "type": "raw_log_scene_building",
   "dataset_id": "$DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "build_scenes": {
       "source_type": "nuscenes_raw_log_mock",
@@ -129,7 +130,7 @@ if [ "$FINAL_STATUS" = "blocked" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'raw_log_scene_building pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'raw_log_scene_building pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 

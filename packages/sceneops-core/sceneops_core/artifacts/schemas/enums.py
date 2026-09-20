@@ -24,11 +24,16 @@ class ArtifactKind(StrEnum):
     WORLD_STATE_MANIFEST = "world_state_manifest"
     SCENE_PACKAGE = "scene_package"
 
+    # Episode-level
+    EPISODE_MANIFEST = "episode_manifest"
+    EPISODE_VALIDATION_REPORT = "episode_validation_report"
+    EPISODE_PROFILE_REPORT = "episode_profile_report"
+
     # Dataset-level
     DATASET_MANIFEST = "dataset_manifest"
     DATASET_VALIDATION_REPORT = "dataset_validation_report"
     DATASET_PROFILE_REPORT = "dataset_profile_report"
-    DISTRIBUTION_REPORT = "distribution_report"
+    ANALYTICS_TABLE = "analytics_table"
 
     # Scenario-level
     SCENARIO_SET_MANIFEST = "scenario_set_manifest"

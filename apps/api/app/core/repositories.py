@@ -8,14 +8,13 @@ from app.core.dependencies import DbSessionDep
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.datasets import (
     DatasetRepository,
-    DatasetRunRepository,
     DatasetVersionRepository,
 )
+from sceneops_db.repositories.episodes import EpisodeRepository, EpisodeRunRepository
 from sceneops_db.repositories.evaluations import EvaluationRunRepository
 from sceneops_db.repositories.executions import ExecutionRecordRepository
 from sceneops_db.repositories.inference import InferenceRunRepository
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
-from sceneops_db.repositories.labels import LabelRunRepository
 from sceneops_db.repositories.model_registry import (
     ModelRepository,
     ModelVersionRepository,
@@ -23,6 +22,12 @@ from sceneops_db.repositories.model_registry import (
 from sceneops_db.repositories.pipelines import (
     PipelineRunRepository,
     PipelineTaskRunRepository,
+)
+from sceneops_db.repositories.robots import (
+    MissionRepository,
+    RobotRepository,
+    RobotRunRepository,
+    RobotStateRepository,
 )
 from sceneops_db.repositories.scenarios import (
     ScenarioRunRepository,
@@ -33,14 +38,16 @@ from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.datasets import (
     PostgresDatasetRepository,
-    PostgresDatasetRunRepository,
     PostgresDatasetVersionRepository,
+)
+from sceneops_db.postgres.episodes import (
+    PostgresEpisodeRepository,
+    PostgresEpisodeRunRepository,
 )
 from sceneops_db.postgres.evaluations import PostgresEvaluationRunRepository
 from sceneops_db.postgres.executions import PostgresExecutionRecordRepository
 from sceneops_db.postgres.inference import PostgresInferenceRunRepository
 from sceneops_db.postgres.jobs import PostgresJobEventRepository, PostgresJobRepository
-from sceneops_db.postgres.labels import PostgresLabelRunRepository
 from sceneops_db.postgres.model_registry import (
     PostgresModelRepository,
     PostgresModelVersionRepository,
@@ -48,6 +55,12 @@ from sceneops_db.postgres.model_registry import (
 from sceneops_db.postgres.pipelines import (
     PostgresPipelineRunRepository,
     PostgresPipelineTaskRunRepository,
+)
+from sceneops_db.postgres.robots import (
+    PostgresMissionRepository,
+    PostgresRobotRepository,
+    PostgresRobotRunRepository,
+    PostgresRobotStateRepository,
 )
 from sceneops_db.postgres.scenarios import (
     PostgresScenarioRunRepository,
@@ -128,16 +141,9 @@ def get_dataset_version_repository(session: DbSessionDep) -> DatasetVersionRepos
     return PostgresDatasetVersionRepository(session)
 
 
-def get_dataset_run_repository(session: DbSessionDep) -> DatasetRunRepository:
-    return PostgresDatasetRunRepository(session)
-
-
 DatasetRepositoryDep = Annotated[DatasetRepository, Depends(get_dataset_repository)]
 DatasetVersionRepositoryDep = Annotated[
     DatasetVersionRepository, Depends(get_dataset_version_repository)
-]
-DatasetRunRepositoryDep = Annotated[
-    DatasetRunRepository, Depends(get_dataset_run_repository)
 ]
 
 
@@ -154,6 +160,23 @@ def get_scene_run_repository(session: DbSessionDep) -> SceneRunRepository:
 
 SceneRepositoryDep = Annotated[SceneRepository, Depends(get_scene_repository)]
 SceneRunRepositoryDep = Annotated[SceneRunRepository, Depends(get_scene_run_repository)]
+
+
+# --- domains: episodes ---
+
+
+def get_episode_repository(session: DbSessionDep) -> EpisodeRepository:
+    return PostgresEpisodeRepository(session)
+
+
+def get_episode_run_repository(session: DbSessionDep) -> EpisodeRunRepository:
+    return PostgresEpisodeRunRepository(session)
+
+
+EpisodeRepositoryDep = Annotated[EpisodeRepository, Depends(get_episode_repository)]
+EpisodeRunRepositoryDep = Annotated[
+    EpisodeRunRepository, Depends(get_episode_run_repository)
+]
 
 
 # --- domains: scenarios ---
@@ -216,11 +239,28 @@ EvaluationRunRepositoryDep = Annotated[
 ]
 
 
-# --- domains: labels ---
+# --- domains: robots ---
 
 
-def get_label_run_repository(session: DbSessionDep) -> LabelRunRepository:
-    return PostgresLabelRunRepository(session)
+def get_robot_repository(session: DbSessionDep) -> RobotRepository:
+    return PostgresRobotRepository(session)
 
 
-LabelRunRepositoryDep = Annotated[LabelRunRepository, Depends(get_label_run_repository)]
+def get_robot_run_repository(session: DbSessionDep) -> RobotRunRepository:
+    return PostgresRobotRunRepository(session)
+
+
+def get_mission_repository(session: DbSessionDep) -> MissionRepository:
+    return PostgresMissionRepository(session)
+
+
+def get_robot_state_repository(session: DbSessionDep) -> RobotStateRepository:
+    return PostgresRobotStateRepository(session)
+
+
+RobotRepositoryDep = Annotated[RobotRepository, Depends(get_robot_repository)]
+RobotRunRepositoryDep = Annotated[RobotRunRepository, Depends(get_robot_run_repository)]
+MissionRepositoryDep = Annotated[MissionRepository, Depends(get_mission_repository)]
+RobotStateRepositoryDep = Annotated[
+    RobotStateRepository, Depends(get_robot_state_repository)
+]

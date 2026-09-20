@@ -9,7 +9,7 @@ from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import default_inference_run_id, generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
-from sceneops_core.datasets.schemas import DatasetManifest, DatasetVersionStatus
+from sceneops_core.datasets.schemas import DatasetManifest
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
 from sceneops_core.inference.enums import InferenceBackendType
 from sceneops_core.inference.schemas import (
@@ -32,6 +32,10 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.inference.detection import create_detection_inference_backend
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
+from sceneops_worker.scenarios.resolver import (
+    ResolvedScenarioSet,
+    ScenarioSetSceneResolver,
+)
 from sceneops_worker.scenes.selection import select_detection_scenes
 
 
@@ -57,6 +61,7 @@ class PredictDetectionInputs:
     dataset_manifest_uri: str
     selected_scene_ids: list[str]
     scene_selection_metadata: JsonDict
+    resolved_scenario_set: ResolvedScenarioSet | None = None
 
 
 @dataclass(frozen=True)
@@ -192,7 +197,7 @@ class PredictDetectionJobHandler(
         model_uri = model_version.model_uri
         endpoint_url = model_version.endpoint_url
 
-        dataset_version = await self._require_ready_dataset_version(
+        dataset_version = await self._require_scene_dataset_ready(
             context, params.dataset_id, params.dataset_version
         )
         self._validate_backend_inputs(
@@ -213,11 +218,19 @@ class PredictDetectionJobHandler(
         )
 
     @staticmethod
-    async def _require_ready_dataset_version(
+    async def _require_scene_dataset_ready(
         context: WorkerContext,
         dataset_id: str,
         dataset_version: str,
     ) -> DatasetVersionRecord:
+        """Is this Scene dataset ready for detection prediction?
+
+        SceneOps V2 Request 05: replaces the old generic
+        ``version.status == READY`` gate (Scene-workflow state that had no
+        meaning for Episode-only versions) with explicit Scene prerequisites:
+        a Scene summary must exist, it must have a built dataset manifest,
+        and Scene validation must not have flagged it as blocking.
+        """
         version = await context.dataset_store.get_version(
             dataset_id=dataset_id, version=dataset_version
         )
@@ -225,14 +238,18 @@ class PredictDetectionJobHandler(
             raise ValueError(
                 f"Dataset version not found: {dataset_id}:{dataset_version}"
             )
-        if version.status != DatasetVersionStatus.READY:
+        if version.scene is None:
             raise ValueError(
-                f"Dataset version is not usable for prediction: "
-                f"{dataset_id}:{dataset_version}, status={version.status}"
+                f"Dataset version has no Scene data: {dataset_id}:{dataset_version}"
             )
-        if version.manifest_uri is None:
+        if not version.scene.manifest_uri:
             raise ValueError(
                 f"Dataset version has no manifest_uri: {dataset_id}:{dataset_version}"
+            )
+        if version.scene.should_block_pipeline:
+            raise ValueError(
+                f"Dataset version Scene validation blocked downstream use: "
+                f"{dataset_id}:{dataset_version}"
             )
         return version
 
@@ -283,21 +300,39 @@ class PredictDetectionJobHandler(
         execution: PredictDetectionExecution,
     ) -> PredictDetectionInputs:
         version = execution.dataset_version_record
+        # _require_scene_dataset_ready already guaranteed version.scene and
+        # its manifest_uri are set before this runs.
+        manifest_uri = version.scene.manifest_uri
         dataset_manifest = (
             await execution.context.dataset_artifact_store.load_dataset_manifest(
-                version.manifest_uri
+                manifest_uri
             )
         )
+
+        resolved_scenario_set: ResolvedScenarioSet | None = None
+        scenario_set_scene_ids: set[str] | None = None
+        if execution.params.scenario_set_id:
+            resolver = ScenarioSetSceneResolver(
+                scenario_store=execution.context.scenario_store,
+                artifact_store=execution.context.artifact_store,
+            )
+            resolved_scenario_set = await resolver.resolve(
+                execution.params.scenario_set_id
+            )
+            scenario_set_scene_ids = set(resolved_scenario_set.selected_scene_ids)
+
         selection_result = await select_detection_scenes(
             dataset_manifest=dataset_manifest,
             scene_artifact_store=execution.context.scene_artifact_store,
             selection=execution.params.scene_selection,
+            scenario_set_scene_ids=scenario_set_scene_ids,
         )
         return PredictDetectionInputs(
             dataset_manifest=dataset_manifest,
-            dataset_manifest_uri=version.manifest_uri,
+            dataset_manifest_uri=manifest_uri,
             selected_scene_ids=selection_result["selected_scene_ids"],
             scene_selection_metadata=selection_result,
+            resolved_scenario_set=resolved_scenario_set,
         )
 
     # ── inference ─────────────────────────────────────────────────────────────
@@ -324,7 +359,7 @@ class PredictDetectionJobHandler(
             inference_backend=params.inference_backend.value,
             model_uri=execution.model_uri,
             endpoint_url=execution.endpoint_url,
-            raw_source_root_uri=execution.dataset_version_record.raw_source_root_uri,
+            raw_source_root_uri=execution.dataset_version_record.scene.raw_source_root_uri,
             scene_ids=inputs.selected_scene_ids,
             max_scenes=None,
             max_samples=selection.max_samples,
@@ -430,6 +465,16 @@ class PredictDetectionJobHandler(
         artifacts: PredictDetectionArtifacts,
         inputs: PredictDetectionInputs,
     ) -> InferenceRunRecord:
+        scenario_set_metadata: JsonDict = {}
+        if inputs.resolved_scenario_set is not None:
+            rss = inputs.resolved_scenario_set
+            scenario_set_metadata = {
+                "scenario_set_id": rss.scenario_set_id,
+                "scenario_set_uri": rss.scenario_set_uri,
+                "scenario_candidate_count": rss.candidate_count,
+                "scenario_selected_count": rss.selected_count,
+                "scenario_rejected_count": rss.rejected_count,
+            }
         return initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
@@ -441,6 +486,7 @@ class PredictDetectionJobHandler(
                 "metadata": {
                     "model_uri": execution.model_uri,
                     "endpoint_url": execution.endpoint_url,
+                    **scenario_set_metadata,
                     "scene_selection": inputs.scene_selection_metadata,
                     **inference_result.metadata,
                 },

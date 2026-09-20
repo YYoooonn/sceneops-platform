@@ -46,6 +46,7 @@ def job_model_to_manifest(model: JobModel) -> JobManifest:
         pipeline_task_id=model.pipeline_task_id,
         retry_count=model.retry_count,
         max_retries=model.max_retries,
+        execution_key=model.execution_key,
         worker_id=model.worker_id,
         queued_at=model.queued_at,
         locked_at=model.locked_at,

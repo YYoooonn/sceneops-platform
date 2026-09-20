@@ -63,6 +63,22 @@ def generate_artifact_id() -> str:
     return generate_prefixed_id("art")
 
 
+def generate_robot_id() -> str:
+    return generate_prefixed_id("robot")
+
+
+def generate_robot_run_id() -> str:
+    return generate_prefixed_id("robotrun")
+
+
+def generate_mission_id() -> str:
+    return generate_prefixed_id("mission")
+
+
+def generate_robot_state_id() -> str:
+    return generate_prefixed_id("robotstate")
+
+
 def generate_comparison_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"cmp-{suffix}"

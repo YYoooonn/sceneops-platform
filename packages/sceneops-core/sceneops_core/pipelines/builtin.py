@@ -176,6 +176,90 @@ _BUILD_DATASET_MANIFEST_OUTPUTS = [
     PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
 ]
 
+_BUILD_EPISODES_OUTPUTS = [
+    # episode_manifest_uris consumed by register_episode → REF.
+    PipelineTaskOutputSpec(
+        name="episode_manifest_uris", kind=_REF, source="episode_manifest_uris"
+    ),
+    PipelineTaskOutputSpec(name="episode_count", kind=_SUMMARY, source="episode_count"),
+    PipelineTaskOutputSpec(
+        name="observation_frame_count", kind=_SUMMARY, source="observation_frame_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="action_frame_count", kind=_SUMMARY, source="action_frame_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="segmentation_strategy", kind=_SUMMARY, source="segmentation_strategy"
+    ),
+]
+
+_REGISTER_EPISODE_OUTPUTS = [
+    PipelineTaskOutputSpec(
+        name="episode_manifest_uris", kind=_REF, source="episode_manifest_uris"
+    ),
+    # episode_ids consumed by validate_episode/profile_episode → REF. Already
+    # produced by RegisterEpisodeJobResult.episode_ids, just not previously
+    # declared as a pipeline output (SceneOps V2 Request 17).
+    PipelineTaskOutputSpec(name="episode_ids", kind=_REF, source="episode_ids"),
+    PipelineTaskOutputSpec(
+        name="registered_episode_count",
+        kind=_SUMMARY,
+        source="registered_episode_count",
+    ),
+]
+
+_VALIDATE_EPISODE_OUTPUTS = [
+    PipelineTaskOutputSpec(
+        name="validation_run_id", kind=_REF, source="validation_run_id"
+    ),
+    PipelineTaskOutputSpec(
+        name="validation_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="validation_report_uri",
+    ),
+    PipelineTaskOutputSpec(
+        name="validation_status",
+        kind=_SUMMARY,
+        source="status",
+        target="validation_status",
+    ),
+    PipelineTaskOutputSpec(
+        name="should_block_pipeline", kind=_SUMMARY, source="should_block_pipeline"
+    ),
+    PipelineTaskOutputSpec(
+        name="checked_episode_count", kind=_SUMMARY, source="checked_episode_count"
+    ),
+    PipelineTaskOutputSpec(name="issue_count", kind=_SUMMARY, source="issue_count"),
+]
+
+_VALIDATE_EPISODE_QUALITY_RULES = [
+    PipelineTaskQualityRule(
+        rule_type=PipelineTaskQualityRuleType.BLOCK_IF_TRUE,
+        source="summary.should_block_pipeline",
+        message="Episode validation blocked pipeline",
+        code="validate_episode_blocked",
+    ),
+]
+
+_PROFILE_EPISODE_OUTPUTS = [
+    PipelineTaskOutputSpec(name="profile_run_id", kind=_REF, source="profile_run_id"),
+    PipelineTaskOutputSpec(
+        name="profile_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="profile_report_uri",
+    ),
+    PipelineTaskOutputSpec(
+        name="checked_episode_count", kind=_SUMMARY, source="checked_episode_count"
+    ),
+    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+    PipelineTaskOutputSpec(
+        name="observation_count", kind=_SUMMARY, source="observation_count"
+    ),
+    PipelineTaskOutputSpec(name="action_count", kind=_SUMMARY, source="action_count"),
+]
+
 _PREDICT_DETECTION_OUTPUTS = [
     # inference_run_id consumed by evaluate_detection → REF.
     PipelineTaskOutputSpec(
@@ -326,6 +410,13 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             job_type=JobType.BUILD_SCENES,
             default_params={
                 "build_assets": True,
+                # Reserved, currently a no-op: no handler branches on this
+                # flag anywhere (build_scenes.py never reads it), no
+                # persisted scene has world_state_manifest_uri set, and
+                # WorldStateManifest (scenes/schemas/world_state.py) has no
+                # writer. Kept as an explicit False default rather than
+                # removed — see that module's docstring (Stabilization
+                # Request 5 audit) for the retain-vs-remove reasoning.
                 "build_world_state": False,
                 "sampling": {
                     "missing_channel_policy": "keep_with_warning",
@@ -382,61 +473,54 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
 )
 
 
-SCENE_RECONSTRUCTION_PIPELINE = PipelineDefinition(
-    type=PipelineType.SCENE_RECONSTRUCTION,
-    name="Scene Reconstruction",
+RAW_LOG_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.RAW_LOG_EPISODE_BUILDING,
+    name="Raw Log Episode Building",
     description=(
-        "Build physics-grounded scene representation from raw logs, validate/profile "
-        "the scene, and export a reconstruction package."
+        "Build SceneOps episode manifests from a robot rosbag/MCAP recording, "
+        "segmented by Mission boundaries, then register them. Deliberately "
+        "separate from RAW_LOG_SCENE_BUILDING: Scene captures a spatiotemporal "
+        "observation unit, Episode captures a task-oriented observation+action "
+        "unit. Uses RosbagAdapter registered under RawLogSourceType.REAL_ROBOT_LOG "
+        "in this job's own adapter factory."
     ),
-    supported=False,
     experimental=True,
-    implemented=False,
     tasks=[
         PipelineTaskDefinition(
-            pipeline_task_id="build_scenes",
-            name="Build scenes",
+            pipeline_task_id="build_episodes",
+            name="Build episodes",
             order=0,
-            job_type=JobType.BUILD_SCENES,
-            default_params={
-                "build_assets": True,
-                "build_world_state": True,
-            },
+            job_type=JobType.BUILD_EPISODES,
+            outputs=_BUILD_EPISODES_OUTPUTS,
         ),
         PipelineTaskDefinition(
-            pipeline_task_id="validate_scene",
-            name="Validate scene",
+            pipeline_task_id="register_episode",
+            name="Register episodes",
             order=1,
-            job_type=JobType.VALIDATE_SCENE,
-            depends_on_pipeline_task_ids=["build_scenes"],
+            job_type=JobType.REGISTER_EPISODE,
+            depends_on_pipeline_task_ids=["build_episodes"],
             default_params={
-                "require_world_state": True,
-                "require_assets": True,
+                "replace_existing": True,
             },
+            outputs=_REGISTER_EPISODE_OUTPUTS,
         ),
         PipelineTaskDefinition(
-            pipeline_task_id="profile_scene",
-            name="Profile scene",
+            pipeline_task_id="validate_episode",
+            name="Validate episode",
             order=2,
-            job_type=JobType.PROFILE_SCENE,
-            depends_on_pipeline_task_ids=["build_scenes"],
-            default_params={
-                "profile_assets": True,
-                "profile_world_state": True,
-            },
-            optional=True,
+            job_type=JobType.VALIDATE_EPISODE,
+            depends_on_pipeline_task_ids=["register_episode"],
+            outputs=_VALIDATE_EPISODE_OUTPUTS,
+            quality_rules=_VALIDATE_EPISODE_QUALITY_RULES,
         ),
         PipelineTaskDefinition(
-            pipeline_task_id="export_scene_package",
-            name="Export scene package",
+            pipeline_task_id="profile_episode",
+            name="Profile episode",
             order=3,
-            job_type=JobType.EXPORT_SCENE_PACKAGE,
-            depends_on_pipeline_task_ids=["validate_scene"],
-            default_params={
-                "package_type": "reconstruction",
-                "include_assets": True,
-                "include_world_state": True,
-            },
+            job_type=JobType.PROFILE_EPISODE,
+            depends_on_pipeline_task_ids=["register_episode"],
+            optional=True,
+            outputs=_PROFILE_EPISODE_OUTPUTS,
         ),
     ],
 )
@@ -475,14 +559,6 @@ SCENE_REGISTRATION_PIPELINE = PipelineDefinition(
             order=2,
             job_type=JobType.PROFILE_SCENE,
             depends_on_pipeline_task_ids=["register_scene"],
-            optional=True,
-        ),
-        PipelineTaskDefinition(
-            pipeline_task_id="compare_scenes",
-            name="Compare scenes",
-            order=3,
-            job_type=JobType.COMPARE_SCENES,
-            depends_on_pipeline_task_ids=["validate_scene"],
             optional=True,
         ),
     ],
@@ -654,65 +730,6 @@ SCENARIO_CURATION_PIPELINE = PipelineDefinition(
 )
 
 
-GENERATED_DATASET_PREPARATION_PIPELINE = PipelineDefinition(
-    type=PipelineType.GENERATED_DATASET_PREPARATION,
-    name="Generated Dataset Preparation",
-    description=(
-        "Prepare generated or reconstructed scenes as a dataset version, "
-        "optionally auto-label scenes, check distribution, and export the dataset."
-    ),
-    supported=False,
-    experimental=True,
-    implemented=False,
-    tasks=[
-        PipelineTaskDefinition(
-            pipeline_task_id="register_scene",
-            name="Register scene",
-            order=0,
-            job_type=JobType.REGISTER_SCENE,
-        ),
-        PipelineTaskDefinition(
-            pipeline_task_id="compare_scenes",
-            name="Compare scenes",
-            order=1,
-            job_type=JobType.COMPARE_SCENES,
-            depends_on_pipeline_task_ids=["register_scene"],
-            optional=True,
-        ),
-        PipelineTaskDefinition(
-            pipeline_task_id="auto_label_scene",
-            name="Auto-label scene",
-            order=2,
-            job_type=JobType.AUTO_LABEL_SCENE,
-            depends_on_pipeline_task_ids=["register_scene"],
-            optional=True,
-        ),
-        PipelineTaskDefinition(
-            pipeline_task_id="build_dataset_manifest",
-            name="Build dataset manifest",
-            order=3,
-            job_type=JobType.BUILD_DATASET_MANIFEST,
-            depends_on_pipeline_task_ids=["register_scene"],
-        ),
-        PipelineTaskDefinition(
-            pipeline_task_id="check_distribution",
-            name="Check distribution",
-            order=4,
-            job_type=JobType.CHECK_DISTRIBUTION,
-            depends_on_pipeline_task_ids=["build_dataset_manifest"],
-            optional=True,
-        ),
-        PipelineTaskDefinition(
-            pipeline_task_id="export_dataset",
-            name="Export dataset",
-            order=5,
-            job_type=JobType.EXPORT_DATASET,
-            depends_on_pipeline_task_ids=["build_dataset_manifest"],
-        ),
-    ],
-)
-
-
 DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
     type=PipelineType.DETECTION_EVALUATION,
     name="Detection Evaluation",
@@ -747,10 +764,9 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
 BUILTIN_PIPELINE_DEFINITIONS = [
     DATASET_SCENE_INGESTION_PIPELINE,
     RAW_LOG_SCENE_BUILDING_PIPELINE,
-    SCENE_RECONSTRUCTION_PIPELINE,
+    RAW_LOG_EPISODE_BUILDING_PIPELINE,
     SCENE_REGISTRATION_PIPELINE,
     SCENARIO_CURATION_PIPELINE,
-    GENERATED_DATASET_PREPARATION_PIPELINE,
     DETECTION_EVALUATION_PIPELINE,
 ]
 

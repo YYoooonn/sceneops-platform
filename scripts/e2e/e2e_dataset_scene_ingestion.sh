@@ -34,10 +34,15 @@ echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
 echo ""
 
-# ── 1. Ensure dataset exists ──────────────────────────────────────────────────
+# ── 1. Ensure dataset and version exist ──────────────────────────────────────
 
 echo "--- 1. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId, status}' 2>/dev/null || true
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
+echo ""
+
+echo "--- 1b. Upsert dataset version (with raw_source_root_uri) ---"
+upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$SOURCE_ROOT_URI" \
+  | jq '.version | {version, status, scene}' 2>/dev/null || true
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────
@@ -48,6 +53,7 @@ PAYLOAD="$(cat <<JSON
   "type": "dataset_scene_ingestion",
   "dataset_id": "$DATASET_ID",
   "dataset_version": "$DATASET_VERSION",
+  "force": true,
   "params": {
     "ingest_scenes": {
       "source_format": "nuscenes",
@@ -105,7 +111,7 @@ if [ "$FINAL_STATUS" = "failed" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'dataset_scene_ingestion pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'dataset_scene_ingestion pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 
@@ -179,16 +185,17 @@ echo ""
 echo "--- 8. Assert dataset version ---"
 VERSION_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
 VERSION_STATUS="$(echo "$VERSION_JSON" | jq -r '.version.status')"
-MANIFEST_URI="$(echo "$VERSION_JSON" | jq -r '.version.manifestUri // empty')"
-VERSION_SCENE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.sceneCount // 0')"
-SAMPLE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.sampleCount // 0')"
+MANIFEST_URI="$(echo "$VERSION_JSON" | jq -r '.version.scene.manifestUri // empty')"
+VERSION_SCENE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.scene.sceneCount // 0')"
+SAMPLE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.scene.sampleCount // 0')"
 
 echo "  status=$VERSION_STATUS"
 echo "  sceneCount=$VERSION_SCENE_COUNT  sampleCount=$SAMPLE_COUNT"
 echo "  manifestUri=$MANIFEST_URI"
 
-assert_json_equals "$VERSION_JSON" '.version.status' 'ready' 'dataset version should be ready'
-assert_json_not_empty "$VERSION_JSON" '.version.manifestUri' 'dataset version manifestUri'
+# DatasetVersion.status no longer tracks Scene workflow progress (SceneOps V2
+# Request 05) — Scene readiness is the presence of a built manifest instead.
+assert_json_not_empty "$VERSION_JSON" '.version.scene.manifestUri' 'dataset version scene.manifestUri'
 echo "  OK"
 echo ""
 

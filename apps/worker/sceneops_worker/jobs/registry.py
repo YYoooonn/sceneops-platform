@@ -6,15 +6,24 @@ from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
 from sceneops_worker.jobs.dataset import (
     BuildDatasetManifestJobHandler,
+    BuildEpisodesJobHandler,
     BuildSceneIndexJobHandler,
     BuildScenesJobHandler,
+    ExportAnalyticsSnapshotJobHandler,
     IngestScenesJobHandler,
+    ProfileEpisodeJobHandler,
     ProfileSceneJobHandler,
+    RegisterEpisodeJobHandler,
     RegisterSceneJobHandler,
+    ValidateEpisodeJobHandler,
     ValidateSceneJobHandler,
 )
 from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.inference import PredictDetectionJobHandler
+from sceneops_worker.jobs.robots import (
+    ExportRobotAnalyticsSnapshotJobHandler,
+    IngestRobotStatesJobHandler,
+)
 from sceneops_worker.jobs.scenarios import (
     MineScenariosJobHandler,
     ScoreScenarioReadinessJobHandler,
@@ -56,9 +65,16 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
             ValidateSceneJobHandler(),
             ProfileSceneJobHandler(),
             BuildDatasetManifestJobHandler(),
+            ExportAnalyticsSnapshotJobHandler(),
             PredictDetectionJobHandler(),
             EvaluateDetectionJobHandler(),
             MineScenariosJobHandler(),
             ScoreScenarioReadinessJobHandler(),
+            IngestRobotStatesJobHandler(),
+            ExportRobotAnalyticsSnapshotJobHandler(),
+            BuildEpisodesJobHandler(),
+            RegisterEpisodeJobHandler(),
+            ValidateEpisodeJobHandler(),
+            ProfileEpisodeJobHandler(),
         ]
     )

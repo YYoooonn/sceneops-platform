@@ -42,6 +42,7 @@ class PredictDetectionJobParams(BaseJobParams):
 
     dataset_manifest_uri: str | None = None
     scene_ids: list[str] | None = None
+    scenario_set_id: str | None = None
 
     inference_backend: InferenceBackendType = InferenceBackendType.MOCK
 
@@ -75,6 +76,7 @@ class EvaluateDetectionJobParams(BaseJobParams):
     dataset_version: str
 
     inference_run_id: str
+    scenario_set_id: str | None = None
 
     evaluation_run_id: str | None = None
 

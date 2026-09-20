@@ -113,7 +113,9 @@ class SceneBuilder:
             segments=emitted_segments,
         )
 
-        segment_index_uri = self._obs_store.scene_segments_uri(version_root_uri)
+        segment_index_uri = self._obs_store.scene_segments_uri(
+            version_root_uri, manifest.raw_log_id
+        )
 
         await self._obs_store.save_scene_segment_index(
             uri=segment_index_uri,

@@ -71,6 +71,7 @@ def pipeline_run_model_to_manifest(model: PipelineRunModel) -> PipelineRunManife
         if model.result
         else None,
         error=error_from_json(model.error),
+        execution_key=model.execution_key,
         created_at=model.created_at,
         updated_at=model.updated_at,
         started_at=model.started_at,

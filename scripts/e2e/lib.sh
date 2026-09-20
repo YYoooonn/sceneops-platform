@@ -160,7 +160,153 @@ poll_pipeline_terminal() {
 assert_pipeline_succeeded() {
   local pipeline_json="$1"
   local message="${2:-pipeline should succeed}"
-  assert_json_equals "$pipeline_json" '.pipelineRun.status' 'succeeded' "$message"
+  # Optional — when provided, a failure also prints per-task statuses so a
+  # failing E2E run doesn't require a second manual API call to see which
+  # task actually broke.
+  local api_base_url="${3:-}"
+  local pipeline_run_id="${4:-}"
+
+  local status
+  status="$(echo "$pipeline_json" | jq -r '.pipelineRun.status')"
+  if [ "$status" = "succeeded" ]; then
+    return 0
+  fi
+
+  echo "❌ Assertion failed: $message" >&2
+  echo "  pipeline_run_id=${pipeline_run_id:-$(echo "$pipeline_json" | jq -r '.pipelineRun.pipelineRunId // "unknown"')}" >&2
+  echo "  status=$status" >&2
+  echo "  error=$(echo "$pipeline_json" | jq -r '.pipelineRun.error.message // "none"')" >&2
+  if [ -n "$api_base_url" ] && [ -n "$pipeline_run_id" ]; then
+    echo "  task statuses:" >&2
+    fetch_pipeline_tasks "$api_base_url" "$pipeline_run_id" 2>/dev/null \
+      | jq -r '.tasks[] | "    \(.pipelineTaskId): \(.status)" + (if .error then "  error=\(.error.message // .error)" else "" end)' >&2 \
+      || echo "    (failed to fetch task statuses)" >&2
+  fi
+  exit 1
+}
+
+# ── Job API (standalone jobs, not part of a pipeline) ──────────────────────────
+
+create_job() {
+  local api_base_url="$1"
+  local payload="$2"
+  curl -sS -X POST "$(api_url "$api_base_url" "/jobs")" \
+    -H "Content-Type: application/json" \
+    -d "$payload"
+}
+
+execute_job() {
+  local api_base_url="$1"
+  local job_id="$2"
+  curl -sS -X POST "$(api_url "$api_base_url" "/jobs/$job_id/execute")"
+}
+
+fetch_job() {
+  local api_base_url="$1"
+  local job_id="$2"
+  curl -sS "$(api_url "$api_base_url" "/jobs/$job_id")"
+}
+
+extract_job_id() {
+  local json="$1"
+  require_json_field "$json" '.job.jobId' 'jobId'
+}
+
+poll_job_terminal() {
+  local api_base_url="$1"
+  local job_id="$2"
+  local max_attempts="${3:-60}"
+  local sleep_seconds="${4:-5}"
+
+  local job_json status
+
+  for i in $(seq 1 "$max_attempts"); do
+    job_json="$(fetch_job "$api_base_url" "$job_id")"
+    status="$(echo "$job_json" | jq -r '.job.status // empty')"
+
+    echo "  [$i/$max_attempts] status=$status" >&2
+
+    case "$status" in
+      succeeded|failed|cancelled|skipped)
+        echo "$job_json"
+        return 0
+        ;;
+    esac
+
+    sleep "$sleep_seconds"
+  done
+
+  echo "❌ Job did not reach terminal state after $max_attempts attempts: $job_id" >&2
+  exit 1
+}
+
+assert_job_succeeded() {
+  local job_json="$1"
+  local message="${2:-job should succeed}"
+
+  local status
+  status="$(echo "$job_json" | jq -r '.job.status')"
+  if [ "$status" = "succeeded" ]; then
+    return 0
+  fi
+
+  echo "❌ Assertion failed: $message" >&2
+  echo "  job_id=$(echo "$job_json" | jq -r '.job.jobId // "unknown"')" >&2
+  echo "  status=$status" >&2
+  echo "  error=$(echo "$job_json" | jq -r '.job.error.message // .job.error // "none"')" >&2
+  exit 1
+}
+
+# ── Robot / RobotRun API ────────────────────────────────────────────────────
+
+upsert_robot() {
+  local api_base_url="$1"
+  local robot_id="$2"
+  local platform="$3"
+
+  local existing
+  existing="$(curl -sS "$(api_url "$api_base_url" "/robots/$robot_id")")"
+
+  if echo "$existing" | jq -e '.robot' >/dev/null 2>&1; then
+    echo "$existing"
+    return 0
+  fi
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/robots")" \
+    -H "Content-Type: application/json" \
+    -d "{\"robot_id\": \"$robot_id\", \"platform\": \"$platform\"}"
+}
+
+upsert_robot_run() {
+  local api_base_url="$1"
+  local run_id="$2"
+  local robot_id="$3"
+  local mcap_uri="$4"
+
+  local existing
+  existing="$(curl -sS "$(api_url "$api_base_url" "/robot-runs/$run_id")")"
+
+  if echo "$existing" | jq -e '.robotRun' >/dev/null 2>&1; then
+    echo "$existing"
+    return 0
+  fi
+
+  curl -sS -X POST "$(api_url "$api_base_url" "/robot-runs")" \
+    -H "Content-Type: application/json" \
+    -d "{\"run_id\": \"$run_id\", \"robot_id\": \"$robot_id\", \"mcap_uri\": \"$mcap_uri\"}"
+}
+
+fetch_missions() {
+  local api_base_url="$1"
+  local robot_run_id="$2"
+  curl -sS "$(api_url "$api_base_url" "/missions?robot_run_id=$robot_run_id")"
+}
+
+fetch_robot_states() {
+  local api_base_url="$1"
+  local robot_run_id="$2"
+  local limit="${3:-1}"
+  curl -sS "$(api_url "$api_base_url" "/robot-states?robot_run_id=$robot_run_id&limit=$limit")"
 }
 
 # ── Dataset / Scene API ───────────────────────────────────────────────────────
@@ -188,22 +334,38 @@ upsert_dataset_version() {
   local api_base_url="$1"
   local dataset_id="$2"
   local version="$3"
-  local raw_source_root_uri="$4"
+  # raw_source_root_uri is Scene-owned (SceneOps V2 Request 04) — Episode
+  # dataset versions have no use for it (their source is RobotRun.mcap_uri),
+  # so it's optional here. Omit it to create/patch a version with no Scene
+  # raw-source config at all.
+  local raw_source_root_uri="${4:-}"
 
   local existing
   existing="$(curl -sS "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")")"
 
+  if [ -n "$raw_source_root_uri" ]; then
+    patch_body="{\"raw_source_root_uri\": \"$raw_source_root_uri\", \"required_channels\": [\"CAM_FRONT\", \"LIDAR_TOP\"]}"
+    create_body="{\"version\": \"$version\", \"raw_source_root_uri\": \"$raw_source_root_uri\", \"metadata\": {}}"
+  else
+    patch_body=""
+    create_body="{\"version\": \"$version\", \"metadata\": {}}"
+  fi
+
   if echo "$existing" | jq -e '.version' >/dev/null 2>&1; then
-    # Version exists — patch raw_source_root_uri in case it changed.
+    if [ -z "$patch_body" ]; then
+      # Nothing Scene-specific to patch — the version already exists as-is.
+      echo "$existing"
+      return 0
+    fi
     curl -sS -X PATCH "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")" \
       -H "Content-Type: application/json" \
-      -d "{\"raw_source_root_uri\": \"$raw_source_root_uri\", \"required_channels\": ["CAM_FRONT", "LIDAR_TOP"]}"
+      -d "$patch_body"
     return 0
   fi
 
   curl -sS -X POST "$(api_url "$api_base_url" "/datasets/$dataset_id/versions")" \
     -H "Content-Type: application/json" \
-    -d "{\"version\": \"$version\", \"raw_source_root_uri\": \"$raw_source_root_uri\", \"metadata\": {}}"
+    -d "$create_body"
 }
 
 

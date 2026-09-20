@@ -27,6 +27,7 @@ class ArtifactSettings(StorageSettings):
     dataset_prefix: str = "datasets"
     run_prefix: str = "runs"
     model_prefix: str = "models"
+    analytics_prefix: str = "analytical"
 
     # Unused legacy fields — kept for backward compatibility only.
     bucket: str | None = None
@@ -43,6 +44,10 @@ class ArtifactSettings(StorageSettings):
     @property
     def model_root_uri(self) -> str:
         return join_uri(self.root_uri, self.model_prefix)
+
+    @property
+    def analytics_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.analytics_prefix)
 
 
 class RawSourceSettings(StorageSettings):

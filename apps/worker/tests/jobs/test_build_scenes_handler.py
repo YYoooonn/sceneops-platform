@@ -4,7 +4,7 @@ Covers:
 - _build_result: grouping-report fields flow into BuildScenesJobResult
 - build_job_params: dataset.required_channels injected into sampling
 - _resolve_raw_log_inputs: branch selection (load path vs adapter path)
-- _mark_dataset_version_ingested: correct counts forwarded to dataset store
+- _update_scene_summary_after_build: correct counts forwarded to dataset store
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.datasets.schemas.summaries import SceneVersionSummary
 from sceneops_core.jobs.schemas import BuildScenesJobParams, BuildScenesJobResult
 from sceneops_core.pipelines.schemas import (
     DatasetInputRef,
@@ -32,8 +33,8 @@ from sceneops_worker.jobs.dataset.build_scenes import (
     BuildScenesJobHandler,
     BuildScenesRawInputs,
 )
-from sceneops_worker.scenes.raw_scene_builder import SceneBuildResult
-from sceneops_worker.scenes.sample_grouping import SampleGroupingReport
+from sceneops_worker.scenes.building import SceneBuildResult
+from sceneops_worker.scenes.building.reports import SampleGroupingReport
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -63,7 +64,7 @@ def _make_version_record(
     return DatasetVersionRecord(
         dataset_id=dataset_id,
         version=version,
-        raw_source_root_uri=raw_source_root_uri,
+        scene=SceneVersionSummary(raw_source_root_uri=raw_source_root_uri),
     )
 
 
@@ -136,7 +137,6 @@ def _make_scene_build_result(
         observation_count=observation_count,
         grouping_report=grouping_report
         or SampleGroupingReport(
-            total_samples_built=total_samples,
             sample_count_before_filtering=total_samples,
             sample_count_after_filtering=total_samples,
         ),
@@ -174,7 +174,6 @@ class TestBuildResult:
 
     def test_phase2_report_fields_populated_from_grouping_report(self) -> None:
         report = SampleGroupingReport(
-            total_samples_built=8,
             sample_count_before_filtering=10,
             sample_count_after_filtering=8,
             dropped_sample_count=2,
@@ -362,26 +361,22 @@ class TestResolveRawLogInputsBranching:
 # ── _mark_dataset_version_ingested: count forwarding ─────────────────────────
 
 
-class TestMarkDatasetVersionIngested:
+class TestUpdateSceneSummaryAfterBuild:
+    """SceneOps V2 Request 05 renamed _mark_dataset_version_ingested to
+    _update_scene_summary_after_build: it no longer saves a full
+    DatasetVersionRecord (status transitions were removed), it forwards a
+    targeted partial update to dataset_store.update_scene_summary()."""
+
     @pytest.mark.asyncio
     async def test_forwards_scene_and_sample_counts_to_store(self) -> None:
         handler = _make_handler()
         mock_store = AsyncMock()
-        mock_store.save_version = AsyncMock(
-            side_effect=lambda v: v  # return the version passed in
-        )
 
         context = MagicMock()
         context.dataset_store = mock_store
 
         execution = replace(_make_execution(params=_make_params()), context=context)
 
-        version = DatasetVersionRecord(
-            dataset_id="ds-001",
-            version="v1",
-            status="ingesting",
-            raw_source_root_uri="/data/raw/nuscenes",
-        )
         raw_inputs = _make_raw_inputs(channels=["CAM_FRONT", "LIDAR_TOP"])
         scene_result = _make_scene_build_result(
             scene_ids=["sc-001", "sc-002"],
@@ -389,50 +384,43 @@ class TestMarkDatasetVersionIngested:
             total_frames=90,
         )
 
-        await handler._mark_dataset_version_ingested(
+        await handler._update_scene_summary_after_build(
             execution=execution,
-            version=version,
             raw_inputs=raw_inputs,
             scene_build_result=scene_result,
         )
 
-        mock_store.save_version.assert_called_once()
-        saved = mock_store.save_version.call_args[0][0]
-        assert saved.scene_count == 2
-        assert saved.sample_count == 15
-        assert saved.frame_count == 90
-        assert saved.channels == ["CAM_FRONT", "LIDAR_TOP"]
+        mock_store.update_scene_summary.assert_called_once_with(
+            dataset_id=execution.dataset_version_record.dataset_id,
+            version=execution.dataset_version_record.version,
+            scene_count=2,
+            sample_count=15,
+            frame_count=90,
+            channels=["CAM_FRONT", "LIDAR_TOP"],
+        )
 
     @pytest.mark.asyncio
     async def test_channels_are_sorted(self) -> None:
         handler = _make_handler()
         mock_store = AsyncMock()
-        mock_store.save_version = AsyncMock(side_effect=lambda v: v)
 
         context = MagicMock()
         context.dataset_store = mock_store
 
         execution = replace(_make_execution(params=_make_params()), context=context)
 
-        version = DatasetVersionRecord(
-            dataset_id="ds-001",
-            version="v1",
-            status="ingesting",
-            raw_source_root_uri="/data/raw/nuscenes",
-        )
         # deliberately out of order
         raw_inputs = _make_raw_inputs(channels=["LIDAR_TOP", "CAM_BACK", "CAM_FRONT"])
         scene_result = _make_scene_build_result()
 
-        await handler._mark_dataset_version_ingested(
+        await handler._update_scene_summary_after_build(
             execution=execution,
-            version=version,
             raw_inputs=raw_inputs,
             scene_build_result=scene_result,
         )
 
-        saved = mock_store.save_version.call_args[0][0]
-        assert saved.channels == ["CAM_BACK", "CAM_FRONT", "LIDAR_TOP"]
+        call_kwargs = mock_store.update_scene_summary.call_args.kwargs
+        assert call_kwargs["channels"] == ["CAM_BACK", "CAM_FRONT", "LIDAR_TOP"]
 
 
 # ── build_job_params: dataset.required_channels injection ─────────────────────

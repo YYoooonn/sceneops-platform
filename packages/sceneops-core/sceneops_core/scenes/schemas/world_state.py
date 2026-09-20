@@ -1,3 +1,20 @@
+"""World State: a reserved, currently-unimplemented hook for richer 3D scene
+reconstruction (scene graph / physics bodies / static+dynamic assets) beyond
+today's flat SceneManifest.
+
+Status as of Stabilization Request 5's audit: no job handler reads or
+writes any of this — build_scenes.py never branches on the
+`build_world_state` param that threads through pipeline/job schemas
+(defaults to False everywhere), no persisted SceneRecord has
+world_state_manifest_uri set, and SceneManifest.world_state is never
+populated. Retained rather than removed because it's a coherent, complete
+schema (not confused/abandoned code) with zero compatibility cost
+(everything defaults off, nothing depends on it) — a deliberate future hook,
+not dead code left over from a removed feature. If it's still unimplemented
+by the time a broader architecture pass happens, that's the point to decide
+whether to build it or finally drop it.
+"""
+
 from __future__ import annotations
 
 from enum import StrEnum

@@ -5,10 +5,7 @@ from typing import Any, TypeAlias
 from sceneops_core.runs.schemas import RunType
 from sceneops_core.scenes.schemas.records import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
-    SceneComparisonRunRecord,
-    ScenePackageExportRunRecord,
     SceneProfileRunRecord,
-    SceneReconstructionRunRecord,
     SceneValidationRunRecord,
 )
 
@@ -21,20 +18,11 @@ from ._utils import (
     metadata_from_model,
 )
 
-SceneRunRecord: TypeAlias = (
-    SceneValidationRunRecord
-    | SceneProfileRunRecord
-    | SceneComparisonRunRecord
-    | SceneReconstructionRunRecord
-    | ScenePackageExportRunRecord
-)
+SceneRunRecord: TypeAlias = SceneValidationRunRecord | SceneProfileRunRecord
 
 _SCENE_RUN_TYPE_MAP: dict[str, type[SceneRunRecord]] = {
     RunType.SCENE_VALIDATION.value: SceneValidationRunRecord,
     RunType.SCENE_PROFILE.value: SceneProfileRunRecord,
-    RunType.SCENE_COMPARISON.value: SceneComparisonRunRecord,
-    RunType.SCENE_RECONSTRUCTION.value: SceneReconstructionRunRecord,
-    RunType.SCENE_PACKAGE_EXPORT.value: ScenePackageExportRunRecord,
 }
 
 
@@ -161,7 +149,7 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
             missing_artifact_count=s.get("missing_artifact_count"),
             summary=s,
         )
-    elif model.type == RunType.SCENE_PROFILE.value:
+    else:  # SCENE_PROFILE
         s = model.summary or {}
         return SceneProfileRunRecord(
             **base,
@@ -178,33 +166,6 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
             asset_summary=s.get("asset_summary", {}),
             world_state_summary=s.get("world_state_summary", {}),
             annotation_summary=s.get("annotation_summary", {}),
-        )
-    elif model.type == RunType.SCENE_COMPARISON.value:
-        return SceneComparisonRunRecord(
-            **base,
-            source_scene_id=model.source_scene_id,
-            source_scene_manifest_uri=model.scene_manifest_uri,
-            target_scene_id=model.target_scene_id,
-            comparison_report_uri=model.report_uri,
-            summary=model.summary or {},
-        )
-    elif model.type == RunType.SCENE_RECONSTRUCTION.value:
-        return SceneReconstructionRunRecord(
-            **base,
-            raw_log_id=model.raw_log_id,
-            raw_log_manifest_uri=model.raw_log_manifest_uri,
-            raw_log_frame_index_uri=model.raw_log_frame_index_uri,
-            scene_id=model.scene_id,
-            scene_manifest_uri=model.scene_manifest_uri,
-            world_state_manifest_uri=model.world_state_manifest_uri,
-        )
-    else:  # SCENE_PACKAGE_EXPORT
-        return ScenePackageExportRunRecord(
-            **base,
-            scene_id=model.scene_id,
-            scene_manifest_uri=model.scene_manifest_uri or "",
-            package_uri=model.package_uri,
-            summary=model.summary or {},
         )
 
 
@@ -233,7 +194,7 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
             "report_uri": record.validation_report_uri,
             "summary": summary,
         }
-    elif isinstance(record, SceneProfileRunRecord):
+    else:  # SceneProfileRunRecord
         summary = {
             "sample_count": record.sample_count,
             "frame_count": record.frame_count,
@@ -252,31 +213,4 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
             "dataset_version": record.dataset_version,
             "report_uri": record.profile_report_uri,
             "summary": summary,
-        }
-    elif isinstance(record, SceneComparisonRunRecord):
-        return {
-            **base,
-            "source_scene_id": record.source_scene_id,
-            "scene_manifest_uri": record.source_scene_manifest_uri,
-            "target_scene_id": record.target_scene_id,
-            "report_uri": record.comparison_report_uri,
-            "summary": record.summary or {},
-        }
-    elif isinstance(record, SceneReconstructionRunRecord):
-        return {
-            **base,
-            "raw_log_id": record.raw_log_id,
-            "raw_log_manifest_uri": record.raw_log_manifest_uri,
-            "raw_log_frame_index_uri": record.raw_log_frame_index_uri,
-            "scene_id": record.scene_id,
-            "scene_manifest_uri": record.scene_manifest_uri,
-            "world_state_manifest_uri": record.world_state_manifest_uri,
-        }
-    else:  # ScenePackageExportRunRecord
-        return {
-            **base,
-            "scene_id": record.scene_id,
-            "scene_manifest_uri": record.scene_manifest_uri,
-            "package_uri": record.package_uri,
-            "summary": record.summary or {},
         }

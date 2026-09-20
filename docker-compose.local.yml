@@ -9,10 +9,38 @@ x-worker-common: &worker-common
     postgres:
       condition: service_healthy
     redis:
-      condition: service_started
+      condition: service_healthy
+    minio:
+      condition: service_healthy
   volumes:
     - ./data:/data
     - ./scripts:/workspace/scripts:ro
+
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow
+    dockerfile: Dockerfile
+  image: sceneops-platform/airflow:local
+  env_file:
+    - .env.local
+    - .env.airflow.local
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    HOST_DATA_DIR: ${PWD}/data
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+  profiles:
+    - airflow
+
+networks:
+  default:
+    name: sceneops-network
 
 services:
   postgres:
@@ -21,11 +49,11 @@ services:
     env_file:
       - .env.local
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - sceneops_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sceneops -d sceneops"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sceneops} -d ${POSTGRES_DB:-sceneops}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -34,10 +62,15 @@ services:
     image: redis:7-alpine
     container_name: sceneops-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
     image: minio/minio:RELEASE.2024-11-07T00-52-20Z
@@ -46,8 +79,8 @@ services:
     env_file:
       - .env.local
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -55,9 +88,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    profiles:
-      - minio
 
+  # One-shot, idempotent bucket bootstrap (mc mb --ignore-existing) — the
+  # MinIO-side counterpart to the `migrate` service. Grouped under `tools`
+  # like `migrate`, not `minio`, since it's an action you run once per
+  # bootstrap, not a long-running dependency of anything.
   minio-init:
     image: minio/mc:RELEASE.2024-11-17T19-35-25Z
     container_name: sceneops-minio-init
@@ -71,7 +106,7 @@ services:
       - ./data/raw:/data/raw:ro
       - ./scripts:/scripts:ro
     profiles:
-      - minio
+      - tools
 
   api:
     build:
@@ -82,14 +117,16 @@ services:
     env_file:
       - .env.local
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     volumes:
       - ./data:/data
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -166,7 +203,7 @@ services:
       HF_HOME: /cache/hf
       SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
     ports:
-      - "8001:8001"
+      - "${INFERENCE_PORT:-8001}:8001"
     volumes:
       - ./data:/data:ro
       - ./cache/hf:/cache/hf
@@ -202,7 +239,7 @@ services:
       HF_HOME: /cache/hf
       SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
     ports:
-      - "8001:8001"
+      - "${INFERENCE_PORT:-8001}:8001"
     volumes:
       - ./data:/data:ro
       - ./cache/hf:/cache/hf
@@ -219,7 +256,83 @@ services:
     profiles:
       - inference
 
+  airflow-postgres:
+    image: postgres:16
+    container_name: sceneops-airflow-postgres
+    env_file:
+      - .env.airflow.local
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles:
+      - airflow
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: sceneops-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      # $$VAR (not ${VAR}) is intentional: this runs as a shell script
+      # inside the container, so it should resolve from the container's own
+      # env (loaded via env_file: .env.airflow.local above), not from
+      # compose-level ${VAR} substitution on the host.
+      - >-
+        airflow db migrate &&
+        airflow users create --username "$$AIRFLOW_ADMIN_USERNAME"
+        --password "$$AIRFLOW_ADMIN_PASSWORD"
+        --firstname Scene --lastname Ops --role Admin
+        --email airflow@sceneops.local || true
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: sceneops-airflow-webserver
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: webserver
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: sceneops-airflow-scheduler
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: scheduler
+
+  ros2:
+    build:
+      context: ./ros2
+      dockerfile: Dockerfile
+    image: sceneops-platform/ros2:local
+    container_name: sceneops-ros2
+    volumes:
+      - ./data:/data
+      - ./ros2/nodes:/workspace/nodes:ro
+    profiles:
+      - ros2
+
 volumes:
   sceneops_postgres_data:
   redis-data:
   minio-data:
+  airflow_postgres_data:

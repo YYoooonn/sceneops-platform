@@ -10,20 +10,11 @@ from sceneops_core.scenes.schemas import (
     SceneRecord,
 )
 from sceneops_core.scenes.schemas.runs import (
-    SceneComparisonRunRecord,
-    ScenePackageExportRunRecord,
     SceneProfileRunRecord,
-    SceneReconstructionRunRecord,
     SceneValidationRunRecord,
 )
 
-SceneRunRecord: TypeAlias = (
-    SceneValidationRunRecord
-    | SceneProfileRunRecord
-    | SceneComparisonRunRecord
-    | SceneReconstructionRunRecord
-    | ScenePackageExportRunRecord
-)
+SceneRunRecord: TypeAlias = SceneValidationRunRecord | SceneProfileRunRecord
 
 
 @runtime_checkable

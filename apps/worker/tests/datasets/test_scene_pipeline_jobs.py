@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
-from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.enums import SceneStatus
 from sceneops_core.scenes.schemas.records import SceneRecord
@@ -142,7 +141,7 @@ def _context(
     ctx.settings.run_root_uri = "file:///runs"
 
     ctx.dataset_store = MagicMock()
-    ctx.dataset_store.update_quality_cache = AsyncMock()
+    ctx.dataset_store.update_scene_summary = AsyncMock()
 
     ctx.commit = AsyncMock()
 
@@ -170,7 +169,12 @@ def _params(uris: list[str] | None = None, **extra) -> MagicMock:
 # ── register_scene ────────────────────────────────────────────────────────────
 
 
-async def test_register_scene_registers_scene_manifest_artifact():
+async def test_register_scene_does_not_register_scene_manifest_artifact():
+    """SceneOps V2 Request 22 / F-03: the SCENE_MANIFEST ArtifactRecord is
+    registered exactly once, by whichever job physically produced the
+    manifest (build_scenes / ingest_scenes). register_scene only consumes
+    the manifest to upsert SceneRecord — it must not create a second,
+    mis-attributed ArtifactRecord for a manifest it did not produce."""
     ctx = _context()
     handler = RegisterSceneJobHandler()
     job = _job()
@@ -186,40 +190,37 @@ async def test_register_scene_registers_scene_manifest_artifact():
     ):
         await handler.run(request)
 
-    artifacts = ctx._created_artifacts
-    assert any(
-        a.get("ref") is not None
-        and getattr(a["ref"], "kind", None) == ArtifactKind.SCENE_MANIFEST
-        for a in artifacts
-    ), "Expected SCENE_MANIFEST artifact to be registered"
-
-
-async def test_register_scene_artifact_has_scene_id_and_owner():
-    ctx = _context()
-    handler = RegisterSceneJobHandler()
-    job = _job()
-    params = _params()
-    request = MagicMock()
-    request.params = params
-    request.context = ctx
-    request.job = job
-
-    with patch(
-        "sceneops_worker.jobs.dataset.register_scene._build_scene_record_from_manifest",
-        return_value=_scene_record(),
-    ):
-        await handler.run(request)
-
-    scene_artifacts = [
+    scene_manifest_artifacts = [
         a
         for a in ctx._created_artifacts
         if getattr(a.get("ref"), "kind", None) == ArtifactKind.SCENE_MANIFEST
     ]
-    assert len(scene_artifacts) == 1
-    a = scene_artifacts[0]
-    assert a["scene_id"] == SCENE_ID
-    assert a["owner_type"] == ArtifactOwnerType.SCENE
-    assert a["owner_id"] == SCENE_ID
+    assert scene_manifest_artifacts == [], (
+        "register_scene must not create a SCENE_MANIFEST ArtifactRecord — "
+        "the producing job (build_scenes/ingest_scenes) already did"
+    )
+
+
+async def test_register_scene_still_upserts_scene_record():
+    """The artifact-registration removal must not affect register_scene's
+    actual responsibility: upserting the canonical SceneRecord."""
+    ctx = _context()
+    handler = RegisterSceneJobHandler()
+    job = _job()
+    params = _params()
+    request = MagicMock()
+    request.params = params
+    request.context = ctx
+    request.job = job
+
+    with patch(
+        "sceneops_worker.jobs.dataset.register_scene._build_scene_record_from_manifest",
+        return_value=_scene_record(),
+    ):
+        await handler.run(request)
+
+    assert len(ctx._upserted_scenes) == 1
+    assert ctx._upserted_scenes[0].scene_id == SCENE_ID
 
 
 # ── validate_scene ────────────────────────────────────────────────────────────

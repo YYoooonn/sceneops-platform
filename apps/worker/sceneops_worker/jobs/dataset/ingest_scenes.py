@@ -7,7 +7,7 @@ from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.datasets.schemas import DatasetType, DatasetVersionStatus
+from sceneops_core.datasets.schemas import DatasetType
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
 from sceneops_core.jobs.schemas import (
     IngestScenesJobParams,
@@ -49,20 +49,15 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
         dataset_id = params.dataset_id
         dataset_version = params.dataset_version
 
+        # SceneOps V2 Request 05: DatasetVersion.status no longer tracks Scene
+        # workflow progress — auto-create with the default (generic)
+        # REGISTERED state if this is the first time we've seen this version.
         version = await context.dataset_store.get_version(
             dataset_id=dataset_id, version=dataset_version
         )
         if version is None:
             version = await context.dataset_store.create_version(
-                DatasetVersionRecord(
-                    dataset_id=dataset_id,
-                    version=dataset_version,
-                    status=DatasetVersionStatus.INGESTING,
-                )
-            )
-        else:
-            version = await context.dataset_store.save_version(
-                version.model_copy(update={"status": DatasetVersionStatus.INGESTING})
+                DatasetVersionRecord(dataset_id=dataset_id, version=dataset_version)
             )
 
         scene_ids: list[str] = []
@@ -98,16 +93,13 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
 
         channels = sorted(all_channels)
 
-        await context.dataset_store.save_version(
-            version.model_copy(
-                update={
-                    "status": DatasetVersionStatus.INGESTED,
-                    "scene_count": len(scene_ids),
-                    "sample_count": total_samples,
-                    "frame_count": total_frames,
-                    "channels": channels,
-                }
-            )
+        await context.dataset_store.update_scene_summary(
+            dataset_id=dataset_id,
+            version=dataset_version,
+            scene_count=len(scene_ids),
+            sample_count=total_samples,
+            frame_count=total_frames,
+            channels=channels,
         )
 
         return IngestScenesJobResult(

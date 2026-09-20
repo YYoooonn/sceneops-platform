@@ -181,7 +181,9 @@ class NuScenesRawLogMocker:
         calibrations = list(calibrations_by_id.values())
         ego_poses = list(ego_poses_by_id.values())
 
-        frame_index_uri = self._observation_store.raw_frame_index_uri(version_root_uri)
+        frame_index_uri = self._observation_store.raw_frame_index_uri(
+            version_root_uri, raw_log_id
+        )
 
         frame_index = RawLogFrameIndex(
             raw_log_id=raw_log_id,
@@ -217,7 +219,9 @@ class NuScenesRawLogMocker:
             frame_index_uri=frame_index_uri,
         )
 
-        manifest_uri = self._observation_store.raw_log_manifest_uri(version_root_uri)
+        manifest_uri = self._observation_store.raw_log_manifest_uri(
+            version_root_uri, raw_log_id
+        )
 
         await self._observation_store.save_raw_log_manifest(
             uri=manifest_uri,

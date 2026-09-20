@@ -30,6 +30,7 @@
 #   DATASET_VERSION         (default: v1.0-mini)
 #   MODEL_ID                (default: grounding-dino)
 #   MODEL_VERSION           (default: tiny)
+#   MAX_SCENES              number of scenes to select for inference (default: 1)
 #   MAX_SAMPLES             number of samples to run inference on (default: 5)
 #   READYZ_TIMEOUT          readyz poll attempts at 2s each (default: 90 = 3 min)
 #   POLL_TIMEOUT            pipeline poll attempts at 5s each (default: 120 = 10 min)
@@ -49,8 +50,12 @@ MODEL_VERSION="${MODEL_VERSION:-tiny}"
 READYZ_TIMEOUT="${READYZ_TIMEOUT:-90}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 DETECTION_MODE="${DETECTION_MODE:-ground_truth_only}"
-MAX_SCENES="${MAX_SCENES:-10}"
-MAX_SAMPLES="${MAX_SAMPLES:-500}"
+MAX_SCENES="${MAX_SCENES:-1}"
+MAX_SAMPLES="${MAX_SAMPLES:-5}"
+# ScenarioSet inputs: provide one of SCENARIO_SET_ID or SCENARIO_CURATION_PIPELINE_RUN_ID.
+# PIPELINE_RUN_ID is accepted as an alias for SCENARIO_CURATION_PIPELINE_RUN_ID.
+SCENARIO_SET_ID="${SCENARIO_SET_ID:-}"
+SCENARIO_CURATION_PIPELINE_RUN_ID="${SCENARIO_CURATION_PIPELINE_RUN_ID:-${PIPELINE_RUN_ID:-}}"
 
 echo "=== GroundingDINO detection_evaluation E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
@@ -61,6 +66,47 @@ echo "  MODEL_ID=$MODEL_ID  MODEL_VERSION=$MODEL_VERSION"
 echo "  DETECTION_MODE=$DETECTION_MODE"
 echo "  MAX_SCENES=$MAX_SCENES"
 echo "  MAX_SAMPLES=$MAX_SAMPLES"
+echo "  SCENARIO_SET_ID=${SCENARIO_SET_ID:-(not set)}"
+echo "  SCENARIO_CURATION_PIPELINE_RUN_ID=${SCENARIO_CURATION_PIPELINE_RUN_ID:-(not set)}"
+echo ""
+
+# ── 0. Resolve ScenarioSet ID ─────────────────────────────────────────────────
+
+echo "--- 0. Resolve ScenarioSet ID ---"
+
+if [ -z "$SCENARIO_SET_ID" ] && [ -z "$SCENARIO_CURATION_PIPELINE_RUN_ID" ]; then
+  echo "❌ ScenarioSet input required. Provide one of:" >&2
+  echo "   SCENARIO_SET_ID=scset-...                        (direct ScenarioSet ID)" >&2
+  echo "   SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...       (resolve from scenario curation pipeline run)" >&2
+  echo "" >&2
+  echo "   Run scenario curation first: make e2e-scenario-curation" >&2
+  exit 1
+fi
+
+if [ -n "$SCENARIO_SET_ID" ]; then
+  echo "  using direct SCENARIO_SET_ID=$SCENARIO_SET_ID"
+else
+  echo "  resolving from SCENARIO_CURATION_PIPELINE_RUN_ID=$SCENARIO_CURATION_PIPELINE_RUN_ID"
+  SCENARIO_PIPELINE_JSON="$(fetch_pipeline_run "$API_BASE_URL" "$SCENARIO_CURATION_PIPELINE_RUN_ID")"
+
+  SCENARIO_PIPELINE_TYPE="$(echo "$SCENARIO_PIPELINE_JSON" | \
+    jq -r '.pipelineRun.type // .pipelineRun.pipelineType // empty')"
+  if [ -n "$SCENARIO_PIPELINE_TYPE" ] && [ "$SCENARIO_PIPELINE_TYPE" != "scenario_curation" ]; then
+    echo "❌ Pipeline $SCENARIO_CURATION_PIPELINE_RUN_ID is type '$SCENARIO_PIPELINE_TYPE', expected 'scenario_curation'" >&2
+    exit 1
+  fi
+
+  SCENARIO_SET_ID="$(echo "$SCENARIO_PIPELINE_JSON" | \
+    jq -r '.pipelineRun.result.outputs.scenario_set_id // empty')"
+
+  if [ -z "$SCENARIO_SET_ID" ] || [ "$SCENARIO_SET_ID" = "null" ]; then
+    echo "❌ Could not extract scenario_set_id from pipeline run: $SCENARIO_CURATION_PIPELINE_RUN_ID" >&2
+    echo "  Check that the pipeline run completed successfully and contains outputs.scenario_set_id." >&2
+    exit 1
+  fi
+
+  echo "  resolved scenario_set_id=$SCENARIO_SET_ID"
+fi
 echo ""
 
 # ── 1. API health ─────────────────────────────────────────────────────────────
@@ -112,11 +158,14 @@ echo ""
 
 echo "--- 4. Dataset version status ---"
 DATASET_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
-DATASET_STATUS="$(echo "$DATASET_JSON" | jq -r '.version.status // empty')"
-echo "  $DATASET_ID/$DATASET_VERSION: status=$DATASET_STATUS"
+# DatasetVersion.status no longer tracks Scene workflow progress (SceneOps V2
+# Request 05) — Scene readiness for detection is the presence of a built
+# manifest instead (mirrors _require_scene_dataset_ready in the worker).
+SCENE_MANIFEST_URI="$(echo "$DATASET_JSON" | jq -r '.version.scene.manifestUri // empty')"
+echo "  $DATASET_ID/$DATASET_VERSION: scene.manifestUri=$SCENE_MANIFEST_URI"
 
-if [ "$DATASET_STATUS" != "ready" ]; then
-  echo "❌ Dataset version is not ready (status='$DATASET_STATUS')" >&2
+if [ -z "$SCENE_MANIFEST_URI" ]; then
+  echo "❌ Dataset version has no Scene manifest yet" >&2
   echo "  Run dataset ingestion first: make e2e-dataset-scene-ingestion" >&2
   exit 1
 fi
@@ -141,8 +190,10 @@ PAYLOAD="$(cat <<JSON
   "dataset_version": "$DATASET_VERSION",
   "model_id": "$MODEL_ID",
   "model_version": "$MODEL_VERSION",
+  "force": true,
   "params": {
     "predict_detection": {
+      "scenario_set_id": "$SCENARIO_SET_ID",
       "model_id": "$MODEL_ID",
       "model_version": "$MODEL_VERSION",
       "inference_backend": "grounding_dino",
@@ -154,6 +205,7 @@ PAYLOAD="$(cat <<JSON
       "camera_channel": "CAM_FRONT"
     },
     "evaluate_detection": {
+      "scenario_set_id": "$SCENARIO_SET_ID",
       "evaluator_id": "center-distance",
       "match_distance_m": 2.0
     }
@@ -196,7 +248,7 @@ if [ "$FINAL_STATUS" = "failed" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'detection_evaluation (groundingdino) pipeline should succeed'
+assert_pipeline_succeeded "$PIPELINE_JSON" 'detection_evaluation (groundingdino) pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 
@@ -324,8 +376,13 @@ fi
 LB_ENTRY="$(echo "$LB_JSON" | jq --arg eid "$EVALUATION_RUN_ID" \
   '.entries[] | select(.evaluationRunId == $eid)')"
 if [ -z "$LB_ENTRY" ]; then
-  echo "  (evaluation_run_id not matched, using first entry)"
-  LB_ENTRY="$(echo "$LB_JSON" | jq '.entries[0]')"
+  # Persistent local stack: do NOT fall back to entries[0] — under
+  # accumulated history that would silently validate a DIFFERENT,
+  # unrelated historical run instead of catching that this run's own
+  # leaderboard entry is missing.
+  echo "❌ No leaderboard entry found for this run's evaluation_run_id=$EVALUATION_RUN_ID" >&2
+  echo "$LB_JSON" | jq '.entries[] | {evaluationRunId, primaryMetricName, primaryMetricValue}' >&2
+  exit 1
 fi
 
 LB_ID="$(echo "$LB_ENTRY" | jq -r '.id // .leaderboardEntryId // empty')"
@@ -383,6 +440,49 @@ if [ "${SEL_SCENE_IDS_LEN:-0}" -lt 1 ]; then
   exit 1
 fi
 echo "  OK"
+echo ""
+
+# ── 15b. ScenarioSet lineage verification ─────────────────────────────────────
+
+echo "--- 15b. ScenarioSet lineage verification ---"
+
+INFER_SS_ID="$(echo "$INFERENCE_JSON" | jq -r '.run.metadata.scenario_set_id // empty')"
+EVAL_SS_ID="$(echo "$EVAL_JSON" | jq -r '.run.metadata.scenario_set_id // empty')"
+
+if [ "$INFER_SS_ID" != "$SCENARIO_SET_ID" ]; then
+  echo "❌ inference_run scenario_set_id mismatch" >&2
+  echo "  expected=$SCENARIO_SET_ID  actual=$INFER_SS_ID" >&2
+  exit 1
+fi
+echo "  ✓ inference_run scenario_set_id=$INFER_SS_ID"
+
+if [ "$EVAL_SS_ID" != "$SCENARIO_SET_ID" ]; then
+  echo "❌ evaluation_run scenario_set_id mismatch" >&2
+  echo "  expected=$SCENARIO_SET_ID  actual=$EVAL_SS_ID" >&2
+  exit 1
+fi
+echo "  ✓ evaluation_run scenario_set_id=$EVAL_SS_ID"
+
+INFER_SCENARIO_CANDIDATE_COUNT="$(echo "$INFERENCE_JSON" | \
+  jq -r '.run.metadata.scenario_candidate_count // "n/a"')"
+INFER_SCENARIO_SELECTED_COUNT="$(echo "$INFERENCE_JSON" | \
+  jq -r '.run.metadata.scenario_selected_count // "n/a"')"
+INFER_SCENARIO_REJECTED_COUNT="$(echo "$INFERENCE_JSON" | \
+  jq -r '.run.metadata.scenario_rejected_count // "n/a"')"
+NOT_IN_SCENARIO_SET_COUNT="$(echo "$INFERENCE_JSON" | \
+  jq '[.run.metadata.scene_selection.skipped_scenes[]? | select(.reason == "not_in_scenario_set")] | length' \
+  2>/dev/null || echo "n/a")"
+
+echo ""
+echo "=== ScenarioSet Lineage ==="
+echo "  scenario_set_id                   : $SCENARIO_SET_ID"
+if [ -n "$SCENARIO_CURATION_PIPELINE_RUN_ID" ]; then
+  echo "  scenario_curation_pipeline_run_id : $SCENARIO_CURATION_PIPELINE_RUN_ID"
+fi
+echo "  scenario_candidate_count          : $INFER_SCENARIO_CANDIDATE_COUNT"
+echo "  scenario_selected_count           : $INFER_SCENARIO_SELECTED_COUNT"
+echo "  scenario_rejected_count           : $INFER_SCENARIO_REJECTED_COUNT"
+echo "  not_in_scenario_set               : $NOT_IN_SCENARIO_SET_COUNT"
 echo ""
 
 # ── 16. Assert evaluation artifacts and metrics content ───────────────────────
@@ -479,6 +579,7 @@ EVAL_EVALUABLE="$(echo "$EVAL_JSON" | jq -r '.run.summary.evaluable_prediction_c
 
 echo "=== PASSED: GroundingDINO detection_evaluation E2E ==="
 echo ""
+echo "  scenario_set_id                  = $SCENARIO_SET_ID"
 echo "  pipeline_run_id                  = $PIPELINE_RUN_ID"
 echo "  inference_run_id                 = $INFERENCE_RUN_ID"
 echo "  evaluation_run_id                = $EVALUATION_RUN_ID"

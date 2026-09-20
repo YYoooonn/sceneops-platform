@@ -7,6 +7,7 @@ from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
     PipelineTaskRunManifest,
+    PipelineTaskRunStatus,
 )
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.pipelines.result_builder import (
@@ -69,6 +70,57 @@ class PipelineRunner:
                 error=error,
             )
 
+    # ── per-task DAG bridge (Airflow) ────────────────────────────────────────
+    async def start(self, pipeline_run_id: str) -> PipelineRunManifest:
+        pipeline_run = await self._load_pipeline_run(pipeline_run_id)
+        self._validate_runnable(pipeline_run)
+        return await self._start_pipeline(pipeline_run)
+
+    async def finalize(self, pipeline_run_id: str) -> PipelineRunManifest:
+        pipeline_run = await self._load_pipeline_run(pipeline_run_id)
+        task_runs = await self._list_task_runs(pipeline_run_id)
+
+        if pipeline_run.status != PipelineRunStatus.RUNNING:
+            # start() never completed (e.g. validation rejected it before any
+            # task ran) — there is nothing to roll up.
+            return await self._fail_pipeline(
+                pipeline_run=pipeline_run,
+                task_runs=task_runs,
+                error=ErrorInfo(
+                    type="PipelineNeverStarted",
+                    message=(
+                        f"finalize() called but pipeline_run status is "
+                        f"{pipeline_run.status.value!r}, not 'running' — "
+                        "start() must have failed or never ran."
+                    ),
+                ),
+            )
+
+        if any(t.status == PipelineTaskRunStatus.BLOCKED for t in task_runs):
+            return await self._block_pipeline(
+                pipeline_run=pipeline_run,
+                task_runs=task_runs,
+                error=ErrorInfo(
+                    type="PipelineQualityBlocked",
+                    message="One or more tasks were blocked by a quality gate.",
+                ),
+            )
+
+        if any(t.status == PipelineTaskRunStatus.FAILED for t in task_runs):
+            return await self._fail_pipeline(
+                pipeline_run=pipeline_run,
+                task_runs=task_runs,
+                error=ErrorInfo(
+                    type="PipelineTaskFailed",
+                    message="One or more tasks failed.",
+                ),
+            )
+
+        return await self._succeed_pipeline(
+            pipeline_run=pipeline_run,
+            task_runs=task_runs,
+        )
+
     # ── loading / validation ─────────────────────────────────────────────────
 
     async def _load_pipeline_run(
@@ -98,10 +150,12 @@ class PipelineRunner:
                 f"Pipeline run is cancelled: {pipeline_run.pipeline_run_id}"
             )
 
-        if pipeline_run.status == PipelineRunStatus.BLOCKED:
-            raise RuntimeError(
-                f"Pipeline run is already blocked: {pipeline_run.pipeline_run_id}"
-            )
+        # BLOCKED is intentionally retryable: it means a quality gate stopped
+        # the pipeline (e.g. validate_scene), not that the pipeline failed to
+        # run. Once the underlying issue is fixed, redispatching should
+        # re-evaluate the blocking task. The API layer's
+        # PipelineService.validate_executable already allows this; this check
+        # used to be inconsistent with it.
 
     # ── execution ────────────────────────────────────────────────────────────
 
@@ -258,6 +312,5 @@ class PipelineRunner:
             return task_run.error.message
 
         return (
-            "Pipeline blocked by quality gate at task "
-            f"'{task_run.pipeline_task_id}'."
+            f"Pipeline blocked by quality gate at task '{task_run.pipeline_task_id}'."
         )

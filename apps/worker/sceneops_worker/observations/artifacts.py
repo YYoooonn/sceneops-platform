@@ -8,7 +8,10 @@ from sceneops_storage import ArtifactStore
 class ObservationArtifactStore:
     """Artifact store for raw observation data (raw logs, frame indices, segments).
 
-    Scaffolded for future raw-log ingestion support.
+    Raw-log-derived artifacts are scoped by ``raw_log_id`` within a
+    DatasetVersion so a second raw-log build/ingestion against the same
+    dataset version cannot silently overwrite an earlier one's manifest,
+    frame index, or scene segments (SceneOps V2 Request 22 / F-01).
     """
 
     def __init__(
@@ -20,22 +23,22 @@ class ObservationArtifactStore:
         self.artifact_store = artifact_store
         self.dataset_root_uri = dataset_root_uri
 
-    def _raw_root_uri(self, version_root_uri: str) -> str:
-        return self.artifact_store.join_uri(version_root_uri, "raw")
+    def _raw_log_root_uri(self, version_root_uri: str, raw_log_id: str) -> str:
+        return self.artifact_store.join_uri(version_root_uri, "raw", raw_log_id)
 
-    def raw_log_manifest_uri(self, version_root_uri: str) -> str:
+    def raw_log_manifest_uri(self, version_root_uri: str, raw_log_id: str) -> str:
         return self.artifact_store.join_uri(
-            self._raw_root_uri(version_root_uri), "raw_log.json"
+            self._raw_log_root_uri(version_root_uri, raw_log_id), "raw_log.json"
         )
 
-    def raw_frame_index_uri(self, version_root_uri: str) -> str:
+    def raw_frame_index_uri(self, version_root_uri: str, raw_log_id: str) -> str:
         return self.artifact_store.join_uri(
-            self._raw_root_uri(version_root_uri), "frames.json"
+            self._raw_log_root_uri(version_root_uri, raw_log_id), "frames.json"
         )
 
-    def scene_segments_uri(self, version_root_uri: str) -> str:
+    def scene_segments_uri(self, version_root_uri: str, raw_log_id: str) -> str:
         return self.artifact_store.join_uri(
-            self._raw_root_uri(version_root_uri), "scene_segments.json"
+            self._raw_log_root_uri(version_root_uri, raw_log_id), "scene_segments.json"
         )
 
     async def save_raw_log_manifest(

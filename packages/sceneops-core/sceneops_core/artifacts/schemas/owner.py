@@ -8,9 +8,11 @@ class ArtifactOwnerType(StrEnum):
     DATASET = "dataset"
     DATASET_VERSION = "dataset_version"
     SCENE = "scene"
+    EPISODE = "episode"
     SCENARIO_SET = "scenario_set"
     MODEL = "model"
     MODEL_VERSION = "model_version"
+    ROBOT_RUN = "robot_run"
     # platform
     JOB = "job"
     PIPELINE_RUN = "pipeline_run"
@@ -20,8 +22,14 @@ class ArtifactOwnerType(StrEnum):
     SCENE_COMPARISON_RUN = "scene_comparison_run"
     SCENE_EXPORT_RUN = "scene_export_run"
     SCENE_AUTO_LABEL_RUN = "scene_auto_label_run"
+    # episode-level runs
+    EPISODE_VALIDATION_RUN = "episode_validation_run"
+    EPISODE_PROFILE_RUN = "episode_profile_run"
     # dataset-level runs
-    DATASET_DISTRIBUTION_RUN = "dataset_distribution_run"
+    # (DATASET_DISTRIBUTION_RUN removed in Stabilization Request 5 alongside
+    # JobType.CHECK_DISTRIBUTION — see that enum's history: its DatasetVersion
+    # pointer fields were already dropped as dead in migration
+    # b5f4b88342e2, and this owner type had zero other usage.)
     DATASET_EXPORT_RUN = "dataset_export_run"
     DATASET_AUTO_LABEL_RUN = "dataset_auto_label_run"
     # scenario-level runs

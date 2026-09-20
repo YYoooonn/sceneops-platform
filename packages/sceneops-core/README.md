@@ -13,6 +13,7 @@ sceneops_core/
   config.py           ← runtime settings (ArtifactSettings, ExecutionSettings .etc)
   constants/          ← platform constants (sensor name, queue name)
   datasets/           ← dataset domain (Record, Manifest, Run, Validation schema)
+  episodes/           ← Episode domain (v2 — Record, Manifest, segmentation config, Run schema)
   evaluations/        ← evaluation comain (Metric, Leaderboard, History schema)
   executions/         ← Execution Backend schema (Celery / Airflow)
   inference/          ← Inference domain (Detection 스키마, 백엔드 타입)
@@ -21,8 +22,8 @@ sceneops_core/
   models/             ← Model Registry Schema (Record, Artifact)
   observations/       ← Raw Observation domain (RawLog, frame, sensor frame)
   operations/         ← Operations schema
-  paths/              ← URI generation pure functions
   pipelines/          ← Pipeline domain (definitions, manifests, pipeline steps)
+  robots/             ← Robot domain (v2 — Robot, RobotRun, Mission, RobotState schema)
   runs/               ← Common Run Schema (RunStatus, RunType, RunRef)
   scenarios/          ← Scenario Domain (Candidates, Predicates, Mining schema)
   scenes/             ← Scene Domain (Manifest, WorldState, Segment schema)
@@ -65,21 +66,6 @@ from sceneops_core.artifacts.contracts import ArtifactStore
 
 # Protocol이므로 duck typing으로 동작
 # 구체 구현은 sceneops-storage 참고
-```
-
-### paths — URI generation pure functions
-
-아티팩트 경로를 일관되게 생성하는 무상태 함수 모음.
-
-```python
-from sceneops_core.paths import (
-    dataset_manifest_uri,
-    scene_manifest_uri,
-    inference_run_manifest_uri,
-)
-
-uri = dataset_manifest_uri(root_uri, dataset_id, dataset_version)
-# → "{root_uri}/datasets/{dataset_id}/versions/{dataset_version}/manifest.json"
 ```
 
 ### ArtifactRef

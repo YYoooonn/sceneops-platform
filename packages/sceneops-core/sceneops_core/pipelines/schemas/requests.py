@@ -18,4 +18,9 @@ class CreatePipelineRunRequest(SceneOpsBaseModel):
 
     params: JsonDict = Field(default_factory=dict)
 
+    # If a pipeline run with the same computed execution_key already exists
+    # as QUEUED/RUNNING/SUCCEEDED, that run is returned instead of creating a
+    # duplicate. Set force=True to always create a new run.
+    force: bool = False
+
     metadata: JsonDict = Field(default_factory=dict)

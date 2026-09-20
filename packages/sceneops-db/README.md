@@ -37,6 +37,8 @@ models/         ←  SQLAlchemy ORM 모델
 | execution | `ExecutionRecordRepository` | `PostgresExecutionRecordRepository` |
 | dataset | `DatasetRepository`, `DatasetVersionRepository`, `DatasetRunRepository` | `PostgresDatasetRepository`, ... |
 | scene | `SceneRepository`, `SceneRunRepository` | `PostgresSceneRepository`, `PostgresSceneRunRepository` |
+| episode (v2) | `EpisodeRepository`, `EpisodeRunRepository` | `PostgresEpisodeRepository`, `PostgresEpisodeRunRepository` |
+| robot (v2) | `RobotRepository`, `RobotRunRepository`, `MissionRepository`, `RobotStateRepository` | `PostgresRobotRepository`, `PostgresRobotRunRepository`, `PostgresMissionRepository`, `PostgresRobotStateRepository` |
 | scenario | `ScenarioSetRepository`, `ScenarioRunRepository` | `PostgresScenarioSetRepository`, `PostgresScenarioRunRepository` |
 | inference | `InferenceRunRepository` | `PostgresInferenceRunRepository` |
 | evaluation | `EvaluationRunRepository` | `PostgresEvaluationRunRepository` |

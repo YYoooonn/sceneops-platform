@@ -6,10 +6,16 @@ from app.platform.jobs.router import router as jobs_router
 from app.platform.pipelines.router import router as pipelines_router
 
 from app.domains.datasets.router import router as datasets_router
+from app.domains.episodes.router import router as episodes_router
 from app.domains.evaluations.router import router as evaluations_router
 from app.domains.inference.router import router as inference_router
-from app.domains.labels.router import router as labels_router
 from app.domains.models.router import router as models_router
+from app.domains.robots.router import (
+    missions_router,
+    robot_runs_router,
+    robot_states_router,
+    robots_router,
+)
 from app.domains.scenarios.router import router as scenarios_router
 from app.domains.scenes.router import router as scenes_router
 
@@ -27,15 +33,19 @@ api_router.include_router(artifacts_router, prefix="/artifacts", tags=["artifact
 # domains — core resources
 api_router.include_router(datasets_router, prefix="/datasets", tags=["datasets"])
 api_router.include_router(scenes_router, prefix="/scenes", tags=["scenes"])
+api_router.include_router(episodes_router, prefix="/episodes", tags=["episodes"])
 api_router.include_router(scenarios_router, prefix="/scenarios", tags=["scenarios"])
 api_router.include_router(models_router, prefix="/models", tags=["models"])
+api_router.include_router(robots_router, prefix="/robots", tags=["robots"])
+api_router.include_router(robot_runs_router, prefix="/robot-runs", tags=["robots"])
+api_router.include_router(missions_router, prefix="/missions", tags=["robots"])
+api_router.include_router(robot_states_router, prefix="/robot-states", tags=["robots"])
 
 # domains — ML workflow results
 api_router.include_router(inference_router, prefix="/inference", tags=["inference"])
 api_router.include_router(
     evaluations_router, prefix="/evaluations", tags=["evaluations"]
 )
-api_router.include_router(labels_router, prefix="/labels", tags=["labels"])
 
 # views
 api_router.include_router(operations_router, prefix="/operations", tags=["operations"])

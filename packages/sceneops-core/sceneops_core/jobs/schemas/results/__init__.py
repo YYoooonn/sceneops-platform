@@ -2,6 +2,7 @@ from .base import BaseJobResult
 from .dataset import (
     AutoLabelDatasetJobResult,
     CheckDistributionJobResult,
+    ExportAnalyticsSnapshotJobResult,
     ExportDatasetJobResult,
 )
 from .detection import EvaluateDetectionJobResult, PredictDetectionJobResult
@@ -17,10 +18,23 @@ from .scene import (
     RegisterSceneJobResult,
     ValidateSceneJobResult,
 )
+from .robots import ExportRobotAnalyticsSnapshotJobResult, IngestRobotStatesJobResult
+from .episodes import (
+    BuildEpisodesJobResult,
+    ProfileEpisodeJobResult,
+    RegisterEpisodeJobResult,
+    ValidateEpisodeJobResult,
+)
 from .scenario import MineScenariosJobResult, ScoreScenarioReadinessJobResult
 
 __all__ = [
     "BaseJobResult",
+    "IngestRobotStatesJobResult",
+    "ExportRobotAnalyticsSnapshotJobResult",
+    "BuildEpisodesJobResult",
+    "RegisterEpisodeJobResult",
+    "ValidateEpisodeJobResult",
+    "ProfileEpisodeJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
     "BuildDatasetManifestJobResult",
@@ -36,6 +50,7 @@ __all__ = [
     "AutoLabelDatasetJobResult",
     "CheckDistributionJobResult",
     "ExportDatasetJobResult",
+    "ExportAnalyticsSnapshotJobResult",
     "PredictDetectionJobResult",
     "EvaluateDetectionJobResult",
 ]

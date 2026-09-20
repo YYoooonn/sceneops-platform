@@ -39,6 +39,7 @@ class JobModel(Base):
     max_retries: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    execution_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
@@ -126,6 +127,7 @@ Index("ix_jobs_pipeline_run_id", JobModel.pipeline_run_id)
 Index("ix_jobs_pipeline_task_run_id", JobModel.pipeline_task_run_id)
 Index("ix_jobs_status_queued_at", JobModel.status, JobModel.queued_at)
 Index("ix_jobs_status_locked_at", JobModel.status, JobModel.locked_at)
+Index("ix_jobs_execution_key", JobModel.execution_key)
 
 Index("ix_job_events_job_id_created_at", JobEventModel.job_id, JobEventModel.created_at)
 Index("ix_job_events_level_created_at", JobEventModel.level, JobEventModel.created_at)

@@ -1,9 +1,14 @@
 from .build_dataset_manifest import BuildDatasetManifestJobHandler
+from .build_episodes import BuildEpisodesJobHandler
 from .build_scene_index import BuildSceneIndexJobHandler
 from .build_scenes import BuildScenesJobHandler
+from .export_analytics_snapshot import ExportAnalyticsSnapshotJobHandler
 from .ingest_scenes import IngestScenesJobHandler
+from .profile_episode import ProfileEpisodeJobHandler
 from .profile_scene import ProfileSceneJobHandler
+from .register_episode import RegisterEpisodeJobHandler
 from .register_scene import RegisterSceneJobHandler
+from .validate_episode import ValidateEpisodeJobHandler
 from .validate_scene import ValidateSceneJobHandler
 
 __all__ = [
@@ -14,4 +19,9 @@ __all__ = [
     "BuildDatasetManifestJobHandler",
     "BuildSceneIndexJobHandler",
     "BuildScenesJobHandler",
+    "ExportAnalyticsSnapshotJobHandler",
+    "BuildEpisodesJobHandler",
+    "RegisterEpisodeJobHandler",
+    "ValidateEpisodeJobHandler",
+    "ProfileEpisodeJobHandler",
 ]
