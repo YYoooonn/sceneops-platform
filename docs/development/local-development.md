@@ -94,6 +94,10 @@ store backend), not an optional extra, so `api`/`worker-*` can
 
 ## Testing
 
+See [test-matrix.md](./test-matrix.md) for actual, per-capability verification
+status (unit/API/DB/job-pipeline/E2E/optional-runtime/clean-room/restart) —
+this section covers only the command surface.
+
 ```
 make test              infrastructure-independent, run anywhere, no prerequisites
 make test-integration  real Postgres + MinIO, requires `make local-up` first

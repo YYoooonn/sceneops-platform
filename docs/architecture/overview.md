@@ -203,6 +203,7 @@ domain-specific docs below for Scene/Episode flow.
 | Reserved architecture and current limitations | [reserved-and-limitations.md](./reserved-and-limitations.md) |
 | Robot data ingestion (ROS2 -> MCAP -> RobotRun) | [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) |
 | Local development, testing, E2E | [../development/local-development.md](../development/local-development.md) |
+| Verified test coverage per capability | [../development/test-matrix.md](../development/test-matrix.md) |
 | Architecture decisions | [../adr/](../adr/) |
 
 ## 6. Source-of-truth map
