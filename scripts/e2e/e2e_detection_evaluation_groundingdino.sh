@@ -30,6 +30,7 @@
 #   DATASET_VERSION         (default: v1.0-mini)
 #   MODEL_ID                (default: grounding-dino)
 #   MODEL_VERSION           (default: tiny)
+#   MAX_SCENES              number of scenes to select for inference (default: 1)
 #   MAX_SAMPLES             number of samples to run inference on (default: 5)
 #   READYZ_TIMEOUT          readyz poll attempts at 2s each (default: 90 = 3 min)
 #   POLL_TIMEOUT            pipeline poll attempts at 5s each (default: 120 = 10 min)
@@ -49,8 +50,8 @@ MODEL_VERSION="${MODEL_VERSION:-tiny}"
 READYZ_TIMEOUT="${READYZ_TIMEOUT:-90}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 DETECTION_MODE="${DETECTION_MODE:-ground_truth_only}"
-MAX_SCENES="${MAX_SCENES:-10}"
-MAX_SAMPLES="${MAX_SAMPLES:-500}"
+MAX_SCENES="${MAX_SCENES:-1}"
+MAX_SAMPLES="${MAX_SAMPLES:-5}"
 # ScenarioSet inputs: provide one of SCENARIO_SET_ID or SCENARIO_CURATION_PIPELINE_RUN_ID.
 # PIPELINE_RUN_ID is accepted as an alias for SCENARIO_CURATION_PIPELINE_RUN_ID.
 SCENARIO_SET_ID="${SCENARIO_SET_ID:-}"

@@ -31,7 +31,7 @@ RUN uv venv
 RUN if [ "$TORCH_FLAVOR" = "cu121" ]; then \
         uv pip install --no-cache torch --index-url https://download.pytorch.org/whl/cu121; \
     else \
-        uv pip install --no-cache torch; \
+        uv pip install --no-cache torch --index-url https://download.pytorch.org/whl/cpu; \
     fi
 
 RUN uv sync --package sceneops-inference-server --frozen --no-dev --no-install-workspace

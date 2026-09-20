@@ -34,10 +34,15 @@ echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
 echo ""
 
-# ── 1. Ensure dataset exists ──────────────────────────────────────────────────
+# ── 1. Ensure dataset and version exist ──────────────────────────────────────
 
 echo "--- 1. Upsert dataset ---"
 upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
+echo ""
+
+echo "--- 1b. Upsert dataset version (with raw_source_root_uri) ---"
+upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$SOURCE_ROOT_URI" \
+  | jq '.version | {version, status, scene}' 2>/dev/null || true
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────

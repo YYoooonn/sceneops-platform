@@ -8,7 +8,7 @@ airflow-up:
 
 .PHONY: airflow-down
 airflow-down:
-	$(COMPOSE) --profile airflow down
+	$(COMPOSE) --profile airflow down airflow-webserver airflow-scheduler airflow-init airflow-postgres
 
 .PHONY: airflow-logs
 airflow-logs:
