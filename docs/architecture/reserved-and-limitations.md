@@ -37,6 +37,13 @@ pipeline (see [Jobs and pipelines](./jobs-and-pipelines.md) §2). This is
 different from the reservation above: these two are fully implemented,
 just pipeline-less by design.
 
+The five Phase 2 robot-learning-data JobTypes (`ALIGN_EPISODE`,
+`VALIDATE_ALIGNED_EPISODE`, `PROFILE_ALIGNED_EPISODE`,
+`EXPORT_LEARNING_DATA`, `CURATE_EPISODES`) follow the same pattern — fully
+implemented, handler-registered, but not wired into
+`RAW_LOG_EPISODE_BUILDING_PIPELINE` or any other pipeline. See
+[Robot learning data layer](./robot-learning-data.md) §8.
+
 ## 2. WORLD_STATE (Scene)
 
 `packages/sceneops-core/sceneops_core/scenes/schemas/world_state.py` defines
@@ -97,15 +104,26 @@ presence doesn't imply an export or deprecation workflow exists.
 - The Airflow pipeline backend is a per-task DAG proof of concept
   hardcoded to `dataset_scene_ingestion` — every other pipeline type,
   including `raw_log_episode_building`, only runs through Celery.
-- Episode has no `DatasetManifest`-equivalent aggregate index and no
-  Parquet analytics table (`export_analytics_snapshot` covers Scene only).
-- Episode has no `selectable_for_*` concept — no downstream consumer
-  selects episodes by quality the way detection evaluation selects scenes.
+- Episode still has no `DatasetManifest`-equivalent aggregate index, and
+  `export_analytics_snapshot` still covers Scene only — but as of Phase 2,
+  aligned Episode revisions do get their own Parquet export
+  (`EXPORT_LEARNING_DATA` -> `learning_episodes/steps/signals.parquet`,
+  scoped by `(dataset_id, dataset_version, export_id)`, not by
+  `export_analytics_snapshot`) and their own selectable-by-quality concept
+  (`CURATE_EPISODES` -> `EpisodeCurationManifest.selected_aligned_artifact_
+  checksums`) — see [Robot learning data layer](./robot-learning-data.md).
 - Robot data ingestion limitations (binary sensor payload capture,
   `/vehicle/control`+`/mission/status` message bridging, pre-registration
   flow) — see [Robot data ingestion](../workflows/robot-run-and-mcap.md) §6.
 - `Artifact.checksum`/`size_bytes` aren't populated by most writers — see
   [Storage layout](./storage-layout.md) §6.
+- Phase 2's robot learning data layer (alignment through
+  `SceneOpsDataset`/`SequenceSampler`/consumer adapters) has its own
+  intentional v1 boundaries — no remote Parquet predicate pushdown, no
+  lazy/streaming Torch dataset, numeric-only dense projection, no
+  missing-value fill/mask policy, no external format adapter yet — see
+  [Robot learning data layer](./robot-learning-data.md) §8 for the full,
+  verified list.
 - DuckDB queries only work against locally-downloaded Parquet files —
   querying MinIO/S3-backed artifacts directly would need DuckDB's
   httpfs/S3 extension, not wired up.
@@ -125,3 +143,6 @@ implements or half-implements them, so there's nothing to document as
   future boundary once a streaming path is built).
 - Evaluation-aware scenario mining (FP/FN-by-scene signals), pseudo-label
   candidate scoring, or VLM-based scene tagging.
+- External training-format adapters (LeRobot, RLDS, or any other) — scoped
+  to Phase 3 ("Dataset Interoperability"), not started. See
+  [Robot learning data layer](./robot-learning-data.md) §9.
