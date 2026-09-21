@@ -1,4 +1,4 @@
-from .key import compute_execution_key
+from .key import compute_execution_key, params_for_execution_key
 from .schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,
@@ -12,4 +12,5 @@ __all__ = [
     "ExecutionStatus",
     "ExecutionDispatchResult",
     "compute_execution_key",
+    "params_for_execution_key",
 ]

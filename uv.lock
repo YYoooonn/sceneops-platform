@@ -1882,20 +1882,29 @@ version = "0.1.0"
 source = { editable = "packages/sceneops-analytics" }
 dependencies = [
     { name = "duckdb" },
+    { name = "numpy" },
     { name = "polars" },
     { name = "pyarrow" },
     { name = "sceneops-core" },
     { name = "sceneops-storage" },
 ]
 
+[package.optional-dependencies]
+torch = [
+    { name = "torch" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=1.0" },
+    { name = "numpy", specifier = ">=1.24" },
     { name = "polars", specifier = ">=1.0" },
     { name = "pyarrow", specifier = ">=15.0" },
     { name = "sceneops-core", editable = "packages/sceneops-core" },
     { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+    { name = "torch", marker = "extra == 'torch'", specifier = ">=2.1" },
 ]
+provides-extras = ["torch"]
 
 [[package]]
 name = "sceneops-api"

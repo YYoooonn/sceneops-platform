@@ -26,7 +26,9 @@ packages/
                        — pure Python, no I/O
   sceneops-db         SQLAlchemy models, repositories, converters, Alembic migrations
   sceneops-storage    ArtifactStore implementations (Local/S3)
-  sceneops-analytics  Parquet table builders + DuckDB query helper
+  sceneops-analytics  Parquet table builders + DuckDB query helper, plus the
+                       native learning-data read/access layer
+                       (SceneOpsDataset/SequenceSampler/consumer adapters)
 ```
 
 `sceneops-core` never touches a database or object store directly — it only
@@ -197,6 +199,7 @@ domain-specific docs below for Scene/Episode flow.
 | Entities and relationships | [data-model.md](./data-model.md) |
 | Scene domain (build -> quality -> API) | [scene-domain.md](./scene-domain.md) |
 | Episode domain (build -> quality -> API) | [episode-domain.md](./episode-domain.md) |
+| Robot learning data layer (alignment -> curation -> native dataset -> consumer adapters) | [robot-learning-data.md](./robot-learning-data.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
 | Run records and derived quality/readiness | [quality-and-runs.md](./quality-and-runs.md) |
@@ -233,6 +236,14 @@ the doc over the code.
   segmentation, register, validate, profile)
 - Quality: `apps/api/app/domains/episodes/quality.py`
 - Doc: [episode-domain.md](./episode-domain.md)
+
+**LEARNING DATA** — temporal alignment, validation/profiling, columnar
+export, curation, native dataset/sampler/consumer adapters (Phase 2,
+dispatched as standalone Jobs, no dedicated pipeline or API domain)
+- Alignment/curation/native-contract: `packages/sceneops-core/sceneops_core/episodes/{alignment,curation,learning}/`
+- `SceneOpsDataset`/`SequenceSampler`/adapters: `packages/sceneops-analytics/sceneops_analytics/learning_dataset/`
+- Job handlers: `apps/worker/sceneops_worker/jobs/dataset/{align_episode,validate_aligned_episode,profile_aligned_episode,export_learning_data,curate_episodes}.py`
+- Doc: [robot-learning-data.md](./robot-learning-data.md)
 
 **PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records
 - Job/Pipeline runners: `apps/worker/sceneops_worker/jobs/runner.py`,

@@ -27,9 +27,15 @@ from .scene import (
 )
 from .robots import ExportRobotAnalyticsSnapshotJobParams, IngestRobotStatesJobParams
 from .episodes import (
+    AlignEpisodeJobParams,
     BuildEpisodesJobParams,
+    CurateEpisodesJobParams,
+    ExportLearningDataJobParams,
+    LearningDataExportInputParams,
+    ProfileAlignedEpisodeJobParams,
     ProfileEpisodeJobParams,
     RegisterEpisodeJobParams,
+    ValidateAlignedEpisodeJobParams,
     ValidateEpisodeJobParams,
 )
 from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
@@ -42,6 +48,12 @@ __all__ = [
     "RegisterEpisodeJobParams",
     "ValidateEpisodeJobParams",
     "ProfileEpisodeJobParams",
+    "AlignEpisodeJobParams",
+    "ValidateAlignedEpisodeJobParams",
+    "ProfileAlignedEpisodeJobParams",
+    "ExportLearningDataJobParams",
+    "LearningDataExportInputParams",
+    "CurateEpisodesJobParams",
     "DetectionSceneSelectionConfig",
     "DetectionSceneSelectionMode",
     "IngestScenesJobParams",

@@ -28,6 +28,27 @@ class ArtifactKind(StrEnum):
     EPISODE_MANIFEST = "episode_manifest"
     EPISODE_VALIDATION_REPORT = "episode_validation_report"
     EPISODE_PROFILE_REPORT = "episode_profile_report"
+    # SceneOps V2 Request 2.3: persisted AlignedEpisodeArtifact envelope.
+    # Owner stays ArtifactOwnerType.EPISODE — no new owner type needed.
+    ALIGNED_EPISODE_MANIFEST = "aligned_episode_manifest"
+    # SceneOps V2 Request 2.4: structural validation / descriptive profile
+    # reports over one ALIGNED_EPISODE_MANIFEST revision. Owner stays
+    # ArtifactOwnerType.EPISODE, same as the two kinds above.
+    ALIGNED_EPISODE_VALIDATION_REPORT = "aligned_episode_validation_report"
+    ALIGNED_EPISODE_PROFILE_REPORT = "aligned_episode_profile_report"
+    # SceneOps V2 Request 2.5: index for one columnar learning-data export
+    # snapshot (learning_episodes/learning_steps/learning_signals.parquet).
+    # The Parquet tables themselves reuse ANALYTICS_TABLE below -- only the
+    # manifest indexing them needs a dedicated kind. Owner is
+    # ArtifactOwnerType.DATASET_VERSION, matching EXPORT_ANALYTICS_SNAPSHOT's
+    # existing Scene-table convention.
+    LEARNING_DATA_EXPORT_MANIFEST = "learning_data_export_manifest"
+    # SceneOps V2 Request 2.6: selection-layer manifest over one pinned
+    # LEARNING_DATA_EXPORT_MANIFEST revision -- which AlignedEpisode
+    # revisions were selected/rejected and why. Owner stays
+    # ArtifactOwnerType.DATASET_VERSION, same as the export manifest it
+    # selects over.
+    EPISODE_CURATION_MANIFEST = "episode_curation_manifest"
 
     # Dataset-level
     DATASET_MANIFEST = "dataset_manifest"

@@ -53,6 +53,19 @@ class JobType(StrEnum):
     VALIDATE_EPISODE = "validate_episode"
     PROFILE_EPISODE = "profile_episode"
 
+    # ── episode temporal alignment (SceneOps V2 Request 2.3) ──
+    ALIGN_EPISODE = "align_episode"
+
+    # ── aligned-episode validation / profiling (SceneOps V2 Request 2.4) ──
+    VALIDATE_ALIGNED_EPISODE = "validate_aligned_episode"
+    PROFILE_ALIGNED_EPISODE = "profile_aligned_episode"
+
+    # ── columnar learning-data export (SceneOps V2 Request 2.5) ──
+    EXPORT_LEARNING_DATA = "export_learning_data"
+
+    # ── episode curation (SceneOps V2 Request 2.6) ──
+    CURATE_EPISODES = "curate_episodes"
+
 
 class JobStatus(StrEnum):
     PENDING = "pending"

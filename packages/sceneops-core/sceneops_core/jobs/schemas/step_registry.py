@@ -134,6 +134,48 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("profile_episode", "Profile episode"),
         step("save_profile_report", "Save profile report"),
     ],
+    JobType.ALIGN_EPISODE: [
+        step("resolve_source_manifest", "Resolve source episode manifest"),
+        step("verify_source_checksum", "Verify source manifest checksum"),
+        step("run_alignment", "Run temporal alignment"),
+        step("save_aligned_episode", "Save aligned episode artifact"),
+    ],
+    JobType.VALIDATE_ALIGNED_EPISODE: [
+        step("resolve_aligned_artifact", "Resolve aligned episode artifact"),
+        step("verify_aligned_checksum", "Verify aligned artifact checksum"),
+        step("run_validation", "Run structural validation"),
+        step("save_validation_report", "Save validation report"),
+    ],
+    JobType.PROFILE_ALIGNED_EPISODE: [
+        step("resolve_aligned_artifact", "Resolve aligned episode artifact"),
+        step("verify_aligned_checksum", "Verify aligned artifact checksum"),
+        step("run_profiling", "Run descriptive profiling"),
+        step("save_profile_report", "Save profile report"),
+    ],
+    JobType.EXPORT_LEARNING_DATA: [
+        step("resolve_aligned_artifacts", "Resolve pinned aligned episode artifacts"),
+        step("verify_aligned_checksums", "Verify aligned artifact checksums"),
+        step("validate_aligned_episodes", "Validate aligned episode structure"),
+        step("build_learning_tables", "Build learning data tables"),
+        step("write_parquet_tables", "Write parquet tables"),
+        step("save_export_manifest", "Save export manifest"),
+    ],
+    JobType.CURATE_EPISODES: [
+        step(
+            "resolve_learning_export_manifest",
+            "Resolve pinned learning-data export manifest",
+        ),
+        step(
+            "verify_learning_export_checksum",
+            "Verify learning-data export manifest checksum",
+        ),
+        step(
+            "resolve_candidate_artifacts",
+            "Resolve pinned candidate aligned episode artifacts",
+        ),
+        step("evaluate_curation_policy", "Evaluate curation policy"),
+        step("save_curation_manifest", "Save curation manifest"),
+    ],
 }
 
 

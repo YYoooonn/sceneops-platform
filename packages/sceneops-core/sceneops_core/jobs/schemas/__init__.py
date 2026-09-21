@@ -2,7 +2,13 @@ from .enums import JobEventType, JobStatus, JobType, JobStepStatus, JobEventLeve
 from .events import JobEvent
 from .manifests import JobManifest
 from .params import (
+    AlignEpisodeJobParams,
     AutoLabelDatasetJobParams,
+    CurateEpisodesJobParams,
+    ExportLearningDataJobParams,
+    LearningDataExportInputParams,
+    ProfileAlignedEpisodeJobParams,
+    ValidateAlignedEpisodeJobParams,
     AutoLabelSceneJobParams,
     BaseJobParams,
     BuildDatasetManifestJobParams,
@@ -36,7 +42,12 @@ from .registry import (
 )
 from .requests import CreateJobRequest
 from .results import (
+    AlignEpisodeJobResult,
     AutoLabelDatasetJobResult,
+    CurateEpisodesJobResult,
+    ExportLearningDataJobResult,
+    ProfileAlignedEpisodeJobResult,
+    ValidateAlignedEpisodeJobResult,
     AutoLabelSceneJobResult,
     BaseJobResult,
     BuildDatasetManifestJobResult,
@@ -102,6 +113,12 @@ __all__ = [
     "RegisterEpisodeJobParams",
     "ValidateEpisodeJobParams",
     "ProfileEpisodeJobParams",
+    "AlignEpisodeJobParams",
+    "ValidateAlignedEpisodeJobParams",
+    "ProfileAlignedEpisodeJobParams",
+    "ExportLearningDataJobParams",
+    "LearningDataExportInputParams",
+    "CurateEpisodesJobParams",
     "BaseJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
@@ -127,6 +144,11 @@ __all__ = [
     "RegisterEpisodeJobResult",
     "ValidateEpisodeJobResult",
     "ProfileEpisodeJobResult",
+    "AlignEpisodeJobResult",
+    "ValidateAlignedEpisodeJobResult",
+    "ProfileAlignedEpisodeJobResult",
+    "ExportLearningDataJobResult",
+    "CurateEpisodesJobResult",
     "JOB_PARAM_SCHEMA_BY_TYPE",
     "JOB_RESULT_SCHEMA_BY_TYPE",
     "parse_job_params",

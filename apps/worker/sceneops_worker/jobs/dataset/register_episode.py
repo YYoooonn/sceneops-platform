@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeRecord, EpisodeStatus
 from sceneops_core.jobs.schemas import (
@@ -96,6 +98,22 @@ class RegisterEpisodeJobHandler(
         )
 
 
+def _us_to_datetime(timestamp_us: int | None) -> datetime | None:
+    """Project a manifest timestamp_us (epoch microseconds) onto a
+    timezone-aware UTC datetime for EpisodeRecord's DB-facing columns.
+
+    Integer arithmetic (not timestamp_us / 1e6) to avoid float-precision
+    loss at microsecond resolution for large epoch values. EpisodeManifest
+    stays the authoritative source — this is a lossless projection for
+    query/API/indexed access, not a new clock or a re-derivation.
+    """
+    if timestamp_us is None:
+        return None
+    return datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(
+        microseconds=timestamp_us
+    )
+
+
 def _build_episode_record_from_manifest(
     *,
     episode_id: str,
@@ -120,5 +138,7 @@ def _build_episode_record_from_manifest(
         action_channels=manifest.action_channels,
         control_frequency_hz=manifest.control_frequency_hz,
         frame_count=manifest.frame_count,
+        started_at=_us_to_datetime(manifest.start_timestamp_us),
+        ended_at=_us_to_datetime(manifest.end_timestamp_us),
         metadata=manifest.metadata,
     )

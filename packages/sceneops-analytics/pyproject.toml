@@ -9,7 +9,14 @@ dependencies = [
   "polars>=1.0",
   "duckdb>=1.0",
   "pyarrow>=15.0",
+  "numpy>=1.24",
 ]
+
+[project.optional-dependencies]
+# SceneOps V2 Request 2.7D: sceneops_analytics.learning_dataset.torch_adapter
+# is the only module that imports torch -- nothing else in this package
+# requires it. Install with `sceneops-analytics[torch]`.
+torch = ["torch>=2.1"]
 
 [tool.uv.sources]
 sceneops-core = { workspace = true }

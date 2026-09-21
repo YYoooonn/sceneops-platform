@@ -5,16 +5,21 @@ from collections.abc import Iterable
 from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
 from sceneops_worker.jobs.dataset import (
+    AlignEpisodeJobHandler,
     BuildDatasetManifestJobHandler,
     BuildEpisodesJobHandler,
     BuildSceneIndexJobHandler,
     BuildScenesJobHandler,
+    CurateEpisodesJobHandler,
     ExportAnalyticsSnapshotJobHandler,
+    ExportLearningDataJobHandler,
     IngestScenesJobHandler,
+    ProfileAlignedEpisodeJobHandler,
     ProfileEpisodeJobHandler,
     ProfileSceneJobHandler,
     RegisterEpisodeJobHandler,
     RegisterSceneJobHandler,
+    ValidateAlignedEpisodeJobHandler,
     ValidateEpisodeJobHandler,
     ValidateSceneJobHandler,
 )
@@ -76,5 +81,10 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
             RegisterEpisodeJobHandler(),
             ValidateEpisodeJobHandler(),
             ProfileEpisodeJobHandler(),
+            AlignEpisodeJobHandler(),
+            ValidateAlignedEpisodeJobHandler(),
+            ProfileAlignedEpisodeJobHandler(),
+            ExportLearningDataJobHandler(),
+            CurateEpisodesJobHandler(),
         ]
     )

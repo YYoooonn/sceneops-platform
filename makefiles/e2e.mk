@@ -16,7 +16,7 @@
 
 .PHONY: e2e
 e2e: e2e-api-smoke e2e-pipeline-contracts e2e-dataset-ingestion e2e-raw-log-scene-building \
-	e2e-episode-building e2e-scenario-curation e2e-detection-evaluation \
+	e2e-episode-building e2e-episode-curation e2e-scenario-curation e2e-detection-evaluation \
 	e2e-analytics-export e2e-reliability
 
 .PHONY: e2e-api-smoke
@@ -70,6 +70,19 @@ e2e-episode-building:
 	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
 	DATASET_ID=$(EPISODE_DATASET_ID) DATASET_VERSION=$(EPISODE_DATASET_VERSION) \
 	scripts/e2e/e2e_episode_building.sh
+
+.PHONY: e2e-episode-curation
+# Reuses the episode registered by e2e-episode-building (same
+# EPISODE_DATASET_ID/EPISODE_DATASET_VERSION) — run that target at least once
+# first. Exercises ALIGN_EPISODE(x2) -> PROFILE/VALIDATE_ALIGNED_EPISODE(x2)
+# -> EXPORT_LEARNING_DATA -> CURATE_EPISODES (SceneOps V2 Request 2.6) as
+# standalone jobs (not a pipeline — no CURATE_EPISODES PipelineType exists
+# yet, by design).
+e2e-episode-curation:
+	chmod +x scripts/e2e/e2e_episode_curation.sh
+	API_BASE_URL=$(API_HOST) \
+	DATASET_ID=$(EPISODE_DATASET_ID) DATASET_VERSION=$(EPISODE_DATASET_VERSION) \
+	scripts/e2e/e2e_episode_curation.sh
 
 .PHONY: e2e-scenario-curation
 e2e-scenario-curation:

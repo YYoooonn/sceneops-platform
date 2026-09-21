@@ -6,44 +6,54 @@ from sceneops_core.common.schemas import JsonDict
 
 from .enums import JobType
 from .params import (
+    AlignEpisodeJobParams,
     BaseJobParams,
     BuildDatasetManifestJobParams,
     BuildEpisodesJobParams,
     BuildSceneIndexJobParams,
     BuildScenesJobParams,
+    CurateEpisodesJobParams,
     EvaluateDetectionJobParams,
     ExportAnalyticsSnapshotJobParams,
+    ExportLearningDataJobParams,
     ExportRobotAnalyticsSnapshotJobParams,
     IngestScenesJobParams,
     MineScenariosJobParams,
     IngestRobotStatesJobParams,
     PredictDetectionJobParams,
+    ProfileAlignedEpisodeJobParams,
     ProfileEpisodeJobParams,
     ProfileSceneJobParams,
     RegisterEpisodeJobParams,
     RegisterSceneJobParams,
     ScoreScenarioReadinessJobParams,
+    ValidateAlignedEpisodeJobParams,
     ValidateEpisodeJobParams,
     ValidateSceneJobParams,
 )
 from .results import (
+    AlignEpisodeJobResult,
     BaseJobResult,
     BuildDatasetManifestJobResult,
     BuildEpisodesJobResult,
     BuildSceneIndexJobResult,
     BuildScenesJobResult,
+    CurateEpisodesJobResult,
     EvaluateDetectionJobResult,
     ExportAnalyticsSnapshotJobResult,
+    ExportLearningDataJobResult,
     ExportRobotAnalyticsSnapshotJobResult,
     IngestRobotStatesJobResult,
     IngestScenesJobResult,
     MineScenariosJobResult,
     PredictDetectionJobResult,
+    ProfileAlignedEpisodeJobResult,
     ProfileEpisodeJobResult,
     ProfileSceneJobResult,
     RegisterEpisodeJobResult,
     RegisterSceneJobResult,
     ScoreScenarioReadinessJobResult,
+    ValidateAlignedEpisodeJobResult,
     ValidateEpisodeJobResult,
     ValidateSceneJobResult,
 )
@@ -70,6 +80,11 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.REGISTER_EPISODE: RegisterEpisodeJobParams,
     JobType.VALIDATE_EPISODE: ValidateEpisodeJobParams,
     JobType.PROFILE_EPISODE: ProfileEpisodeJobParams,
+    JobType.ALIGN_EPISODE: AlignEpisodeJobParams,
+    JobType.VALIDATE_ALIGNED_EPISODE: ValidateAlignedEpisodeJobParams,
+    JobType.PROFILE_ALIGNED_EPISODE: ProfileAlignedEpisodeJobParams,
+    JobType.EXPORT_LEARNING_DATA: ExportLearningDataJobParams,
+    JobType.CURATE_EPISODES: CurateEpisodesJobParams,
 }
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
@@ -91,6 +106,11 @@ JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.REGISTER_EPISODE: RegisterEpisodeJobResult,
     JobType.VALIDATE_EPISODE: ValidateEpisodeJobResult,
     JobType.PROFILE_EPISODE: ProfileEpisodeJobResult,
+    JobType.ALIGN_EPISODE: AlignEpisodeJobResult,
+    JobType.VALIDATE_ALIGNED_EPISODE: ValidateAlignedEpisodeJobResult,
+    JobType.PROFILE_ALIGNED_EPISODE: ProfileAlignedEpisodeJobResult,
+    JobType.EXPORT_LEARNING_DATA: ExportLearningDataJobResult,
+    JobType.CURATE_EPISODES: CurateEpisodesJobResult,
 }
 
 

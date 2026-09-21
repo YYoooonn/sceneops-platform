@@ -113,3 +113,12 @@ GET /api/v1/artifacts?owner_type=episode&owner_id={episode_id}
 `robot_run_id`, and `mission_id` — the last two are the practical way to
 find "the episodes that came from this robot recording," since Episode has
 no `DatasetManifest`-equivalent index.
+
+## 6. Downstream: robot learning data (Phase 2)
+
+Everything above ends at a registered, quality-scored `EpisodeRecord` —
+this doc's scope stops there. Temporal alignment, validation/profiling of
+the *aligned* representation, columnar learning-data export, curation, and
+the native `SceneOpsDataset`/`SequenceSampler`/consumer-adapter stack are a
+separate layer built on top of `EpisodeManifest`, documented in
+[Robot learning data layer](./robot-learning-data.md).

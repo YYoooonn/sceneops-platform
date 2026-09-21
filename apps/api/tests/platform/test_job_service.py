@@ -72,11 +72,28 @@ class FakeJobEventRepository:
         return [e for e in self.events if e.pipeline_run_id == pipeline_run_id]
 
 
+class FakeArtifactRepository:
+    """No ALIGN_EPISODE requests are made in this file -- see
+    test_job_service_align_episode.py for the ALIGN_EPISODE-specific
+    pre-execution-key source resolution (SceneOps V2 Request 2.3A). This
+    fake only needs to satisfy JobService's constructor."""
+
+    async def create(self, **kwargs):
+        raise NotImplementedError
+
+    async def get(self, artifact_id: str):
+        return None
+
+    async def list(self, **kwargs) -> list:
+        return []
+
+
 def _service() -> tuple[JobService, FakeJobRepository]:
     repo = FakeJobRepository()
     service = JobService(
         repository=repo,
         event_repository=FakeJobEventRepository(),
+        artifact_repository=FakeArtifactRepository(),
         default_dataset_id=DATASET_ID,
         default_dataset_version=DATASET_VERSION,
     )

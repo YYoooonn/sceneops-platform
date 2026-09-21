@@ -23,7 +23,15 @@ async def create_job(
     request: CreateJobRequest,
     service: JobServiceDep,
 ) -> JobDetailResponse:
-    job = await service.create_job(request)
+    # SceneOps V2 Request 2.3A: ALIGN_EPISODE source resolution can now
+    # raise ValueError (no source found / legacy no-checksum source) before
+    # a Job is ever created -- surface it as a clear 400, matching
+    # execute_job's existing ValueError -> raise_bad_request pattern below,
+    # rather than an unhandled 500.
+    try:
+        job = await service.create_job(request)
+    except ValueError as exc:
+        raise_bad_request(str(exc))
     return JobDetailResponse(job=job)
 
 

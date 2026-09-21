@@ -89,8 +89,28 @@ Parquet files (including cross-table joins). MinIO/S3-stored Parquet files
 can't be queried directly without DuckDB's httpfs/S3 extension (not wired
 up); the supported path downloads to local disk first, then queries.
 
-Episode has no Parquet analytics table yet — `export_analytics_snapshot`
-only covers Scene-domain tables.
+`export_analytics_snapshot` only covers Scene-domain tables — Episode has
+no equivalent flat, overwrite-in-place export. Aligned Episode revisions
+do have their own Parquet export under a different scheme; see below.
+
+### Learning data & curation (Phase 2)
+
+Scoped by `export_id`/`curation_id` rather than overwriting a single
+per-dataset-version URI the way `export_analytics_snapshot` does —
+multiple learning-data export snapshots and curation runs must coexist per
+`DatasetVersion`, each identified by its own deterministic id
+(`learning_data_export_id`/`episode_curation_id`):
+
+```text
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/{table_name}.parquet
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/manifest.json
+{dataset_id}/{dataset_version}/curation/{curation_id[:16]}/manifest.json
+```
+
+Written by `EXPORT_LEARNING_DATA`/`CURATE_EPISODES` via
+`AnalyticsTableWriter.write_learning_table`/`write_learning_export_manifest`/
+`write_curation_manifest` — see
+[Robot learning data layer](./robot-learning-data.md).
 
 ### Raw source data
 

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
+from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.common.ids import generate_job_event_id, generate_job_id
+from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
-from sceneops_core.executions import compute_execution_key
+from sceneops_core.executions import compute_execution_key, params_for_execution_key
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
@@ -10,10 +14,13 @@ from sceneops_core.jobs.schemas import (
     JobEventType,
     JobManifest,
     JobStatus,
+    JobType,
     create_initial_job_steps,
     parse_job_params,
 )
 from app.platform.jobs.schemas import JobEventListResponse, JobListResponse
+from sceneops_db.queries import resolve_current_episode_manifest_source
+from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
 
 _DEDUP_STATUSES = {
@@ -30,11 +37,13 @@ class JobService:
         *,
         repository: JobRepository,
         event_repository: JobEventRepository,
+        artifact_repository: ArtifactRepository,
         default_dataset_id: str,
         default_dataset_version: str,
     ) -> None:
         self._repository = repository
         self._event_repository = event_repository
+        self._artifact_repository = artifact_repository
         self._default_dataset_id = default_dataset_id
         self._default_dataset_version = default_dataset_version
 
@@ -49,6 +58,23 @@ class JobService:
             "dataset_id": dataset_id,
             "dataset_version": dataset_version,
         }
+
+        if request.type == JobType.ALIGN_EPISODE:
+            raw_params = await self._resolve_align_episode_source(
+                raw_params, dataset_id=dataset_id, dataset_version=dataset_version
+            )
+        elif request.type in (
+            JobType.VALIDATE_ALIGNED_EPISODE,
+            JobType.PROFILE_ALIGNED_EPISODE,
+        ):
+            raw_params = await self._resolve_aligned_artifact_checksum(raw_params)
+        elif request.type == JobType.EXPORT_LEARNING_DATA:
+            raw_params = await self._resolve_learning_data_export_inputs(raw_params)
+        elif request.type == JobType.CURATE_EPISODES:
+            raw_params = await self._resolve_learning_export_manifest_checksum(
+                raw_params
+            )
+
         validated_params = parse_job_params(request.type, raw_params)
         validated_params_dump = validated_params.model_dump()
 
@@ -57,7 +83,7 @@ class JobService:
             type=request.type.value,
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            params=validated_params_dump,
+            params=params_for_execution_key(request.type, validated_params_dump),
         )
 
         if not request.force:
@@ -108,6 +134,233 @@ class JobService:
         )
 
         return created
+
+    async def _resolve_align_episode_source(
+        self,
+        raw_params: dict[str, Any],
+        *,
+        dataset_id: str,
+        dataset_version: str,
+    ) -> JsonDict:
+        """SceneOps V2 Request 2.3A: resolve the current EPISODE_MANIFEST
+        source revision *before* execution-key computation, so an unpinned
+        ALIGN_EPISODE request dedups on source content, not just
+        (episode_id, config, semantics_version).
+
+        A caller-supplied pin (source_artifact_id set) is left untouched —
+        an explicit pin always wins (§7). Legacy sources with no populated
+        checksum are explicitly out of scope (§0/§18): fail clearly rather
+        than silently falling back to a weaker dedup rule.
+        """
+        if raw_params.get("source_artifact_id") is not None:
+            return raw_params
+
+        episode_id = raw_params.get("episode_id")
+        if not episode_id:
+            # Let normal Pydantic param validation raise its own clear
+            # "episode_id required" error rather than duplicating that check
+            # here.
+            return raw_params
+
+        record = await resolve_current_episode_manifest_source(
+            self._artifact_repository,
+            episode_id=episode_id,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
+        if record is None:
+            raise ValueError(
+                f"No EPISODE_MANIFEST artifact found for episode_id={episode_id!r} "
+                f"in {dataset_id}/{dataset_version} — build_episodes must run "
+                "before align_episode can be dispatched."
+            )
+        if record.checksum is None:
+            raise ValueError(
+                f"Current EpisodeManifest source for episode_id={episode_id!r} "
+                f"(artifact_id={record.artifact_id}) has no checksum and must be "
+                "rebuilt via build_episodes, or pin an explicit "
+                "source_artifact_id/source_manifest_sha256 if the correct hash "
+                "is already known."
+            )
+
+        return {
+            **raw_params,
+            "source_artifact_id": record.artifact_id,
+            "source_manifest_sha256": record.checksum.removeprefix("sha256:"),
+        }
+
+    async def _resolve_aligned_artifact_checksum(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """SceneOps V2 Request 2.4 §33/§34: shared by
+        VALIDATE_ALIGNED_EPISODE/PROFILE_ALIGNED_EPISODE.
+
+        Unlike ALIGN_EPISODE's source resolution, aligned_artifact_id is
+        always required and caller-pinned (there is no sensible "current
+        aligned artifact" for one episode, which can legitimately have many).
+        Resolving its checksum is therefore a simple 1:1 ArtifactRecord.get()
+        lookup, not a "latest" selection -- no ambiguity, no ordering
+        assumption. A caller-supplied aligned_artifact_checksum is left
+        untouched, matching ALIGN_EPISODE's pin-always-wins behavior.
+        """
+        if raw_params.get("aligned_artifact_checksum") is not None:
+            return raw_params
+
+        aligned_artifact_id = raw_params.get("aligned_artifact_id")
+        if not aligned_artifact_id:
+            # Let normal Pydantic param validation raise its own clear
+            # "aligned_artifact_id required" error.
+            return raw_params
+
+        record = await self._artifact_repository.get(aligned_artifact_id)
+        if record is None or record.kind != ArtifactKind.ALIGNED_EPISODE_MANIFEST.value:
+            raise ValueError(
+                f"aligned_artifact_id={aligned_artifact_id!r} is not a valid "
+                "ALIGNED_EPISODE_MANIFEST artifact — align_episode must run "
+                "before validation/profiling can be dispatched."
+            )
+        if record.checksum is None:
+            raise ValueError(
+                f"ALIGNED_EPISODE_MANIFEST artifact {aligned_artifact_id!r} has "
+                "no checksum -- this should not happen for any artifact "
+                "written by align_episode; re-run align_episode to produce a "
+                "checksummed artifact."
+            )
+
+        return {
+            **raw_params,
+            "aligned_artifact_checksum": record.checksum.removeprefix("sha256:"),
+        }
+
+    async def _resolve_learning_data_export_inputs(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """resolve each pinned input's checksum
+        *before* execution-key computation, same pattern as
+        _resolve_aligned_artifact_checksum, but applied per-item across a
+        LIST of inputs rather than a single field -- one export can pin many
+        aligned revisions at once. A caller-supplied
+        aligned_artifact_checksum on any individual item is left untouched
+        (pin-always-wins, matching every other resolver here).
+
+        SceneOps V2 Request 2.5A §2: also rejects duplicate *semantic*
+        inputs -- two items that resolve to the same
+        aligned_artifact_checksum, even under two different (random)
+        aligned_artifact_ids. Checked here, once every item's checksum is
+        known, rather than as a Pydantic model_validator on
+        ExportLearningDataJobParams, because an unresolved item's checksum
+        (and therefore whether it collides with another item) isn't known
+        until after this resolution step runs -- the same reason checksum
+        resolution itself lives here and not in the schema layer. Semantic
+        identity is checksum-only (Request 2.5A §3): episode_id is
+        deliberately not part of the duplicate check.
+        """
+        inputs = raw_params.get("inputs")
+        if not isinstance(inputs, list) or not inputs:
+            # Let normal Pydantic param validation raise its own clear
+            # "at least one input required" error.
+            return raw_params
+
+        resolved_inputs: list[Any] = []
+        seen_checksums: dict[str, str | None] = {}
+        for item in inputs:
+            if not isinstance(item, dict):
+                resolved_inputs.append(item)
+                continue
+
+            checksum = item.get("aligned_artifact_checksum")
+            if not checksum:
+                aligned_artifact_id = item.get("aligned_artifact_id")
+                if not aligned_artifact_id:
+                    resolved_inputs.append(item)
+                    continue
+
+                record = await self._artifact_repository.get(aligned_artifact_id)
+                if (
+                    record is None
+                    or record.kind != ArtifactKind.ALIGNED_EPISODE_MANIFEST.value
+                ):
+                    raise ValueError(
+                        f"aligned_artifact_id={aligned_artifact_id!r} is not a "
+                        "valid ALIGNED_EPISODE_MANIFEST artifact — "
+                        "align_episode must run before export_learning_data "
+                        "can be dispatched."
+                    )
+                if record.checksum is None:
+                    raise ValueError(
+                        f"ALIGNED_EPISODE_MANIFEST artifact {aligned_artifact_id!r} "
+                        "has no checksum -- this should not happen for any "
+                        "artifact written by align_episode; re-run "
+                        "align_episode to produce a checksummed artifact."
+                    )
+                checksum = record.checksum.removeprefix("sha256:")
+                item = {**item, "aligned_artifact_checksum": checksum}
+
+            if checksum in seen_checksums:
+                raise ValueError(
+                    f"export_learning_data: duplicate aligned_artifact_checksum="
+                    f"{checksum!r} in export selection "
+                    f"(aligned_artifact_id={item.get('aligned_artifact_id')!r} "
+                    "duplicates aligned_artifact_id="
+                    f"{seen_checksums[checksum]!r}) -- each export snapshot "
+                    "must reference distinct aligned revisions; remove the "
+                    "duplicate input."
+                )
+            seen_checksums[checksum] = item.get("aligned_artifact_id")
+
+            resolved_inputs.append(item)
+
+        return {**raw_params, "inputs": resolved_inputs}
+
+    async def _resolve_learning_export_manifest_checksum(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """SceneOps V2 Request 2.6 §11: resolve
+        learning_data_export_manifest_checksum *before* execution-key
+        computation, same pattern as _resolve_aligned_artifact_checksum one
+        layer up. learning_data_export_manifest_artifact_id is always
+        required and caller-pinned -- there is no "latest export" to
+        resolve unambiguously, matching every other pinned-artifact
+        resolver in this file. A caller-supplied
+        learning_data_export_manifest_checksum is left untouched
+        (pin-always-wins).
+        """
+        if raw_params.get("learning_data_export_manifest_checksum") is not None:
+            return raw_params
+
+        manifest_artifact_id = raw_params.get(
+            "learning_data_export_manifest_artifact_id"
+        )
+        if not manifest_artifact_id:
+            # Let normal Pydantic param validation raise its own clear
+            # "learning_data_export_manifest_artifact_id required" error.
+            return raw_params
+
+        record = await self._artifact_repository.get(manifest_artifact_id)
+        if (
+            record is None
+            or record.kind != ArtifactKind.LEARNING_DATA_EXPORT_MANIFEST.value
+        ):
+            raise ValueError(
+                f"learning_data_export_manifest_artifact_id={manifest_artifact_id!r} "
+                "is not a valid LEARNING_DATA_EXPORT_MANIFEST artifact — "
+                "export_learning_data must run before curate_episodes can be "
+                "dispatched."
+            )
+        if record.checksum is None:
+            raise ValueError(
+                f"LEARNING_DATA_EXPORT_MANIFEST artifact {manifest_artifact_id!r} "
+                "has no checksum -- this should not happen for any artifact "
+                "written by export_learning_data; re-run export_learning_data "
+                "to produce a checksummed artifact."
+            )
+
+        return {
+            **raw_params,
+            "learning_data_export_manifest_checksum": (
+                record.checksum.removeprefix("sha256:")
+            ),
+        }
 
     async def list_jobs(
         self,
