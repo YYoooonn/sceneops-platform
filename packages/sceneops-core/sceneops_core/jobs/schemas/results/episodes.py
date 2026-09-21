@@ -114,6 +114,25 @@ class ValidateAlignedEpisodeJobResult(BaseJobResult):
     metadata: JsonDict = Field(default_factory=dict)
 
 
+class ExportLearningDataJobResult(BaseJobResult):
+    """Summary/reference metadata only -- the full columnar tables are
+    Parquet artifacts, not returned inline (SceneOps V2 Request 2.5)."""
+
+    dataset_id: str
+    dataset_version: str
+
+    export_id: str
+    episode_count: int = 0
+
+    table_uris: dict[str, str] = Field(default_factory=dict)
+    row_counts: dict[str, int] = Field(default_factory=dict)
+
+    manifest_artifact_id: str | None = None
+    manifest_uri: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
 class ProfileAlignedEpisodeJobResult(BaseJobResult):
     """Summary only -- the full AlignedEpisodeProfile (with per-channel
     coverage) is persisted as an ArtifactRecord, not returned inline."""

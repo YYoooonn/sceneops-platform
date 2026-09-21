@@ -14,6 +14,7 @@ from .params import (
     BuildScenesJobParams,
     EvaluateDetectionJobParams,
     ExportAnalyticsSnapshotJobParams,
+    ExportLearningDataJobParams,
     ExportRobotAnalyticsSnapshotJobParams,
     IngestScenesJobParams,
     MineScenariosJobParams,
@@ -38,6 +39,7 @@ from .results import (
     BuildScenesJobResult,
     EvaluateDetectionJobResult,
     ExportAnalyticsSnapshotJobResult,
+    ExportLearningDataJobResult,
     ExportRobotAnalyticsSnapshotJobResult,
     IngestRobotStatesJobResult,
     IngestScenesJobResult,
@@ -79,6 +81,7 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.ALIGN_EPISODE: AlignEpisodeJobParams,
     JobType.VALIDATE_ALIGNED_EPISODE: ValidateAlignedEpisodeJobParams,
     JobType.PROFILE_ALIGNED_EPISODE: ProfileAlignedEpisodeJobParams,
+    JobType.EXPORT_LEARNING_DATA: ExportLearningDataJobParams,
 }
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
@@ -103,6 +106,7 @@ JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.ALIGN_EPISODE: AlignEpisodeJobResult,
     JobType.VALIDATE_ALIGNED_EPISODE: ValidateAlignedEpisodeJobResult,
     JobType.PROFILE_ALIGNED_EPISODE: ProfileAlignedEpisodeJobResult,
+    JobType.EXPORT_LEARNING_DATA: ExportLearningDataJobResult,
 }
 
 

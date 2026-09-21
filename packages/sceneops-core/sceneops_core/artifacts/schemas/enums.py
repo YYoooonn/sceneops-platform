@@ -36,6 +36,13 @@ class ArtifactKind(StrEnum):
     # ArtifactOwnerType.EPISODE, same as the two kinds above.
     ALIGNED_EPISODE_VALIDATION_REPORT = "aligned_episode_validation_report"
     ALIGNED_EPISODE_PROFILE_REPORT = "aligned_episode_profile_report"
+    # SceneOps V2 Request 2.5: index for one columnar learning-data export
+    # snapshot (learning_episodes/learning_steps/learning_signals.parquet).
+    # The Parquet tables themselves reuse ANALYTICS_TABLE below -- only the
+    # manifest indexing them needs a dedicated kind. Owner is
+    # ArtifactOwnerType.DATASET_VERSION, matching EXPORT_ANALYTICS_SNAPSHOT's
+    # existing Scene-table convention.
+    LEARNING_DATA_EXPORT_MANIFEST = "learning_data_export_manifest"
 
     # Dataset-level
     DATASET_MANIFEST = "dataset_manifest"

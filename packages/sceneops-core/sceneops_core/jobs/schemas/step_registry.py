@@ -152,6 +152,14 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("run_profiling", "Run descriptive profiling"),
         step("save_profile_report", "Save profile report"),
     ],
+    JobType.EXPORT_LEARNING_DATA: [
+        step("resolve_aligned_artifacts", "Resolve pinned aligned episode artifacts"),
+        step("verify_aligned_checksums", "Verify aligned artifact checksums"),
+        step("validate_aligned_episodes", "Validate aligned episode structure"),
+        step("build_learning_tables", "Build learning data tables"),
+        step("write_parquet_tables", "Write parquet tables"),
+        step("save_export_manifest", "Save export manifest"),
+    ],
 }
 
 

@@ -166,3 +166,47 @@ class ValidateAlignedEpisodeJobParams(_PinnedAlignedArtifactJobParams):
 class ProfileAlignedEpisodeJobParams(_PinnedAlignedArtifactJobParams):
     """AlignedEpisodeArtifact -> descriptive AlignedEpisodeProfile (SceneOps
     V2 Request 2.4)."""
+
+
+class LearningDataExportInputParams(BaseJobParams):
+    """One pinned export input, as supplied by the caller. Mirrors
+    AlignedArtifactRevision's identity fields, but with
+    aligned_artifact_checksum optional here -- resolved by the API at
+    Job-creation time (SceneOps V2 Request 2.5 §3/§7), same as
+    _PinnedAlignedArtifactJobParams. The manifest's own
+    AlignedArtifactRevision always has the checksum populated; this is the
+    request-side, pre-resolution shape only."""
+
+    episode_id: str
+    aligned_artifact_id: str
+    aligned_artifact_checksum: str | None = None
+
+
+class ExportLearningDataJobParams(BaseJobParams):
+    """Explicit, revision-pinned AlignedEpisodeArtifacts -> columnar Parquet
+    export (SceneOps V2 Request 2.5).
+
+    Never infers "latest alignment per Episode" -- ``inputs`` is always an
+    explicit list; one Episode may appear multiple times across different
+    exports (or even within the same export, under different aligned
+    revisions) if the caller wants that. Each input's checksum is resolved
+    at Job-creation time exactly like VALIDATE_ALIGNED_EPISODE/
+    PROFILE_ALIGNED_EPISODE (Request 2.4), before execution-key computation.
+    """
+
+    dataset_id: str
+    dataset_version: str
+
+    inputs: list[LearningDataExportInputParams] = Field(default_factory=list)
+
+    # None -> build all learning tables (learning_episodes, learning_steps,
+    # learning_signals), mirroring ExportAnalyticsSnapshotJobParams.tables.
+    tables: list[str] | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_non_empty_inputs(self) -> ExportLearningDataJobParams:
+        if not self.inputs:
+            raise ValueError("export_learning_data requires at least one input")
+        return self

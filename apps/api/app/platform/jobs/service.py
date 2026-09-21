@@ -68,6 +68,8 @@ class JobService:
             JobType.PROFILE_ALIGNED_EPISODE,
         ):
             raw_params = await self._resolve_aligned_artifact_checksum(raw_params)
+        elif request.type == JobType.EXPORT_LEARNING_DATA:
+            raw_params = await self._resolve_learning_data_export_inputs(raw_params)
 
         validated_params = parse_job_params(request.type, raw_params)
         validated_params_dump = validated_params.model_dump()
@@ -225,6 +227,86 @@ class JobService:
             **raw_params,
             "aligned_artifact_checksum": record.checksum.removeprefix("sha256:"),
         }
+
+    async def _resolve_learning_data_export_inputs(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """resolve each pinned input's checksum
+        *before* execution-key computation, same pattern as
+        _resolve_aligned_artifact_checksum, but applied per-item across a
+        LIST of inputs rather than a single field -- one export can pin many
+        aligned revisions at once. A caller-supplied
+        aligned_artifact_checksum on any individual item is left untouched
+        (pin-always-wins, matching every other resolver here).
+
+        SceneOps V2 Request 2.5A §2: also rejects duplicate *semantic*
+        inputs -- two items that resolve to the same
+        aligned_artifact_checksum, even under two different (random)
+        aligned_artifact_ids. Checked here, once every item's checksum is
+        known, rather than as a Pydantic model_validator on
+        ExportLearningDataJobParams, because an unresolved item's checksum
+        (and therefore whether it collides with another item) isn't known
+        until after this resolution step runs -- the same reason checksum
+        resolution itself lives here and not in the schema layer. Semantic
+        identity is checksum-only (Request 2.5A §3): episode_id is
+        deliberately not part of the duplicate check.
+        """
+        inputs = raw_params.get("inputs")
+        if not isinstance(inputs, list) or not inputs:
+            # Let normal Pydantic param validation raise its own clear
+            # "at least one input required" error.
+            return raw_params
+
+        resolved_inputs: list[Any] = []
+        seen_checksums: dict[str, str | None] = {}
+        for item in inputs:
+            if not isinstance(item, dict):
+                resolved_inputs.append(item)
+                continue
+
+            checksum = item.get("aligned_artifact_checksum")
+            if not checksum:
+                aligned_artifact_id = item.get("aligned_artifact_id")
+                if not aligned_artifact_id:
+                    resolved_inputs.append(item)
+                    continue
+
+                record = await self._artifact_repository.get(aligned_artifact_id)
+                if (
+                    record is None
+                    or record.kind != ArtifactKind.ALIGNED_EPISODE_MANIFEST.value
+                ):
+                    raise ValueError(
+                        f"aligned_artifact_id={aligned_artifact_id!r} is not a "
+                        "valid ALIGNED_EPISODE_MANIFEST artifact — "
+                        "align_episode must run before export_learning_data "
+                        "can be dispatched."
+                    )
+                if record.checksum is None:
+                    raise ValueError(
+                        f"ALIGNED_EPISODE_MANIFEST artifact {aligned_artifact_id!r} "
+                        "has no checksum -- this should not happen for any "
+                        "artifact written by align_episode; re-run "
+                        "align_episode to produce a checksummed artifact."
+                    )
+                checksum = record.checksum.removeprefix("sha256:")
+                item = {**item, "aligned_artifact_checksum": checksum}
+
+            if checksum in seen_checksums:
+                raise ValueError(
+                    f"export_learning_data: duplicate aligned_artifact_checksum="
+                    f"{checksum!r} in export selection "
+                    f"(aligned_artifact_id={item.get('aligned_artifact_id')!r} "
+                    "duplicates aligned_artifact_id="
+                    f"{seen_checksums[checksum]!r}) -- each export snapshot "
+                    "must reference distinct aligned revisions; remove the "
+                    "duplicate input."
+                )
+            seen_checksums[checksum] = item.get("aligned_artifact_id")
+
+            resolved_inputs.append(item)
+
+        return {**raw_params, "inputs": resolved_inputs}
 
     async def list_jobs(
         self,

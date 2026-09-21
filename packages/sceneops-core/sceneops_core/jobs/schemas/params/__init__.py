@@ -29,6 +29,8 @@ from .robots import ExportRobotAnalyticsSnapshotJobParams, IngestRobotStatesJobP
 from .episodes import (
     AlignEpisodeJobParams,
     BuildEpisodesJobParams,
+    ExportLearningDataJobParams,
+    LearningDataExportInputParams,
     ProfileAlignedEpisodeJobParams,
     ProfileEpisodeJobParams,
     RegisterEpisodeJobParams,
@@ -48,6 +50,8 @@ __all__ = [
     "AlignEpisodeJobParams",
     "ValidateAlignedEpisodeJobParams",
     "ProfileAlignedEpisodeJobParams",
+    "ExportLearningDataJobParams",
+    "LearningDataExportInputParams",
     "DetectionSceneSelectionConfig",
     "DetectionSceneSelectionMode",
     "IngestScenesJobParams",

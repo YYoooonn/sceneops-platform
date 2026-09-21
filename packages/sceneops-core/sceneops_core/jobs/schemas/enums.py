@@ -60,6 +60,9 @@ class JobType(StrEnum):
     VALIDATE_ALIGNED_EPISODE = "validate_aligned_episode"
     PROFILE_ALIGNED_EPISODE = "profile_aligned_episode"
 
+    # ── columnar learning-data export (SceneOps V2 Request 2.5) ──
+    EXPORT_LEARNING_DATA = "export_learning_data"
+
 
 class JobStatus(StrEnum):
     PENDING = "pending"

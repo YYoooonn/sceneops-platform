@@ -11,6 +11,7 @@ from sceneops_worker.jobs.dataset import (
     BuildSceneIndexJobHandler,
     BuildScenesJobHandler,
     ExportAnalyticsSnapshotJobHandler,
+    ExportLearningDataJobHandler,
     IngestScenesJobHandler,
     ProfileAlignedEpisodeJobHandler,
     ProfileEpisodeJobHandler,
@@ -82,5 +83,6 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
             AlignEpisodeJobHandler(),
             ValidateAlignedEpisodeJobHandler(),
             ProfileAlignedEpisodeJobHandler(),
+            ExportLearningDataJobHandler(),
         ]
     )

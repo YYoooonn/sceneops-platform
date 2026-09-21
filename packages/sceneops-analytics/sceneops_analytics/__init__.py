@@ -1,3 +1,12 @@
+from sceneops_analytics.learning_tables import (
+    LEARNING_EPISODES_SCHEMA,
+    LEARNING_SIGNALS_SCHEMA,
+    LEARNING_STEPS_SCHEMA,
+    LEARNING_TABLE_BUILDERS,
+    build_learning_episodes_table,
+    build_learning_signals_table,
+    build_learning_steps_table,
+)
 from sceneops_analytics.query import query_parquet
 from sceneops_analytics.tables import (
     ROBOT_TABLE_BUILDERS,
@@ -9,17 +18,25 @@ from sceneops_analytics.tables import (
     build_scenes_table,
     build_sensor_frames_table,
 )
-from sceneops_analytics.writer import AnalyticsTableWriter
+from sceneops_analytics.writer import AnalyticsTableWriteResult, AnalyticsTableWriter
 
 __all__ = [
     "TABLE_BUILDERS",
     "ROBOT_TABLE_BUILDERS",
+    "LEARNING_TABLE_BUILDERS",
+    "LEARNING_EPISODES_SCHEMA",
+    "LEARNING_STEPS_SCHEMA",
+    "LEARNING_SIGNALS_SCHEMA",
     "build_scenes_table",
     "build_samples_table",
     "build_sensor_frames_table",
     "build_annotations_table",
     "build_robot_telemetry_table",
     "build_missions_table",
+    "build_learning_episodes_table",
+    "build_learning_steps_table",
+    "build_learning_signals_table",
     "AnalyticsTableWriter",
+    "AnalyticsTableWriteResult",
     "query_parquet",
 ]

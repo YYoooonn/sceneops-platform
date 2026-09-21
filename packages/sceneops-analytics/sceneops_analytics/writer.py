@@ -1,10 +1,39 @@
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+from dataclasses import dataclass
+from typing import Any
 
 import polars as pl
 
 from sceneops_storage import ArtifactStore
+
+
+def _canonical_bytes(payload: dict[str, Any]) -> bytes:
+    """Deterministic, compact JSON encoding, matching the convention used by
+    EpisodeArtifactStore for every other checksummed SceneOps artifact
+    (SceneOps V2 Request 2.5, mirroring Request 2.3 §3)."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+@dataclass(frozen=True)
+class AnalyticsTableWriteResult:
+    """Like EpisodeArtifactStore.EpisodeArtifactWriteResult, but for Parquet
+    tables/manifests written through this writer (SceneOps V2 Request 2.5).
+    Added alongside the existing str-only write_table/write_robot_run_table
+    -- those two keep their existing return type unchanged so
+    export_analytics_snapshot/export_robot_analytics_snapshot are
+    unaffected; only the new learning-export write paths return this."""
+
+    uri: str
+    checksum: str
+    size_bytes: int
 
 
 class AnalyticsTableWriter:
@@ -76,5 +105,89 @@ class AnalyticsTableWriter:
         await self.artifact_store.write_bytes(uri, buffer.getvalue())
         return uri
 
+    # ------------------------------------------------------------------
+    # Columnar learning-data export snapshots (SceneOps V2 Request 2.5)
+    # ------------------------------------------------------------------
+    #
+    # Scoped by export_id rather than overwriting a single per-dataset-
+    # version URI like write_table does -- multiple learning-data export
+    # snapshots must coexist per DatasetVersion (Request 2.5 §6), each
+    # identified by its own deterministic export_id.
 
-__all__ = ["AnalyticsTableWriter"]
+    def learning_table_uri(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        export_id: str,
+        table_name: str,
+    ) -> str:
+        return self.artifact_store.join_uri(
+            self.root_uri,
+            dataset_id,
+            dataset_version,
+            "learning",
+            export_id[:16],
+            f"{table_name}.parquet",
+        )
+
+    async def write_learning_table(
+        self,
+        table_name: str,
+        df: pl.DataFrame,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        export_id: str,
+    ) -> AnalyticsTableWriteResult:
+        uri = self.learning_table_uri(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            export_id=export_id,
+            table_name=table_name,
+        )
+        buffer = io.BytesIO()
+        df.write_parquet(buffer)
+        data = buffer.getvalue()
+        await self.artifact_store.write_bytes(uri, data)
+        return AnalyticsTableWriteResult(
+            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
+        )
+
+    def learning_export_manifest_uri(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        export_id: str,
+    ) -> str:
+        return self.artifact_store.join_uri(
+            self.root_uri,
+            dataset_id,
+            dataset_version,
+            "learning",
+            export_id[:16],
+            "manifest.json",
+        )
+
+    async def write_learning_export_manifest(
+        self,
+        manifest: Any,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        export_id: str,
+    ) -> AnalyticsTableWriteResult:
+        uri = self.learning_export_manifest_uri(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            export_id=export_id,
+        )
+        data = _canonical_bytes(manifest.to_artifact_dict())
+        await self.artifact_store.write_bytes(uri, data)
+        return AnalyticsTableWriteResult(
+            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
+        )
+
+
+__all__ = ["AnalyticsTableWriter", "AnalyticsTableWriteResult"]
