@@ -152,3 +152,24 @@ class ProfileAlignedEpisodeJobResult(BaseJobResult):
     report_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
+
+
+class CurateEpisodesJobResult(BaseJobResult):
+    """Summary/reference metadata only -- the full EpisodeCurationManifest
+    (with its per-candidate decisions/reasons) is persisted as an
+    ArtifactRecord, not returned inline (SceneOps V2 Request 2.6, mirroring
+    ExportLearningDataJobResult's shape)."""
+
+    dataset_id: str
+    dataset_version: str
+
+    curation_id: str
+
+    candidate_count: int = 0
+    selected_count: int = 0
+    rejected_count: int = 0
+
+    manifest_artifact_id: str | None = None
+    manifest_uri: str | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)

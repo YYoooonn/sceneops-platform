@@ -22,6 +22,7 @@ from .robots import ExportRobotAnalyticsSnapshotJobResult, IngestRobotStatesJobR
 from .episodes import (
     AlignEpisodeJobResult,
     BuildEpisodesJobResult,
+    CurateEpisodesJobResult,
     ExportLearningDataJobResult,
     ProfileAlignedEpisodeJobResult,
     ProfileEpisodeJobResult,
@@ -43,6 +44,7 @@ __all__ = [
     "ValidateAlignedEpisodeJobResult",
     "ProfileAlignedEpisodeJobResult",
     "ExportLearningDataJobResult",
+    "CurateEpisodesJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
     "BuildDatasetManifestJobResult",

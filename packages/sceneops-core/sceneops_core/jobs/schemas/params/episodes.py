@@ -7,6 +7,7 @@ from sceneops_core.episodes.alignment import (
     TemporalAlignmentConfig,
     TemporalSourceContext,
 )
+from sceneops_core.episodes.curation import CurationPolicy
 from sceneops_core.episodes.schemas import EpisodeSegmentationConfig
 
 from .base import BaseJobParams
@@ -210,3 +211,27 @@ class ExportLearningDataJobParams(BaseJobParams):
         if not self.inputs:
             raise ValueError("export_learning_data requires at least one input")
         return self
+
+
+class CurateEpisodesJobParams(BaseJobParams):
+    """Explicit, revision-pinned LearningDataExportManifest -> selected/
+    rejected AlignedEpisode revisions (SceneOps V2 Request 2.6).
+
+    Always pinned by learning_data_export_manifest_artifact_id -- there is
+    no "latest export" resolution, mirroring
+    _PinnedAlignedArtifactJobParams's reasoning (Request 2.4 §33/§34)
+    applied one layer up. learning_data_export_manifest_checksum is
+    resolved by the API at Job-creation time exactly like
+    aligned_artifact_checksum (Request 2.4) / per-item checksums (Request
+    2.5), before execution-key computation (Request 2.6 §11).
+    """
+
+    dataset_id: str
+    dataset_version: str
+
+    learning_data_export_manifest_artifact_id: str
+    learning_data_export_manifest_checksum: str | None = None
+
+    policy: CurationPolicy
+
+    metadata: JsonDict = Field(default_factory=dict)

@@ -43,6 +43,12 @@ class ArtifactKind(StrEnum):
     # ArtifactOwnerType.DATASET_VERSION, matching EXPORT_ANALYTICS_SNAPSHOT's
     # existing Scene-table convention.
     LEARNING_DATA_EXPORT_MANIFEST = "learning_data_export_manifest"
+    # SceneOps V2 Request 2.6: selection-layer manifest over one pinned
+    # LEARNING_DATA_EXPORT_MANIFEST revision -- which AlignedEpisode
+    # revisions were selected/rejected and why. Owner stays
+    # ArtifactOwnerType.DATASET_VERSION, same as the export manifest it
+    # selects over.
+    EPISODE_CURATION_MANIFEST = "episode_curation_manifest"
 
     # Dataset-level
     DATASET_MANIFEST = "dataset_manifest"

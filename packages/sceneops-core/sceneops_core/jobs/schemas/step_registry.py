@@ -160,6 +160,22 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("write_parquet_tables", "Write parquet tables"),
         step("save_export_manifest", "Save export manifest"),
     ],
+    JobType.CURATE_EPISODES: [
+        step(
+            "resolve_learning_export_manifest",
+            "Resolve pinned learning-data export manifest",
+        ),
+        step(
+            "verify_learning_export_checksum",
+            "Verify learning-data export manifest checksum",
+        ),
+        step(
+            "resolve_candidate_artifacts",
+            "Resolve pinned candidate aligned episode artifacts",
+        ),
+        step("evaluate_curation_policy", "Evaluate curation policy"),
+        step("save_curation_manifest", "Save curation manifest"),
+    ],
 }
 
 

@@ -189,5 +189,58 @@ class AnalyticsTableWriter:
             uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
         )
 
+    async def read_learning_export_manifest_bytes(self, uri: str) -> bytes | None:
+        """Raw bytes, for CURATE_EPISODES (SceneOps V2 Request 2.6) which
+        needs to hash the exact pinned LearningDataExportManifest content
+        before parsing it -- mirrors EpisodeArtifactStore.
+        read_aligned_episode_bytes's role for aligned artifacts."""
+        if not await self.artifact_store.exists(uri):
+            return None
+        return await self.artifact_store.read_bytes(uri)
+
+    # ------------------------------------------------------------------
+    # Episode curation manifests (SceneOps V2 Request 2.6)
+    # ------------------------------------------------------------------
+    #
+    # Scoped by curation_id, same coexisting-snapshots pattern as
+    # learning_export_manifest_uri above -- multiple curation runs must
+    # coexist per DatasetVersion, each identified by its own deterministic
+    # curation_id.
+
+    def curation_manifest_uri(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        curation_id: str,
+    ) -> str:
+        return self.artifact_store.join_uri(
+            self.root_uri,
+            dataset_id,
+            dataset_version,
+            "curation",
+            curation_id[:16],
+            "manifest.json",
+        )
+
+    async def write_curation_manifest(
+        self,
+        manifest: Any,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        curation_id: str,
+    ) -> AnalyticsTableWriteResult:
+        uri = self.curation_manifest_uri(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            curation_id=curation_id,
+        )
+        data = _canonical_bytes(manifest.to_artifact_dict())
+        await self.artifact_store.write_bytes(uri, data)
+        return AnalyticsTableWriteResult(
+            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
+        )
+
 
 __all__ = ["AnalyticsTableWriter", "AnalyticsTableWriteResult"]

@@ -3,6 +3,7 @@ from .build_dataset_manifest import BuildDatasetManifestJobHandler
 from .build_episodes import BuildEpisodesJobHandler
 from .build_scene_index import BuildSceneIndexJobHandler
 from .build_scenes import BuildScenesJobHandler
+from .curate_episodes import CurateEpisodesJobHandler
 from .export_analytics_snapshot import ExportAnalyticsSnapshotJobHandler
 from .export_learning_data import ExportLearningDataJobHandler
 from .ingest_scenes import IngestScenesJobHandler
@@ -32,4 +33,5 @@ __all__ = [
     "ValidateAlignedEpisodeJobHandler",
     "ProfileAlignedEpisodeJobHandler",
     "ExportLearningDataJobHandler",
+    "CurateEpisodesJobHandler",
 ]

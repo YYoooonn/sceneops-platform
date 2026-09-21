@@ -4,6 +4,7 @@ from .manifests import JobManifest
 from .params import (
     AlignEpisodeJobParams,
     AutoLabelDatasetJobParams,
+    CurateEpisodesJobParams,
     ExportLearningDataJobParams,
     LearningDataExportInputParams,
     ProfileAlignedEpisodeJobParams,
@@ -43,6 +44,7 @@ from .requests import CreateJobRequest
 from .results import (
     AlignEpisodeJobResult,
     AutoLabelDatasetJobResult,
+    CurateEpisodesJobResult,
     ExportLearningDataJobResult,
     ProfileAlignedEpisodeJobResult,
     ValidateAlignedEpisodeJobResult,
@@ -116,6 +118,7 @@ __all__ = [
     "ProfileAlignedEpisodeJobParams",
     "ExportLearningDataJobParams",
     "LearningDataExportInputParams",
+    "CurateEpisodesJobParams",
     "BaseJobResult",
     "IngestScenesJobResult",
     "BuildScenesJobResult",
@@ -145,6 +148,7 @@ __all__ = [
     "ValidateAlignedEpisodeJobResult",
     "ProfileAlignedEpisodeJobResult",
     "ExportLearningDataJobResult",
+    "CurateEpisodesJobResult",
     "JOB_PARAM_SCHEMA_BY_TYPE",
     "JOB_RESULT_SCHEMA_BY_TYPE",
     "parse_job_params",

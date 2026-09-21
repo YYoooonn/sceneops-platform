@@ -63,6 +63,9 @@ class JobType(StrEnum):
     # ── columnar learning-data export (SceneOps V2 Request 2.5) ──
     EXPORT_LEARNING_DATA = "export_learning_data"
 
+    # ── episode curation (SceneOps V2 Request 2.6) ──
+    CURATE_EPISODES = "curate_episodes"
+
 
 class JobStatus(StrEnum):
     PENDING = "pending"

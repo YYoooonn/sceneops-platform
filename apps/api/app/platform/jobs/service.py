@@ -70,6 +70,10 @@ class JobService:
             raw_params = await self._resolve_aligned_artifact_checksum(raw_params)
         elif request.type == JobType.EXPORT_LEARNING_DATA:
             raw_params = await self._resolve_learning_data_export_inputs(raw_params)
+        elif request.type == JobType.CURATE_EPISODES:
+            raw_params = await self._resolve_learning_export_manifest_checksum(
+                raw_params
+            )
 
         validated_params = parse_job_params(request.type, raw_params)
         validated_params_dump = validated_params.model_dump()
@@ -307,6 +311,56 @@ class JobService:
             resolved_inputs.append(item)
 
         return {**raw_params, "inputs": resolved_inputs}
+
+    async def _resolve_learning_export_manifest_checksum(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """SceneOps V2 Request 2.6 §11: resolve
+        learning_data_export_manifest_checksum *before* execution-key
+        computation, same pattern as _resolve_aligned_artifact_checksum one
+        layer up. learning_data_export_manifest_artifact_id is always
+        required and caller-pinned -- there is no "latest export" to
+        resolve unambiguously, matching every other pinned-artifact
+        resolver in this file. A caller-supplied
+        learning_data_export_manifest_checksum is left untouched
+        (pin-always-wins).
+        """
+        if raw_params.get("learning_data_export_manifest_checksum") is not None:
+            return raw_params
+
+        manifest_artifact_id = raw_params.get(
+            "learning_data_export_manifest_artifact_id"
+        )
+        if not manifest_artifact_id:
+            # Let normal Pydantic param validation raise its own clear
+            # "learning_data_export_manifest_artifact_id required" error.
+            return raw_params
+
+        record = await self._artifact_repository.get(manifest_artifact_id)
+        if (
+            record is None
+            or record.kind != ArtifactKind.LEARNING_DATA_EXPORT_MANIFEST.value
+        ):
+            raise ValueError(
+                f"learning_data_export_manifest_artifact_id={manifest_artifact_id!r} "
+                "is not a valid LEARNING_DATA_EXPORT_MANIFEST artifact — "
+                "export_learning_data must run before curate_episodes can be "
+                "dispatched."
+            )
+        if record.checksum is None:
+            raise ValueError(
+                f"LEARNING_DATA_EXPORT_MANIFEST artifact {manifest_artifact_id!r} "
+                "has no checksum -- this should not happen for any artifact "
+                "written by export_learning_data; re-run export_learning_data "
+                "to produce a checksummed artifact."
+            )
+
+        return {
+            **raw_params,
+            "learning_data_export_manifest_checksum": (
+                record.checksum.removeprefix("sha256:")
+            ),
+        }
 
     async def list_jobs(
         self,
