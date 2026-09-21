@@ -49,3 +49,13 @@ class StepOutOfRangeError(SceneOpsDatasetError):
     (get_window) start_step/horizon does not fit -- see
     sceneops_core.episodes.learning.SequenceBoundaryError for the
     window-specific case, which this module re-raises unchanged."""
+
+
+class SamplerSchemaMismatchError(SceneOpsDatasetError):
+    """SceneOps V2 Request 2.7C: two EpisodeRefs exposed by the same
+    SceneOpsDataset resolve one FeatureSchema's FeatureProjection to
+    incompatible dense shapes (different observation_dim/action_dim, or a
+    different per-channel kind/dimension). A SequenceSampler requires every
+    Episode it may sample from to share one identical FeatureSchema --
+    otherwise sampler[i] could return incompatible shapes across i. Raised
+    at SequenceSampler.create() time, not lazily on first access."""

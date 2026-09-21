@@ -5,8 +5,10 @@ from sceneops_analytics.learning_dataset import (
     EpisodeNotFoundError,
     LearningDataIntegrityError,
     LearningTableMissingError,
+    SamplerSchemaMismatchError,
     SceneOpsDataset,
     SceneOpsDatasetError,
+    SequenceSampler,
     StepOutOfRangeError,
 )
 from sceneops_analytics.learning_tables import (
@@ -51,6 +53,7 @@ __all__ = [
     "AnalyticsTableWriteResult",
     "query_parquet",
     "SceneOpsDataset",
+    "SequenceSampler",
     "EpisodeMetadata",
     "SceneOpsDatasetError",
     "LearningTableMissingError",
@@ -59,4 +62,5 @@ __all__ = [
     "LearningDataIntegrityError",
     "EpisodeNotFoundError",
     "StepOutOfRangeError",
+    "SamplerSchemaMismatchError",
 ]

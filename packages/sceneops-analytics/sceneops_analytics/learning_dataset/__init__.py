@@ -5,9 +5,11 @@ from .errors import (
     EpisodeNotFoundError,
     LearningDataIntegrityError,
     LearningTableMissingError,
+    SamplerSchemaMismatchError,
     SceneOpsDatasetError,
     StepOutOfRangeError,
 )
+from .sampler import SequenceSampler
 from .schemas import EpisodeMetadata
 
 __all__ = [
@@ -17,7 +19,9 @@ __all__ = [
     "EpisodeNotFoundError",
     "LearningDataIntegrityError",
     "LearningTableMissingError",
+    "SamplerSchemaMismatchError",
     "SceneOpsDataset",
     "SceneOpsDatasetError",
+    "SequenceSampler",
     "StepOutOfRangeError",
 ]
