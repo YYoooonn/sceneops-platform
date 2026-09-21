@@ -43,7 +43,7 @@ RUN_ID="run-${SCENE}"
 BAG_DIR="/data/raw/rosbag/${SCENE}"
 MCAP_URI="${BAG_DIR}/${SCENE}_0.mcap"
 
-COMPOSE="docker compose -f $REPO_ROOT/docker-compose.local.yml"
+COMPOSE="docker compose -f $REPO_ROOT/compose.yaml"
 
 echo "=== robot_can_replay (Phase 4) E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"

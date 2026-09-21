@@ -1,4 +1,13 @@
 # --------------------
+# Fixtures
+# --------------------
+
+.PHONY: register-nuscenes-dataset
+register-nuscenes-dataset:
+	chmod +x scripts/fixtures/register_nuscenes_dataset.sh
+	API_PREFIX=$(API_PREFIX) scripts/fixtures/register_nuscenes_dataset.sh
+
+# --------------------
 # E2E
 #
 # `make e2e` = every workflow E2E whose required services are provided by

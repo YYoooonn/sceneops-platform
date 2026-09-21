@@ -42,7 +42,7 @@ db-history:
 db-reset:
 	$(COMPOSE) stop postgres
 	$(COMPOSE) rm -f postgres
-	docker volume rm -f $$(docker volume ls -q --filter label=com.docker.compose.volume=sceneops_postgres_data)
+	docker volume rm -f $$(docker volume ls -q --filter label=com.docker.compose.project=sceneops --filter label=com.docker.compose.volume=postgres-data)
 	$(MAKE) db-migrate
 
 .PHONY: db-shell

@@ -1,0 +1,36 @@
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: migrations/Dockerfile.migrate
+    env_file:
+      - .env.local
+    volumes:
+      - ./migrations:/workspace/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - alembic
+      - -c
+      - migrations/alembic.ini
+      - upgrade
+      - head
+    profiles:
+      - tools
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-17T19-35-25Z
+    env_file:
+      - .env.local
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - /scripts/init/minio_init.sh
+    volumes:
+      - ./data/raw:/data/raw:ro
+      - ./scripts:/scripts:ro
+    profiles:
+      - tools

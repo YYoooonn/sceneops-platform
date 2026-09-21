@@ -1,0 +1,51 @@
+x-worker-common: &worker-common
+  build:
+    context: .
+    dockerfile: apps/worker/Dockerfile
+  image: sceneops-platform/worker:local
+  env_file:
+    - .env.local
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+  volumes:
+    - ./data:/data
+    - ./scripts:/workspace/scripts:ro
+
+
+services:
+  worker-pipeline:
+    <<: *worker-common
+    command: >
+      celery
+      -A sceneops_worker.celery_app.celery_app
+      worker
+      --loglevel=info
+      --queues=sceneops.pipeline_runs
+      --concurrency=${SCENEOPS_WORKER_PIPELINE_CONCURRENCY:-1}
+      --hostname=sceneops-pipeline@%h
+    profiles:
+      - worker
+
+  worker-jobs:
+    <<: *worker-common
+    command: >
+      celery
+      -A sceneops_worker.celery_app.celery_app
+      worker
+      --loglevel=info
+      --queues=sceneops.jobs
+      --concurrency=${SCENEOPS_WORKER_JOBS_CONCURRENCY:-4}
+      --hostname=sceneops-jobs@%h
+    profiles:
+      - worker
+
+
+  worker-cli:
+    <<: *worker-common
+    profiles:
+      - debug

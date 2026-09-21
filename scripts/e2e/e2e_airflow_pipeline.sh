@@ -12,7 +12,7 @@
 #   1. `make airflow-up` has been run (Airflow webserver/scheduler/DB up).
 #   2. .env.local has SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow, and
 #      the `api` service has been (re)started with that value, e.g.:
-#        docker compose -f docker-compose.local.yml up -d --build api
+#        docker compose up -d --build api
 #
 # Usage:
 #   bash scripts/e2e/e2e_airflow_pipeline.sh

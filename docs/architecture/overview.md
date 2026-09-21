@@ -253,7 +253,7 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 - Docs: [jobs-and-pipelines.md](./jobs-and-pipelines.md), [quality-and-runs.md](./quality-and-runs.md)
 
 **INFRA** — Postgres, MinIO, Redis, Celery, Docker Compose
-- `docker-compose.local.yml`, `Makefile` + `makefiles/*.mk`
+- `compose.yaml` + `compose/*.yaml`, `Makefile` + `makefiles/*.mk`
 - `packages/sceneops-db/sceneops_db/session.py` (async engine/session)
 - `packages/sceneops-storage/sceneops_storage/backends/`
 - Doc: [../development/local-development.md](../development/local-development.md), [storage-layout.md](./storage-layout.md)

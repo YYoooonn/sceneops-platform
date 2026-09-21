@@ -1,0 +1,59 @@
+# inference-server-local (profile: inference) and inference-server-gpu
+# (profile: gpu) are mutually exclusive runtime variants of the same
+# logical inference subsystem: they share INFERENCE_PORT and the
+# sceneops-inference network alias, so running both profiles at once is
+# unsupported and one will fail to bind.
+x-inference-common: &inference-common
+  build:
+    context: .
+    dockerfile: apps/inference-server/Dockerfile
+  env_file:
+    - .env.local
+  environment:
+    HF_HOME: /cache/hf
+    SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
+  ports:
+    - "${INFERENCE_PORT:-8001}:8001"
+  volumes:
+    - ./data:/data:ro
+    - ./cache/hf:/cache/hf
+  networks:
+    default:
+      aliases:
+        - sceneops-inference
+  healthcheck:
+    test:
+      [
+        "CMD-SHELL",
+        "curl -f http://localhost:8001/readyz || exit 1"
+      ]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 120s
+
+services:
+  inference-server-local:
+    <<: *inference-common
+    image: sceneops-platform/inference-server:local
+    profiles:
+      - inference
+
+  inference-server-gpu:
+    <<: *inference-common
+    build:
+      context: .
+      dockerfile: apps/inference-server/Dockerfile
+      args:
+        TORCH_FLAVOR: cu121
+    image: sceneops-platform/inference-server:gpu-local
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+    profiles:
+      - gpu

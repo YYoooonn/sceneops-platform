@@ -63,7 +63,7 @@ shell environment                              (highest precedence)
   both point at the same file to stay consistent:
   - `--env-file .env.local` on every `docker compose` invocation (wired up
     once via `$(COMPOSE)` in the root `Makefile`) — this is what lets
-    `${POSTGRES_PORT:-5432}`-style values in `docker-compose.local.yml`
+    `${POSTGRES_PORT:-5432}`-style values in `compose/core.yaml`
     actually pick up your overrides, not just their hardcoded defaults.
   - `env_file: [.env.local]` on each service — injects the same values into
     the container's own runtime environment.
@@ -81,10 +81,17 @@ Override a port without editing any file: `POSTGRES_PORT=5433 make local-up`.
 
 ## Service topology vs. configuration
 
-`docker-compose.local.yml` should describe *topology* (which services exist,
-what they depend on, health checks) and provide only harmless local
-fallbacks (`${POSTGRES_DB:-sceneops}`) — not be the primary place
-environment-specific values live. Real values live in `.env.local`.
+`compose.yaml` (via `include:` of `compose/*.yaml`) should describe
+*topology* (which services exist, what they depend on, health checks) and
+provide only harmless local fallbacks (`${POSTGRES_DB:-sceneops}`) — not be
+the primary place environment-specific values live. Real values live in
+`.env.local`.
+
+The Compose project is named `sceneops` (set via `name:` in `compose.yaml`)
+and `compose.yaml` at the repo root is the canonical entrypoint, so plain
+`docker compose ...` (no `-f`) resolves it via normal discovery from the
+repo root — that's what `$(COMPOSE)` in the Makefile and the scripts under
+`scripts/` rely on.
 
 `minio` is intentionally **not** profile-gated, unlike `inference`/
 `airflow`/`ros2`/`gpu`/`debug` — it's required infrastructure (the artifact
@@ -128,8 +135,9 @@ make e2e               full default-stack workflow suite, requires `make local-u
 `make e2e` runs the full default-stack suite — every workflow E2E whose
 required services are provided by `make local-up` alone:
 `api-smoke`, `pipeline-contracts`, `dataset-ingestion`,
-`raw-log-scene-building`, `episode-building`, `scenario-curation`,
-`detection-evaluation` (mock backend), `analytics-export`, `reliability`.
+`raw-log-scene-building`, `episode-building`, `episode-curation`,
+`scenario-curation`, `detection-evaluation` (mock backend),
+`analytics-export`, `reliability`.
 
 `e2e-episode-building` reuses the committed MCAP fixture from
 `e2e-robot-can-replay` (`apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap`)

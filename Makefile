@@ -1,6 +1,5 @@
-COMPOSE_FILE ?= docker-compose.local.yml
 ENV_FILE     ?= .env.local
-COMPOSE      := docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE)
+COMPOSE      := docker compose --env-file $(ENV_FILE)
 API_HOST     ?= http://localhost:8000
 API_PREFIX   ?= /api/v1
 ALEMBIC_CONFIG ?= migrations/alembic.ini
@@ -44,7 +43,7 @@ help:
 	@echo "  make local-up                 Start full local stack (idempotent: infra -> health -> MinIO buckets -> migrate -> API + workers)"
 	@echo "  make test                     All infrastructure-independent unit tests"
 	@echo "  make test-integration         Real-Postgres/MinIO tests -- requires local-up"
-	@echo "  make e2e                      Full default-stack E2E suite (9 scripts) -- see 'E2E' below for what's NOT included"
+	@echo "  make e2e                      Full default-stack E2E suite (10 scripts) -- see 'E2E' below for what's NOT included"
 	@echo "  make local-down               Stop services, KEEP all data"
 	@echo "  make status / make logs       Service status / follow logs"
 	@echo ""
@@ -66,9 +65,8 @@ help:
 	@echo "  make status                   Show service status"
 	@echo "  make logs                     Follow logs for core services"
 	@echo ""
-	@echo "Docker Compose (raw escape hatches -- prefer the targets above):"
+	@echo "Docker Compose (image rebuilds -- rarely needed, see Local stack for status/logs):"
 	@echo "  make compose-build / compose-build-no-cache"
-	@echo "  make compose-logs / compose-ps"
 	@echo ""
 	@echo "MinIO (started by default as part of local-up):"
 	@echo "  make minio-up / minio-down / minio-logs"
@@ -108,13 +106,14 @@ help:
 	@echo "Fixtures:"
 	@echo "  make register-nuscenes-dataset"
 	@echo ""
-	@echo "E2E -- default (make e2e = all 9 of these; needs only local-up):"
+	@echo "E2E -- default (make e2e = all 10 of these; needs only local-up):"
 	@echo "  make e2e"
 	@echo "  make e2e-api-smoke"
 	@echo "  make e2e-pipeline-contracts"
 	@echo "  make e2e-dataset-ingestion"
 	@echo "  make e2e-raw-log-scene-building"
 	@echo "  make e2e-episode-building                  Reuses the MCAP fixture from e2e-robot-can-replay"
+	@echo "  make e2e-episode-curation                  Reuses the episode registered by e2e-episode-building"
 	@echo "  make e2e-scenario-curation                 Prints scenario_set_id and pipeline_run_id"
 	@echo "  make e2e-detection-evaluation               Mock inference backend"
 	@echo "  make e2e-analytics-export"
@@ -137,7 +136,7 @@ help:
 	@echo "  make show-runs"
 	@echo "  make show-pipeline PIPELINE_RUN_ID=pipe-xxx"
 	@echo "  make show-job-events JOB_ID=job-xxx"
-	@echo "  make tail-worker-logs"
+	@echo "  (worker logs: make worker-logs)"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make prepare-data / clean-artifacts / clean-python"
@@ -159,6 +158,5 @@ include makefiles/worker.mk
 include makefiles/minio.mk
 include makefiles/inference.mk
 include makefiles/checks.mk
-include makefiles/fixtures.mk
 include makefiles/e2e.mk
 include makefiles/debug.mk

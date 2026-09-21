@@ -33,7 +33,7 @@ local-down:
 # FORCE=1. See scripts/dev/reset_local_state.sh for the exact steps.
 local-reset:
 	chmod +x scripts/dev/reset_local_state.sh
-	COMPOSE_FILE=$(COMPOSE_FILE) ENV_FILE=$(ENV_FILE) scripts/dev/reset_local_state.sh
+	ENV_FILE=$(ENV_FILE) scripts/dev/reset_local_state.sh
 
 .PHONY: logs
 logs:

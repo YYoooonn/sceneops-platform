@@ -12,9 +12,8 @@
 
 set -euo pipefail
 
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.local.yml}"
 ENV_FILE="${ENV_FILE:-.env.local}"
-COMPOSE=(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
+COMPOSE=(docker compose --env-file "$ENV_FILE")
 
 echo "This will PERMANENTLY delete local Postgres/Redis/MinIO data and generated artifacts."
 if [ "${FORCE:-0}" != "1" ]; then
@@ -33,6 +32,6 @@ rm -rf data/datasets data/runs data/models data/artifacts
 mkdir -p data/raw data/datasets data/runs data/models data/artifacts cache/hf
 
 echo "--- rebuilding clean stack ---"
-make local-up COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE"
+make local-up ENV_FILE="$ENV_FILE"
 
 echo "local state reset complete"
