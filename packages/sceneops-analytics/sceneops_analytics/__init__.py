@@ -1,15 +1,19 @@
 from sceneops_analytics.learning_dataset import (
+    DEFAULT_DTYPE,
     CurationManifestMismatchError,
     DatasetManifestMismatchError,
     EpisodeMetadata,
     EpisodeNotFoundError,
     LearningDataIntegrityError,
     LearningTableMissingError,
+    NumPySequenceSample,
     SamplerSchemaMismatchError,
     SceneOpsDataset,
     SceneOpsDatasetError,
     SequenceSampler,
     StepOutOfRangeError,
+    materialize_sequences,
+    to_numpy,
 )
 from sceneops_analytics.learning_tables import (
     LEARNING_EPISODES_SCHEMA,
@@ -63,4 +67,8 @@ __all__ = [
     "EpisodeNotFoundError",
     "StepOutOfRangeError",
     "SamplerSchemaMismatchError",
+    "DEFAULT_DTYPE",
+    "NumPySequenceSample",
+    "materialize_sequences",
+    "to_numpy",
 ]
