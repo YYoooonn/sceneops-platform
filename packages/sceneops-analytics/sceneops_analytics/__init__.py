@@ -1,3 +1,14 @@
+from sceneops_analytics.learning_dataset import (
+    CurationManifestMismatchError,
+    DatasetManifestMismatchError,
+    EpisodeMetadata,
+    EpisodeNotFoundError,
+    LearningDataIntegrityError,
+    LearningTableMissingError,
+    SceneOpsDataset,
+    SceneOpsDatasetError,
+    StepOutOfRangeError,
+)
 from sceneops_analytics.learning_tables import (
     LEARNING_EPISODES_SCHEMA,
     LEARNING_SIGNALS_SCHEMA,
@@ -39,4 +50,13 @@ __all__ = [
     "AnalyticsTableWriter",
     "AnalyticsTableWriteResult",
     "query_parquet",
+    "SceneOpsDataset",
+    "EpisodeMetadata",
+    "SceneOpsDatasetError",
+    "LearningTableMissingError",
+    "DatasetManifestMismatchError",
+    "CurationManifestMismatchError",
+    "LearningDataIntegrityError",
+    "EpisodeNotFoundError",
+    "StepOutOfRangeError",
 ]
