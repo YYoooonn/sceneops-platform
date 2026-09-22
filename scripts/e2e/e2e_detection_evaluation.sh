@@ -10,13 +10,21 @@
 #                          prediction_count, ground_truth_count, evaluation_unit
 #   - Leaderboard entry:   primary_metric_name, primary_metric_value
 #
+# Assumes dataset scene ingestion (registered scenes + ground-truth
+# annotations) has already run for DATASET_ID/DATASET_VERSION -- predict/
+# evaluate need existing scenes+annotations to run against, and this script
+# does not seed any itself. Run `make e2e-pipeline-contracts` or
+# `make e2e-dataset-ingestion` first if starting from scratch (SceneOps V2
+# Request 3.2A -- this dependency existed before but was undocumented here).
+#
 # Usage:
 #   bash scripts/e2e/e2e_detection_evaluation.sh
 #
-# Env overrides:
+# Env overrides (defaults come from the "core" E2E fixture, see
+# scripts/e2e/lib.sh's resolve_e2e_fixture):
 #   API_BASE_URL      (default: http://localhost:8000)
-#   DATASET_ID        (default: nuscenes)
-#   DATASET_VERSION   (default: v1.0-mini)
+#   DATASET_ID        (default: test-e2e-core)
+#   DATASET_VERSION   (default: test-v1)
 #   MODEL_ID          (default: dummy-detector)
 #   MODEL_VERSION     (default: v1)
 #   POLL_TIMEOUT      max poll attempts, 5s each (default: 60 = 5 min)
@@ -27,8 +35,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
+resolve_e2e_fixture core
 MODEL_ID="${MODEL_ID:-dummy-detector}"
 MODEL_VERSION="${MODEL_VERSION:-v1}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"

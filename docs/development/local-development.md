@@ -139,12 +139,17 @@ required services are provided by `make local-up` alone:
 `scenario-curation`, `detection-evaluation` (mock backend),
 `analytics-export`, `reliability`.
 
-`e2e-episode-building` reuses the committed MCAP fixture from
-`e2e-robot-can-replay` (`apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap`)
-rather than needing a live ROS2 sandbox — it runs the
-`raw_log_episode_building` pipeline directly against that fixture through
-`RosbagAdapter`, so it stays in the default suite despite exercising the
-same decode path robot ingestion uses. See
+`e2e-episode-building` reuses the MCAP recording produced by a prior
+`e2e-robot-can-replay` run (`data/raw/rosbag/<scene>/<scene>_0.mcap`,
+runtime-generated and gitignored, **not** the similarly-named committed
+unit-test fixture at `apps/worker/tests/fixtures/rosbag/`) rather than
+re-running the ROS2 replay itself — it runs the `raw_log_episode_building`
+pipeline directly against that recording through `RosbagAdapter`. This
+means a genuinely fresh environment must run `make e2e-robot-can-replay`
+(needs the ROS2 sandbox, `--profile ros2`) **at least once** before
+`e2e-episode-building` — and therefore `make e2e` — can pass; it is a
+one-time data precondition, not a per-run service dependency, so
+`e2e-robot-can-replay` itself stays out of the default `make e2e` set. See
 [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md).
 
 Not included — each needs infrastructure beyond `make local-up`:
@@ -166,3 +171,94 @@ current run (`pipeline_run_id`, `run_id`s, etc.), not global counts, so they
 hold up under a persistent stack's accumulated history — see
 `scripts/e2e/e2e_episode_building.sh` or `scripts/e2e/e2e_reliability.sh`
 for the clearest examples.
+
+### Canonical identity vs. external source/export identity
+
+`DATASET_ID`/`DATASET_VERSION` mean **SceneOps' own canonical identity
+only** — never constrained by what an external format's SDK happens to
+require. This wasn't always true: Request 3.2A had to keep `DATASET_VERSION`
+pinned to the real `v1.0-mini` for nuScenes-backed workflows, because
+`ingest_scenes`/`build_scenes` passed `dataset_version` straight into the
+real `nuscenes-devkit` `NuScenes(version=..., dataroot=...)` loader, which
+requires it to be the literal on-disk version folder name (found by
+actually running `make e2e-pipeline-contracts` against a renamed version
+and hitting `Database version not found: /data/raw/nuscenes/test-v1`).
+
+Request 3.2B separated the two: `IngestScenesJobParams`/`BuildScenesJobParams`
+carry an explicit `source_format_version` field, and the nuScenes SDK
+(`apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py`,
+`datasets/ingestion/nuscenes_raw_log.py`) reads only that, never
+`dataset_version` — so `DATASET_VERSION` is finally free to be `test-v1`
+everywhere. Request 3.2B.1 then removed the short-lived
+`source_format_version or dataset_version` fallback entirely:
+`source_format_version` is **required** whenever the source format needs
+one (nuScenes) — enforced by a pydantic validator on both job params
+classes at job-creation time — so a caller that omits it gets a clear
+validation error instead of silently reusing `dataset_version`. Local
+SceneOps state may always be reset, so no backward compatibility with the
+old overloaded behavior is preserved. The shared conceptual shape for "a
+dataset outside SceneOps' canonical model" — covering both this nuScenes
+import source and a future LeRobot/RLDS export target — is
+`ExternalDatasetRef` (`sceneops_core.datasets.ExternalDatasetRef`):
+`format`/`format_version`/`uri` plus optional `external_name`/
+`external_revision`/`checksum`. Import vs. export is a property of the
+operation, not the ref's shape.
+
+### The E2E fixture catalog: `sceneops-e2e-v1`
+
+Request 3.2A gave every workflow its own derived dataset identity — safe,
+but it meant one canonical Dataset/DatasetVersion per workflow even where
+nothing about the data required that. Request 3.2B replaces that with two
+shared logical fixtures, resolved via `scripts/e2e/lib.sh`'s
+`resolve_e2e_fixture <name>`:
+
+- **`core`** — `DATASET_ID=test-e2e-core`, `DATASET_VERSION=test-v1`,
+  external source `SOURCE_FORMAT=nuscenes`/`SOURCE_FORMAT_VERSION=v1.0-mini`/
+  `SOURCE_ROOT_URI=/data/raw/nuscenes`. Used by `pipeline-contracts`,
+  `dataset-ingestion`, `scenario-curation`, `detection-evaluation`,
+  `analytics-export`, `reliability`, `airflow-pipeline`, `episode-building`,
+  and `episode-curation`. Scene and Episode families coexist on one
+  DatasetVersion by design — each owns an independent summary sub-object
+  that never overwrites the other's (see
+  `packages/sceneops-core/tests/test_dataset_version_summaries.py`);
+  `episode-building` additionally needs the MCAP fixture from
+  `e2e-robot-can-replay` (see above), unrelated to this canonical identity.
+- **`interop`** — `DATASET_ID=test-e2e-interop`, `DATASET_VERSION=test-v1`.
+  Source: the deterministic golden learning fixture built by
+  `sceneops_analytics.testing.interop_dataset` (Request 3.2), for
+  external-adapter/interoperability round-trip tests. Python-only today —
+  no shell E2E ingestion path exists for it yet.
+
+`raw-log-scene-building` deliberately stays its own identity
+(`DATASET_ID=test-e2e-raw-log`), **outside** the catalog: it produces
+non-ground-truth scenes that measurably drag down `core`'s aggregate
+`/quality` readiness if they share one DatasetVersion (see
+`makefiles/e2e.mk`'s comment on that target) — a real, previously-discovered
+data-requirement conflict, not an oversight. It still resolves through the
+same `resolve_e2e_fixture raw-log` call for consistency, and shares `core`'s
+`SOURCE_FORMAT_VERSION` (both read the same physical nuScenes mini fixture).
+
+`api-smoke` sits outside the catalog entirely — always a fresh
+`test-e2e-smoke-<timestamp>`, never overridable, since it never accepts a
+caller-supplied dataset.
+
+**Overriding**: every workflow still accepts an explicit identity, applied
+exactly as given, never coerced into the `test-e2e-*` form —
+`resolve_e2e_fixture` only fills in whichever of `DATASET_ID`/
+`DATASET_VERSION`/`SOURCE_FORMAT_VERSION`/etc. the caller's environment left
+unset (bash's `: "${VAR:=default}"` idiom):
+
+```bash
+make e2e-scenario-curation                                          # DATASET_ID=test-e2e-core DATASET_VERSION=test-v1
+DATASET_ID=my-local-dataset DATASET_VERSION=v3 make e2e-scenario-curation   # runs against your own dataset instead
+```
+
+This is also why cleanup here is deliberately simple: **there is no
+automated cleanup today**. `make local-up`'s design is purely
+additive/idempotent (see above), and every pipeline-run-creating E2E script
+already tolerates a persistent stack's accumulated history (see the
+`force: true` paragraph above) rather than needing a clean slate. The one
+rule that matters if/when automated cleanup is ever added: it may only ever
+target the known `test-e2e-*`/`test-v1` identities, never a caller-supplied
+one — this doc and `scripts/e2e/lib.sh`'s `resolve_e2e_fixture` are the
+source of truth for what counts as "known test identity."

@@ -21,8 +21,39 @@ MCAP_URI        ?=
 
 MODEL_ID        ?= dummy-detector
 MODEL_VERSION   ?= v1
-DATASET_ID      ?= nuscenes
-DATASET_VERSION ?= v1.0-mini
+
+# SceneOps V2 Request 3.2A/3.2B: shared E2E fixture catalog ("core"/
+# "interop"/"raw-log", see scripts/e2e/lib.sh's resolve_e2e_fixture for the
+# full catalog doc) and canonical-vs-source identity separation.
+#
+# DATASET_ID/DATASET_VERSION below are the "core" fixture's default --
+# SceneOps' OWN canonical identity, used by pipeline-contracts,
+# dataset-ingestion, scenario-curation, detection-evaluation,
+# analytics-export, reliability, airflow-pipeline, episode-building, and
+# episode-curation. Canonical identity is never constrained by what an
+# external format's SDK happens to require: SOURCE_FORMAT_VERSION below is
+# the separate, real nuScenes SDK version (apps/worker/sceneops_worker/
+# jobs/dataset/ingest_scenes.py reads this, never dataset_version, when
+# constructing `nuscenes-devkit`'s NuScenes(...)`). Request 3.2A initially
+# had to keep DATASET_VERSION pinned to the real "v1.0-mini" here (found by
+# actually running `make e2e-pipeline-contracts` against a renamed version
+# and hitting "Database version not found: /data/raw/nuscenes/test-v1");
+# Request 3.2B's source_format_version param is what let DATASET_VERSION
+# become a free canonical identity too.
+#
+# See makefiles/e2e.mk for the raw-log fixture (RAW_LOG_DATASET_ID), which
+# stays isolated from "core" on purpose but shares this same
+# SOURCE_FORMAT_VERSION (both read the same physical nuScenes mini
+# fixture). An explicit `DATASET_ID=my-dataset make e2e-...` always
+# overrides these defaults and is never coerced into the test-e2e-* form.
+DEFAULT_E2E_DATASET_PREFIX  ?= test-e2e
+DEFAULT_E2E_DATASET_VERSION ?= test-v1
+DATASET_ID            ?= $(DEFAULT_E2E_DATASET_PREFIX)-core
+DATASET_VERSION       ?= $(DEFAULT_E2E_DATASET_VERSION)
+
+SOURCE_FORMAT ?= nuscenes
+SOURCE_FORMAT_VERSION ?= v1.0-mini
+SOURCE_ROOT_URI ?= /data/raw/nuscenes
 
 GDINO_MODEL_ID      ?= grounding-dino
 GDINO_MODEL_VERSION ?= tiny

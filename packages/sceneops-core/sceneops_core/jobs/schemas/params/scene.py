@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.datasets.schemas import DatasetType
@@ -40,6 +40,7 @@ class IngestScenesJobParams(BaseJobParams):
 
     source_format: DatasetType = DatasetType.NUSCENES
     source_root_uri: str
+    source_format_version: str | None = None
 
     source_scene_ids: list[str] | None = None
     max_source_scenes: int | None = None
@@ -49,6 +50,19 @@ class IngestScenesJobParams(BaseJobParams):
     mode: str = "upsert"
 
     metadata: JsonDict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _require_source_format_version_for_nuscenes(self) -> "IngestScenesJobParams":
+        if (
+            self.source_format == DatasetType.NUSCENES
+            and not self.source_format_version
+        ):
+            raise ValueError(
+                "source_format_version is required when source_format=nuscenes "
+                "-- it is the nuScenes SDK's own on-disk version (e.g. "
+                "'v1.0-mini'), never SceneOps' canonical dataset_version"
+            )
+        return self
 
 
 class BuildScenesJobParams(BaseJobParams):
@@ -64,6 +78,14 @@ class BuildScenesJobParams(BaseJobParams):
     # Raw-log source classification
     source_type: RawLogSourceType | None = None
     source_format: RawLogSourceFormat | None = None
+    # SceneOps V2 Request 3.2B: same split as IngestScenesJobParams above --
+    # the external source format's own version identity (e.g. nuScenes'
+    # "v1.0-mini"), never `dataset_version`. Required whenever source_type
+    # needs one (currently: NUSCENES_RAW_LOG_MOCK); RosbagAdapter ignores
+    # it. Request 3.2B.1 removed the `source_format_version or
+    # dataset_version` fallback that briefly existed here -- no backward
+    # compatibility with that overloaded behavior is preserved.
+    source_format_version: str | None = None
     # URI of the actual sensor record files (rosbag, MCAP, etc.) for real adapters.
     # Not used as a raw source root; raw source root comes from DatasetVersionRecord.
     records_uri: str | None = None
@@ -86,6 +108,22 @@ class BuildScenesJobParams(BaseJobParams):
     output_scene_root_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _require_source_format_version_for_nuscenes_raw_log(
+        self,
+    ) -> "BuildScenesJobParams":
+        if (
+            self.source_type == RawLogSourceType.NUSCENES_RAW_LOG_MOCK
+            and not self.source_format_version
+        ):
+            raise ValueError(
+                "source_format_version is required when "
+                "source_type=nuscenes_raw_log_mock -- it is the nuScenes "
+                "SDK's own on-disk version (e.g. 'v1.0-mini'), never "
+                "SceneOps' canonical dataset_version"
+            )
+        return self
 
 
 class BuildDatasetManifestJobParams(BaseJobParams):

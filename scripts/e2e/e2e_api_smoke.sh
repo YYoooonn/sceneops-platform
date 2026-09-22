@@ -141,7 +141,13 @@ echo "  📋 ${def_count} built-in pipeline definitions"
 
 echo ""
 echo "─── create smoke ────────────────────────────────────"
-DATASET_ID="smoke-test-$(date +%s)"
+# Deliberately hardcoded, not "${DATASET_ID:-...}" -- this smoke test never
+# accepts a caller-supplied dataset, it always creates+verifies its own
+# disposable one. "test-e2e-smoke-" matches the shared test-e2e-* default
+# identity convention (SceneOps V2 Request 3.2A, scripts/e2e/lib.sh) even
+# though this script deliberately doesn't source lib.sh (kept dependency-free
+# on purpose -- see the file header).
+DATASET_ID="test-e2e-smoke-$(date +%s)"
 
 dataset_resp="$(post /datasets "{
   \"dataset_id\": \"${DATASET_ID}\",
@@ -166,7 +172,7 @@ check "GET /datasets/{id}/versions/v1.0" "$(get "/datasets/${DATASET_ID}/version
 check "GET /datasets/{id}/versions/v1.0/quality" "$(get "/datasets/${DATASET_ID}/versions/v1.0/quality")"
 
 # create model
-MODEL_ID="smoke-model-$(date +%s)"
+MODEL_ID="test-e2e-smoke-model-$(date +%s)"
 model_resp="$(post /models "{
   \"model_id\": \"${MODEL_ID}\",
   \"name\": \"Smoke Test Model\"

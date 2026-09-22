@@ -29,11 +29,13 @@
 #   Run e2e_episode_building.sh at least once first (or otherwise have a
 #   registered EPISODE_MANIFEST for EPISODE_ID in DATASET_ID/DATASET_VERSION).
 #
-# Env overrides:
+# Env overrides (DATASET_ID/DATASET_VERSION default from the shared "core"
+# E2E fixture, see scripts/e2e/lib.sh's resolve_e2e_fixture -- merged onto
+# the same fixture e2e_episode_building.sh uses, SceneOps V2 Request 3.2B):
 #   API_BASE_URL     (default: http://localhost:8000)
-#   DATASET_ID       (default: episodes-e2e)
-#   DATASET_VERSION  (default: v1)
-#   EPISODE_ID       (default: episodes-e2e-v1-episodes-mission-scene-0061)
+#   DATASET_ID       (default: test-e2e-core)
+#   DATASET_VERSION  (default: test-v1)
+#   EPISODE_ID       (default: test-e2e-core-test-v1-episodes-mission-scene-0061)
 #   POLL_TIMEOUT     max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
@@ -42,9 +44,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-DATASET_ID="${DATASET_ID:-episodes-e2e}"
-DATASET_VERSION="${DATASET_VERSION:-v1}"
-EPISODE_ID="${EPISODE_ID:-episodes-e2e-v1-episodes-mission-scene-0061}"
+resolve_e2e_fixture core
+# build_episodes derives raw_log_id as "{dataset_id}-{dataset_version}-episodes"
+# (apps/worker/sceneops_worker/jobs/dataset/build_episodes.py) and episode_id
+# as "{raw_log_id}-{mission_id}" -- this default must track DATASET_ID/
+# DATASET_VERSION's own default above, or it points at an episode
+# e2e_episode_building.sh never actually registered.
+EPISODE_ID="${EPISODE_ID:-${DATASET_ID}-${DATASET_VERSION}-episodes-mission-scene-0061}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 echo "=== CURATE_EPISODES E2E ==="
@@ -289,7 +295,7 @@ echo ""
 # ── 5. Verify the persisted EpisodeCurationManifest via the real ArtifactStore ──
 
 echo "--- 5. Verify persisted ArtifactRecord (real Postgres) ---"
-ARTIFACTS_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/artifacts?owner_type=dataset_version&owner_id=$DATASET_ID:$DATASET_VERSION")")"
+ARTIFACTS_JSON="$(fetch_artifacts_by_owner "$API_BASE_URL" "dataset_version" "$DATASET_ID:$DATASET_VERSION")"
 CURATION_ARTIFACT="$(echo "$ARTIFACTS_JSON" | jq --arg id "$MANIFEST_ARTIFACT_ID" '.artifacts[] | select(.artifactId == $id)')"
 echo "$CURATION_ARTIFACT" | jq '{artifactId, kind, ownerType, ownerId, checksum}'
 KIND="$(echo "$CURATION_ARTIFACT" | jq -r '.kind')"

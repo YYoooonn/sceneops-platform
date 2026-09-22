@@ -11,10 +11,12 @@
 # Usage:
 #   bash scripts/e2e/e2e_reliability.sh
 #
-# Env overrides:
+# Env overrides (defaults come from the "core" E2E fixture, see
+# scripts/e2e/lib.sh's resolve_e2e_fixture):
 #   API_BASE_URL    (default: http://localhost:8000)
-#   DATASET_ID      (default: nuscenes)
-#   DATASET_VERSION (default: v1.0-mini)
+#   DATASET_ID      (default: test-e2e-core)
+#   DATASET_VERSION (default: test-v1)
+#   SOURCE_FORMAT_VERSION (default: v1.0-mini)
 #   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
 #   MAX_SOURCE_SCENES (default: 2)
 #   POLL_TIMEOUT    max poll attempts, 5s each (default: 60 = 5 min)
@@ -25,11 +27,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
+resolve_e2e_fixture core
 MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-2}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
+
+SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
+SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
+SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 echo "=== reliability (idempotency + partial retry) E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
@@ -98,8 +102,9 @@ PIPELINE_PAYLOAD="$(cat <<JSON
   "dataset_version": "$DATASET_VERSION",
   "params": {
     "ingest_scenes": {
-      "source_format": "nuscenes",
+      "source_format": "$SOURCE_FORMAT",
       "source_root_uri": "$SOURCE_ROOT_URI",
+      "source_format_version": "$SOURCE_FORMAT_VERSION",
       "max_source_scenes": $MAX_SOURCE_SCENES,
       "mode": "upsert"
     },

@@ -30,11 +30,11 @@ def _make_mocker(source_root_uri: str) -> NuScenesRawLogMocker:
 
 
 _BUILD_RAW_LOG_KWARGS = dict(
-    dataset_id="nuscenes",
-    dataset_version="v1.0-mini",
+    dataset_id="test-e2e-raw-log",
+    dataset_version="test-v1",
     raw_log_id="log-001",
     version_root_uri="s3://root/",
-    params={},
+    params={"source_format_version": "v1.0-mini"},
 )
 
 
@@ -143,6 +143,82 @@ class TestBuildRawLogLocalPath:
             return_value=mock_nusc,
         ) as MockNuScenes:
             await mocker.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
+
+        MockNuScenes.assert_called_once_with(
+            version="v1.0-mini",
+            dataroot="/data/raw/nuscenes",
+            verbose=False,
+        )
+
+
+# ── build_raw_log: canonical dataset_version vs. source_format_version ──────
+# SceneOps V2 Request 3.2B.1: dataset_version is SceneOps' own canonical
+# DatasetVersion identity; source_format_version (a required key in the
+# params dict) is the nuScenes SDK's own on-disk version folder name. They
+# must never be conflated, and there is no fallback from one to the other.
+
+
+class TestBuildRawLogSourceFormatVersion:
+    @pytest.mark.asyncio
+    async def test_missing_source_format_version_raises_clear_error(self) -> None:
+        """No fallback: an absent source_format_version must fail clearly,
+        never silently reuse dataset_version."""
+        mocker = _make_mocker("/data/raw/nuscenes")
+
+        with patch("nuscenes.nuscenes.NuScenes") as MockNuScenes:
+            with pytest.raises(ValueError, match="source_format_version"):
+                await mocker.build_raw_log(
+                    dataset_id="test-e2e-raw-log",
+                    dataset_version="test-v1",
+                    raw_log_id="log-001",
+                    version_root_uri="s3://root/",
+                    params={},
+                )
+        MockNuScenes.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_string_source_format_version_also_raises(self) -> None:
+        mocker = _make_mocker("/data/raw/nuscenes")
+
+        with patch("nuscenes.nuscenes.NuScenes") as MockNuScenes:
+            with pytest.raises(ValueError, match="source_format_version"):
+                await mocker.build_raw_log(
+                    dataset_id="test-e2e-raw-log",
+                    dataset_version="test-v1",
+                    raw_log_id="log-001",
+                    version_root_uri="s3://root/",
+                    params={"source_format_version": ""},
+                )
+        MockNuScenes.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uses_source_format_version_when_present_not_dataset_version(
+        self,
+    ) -> None:
+        """The SDK must receive the external source version, never the
+        SceneOps canonical dataset_version, once source_format_version is
+        explicitly set."""
+        mocker = _make_mocker("/data/raw/nuscenes")
+        mock_obs_store = AsyncMock()
+        mock_obs_store.raw_log_manifest_uri = MagicMock(return_value="s3://root/m.json")
+        mock_obs_store.raw_frame_index_uri = MagicMock(return_value="s3://root/f.json")
+        mock_obs_store.save_raw_log_manifest = AsyncMock()
+        mock_obs_store.save_raw_frame_index = AsyncMock()
+        mocker._observation_store = mock_obs_store
+
+        mock_nusc = MagicMock()
+        mock_nusc.scene = []
+
+        with patch(
+            "nuscenes.nuscenes.NuScenes", return_value=mock_nusc
+        ) as MockNuScenes:
+            await mocker.build_raw_log(
+                dataset_id="test-e2e-raw-log",
+                dataset_version="test-v1",
+                raw_log_id="log-001",
+                version_root_uri="s3://root/",
+                params={"source_format_version": "v1.0-mini"},
+            )
 
         MockNuScenes.assert_called_once_with(
             version="v1.0-mini",
