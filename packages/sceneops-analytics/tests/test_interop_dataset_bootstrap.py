@@ -3,8 +3,10 @@
 external-format adapters (LeRobot, RLDS, ...) and their round-trip tests
 will share.
 
-These tests exercise the bootstrap itself, not any concrete external
-format -- no LeRobot/RLDS dependency exists anywhere in this repository yet.
+These tests exercise the bootstrap itself, not any concrete external format
+-- SceneOps V2 Request 3.3 later added a concrete, optional LeRobot adapter
+(sceneops_analytics.external_adapters.lerobot), but this module and its
+bootstrap remain LeRobot/RLDS-free.
 """
 
 from __future__ import annotations
@@ -147,8 +149,25 @@ async def test_two_independent_bootstrap_runs_produce_identical_semantics(
 
 
 async def test_no_lerobot_or_rlds_dependency_is_required(tmp_path):
+    # A snapshot-before/after-delta check, not a bare absence check: SceneOps
+    # V2 Request 3.3 added a real, optional LeRobot adapter elsewhere in this
+    # package (sceneops_analytics.external_adapters.lerobot), so lerobot may
+    # already be loaded in this process by the time this test runs (e.g. an
+    # earlier test module imported it) -- that is expected and fine. What
+    # this test actually guards is narrower and still holds: building the
+    # interop golden dataset itself never imports lerobot/rlds as a side
+    # effect.
+    before = {
+        name
+        for name in sys.modules
+        if "lerobot" in name.lower() or "rlds" in name.lower()
+    }
+
     await build_interop_test_dataset(tmp_path)
 
-    assert not any(
-        "lerobot" in name.lower() or "rlds" in name.lower() for name in sys.modules
-    )
+    after = {
+        name
+        for name in sys.modules
+        if "lerobot" in name.lower() or "rlds" in name.lower()
+    }
+    assert after == before

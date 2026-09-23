@@ -1,0 +1,44 @@
+[project]
+name = "sceneops-lerobot-integration"
+version = "0.1.0"
+description = "Isolated, reproducible environment for SceneOps' LeRobot dataset adapter (SceneOps V2 Request 3.3/3.3A)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+  "sceneops-analytics",
+  "lerobot>=0.4,<0.5",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+]
+
+# This project intentionally lives outside the root sceneops-platform uv
+# workspace (see ../../packages/sceneops-analytics/pyproject.toml's
+# [project.optional-dependencies] comment for the full "why"): lerobot
+# 0.4.4's dependency graph needs numpy>=2, which is permanently
+# incompatible with apps/worker's nuscenes-devkit pin in the same
+# universal-resolution lockfile (nuscenes-devkit's only numpy<2-compatible
+# fallback needs a matplotlib release with no Python 3.11 wheels on PyPI).
+# Being a separate, non-member uv project gives this its own independent
+# uv.lock whose dependency graph never includes apps/worker or
+# nuscenes-devkit at all, so that conflict cannot occur here.
+#
+# This project declares no Python package of its own -- it exists purely
+# to pin/lock a reproducible dependency set on top of the *existing*
+# sceneops-analytics code (via editable path sources below), never to
+# duplicate sceneops_analytics.external_adapters.lerobot's implementation.
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+sceneops-core = { path = "../../packages/sceneops-core", editable = true }
+sceneops-storage = { path = "../../packages/sceneops-storage", editable = true }
+sceneops-analytics = { path = "../../packages/sceneops-analytics", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
