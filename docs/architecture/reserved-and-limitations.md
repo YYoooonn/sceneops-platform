@@ -121,9 +121,17 @@ presence doesn't imply an export or deprecation workflow exists.
   `SceneOpsDataset`/`SequenceSampler`/consumer adapters) has its own
   intentional v1 boundaries — no remote Parquet predicate pushdown, no
   lazy/streaming Torch dataset, numeric-only dense projection, no
-  missing-value fill/mask policy, no external format adapter yet — see
+  missing-value fill/mask policy — see
   [Robot learning data layer](./robot-learning-data.md) §8 for the full,
   verified list.
+- Phase 3's dataset interoperability layer (the `ExternalDatasetAdapter`
+  contract and its one concrete LeRobot implementation) has its own
+  intentional v1 boundaries — numeric-only, no image/video, no RLDS
+  adapter yet, no persistent SceneOps record for an external export, and
+  a LeRobot runtime that is permanently isolated from the main workspace
+  by a real dependency conflict (not a temporary inconvenience) — see
+  [Dataset interoperability](./dataset-interoperability.md) §10 for the
+  full, verified list.
 - DuckDB queries only work against locally-downloaded Parquet files —
   querying MinIO/S3-backed artifacts directly would need DuckDB's
   httpfs/S3 extension, not wired up.
@@ -143,6 +151,12 @@ implements or half-implements them, so there's nothing to document as
   future boundary once a streaming path is built).
 - Evaluation-aware scenario mining (FP/FN-by-scene signals), pseudo-label
   candidate scoring, or VLM-based scene tagging.
-- External training-format adapters (LeRobot, RLDS, or any other) — scoped
-  to Phase 3 ("Dataset Interoperability"), not started. See
-  [Robot learning data layer](./robot-learning-data.md) §9.
+- An RLDS (or any other second) external training-format adapter —
+  `ExternalDatasetAdapter`/`ExternalDatasetWriter` are already
+  format-neutral and support this without redesign, but none exists yet.
+  A LeRobot adapter *is* implemented (Phase 3, complete) — see
+  [Dataset interoperability](./dataset-interoperability.md).
+- Containerized/portable packaging of the LeRobot integration runtime
+  (`tools/lerobot-integration/` is a local uv project only today) —
+  scoped to Phase 4 ("External Integration Runtime"), not started. See
+  [Dataset interoperability](./dataset-interoperability.md) §11.

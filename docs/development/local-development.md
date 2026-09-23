@@ -169,6 +169,11 @@ Not included — each needs infrastructure beyond `make local-up`:
 - `e2e-detection-evaluation-groundingdino` / `e2e-detection-evaluation-real`
   — needs a real inference server (`make inference-local-up` for CPU or
   `make inference-gpu-up` for GPU); same script either way.
+- `e2e-lerobot` — needs the isolated LeRobot environment
+  (`make lerobot-sync`, one-time). Real Postgres/MinIO round-trip
+  (`interop` fixture -> `SceneOpsDataset` -> LeRobot export -> official
+  reader -> golden comparison), see
+  [Dataset interoperability](../architecture/dataset-interoperability.md) §6.
 
 All pipeline-run-creating scripts in the default suite pass `force: true`,
 so re-running `make e2e` against an already-populated persistent stack
@@ -208,8 +213,9 @@ validation error instead of silently reusing `dataset_version`. Local
 SceneOps state may always be reset, so no backward compatibility with the
 old overloaded behavior is preserved. The shared conceptual shape for "a
 dataset outside SceneOps' canonical model" — covering both this nuScenes
-import source and a future LeRobot/RLDS export target — is
-`ExternalDatasetRef` (`sceneops_core.datasets.ExternalDatasetRef`):
+import source and the LeRobot export target implemented in Phase 3 (see
+[Dataset interoperability](../architecture/dataset-interoperability.md))
+— is `ExternalDatasetRef` (`sceneops_core.datasets.ExternalDatasetRef`):
 `format`/`format_version`/`uri` plus optional `external_name`/
 `external_revision`/`checksum`. Import vs. export is a property of the
 operation, not the ref's shape.
@@ -236,8 +242,12 @@ shared logical fixtures, resolved via `scripts/e2e/lib.sh`'s
 - **`interop`** — `DATASET_ID=test-e2e-interop`, `DATASET_VERSION=test-v1`.
   Source: the deterministic golden learning fixture built by
   `sceneops_analytics.testing.interop_dataset` (Request 3.2), for
-  external-adapter/interoperability round-trip tests. Python-only today —
-  no shell E2E ingestion path exists for it yet.
+  external-adapter/interoperability round-trip tests. Built directly by
+  `make e2e-bootstrap-interop` (Python-only — no shell E2E *ingestion*
+  path exists for it, unlike `core`); consumed on the export side by
+  `make e2e-lerobot`'s real LeRobot round-trip (see
+  [Dataset interoperability](../architecture/dataset-interoperability.md)
+  §6/§7).
 
 `raw-log-scene-building` deliberately stays its own identity
 (`DATASET_ID=test-e2e-raw-log`), **outside** the catalog: it produces

@@ -295,8 +295,8 @@ These are deliberate v1 boundaries, not correctness bugs:
   2.5); only `reference_uri`/`reference_modality` round-trip.
 - No missing-value filling/masking/drop policy exists --
   `MissingFeaturePolicy.ERROR` is the only implemented member.
-- No external dataset format adapter (LeRobot, RLDS, ...) exists yet --
-  see §9.
+- A LeRobot external dataset format adapter exists (Phase 3); RLDS does
+  not -- see §9 and [dataset-interoperability.md](./dataset-interoperability.md).
 - `ALIGN_EPISODE`/`VALIDATE_ALIGNED_EPISODE`/`PROFILE_ALIGNED_EPISODE`/
   `EXPORT_LEARNING_DATA`/`CURATE_EPISODES` are registered `JobType`s
   dispatched as standalone Jobs -- none is wired into
@@ -330,11 +330,12 @@ Phase 2 -- Robot Learning Data Layer        COMPLETE
 
 Phase 2 ends at the native training-consumer layer
 (`NumPySequenceSample`/`SceneOpsTorchDataset`). External ecosystem
-integration is explicitly out of scope for Phase 2 and moves to:
-
-```text
-Phase 3 -- Dataset Interoperability   (not started)
-```
+integration was explicitly out of scope for Phase 2 and moved to Phase 3,
+now complete — see
+[Dataset interoperability](./dataset-interoperability.md) for the full,
+verified architecture (`ExternalDatasetAdapter`/`ExternalDatasetWriter`
+contract, the concrete LeRobot adapter, its isolated runtime, and the
+real Postgres/MinIO round-trip E2E).
 
 ```text
 SceneOpsDataset
@@ -342,17 +343,16 @@ SceneOpsDataset
       +-- Training path (Phase 2, complete)
       |     SequenceSampler -> NumPy / Torch
       |
-      +-- Interoperability path (Phase 3, not started)
-            Episode / Step projection
-              -> LeRobot
-              -> RLDS
-              -> other external adapters
+      +-- Interoperability path (Phase 3, complete)
+            ExternalDatasetAdapter -> ExternalDatasetWriter
+              -> LeRobot (implemented, Request 3.3)
+              -> RLDS (not implemented -- see dataset-interoperability.md §10)
 ```
 
-Nothing in Phase 2 blocks this: `SceneOpsDataset.get_step()`/`get_window()`
-and the 2.7A pure projection functions are already the exact seam a future
-external-format adapter would read through, without needing any change to
-`SceneOpsDataset`/`SequenceSampler` themselves.
+Nothing in Phase 2 blocked this: `SceneOpsDataset.get_step()`/
+`get_window()` and the 2.7A pure projection functions turned out to be
+exactly the seam the Phase 3 external-format adapter reads through,
+without any change to `SceneOpsDataset`/`SequenceSampler` themselves.
 
 ## 10. Source-of-truth map
 
