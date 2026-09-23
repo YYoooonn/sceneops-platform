@@ -24,7 +24,7 @@ lerobot-lock:
 
 .PHONY: lerobot-test
 lerobot-test:
-	cd tools/lerobot-integration && uv run pytest -c pyproject.toml ../../packages/sceneops-analytics/tests/test_lerobot_adapter.py ../../packages/sceneops-analytics/tests/test_lerobot_entrypoint.py -v
+	cd tools/lerobot-integration && uv run pytest -c pyproject.toml ../../packages/sceneops-analytics/tests/test_lerobot_adapter.py ../../packages/sceneops-analytics/tests/test_lerobot_entrypoint.py ../../scripts/e2e/tests/test_lerobot_roundtrip_golden.py -v
 
 # --------------------
 # LeRobot round-trip E2E (SceneOps V2 Request 3.4)
@@ -86,3 +86,28 @@ lerobot-image:
 lerobot-container-smoke:
 	chmod +x scripts/e2e/lerobot_container_smoke.sh
 	$(E2E_BOOTSTRAP_ENV) scripts/e2e/lerobot_container_smoke.sh
+
+# --------------------
+# Containerized LeRobot round-trip E2E (SceneOps V2 Request 4.3)
+# --------------------
+#
+# The full Request 3.4 golden round-trip, with the export step running
+# through the LeRobot integration CONTAINER (above) instead of a second
+# host-side isolated-venv process. Checks the exact same frozen
+# expectations as `make e2e-lerobot` (scripts/e2e/
+# lerobot_roundtrip_golden.py, shared unchanged) -- this proves the
+# container execution boundary preserves Phase 3's interoperability
+# semantics, it does not re-derive or duplicate them. Also verifies the
+# container-level "never deletes external_ref.uri" behavior (Request 4.2
+# follow-up) through the real docker/CLI boundary, not just execute()
+# directly. See scripts/e2e/e2e_lerobot_container_roundtrip.sh's own header
+# for the full three-environment flow.
+#
+# Distinct from, and does not replace, `make e2e-lerobot` (host runtime) or
+# `make lerobot-container-smoke` (minimal container smoke test, no golden
+# comparison). Not part of `make e2e` -- same "optional environment E2E,
+# requires local build/sync steps first" convention as `make e2e-lerobot`.
+.PHONY: e2e-lerobot-container
+e2e-lerobot-container:
+	chmod +x scripts/e2e/e2e_lerobot_container_roundtrip.sh
+	$(E2E_BOOTSTRAP_ENV) scripts/e2e/e2e_lerobot_container_roundtrip.sh
