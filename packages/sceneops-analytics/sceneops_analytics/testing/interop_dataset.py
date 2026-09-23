@@ -343,6 +343,39 @@ class InteropDatasetBootstrap:
     expected_by_ref: dict[EpisodeRef, ExpectedEpisode]
 
 
+def build_interop_entries() -> list[tuple[str, AlignedEpisodeArtifact]]:
+    """The golden dataset's raw (checksum, AlignedEpisodeArtifact) entries,
+    in ``INTEROP_EPISODE_SPECS`` order (SceneOps V2 Request 3.2). Pure,
+    I/O-free -- shared by ``build_interop_test_dataset`` (in-memory/
+    LocalArtifactStore, for unit tests) and the persistent fixture
+    bootstrap (real ArtifactStore/Postgres, Request 3.2C), so the golden
+    fixture's actual content is defined exactly once and never duplicated.
+    """
+    return [
+        (
+            spec.aligned_artifact_checksum,
+            _aligned_artifact(_aligned_episode(spec), spec),
+        )
+        for spec in INTEROP_EPISODE_SPECS
+    ]
+
+
+def compute_expected_interop_episodes() -> dict[EpisodeRef, ExpectedEpisode]:
+    """The golden dataset's expected per-episode reference, keyed by
+    EpisodeRef (SceneOps V2 Request 3.2 §6). Pure, I/O-free -- derived
+    directly from this module's generator formulas, never by reading an
+    exported dataset back. Shared by ``build_interop_test_dataset`` and the
+    persistent fixture bootstrap/verification (Request 3.2C).
+    """
+    return {
+        EpisodeRef(
+            episode_id=spec.episode_id,
+            aligned_artifact_checksum=spec.aligned_artifact_checksum,
+        ): _expected_episode(spec)
+        for spec in INTEROP_EPISODE_SPECS
+    }
+
+
 async def build_interop_test_dataset(tmp_path) -> InteropDatasetBootstrap:
     """Build the SceneOps interoperability golden dataset (SceneOps V2
     Request 3.2) via the real Phase 2 pipeline -- build_learning_*_table,
@@ -361,13 +394,7 @@ async def build_interop_test_dataset(tmp_path) -> InteropDatasetBootstrap:
     """
     artifact_store = LocalArtifactStore(root_uri=str(tmp_path / "storage"))
 
-    entries: list[tuple[str, AlignedEpisodeArtifact]] = [
-        (
-            spec.aligned_artifact_checksum,
-            _aligned_artifact(_aligned_episode(spec), spec),
-        )
-        for spec in INTEROP_EPISODE_SPECS
-    ]
+    entries = build_interop_entries()
 
     export_config = LearningDataExportConfig()
     export_id = learning_data_export_id(
@@ -436,13 +463,7 @@ async def build_interop_test_dataset(tmp_path) -> InteropDatasetBootstrap:
         artifact_store=artifact_store,
     )
 
-    expected_by_ref = {
-        EpisodeRef(
-            episode_id=spec.episode_id,
-            aligned_artifact_checksum=spec.aligned_artifact_checksum,
-        ): _expected_episode(spec)
-        for spec in INTEROP_EPISODE_SPECS
-    }
+    expected_by_ref = compute_expected_interop_episodes()
     episode_refs = dataset.episodes()
     expected_episodes = [expected_by_ref[ref] for ref in episode_refs]
 
@@ -473,5 +494,7 @@ __all__ = [
     "ExpectedStep",
     "InteropDatasetBootstrap",
     "InteropEpisodeSpec",
+    "build_interop_entries",
     "build_interop_test_dataset",
+    "compute_expected_interop_episodes",
 ]

@@ -7,6 +7,14 @@ POSTGRES_USER ?= sceneops
 POSTGRES_DB   ?= sceneops
 POSTGRES_PASSWORD ?= sceneops
 
+# Shared local MinIO defaults (SceneOps V2 Request 3.2C.1 §5) -- the single
+# source of truth `make e2e-bootstrap`/`make test-integration` both pass
+# into their bootstrap commands, instead of each hardcoding its own copy
+# of the same literals. Overridable exactly like the POSTGRES_* vars above.
+MINIO_ROOT_USER     ?= minioadmin
+MINIO_ROOT_PASSWORD ?= minioadmin
+MINIO_BUCKET        ?= sceneops
+
 JOB_ID          ?=
 PIPELINE_RUN_ID ?=
 TASK_ID         ?=
@@ -136,6 +144,12 @@ help:
 	@echo ""
 	@echo "Fixtures:"
 	@echo "  make register-nuscenes-dataset"
+	@echo ""
+	@echo "Persistent E2E fixture bootstrap (idempotent; requires local-up):"
+	@echo "  make e2e-bootstrap                          core + interop + raw-log, then verify"
+	@echo "  make e2e-bootstrap-core"
+	@echo "  make e2e-bootstrap-interop"
+	@echo "  make e2e-bootstrap-raw-log"
 	@echo ""
 	@echo "E2E -- default (make e2e = all 10 of these; needs only local-up):"
 	@echo "  make e2e"

@@ -8,6 +8,61 @@ register-nuscenes-dataset:
 	API_PREFIX=$(API_PREFIX) scripts/fixtures/register_nuscenes_dataset.sh
 
 # --------------------
+# Persistent E2E fixture bootstrap (SceneOps V2 Request 3.2C, hardened by
+# Request 3.2C.1)
+#
+# Materializes the shared E2E fixture catalog (core/interop/raw-log --
+# scripts/e2e/lib.sh's resolve_e2e_fixture, mirrored in Python by
+# scripts/e2e/e2e_fixture_bootstrap.py) into the real Postgres + MinIO
+# `make local-up` already started, so future E2Es can start from known
+# fixture state instead of recreating ad-hoc datasets independently.
+# Idempotent -- safe to re-run; bootstrap itself always verifies before
+# reporting success (create/reuse/verify contract, SceneOps V2 Request
+# 3.2C.1 §2), and --verify additionally re-checks that state independently
+# afterward (for interop: through a real SceneOpsDataset).
+#
+# Connects from the HOST, like `make test-integration` -- overrides
+# SCENEOPS_DATABASE_URL/MINIO_ENDPOINT_URL to their localhost forms rather
+# than .env.local's container-internal postgres/minio hostnames.
+#
+# Common infra config (all fixtures) vs. source-specific config (only
+# fixtures whose verification actually reads an external source fixture
+# from disk -- SceneOps V2 Request 3.2C.1 §4) are kept in separate
+# variables: interop's bootstrap/verification never touches the nuScenes
+# source path, only core/raw-log's does.
+# E2E_BOOTSTRAP_SOURCE_ROOT_URI overrides that nuScenes source check to the
+# host filesystem path -- the pipelines' own in-container default
+# ("/data/raw/nuscenes") only resolves inside api/worker, where
+# ./data:/data is bind-mounted; from the host it's $(CURDIR)/data/raw/nuscenes.
+# --------------------
+
+E2E_BOOTSTRAP_ENV = \
+	SCENEOPS_DATABASE_URL="postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$${POSTGRES_PORT:-5432}/$(POSTGRES_DB)" \
+	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
+	MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
+	MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
+	MINIO_BUCKET=$(MINIO_BUCKET)
+
+E2E_BOOTSTRAP_NUSCENES_ENV = \
+	E2E_BOOTSTRAP_SOURCE_ROOT_URI=$(CURDIR)/data/raw/nuscenes
+
+.PHONY: e2e-bootstrap
+e2e-bootstrap:
+	$(E2E_BOOTSTRAP_ENV) $(E2E_BOOTSTRAP_NUSCENES_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture all --verify
+
+.PHONY: e2e-bootstrap-core
+e2e-bootstrap-core:
+	$(E2E_BOOTSTRAP_ENV) $(E2E_BOOTSTRAP_NUSCENES_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture core --verify
+
+.PHONY: e2e-bootstrap-interop
+e2e-bootstrap-interop:
+	$(E2E_BOOTSTRAP_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture interop --verify
+
+.PHONY: e2e-bootstrap-raw-log
+e2e-bootstrap-raw-log:
+	$(E2E_BOOTSTRAP_ENV) $(E2E_BOOTSTRAP_NUSCENES_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture raw-log --verify
+
+# --------------------
 # E2E
 #
 # `make e2e` = every workflow E2E whose required services are provided by

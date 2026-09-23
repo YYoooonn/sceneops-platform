@@ -112,19 +112,29 @@ make e2e               full default-stack workflow suite, requires `make local-u
 ```
 
 - `make test` covers `apps/worker`, `apps/api`, `apps/inference-server`,
-  `packages/sceneops-core`, `packages/sceneops-analytics`. Every
-  `inference-server` test mocks `GroundingDinoModel`/`ImageResolver` — none
-  of it needs GPU, model weights, or a running inference server (confirmed
-  during Stabilization Request 4's audit).
+  `packages/sceneops-core`, `packages/sceneops-analytics`, and
+  `scripts/e2e/tests/test_e2e_fixture_bootstrap.py` (the E2E fixture
+  bootstrap's own unit suite, Postgres faked in-memory — SceneOps V2
+  Request 3.2C.1). Every `inference-server` test mocks
+  `GroundingDinoModel`/`ImageResolver` — none of it needs GPU, model
+  weights, or a running inference server (confirmed during Stabilization
+  Request 4's audit).
 - `make test-integration` covers `packages/sceneops-db/tests` (real
-  Postgres) and `packages/sceneops-storage/tests` (real MinIO). No pytest
-  marker is used to select these — they live in dedicated test directories
-  that `make test`'s testpaths never touch, which is sufficient selection on
-  its own. Each test gets a fresh session/engine and either rolls back
-  (`sceneops-db`, transactional isolation — nothing is ever committed) or
-  deletes what it wrote (`sceneops-storage`, via `delete_prefix` under a
-  dedicated `_test-integration/` key prefix) — safe to run against the same
-  persistent local stack you're developing against.
+  Postgres), `packages/sceneops-storage/tests` (real MinIO), and
+  `scripts/e2e/tests/test_e2e_fixture_bootstrap_integration.py` (both —
+  the persistent E2E fixture bootstrap, see below). No pytest marker is
+  used to select these — they live in dedicated test files/directories
+  that `make test`'s testpaths never touch, which is sufficient selection
+  on its own. Each `sceneops-db`/`sceneops-storage` test gets a fresh
+  session/engine and either rolls back (transactional isolation — nothing
+  is ever committed) or deletes what it wrote (`delete_prefix` under a
+  dedicated `_test-integration/` key prefix) — safe to run against the
+  same persistent local stack you're developing against.
+  `test_e2e_fixture_bootstrap_integration.py` is the one deliberate
+  exception: it commits, and does not clean up after itself —
+  bootstrapping the shared `test-e2e-*` fixtures *is* the intended
+  persistent effect, not test pollution (see "Persistent fixture
+  bootstrap" below).
 - On Apple Silicon hosts, running `sceneops-db`'s async engine outside
   Docker requires `greenlet`, which `sqlalchemy`'s own platform-marker-gated
   extra silently excludes there (`aarch64` is listed, macOS's `arm64` isn't)
@@ -262,3 +272,148 @@ rule that matters if/when automated cleanup is ever added: it may only ever
 target the known `test-e2e-*`/`test-v1` identities, never a caller-supplied
 one — this doc and `scripts/e2e/lib.sh`'s `resolve_e2e_fixture` are the
 source of truth for what counts as "known test identity."
+
+### Persistent fixture bootstrap (SceneOps V2 Request 3.2C, hardened by Request 3.2C.1)
+
+The catalog above describes *identity*; it says nothing about whether that
+identity's data actually exists yet in a given local stack. Request 3.2C
+added one reusable, idempotent bootstrap that materializes it for real, so
+future E2Es (shell or Python) can depend on known fixture state existing
+without depending on another E2E having run first. Request 3.2C.1
+subsequently hardened its create/reuse/verify contract and moved its
+implementation out of `sceneops-analytics` (see "Package boundary" below).
+
+**Seed boundary** — bootstrap only ever creates *prerequisite* state, never
+the output whose production is the behavior some E2E actually tests:
+
+- **`core`**/**`raw-log`** — ensures the canonical DatasetVersion row
+  exists. Nothing else: producing Scenes/Episodes is
+  pipeline-contracts/dataset-ingestion/episode-building/raw-log-scene-
+  building's own job, not bootstrap's. Verification additionally checks
+  the external nuScenes source directory is present on disk.
+- **`interop`** — the *full* golden `LearningDataExportManifest` + its
+  three Parquet tables + their `ArtifactRecord`s, persisted into real
+  Postgres/MinIO. Unlike core/raw-log, nothing currently or plannedly
+  under test *produces* this snapshot — future external-adapter/round-trip
+  tests only ever read from it — so materializing it completely is itself
+  prerequisite state. The golden data is never redefined here; it comes
+  from `sceneops_analytics.testing.interop_dataset`'s
+  `build_interop_entries()`/`compute_expected_interop_episodes()` exactly
+  as Request 3.2 defined them. Interop's bootstrap/verification never
+  touches the nuScenes source path — that's a core/raw-log-only check.
+
+**Package boundary** (SceneOps V2 Request 3.2C.1 §1) — `sceneops-analytics`
+is a production package (the columnar analytics export layer); it must not
+depend on `sceneops-db` just to support E2E setup. So the orchestration
+that actually talks to Postgres/MinIO — `scripts/e2e/e2e_fixture_bootstrap.py`
+— lives outside that package, as a plain (non-installed) sibling module
+next to the CLI that calls it (`scripts/e2e/bootstrap_e2e_fixtures.py`).
+Only the deterministic, DB-free golden-data definitions
+(`sceneops_analytics.testing.interop_dataset`) are still imported from
+`sceneops-analytics`; a regression test
+(`packages/sceneops-analytics/tests/test_package_boundaries.py`) enforces
+that `sceneops-analytics` never re-acquires a `sceneops-db` import.
+
+**API** — `scripts/e2e/e2e_fixture_bootstrap.py`:
+
+```python
+results = await bootstrap_e2e_fixtures(
+    "interop",  # or "core" / "raw-log" / "all"
+    session=session, artifact_store=artifact_store, analytics_root_uri=analytics_root_uri,
+)
+verification = await verify_e2e_fixture("interop", session=session, artifact_store=artifact_store)
+```
+
+`ensure_e2e_fixture(...)` is the identical function under the name an E2E
+workflow would call inline before its own execution
+(`fixture bootstrap → known prerequisite state; workflow E2E → behavior
+under test; verification → produced outputs`). Both `bootstrap_e2e_fixtures`
+and `ensure_e2e_fixture` return `FixtureBootstrapResult` — stable,
+JSON-able field names (`fixture_name`, `dataset_id`, `dataset_version`,
+`created`, `learning_manifest_*`, `episode_refs`) for scripting; never
+scrape log output.
+
+**Create/reuse/verify contract** (SceneOps V2 Request 3.2C.1 §2) — a
+successful return from `bootstrap_e2e_fixtures`/`ensure_e2e_fixture` always
+means the fixture is verified-ready, never merely that a matching record
+exists:
+
+```
+missing                                  -> create -> verify -> success
+existing, matching semantic identity     -> verify -> success only if valid
+existing, matching identity, corrupted/
+  missing artifact                       -> FixtureVerificationError
+existing, incompatible semantic identity -> FixtureConflictError
+```
+
+Semantic identity is still `export_id` (interop) / DatasetVersion identity
+(core, raw-log) — computed purely from the golden data + export config, so
+it never varies run to run even though real DB IDs and timestamps do. A
+matching identity is *necessary* for reuse but no longer *sufficient*:
+bootstrap re-reads the persisted Postgres rows and MinIO objects, rechecks
+every checksum, and — for `interop` — reopens the snapshot through a real
+`SceneOpsDataset` before returning, every single call (not just on first
+creation). This makes repeat calls slightly more expensive than pure
+existence-checking, but a fixture nothing ever notices is silently broken
+is a worse failure mode than a few extra checksum reads.
+`verify_e2e_fixture(...)` remains separately callable (e.g. the CLI's
+`--verify-only`) to re-check existing state without attempting to
+create/reuse anything.
+
+**No automatic repair, partial-write recovery** (SceneOps V2 Request
+3.2C.1 §3): `FixtureConflictError`/`FixtureVerificationError` are never
+auto-resolved — both require a human decision or a `make local-reset`.
+There is also no transaction spanning the MinIO writes and the Postgres
+commit for the `interop` fixture: table/manifest bytes are written to
+MinIO first, then one commit registers all four `ArtifactRecord`s
+together. A crash before that commit leaves nothing persisted in Postgres
+(the next bootstrap attempt sees "missing" and retries cleanly, possibly
+leaving harmless orphaned MinIO objects that verification simply never
+looks at). This is an accepted v1 limitation, not a bug: local E2E state
+is disposable, and `make local-reset` is the recovery path, not a repair
+API this bootstrap will ever grow.
+
+**CLI / Make surface** (unchanged target names — SceneOps V2 Request
+3.2C.1 §6):
+
+```bash
+make e2e-bootstrap             # core + interop + raw-log, then verify
+make e2e-bootstrap-core
+make e2e-bootstrap-interop
+make e2e-bootstrap-raw-log
+
+uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture interop --verify --json
+```
+
+Connects from the **host**, like `make test-integration` — the Make
+targets override `SCENEOPS_DATABASE_URL`/`MINIO_ENDPOINT_URL` to their
+`localhost` forms (not `.env.local`'s container-internal `postgres`/`minio`
+hostnames). Common infra config (`SCENEOPS_DATABASE_URL`,
+`MINIO_ENDPOINT_URL`, `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`/
+`MINIO_BUCKET`) is split from source-specific config
+(`E2E_BOOTSTRAP_SOURCE_ROOT_URI`, pointing the nuScenes source check at
+`$(CURDIR)/data/raw/nuscenes` on the host) in `makefiles/e2e.mk` — only
+`core`/`raw-log`/`all` need the latter; `interop` never does (SceneOps V2
+Request 3.2C.1 §4). `MINIO_ROOT_USER ?= minioadmin` /
+`MINIO_ROOT_PASSWORD ?= minioadmin` / `MINIO_BUCKET ?= sceneops` are
+overridable Make variables shared with `make test-integration`, defined
+once at the top of the root `Makefile` next to the equivalent
+`POSTGRES_*` variables (§5) — a caller override
+(`MINIO_ROOT_USER=custom make e2e-bootstrap`) still works exactly as
+before. Never uses raw SQL or direct boto3/MinIO calls: only real
+`sceneops-db` repositories, `ArtifactStore`, and `AnalyticsTableWriter` —
+the same abstractions `apps/worker`'s own job handlers use (mirroring
+`export_learning_data.py`'s persistence pattern exactly for `interop`).
+
+**Verification** (`--verify`, and internally on every bootstrap call)
+independently re-derives the expected `export_id`, fetches the persisted
+manifest/table bytes from MinIO, recomputes their checksums, and — for
+`interop` — opens the real snapshot through `SceneOpsDataset.open()` and
+compares every episode's step count, timestamps, and observation/action
+values against Request 3.2's frozen expectations. It never writes
+anything.
+
+**No cleanup command**: same rule as the identity catalog above — nothing
+here deletes a fixture, and nothing should until a real need for it
+appears. `make local-reset` (destructive, whole-stack) remains the only way
+to clear a bootstrapped fixture today.

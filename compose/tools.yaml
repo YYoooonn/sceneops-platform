@@ -20,7 +20,7 @@ services:
       - tools
 
   minio-init:
-    image: minio/mc:RELEASE.2024-11-17T19-35-25Z
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
     env_file:
       - .env.local
     depends_on:
