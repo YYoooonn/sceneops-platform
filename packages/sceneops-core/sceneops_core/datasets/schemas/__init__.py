@@ -5,6 +5,7 @@ from .enums import (
     DatasetType,
     DatasetVersionStatus,
 )
+from .external import ExternalDatasetRef
 from .manifests import DatasetManifest, DatasetSceneIndexEntry
 from .records import DatasetRecord, DatasetVersionRecord
 from .summaries import EpisodeVersionSummary, SceneVersionSummary
@@ -30,6 +31,7 @@ __all__ = [
     "DatasetSceneIndexEntry",
     "DatasetManifest",
     "DatasetValidationStatus",
+    "ExternalDatasetRef",
     "CreateDatasetRequest",
     "CreateDatasetVersionRequest",
     "RegisterDatasetManifestRequest",

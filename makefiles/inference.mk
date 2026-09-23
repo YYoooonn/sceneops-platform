@@ -34,18 +34,18 @@ check-inference-server-ready:
 
 .PHONY: inference-gpu-build
 inference-gpu-build:
-	$(COMPOSE) --profile gpu build inference-server
+	$(COMPOSE) --profile gpu build inference-server-gpu
 
 .PHONY: inference-gpu-up
 inference-gpu-up:
 	mkdir -p cache/hf
-	$(COMPOSE) --profile gpu up -d inference-server
+	$(COMPOSE) --profile gpu up -d inference-server-gpu
 
 .PHONY: inference-gpu-down
 inference-gpu-down:
-	$(COMPOSE) --profile gpu stop inference-server
-	$(COMPOSE) --profile gpu rm -f inference-server
+	$(COMPOSE) --profile gpu stop inference-server-gpu
+	$(COMPOSE) --profile gpu rm -f inference-server-gpu
 
 .PHONY: inference-gpu-logs
 inference-gpu-logs:
-	$(COMPOSE) --profile gpu logs -f inference-server
+	$(COMPOSE) --profile gpu logs -f inference-server-gpu

@@ -4,8 +4,11 @@
 
 .PHONY: show-runs
 show-runs:
-	chmod +x scripts/debug/show_runs.sh
-	API_PREFIX=$(API_PREFIX) scripts/debug/show_runs.sh
+	@echo "== Inference runs =="
+	@curl -sS "$(API_HOST)$(API_PREFIX)/inference/runs" | python3 -m json.tool || true
+	@echo ""
+	@echo "== Evaluation runs =="
+	@curl -sS "$(API_HOST)$(API_PREFIX)/evaluations/runs" | python3 -m json.tool || true
 
 .PHONY: show-pipeline
 show-pipeline:
@@ -13,8 +16,7 @@ show-pipeline:
 		echo "PIPELINE_RUN_ID is required. Usage: make show-pipeline PIPELINE_RUN_ID=pipe-xxx"; \
 		exit 1; \
 	fi
-	chmod +x scripts/debug/show_pipeline.sh
-	API_PREFIX=$(API_PREFIX) PIPELINE_RUN_ID=$(PIPELINE_RUN_ID) scripts/debug/show_pipeline.sh
+	curl -sS "$(API_HOST)$(API_PREFIX)/pipelines/runs/$(PIPELINE_RUN_ID)" | python3 -m json.tool
 
 .PHONY: show-job-events
 show-job-events:
@@ -22,13 +24,7 @@ show-job-events:
 		echo "JOB_ID is required. Usage: make show-job-events JOB_ID=job-xxx"; \
 		exit 1; \
 	fi
-	chmod +x scripts/debug/show_job_events.sh
-	API_PREFIX=$(API_PREFIX) JOB_ID=$(JOB_ID) scripts/debug/show_job_events.sh
-
-.PHONY: tail-worker-logs
-tail-worker-logs:
-	chmod +x scripts/debug/tail_worker_logs.sh
-	scripts/debug/tail_worker_logs.sh
+	curl -sS "$(API_HOST)$(API_PREFIX)/jobs/$(JOB_ID)/events" | python3 -m json.tool
 
 .PHONY: compare-detection
 compare-detection:

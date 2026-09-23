@@ -10,10 +10,12 @@
 # Usage:
 #   bash scripts/e2e/e2e_analytics_export.sh
 #
-# Env overrides:
+# Env overrides (defaults come from the "core" E2E fixture, see
+# scripts/e2e/lib.sh's resolve_e2e_fixture):
 #   API_BASE_URL    (default: http://localhost:8000)
-#   DATASET_ID      (default: nuscenes)
-#   DATASET_VERSION (default: v1.0-mini)
+#   DATASET_ID      (default: test-e2e-core)
+#   DATASET_VERSION (default: test-v1)
+#   SOURCE_FORMAT_VERSION (default: v1.0-mini)
 #   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
 #   MAX_SOURCE_SCENES (default: 2)
 #   SKIP_INGESTION  set to "1" to reuse scenes already registered for
@@ -26,12 +28,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
+resolve_e2e_fixture core
 MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-2}"
 SKIP_INGESTION="${SKIP_INGESTION:-0}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
+
+SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
+SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
+SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 echo "=== export_analytics_snapshot E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
@@ -47,6 +51,7 @@ else
   API_BASE_URL="$API_BASE_URL" \
   DATASET_ID="$DATASET_ID" \
   DATASET_VERSION="$DATASET_VERSION" \
+  SOURCE_FORMAT_VERSION="$SOURCE_FORMAT_VERSION" \
   SOURCE_ROOT_URI="$SOURCE_ROOT_URI" \
   MAX_SOURCE_SCENES="$MAX_SOURCE_SCENES" \
   POLL_TIMEOUT="$POLL_TIMEOUT" \
@@ -131,7 +136,7 @@ echo ""
 # ── 7. Assert analytics_table artifacts registered ───────────────────────────
 
 echo "--- 7. Assert artifacts ---"
-ARTIFACTS_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/artifacts?owner_type=dataset_version&owner_id=$DATASET_ID:$DATASET_VERSION")")"
+ARTIFACTS_JSON="$(fetch_artifacts_by_owner "$API_BASE_URL" "dataset_version" "$DATASET_ID:$DATASET_VERSION")"
 assert_artifact_kind_present "$ARTIFACTS_JSON" "analytics_table" "expected analytics_table artifacts for $DATASET_ID:$DATASET_VERSION"
 ANALYTICS_ARTIFACT_COUNT="$(echo "$ARTIFACTS_JSON" | jq '[.artifacts[] | select(.kind == "analytics_table")] | length')"
 echo "  analytics_table artifacts=$ANALYTICS_ARTIFACT_COUNT"

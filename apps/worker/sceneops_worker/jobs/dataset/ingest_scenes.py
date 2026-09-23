@@ -134,8 +134,15 @@ async def _ingest_nuscenes_scenes(
     dataset_id = params.dataset_id
     dataset_version = params.dataset_version
 
+    if not params.source_format_version:
+        raise ValueError(
+            "IngestScenesJobParams.source_format_version is required for "
+            "source_format=nuscenes -- refusing to fall back to "
+            f"dataset_version={dataset_version!r}"
+        )
+
     nusc = NuScenes(
-        version=dataset_version,
+        version=params.source_format_version,
         dataroot=params.source_root_uri,
         verbose=False,
     )

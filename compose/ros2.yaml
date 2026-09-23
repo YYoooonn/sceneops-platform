@@ -1,0 +1,11 @@
+services:
+  ros2:
+    build:
+      context: ./ros2
+      dockerfile: Dockerfile
+    image: sceneops-platform/ros2:local
+    volumes:
+      - ./data:/data
+      - ./ros2/nodes:/workspace/nodes:ro
+    profiles:
+      - ros2

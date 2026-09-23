@@ -12,11 +12,15 @@
 # Usage:
 #   bash scripts/e2e/e2e_pipeline_contracts.sh
 #
-# Env overrides:
-#   API_BASE_URL     (default: http://localhost:8000)
-#   DATASET_ID       (default: nuscenes)
-#   DATASET_VERSION  (default: v1.0-mini)
-#   SOURCE_ROOT_URI  (default: /data/raw/nuscenes)
+# Env overrides (defaults come from the "core" E2E fixture, see
+# scripts/e2e/lib.sh's resolve_e2e_fixture -- DATASET_ID/DATASET_VERSION are
+# SceneOps' own canonical identity; SOURCE_FORMAT_VERSION is the separate,
+# real nuScenes SDK version the dataroot below actually contains):
+#   API_BASE_URL           (default: http://localhost:8000)
+#   DATASET_ID              (default: test-e2e-core)
+#   DATASET_VERSION         (default: test-v1)
+#   SOURCE_FORMAT_VERSION   (default: v1.0-mini)
+#   SOURCE_ROOT_URI         (default: /data/raw/nuscenes)
 #   MAX_SOURCE_SCENES (default: 2)
 #   POLL_TIMEOUT     max poll attempts, 5s each (default: 60 = 5 min)
 
@@ -26,11 +30,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
+resolve_e2e_fixture core
 MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-2}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
+
+SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
+SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
+SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 SUPPORTED_PIPELINE_TYPES=(
   "dataset_scene_ingestion"
@@ -45,7 +51,7 @@ UNSUPPORTED_PIPELINE_TYPES=(
 echo "=== pipeline contracts E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
+echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
 echo ""
 
 # ── 1. Pipeline definitions — only supported+implemented returned ─────────────
@@ -124,8 +130,9 @@ PAYLOAD="$(cat <<JSON
   "force": true,
   "params": {
     "ingest_scenes": {
-      "source_format": "nuscenes",
+      "source_format": "$SOURCE_FORMAT",
       "source_root_uri": "$SOURCE_ROOT_URI",
+      "source_format_version": "$SOURCE_FORMAT_VERSION",
       "max_source_scenes": $MAX_SOURCE_SCENES,
       "mode": "upsert"
     },
@@ -353,10 +360,11 @@ echo ""
 # confirm optional tasks are marked SKIPPED and do not block the pipeline.
 
 echo "--- 12. Verify optional task skip (no validate/profile params) ---"
-# ingest_scenes passes dataset_version straight to the NuScenes SDK as the
-# on-disk version folder name (dataroot/<dataset_version>) — it must be a
-# real nuScenes version, not an arbitrary suffix. Isolate this run from the
-# main dataset via a separate dataset_id instead, reusing the real version.
+# Isolated under its own dataset_id, not because of any nuScenes-version
+# constraint (SceneOps V2 Request 3.2B separated dataset_version from
+# source_format_version, so DATASET_VERSION here is free-form) -- purely to
+# avoid this second, overlapping scene registration skewing the main run's
+# aggregate /quality readiness on the shared "core" fixture.
 SKIP_TEST_DATASET_ID="${DATASET_ID}-skip-test"
 upsert_dataset "$API_BASE_URL" "$SKIP_TEST_DATASET_ID" "nuScenes (skip-test)" >/dev/null 2>&1 || true
 
@@ -368,8 +376,9 @@ SKIP_PAYLOAD="$(cat <<JSON
   "force": true,
   "params": {
     "ingest_scenes": {
-      "source_format": "nuscenes",
+      "source_format": "$SOURCE_FORMAT",
       "source_root_uri": "$SOURCE_ROOT_URI",
+      "source_format_version": "$SOURCE_FORMAT_VERSION",
       "max_source_scenes": $MAX_SOURCE_SCENES,
       "mode": "upsert"
     },

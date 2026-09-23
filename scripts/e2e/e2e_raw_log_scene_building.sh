@@ -10,12 +10,18 @@
 # Usage:
 #   bash scripts/e2e/e2e_raw_log_scene_building.sh
 #
-# Env overrides:
-#   API_BASE_URL        (default: http://localhost:8000)
-#   DATASET_ID          (default: nuscenes)
-#   DATASET_VERSION     (default: v1.0-mini)
-#   RAW_SOURCE_ROOT_URI NuScenes dataroot registered on the dataset version
-#                       (default: /data/raw/nuscenes)
+# Env overrides (defaults come from the "raw-log" E2E fixture, see
+# scripts/e2e/lib.sh's resolve_e2e_fixture -- deliberately isolated from the
+# shared "core" fixture, see makefiles/e2e.mk's e2e-raw-log-scene-building
+# comment. DATASET_ID/DATASET_VERSION are SceneOps' own canonical identity;
+# SOURCE_FORMAT_VERSION is the separate, real nuScenes SDK version the
+# dataroot below actually contains -- SceneOps V2 Request 3.2B):
+#   API_BASE_URL          (default: http://localhost:8000)
+#   DATASET_ID            (default: test-e2e-raw-log)
+#   DATASET_VERSION       (default: test-v1)
+#   SOURCE_FORMAT_VERSION (default: v1.0-mini)
+#   SOURCE_ROOT_URI       NuScenes dataroot registered on the dataset version
+#                         (default: /data/raw/nuscenes)
 #   MAX_SEQUENCES       (default: 10)
 #   POLL_TIMEOUT        max poll attempts, 5s each (default: 60 = 5 min)
 
@@ -25,16 +31,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-RAW_SOURCE_ROOT_URI="${RAW_SOURCE_ROOT_URI:-/data/raw/nuscenes}"
+resolve_e2e_fixture raw-log
 MAX_SEQUENCES="${MAX_SEQUENCES:-10}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
+
+SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
+SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
+SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 echo "=== raw_log_scene_building E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  RAW_SOURCE_ROOT_URI=$RAW_SOURCE_ROOT_URI  MAX_SEQUENCES=$MAX_SEQUENCES"
+echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SEQUENCES=$MAX_SEQUENCES"
 echo ""
 
 # ── 1. Ensure dataset and version exist ──────────────────────────────────────
@@ -44,7 +52,7 @@ upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datase
 echo ""
 
 echo "--- 1b. Upsert dataset version (with raw_source_root_uri) ---"
-upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$RAW_SOURCE_ROOT_URI" \
+upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$SOURCE_ROOT_URI" \
   | jq '.version | {version, status, scene}' 2>/dev/null || true
 echo ""
 
@@ -60,7 +68,8 @@ PAYLOAD="$(cat <<JSON
   "params": {
     "build_scenes": {
       "source_type": "nuscenes_raw_log_mock",
-      "source_format": "nuscenes",
+      "source_format": "$SOURCE_FORMAT",
+      "source_format_version": "$SOURCE_FORMAT_VERSION",
       "max_source_sequences": $MAX_SEQUENCES,
       "segmentation": {
         "strategy": "fixed_window",

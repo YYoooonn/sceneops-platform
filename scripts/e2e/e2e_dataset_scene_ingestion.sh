@@ -8,11 +8,15 @@
 # Usage:
 #   bash scripts/e2e/e2e_dataset_scene_ingestion.sh
 #
-# Env overrides:
-#   API_BASE_URL   (default: http://localhost:8000)
-#   DATASET_ID     (default: nuscenes)
-#   DATASET_VERSION (default: v1.0-mini)
-#   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
+# Env overrides (defaults come from the "core" E2E fixture, see
+# scripts/e2e/lib.sh's resolve_e2e_fixture -- DATASET_ID/DATASET_VERSION are
+# SceneOps' own canonical identity; SOURCE_FORMAT_VERSION is the separate,
+# real nuScenes SDK version the dataroot below actually contains):
+#   API_BASE_URL            (default: http://localhost:8000)
+#   DATASET_ID              (default: test-e2e-core)
+#   DATASET_VERSION         (default: test-v1)
+#   SOURCE_FORMAT_VERSION   (default: v1.0-mini)
+#   SOURCE_ROOT_URI         (default: /data/raw/nuscenes)
 #   MAX_SOURCE_SCENES     (default: 2)
 #   POLL_TIMEOUT   max poll attempts, 5s each (default: 60 = 5 min)
 
@@ -22,16 +26,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
-SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
+resolve_e2e_fixture core
 MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-10}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
+
+SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
+SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
+SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 echo "=== dataset_scene_ingestion E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
+echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
 echo ""
 
 # ── 1. Ensure dataset and version exist ──────────────────────────────────────
@@ -56,8 +62,9 @@ PAYLOAD="$(cat <<JSON
   "force": true,
   "params": {
     "ingest_scenes": {
-      "source_format": "nuscenes",
+      "source_format": "$SOURCE_FORMAT",
       "source_root_uri": "$SOURCE_ROOT_URI",
+      "source_format_version": "$SOURCE_FORMAT_VERSION",
       "max_source_scenes": $MAX_SOURCE_SCENES,
       "mode": "upsert"
     },
@@ -202,14 +209,8 @@ echo ""
 # ── 9. Assert dataset manifest artifact ──────────────────────────────────────
 
 echo "--- 9. Assert artifacts ---"
-ARTIFACTS_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/artifacts?owner_type=dataset_version&owner_id=$DATASET_ID:$DATASET_VERSION")")"
-MANIFEST_ARTIFACT_COUNT="$(echo "$ARTIFACTS_JSON" | jq '[.artifacts[] | select(.kind == "dataset_manifest")] | length')"
-echo "  dataset_manifest artifacts=$MANIFEST_ARTIFACT_COUNT"
-
-if [ "$MANIFEST_ARTIFACT_COUNT" -lt 1 ]; then
-  echo "❌ Expected at least 1 dataset_manifest artifact" >&2
-  exit 1
-fi
+ARTIFACTS_JSON="$(fetch_artifacts_by_owner "$API_BASE_URL" "dataset_version" "$DATASET_ID:$DATASET_VERSION")"
+assert_artifact_kind_present "$ARTIFACTS_JSON" "dataset_manifest" "expected at least 1 dataset_manifest artifact"
 echo "  OK"
 echo ""
 

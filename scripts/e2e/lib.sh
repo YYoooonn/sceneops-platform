@@ -1,6 +1,147 @@
 #!/usr/bin/env bash
 # lib.sh — shared helpers for SceneOps E2E scripts
 
+# ── Default E2E resource identity (SceneOps V2 Request 3.2A) ──────────────────
+#
+# Every E2E workflow that auto-creates a dataset (the caller supplied no
+# DATASET_ID/DATASET_VERSION) must default to an identity that is
+# unambiguously test-owned -- never something a real developer might
+# independently choose for genuine local-dev data. The old "nuscenes"/
+# "v1.0-mini" default was exactly that collision: `make register-nuscenes-
+# dataset` (scripts/fixtures/register_nuscenes_dataset.sh, unrelated to this
+# convention and deliberately left as "nuscenes") registers a real,
+# intentionally-named local fixture under that same identity for manual
+# UI/API exploration, which every E2E script's identical default silently
+# shared/mutated.
+#
+# An explicit DATASET_ID/DATASET_VERSION from the environment always wins;
+# these are only the fallback when the caller supplies neither. This is
+# also the naming rule any future automated cleanup must key off (safe to
+# target "test-e2e-*"/"test-v1"; never safe to touch a caller-supplied
+# identity).
+DEFAULT_E2E_DATASET_PREFIX="${DEFAULT_E2E_DATASET_PREFIX:-test-e2e}"
+DEFAULT_E2E_DATASET_VERSION="${DEFAULT_E2E_DATASET_VERSION:-test-v1}"
+
+# ── E2E fixture catalog: sceneops-e2e-v1 (SceneOps V2 Request 3.2B) ────────────
+#
+# Request 3.2A gave each workflow its OWN derived identity
+# ("${DEFAULT_E2E_DATASET_PREFIX}-scene", "-episode", "-raw-log", ...) --
+# workable, but it meant one canonical Dataset/DatasetVersion per workflow
+# even where nothing about the data actually required that. This catalog
+# replaces that per-script derivation with two shared logical fixtures:
+#
+#   core     Scene ingestion, analytics export, detection evaluation,
+#            scenario/episode curation, episode building. Canonical
+#            test-e2e-core/test-v1. External source: the real nuScenes mini
+#            fixture (format=nuscenes, format_version=v1.0-mini -- see
+#            ExternalDatasetRef, sceneops_core.datasets.ExternalDatasetRef)
+#            for scene-family workflows; the MCAP fixture recorded by
+#            `make e2e-robot-can-replay` for the episode family. Both
+#            families coexist on one DatasetVersion by design -- Scene and
+#            Episode each own an independent summary sub-object on
+#            DatasetVersionRecord that never overwrites the other's (see
+#            packages/sceneops-core/tests/test_dataset_version_summaries.py).
+#   interop  External-adapter/interoperability round-trip tests. Canonical
+#            test-e2e-interop/test-v1. Source: the deterministic golden
+#            learning fixture built by
+#            sceneops_analytics.testing.interop_dataset (Request 3.2) --
+#            no shell ingestion path exists for it yet (Python-only today).
+#
+# raw-log-scene-building deliberately stays its OWN identity, OUTSIDE
+# `core`: it produces non-ground-truth scenes that measurably drag down
+# `core`'s aggregate /quality readiness if they share one DatasetVersion
+# (see makefiles/e2e.mk's comment on e2e-raw-log-scene-building) -- a real,
+# previously-discovered data-requirement conflict, not an oversight. It
+# still uses this same resolver for consistency.
+#
+# CANONICAL vs. SOURCE identity (Request 3.2B §2): DATASET_ID/
+# DATASET_VERSION below are SceneOps' own canonical identity ONLY -- never
+# constrained by what an external format's SDK happens to require.
+# SOURCE_FORMAT/SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI describe the external
+# nuScenes source separately. This is what closes the identity ambiguity
+# Request 3.2A left open (DATASET_VERSION had to stay "v1.0-mini" there
+# because dataset_scene_ingestion/raw_log_scene_building passed it straight
+# into `nuscenes-devkit`'s `NuScenes(version=..., ...)`); the job handlers
+# now read the `source_format_version` param instead
+# (apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py,
+# datasets/ingestion/nuscenes_raw_log.py) -- Request 3.2B.1 removed the
+# short-lived fallback to dataset_version entirely: source_format_version
+# is required whenever the source format needs one (nuScenes), enforced by
+# IngestScenesJobParams/BuildScenesJobParams at job-creation time, so a
+# caller that omits it fails clearly instead of silently reusing
+# dataset_version.
+
+# resolve_e2e_fixture <fixture-name>
+# Sets DATASET_ID/DATASET_VERSION (and, for fixtures with an external
+# nuScenes source, SOURCE_FORMAT/SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI, or
+# RAW_SOURCE_ROOT_URI for raw-log) to this fixture's defaults -- but ONLY
+# for whichever of those the caller's environment left unset, via bash's
+# `: "${VAR:=default}"` assign-if-unset idiom, so an explicit
+# `DATASET_ID=... make e2e-...` always wins untouched. Call once, right
+# after sourcing lib.sh; no further "${DATASET_ID:-...}" line is needed
+# afterward.
+resolve_e2e_fixture() {
+  local fixture_name="$1"
+  case "$fixture_name" in
+    core)
+      : "${DATASET_ID:=test-e2e-core}"
+      : "${DATASET_VERSION:=test-v1}"
+      : "${SOURCE_FORMAT:=nuscenes}"
+      : "${SOURCE_FORMAT_VERSION:=v1.0-mini}"
+      : "${SOURCE_ROOT_URI:=/data/raw/nuscenes}"
+      ;;
+    interop)
+      : "${DATASET_ID:=test-e2e-interop}"
+      : "${DATASET_VERSION:=test-v1}"
+      ;;
+    raw-log)
+      # Isolated on purpose -- see the catalog note above.
+      : "${DATASET_ID:=test-e2e-raw-log}"
+      : "${DATASET_VERSION:=test-v1}"
+      : "${SOURCE_FORMAT:=nuscenes}"
+      : "${SOURCE_FORMAT_VERSION:=v1.0-mini}"
+      : "${RAW_SOURCE_ROOT_URI:=/data/raw/nuscenes}"
+      ;;
+    *)
+      echo "❌ unknown E2E fixture: '$fixture_name' (expected core|interop|raw-log)" >&2
+      return 1
+      ;;
+  esac
+}
+
+# ── Service readiness ───────────────────────────────────────────────────────────
+
+# require_service <name> <health_url> [max_attempts=1] [sleep_seconds=1] [hint]
+# Polls <health_url> with `curl -sf` until it responds successfully, or exits
+# with a clear, actionable error. Centralizes what e2e_api_smoke.sh (a
+# polling wait_for_health loop) and e2e_detection_evaluation_groundingdino.sh
+# (a one-shot check) each implemented independently (SceneOps V2 Request
+# 3.2A) -- one call site covers both by varying max_attempts.
+require_service() {
+  local name="$1"
+  local health_url="$2"
+  local max_attempts="${3:-1}"
+  local sleep_seconds="${4:-1}"
+  local hint="${5:-}"
+
+  local attempt
+  for attempt in $(seq 1 "$max_attempts"); do
+    if curl -sf "$health_url" >/dev/null 2>&1; then
+      echo "✅ $name reachable at $health_url" >&2
+      return 0
+    fi
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      sleep "$sleep_seconds"
+    fi
+  done
+
+  echo "❌ $name not reachable at $health_url (after $max_attempts attempt(s))" >&2
+  if [ -n "$hint" ]; then
+    echo "  $hint" >&2
+  fi
+  exit 1
+}
+
 api_url() {
   local api_base_url="$1"
   local path="$2"
@@ -470,6 +611,19 @@ fetch_evaluation_run_metrics() {
   local api_base_url="$1"
   local evaluation_run_id="$2"
   curl -sS "$(api_url "$api_base_url" "/evaluations/runs/$evaluation_run_id/metrics")"
+}
+
+# fetch_artifacts_by_owner <api_base_url> <owner_type> <owner_id>
+# Generic GET /artifacts?owner_type=...&owner_id=... fetch -- centralizes
+# what e2e_dataset_scene_ingestion.sh, e2e_analytics_export.sh, and
+# e2e_episode_curation.sh each wrote as an inline curl call (SceneOps V2
+# Request 3.2A). Pair with assert_artifact_kind_present below rather than
+# re-deriving a count with ad hoc jq.
+fetch_artifacts_by_owner() {
+  local api_base_url="$1"
+  local owner_type="$2"
+  local owner_id="$3"
+  curl -sS "$(api_url "$api_base_url" "/artifacts?owner_type=$owner_type&owner_id=$owner_id")"
 }
 
 # Assert that at least one artifact of the given kind is present.

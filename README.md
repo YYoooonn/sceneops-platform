@@ -677,7 +677,7 @@ See [`docs/development/local-development.md`](docs/development/local-development
 
 |  Command | Description |
 | --- | --- |
-| `make e2e` | Full default-stack suite: api-smoke + pipeline-contracts + dataset-ingestion + raw-log-scene-building + episode-building + scenario-curation + detection-evaluation (mock) + analytics-export + reliability |
+| `make e2e` | Full default-stack suite: api-smoke + pipeline-contracts + dataset-ingestion + raw-log-scene-building + episode-building + episode-curation + scenario-curation + detection-evaluation (mock) + analytics-export + reliability |
 | `make e2e-api-smoke` | API smoke |
 | `make e2e-dataset-ingestion` | Ingestion pipeline |
 | `make e2e-raw-log-scene-building` | Raw log scene building |
@@ -687,6 +687,7 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | `make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...` | Same as above; resolves ScenarioSet from the curation pipeline run |
 | `make e2e-pipeline-contracts` | Pipeline contract validation  |
 | `make e2e-episode-building` | Episode domain build → register → validate → profile pipeline |
+| `make e2e-episode-curation` | Reuses the episode from `e2e-episode-building`; align → profile/validate → export → curate |
 | `make e2e-analytics-export` | Analytics snapshot export |
 | `make e2e-reliability` | Asserts pipeline execution-key dedup/force semantics |
 | `make e2e-airflow-pipeline` | *(optional environment)* Same pipeline, dispatched via Airflow — requires `make airflow-up` |
@@ -754,7 +755,8 @@ sceneops-platform/
 │   ├── workflows/                  # robot-run-and-mcap.md (v2)
 │   ├── development/                # local-development.md
 │   └── adr/                        # architecture decision records
-├── docker-compose.local.yml
+├── compose.yaml                    # root Compose entrypoint (include: compose/*.yaml)
+├── compose/                        # core, workers, inference, airflow, ros2, tools
 ├── Makefile
 └── pyproject.toml                  # uv workspace (Python 3.11–3.12)
 ```

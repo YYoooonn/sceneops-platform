@@ -200,6 +200,7 @@ domain-specific docs below for Scene/Episode flow.
 | Scene domain (build -> quality -> API) | [scene-domain.md](./scene-domain.md) |
 | Episode domain (build -> quality -> API) | [episode-domain.md](./episode-domain.md) |
 | Robot learning data layer (alignment -> curation -> native dataset -> consumer adapters) | [robot-learning-data.md](./robot-learning-data.md) |
+| Dataset interoperability (external adapter contract, LeRobot, isolated runtime, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
 | Run records and derived quality/readiness | [quality-and-runs.md](./quality-and-runs.md) |
@@ -245,6 +246,14 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 - Job handlers: `apps/worker/sceneops_worker/jobs/dataset/{align_episode,validate_aligned_episode,profile_aligned_episode,export_learning_data,curate_episodes}.py`
 - Doc: [robot-learning-data.md](./robot-learning-data.md)
 
+**DATASET INTEROPERABILITY** — external adapter contract, LeRobot export,
+isolated runtime, real Postgres/MinIO round-trip E2E (Phase 3, complete)
+- Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/`
+- Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
+- Isolated LeRobot environment: `tools/lerobot-integration/`
+- E2E: `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh` (`make e2e-lerobot`)
+- Doc: [dataset-interoperability.md](./dataset-interoperability.md)
+
 **PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records
 - Job/Pipeline runners: `apps/worker/sceneops_worker/jobs/runner.py`,
   `apps/worker/sceneops_worker/pipelines/runner.py`
@@ -253,7 +262,7 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 - Docs: [jobs-and-pipelines.md](./jobs-and-pipelines.md), [quality-and-runs.md](./quality-and-runs.md)
 
 **INFRA** — Postgres, MinIO, Redis, Celery, Docker Compose
-- `docker-compose.local.yml`, `Makefile` + `makefiles/*.mk`
+- `compose.yaml` + `compose/*.yaml`, `Makefile` + `makefiles/*.mk`
 - `packages/sceneops-db/sceneops_db/session.py` (async engine/session)
 - `packages/sceneops-storage/sceneops_storage/backends/`
 - Doc: [../development/local-development.md](../development/local-development.md), [storage-layout.md](./storage-layout.md)

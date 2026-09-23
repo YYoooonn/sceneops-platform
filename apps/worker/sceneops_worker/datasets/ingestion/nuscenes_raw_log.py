@@ -68,8 +68,16 @@ class NuScenesRawLogMocker:
 
         from nuscenes.nuscenes import NuScenes
 
+        source_format_version = params.get("source_format_version")
+        if not source_format_version:
+            raise ValueError(
+                "params['source_format_version'] is required for "
+                "NuScenesRawLogMocker.build_raw_log -- refusing to fall "
+                f"back to dataset_version={dataset_version!r}"
+            )
+
         nusc = NuScenes(
-            version=dataset_version,
+            version=source_format_version,
             dataroot=self._source_root_uri,
             verbose=False,
         )

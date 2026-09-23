@@ -49,12 +49,16 @@
 #   Run e2e_robot_can_replay.sh at least once first (or otherwise populate
 #   data/raw/rosbag/<scene>/<scene>_0.mcap) so MCAP_URI exists.
 #
-# Env overrides:
+# Env overrides (DATASET_ID/DATASET_VERSION default from the shared "core"
+# E2E fixture, see scripts/e2e/lib.sh's resolve_e2e_fixture -- Episodes and
+# Scenes coexist on one DatasetVersion by design, see the catalog note
+# there, so this merges onto the same fixture pipeline-contracts/
+# dataset-ingestion use, SceneOps V2 Request 3.2B):
 #   API_BASE_URL              (default: http://localhost:8000)
 #   SCENE                     nuScenes scene name whose bag to reuse (default: scene-0061)
 #   ROBOT_ID                  (default: robot-nuscenes-01)
-#   DATASET_ID                (default: episodes-e2e)
-#   DATASET_VERSION           (default: v1)
+#   DATASET_ID                (default: test-e2e-core)
+#   DATASET_VERSION           (default: test-v1)
 #   SEGMENTATION_STRATEGY     mission_boundary | whole_run | fixed_window (default: mission_boundary)
 #   FIXED_WINDOW_DURATION_MS  only used when SEGMENTATION_STRATEGY=fixed_window (default: 5000)
 #   POLL_TIMEOUT              max poll attempts, 5s each (default: 60 = 5 min)
@@ -68,8 +72,7 @@ source "$SCRIPT_DIR/lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 SCENE="${SCENE:-scene-0061}"
 ROBOT_ID="${ROBOT_ID:-robot-nuscenes-01}"
-DATASET_ID="${DATASET_ID:-episodes-e2e}"
-DATASET_VERSION="${DATASET_VERSION:-v1}"
+resolve_e2e_fixture core
 SEGMENTATION_STRATEGY="${SEGMENTATION_STRATEGY:-mission_boundary}"
 FIXED_WINDOW_DURATION_MS="${FIXED_WINDOW_DURATION_MS:-5000}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"

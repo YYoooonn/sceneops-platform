@@ -11,7 +11,7 @@
 #   1. Full local stack running:    make local-up
 #   2. Inference server running:    make inference-local-up  (CPU)
 #                                   make inference-gpu-up    (GPU)
-#   3. Dataset ingested:            make e2e-dataset-scene-ingestion
+#   3. Dataset ingested:            make e2e-dataset-ingestion
 #
 # The worker reaches the inference server via INFERENCE_ENDPOINT_URL
 # (container-internal network alias).  The E2E script itself uses
@@ -26,8 +26,9 @@
 #                           (default: http://localhost:8001)
 #   INFERENCE_ENDPOINT_URL  container-internal URL passed to the worker
 #                           (default: http://sceneops-inference:8001)
-#   DATASET_ID              (default: nuscenes)
-#   DATASET_VERSION         (default: v1.0-mini)
+#   DATASET_ID              (default: test-e2e-core -- see scripts/e2e/lib.sh's
+#                           resolve_e2e_fixture)
+#   DATASET_VERSION         (default: test-v1)
 #   MODEL_ID                (default: grounding-dino)
 #   MODEL_VERSION           (default: tiny)
 #   MAX_SCENES              number of scenes to select for inference (default: 1)
@@ -43,8 +44,7 @@ source "$SCRIPT_DIR/lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 INFERENCE_SERVER_URL="${INFERENCE_SERVER_URL:-http://localhost:8001}"
 INFERENCE_ENDPOINT_URL="${INFERENCE_ENDPOINT_URL:-http://sceneops-inference:8001}"
-DATASET_ID="${DATASET_ID:-nuscenes}"
-DATASET_VERSION="${DATASET_VERSION:-v1.0-mini}"
+resolve_e2e_fixture core
 MODEL_ID="${MODEL_ID:-grounding-dino}"
 MODEL_VERSION="${MODEL_VERSION:-tiny}"
 READYZ_TIMEOUT="${READYZ_TIMEOUT:-90}"
@@ -112,25 +112,14 @@ echo ""
 # ── 1. API health ─────────────────────────────────────────────────────────────
 
 echo "--- 1. API health ---"
-if ! curl -sf "$(api_url "$API_BASE_URL" "/health" | sed "s|${API_BASE_URL}${API_PREFIX:-/api/v1}||")" \
-    --url "${API_BASE_URL}/health" > /dev/null 2>&1; then
-  if ! curl -sf "${API_BASE_URL}/health" > /dev/null 2>&1; then
-    echo "❌ API not reachable at $API_BASE_URL" >&2
-    exit 1
-  fi
-fi
-echo "  OK: $API_BASE_URL/health"
+require_service "API" "${API_BASE_URL}/health"
 echo ""
 
 # ── 2. Inference server liveness ──────────────────────────────────────────────
 
 echo "--- 2. Inference server liveness ---"
-if ! curl -sf "${INFERENCE_SERVER_URL}/healthz" > /dev/null 2>&1; then
-  echo "❌ Inference server not reachable at $INFERENCE_SERVER_URL" >&2
-  echo "  Run: make inference-local-up  (CPU)  or  make inference-gpu-up  (GPU)" >&2
-  exit 1
-fi
-echo "  OK: $INFERENCE_SERVER_URL/healthz"
+require_service "Inference server" "${INFERENCE_SERVER_URL}/healthz" 1 1 \
+  "Run: make inference-local-up  (CPU)  or  make inference-gpu-up  (GPU)"
 echo ""
 
 # ── 3. Inference server readiness (wait for model + warmup) ───────────────────
@@ -166,7 +155,7 @@ echo "  $DATASET_ID/$DATASET_VERSION: scene.manifestUri=$SCENE_MANIFEST_URI"
 
 if [ -z "$SCENE_MANIFEST_URI" ]; then
   echo "❌ Dataset version has no Scene manifest yet" >&2
-  echo "  Run dataset ingestion first: make e2e-dataset-scene-ingestion" >&2
+  echo "  Run dataset ingestion first: make e2e-dataset-ingestion" >&2
   exit 1
 fi
 echo "  OK"

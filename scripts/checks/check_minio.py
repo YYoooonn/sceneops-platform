@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
 from sceneops_core.config import ArtifactBackend, ArtifactSettings
-from sceneops_storage.s3 import S3ArtifactStore
+from sceneops_storage import S3ArtifactStore
 
-BUCKET = "sceneops"
+BUCKET = os.environ.get("MINIO_BUCKET", "sceneops")
 CHECK_PREFIX = f"s3://{BUCKET}/_checks"
 TEST_URI = f"{CHECK_PREFIX}/store_check.json"
 TEST_PAYLOAD = {"check": "s3_artifact_store", "status": "ok"}
@@ -26,8 +27,8 @@ async def run_checks(endpoint: str) -> None:
         backend=ArtifactBackend.MINIO,
         root_uri=f"s3://{BUCKET}",
         endpoint_url=endpoint,
-        access_key_id="minioadmin",
-        secret_access_key="minioadmin",
+        access_key_id=os.environ.get("MINIO_ROOT_USER", "minioadmin"),
+        secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
     )
     store = S3ArtifactStore(settings=settings)
 

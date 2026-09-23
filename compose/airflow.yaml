@@ -1,0 +1,82 @@
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow
+    dockerfile: Dockerfile
+  image: sceneops-platform/airflow:local
+  env_file:
+    - .env.local
+    - .env.airflow.local
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    HOST_DATA_DIR: ${PWD}/data
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+  profiles:
+    - airflow
+
+services:
+  airflow-postgres:
+    image: postgres:16
+    env_file:
+      - .env.airflow.local
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U airflow -d airflow"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    profiles:
+      - airflow
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - >-
+        airflow db migrate &&
+        airflow users create
+        --username "$$AIRFLOW_ADMIN_USERNAME"
+        --password "$$AIRFLOW_ADMIN_PASSWORD"
+        --firstname Scene
+        --lastname Ops
+        --role Admin
+        --email airflow@sceneops.local || true
+
+  airflow-webserver:
+    <<: *airflow-common
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: webserver
+
+  airflow-scheduler:
+    <<: *airflow-common
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: scheduler
+
+volumes:
+  airflow-postgres-data:

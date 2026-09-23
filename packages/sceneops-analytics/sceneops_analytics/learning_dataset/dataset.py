@@ -276,6 +276,15 @@ class SceneOpsDataset:
     # sync accessors -- answerable from already-loaded episode metadata
     # ------------------------------------------------------------------
 
+    @property
+    def learning_manifest(self) -> LearningDataExportManifest:
+        """The pinned LearningDataExportManifest this dataset was opened
+        over (SceneOps V2 Request 2.7B) -- exposed read-only so a downstream
+        layer (e.g. Request 3.1's external dataset adapters) can report
+        source-snapshot identity (dataset_id/dataset_version/export_id)
+        without re-deriving or re-fetching it."""
+        return self._learning_manifest
+
     def episodes(self) -> list[EpisodeRef]:
         """Every exposed EpisodeRef, sorted by (episode_id,
         aligned_artifact_checksum) -- deterministic, independent of

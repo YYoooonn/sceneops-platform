@@ -9,8 +9,10 @@ check-env:
 
 .PHONY: check-imports
 check-imports:
-	chmod +x scripts/checks/check_python_imports.sh
-	scripts/checks/check_python_imports.sh
+	$(COMPOSE) exec api python -c \
+		"import app, sceneops_core, sceneops_db, sceneops_storage, celery; print('api imports ok')"
+	$(COMPOSE) --profile debug run --rm --entrypoint python worker-cli -c \
+		"import sceneops_worker, sceneops_core, sceneops_db, sceneops_storage, celery; print('worker imports ok')"
 
 .PHONY: check-celery
 check-celery:
@@ -19,5 +21,4 @@ check-celery:
 
 .PHONY: check-minio
 check-minio:
-	chmod +x scripts/checks/check_minio.sh
-	scripts/checks/check_minio.sh
+	uv run python scripts/checks/check_minio.py --endpoint "$${MINIO_ENDPOINT:-http://localhost:9000}"

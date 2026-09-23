@@ -136,7 +136,7 @@ through where its artifacts physically live.
 
 ## 5. Object storage account/infra
 
-Local development uses MinIO (S3-compatible) via `docker-compose.local.yml`
+Local development uses MinIO (S3-compatible) via `compose/core.yaml`
 and `.env.example`'s `MINIO_ROOT_USER`. Switching to real AWS S3 means
 clearing `endpoint_url` and swapping credentials — no code change, since
 both paths go through `S3ArtifactStore`.
