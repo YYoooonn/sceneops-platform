@@ -127,11 +127,17 @@ presence doesn't imply an export or deprecation workflow exists.
 - Phase 3's dataset interoperability layer (the `ExternalDatasetAdapter`
   contract and its one concrete LeRobot implementation) has its own
   intentional v1 boundaries — numeric-only, no image/video, no RLDS
-  adapter yet, no persistent SceneOps record for an external export, and
-  a LeRobot runtime that is permanently isolated from the main workspace
-  by a real dependency conflict (not a temporary inconvenience) — see
+  adapter yet, no persistent SceneOps record for an external export — see
   [Dataset interoperability](./dataset-interoperability.md) §10 for the
   full, verified list.
+- Phase 4's external integration runtime layer (`IntegrationExecutor`, the
+  isolated nuScenes/LeRobot runtimes) has its own intentional v1
+  boundaries — LeRobot is not yet worker-invoked via HTTP (only nuScenes
+  is), `ContainerIntegrationExecutor` is local/dev-only, no Kubernetes
+  executor, no service discovery/plugin registry, no persistent
+  integration-run DB entity, `POST /execute` is synchronous only — see
+  [External integration runtime](./external-integration-runtime.md) §8
+  for the full, verified list.
 - DuckDB queries only work against locally-downloaded Parquet files —
   querying MinIO/S3-backed artifacts directly would need DuckDB's
   httpfs/S3 extension, not wired up.
@@ -156,7 +162,8 @@ implements or half-implements them, so there's nothing to document as
   format-neutral and support this without redesign, but none exists yet.
   A LeRobot adapter *is* implemented (Phase 3, complete) — see
   [Dataset interoperability](./dataset-interoperability.md).
-- Containerized/portable packaging of the LeRobot integration runtime
-  (`tools/lerobot-integration/` is a local uv project only today) —
-  scoped to Phase 4 ("External Integration Runtime"), not started. See
-  [Dataset interoperability](./dataset-interoperability.md) §11.
+- A Kubernetes (or other remote-cluster) `IntegrationExecutor` backend —
+  Phase 4 built the Protocol to make one a drop-in addition, but none
+  exists. A service-discovery/plugin registry for integration runtimes,
+  similarly — routing stays explicit per-integration config by design.
+  See [External integration runtime](./external-integration-runtime.md) §8.

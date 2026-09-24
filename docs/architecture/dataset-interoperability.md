@@ -245,20 +245,15 @@ dependency resolution is isolated. Its lockfile's dependency graph never
 includes `apps/worker` or `nuscenes-devkit`, so the conflict structurally
 cannot occur inside it.
 
-> **Update (Request 4.6B):** `apps/worker` no longer declares
-> `nuscenes-devkit` at all — both nuScenes job handlers now run through the
-> isolated `nuscenes-integration` HTTP service
-> (`packages/sceneops-integrations`/`tools/nuscenes-integration`) instead
-> of importing the SDK in-process, so the specific `numpy<2` pin described
-> above no longer lives in the root workspace's `uv.lock` either. This
-> doesn't undo the isolation this section describes — `tools/
-> lerobot-integration` still exists for the same reason `tools/
-> nuscenes-integration` does (Request 4.5's README: a minimal,
-> reproducible, DB/Celery-free container dependency closure, not solely a
-> version conflict) — it just means the *original* trigger for building it
-> this way is now historical, not a live constraint. Revisiting whether
-> `tools/lerobot-integration` can rejoin the root workspace is out of
-> scope for Request 4.6B.
+> **Update (Phase 4/Request 4.6B):** `apps/worker` no longer declares
+> `nuscenes-devkit` at all, so the specific `numpy<2` pin described above
+> no longer lives in the root workspace's `uv.lock` either — this doesn't
+> undo the isolation this section describes, it just means the *original*
+> trigger for building it this way is now historical, not a live
+> constraint. See
+> [External integration runtime](./external-integration-runtime.md) §6 for
+> the full current-state explanation and the accurate reason
+> `tools/lerobot-integration` stays isolated today.
 
 ```bash
 make lerobot-sync    # cd tools/lerobot-integration && uv sync --group dev --locked
@@ -438,12 +433,16 @@ not correctness failures to fix before closing the phase:
   returned directly to the caller and never persisted by this phase.
 - LeRobot output is never a SceneOps `DatasetVersion` — it is described
   only as an `ExternalDatasetRef`, by design (§4/§9).
-- The LeRobot runtime is isolated from the main workspace by a
-  permanent, structural dependency conflict, not a temporary
-  inconvenience (§5) — `lerobot` will not become installable in the main
-  `.venv` without either loosening `apps/worker`'s `nuscenes-devkit` pin
-  or lerobot resolving its own `numpy` floor down, neither of which this
-  phase controls.
+- The LeRobot runtime is isolated from the main workspace by a real
+  structural dependency conflict at the time this phase closed —
+  `lerobot`'s `numpy>=2` vs. `apps/worker`'s then-`nuscenes-devkit` pin
+  (`numpy<2`), not a temporary inconvenience (§5). **Historical as of
+  Phase 4/Request 4.6B**: `apps/worker` no longer depends on
+  `nuscenes-devkit` at all, so this specific conflict no longer exists in
+  the root workspace lock — see
+  [External integration runtime](./external-integration-runtime.md) §6 for
+  the current, accurate isolation rationale (general SDK/runtime
+  isolation, not an active NumPy conflict).
 - `make e2e-lerobot` is optional and intentionally **not** part of
   default `make e2e` — it requires the isolated environment
   (`make lerobot-sync`) as a one-time prerequisite, unlike every script in
@@ -451,9 +450,10 @@ not correctness failures to fix before closing the phase:
 - RLDS is not implemented — `ExternalDatasetAdapter`/`ExternalDatasetWriter`
   are format-neutral and already support a second concrete adapter, but
   none exists yet.
-- Integration runtime packaging/containerization is deferred to Phase 4
-  (§11) — `tools/lerobot-integration` today is a local uv project only,
-  not a container image.
+- Integration runtime packaging/containerization was deferred to Phase 4
+  at the time this document closed (§11) — now done: see
+  [External integration runtime](./external-integration-runtime.md) §6
+  (`tools/lerobot-integration` packaged as a container, Request 4.2/4.3).
 - The worked identity-model example in §2 (nuScenes -> `core` ->
   LeRobot) is architecturally valid and each half is independently
   tested, but no single E2E chains live nuScenes ingestion directly into
@@ -491,41 +491,15 @@ reproducible environment." It does not attempt runtime packaging,
 containerization, a second (RLDS) adapter, or persistent SceneOps records
 for external exports — those are explicitly out of scope, not gaps.
 
-```text
-Phase 4 -- External Integration Runtime      (not started)
-
-  4.1  Integration Runtime Contract
-       Generalize what Phase 3's tools/lerobot-integration/ proved ad hoc
-       (isolated venv, editable path sources onto platform code, its own
-       lockfile) into a documented, repeatable pattern any future
-       integration can follow.
-  4.2  LeRobot Integration Container
-       Package tools/lerobot-integration as a container image -- solves
-       "how do I run this without a local uv/Python setup at all", not a
-       semantic question.
-  4.3  Containerized LeRobot E2E
-       Re-run Phase 3.4's exact round-trip through that container instead
-       of a local uv venv; same assertions, same golden fixture.
-  4.4  nuScenes Integration Extraction
-       Apply the same isolation pattern to nuscenes-devkit's own
-       numpy<2/matplotlib pin (currently just tolerated inside
-       apps/worker) -- extract it the same way lerobot was extracted, if
-       and when that pin becomes a similar liability.
-  4.5  nuScenes Integration Container
-       Container packaging for that extraction, mirroring 4.2.
-  4.6  Generic Integration Execution Model
-       A shared runtime contract for "any externally-isolated
-       integration" (LeRobot, nuScenes-devkit, a future RLDS adapter, ...)
-       instead of one-off patterns per integration.
-  4.7  Architecture Freeze
-       Phase 4 closure, this document's counterpart for the runtime layer.
-```
-
-Phase 4 solves runtime/dependency-isolation packaging. It must not
-redesign Phase 3's semantic adapter contracts (§3/§4), the LeRobot mapping
-or semantic-loss classification (§5), or `ExternalDatasetRef`/`Dataset`/
-`DatasetVersion` identity ownership (§2) — those are frozen by this
-document.
+**Phase 4 ("External Integration Runtime") is now COMPLETE** — see
+[External integration runtime](./external-integration-runtime.md) for its
+full closure document (reference/runtime contract, ownership boundaries,
+`IntegrationExecutor`/HTTP transport, final nuScenes and LeRobot
+architecture, package layout, intentional limitations, and next-phase
+candidates). It did not redesign Phase 3's semantic adapter contracts
+(§3/§4), the LeRobot mapping or semantic-loss classification (§5), or
+`ExternalDatasetRef`/`Dataset`/`DatasetVersion` identity ownership (§2) —
+those remain frozen by this document, unchanged.
 
 ## 12. Source-of-truth map
 
