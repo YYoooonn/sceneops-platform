@@ -8,7 +8,13 @@ dependencies = [
     "sceneops-db",
     "sceneops-storage",
     "sceneops-analytics",
-    "nuscenes-devkit",
+    "sceneops-integrations",
+    # SceneOps V2 Request 4.6B: nuscenes-devkit is no longer a worker
+    # dependency at all. Both nuScenes INGEST paths (BuildScenesJobHandler's
+    # raw-log ingest, Request 4.5/4.6, and IngestScenesJobHandler's direct
+    # SceneManifest ingest, Request 4.6B) now run through the isolated
+    # nuscenes-integration HTTP service (sceneops_integrations.nuscenes) --
+    # apps/worker never imports `nuscenes` directly anymore.
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "typer>=0.12",
@@ -36,6 +42,7 @@ sceneops-core = { workspace = true }
 sceneops-db = { workspace = true }
 sceneops-storage = { workspace = true }
 sceneops-analytics = { workspace = true }
+sceneops-integrations = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["sceneops_worker"]

@@ -46,9 +46,10 @@ This matters because a single `DatasetVersion` can have multiple raw-log
 builds run against it over time (e.g. re-ingesting a corrected log, or
 building from more than one raw log into the same version) — without the
 `raw_log_id` segment, a second build would silently overwrite the first
-build's raw-log artifacts at the same URI. Every raw-log adapter
-(`NuScenesRawLogMocker`, `RosbagAdapter`) and `SceneBuilder` all pass
-`raw_log_id` through to these URI builders.
+build's raw-log artifacts at the same URI. Every raw-log source
+(`RosbagAdapter` in-process; nuScenes via the isolated integration service,
+see [External integration runtime](./external-integration-runtime.md)) and
+`SceneBuilder` all pass `raw_log_id` through to these URI builders.
 
 ## 3. Artifact ownership: producer owns the record
 

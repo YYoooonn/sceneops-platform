@@ -1,7 +1,39 @@
+"""nuScenes-SDK-bound direct SceneManifest ingestion (SceneOps V2 Request
+4.6B).
+
+Migrated from ``apps/worker/sceneops_worker/datasets/ingestion/
+nuscenes_scene.py`` (``build_scene_manifest`` and its helpers, unchanged
+logic) plus the scene-iteration/filtering loop from
+``apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py``'s
+``_ingest_nuscenes_scenes``, now living where every other nuScenes-SDK-bound
+code lives (``sceneops_integrations.nuscenes``, Request 4.4/4.5) instead of
+inside the worker process. Reached through the same ``runtime.execute()``
+entrypoint as ``raw_log.py`` (``config["mode"] == "scene_manifest"``, see
+``runtime.py``), so it shares the same HTTP/container transport
+(``service.py``/``entrypoint.py``) -- no new transport was added for this.
+
+This is a genuinely distinct capability from ``raw_log.py``: it builds one
+canonical ``SceneManifest`` per real nuScenes scene directly, INCLUDING
+ground-truth annotations (bounding boxes, velocity, attributes) from
+nuScenes' own ``sample_annotation`` records -- the raw-log ->
+``BUILD_SCENES`` flow never has and still does not produce annotations at
+all. Removing this path would remove the only source of ground-truth
+scenes in the repository (consumed downstream by
+``sceneops_worker.evaluation.detection`` and
+``sceneops_worker.jobs.scenarios``), which is why Request 4.6B migrates it
+instead of deleting it.
+
+May depend on: ``sceneops-core`` (schemas), an ``ArtifactStore``
+implementation, and the ``nuscenes-devkit`` SDK (imported lazily). Must
+never depend on ``sceneops-db``, worker job/Celery context, or
+artifact-record registration -- exactly like ``raw_log.py``.
+"""
+
 from __future__ import annotations
 
-from nuscenes.nuscenes import NuScenes
+from dataclasses import dataclass
 
+from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_core.scenes.schemas.manifests import (
     SceneAnnotationManifest,
     SceneManifest,
@@ -10,17 +42,88 @@ from sceneops_core.scenes.schemas.manifests import (
 )
 from sceneops_core.sensors import SensorModality
 from sceneops_core.sensors.manifests import (
+    EgoPoseManifest,
     ImageMetadataManifest,
     SensorCalibrationManifest,
-    EgoPoseManifest,
 )
 
 _TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
 
 
+@dataclass(frozen=True)
+class IngestedScene:
+    scene_id: str
+    manifest: SceneManifest
+    manifest_uri: str
+
+
+async def ingest_nuscenes_scenes(
+    *,
+    artifact_store: ArtifactStore,
+    source_root_uri: str,
+    source_format_version: str,
+    dataset_id: str,
+    dataset_version: str,
+    scene_manifest_root_uri: str,
+    source_scene_ids: list[str] | None = None,
+    max_source_scenes: int | None = None,
+) -> list[IngestedScene]:
+    """Parse a local nuScenes dataroot into one ``SceneManifest`` per real
+    nuScenes scene (with ground-truth annotations) and persist each to
+    ``artifact_store`` under ``scene_manifest_root_uri`` -- the same
+    ``{scene_id}.json`` naming ``SceneArtifactStore.scene_manifest_uri``
+    already uses, so scenes registered from this path land at identical
+    URIs to before this extraction.
+
+    ``source_scene_ids`` filters by nuScenes scene name before
+    ``max_source_scenes`` truncates -- same order Request 3.x's
+    ``_ingest_nuscenes_scenes`` always applied them in.
+    """
+    from nuscenes.nuscenes import NuScenes
+
+    nusc = NuScenes(
+        version=source_format_version,
+        dataroot=source_root_uri,
+        verbose=False,
+    )
+
+    scenes = nusc.scene
+    if source_scene_ids:
+        scene_names = set(source_scene_ids)
+        scenes = [s for s in scenes if s["name"] in scene_names]
+    if max_source_scenes is not None:
+        scenes = scenes[:max_source_scenes]
+
+    results: list[IngestedScene] = []
+
+    for ns_scene in scenes:
+        scene_id = ns_scene["name"]
+
+        manifest = build_scene_manifest(
+            nusc=nusc,
+            scene=ns_scene,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            scene_id=scene_id,
+        )
+
+        manifest_uri = artifact_store.join_uri(
+            scene_manifest_root_uri, f"{scene_id}.json"
+        )
+        await artifact_store.write_json(manifest_uri, manifest.to_artifact_dict())
+
+        results.append(
+            IngestedScene(
+                scene_id=scene_id, manifest=manifest, manifest_uri=manifest_uri
+            )
+        )
+
+    return results
+
+
 def build_scene_manifest(
     *,
-    nusc: NuScenes,
+    nusc,
     scene: dict,
     dataset_id: str,
     dataset_version: str,
@@ -86,7 +189,7 @@ def build_scene_manifest(
     )
 
 
-def _collect_sample_tokens(nusc: NuScenes, first_token: str) -> list[str]:
+def _collect_sample_tokens(nusc, first_token: str) -> list[str]:
     tokens: list[str] = []
     current = first_token
     while current:
@@ -96,11 +199,7 @@ def _collect_sample_tokens(nusc: NuScenes, first_token: str) -> list[str]:
     return tokens
 
 
-def _resolve_attribute_names(
-    *,
-    nusc: NuScenes,
-    ann: dict,
-) -> list[str]:
+def _resolve_attribute_names(*, nusc, ann: dict) -> list[str]:
     names: list[str] = []
 
     for token in ann.get("attribute_tokens", []):
@@ -115,11 +214,7 @@ def _resolve_attribute_names(
     return names
 
 
-def _safe_box_velocity(
-    *,
-    nusc: NuScenes,
-    annotation_token: str,
-) -> list[float] | None:
+def _safe_box_velocity(*, nusc, annotation_token: str) -> list[float] | None:
     try:
         velocity = nusc.box_velocity(annotation_token)
     except Exception:
@@ -136,10 +231,7 @@ def _safe_box_velocity(
 
 
 def _build_sample_annotations(
-    *,
-    nusc: NuScenes,
-    sample: dict,
-    sample_id: str,
+    *, nusc, sample: dict, sample_id: str
 ) -> list[SceneAnnotationManifest]:
     annotations: list[SceneAnnotationManifest] = []
 
@@ -176,11 +268,7 @@ def _build_sample_annotations(
 
 
 def _build_sample_sensor_frames(
-    *,
-    nusc: NuScenes,
-    sample: dict,
-    sample_id: str,
-    annotation_ids: list[str],
+    *, nusc, sample: dict, sample_id: str, annotation_ids: list[str]
 ) -> tuple[
     list[SceneSensorFrameManifest],
     dict[str, SensorCalibrationManifest],
@@ -270,21 +358,14 @@ def _build_sample_sensor_frames(
 
 
 def _build_sample_manifest(
-    *,
-    nusc: NuScenes,
-    scene_id: str,
-    sample_id: str,
-    sample: dict,
-    frame_index: int,
+    *, nusc, scene_id: str, sample_id: str, sample: dict, frame_index: int
 ) -> tuple[
     SceneSampleManifest,
     dict[str, SensorCalibrationManifest],
     dict[str, EgoPoseManifest],
 ]:
     annotations = _build_sample_annotations(
-        nusc=nusc,
-        sample=sample,
-        sample_id=sample_id,
+        nusc=nusc, sample=sample, sample_id=sample_id
     )
     annotation_ids = [ann.annotation_id for ann in annotations]
 
@@ -312,11 +393,7 @@ def _build_sample_manifest(
     )
 
 
-def _to_sensor_modality(
-    *,
-    raw_modality: str,
-    channel: str,
-) -> SensorModality:
+def _to_sensor_modality(*, raw_modality: str, channel: str) -> SensorModality:
     try:
         return SensorModality(raw_modality)
     except ValueError:
@@ -327,3 +404,6 @@ def _to_sensor_modality(
         if channel.startswith("RADAR"):
             return SensorModality.RADAR
         return SensorModality.UNKNOWN
+
+
+__all__ = ["IngestedScene", "ingest_nuscenes_scenes", "build_scene_manifest"]

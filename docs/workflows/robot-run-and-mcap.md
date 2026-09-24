@@ -66,10 +66,13 @@ reorder.
 
 `apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`
 implements the `RawLogAdapter` Protocol
-(`apps/worker/sceneops_worker/observations/adapters/base.py`), the same
-abstraction `NuScenesRawLogMocker` implements for structured-dataset
-ingestion — registered under `RawLogSourceType.REAL_ROBOT_LOG` in
-`build_scenes.py`'s adapter factory.
+(`apps/worker/sceneops_worker/observations/adapters/base.py`) — registered
+under `RawLogSourceType.REAL_ROBOT_LOG` in `build_scenes.py`'s adapter
+factory. nuScenes raw-log ingestion no longer goes through this same
+in-process Protocol (it runs through the isolated nuScenes integration
+service instead — see
+[External integration runtime](../architecture/external-integration-runtime.md));
+`RosbagAdapter` is the only remaining `RawLogAdapter` implementation.
 
 ```python
 class RosbagAdapter:

@@ -12,6 +12,8 @@ x-worker-common: &worker-common
       condition: service_healthy
     minio:
       condition: service_healthy
+    nuscenes-integration:
+      condition: service_healthy
   volumes:
     - ./data:/data
     - ./scripts:/workspace/scripts:ro

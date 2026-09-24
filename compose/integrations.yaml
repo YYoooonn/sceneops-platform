@@ -1,0 +1,38 @@
+# Isolated integration runtimes, reached over the SceneOps internal
+# network by service name/port (SceneOps V2 Request 4.6A) -- never by the
+# worker controlling Docker. Each service is built from its own
+# tools/<name>-integration/Dockerfile with its own independent uv.lock
+# (Request 4.2/4.5); this file only wires it up as a normal compose
+# service, it doesn't change what's inside that image.
+#
+# Not exposed on a host port -- internal-network-only, reached by the
+# worker (and this compose stack's own healthcheck) via the service DNS
+# name, matching every other internal-only service already in this repo.
+services:
+  nuscenes-integration:
+    build:
+      context: .
+      dockerfile: tools/nuscenes-integration/Dockerfile
+    image: sceneops-platform/nuscenes-integration:local
+    env_file:
+      - .env.local
+    command: ["-m", "uvicorn", "sceneops_integrations.nuscenes.service:app", "--host", "0.0.0.0", "--port", "${INTEGRATION_NUSCENES_PORT:-8080}"]
+    volumes:
+      # Read-only: this service only ever reads a local nuScenes dataroot
+      # (external_ref.uri, e.g. /data/raw/nuscenes) -- it writes its
+      # produced artifacts through ArtifactStore (MinIO), never to /data.
+      - ./data:/data:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -f http://localhost:${INTEGRATION_NUSCENES_PORT:-8080}/health || exit 1"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    profiles:
+      - worker

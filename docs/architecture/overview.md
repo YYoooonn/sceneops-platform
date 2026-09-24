@@ -200,7 +200,8 @@ domain-specific docs below for Scene/Episode flow.
 | Scene domain (build -> quality -> API) | [scene-domain.md](./scene-domain.md) |
 | Episode domain (build -> quality -> API) | [episode-domain.md](./episode-domain.md) |
 | Robot learning data layer (alignment -> curation -> native dataset -> consumer adapters) | [robot-learning-data.md](./robot-learning-data.md) |
-| Dataset interoperability (external adapter contract, LeRobot, isolated runtime, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
+| Dataset interoperability (external adapter contract, LeRobot semantic mapping, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
+| External integration runtime (IntegrationRequest/Result, IntegrationExecutor, HTTP transport, nuScenes + LeRobot isolated runtimes) | [external-integration-runtime.md](./external-integration-runtime.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
 | Run records and derived quality/readiness | [quality-and-runs.md](./quality-and-runs.md) |
@@ -246,13 +247,23 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 - Job handlers: `apps/worker/sceneops_worker/jobs/dataset/{align_episode,validate_aligned_episode,profile_aligned_episode,export_learning_data,curate_episodes}.py`
 - Doc: [robot-learning-data.md](./robot-learning-data.md)
 
-**DATASET INTEROPERABILITY** — external adapter contract, LeRobot export,
-isolated runtime, real Postgres/MinIO round-trip E2E (Phase 3, complete)
+**DATASET INTEROPERABILITY** — external adapter contract, LeRobot export
+semantic mapping, real Postgres/MinIO round-trip E2E (Phase 3, complete)
 - Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/`
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
-- Isolated LeRobot environment: `tools/lerobot-integration/`
-- E2E: `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh` (`make e2e-lerobot`)
+- E2E (local venv, not the container): `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh` (`make e2e-lerobot`)
 - Doc: [dataset-interoperability.md](./dataset-interoperability.md)
+
+**EXTERNAL INTEGRATION RUNTIME** — IntegrationRequest/IntegrationResult
+contract, IntegrationExecutor (HTTP/container/in-process backends),
+isolated nuScenes + LeRobot runtimes/containers (Phase 4, complete)
+- Reference/runtime contract: `packages/sceneops-core/sceneops_core/integration_runtime/`
+- Executor + HTTP/container backends: `apps/worker/sceneops_worker/integration_execution/`
+- nuScenes SDK-bound implementation: `packages/sceneops-integrations/sceneops_integrations/nuscenes/`
+- Isolated nuScenes environment/container: `tools/nuscenes-integration/`
+- Isolated LeRobot environment/container: `tools/lerobot-integration/`
+- E2E: `make nuscenes-container-smoke`, `make e2e-lerobot-container`
+- Doc: [external-integration-runtime.md](./external-integration-runtime.md)
 
 **PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records
 - Job/Pipeline runners: `apps/worker/sceneops_worker/jobs/runner.py`,

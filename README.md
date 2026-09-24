@@ -728,7 +728,7 @@ sceneops-platform/
 │           ├── jobs/dataset/       # handlers: scene + episode (v2) build/register/validate/profile, dataset aggregation
 │           ├── jobs/               # evaluation/, inference/, scenarios/, robots/ (v2)
 │           ├── scenes/             # validator, profiler, raw scene builder, selection filter
-│           ├── datasets/ingestion/ # NuScenesRawLogMocker, RosbagAdapter (v2, real CDR decoding)
+│           ├── datasets/ingestion/ # nuscenes_ingestion.py (IntegrationRequest builders, HTTP), RosbagAdapter (v2, real CDR decoding)
 │           ├── evaluation/detection/  # CenterDistanceDetectionEvaluator, accumulator
 │           ├── inference/          # mock / ONNX / GroundingDINO + frustum-lift backends
 │           ├── stores/robots.py    # RobotStore (v2)

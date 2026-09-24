@@ -400,7 +400,8 @@ RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
     description=(
         "Build SceneOps scene manifests from raw observation streams, register them, "
         "then build a scene index and dataset manifest. "
-        "Local E2E uses NuScenesRawLogMocker to flatten nuScenes into mock raw frames."
+        "Local E2E ingests nuScenes through the isolated nuscenes-integration "
+        "container to produce mock raw frames."
     ),
     tasks=[
         PipelineTaskDefinition(

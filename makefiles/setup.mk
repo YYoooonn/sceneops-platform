@@ -38,7 +38,7 @@ check:
 # suite (SceneOps V2 Request 3.2C.1) — Postgres is faked in-memory there,
 # so it belongs in the fast tier alongside everything else.
 test:
-	uv run pytest apps/worker/tests/ apps/api/tests/ apps/inference-server/tests/ packages/sceneops-analytics/tests/ packages/sceneops-core/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap.py -v
+	uv run pytest apps/worker/tests/ apps/api/tests/ apps/inference-server/tests/ packages/sceneops-analytics/tests/ packages/sceneops-core/tests/ packages/sceneops-integrations/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap.py -v
 
 .PHONY: test-integration
 # Real-infrastructure tests. Prerequisite: `make local-up` (Postgres + MinIO

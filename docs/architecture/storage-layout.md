@@ -63,9 +63,11 @@ S3/MinIO: `s3://sceneops/artifacts/{datasets,runs,models,analytical}/...`
 
 Within a dataset version's `datasets/` tree, raw-log-derived artifacts
 (`raw_log_manifest_uri`, `raw_frame_index_uri`, `scene_segments_uri`) live
-under `.../raw/{raw_log_id}/{filename}.json` — every raw-log adapter
-(`NuScenesRawLogMocker`, `RosbagAdapter`) and `SceneBuilder` thread
-`raw_log_id` through. This scoping exists so a second `build_scenes` run
+under `.../raw/{raw_log_id}/{filename}.json` — every raw-log source
+(`RosbagAdapter` in-process; nuScenes via the isolated integration service,
+see [External integration runtime](./external-integration-runtime.md)) and
+`SceneBuilder` thread `raw_log_id` through. This scoping exists so a second
+`build_scenes` run
 against the same `DatasetVersion` (a different raw log, or a rebuild)
 doesn't silently overwrite the first run's raw-log artifacts at a shared
 URI — see [Scene domain](./scene-domain.md) §2.

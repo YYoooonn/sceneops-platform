@@ -200,11 +200,15 @@ actually running `make e2e-pipeline-contracts` against a renamed version
 and hitting `Database version not found: /data/raw/nuscenes/test-v1`).
 
 Request 3.2B separated the two: `IngestScenesJobParams`/`BuildScenesJobParams`
-carry an explicit `source_format_version` field, and the nuScenes SDK
-(`apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py`,
-`datasets/ingestion/nuscenes_raw_log.py`) reads only that, never
-`dataset_version` — so `DATASET_VERSION` is finally free to be `test-v1`
-everywhere. Request 3.2B.1 then removed the short-lived
+carry an explicit `source_format_version` field, and only that value ever
+reaches the nuScenes SDK, never `dataset_version` — so `DATASET_VERSION` is
+finally free to be `test-v1` everywhere. (As of Request 4.6B, the SDK call
+itself no longer happens inside `apps/worker` at all — both job handlers
+build an `IntegrationRequest` and run it against the isolated
+`nuscenes-integration` HTTP service, which is the only thing that still
+imports `nuscenes-devkit`; the canonical/source version separation
+described here is unchanged, just enforced one layer further out.) Request
+3.2B.1 then removed the short-lived
 `source_format_version or dataset_version` fallback entirely:
 `source_format_version` is **required** whenever the source format needs
 one (nuScenes) — enforced by a pydantic validator on both job params

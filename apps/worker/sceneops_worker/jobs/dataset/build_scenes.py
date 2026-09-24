@@ -251,13 +251,115 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
     async def _build_raw_log_with_adapter(
         self, execution: BuildScenesExecution
     ) -> BuildScenesRawInputs:
+        """Dispatch to whichever raw-log sourcing mechanism this
+        source_type actually uses (SceneOps V2 Request 4.6/4.6A): nuScenes
+        runs through the generic IntegrationExecutor against the nuScenes
+        integration HTTP service (no in-process SDK call left in the
+        worker); every other source_type still uses the RawLogAdapter/
+        RawLogAdapterFactory path this method has always used. This is the
+        one, explicit dispatch point -- not a format conditional scattered
+        across the handler."""
+        params = execution.params
+        source_type = params.source_type or RawLogSourceType.NUSCENES_RAW_LOG_MOCK
+
+        if source_type == RawLogSourceType.NUSCENES_RAW_LOG_MOCK:
+            return await self._run_nuscenes_ingest(execution)
+
+        return await self._build_raw_log_with_legacy_adapter(
+            execution=execution, source_type=source_type
+        )
+
+    async def _run_nuscenes_ingest(
+        self, execution: BuildScenesExecution
+    ) -> BuildScenesRawInputs:
+        """nuScenes raw-log ingest via the generic execution model
+        (SceneOps V2 Request 4.6, HTTP transport in Request 4.6A): build an
+        IntegrationRequest, run it against the nuScenes integration HTTP
+        service (over the SceneOps internal network -- no Docker socket
+        control involved), then read the two produced artifacts back into
+        typed objects via the existing _load_raw_artifacts path (unchanged
+        since before Request 4.4).
+
+        The worker remains solely responsible for everything downstream of
+        this: DB session, ArtifactRecord registration, lineage, Scene/
+        DatasetVersion state (_register_scene_artifacts/
+        _update_scene_summary_after_build, both unchanged). The integration
+        service itself stays DB-free -- it only produces raw_log_manifest/
+        raw_log_frame_index artifacts and reports their URIs/checksums.
+        """
+        params = execution.params
+        version_record = execution.dataset_version_record
+        obs_store = execution.obs_store
+        # _require_version_with_source already guaranteed version.scene and
+        # its raw_source_root_uri are set before this runs.
+        source_root_uri = version_record.scene.raw_source_root_uri
+
+        if not params.source_format_version:
+            raise ValueError(
+                "params['source_format_version'] is required for a "
+                "nuscenes_raw_log_mock build_scenes run -- refusing to "
+                f"fall back to dataset_version={version_record.version!r}"
+            )
+
+        # pylint: disable=import-outside-toplevel
+        from sceneops_worker.datasets.ingestion.nuscenes_ingestion import (
+            build_nuscenes_http_config,
+            build_nuscenes_ingest_request,
+        )
+        from sceneops_worker.integration_execution import HttpIntegrationExecutor
+
+        request = build_nuscenes_ingest_request(
+            dataset_id=version_record.dataset_id,
+            dataset_version=version_record.version,
+            source_root_uri=source_root_uri,
+            source_format_version=params.source_format_version,
+            max_source_sequences=params.max_source_sequences,
+        )
+
+        manifest_uri = obs_store.raw_log_manifest_uri(
+            execution.version_root_uri, execution.raw_log_id
+        )
+        frame_index_uri = obs_store.raw_frame_index_uri(
+            execution.version_root_uri, execution.raw_log_id
+        )
+
+        config = build_nuscenes_http_config(
+            settings=execution.context.settings,
+            raw_log_id=execution.raw_log_id,
+            manifest_uri=manifest_uri,
+            frame_index_uri=frame_index_uri,
+        )
+        result = await HttpIntegrationExecutor(config).execute(request)
+
+        produced_manifest_uri = result.produced_artifacts["raw_log_manifest"].uri
+        produced_frame_index_uri = result.produced_artifacts["raw_log_frame_index"].uri
+
+        raw_manifest, frame_index = await self._load_raw_artifacts(
+            obs_store=obs_store,
+            manifest_uri=produced_manifest_uri,
+            frame_index_uri=produced_frame_index_uri,
+        )
+
+        return BuildScenesRawInputs(
+            raw_manifest=raw_manifest,
+            frame_index=frame_index,
+            raw_manifest_uri=produced_manifest_uri,
+            raw_frame_index_uri=produced_frame_index_uri,
+        )
+
+    async def _build_raw_log_with_legacy_adapter(
+        self, *, execution: BuildScenesExecution, source_type: RawLogSourceType
+    ) -> BuildScenesRawInputs:
+        """RawLogAdapter path for source_types with no isolated integration
+        runtime yet -- currently only RosbagAdapter/REAL_ROBOT_LOG. nuScenes
+        no longer goes through here (see _run_nuscenes_ingest, SceneOps V2
+        Request 4.6)."""
         params = execution.params
         version_record = execution.dataset_version_record
         adapter_factory = self._build_adapter_factory(
             execution=execution,
             obs_store=execution.obs_store,
         )
-        source_type = params.source_type or RawLogSourceType.NUSCENES_RAW_LOG_MOCK
         adapter = adapter_factory.get(source_type)
 
         (
@@ -286,35 +388,16 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
         execution: BuildScenesExecution,
         obs_store: ObservationArtifactStore,
     ) -> RawLogAdapterFactory:
-        params = execution.params
         version_record = execution.dataset_version_record
         # _require_version_with_source already guaranteed version.scene and
         # its raw_source_root_uri are set before this runs.
         source_root_uri = version_record.scene.raw_source_root_uri
 
         # pylint: disable=import-outside-toplevel
-        from sceneops_worker.datasets.ingestion.nuscenes_raw_log import (
-            NuScenesRawLogMocker,
-        )
         from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 
         factory = RawLogAdapterFactory()
 
-        required_channels = (
-            set(params.sampling.required_channels)
-            if params.sampling.required_channels
-            else None
-        )
-
-        factory.register(
-            RawLogSourceType.NUSCENES_RAW_LOG_MOCK,
-            NuScenesRawLogMocker(
-                source_store=execution.context.raw_source_store,
-                source_root_uri=source_root_uri,
-                observation_store=obs_store,
-                required_channels=required_channels,
-            ),
-        )
         factory.register(
             RawLogSourceType.REAL_ROBOT_LOG,
             RosbagAdapter(
