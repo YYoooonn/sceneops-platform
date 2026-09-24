@@ -1,18 +1,26 @@
-"""nuScenes-SDK-bound raw-log reader (SceneOps V2 Request 4.4).
+"""nuScenes-SDK-bound raw-log reader (SceneOps V2 Request 4.4, isolated into
+its own workspace package in Request 4.5).
 
-Extracted from ``sceneops_worker.datasets.ingestion.nuscenes_raw_log.
-NuScenesRawLogMocker.build_raw_log`` unchanged in behavior: same traversal
-order, same timestamp semantics, same metadata fields, same generated
-``RawLogManifest``/``RawLogFrameIndex`` content. What moved is *shape*, not
-*logic* -- this module is now the SDK-bound leaf (nuScenes SDK + local
-filesystem dataroot + ``ArtifactStore`` only), with no dependency on
-``sceneops-db``, a worker ``JobHandlerRequest``/``WorkerContext``, Celery, or
-``ArtifactRecord`` registration. ``NuScenesRawLogMocker`` (the
-``RawLogAdapter`` the worker's ``RawLogAdapterFactory`` still registers) is
-now a thin wrapper around ``read_nuscenes_raw_log`` below, so
-``BuildScenesJobHandler``'s call site and existing tests are unaffected.
+Originally extracted from ``sceneops_worker.datasets.ingestion.
+nuscenes_raw_log.NuScenesRawLogMocker.build_raw_log`` (Request 4.4) unchanged
+in behavior: same traversal order, same timestamp semantics, same metadata
+fields, same generated ``RawLogManifest``/``RawLogFrameIndex`` content.
+Request 4.5 moved it again -- out of ``apps/worker`` entirely, into this
+package -- with no further logic change, so that ``nuscenes-devkit`` no
+longer needs to be importable inside the main worker process just to run a
+raw-log ingest: ``sceneops_worker.datasets.ingestion.nuscenes_raw_log.
+NuScenesRawLogMocker`` (the ``RawLogAdapter`` the worker's
+``RawLogAdapterFactory`` still registers, kept for backward compatibility
+per Request 4.5 §5) now imports ``read_nuscenes_raw_log`` from here instead
+of hosting it, and ``tools/nuscenes-integration``'s container entrypoint
+(``entrypoint.py``, this same package) is the other, primary caller.
 
-Timestamp semantics (unchanged from the original docstring):
+This module is the SDK-bound leaf (nuScenes SDK + local filesystem dataroot
++ ``ArtifactStore`` only) -- no dependency on ``sceneops-db``, a worker
+``JobHandlerRequest``/``WorkerContext``, Celery, or ``ArtifactRecord``
+registration.
+
+Timestamp semantics (unchanged since Request 4.4):
   RawSensorFrameManifest.timestamp_us <- sample_data["timestamp"]
   RawEgoPoseManifest.timestamp_us     <- ego_pose["timestamp"]
   RawCalibrationManifest              <- no timestamp
@@ -21,8 +29,10 @@ Timestamp semantics (unchanged from the original docstring):
 May depend on: ``sceneops-core`` (schemas), an ``ArtifactStore``
 implementation (``sceneops-storage``, or any ``ArtifactStore``-shaped
 object), and the ``nuscenes-devkit`` SDK (imported lazily, only once a local
-dataroot has been confirmed). Must never depend on ``sceneops-db``, worker
-job/Celery context, or artifact-record registration.
+dataroot has been confirmed -- this package never declares
+``nuscenes-devkit`` as its own dependency, see ``pyproject.toml``'s own
+comment). Must never depend on ``sceneops-db``, worker job/Celery context,
+or artifact-record registration.
 """
 
 from __future__ import annotations

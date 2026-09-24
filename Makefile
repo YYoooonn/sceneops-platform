@@ -206,3 +206,4 @@ include makefiles/checks.mk
 include makefiles/e2e.mk
 include makefiles/debug.mk
 include makefiles/lerobot.mk
+include makefiles/nuscenes.mk

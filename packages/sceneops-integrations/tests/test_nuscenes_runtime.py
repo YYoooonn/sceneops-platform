@@ -1,9 +1,10 @@
-"""Tests for the extracted nuScenes INGEST integration runtime (SceneOps V2
-Request 4.4): ``sceneops_worker.integrations.nuscenes``.
+"""Tests for the nuScenes INGEST integration runtime (SceneOps V2 Request
+4.4, isolated into this package in Request 4.5):
+``sceneops_integrations.nuscenes``.
 
 Covers:
-- the runtime module never imports sceneops-db/celery/nuscenes at import
-  time (DB-free, Celery-free, SDK loaded lazily -- same guarantee
+- the package never imports sceneops-db/celery/nuscenes at import time
+  (DB-free, Celery-free, SDK loaded lazily -- same guarantee
   packages/sceneops-core/tests/test_integration_runtime.py already proves
   for the generic contract itself);
 - execute() runs given only an IntegrationRequest + ArtifactStore, no
@@ -12,13 +13,20 @@ Covers:
   checksums matching the bytes actually written);
 - IntegrationOperation.INGEST contract enforcement (wrong operation/format/
   missing format_version rejected before any ArtifactStore access);
-- raw_log.py's manifest/frame-index output is byte-identical to what
-  NuScenesRawLogMocker (the worker-side RawLogAdapter) produces from the
-  same source -- proving the extraction preserved behavior, not just moved
-  code;
 - the real /data/raw/nuscenes v1.0-mini fixture parses end-to-end through
   both the pure reader and the full IntegrationRequest/IntegrationResult
   runtime (skipped, not failed, if that fixture isn't present).
+
+This package deliberately never declares ``nuscenes-devkit`` as its own
+dependency (see pyproject.toml) -- these tests run here because
+``nuscenes-devkit`` happens to still be installed in the base workspace
+venv (apps/worker's own dependency, for its separate legacy ingestion
+path), the same way ``packages/sceneops-analytics/tests/
+test_lerobot_adapter.py`` runs in the base venv only because a `[tool.uv]`
+extra happens to be present -- never because this package requires it.
+See ``apps/worker/tests/integrations/test_nuscenes_delegation.py`` for the
+cross-package proof that ``NuScenesRawLogMocker`` (apps/worker) delegates
+to this package unchanged.
 """
 
 from __future__ import annotations
@@ -39,10 +47,10 @@ from sceneops_core.integration_runtime import (
 )
 from sceneops_storage.backends.local import LocalArtifactStore
 
-from sceneops_worker.integrations.nuscenes import IntegrationRuntimeError, execute
-from sceneops_worker.integrations.nuscenes.raw_log import read_nuscenes_raw_log
+from sceneops_integrations.nuscenes import IntegrationRuntimeError, execute
+from sceneops_integrations.nuscenes.raw_log import read_nuscenes_raw_log
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 REAL_NUSCENES_DATAROOT = REPO_ROOT / "data" / "raw" / "nuscenes"
 _HAS_REAL_FIXTURE = (REAL_NUSCENES_DATAROOT / "v1.0-mini").exists()
 
@@ -92,7 +100,7 @@ def _mock_nusc_empty() -> MagicMock:
 
 
 class TestNoDbCeleryOrEagerSdkImport:
-    def test_runtime_module_imports_no_db_celery_or_nuscenes(self) -> None:
+    def test_package_imports_no_db_celery_or_nuscenes(self) -> None:
         """Checked in a fresh subprocess (never via sys.modules in the
         current test process) -- other tests in this session already import
         nuscenes-devkit, so in-process sys.modules would already be
@@ -103,7 +111,28 @@ class TestNoDbCeleryOrEagerSdkImport:
             [
                 sys.executable,
                 "-c",
-                "import sys; import sceneops_worker.integrations.nuscenes; "
+                "import sys; import sceneops_integrations.nuscenes; "
+                "loaded = set(sys.modules); "
+                "assert not any(n.startswith('sqlalchemy') for n in loaded); "
+                "assert not any(n.startswith('celery') for n in loaded); "
+                "assert not any(n.startswith('nuscenes') for n in loaded)",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+    def test_entrypoint_module_imports_no_db_or_celery(self) -> None:
+        """entrypoint.py (the container's CLI wrapper) pulls in argparse/
+        pydantic-settings but must stay just as DB/Celery-free as the
+        runtime it wraps."""
+        import subprocess
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; import sceneops_integrations.nuscenes.entrypoint; "
                 "loaded = set(sys.modules); "
                 "assert not any(n.startswith('sqlalchemy') for n in loaded); "
                 "assert not any(n.startswith('celery') for n in loaded); "
@@ -277,63 +306,6 @@ class TestProducedArtifactsMapping:
 
         assert result.result_metadata["raw_log_id"] == "log-001"
         assert result.result_metadata["frame_count"] == 0
-
-
-# ── extraction preserves NuScenesRawLogMocker's output exactly ─────────────
-
-
-class TestWorkerAdapterEquivalence:
-    @pytest.mark.asyncio
-    async def test_mocker_and_pure_reader_produce_identical_manifest(
-        self, tmp_path: Path
-    ) -> None:
-        """NuScenesRawLogMocker (kept for BuildScenesJobHandler's
-        RawLogAdapter contract) must produce byte-identical output to
-        calling read_nuscenes_raw_log directly -- proving the extraction
-        only moved code, it didn't change behavior."""
-        from sceneops_worker.datasets.ingestion.nuscenes_raw_log import (
-            NuScenesRawLogMocker,
-        )
-        from sceneops_worker.observations.artifacts import ObservationArtifactStore
-
-        store = LocalArtifactStore(root_uri=str(tmp_path))
-        obs_store = ObservationArtifactStore(
-            artifact_store=store, dataset_root_uri=str(tmp_path)
-        )
-        mocker = NuScenesRawLogMocker(
-            source_store=MagicMock(),
-            source_root_uri="/data/raw/nuscenes",
-            observation_store=obs_store,
-        )
-
-        with patch("nuscenes.nuscenes.NuScenes", return_value=_mock_nusc_empty()):
-            (
-                manifest,
-                frame_index,
-                manifest_uri,
-                frame_index_uri,
-            ) = await mocker.build_raw_log(
-                dataset_id="d",
-                dataset_version="v1",
-                raw_log_id="log-A",
-                version_root_uri=str(tmp_path),
-                params={"source_format_version": "v1.0-mini"},
-            )
-
-        with patch("nuscenes.nuscenes.NuScenes", return_value=_mock_nusc_empty()):
-            direct_manifest, direct_frame_index = await read_nuscenes_raw_log(
-                artifact_store=store,
-                source_root_uri="/data/raw/nuscenes",
-                source_format_version="v1.0-mini",
-                dataset_id="d",
-                dataset_version="v1",
-                raw_log_id="log-A",
-                manifest_uri=manifest_uri,
-                frame_index_uri=frame_index_uri,
-            )
-
-        assert manifest == direct_manifest
-        assert frame_index == direct_frame_index
 
 
 # ── real nuScenes fixture (skipped if not present) ──────────────────────────

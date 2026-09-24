@@ -17,7 +17,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
-testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests", "packages/sceneops-core/tests"]
+testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests", "packages/sceneops-core/tests", "packages/sceneops-integrations/tests"]
 
 [tool.uv]
 package = false
@@ -28,6 +28,7 @@ members = [
   "packages/sceneops-db",
   "packages/sceneops-storage",
   "packages/sceneops-analytics",
+  "packages/sceneops-integrations",
   "apps/api",
   "apps/worker",
   "apps/inference-server",
@@ -38,5 +39,6 @@ sceneops-core = { workspace = true }
 sceneops-db = { workspace = true }
 sceneops-storage = { workspace = true }
 sceneops-analytics = { workspace = true }
+sceneops-integrations = { workspace = true }
 sceneops-api = { workspace = true }
 sceneops-worker = { workspace = true }

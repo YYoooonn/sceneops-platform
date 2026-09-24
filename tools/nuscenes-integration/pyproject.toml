@@ -1,0 +1,47 @@
+[project]
+name = "sceneops-nuscenes-integration"
+version = "0.1.0"
+description = "Isolated, reproducible environment for SceneOps' nuScenes INGEST integration runtime (SceneOps V2 Request 4.4/4.5)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+  "sceneops-integrations",
+  "nuscenes-devkit",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+]
+
+# This project intentionally lives outside the root sceneops-platform uv
+# workspace, mirroring ../lerobot-integration/pyproject.toml's own
+# isolation (see that file's comment for the full LeRobot-side rationale).
+# For nuScenes the goal is not dodging a version conflict -- nuscenes-devkit
+# is still, today, also a direct apps/worker dependency (its separate
+# legacy/direct SceneManifest ingestion path, ingest_scenes.py, still
+# imports it -- see apps/worker/pyproject.toml's own comment) -- the goal is
+# a minimal, reproducible, DB/Celery-free dependency closure for the
+# container image (Request 4.5 §1/§7): building straight off the root
+# workspace's uv.lock would pull in sceneops-db, Celery, onnxruntime, and
+# everything else apps/worker happens to need, none of which this runtime
+# may ever depend on.
+#
+# This project declares no Python package of its own -- it exists purely to
+# pin/lock a reproducible dependency set on top of the *existing*
+# sceneops-core/sceneops-storage/sceneops-integrations code (via editable
+# path sources below) plus nuscenes-devkit directly, never to duplicate
+# sceneops_integrations.nuscenes's implementation.
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+sceneops-core = { path = "../../packages/sceneops-core", editable = true }
+sceneops-storage = { path = "../../packages/sceneops-storage", editable = true }
+sceneops-integrations = { path = "../../packages/sceneops-integrations", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"

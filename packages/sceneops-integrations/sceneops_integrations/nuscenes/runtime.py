@@ -23,13 +23,11 @@ worker (``BuildScenesJobHandler``, via ``NuScenesRawLogMocker``) remains
 solely responsible for that, using this module's
 ``IntegrationResult.produced_artifacts``.
 
-Unlike the LeRobot EXPORT container entrypoint (Request 4.2), this module
-intentionally stops at an in-process ``execute()`` -- no argv/stdin/stdout
-CLI, no container. Request 4.4 extracts the SDK-bound boundary without
-containerizing nuScenes yet (that's Request 4.5); an ``execute()`` this
-shape is exactly what a future CLI/container entrypoint would wrap, the
-same way ``sceneops_analytics.external_adapters.lerobot.entrypoint.execute``
-is the testable core ``entrypoint.main`` wraps.
+This module stops at an in-process ``execute()`` -- ``entrypoint.py``
+(this same package) is the argv/stdin/stdout CLI/container wrapper around
+it, the same way ``sceneops_analytics.external_adapters.lerobot.
+entrypoint.execute`` is the testable core its own ``entrypoint.main``
+wraps.
 
 Destination URIs (``manifest_uri``/``frame_index_uri``) are explicit
 ``execute()`` parameters, not part of ``IntegrationRequest``: where a raw

@@ -1,0 +1,32 @@
+[project]
+name = "sceneops-integrations"
+version = "0.1.0"
+description = "SDK-bound external-dataset integration runtimes for SceneOps (SceneOps V2 Request 4.4/4.5)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+]
+
+# This package hosts the SDK-bound side of the frozen IntegrationRequest/
+# IntegrationResult contract (sceneops_core.integration_runtime, Request
+# 4.1/4.1A) -- currently sceneops_integrations.nuscenes (INGEST). It
+# deliberately never declares the external SDK itself (nuscenes-devkit,
+# ...) as a dependency here, matching packages/sceneops-analytics not
+# declaring `lerobot`: every SDK import inside this package is lazy (done
+# only inside the function that actually needs it), so this package stays
+# importable from any environment -- the main workspace venv, or an
+# isolated integration project (tools/nuscenes-integration/) that installs
+# the SDK on top of this package via an editable path source. Whether the
+# SDK-touching code in it actually *runs* depends entirely on what
+# environment installed it, never on what this package declares.
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-storage = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_integrations"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

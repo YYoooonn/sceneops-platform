@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_core.observations.schemas import RawLogFrameIndex, RawLogManifest
-from sceneops_worker.integrations.nuscenes.raw_log import (
+from sceneops_integrations.nuscenes.raw_log import (
     is_object_storage_uri,
     read_nuscenes_raw_log,
 )
@@ -12,13 +12,18 @@ _TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
 
 
 class NuScenesRawLogMocker:
-    """Worker-side ``RawLogAdapter`` for nuScenes (SceneOps V2 Request 4.4).
+    """Worker-side ``RawLogAdapter`` for nuScenes (SceneOps V2 Request 4.4,
+    SDK-bound implementation isolated into its own package/container in
+    Request 4.5).
 
     Implements the ``RawLogAdapter`` interface so ``BuildScenesJobHandler``
     can treat it identically to any other raw log source. The SDK-bound
-    parsing itself now lives in
-    ``sceneops_worker.integrations.nuscenes.raw_log.read_nuscenes_raw_log``
-    -- this class is a thin adapter that:
+    parsing itself lives in ``sceneops_integrations.nuscenes.raw_log.
+    read_nuscenes_raw_log`` -- a separate workspace package
+    (``packages/sceneops-integrations``) with no ``nuscenes-devkit``
+    dependency of its own (imported lazily inside that function), so this
+    class's own module never needs ``nuscenes-devkit`` importable at module
+    scope. This class is a thin adapter that:
 
     * resolves ``params['source_format_version']``/
       ``params['max_source_sequences']`` (the ``RawLogAdapter`` protocol's
@@ -32,8 +37,19 @@ class NuScenesRawLogMocker:
 
     Behavior (traversal order, timestamp semantics, metadata fields,
     manifest/frame-index content, the object-storage guard) is unchanged
-    from before this extraction -- see ``raw_log.py`` for the preserved
-    logic itself.
+    from before this extraction -- see ``sceneops_integrations.nuscenes.
+    raw_log`` for the preserved logic itself.
+
+    Kept in-process (as opposed to shelling out to
+    ``tools/nuscenes-integration``'s container) as a Request 4.5 §5
+    transitional compatibility path: ``BuildScenesJobHandler`` still calls
+    this class directly today. The generic execution model that would let
+    the worker invoke the container instead (build an ``IntegrationRequest``,
+    run it out-of-process, consume its ``IntegrationResult``) is Request
+    4.6's job -- this class exists so that transition doesn't require a
+    second nuScenes-parsing implementation in the meantime; it already
+    calls the exact same ``sceneops_integrations.nuscenes`` code the
+    container's entrypoint does.
     """
 
     def __init__(

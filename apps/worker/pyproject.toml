@@ -8,6 +8,19 @@ dependencies = [
     "sceneops-db",
     "sceneops-storage",
     "sceneops-analytics",
+    "sceneops-integrations",
+    # SceneOps V2 Request 4.5: the raw-log ingestion path
+    # (NuScenesRawLogMocker) no longer needs nuscenes-devkit directly --
+    # it delegates to sceneops_integrations.nuscenes (above), which is
+    # importable without the SDK installed at all. This pin remains
+    # SOLELY because sceneops_worker.jobs.dataset.ingest_scenes
+    # (_ingest_nuscenes_scenes) and sceneops_worker.datasets.ingestion.
+    # nuscenes_scene (build_scene_manifest) -- the separate legacy/direct
+    # SceneManifest ingestion path, JobType.INGEST_SCENES -- still call
+    # `from nuscenes.nuscenes import NuScenes` directly inside apps/worker.
+    # Removing this pin requires migrating or retiring that path too,
+    # which Request 4.5 explicitly leaves out of scope (see its own
+    # deliverable report).
     "nuscenes-devkit",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
@@ -36,6 +49,7 @@ sceneops-core = { workspace = true }
 sceneops-db = { workspace = true }
 sceneops-storage = { workspace = true }
 sceneops-analytics = { workspace = true }
+sceneops-integrations = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["sceneops_worker"]
