@@ -100,6 +100,13 @@ echo "--- 2. Run the container (isolated nuScenes image, no DB access) ---"
 # ArtifactStore configuration (entrypoint.py's NuScenesContainerSettings),
 # never a hardcoded backend inside the entrypoint. MinIO is simply what
 # this smoke test's local stack provides.
+#
+# SceneOps V2 Request 4.6A: this image's default command now starts the
+# HTTP service (sceneops_integrations.nuscenes.service, what the worker
+# calls in production, compose/integrations.yaml). This smoke test
+# deliberately still exercises the CLI entrypoint instead (Request 4.6A
+# §5 -- "do not delete the existing container CLI entrypoint or container
+# smoke paths") by overriding the container's command.
 docker run --rm \
   --network "$NUSCENES_CONTAINER_NETWORK" \
   -e SCENEOPS_INTEGRATION_ARTIFACT__BACKEND="minio" \
@@ -109,6 +116,7 @@ docker run --rm \
   -e SCENEOPS_INTEGRATION_ARTIFACT__SECRET_ACCESS_KEY="$MINIO_ROOT_PASSWORD" \
   -v "$REPO_ROOT/data:/data" \
   "$NUSCENES_CONTAINER_IMAGE" \
+  -m sceneops_integrations.nuscenes.entrypoint \
   --request-file "/data/runs/nuscenes-container-smoke/_io/request.json" \
   --output-file "/data/runs/nuscenes-container-smoke/_io/result.json" \
   --raw-log-id "$RAW_LOG_ID" \

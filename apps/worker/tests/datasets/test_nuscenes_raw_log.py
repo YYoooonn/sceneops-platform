@@ -1,227 +1,220 @@
-"""Tests for NuScenesRawLogMocker object-storage guard (R4A).
+"""Tests for build_nuscenes_ingest_request / build_nuscenes_http_config /
+build_nuscenes_container_config (SceneOps V2 Request 4.6/4.6A): the
+nuScenes-specific glue between BuildScenesJobHandler and the generic
+IntegrationExecutor.
 
 Covers:
-- _is_object_storage_uri: recognises s3://, gs://, gcs://, minio://, az://, abfs://
-- _is_object_storage_uri: local paths return False
-- build_raw_log raises NotImplementedError for all object-storage schemes
-- error message includes the received URI
-- build_raw_log reaches NuScenes SDK for local paths (guard does not block)
+- build_nuscenes_ingest_request: operation/format/canonical identity,
+  max_source_sequences only present in config when provided;
+- build_nuscenes_http_config (PRODUCTION, Request 4.6A): base_url from
+  settings.integration_execution.nuscenes_service_url, raw_log_id/
+  manifest_uri/frame_index_uri as extra_query_params;
+- build_nuscenes_container_config (LOCAL/DEV ONLY): image/network/volumes/
+  extra_args wiring from WorkerSettings, ArtifactSettings translated into
+  container env, and the clear failure when host_data_root isn't
+  configured (no silent fallback to a guessed path).
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
+from sceneops_core.config import (
+    ArtifactBackend,
+    ArtifactSettings,
+    IntegrationExecutionSettings,
+)
+from sceneops_core.integration_runtime import IntegrationOperation
 
-from sceneops_worker.datasets.ingestion.nuscenes_raw_log import NuScenesRawLogMocker
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-
-def _make_mocker(source_root_uri: str) -> NuScenesRawLogMocker:
-    return NuScenesRawLogMocker(
-        source_store=MagicMock(),
-        source_root_uri=source_root_uri,
-        observation_store=MagicMock(),
-        required_channels={"CAM_FRONT", "LIDAR_TOP"},
-    )
-
-
-_BUILD_RAW_LOG_KWARGS = dict(
-    dataset_id="test-e2e-raw-log",
-    dataset_version="test-v1",
-    raw_log_id="log-001",
-    version_root_uri="s3://root/",
-    params={"source_format_version": "v1.0-mini"},
+from sceneops_worker.config import WorkerSettings
+from sceneops_worker.datasets.ingestion.nuscenes_raw_log import (
+    build_nuscenes_container_config,
+    build_nuscenes_http_config,
+    build_nuscenes_ingest_request,
 )
 
 
-# ── _is_object_storage_uri ────────────────────────────────────────────────────
+# ── build_nuscenes_ingest_request ───────────────────────────────────────────
 
 
-class TestIsObjectStorageUri:
-    @pytest.mark.parametrize(
-        "uri",
-        [
-            "s3://sceneops/raw/nuscenes",
-            "s3://bucket/path/to/data",
-            "gs://bucket/raw/nuscenes",
-            "gcs://bucket/raw/nuscenes",
-            "minio://sceneops/raw/nuscenes",
-            "az://container/raw",
-            "abfs://container@account.dfs.core.windows.net/raw",
-        ],
-    )
-    def test_object_storage_uris_return_true(self, uri: str) -> None:
-        assert NuScenesRawLogMocker._is_object_storage_uri(uri) is True
-
-    @pytest.mark.parametrize(
-        "uri",
-        [
-            "/data/raw/nuscenes",
-            "/data/raw/nuscenes/v1.0-mini",
-            "file:///data/raw/nuscenes",
-            "./relative/path",
-            "data/raw/nuscenes",
-            "",
-        ],
-    )
-    def test_local_uris_return_false(self, uri: str) -> None:
-        assert NuScenesRawLogMocker._is_object_storage_uri(uri) is False
-
-
-# ── build_raw_log: object-storage guard ──────────────────────────────────────
-
-
-class TestBuildRawLogObjectStorageGuard:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "uri",
-        [
-            "s3://sceneops/raw/nuscenes",
-            "gs://bucket/raw/nuscenes",
-            "gcs://bucket/raw/nuscenes",
-            "minio://sceneops/raw/nuscenes",
-        ],
-    )
-    async def test_raises_not_implemented_for_object_storage(self, uri: str) -> None:
-        mocker = _make_mocker(uri)
-        with pytest.raises(NotImplementedError):
-            await mocker.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
-
-    @pytest.mark.asyncio
-    async def test_error_message_contains_received_uri(self) -> None:
-        uri = "s3://sceneops/raw/nuscenes"
-        mocker = _make_mocker(uri)
-        with pytest.raises(NotImplementedError, match=uri):
-            await mocker.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
-
-    @pytest.mark.asyncio
-    async def test_error_message_explains_local_required(self) -> None:
-        mocker = _make_mocker("s3://bucket/raw")
-        with pytest.raises(NotImplementedError, match="local filesystem"):
-            await mocker.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
-
-    @pytest.mark.asyncio
-    async def test_nuscenes_sdk_not_called_for_object_storage(self) -> None:
-        # NuScenes is imported lazily inside build_raw_log; patch at source module.
-        mocker = _make_mocker("s3://sceneops/raw/nuscenes")
-        with patch("nuscenes.nuscenes.NuScenes") as MockNuScenes:
-            with pytest.raises(NotImplementedError):
-                await mocker.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
-        MockNuScenes.assert_not_called()
-
-
-# ── build_raw_log: local path reaches SDK ────────────────────────────────────
-
-
-class TestBuildRawLogLocalPath:
-    @pytest.mark.asyncio
-    async def test_local_path_reaches_nuscenes_sdk(self) -> None:
-        """Guard does not block local paths; NuScenes SDK constructor is called."""
-        mocker = _make_mocker("/data/raw/nuscenes")
-
-        mock_obs_store = AsyncMock()
-        mock_obs_store.raw_log_manifest_uri = MagicMock(
-            return_value="s3://root/manifest.json"
+class TestBuildNuscenesIngestRequest:
+    def test_operation_and_format(self) -> None:
+        request = build_nuscenes_ingest_request(
+            dataset_id="ds-001",
+            dataset_version="v1",
+            source_root_uri="/data/raw/nuscenes",
+            source_format_version="v1.0-mini",
         )
-        mock_obs_store.raw_frame_index_uri = MagicMock(
-            return_value="s3://root/frames.json"
+        assert request.operation is IntegrationOperation.INGEST
+        assert request.external_ref.format == "nuscenes"
+        assert request.external_ref.format_version == "v1.0-mini"
+        assert request.external_ref.uri == "/data/raw/nuscenes"
+
+    def test_canonical_identity_never_conflated_with_source_version(self) -> None:
+        """dataset_version (canonical) and source_format_version (nuScenes
+        SDK's own on-disk version) must land in different fields -- Request
+        3.2B/3.2B.1's separation, still true through the generic executor."""
+        request = build_nuscenes_ingest_request(
+            dataset_id="ds-001",
+            dataset_version="test-v1",
+            source_root_uri="/data/raw/nuscenes",
+            source_format_version="v1.0-mini",
         )
-        mock_obs_store.save_raw_log_manifest = AsyncMock()
-        mock_obs_store.save_raw_frame_index = AsyncMock()
-
-        mocker._observation_store = mock_obs_store
-
-        mock_nusc = MagicMock()
-        mock_nusc.scene = []
-
-        with patch(
-            "nuscenes.nuscenes.NuScenes",
-            return_value=mock_nusc,
-        ) as MockNuScenes:
-            await mocker.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
-
-        MockNuScenes.assert_called_once_with(
-            version="v1.0-mini",
-            dataroot="/data/raw/nuscenes",
-            verbose=False,
+        assert request.canonical_ref.dataset_version == "test-v1"
+        assert request.external_ref.format_version == "v1.0-mini"
+        assert (
+            request.canonical_ref.dataset_version != request.external_ref.format_version
         )
 
+    def test_max_source_sequences_omitted_when_none(self) -> None:
+        request = build_nuscenes_ingest_request(
+            dataset_id="ds-001",
+            dataset_version="v1",
+            source_root_uri="/data/raw/nuscenes",
+            source_format_version="v1.0-mini",
+        )
+        assert "max_source_sequences" not in request.config
 
-# ── build_raw_log: canonical dataset_version vs. source_format_version ──────
-# SceneOps V2 Request 3.2B.1: dataset_version is SceneOps' own canonical
-# DatasetVersion identity; source_format_version (a required key in the
-# params dict) is the nuScenes SDK's own on-disk version folder name. They
-# must never be conflated, and there is no fallback from one to the other.
+    def test_max_source_sequences_present_when_given(self) -> None:
+        request = build_nuscenes_ingest_request(
+            dataset_id="ds-001",
+            dataset_version="v1",
+            source_root_uri="/data/raw/nuscenes",
+            source_format_version="v1.0-mini",
+            max_source_sequences=3,
+        )
+        assert request.config["max_source_sequences"] == 3
 
 
-class TestBuildRawLogSourceFormatVersion:
-    @pytest.mark.asyncio
-    async def test_missing_source_format_version_raises_clear_error(self) -> None:
-        """No fallback: an absent source_format_version must fail clearly,
-        never silently reuse dataset_version."""
-        mocker = _make_mocker("/data/raw/nuscenes")
+# ── build_nuscenes_container_config ─────────────────────────────────────────
 
-        with patch("nuscenes.nuscenes.NuScenes") as MockNuScenes:
-            with pytest.raises(ValueError, match="source_format_version"):
-                await mocker.build_raw_log(
-                    dataset_id="test-e2e-raw-log",
-                    dataset_version="test-v1",
-                    raw_log_id="log-001",
-                    version_root_uri="s3://root/",
-                    params={},
-                )
-        MockNuScenes.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_empty_string_source_format_version_also_raises(self) -> None:
-        mocker = _make_mocker("/data/raw/nuscenes")
+def _settings(*, host_data_root: str | None = "/host/data") -> WorkerSettings:
+    return WorkerSettings(
+        artifact=ArtifactSettings(
+            backend=ArtifactBackend.MINIO,
+            root_uri="s3://sceneops/artifacts",
+            endpoint_url="http://minio:9000",
+            access_key_id="minioadmin",
+            secret_access_key="minioadmin",
+        ),
+        integration_execution=IntegrationExecutionSettings(
+            nuscenes_service_url="http://nuscenes-integration:8080",
+            nuscenes_image="sceneops-platform/nuscenes-integration:local",
+            docker_network="sceneops-network",
+            host_data_root=host_data_root,
+            io_root_uri="/data/runs/integration-exec",
+        ),
+    )
 
-        with patch("nuscenes.nuscenes.NuScenes") as MockNuScenes:
-            with pytest.raises(ValueError, match="source_format_version"):
-                await mocker.build_raw_log(
-                    dataset_id="test-e2e-raw-log",
-                    dataset_version="test-v1",
-                    raw_log_id="log-001",
-                    version_root_uri="s3://root/",
-                    params={"source_format_version": ""},
-                )
-        MockNuScenes.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_uses_source_format_version_when_present_not_dataset_version(
-        self,
-    ) -> None:
-        """The SDK must receive the external source version, never the
-        SceneOps canonical dataset_version, once source_format_version is
-        explicitly set."""
-        mocker = _make_mocker("/data/raw/nuscenes")
-        mock_obs_store = AsyncMock()
-        mock_obs_store.raw_log_manifest_uri = MagicMock(return_value="s3://root/m.json")
-        mock_obs_store.raw_frame_index_uri = MagicMock(return_value="s3://root/f.json")
-        mock_obs_store.save_raw_log_manifest = AsyncMock()
-        mock_obs_store.save_raw_frame_index = AsyncMock()
-        mocker._observation_store = mock_obs_store
+# ── build_nuscenes_http_config (PRODUCTION, Request 4.6A) ───────────────────
 
-        mock_nusc = MagicMock()
-        mock_nusc.scene = []
 
-        with patch(
-            "nuscenes.nuscenes.NuScenes", return_value=mock_nusc
-        ) as MockNuScenes:
-            await mocker.build_raw_log(
-                dataset_id="test-e2e-raw-log",
-                dataset_version="test-v1",
+class TestBuildNuscenesHttpConfig:
+    def test_base_url_from_settings(self) -> None:
+        config = build_nuscenes_http_config(
+            settings=_settings(),
+            raw_log_id="log-001",
+            manifest_uri="s3://x/manifest.json",
+            frame_index_uri="s3://x/frames.json",
+        )
+        assert config.base_url == "http://nuscenes-integration:8080"
+
+    def test_extra_query_params_carry_raw_log_id_and_destination_uris(self) -> None:
+        config = build_nuscenes_http_config(
+            settings=_settings(),
+            raw_log_id="log-001",
+            manifest_uri="s3://x/manifest.json",
+            frame_index_uri="s3://x/frames.json",
+        )
+        assert config.extra_query_params == {
+            "raw_log_id": "log-001",
+            "manifest_uri": "s3://x/manifest.json",
+            "frame_index_uri": "s3://x/frames.json",
+        }
+
+    def test_no_host_data_root_required(self) -> None:
+        """Unlike the container backend, the HTTP backend needs no
+        Docker-outside-of-Docker path translation at all."""
+        config = build_nuscenes_http_config(
+            settings=_settings(host_data_root=None),
+            raw_log_id="log-001",
+            manifest_uri="s3://x/manifest.json",
+            frame_index_uri="s3://x/frames.json",
+        )
+        assert config.base_url == "http://nuscenes-integration:8080"
+
+
+# ── build_nuscenes_container_config (LOCAL/DEV ONLY) ─────────────────────────
+
+
+class TestBuildNuscenesContainerConfig:
+    def test_image_and_network_from_settings(self) -> None:
+        config = build_nuscenes_container_config(
+            settings=_settings(),
+            raw_log_id="log-001",
+            manifest_uri="s3://sceneops/artifacts/raw/log-001/raw_log.json",
+            frame_index_uri="s3://sceneops/artifacts/raw/log-001/frames.json",
+        )
+        assert config.image == "sceneops-platform/nuscenes-integration:local"
+        assert config.network == "sceneops-network"
+
+    def test_volume_maps_host_data_root_to_slash_data(self) -> None:
+        config = build_nuscenes_container_config(
+            settings=_settings(host_data_root="/host/data"),
+            raw_log_id="log-001",
+            manifest_uri="s3://x/manifest.json",
+            frame_index_uri="s3://x/frames.json",
+        )
+        assert config.volumes == (("/host/data", "/data"),)
+
+    def test_io_dir_scoped_by_raw_log_id(self) -> None:
+        config = build_nuscenes_container_config(
+            settings=_settings(),
+            raw_log_id="log-A",
+            manifest_uri="s3://x/manifest.json",
+            frame_index_uri="s3://x/frames.json",
+        )
+        assert config.io_dir == "/data/runs/integration-exec/log-A"
+
+    def test_extra_args_carry_raw_log_id_and_destination_uris(self) -> None:
+        config = build_nuscenes_container_config(
+            settings=_settings(),
+            raw_log_id="log-001",
+            manifest_uri="s3://x/manifest.json",
+            frame_index_uri="s3://x/frames.json",
+        )
+        assert config.extra_args == (
+            "--raw-log-id",
+            "log-001",
+            "--manifest-uri",
+            "s3://x/manifest.json",
+            "--frame-index-uri",
+            "s3://x/frames.json",
+        )
+
+    def test_env_translated_from_worker_artifact_settings(self) -> None:
+        config = build_nuscenes_container_config(
+            settings=_settings(),
+            raw_log_id="log-001",
+            manifest_uri="s3://x/manifest.json",
+            frame_index_uri="s3://x/frames.json",
+        )
+        assert config.env["SCENEOPS_INTEGRATION_ARTIFACT__BACKEND"] == "minio"
+        assert (
+            config.env["SCENEOPS_INTEGRATION_ARTIFACT__ROOT_URI"]
+            == "s3://sceneops/artifacts"
+        )
+        assert (
+            config.env["SCENEOPS_INTEGRATION_ARTIFACT__ENDPOINT_URL"]
+            == "http://minio:9000"
+        )
+
+    def test_missing_host_data_root_raises_clearly(self) -> None:
+        with pytest.raises(ValueError, match="host_data_root"):
+            build_nuscenes_container_config(
+                settings=_settings(host_data_root=None),
                 raw_log_id="log-001",
-                version_root_uri="s3://root/",
-                params={"source_format_version": "v1.0-mini"},
+                manifest_uri="s3://x/manifest.json",
+                frame_index_uri="s3://x/frames.json",
             )
-
-        MockNuScenes.assert_called_once_with(
-            version="v1.0-mini",
-            dataroot="/data/raw/nuscenes",
-            verbose=False,
-        )

@@ -15,15 +15,16 @@ local-up: prepare-data
 	$(COMPOSE) --profile tools run --rm minio-init
 	@echo "--- running migrations (idempotent) ---"
 	$(MAKE) db-migrate
-	@echo "--- starting api + workers ---"
+	@echo "--- starting api + integration services + workers ---"
 	$(COMPOSE) up -d --wait api
+	$(COMPOSE) up -d --wait nuscenes-integration
 	$(COMPOSE) up -d worker-pipeline worker-jobs
 	@echo "--- local-up complete ---"
 
 .PHONY: local-down
 local-down:
-	$(COMPOSE) --profile worker stop api worker-pipeline worker-jobs postgres redis minio
-	$(COMPOSE) --profile worker rm -f api worker-pipeline worker-jobs postgres redis minio
+	$(COMPOSE) --profile worker stop api worker-pipeline worker-jobs nuscenes-integration postgres redis minio
+	$(COMPOSE) --profile worker rm -f api worker-pipeline worker-jobs nuscenes-integration postgres redis minio
 	@echo "Services stopped. Postgres/Redis/MinIO data preserved."
 	@echo "Use 'make local-reset' to delete local data instead."
 
@@ -37,7 +38,7 @@ local-reset:
 
 .PHONY: logs
 logs:
-	$(COMPOSE) --profile worker logs -f postgres redis minio api worker-pipeline worker-jobs
+	$(COMPOSE) --profile worker logs -f postgres redis minio api nuscenes-integration worker-pipeline worker-jobs
 
 .PHONY: status
 status:

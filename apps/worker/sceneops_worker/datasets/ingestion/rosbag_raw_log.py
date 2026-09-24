@@ -156,10 +156,13 @@ class _BagContents:
 class RosbagAdapter:
     """Reads an MCAP-recorded rosbag2 file into generic raw log artifacts.
 
-    Implements the same ``RawLogAdapter`` interface as ``NuScenesRawLogMocker``
-    (see ``base.RawLogAdapter``) so ``BuildScenesJobHandler`` treats a robot
-    rosbag identically to any other raw log source — no changes needed to the
-    scene-building pipeline itself (docs/workflows/robot-run-and-mcap.md §3).
+    Implements the ``RawLogAdapter`` interface (see ``base.RawLogAdapter``)
+    so ``BuildScenesJobHandler`` treats a robot rosbag identically to any
+    other in-process raw log source — no changes needed to the
+    scene-building pipeline itself (docs/workflows/robot-run-and-mcap.md
+    §3). nuScenes no longer goes through this same interface -- it runs
+    through the generic IntegrationExecutor against an isolated container
+    instead (SceneOps V2 Request 4.6).
 
     Decodes two message encodings:
 

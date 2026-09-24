@@ -6,6 +6,8 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
   "sceneops-core",
   "sceneops-storage",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
 ]
 
 # This package hosts the SDK-bound side of the frozen IntegrationRequest/
@@ -20,6 +22,12 @@ dependencies = [
 # the SDK on top of this package via an editable path source. Whether the
 # SDK-touching code in it actually *runs* depends entirely on what
 # environment installed it, never on what this package declares.
+#
+# fastapi/uvicorn ARE declared here directly (unlike the SDK): they're the
+# HTTP transport itself (SceneOps V2 Request 4.6A, service.py), not
+# format-specific, and matching apps/api's own pins keeps one version
+# across the repo. They were already part of the root uv.lock via apps/api
+# before this package added them.
 [tool.uv.sources]
 sceneops-core = { workspace = true }
 sceneops-storage = { workspace = true }

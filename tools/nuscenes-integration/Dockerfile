@@ -1,9 +1,19 @@
-# nuScenes integration container (SceneOps V2 Request 4.5).
+# nuScenes integration container (SceneOps V2 Request 4.5, HTTP transport
+# in Request 4.6A).
 #
 # Executes the frozen IntegrationRequest -> IntegrationResult contract
 # (sceneops_core.integration_runtime, Request 4.1/4.1A) against
-# sceneops_integrations.nuscenes.entrypoint -- operation=INGEST/
-# format=nuscenes only.
+# sceneops_integrations.nuscenes -- operation=INGEST/format=nuscenes only.
+#
+# Two entrypoints share this one image (Request 4.6A §5 -- the CLI path is
+# kept, not deleted):
+#   default command  -> HTTP service (service.py), what the worker calls
+#                        in production (compose/integrations.yaml)
+#   overridden command -> CLI entrypoint (entrypoint.py), used by
+#                        `make nuscenes-container-smoke` and direct local
+#                        debugging: `docker run <image> -m
+#                        sceneops_integrations.nuscenes.entrypoint
+#                        --request-file ... --raw-log-id ... ...`
 #
 # Built with its OWN committed uv.lock (this directory), never the root
 # workspace's -- see pyproject.toml's own comment for why this project
@@ -63,4 +73,10 @@ RUN uv sync --frozen --no-dev
 # --no-sync: the venv above is already exactly what the committed
 # uv.lock/--no-dev build produced -- never re-check or mutate it (no
 # network access, no dev-group drift) on every container run.
-ENTRYPOINT ["uv", "run", "--no-sync", "python", "-m", "sceneops_integrations.nuscenes.entrypoint"]
+#
+# ENTRYPOINT has no module baked in (unlike Request 4.5) so CMD can be
+# overridden wholesale to switch between the HTTP service (default, what
+# compose/integrations.yaml runs) and the CLI entrypoint (smoke/debug,
+# `docker run <image> -m sceneops_integrations.nuscenes.entrypoint ...`).
+ENTRYPOINT ["uv", "run", "--no-sync", "python"]
+CMD ["-m", "uvicorn", "sceneops_integrations.nuscenes.service:app", "--host", "0.0.0.0", "--port", "8080"]

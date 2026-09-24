@@ -10,6 +10,7 @@ from sceneops_core.config import (
     ArtifactSettings,
     DefaultDatasetSettings,
     ExecutionSettings,
+    IntegrationExecutionSettings,
     RawSourceSettings,
     WorkerRuntimeSettings,
 )
@@ -37,6 +38,9 @@ class WorkerSettings(BaseSettings):
     )
     execution: ExecutionSettings = Field(
         default_factory=ExecutionSettings,
+    )
+    integration_execution: IntegrationExecutionSettings = Field(
+        default_factory=IntegrationExecutionSettings,
     )
 
     @property

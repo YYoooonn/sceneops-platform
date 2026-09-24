@@ -105,6 +105,48 @@ class ExecutionSettings(BaseModel):
     airflow: AirflowSettings = Field(default_factory=AirflowSettings)
 
 
+class IntegrationExecutionSettings(BaseModel):
+    """Configuration for invoking isolated integration runtimes from the
+    worker (SceneOps V2 Request 4.6/4.6A) -- explicit and swappable per
+    environment, never a scattered conditional. Credentials/backend
+    selection for a runtime's OWN ArtifactStore are never duplicated here
+    -- they're translated from this worker's own ArtifactSettings into
+    SCENEOPS_INTEGRATION_ARTIFACT__* environment variables at call time
+    (apps/worker/sceneops_worker/integration_execution/{http,container}.py).
+
+    ``nuscenes_service_url`` is the production routing config (Request
+    4.6A §3/§6): the worker's ``HttpIntegrationExecutor`` reaches the
+    nuScenes integration runtime as a plain internal HTTP service on the
+    SceneOps network (``compose/integrations.yaml``'s ``nuscenes-
+    integration`` service), resolved by service name -- never by
+    controlling Docker. A future LeRobot (or other) integration would add
+    its own ``<name>_service_url`` field here, not a registry/plugin
+    system.
+
+    ``nuscenes_image``/``docker_network``/``host_data_root``/
+    ``io_root_uri`` remain for ``ContainerIntegrationExecutor`` (Request
+    4.6), now a LOCAL/DEV-ONLY backend (``make nuscenes-container-smoke``,
+    direct runtime debugging) -- not the worker's production path since
+    Request 4.6A. ``host_data_root``/``io_root_uri`` exist only because
+    that backend runs `docker run` from inside an already-containerized
+    worker (Docker-outside-of-Docker): a sibling container's ``-v
+    host:container`` mount is resolved by the Docker daemon against the
+    HOST filesystem, never the calling container's own view of it, even
+    though the worker already sees the same content locally. A later
+    Kubernetes (or any other) executor implementing the same
+    ``IntegrationExecutor`` protocol would use its own config shape --
+    nothing about ``IntegrationRequest``/``IntegrationResult`` depends on
+    Docker, HTTP, or any field here.
+    """
+
+    nuscenes_service_url: str = "http://nuscenes-integration:8080"
+
+    nuscenes_image: str = "sceneops-platform/nuscenes-integration:local"
+    docker_network: str | None = "sceneops-network"
+    host_data_root: str | None = None
+    io_root_uri: str = "/data/runs/integration-exec"
+
+
 def join_uri(root: str, *parts: str) -> str:
     normalized_root = root.rstrip("/")
     normalized_parts = [part.strip("/") for part in parts if part.strip("/")]

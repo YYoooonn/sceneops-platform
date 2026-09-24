@@ -98,10 +98,11 @@ class NuScenesContainerSettings(BaseSettings):
     artifact: ArtifactSettings = Field(default_factory=ArtifactSettings)
 
 
-def _build_artifact_store():
+def build_artifact_store():
     """Backend/credentials come entirely from ``NuScenesContainerSettings``
     (environment variables) -- never hardcoded here, never a field on
-    ``IntegrationRequest``."""
+    ``IntegrationRequest``. Shared with ``service.py`` (Request 4.6A) --
+    both transports (CLI, HTTP) select their ArtifactStore the same way."""
     return create_artifact_store(NuScenesContainerSettings().artifact)
 
 
@@ -123,7 +124,7 @@ async def _run(
     except ValidationError as exc:
         raise IntegrationRuntimeError(f"invalid IntegrationRequest: {exc}") from exc
 
-    artifact_store = _build_artifact_store()
+    artifact_store = build_artifact_store()
     result = await execute(
         request,
         artifact_store=artifact_store,

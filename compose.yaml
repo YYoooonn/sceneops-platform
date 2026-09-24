@@ -3,6 +3,8 @@ name: sceneops
 include:
   - path: ./compose/core.yaml
     project_directory: .
+  - path: ./compose/integrations.yaml
+    project_directory: .
   - path: ./compose/workers.yaml
     project_directory: .
   - path: ./compose/inference.yaml

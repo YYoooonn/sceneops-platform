@@ -2004,14 +2004,18 @@ name = "sceneops-integrations"
 version = "0.1.0"
 source = { editable = "packages/sceneops-integrations" }
 dependencies = [
+    { name = "fastapi" },
     { name = "sceneops-core" },
     { name = "sceneops-storage" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.110" },
     { name = "sceneops-core", editable = "packages/sceneops-core" },
     { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 
 [[package]]
