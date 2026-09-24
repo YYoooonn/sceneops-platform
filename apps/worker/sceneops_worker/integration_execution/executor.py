@@ -28,7 +28,7 @@ somewhere isolated, and get back a validated ``IntegrationResult`` or a
 clear failure. Everything format-specific -- which extra CLI args a
 runtime needs, which artifact keys it produces, what its config dict
 means -- stays entirely outside this interface, built by the caller
-(``sceneops_worker.datasets.ingestion.nuscenes_raw_log`` for nuScenes)
+(``sceneops_worker.datasets.ingestion.nuscenes_ingestion`` for nuScenes)
 before ``execute()`` is ever called.
 """
 

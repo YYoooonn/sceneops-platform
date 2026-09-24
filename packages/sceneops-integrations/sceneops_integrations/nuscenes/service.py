@@ -1,11 +1,12 @@
 """HTTP transport for the nuScenes INGEST integration runtime (SceneOps V2
-Request 4.6A).
+Request 4.6A, second capability added in 4.6B).
 
 ::
 
-    POST /execute?raw_log_id=...&manifest_uri=...&frame_index_uri=...
+    POST /execute?raw_log_id=...&manifest_uri=...&frame_index_uri=...              (mode=raw_log)
+    POST /execute?scene_manifest_root_uri=...                                       (mode=scene_manifest)
     body: IntegrationRequest JSON
-            -> execute()                      (runtime.py, unchanged)
+            -> execute()                      (runtime.py, mode dispatch)
             -> nuscenes-devkit read + ArtifactStore write
     <- IntegrationResult JSON (200) | error detail (4xx/5xx)
 
@@ -65,22 +66,36 @@ async def health() -> dict[str, str]:
 @app.post("/execute", response_model=IntegrationResult)
 async def execute_endpoint(
     request: IntegrationRequest,
-    raw_log_id: str = Query(
-        ..., description="Caller-assigned raw log identity (scopes destination URIs)."
+    raw_log_id: str | None = Query(
+        default=None,
+        description="mode=raw_log only: caller-assigned raw log identity "
+        "(scopes the two destination URIs below).",
     ),
-    manifest_uri: str = Query(
-        ..., description="Destination ArtifactStore URI for the RawLogManifest."
+    manifest_uri: str | None = Query(
+        default=None,
+        description="mode=raw_log only: destination ArtifactStore URI for "
+        "the RawLogManifest.",
     ),
-    frame_index_uri: str = Query(
-        ..., description="Destination ArtifactStore URI for the RawLogFrameIndex."
+    frame_index_uri: str | None = Query(
+        default=None,
+        description="mode=raw_log only: destination ArtifactStore URI for "
+        "the RawLogFrameIndex.",
+    ),
+    scene_manifest_root_uri: str | None = Query(
+        default=None,
+        description="mode=scene_manifest only (Request 4.6B): destination "
+        "ArtifactStore prefix each ingested scene's SceneManifest is "
+        "written under as <scene_id>.json.",
     ),
 ) -> IntegrationResult:
     """Synchronous execute: request in, result out, no intermediate state.
-    ``raw_log_id``/``manifest_uri``/``frame_index_uri`` are query
-    parameters rather than IntegrationRequest fields for the same reason
-    they were separate CLI flags in ``entrypoint.py`` -- destination-URI
-    layout is caller-owned policy, not part of the frozen contract
-    (``runtime.py``'s own docstring)."""
+    All four destination params are query parameters rather than
+    IntegrationRequest fields for the same reason they were CLI flags in
+    ``entrypoint.py`` -- destination-URI layout is caller-owned policy, not
+    part of the frozen contract (``runtime.py``'s own docstring). Which
+    ones are actually required depends on the request's own
+    ``config["mode"]``; ``runtime.execute`` enforces that, not this
+    endpoint."""
     try:
         artifact_store = build_artifact_store()
         return await execute(
@@ -89,6 +104,7 @@ async def execute_endpoint(
             raw_log_id=raw_log_id,
             manifest_uri=manifest_uri,
             frame_index_uri=frame_index_uri,
+            scene_manifest_root_uri=scene_manifest_root_uri,
         )
     except IntegrationRuntimeError as exc:
         # A clear, expected runtime-level rejection (unsupported

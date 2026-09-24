@@ -29,6 +29,18 @@ class SceneArtifactStore:
             dataset_version,
         )
 
+    def scenes_root_uri(self, *, dataset_id: str, dataset_version: str) -> str:
+        """The ``scenes/`` prefix every ``scene_manifest_uri()`` result
+        lives under -- exposed so a caller that doesn't yet know individual
+        scene_ids (SceneOps V2 Request 4.6B: the nuScenes integration
+        service discovers scene_ids itself while reading the source) can
+        still hand the isolated runtime a destination prefix that resolves
+        to the exact same URIs this store would compute per scene_id."""
+        version_root = self._version_root_uri(
+            dataset_id=dataset_id, dataset_version=dataset_version
+        )
+        return self.artifact_store.join_uri(version_root, "scenes")
+
     def scene_manifest_uri(
         self,
         *,
@@ -36,10 +48,12 @@ class SceneArtifactStore:
         dataset_version: str,
         scene_id: str,
     ) -> str:
-        version_root = self._version_root_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version
+        return self.artifact_store.join_uri(
+            self.scenes_root_uri(
+                dataset_id=dataset_id, dataset_version=dataset_version
+            ),
+            f"{scene_id}.json",
         )
-        return self.artifact_store.join_uri(version_root, "scenes", f"{scene_id}.json")
 
     def scene_index_uri(self, *, dataset_id: str, dataset_version: str) -> str:
         version_root = self._version_root_uri(

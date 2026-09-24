@@ -41,8 +41,10 @@ MODEL_VERSION   ?= v1
 # episode-curation. Canonical identity is never constrained by what an
 # external format's SDK happens to require: SOURCE_FORMAT_VERSION below is
 # the separate, real nuScenes SDK version (apps/worker/sceneops_worker/
-# jobs/dataset/ingest_scenes.py reads this, never dataset_version, when
-# constructing `nuscenes-devkit`'s NuScenes(...)`). Request 3.2A initially
+# jobs/dataset/ingest_scenes.py reads this, never dataset_version, and
+# passes it through to the isolated nuscenes-integration service's
+# `nuscenes-devkit` `NuScenes(...)` call as of Request 4.6B -- apps/worker
+# itself no longer imports nuscenes-devkit at all). Request 3.2A initially
 # had to keep DATASET_VERSION pinned to the real "v1.0-mini" here (found by
 # actually running `make e2e-pipeline-contracts` against a renamed version
 # and hitting "Database version not found: /data/raw/nuscenes/test-v1");

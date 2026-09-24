@@ -13,6 +13,10 @@ Covers:
   ever runs;
 - the service module never imports sceneops-db/celery/nuscenes at import
   time (same DB-free/Celery-free/lazy-SDK guarantee as runtime.py itself).
+
+As of Request 4.6B, ``nuscenes-devkit`` is no longer installed in the base
+workspace venv (see ``test_nuscenes_runtime.py``'s own docstring) -- this
+whole module is skipped, not failed, wherever the SDK isn't present.
 """
 
 from __future__ import annotations
@@ -20,10 +24,14 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
-from sceneops_storage.backends.local import LocalArtifactStore
+import pytest
 
-from sceneops_integrations.nuscenes.service import app
+nuscenes = pytest.importorskip("nuscenes")
+
+from fastapi.testclient import TestClient  # noqa: E402
+from sceneops_storage.backends.local import LocalArtifactStore  # noqa: E402
+
+from sceneops_integrations.nuscenes.service import app  # noqa: E402
 
 
 def _mock_nusc_empty() -> MagicMock:

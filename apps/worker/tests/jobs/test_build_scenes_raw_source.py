@@ -372,7 +372,7 @@ class TestNuscenesIngestDispatch:
                 return_value=mock_executor_instance,
             ) as MockExecutorClass,
             patch(
-                "sceneops_worker.datasets.ingestion.nuscenes_raw_log.build_nuscenes_http_config"
+                "sceneops_worker.datasets.ingestion.nuscenes_ingestion.build_nuscenes_http_config"
             ) as mock_build_config,
         ):
             mock_build_config.return_value = MagicMock()

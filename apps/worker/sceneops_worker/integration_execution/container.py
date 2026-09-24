@@ -75,7 +75,7 @@ def artifact_settings_to_env(
 class ContainerRuntimeConfig:
     """Explicit, minimal descriptor for one containerized integration
     runtime invocation (Request 4.6 §3/§8) -- built by the caller (e.g.
-    ``sceneops_worker.datasets.ingestion.nuscenes_raw_log`` for nuScenes),
+    ``sceneops_worker.datasets.ingestion.nuscenes_ingestion`` for nuScenes),
     never discovered or dispatched through a generic registry. This is
     configuration, not a plugin framework.
 
@@ -84,7 +84,7 @@ class ContainerRuntimeConfig:
     visible on the worker's own filesystem) and that also resolves, inside
     the launched container, to the same files -- which ``volumes`` is
     responsible for making true (see
-    ``sceneops_worker.datasets.ingestion.nuscenes_raw_log`` for how the
+    ``sceneops_worker.datasets.ingestion.nuscenes_ingestion`` for how the
     nuScenes case satisfies this via a single ``host_data_root:/data``
     mount, mirroring this worker's own ``./data:/data`` compose mount --
     Docker-outside-of-Docker: a sibling container's bind mount is resolved

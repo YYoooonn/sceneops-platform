@@ -302,7 +302,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             )
 
         # pylint: disable=import-outside-toplevel
-        from sceneops_worker.datasets.ingestion.nuscenes_raw_log import (
+        from sceneops_worker.datasets.ingestion.nuscenes_ingestion import (
             build_nuscenes_http_config,
             build_nuscenes_ingest_request,
         )

@@ -1,24 +1,33 @@
-"""nuScenes raw-log ingest, routed through the generic execution model
-(SceneOps V2 Request 4.6, HTTP transport in Request 4.6A).
+"""Both nuScenes INGEST capabilities, routed through the generic execution
+model (SceneOps V2 Request 4.6, HTTP transport in Request 4.6A):
 
 ::
 
-    BuildScenesJobHandler
-            -> build_nuscenes_ingest_request()   (this module)
-            -> build_nuscenes_http_config()       (this module, PRODUCTION)
+    BuildScenesJobHandler (raw-log -> BUILD_SCENES)
+            -> build_nuscenes_ingest_request()          (this module)
+            -> build_nuscenes_http_config()               (this module, PRODUCTION)
             -> HttpIntegrationExecutor.execute()
-            -> nuscenes-integration HTTP service
-            -> IntegrationResult
+            -> nuscenes-integration HTTP service (mode=raw_log)
+            -> IntegrationResult {"raw_log_manifest", "raw_log_frame_index"}
+
+    IngestScenesJobHandler (direct SceneManifest, with ground-truth
+    annotations -- Request 4.6B, migrated from the worker's own
+    in-process _ingest_nuscenes_scenes/build_scene_manifest)
+            -> build_nuscenes_scene_ingest_request()    (this module)
+            -> build_nuscenes_scene_http_config()        (this module, PRODUCTION)
+            -> HttpIntegrationExecutor.execute()
+            -> nuscenes-integration HTTP service (mode=scene_manifest)
+            -> IntegrationResult {"scene_manifest:<scene_id>", ...}
 
     (build_nuscenes_container_config() -- LOCAL/DEV ONLY, see its own
-    docstring -- builds the ContainerIntegrationExecutor equivalent
-    instead, used by make nuscenes-container-smoke and direct runtime
-    debugging, not by BuildScenesJobHandler since Request 4.6A.)
+    docstring -- builds the ContainerIntegrationExecutor equivalent for
+    raw-log mode, used by make nuscenes-container-smoke and direct runtime
+    debugging, not by either job handler since Request 4.6A.)
 
 This module builds the inputs a generic ``IntegrationExecutor`` needs for
 one nuScenes INGEST call -- it contains no nuScenes SDK code itself (that
 lives entirely in ``sceneops_integrations.nuscenes``/
-``tools/nuscenes-integration``, Request 4.4/4.5) and no execution
+``tools/nuscenes-integration``, Request 4.4/4.5/4.6B) and no execution
 mechanics (that's ``sceneops_worker.integration_execution``, Request
 4.6/4.6A §2). It is the "why"/"what" boundary the module docstring in
 ``sceneops_worker.integration_execution.executor`` describes: this is
@@ -26,14 +35,18 @@ where the worker's own params/DatasetVersionRecord get turned into a
 format-specific ``IntegrationRequest`` + runtime invocation config, not
 where that request is either executed or interpreted.
 
-Replaces the Request 4.4/4.5 transitional ``NuScenesRawLogMocker`` (an
-in-process ``RawLogAdapter`` wrapper calling
-``sceneops_integrations.nuscenes`` directly inside the worker process) --
-removed in Request 4.6. No second in-process production path is kept as a
-fallback; ``sceneops_integrations.nuscenes.runtime.execute`` remains
-directly callable for tests (see ``InProcessIntegrationExecutor``) and is
-what both the container entrypoint and the HTTP service (``service.py``)
-call underneath, unchanged.
+Replaces two Request 4.4-4.6 in-process paths: the transitional
+``NuScenesRawLogMocker`` (removed in Request 4.6) and, in Request 4.6B,
+``IngestScenesJobHandler``'s own direct ``nuscenes.nuscenes.NuScenes()``
+call (``_ingest_nuscenes_scenes``/``nuscenes_scene.build_scene_manifest``,
+both removed -- migrated, not deleted, since ground-truth annotation
+ingestion has no other source in this repository; see
+``sceneops_integrations.nuscenes.scene_ingest``'s own docstring for the
+audit). No second in-process production path is kept as a fallback;
+``sceneops_integrations.nuscenes.runtime.execute`` remains directly
+callable for tests (see ``InProcessIntegrationExecutor``) and is what both
+the container entrypoint and the HTTP service (``service.py``) call
+underneath, unchanged.
 """
 
 from __future__ import annotations
@@ -116,6 +129,60 @@ def build_nuscenes_http_config(
     )
 
 
+def build_nuscenes_scene_ingest_request(
+    *,
+    dataset_id: str,
+    dataset_version: str,
+    source_root_uri: str,
+    source_format_version: str,
+    source_scene_ids: list[str] | None = None,
+    max_source_scenes: int | None = None,
+) -> IntegrationRequest:
+    """Build the frozen ``IntegrationRequest`` (Request 4.1/4.1A) for one
+    nuScenes direct-SceneManifest INGEST call (``config["mode"] =
+    "scene_manifest"``, Request 4.6B). Same canonical-identity/
+    source-version separation as ``build_nuscenes_ingest_request`` above --
+    ``source_format_version`` is nuScenes' own on-disk version, never
+    ``dataset_version``."""
+    config: dict = {"mode": "scene_manifest"}
+    if source_scene_ids:
+        config["source_scene_ids"] = source_scene_ids
+    if max_source_scenes is not None:
+        config["max_source_scenes"] = max_source_scenes
+
+    return IntegrationRequest(
+        operation=IntegrationOperation.INGEST,
+        external_ref=ExternalDatasetRef(
+            format=NUSCENES_FORMAT,
+            format_version=source_format_version,
+            uri=source_root_uri,
+        ),
+        canonical_ref=CanonicalDatasetRef(
+            dataset_id=dataset_id, dataset_version=dataset_version
+        ),
+        config=config,
+    )
+
+
+def build_nuscenes_scene_http_config(
+    *,
+    settings: WorkerSettings,
+    scene_manifest_root_uri: str,
+) -> HttpRuntimeConfig:
+    """Build the ``HttpRuntimeConfig`` to call the nuScenes integration
+    HTTP service for one direct-SceneManifest ingest (Request 4.6B --
+    PRODUCTION path). Same service/``base_url`` as
+    ``build_nuscenes_http_config`` (one nuScenes integration service
+    handles both modes) -- only the query params differ, since the number
+    and names of produced scenes aren't known until the runtime reads the
+    source, unlike raw-log mode's single fixed pair of destination URIs.
+    """
+    return HttpRuntimeConfig(
+        base_url=settings.integration_execution.nuscenes_service_url,
+        extra_query_params={"scene_manifest_root_uri": scene_manifest_root_uri},
+    )
+
+
 def build_nuscenes_container_config(
     *,
     settings: WorkerSettings,
@@ -175,5 +242,7 @@ __all__ = [
     "NUSCENES_FORMAT",
     "build_nuscenes_ingest_request",
     "build_nuscenes_http_config",
+    "build_nuscenes_scene_ingest_request",
+    "build_nuscenes_scene_http_config",
     "build_nuscenes_container_config",
 ]

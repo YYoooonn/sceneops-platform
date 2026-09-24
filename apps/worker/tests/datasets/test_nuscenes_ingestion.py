@@ -26,7 +26,7 @@ from sceneops_core.config import (
 from sceneops_core.integration_runtime import IntegrationOperation
 
 from sceneops_worker.config import WorkerSettings
-from sceneops_worker.datasets.ingestion.nuscenes_raw_log import (
+from sceneops_worker.datasets.ingestion.nuscenes_ingestion import (
     build_nuscenes_container_config,
     build_nuscenes_http_config,
     build_nuscenes_ingest_request,

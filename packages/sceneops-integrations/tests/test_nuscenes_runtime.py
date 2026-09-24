@@ -1,12 +1,14 @@
 """Tests for the nuScenes INGEST integration runtime (SceneOps V2 Request
-4.4, isolated into this package in Request 4.5):
-``sceneops_integrations.nuscenes``.
+4.4, isolated into this package in Request 4.5): ``sceneops_integrations.
+nuscenes`` (raw-log mode; see ``test_nuscenes_scene_ingest.py`` for
+scene_manifest mode, added Request 4.6B).
 
 Covers:
-- the package never imports sceneops-db/celery/nuscenes at import time
-  (DB-free, Celery-free, SDK loaded lazily -- same guarantee
-  packages/sceneops-core/tests/test_integration_runtime.py already proves
-  for the generic contract itself);
+- the package never imports sceneops-db/celery at import time (DB-free,
+  Celery-free -- same guarantee packages/sceneops-core/tests/
+  test_integration_runtime.py already proves for the generic contract
+  itself; nuscenes itself is loaded lazily, but these tests need it
+  importable to patch/exercise it, see the importorskip below);
 - execute() runs given only an IntegrationRequest + ArtifactStore, no
   WorkerContext/DB session/Celery job object;
 - IntegrationRequest -> produced_artifacts mapping (keys, ArtifactKind,
@@ -18,15 +20,15 @@ Covers:
   runtime (skipped, not failed, if that fixture isn't present).
 
 This package deliberately never declares ``nuscenes-devkit`` as its own
-dependency (see pyproject.toml) -- these tests run here because
-``nuscenes-devkit`` happens to still be installed in the base workspace
-venv (apps/worker's own dependency, for its separate legacy ingestion
-path), the same way ``packages/sceneops-analytics/tests/
-test_lerobot_adapter.py`` runs in the base venv only because a `[tool.uv]`
-extra happens to be present -- never because this package requires it.
-See ``apps/worker/tests/integrations/test_nuscenes_delegation.py`` for the
-cross-package proof that ``NuScenesRawLogMocker`` (apps/worker) delegates
-to this package unchanged.
+dependency (see pyproject.toml). As of Request 4.6B, ``nuscenes-devkit``
+is no longer installed in the base workspace venv at all (apps/worker's
+former dependency on it was removed once its own direct SDK usage was
+migrated onto this package) -- so this whole module is skipped, not
+failed, wherever the SDK isn't present, exactly like
+``packages/sceneops-analytics/tests/test_lerobot_adapter.py`` skips when
+``lerobot`` isn't installed. Run it via ``cd tools/nuscenes-integration &&
+uv run pytest ../../packages/sceneops-integrations/tests/`` (or any other
+environment with ``nuscenes-devkit`` installed) to actually execute it.
 """
 
 from __future__ import annotations
@@ -38,17 +40,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sceneops_core.artifacts.schemas import ArtifactKind
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef
-from sceneops_core.integration_runtime import (
+nuscenes = pytest.importorskip("nuscenes")
+
+from sceneops_core.artifacts.schemas import ArtifactKind  # noqa: E402
+from sceneops_core.datasets.schemas.external import ExternalDatasetRef  # noqa: E402
+from sceneops_core.integration_runtime import (  # noqa: E402
     CanonicalDatasetRef,
     IntegrationOperation,
     IntegrationRequest,
 )
-from sceneops_storage.backends.local import LocalArtifactStore
+from sceneops_storage.backends.local import LocalArtifactStore  # noqa: E402
 
-from sceneops_integrations.nuscenes import IntegrationRuntimeError, execute
-from sceneops_integrations.nuscenes.raw_log import read_nuscenes_raw_log
+from sceneops_integrations.nuscenes import IntegrationRuntimeError, execute  # noqa: E402
+from sceneops_integrations.nuscenes.raw_log import read_nuscenes_raw_log  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REAL_NUSCENES_DATAROOT = REPO_ROOT / "data" / "raw" / "nuscenes"

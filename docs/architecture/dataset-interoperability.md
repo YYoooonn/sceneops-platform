@@ -245,6 +245,21 @@ dependency resolution is isolated. Its lockfile's dependency graph never
 includes `apps/worker` or `nuscenes-devkit`, so the conflict structurally
 cannot occur inside it.
 
+> **Update (Request 4.6B):** `apps/worker` no longer declares
+> `nuscenes-devkit` at all — both nuScenes job handlers now run through the
+> isolated `nuscenes-integration` HTTP service
+> (`packages/sceneops-integrations`/`tools/nuscenes-integration`) instead
+> of importing the SDK in-process, so the specific `numpy<2` pin described
+> above no longer lives in the root workspace's `uv.lock` either. This
+> doesn't undo the isolation this section describes — `tools/
+> lerobot-integration` still exists for the same reason `tools/
+> nuscenes-integration` does (Request 4.5's README: a minimal,
+> reproducible, DB/Celery-free container dependency closure, not solely a
+> version conflict) — it just means the *original* trigger for building it
+> this way is now historical, not a live constraint. Revisiting whether
+> `tools/lerobot-integration` can rejoin the root workspace is out of
+> scope for Request 4.6B.
+
 ```bash
 make lerobot-sync    # cd tools/lerobot-integration && uv sync --group dev --locked
 make lerobot-test    # runs packages/sceneops-analytics/tests/test_lerobot_adapter.py there

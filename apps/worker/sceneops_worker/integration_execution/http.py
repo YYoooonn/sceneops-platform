@@ -24,7 +24,7 @@ CLI or `/var/run/docker.sock` mount at all.
 
 Interprets nothing format-specific: ``extra_query_params`` (the HTTP
 equivalent of ``ContainerRuntimeConfig.extra_args``) is opaque, caller-
-built configuration (``sceneops_worker.datasets.ingestion.nuscenes_raw_log``
+built configuration (``sceneops_worker.datasets.ingestion.nuscenes_ingestion``
 for nuScenes) -- this module only knows how to attach it to the request.
 """
 

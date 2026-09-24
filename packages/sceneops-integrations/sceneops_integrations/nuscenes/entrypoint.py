@@ -36,12 +36,16 @@ error serialized as "success" -- the same convention
 ``sceneops_analytics.external_adapters.lerobot.entrypoint`` and every
 ``scripts/e2e/e2e_lerobot_*.py`` script already use.
 
-Destination URIs (``--raw-log-id``/``--manifest-uri``/``--frame-index-uri``)
-are CLI arguments, not part of the ``IntegrationRequest`` JSON: per
-``runtime.py``'s own docstring, where a raw log's artifacts land under a
-DatasetVersion's root is SceneOps' own artifact-layout policy, owned by the
-caller (the worker, or -- for the smoke test -- ``scripts/e2e/
-nuscenes_container_build_request.py``), never by this SDK-bound container.
+Destination URIs (``--raw-log-id``/``--manifest-uri``/``--frame-index-uri``
+for ``mode=raw_log``; ``--scene-manifest-root-uri`` for
+``mode=scene_manifest``, Request 4.6B) are CLI arguments, not part of the
+``IntegrationRequest`` JSON: per ``runtime.py``'s own docstring, where an
+artifact lands under a DatasetVersion's root is SceneOps' own
+artifact-layout policy, owned by the caller (the worker, or -- for the
+smoke test -- ``scripts/e2e/nuscenes_container_build_request.py``), never
+by this SDK-bound container. All four are optional here; ``runtime.execute``
+itself enforces which ones the request's ``config["mode"]`` actually
+requires.
 
 ArtifactStore backend/credentials are selected entirely from environment
 variables, via the same ``pydantic_settings.BaseSettings`` +
@@ -110,9 +114,10 @@ async def _run(
     *,
     request_file: Path,
     output_file: Path | None,
-    raw_log_id: str,
-    manifest_uri: str,
-    frame_index_uri: str,
+    raw_log_id: str | None,
+    manifest_uri: str | None,
+    frame_index_uri: str | None,
+    scene_manifest_root_uri: str | None,
 ) -> IntegrationResult:
     try:
         payload = json.loads(request_file.read_text())
@@ -131,6 +136,7 @@ async def _run(
         raw_log_id=raw_log_id,
         manifest_uri=manifest_uri,
         frame_index_uri=frame_index_uri,
+        scene_manifest_root_uri=scene_manifest_root_uri,
     )
 
     result_json = result.model_dump_json(by_alias=True, indent=2)
@@ -158,19 +164,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--raw-log-id",
-        required=True,
-        help="Caller-assigned raw log identity (scopes the two destination "
-        "URIs below, matching ObservationArtifactStore's convention).",
+        default=None,
+        help="mode=raw_log only: caller-assigned raw log identity (scopes "
+        "the two destination URIs below, matching "
+        "ObservationArtifactStore's convention).",
     )
     parser.add_argument(
         "--manifest-uri",
-        required=True,
-        help="Destination ArtifactStore URI for the RawLogManifest.",
+        default=None,
+        help="mode=raw_log only: destination ArtifactStore URI for the "
+        "RawLogManifest.",
     )
     parser.add_argument(
         "--frame-index-uri",
-        required=True,
-        help="Destination ArtifactStore URI for the RawLogFrameIndex.",
+        default=None,
+        help="mode=raw_log only: destination ArtifactStore URI for the "
+        "RawLogFrameIndex.",
+    )
+    parser.add_argument(
+        "--scene-manifest-root-uri",
+        default=None,
+        help="mode=scene_manifest only (Request 4.6B): destination "
+        "ArtifactStore prefix each ingested scene's SceneManifest is "
+        "written under as <scene_id>.json.",
     )
     args = parser.parse_args(argv)
 
@@ -182,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
                 raw_log_id=args.raw_log_id,
                 manifest_uri=args.manifest_uri,
                 frame_index_uri=args.frame_index_uri,
+                scene_manifest_root_uri=args.scene_manifest_root_uri,
             )
         )
     except IntegrationRuntimeError as exc:
