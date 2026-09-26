@@ -4,6 +4,8 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
+from .sharding import LEARNING_DATA_LAYOUT_VERSION_SINGLE_FILE, LearningDataShardIndex
+
 # Distinct from ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION, ALIGNMENT_SEMANTICS_VERSION,
 # ALIGNED_EPISODE_VALIDATION_SEMANTICS_VERSION, and ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION
 # -- this is the *columnar table layout's own* version (SceneOps V2 Request
@@ -51,9 +53,23 @@ class LearningDataExportManifest(SceneOpsBaseModel):
         default_factory=LearningDataExportConfig
     )
 
+    # learning_episodes is always a single file, referenced here regardless
+    # of layout_version. learning_steps/learning_signals are single-file
+    # (keyed here) under LEARNING_DATA_LAYOUT_VERSION_SINGLE_FILE, or
+    # sharded (see shard_index, table_uris/table_checksums omit them)
+    # under LEARNING_DATA_LAYOUT_VERSION_SHARDED (SceneOps V2 Request 5.2).
     table_uris: dict[str, str] = Field(default_factory=dict)
     table_checksums: dict[str, str] = Field(default_factory=dict)
+    # Total row count per table regardless of layout -- for a sharded
+    # table this is the sum across every shard, a summary figure only
+    # (never itself a source of physical-layout truth; see shard_index).
     row_counts: dict[str, int] = Field(default_factory=dict)
+
+    # Physical-layout version tag (SceneOps V2 Request 5.2) -- informational
+    # only; readers must dispatch on shard_index's presence, never on this
+    # string (see sharding.py's module docstring).
+    layout_version: str = LEARNING_DATA_LAYOUT_VERSION_SINGLE_FILE
+    shard_index: LearningDataShardIndex | None = None
 
     episode_count: int = 0
     metadata: JsonDict = Field(default_factory=dict)

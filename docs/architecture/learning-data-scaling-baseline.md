@@ -1,9 +1,10 @@
-# Learning Data Scaling Baseline (Phase 5, Request 5.1)
+# Learning Data Scaling Baseline (Phase 5, Requests 5.1-5.2)
 
-> Audit + measured baseline for `SceneOpsDataset`'s physical storage/query
-> path. No architecture changes in this request -- see
+> Request 5.1: audit + measured baseline for `SceneOpsDataset`'s physical
+> storage/query path (§1 below). Request 5.2: the sharded physical layout
+> built on that baseline (§14 below). See
 > [Robot learning data layer](./robot-learning-data.md) for the frozen
-> Phase 2 domain contracts this audit does not touch, and
+> Phase 2 domain contracts neither request touches, and
 > [Storage layout](./storage-layout.md) for `ArtifactStore`/Parquet URI
 > conventions.
 
@@ -474,3 +475,573 @@ physical-representation change only.
   cost trend (§6) was observed but not scoped as an in-depth bottleneck
   here -- flagged for whoever designs Request 5.2's new writer, since a
   partitioned layout necessarily touches this same code path.
+
+---
+
+# Request 5.2: Scalable Learning Storage Layout
+
+Everything below is new; §1-13 above (Request 5.1) are historical record
+and unchanged. Physical layout only -- no logical semantics changed (§20).
+The *reader*'s access strategy (eager whole-table fetch, in-memory filter)
+is unchanged by design (§16/§21) -- Request 5.3 owns making it selective.
+
+## 14. Scale-fixture changes
+
+Extended `packages/sceneops-analytics/sceneops_analytics/testing/
+scale_fixture.py` (the same module Request 5.1 added) with deterministic
+realistic-variation knobs on `ScaleSpec`, all defaulting to "off" so the
+exact Request 5.1 behavior is still reachable:
+
+- `length_jitter_fraction` -- per-episode step_count varies by a bounded,
+  deterministic formula (`_step_count_for`), not a fixed constant per scale.
+- `extra_revision_every` -- every Nth logical `episode_id` gets a second
+  aligned revision (distinct `aligned_artifact_checksum`, disjoint content
+  via a `1e9`-scaled base offset) -- proves `EpisodeRef` identity
+  (`episode_id` + `aligned_artifact_checksum`, never `episode_id` alone)
+  survives sharding.
+- A cycling task/outcome distribution (`pick/place/insert/calibrate`,
+  `SUCCESS/SUCCESS/FAILURE/UNKNOWN`) instead of one constant value.
+- `num_core_observation_channels`/`num_core_action_channels` split each
+  namespace into "core" (always present, always `RESOLVED`) and "extra"
+  channels. Extra channels are deterministically ABSENT from some
+  episodes entirely (`_extra_channel_present`) and deterministically
+  `MISSING` on some steps where present (`_extra_channel_step_missing`) --
+  core channels are never either, so `feature_projection_for()`'s
+  core-only `FeatureProjection` stays projectable at every scale.
+- Channel 0 in each namespace is scalar-valued (`NUMERIC_SCALAR`), the
+  rest are 3-vectors -- mirrors `interop_dataset.py`'s
+  `gripper_position`/`gripper_command` scalar-among-vectors mix.
+
+`interop_dataset.py` (the frozen golden fixture) is untouched -- it still
+uses the single-file writer path unchanged, per this request's own
+instruction to keep it separate. New unit coverage added:
+`packages/sceneops-analytics/tests/test_scale_fixture.py` gained 6 tests
+(length jitter, multi-revision, task/outcome cycling, ABSENT/MISSING
+isolation on extra channels only, an end-to-end core-projection
+round-trip over the full varied spec, and shard-policy splitting) -- all
+fast (`VARIED_SPEC` uses 6 episodes), part of `make test`.
+
+`write_scaled_dataset_artifacts()` now writes through the new sharded
+writer (§15) instead of the old single-file `write_learning_table` for
+`learning_steps`/`learning_signals` (`learning_episodes` is unaffected --
+never sharded, see §17).
+
+### The scale ladder
+
+| tier | episodes | steps/ep | channels (obs+act) | core channels | jitter | revision period |
+|---|---|---|---|---|---|---|
+| tiny | 10 | 60 | 6+4 | 4+3 | 30% | every 4th |
+| small | 100 | 100 | 8+5 | 5+3 | 30% | every 10th |
+| medium | 1,000 | 60 | 8+5 | 5+3 | 30% | every 25th |
+| large | 10,000 | 30 | 6+4 | 4+3 | 30% | every 200th |
+
+`large` deliberately keeps `steps_per_episode`/channel-count small rather
+than repeating `medium`'s shape at 10x the episodes -- the physical-layout
+question this tier exists to answer is small-file risk at high **episode
+count**, not total byte volume, and the existing per-row Python table
+builders (`build_learning_steps_table`/`build_learning_signals_table`,
+Request 2.5, unmodified by this request) make a naively bigger `large`
+tier impractical to build in this environment (§25). Actual EpisodeRef
+counts after revisions: tiny=13, small=110, medium=1,040, large=10,050.
+
+## 15. Candidate physical layout comparison
+
+Both candidates are the *same* mechanism at different settings --
+`plan_episode_shards()` (pure, sceneops-core) bins a sorted
+`(EpisodeRef, step_count)` sequence into shards bounded by
+`ShardPolicy(max_episodes_per_shard, max_rows_per_shard)`. Setting
+`max_episodes_per_shard=1` reproduces "episode-per-file" as a special
+case -- no second code path exists, so the comparison below is a true
+apples-to-apples sweep of one parameter, not two implementations.
+
+Measured via `scripts/dev/benchmark_learning_data_layout.py` (new,
+non-production, no pass/fail assertions):
+
+| scale | policy | total objects | steps shards | steps size (min/mean/max) | signals shards | signals size (min/mean/max) | episodes/shard (mean/max) |
+|---|---|---|---|---|---|---|---|
+| tiny (13 refs) | episode-per-file | 27 | 13 | 3,014 / 3,122 / 3,226 B | 13 | 9,555 / 11,106 / 13,404 B | 1 / 1 |
+| tiny | bounded-default | 3 | 1 | 29,910 B | 1 | 115,960 B | 13 / 13 |
+| small (110 refs) | episode-per-file | 221 | 110 | 3,199 / 3,396 / 3,630 B | 110 | 11,525 / 15,958 / 21,728 B | 1 / 1 |
+| small | bounded-default | 3 | 1 | 277,171 B | 1 | 1,496,859 B | 110 / 110 |
+| medium (1,040 refs) | episode-per-file | 2,081 | 1,040 | 3,015 / 3,135 / 3,267 B | 1,040 | 9,883 / 11,441 / 18,210 B | 1 / 1 |
+| medium | bounded-default | 13 | 6 | 90,904 / 391,140 / 451,564 B | 6 | 378,628 / 1,576,862 / 1,863,429 B | 173.3 / 200 |
+| large (10,050 refs) | episode-per-file | 20,101 | 10,050 | 2,856 / 2,913 / 2,974 B | 10,050 | 8,196 / 9,704 / 11,097 B | 1 / 1 |
+| large | bounded-default | 103 | 51 | 102,296 / 400,842 / 406,927 B | 51 | 380,002 / 1,448,299 / 1,513,909 B | 197.1 / 200 |
+
+Comparison against the axes requested:
+
+- **Object count**: episode-per-file grows linearly and unboundedly with
+  EpisodeRef count (20,101 objects at 10,050 refs); bounded-default caps
+  at ~2 objects per 200 episodes (103 objects at the same scale -- a
+  ~195x reduction).
+- **Object-size distribution / small-file risk**: episode-per-file's
+  per-object sizes stay in the 3-20 KB range at every scale, well inside
+  "small file" territory for any object store (S3/MinIO request overhead,
+  metadata-operation cost, and listing/inventory cost all become
+  significant relative to payload size at this granularity, per §26's
+  unknown but directionally-expected S3-latency concern from Request
+  5.1 §13). Bounded-default's shards stay in the 100 KB-2 MB range at
+  every scale tested -- comfortably away from small-file territory
+  without needing per-episode addressing to give it up entirely (row
+  groups still do, see §16).
+- **EpisodeRef lookup/read amplification**: see §18 -- bounded-default's
+  *shard-level* amplification (95x-329x at the scales tested) is already
+  large; episode-per-file's would be ~1x by construction (trivial: the
+  file already contains it) but that's precisely the property that
+  causes the object-count explosion above -- there is no free lunch here,
+  only where you put the granularity.
+- **Row-group pruning potential**: identical for both candidates in
+  principle (both use one-row-group-per-episode within whatever file a
+  given episode lands in, §16) -- the axis that actually differs between
+  candidates is object count/size, not row-group granularity.
+- **Incremental-write behavior**: episode-per-file's per-episode files
+  make appending N new episodes to an existing export trivial (write N
+  new files, extend the shard index) with zero rewrite of existing
+  objects. Bounded-default requires either accepting an under-full last
+  shard (simple, what this implementation does) or rewriting the last
+  shard to top it up (more complex, not implemented) -- a real, if minor,
+  incremental-write cost bounded-default pays that episode-per-file
+  doesn't.
+- **Manifest/index complexity**: identical -- both use the same
+  `LearningDataShardIndex` shape (§19); episode-per-file just happens to
+  produce one-entry shards.
+- **Object-store suitability**: bounded-default is the clear fit given
+  the above -- avoids the small-file/object-count explosion that would
+  otherwise dominate S3/MinIO request costs at real fleet scale, at the
+  cost of a real but bounded read-amplification floor (§18) that Request
+  5.3's row-group-level reads can substantially shrink further (§18).
+
+**A real, measured cost of bounded-default not visible in the table
+above**: because bounded shards hold many episodes' rows in one file,
+Parquet writing them still uses one row group per episode (§16) --
+combined with `PyArrow`'s writer (needed for row-group control; Polars'
+own writer doesn't expose per-call row-group boundaries), the resulting
+bytes are measurably larger than the old single-row-group-per-file layout
+would produce for the *same logical content*: at `small` scale, the same
+110-episode entries produce 369,530 bytes (steps+signals) in the old
+single-file/single-row-group layout vs. 1,782,983 bytes bounded-default
+sharded -- a ~4.8x size increase, isolated and explained in §16. This
+does not change the layout *choice* (bounded shards still avoid the
+object-count explosion either way) but is a real storage-cost trade-off
+of the row-group strategy within it, reported honestly rather than
+hidden.
+
+## 16. Selected layout and rationale
+
+**Selected: bounded multi-episode shards (`max_episodes_per_shard=200,
+max_rows_per_shard=200_000`, `default_shard_policy()`), with one Parquet
+row group per episode within each shard.** Not episode-per-file, despite
+Request 5.1's own §10 leaning that direction before this request's
+measurements existed -- §15's object-count explosion at 10,000+ episodes
+is the deciding factor Request 5.1 hadn't measured yet, and the task's own
+warning ("do not choose episode-per-file merely because it is easiest at
+current scale") is borne out by real numbers here, not just intuition.
+
+Rationale, in order of weight:
+
+1. **Object-count/small-file risk dominates at real scale.**
+   Episode-per-file's per-object sizes (3-20 KB) are exactly what object
+   stores handle worst per-request; a 10,000-episode export producing
+   20,101 objects is a small-file-explosion regime a fleet-scale dataset
+   (order of magnitude beyond this benchmark's `large` tier) would make
+   considerably worse, not better.
+2. **Bounded shards still deliver most of the locality benefit.**
+   Episode-aligned row groups within a shard (below) mean a future
+   selective reader (Request 5.3) can address one episode's exact rows
+   inside a shard without touching neighboring episodes' bytes -- the
+   *shard* is the unit of object-count control, the *row group* is the
+   unit of read-locality control, and this design gets both.
+3. **The measured storage-overhead cost (§15's ~1.9-4.8x size increase)
+   is real but bounded and independent of scale** -- it comes from
+   per-episode row-group fragmentation (§ below) and a PyArrow-vs-Polars
+   writer difference, not from the shard-count choice itself, and is a
+   fixable/tunable follow-up (§25), not a reason to abandon
+   episode-aligned row groups.
+4. **Incremental-write cost (§15) is real but minor** relative to the
+   object-count risk it avoids -- an under-full last shard is a
+   reasonable, simple default; more sophisticated shard-rebalancing on
+   backfill is future work (§24), not required for this request.
+
+### Isolating the size overhead (why bounded-default's files are bigger)
+
+Two independent, measured causes, using the real `small`-scale
+`learning_signals` shard (123,384 rows) as the isolation case:
+
+| writer | row groups | compression | bytes |
+|---|---|---|---|
+| Polars `write_parquet` (legacy, unchanged) | 1 | zstd level 3 (Polars default) | 353,809 |
+| PyArrow `ParquetWriter` | 1 | zstd level 3 | 716,020 |
+| PyArrow `ParquetWriter` | 110 (one/episode) | zstd level 3 | ~1,475,705 (measured with default compression before the fix below; see note) |
+
+- **Cause A -- writer/codec defaults**: `pyarrow.parquet.ParquetWriter`
+  defaults to `compression="snappy"` at an effective level equivalent to
+  zstd level 1; Polars' `write_parquet` defaults to `compression="zstd",
+  compression_level=3`. **Fixed** in this request
+  (`AnalyticsTableWriter.write_learning_table_shard` now passes
+  `compression="zstd", compression_level=3` explicitly, matching Polars'
+  documented default exactly) -- this alone closed roughly half the
+  originally-observed gap (see the commit history in this file: the
+  layout-comparison numbers in §15 already reflect the fixed codec).
+- **Cause B -- row-group fragmentation**: even with identical
+  compression settings, one row group per episode (110 row groups)
+  compresses measurably worse than one row group for the whole shard,
+  because dictionary/statistics overhead is paid per row group and this
+  schema's several low-cardinality string columns (`namespace`,
+  `channel`, `policy`, `status`, `value_kind`, and the constant
+  `dataset_id`/`dataset_version`/`export_id` columns) lose cross-episode
+  dictionary sharing when split into many small row groups.
+- **A residual gap remains between PyArrow's writer and Polars' native
+  writer even at one row group each** (716,020 vs 353,809 bytes above,
+  ~2x) -- not fully explained; Polars uses its own native Rust Parquet
+  writer (not a PyArrow wrapper), and likely applies additional
+  encoding-level optimizations (e.g. `BYTE_STREAM_SPLIT` for
+  floating-point columns) PyArrow's writer doesn't enable by default.
+  Chasing this further was out of this request's scope (choosing a
+  shard/row-group *policy*, not tuning Parquet encoding internals) -- see
+  §25.
+
+This is reported as a known, measured, and accepted trade-off: precise
+per-episode row-group addressability (needed for Request 5.3's
+selective reads, §24) costs roughly 2-5x storage overhead relative to a
+single-row-group-per-file layout at the scales measured. A coarser
+row-group granularity (e.g. batching several episodes per row group)
+would recover some of this cost at the price of pruning precision -- a
+viable follow-up tuning direction (§25), not implemented here since the
+task's own framing (`"episode-aligned row groups where feasible"`)
+favors precision for this request.
+
+## 17. Files changed
+
+**sceneops-core** (pure domain, no I/O):
+- `packages/sceneops-core/sceneops_core/episodes/learning_export/sharding.py`
+  (new) -- `ShardPolicy`, `ShardEpisodeMember`, `LearningDataShard`,
+  `LearningDataShardIndex`, `default_shard_policy()`,
+  `plan_episode_shards()` (pure bin-fill).
+- `.../learning_export/schemas.py` -- `LearningDataExportManifest` gained
+  `layout_version: str` and `shard_index: LearningDataShardIndex | None`
+  (both additive, default `None`/`"v1-single-file"` -- old manifests
+  unaffected).
+- `.../learning_export/__init__.py` -- new exports.
+- `packages/sceneops-core/sceneops_core/jobs/schemas/results/episodes.py`
+  -- `ExportLearningDataJobResult` gained `shard_counts: dict[str, int]`.
+
+**sceneops-analytics** (I/O, the new writer + reader generalization):
+- `sceneops_analytics/writer.py` -- `AnalyticsTableWriter` gained
+  `learning_table_shard_uri()`/`write_learning_table_shard()` (PyArrow
+  `ParquetWriter`, explicit `row_group_size` per call, `zstd`
+  level 3). Old `write_learning_table()`/`learning_table_uri()`
+  unchanged, still used for `learning_episodes` and by the frozen
+  `interop_dataset.py` fixture.
+- `sceneops_analytics/learning_tables_sharded.py` (new) --
+  `plan_shards_for_entries()`/`write_sharded_learning_tables()`: the one
+  orchestration entry point shared by the production job handler and the
+  scale fixture (sorts entries, plans shards, reuses
+  `build_learning_steps_table`/`build_learning_signals_table` unchanged
+  per shard, writes each shard, assembles `LearningDataShardIndex`).
+- `sceneops_analytics/learning_dataset/dataset.py` -- `SceneOpsDataset`
+  gained `_table_shard_uris()`/`_read_parquet_tables()`: resolves either
+  `table_uris[name]` (legacy, one URI) or `shard_index.<name>` (new, N
+  URIs) and concatenates via `pl.concat` -- the eager
+  fetch-once-then-cache-then-filter *model* is completely unchanged, only
+  "how many URIs back this table" generalizes from 1 to N.
+- `sceneops_analytics/__init__.py` -- new exports.
+- `sceneops_analytics/testing/scale_fixture.py` -- realistic variation +
+  sharded writer (§14).
+- `sceneops_analytics/testing/__init__.py` -- new exports.
+
+**apps/worker** (production job handler):
+- `sceneops_worker/jobs/dataset/export_learning_data.py` --
+  `learning_episodes` still single-file; `learning_steps`/
+  `learning_signals` now go through `write_sharded_learning_tables()`
+  with `default_shard_policy()`. One `ArtifactRecord` per physical shard
+  file added (lineage), alongside the existing per-table/manifest
+  records.
+
+**Tests**:
+- `apps/worker/tests/jobs/test_export_learning_data_handler.py` -- mocks
+  updated from `write_learning_table` to `write_learning_table_shard` for
+  steps/signals; assertions updated for the new `table_uris`/
+  `shard_counts` split.
+- `packages/sceneops-analytics/tests/test_scale_fixture.py` -- 6 new
+  tests (§14).
+
+**Benchmarks** (new, non-production):
+- `scripts/dev/benchmark_learning_data_layout.py` -- layout comparison +
+  selective-read potential + old-vs-new access-pattern re-run (§15/§18/§21).
+
+**Untouched, intentionally** (§20): `interop_dataset.py`,
+`scripts/e2e/e2e_fixture_bootstrap.py`, every hand-rolled test fixture in
+`test_learning_dataset.py`/`test_sequence_sampler.py`/
+`test_torch_adapter.py`/`test_external_adapters.py`/
+`test_learning_consumer_adapter.py` -- all still build the legacy
+single-file layout directly via `write_learning_table`, and all still
+pass unmodified (§26).
+
+## 18. Shard assignment policy
+
+`plan_episode_shards()` (pure, `sceneops_core.episodes.learning_export.
+sharding`): entries are sorted by `(episode_id, aligned_artifact_checksum)`
+-- the same canonical order `SceneOpsDataset.episodes()` already returns
+regardless of physical layout (frozen, Request 2.7B §2), so this
+reordering relative to the legacy writer's caller-order is never
+consumer-visible. A simple sequential greedy bin-fill then closes the
+current shard as soon as adding the next episode would exceed either
+`max_episodes_per_shard` or `max_rows_per_shard` (evaluated against each
+episode's `learning_steps` row count as a shared proxy for both tables,
+§ note on `ShardPolicy`'s docstring) -- not an optimal bin-packing, and
+never reorders episodes to pack tighter. A single episode whose own row
+count exceeds `max_rows_per_shard` becomes a one-episode shard rather than
+being split (Parquet row groups require contiguous, undivided rows).
+
+Production default (`default_shard_policy()`): `max_episodes_per_shard=200,
+max_rows_per_shard=200_000` -- chosen from §15's measurements so a
+10,000-episode export still produces on the order of 50 shards per table
+(never one file per episode) while keeping each shard's absolute size in
+the 100 KB-2 MB range (comfortably above small-file territory, comfortably
+below "large object" territory for interactive tooling). The row bound is
+deliberately generous relative to a typical episode's step_count so
+episode count, not row count, is the usual binding constraint -- the row
+bound exists specifically to protect against a minority of unusually long
+episodes.
+
+## 19. Row-group strategy
+
+One Parquet row group per episode, within whichever shard that episode
+was assigned to (`AnalyticsTableWriter.write_learning_table_shard`,
+via `pyarrow.parquet.ParquetWriter.write_table(slice, row_group_size=
+exact_slice_length)` called once per episode) -- verified directly against
+real Parquet metadata (not just the writer's own bookkeeping): every
+shard's `pq.ParquetFile(path).metadata.num_row_groups` equals its episode
+count, and each row group's `num_rows` matches that episode's own row
+count exactly (confirmed in this request's manual verification and in
+`test_shard_policy_splits_episodes_across_multiple_shards`).
+
+Both `learning_steps` and `learning_signals` shards for a given
+`shard_index` share the identical episode order (same
+`plan_shards_for_entries()` call decides both), so `row_group_index`
+means the same EpisodeRef in both tables at that shard -- this invariant
+is what lets `LearningDataShard.episodes` (an ordered list, no separate
+reverse index needed) answer "which row group is EpisodeRef X in this
+shard" by simple list position, for both tables uniformly.
+
+Cost of this choice: quantified and discussed in §16 -- roughly 2-5x
+storage overhead vs. a single-row-group-per-file layout at the scales
+measured, accepted as the price of precise future row-group-level
+addressability (§24).
+
+## 20. Manifest/index changes
+
+`LearningDataExportManifest` (sceneops-core, additive, backward
+compatible -- old manifests default to the pre-5.2 meaning unchanged):
+
+```python
+layout_version: str = "v1-single-file"   # or "v2-sharded" -- informational only
+shard_index: LearningDataShardIndex | None = None
+```
+
+`LearningDataShardIndex`:
+
+```python
+shard_policy: ShardPolicy                       # the bounds that produced this layout
+learning_steps: list[LearningDataShard]         # empty if that table wasn't requested/sharded
+learning_signals: list[LearningDataShard]
+```
+
+`LearningDataShard`: `shard_index`, `uri`, `checksum`, `size_bytes`,
+`row_count`, and `episodes: list[ShardEpisodeMember]` (ordered,
+`row_group_index` == position in this list). `ShardEpisodeMember`:
+`episode_ref`, `row_group_index`, `row_count` (this episode's exact row
+count in *this* table -- steps vs. signals differ).
+
+This answers all three questions Request 5.2 §4 asked for:
+
+- **Which objects belong to each logical table** -- `table_uris["learning_
+  episodes"]` (always) plus `shard_index.learning_steps`/
+  `.learning_signals` (when sharded) -- never object-store listing.
+- **Which shard contains a given EpisodeRef** -- linear scan over
+  `shard_index.<table>` (a small, all-metadata list -- at most ~50 shards
+  at the scales measured) checking each shard's `episodes` list; no
+  reverse index was added since this scan touches only manifest metadata,
+  never Parquet bytes (§24 hands this exact lookup to Request 5.3).
+- **Row-group/locality metadata** -- `row_group_index` per member, exact
+  by construction (§19).
+
+`learning_episodes` is **not** sharded -- it stays in `table_uris` exactly
+as Request 2.5 defined it (always metadata-scale, one row per EpisodeRef;
+sharding it would add manifest complexity for no locality benefit, per
+this request's own "avoid a partition-directory cardinality proportional
+to every unique checksum unless measurements justify it" guidance). No DB
+catalog, no generic partition registry -- the manifest alone is the index,
+as required.
+
+## 21. Object/file naming
+
+```text
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/learning_episodes.parquet   (unchanged)
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/manifest.json               (unchanged)
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/learning_steps/shard-00000.parquet
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/learning_steps/shard-00001.parquet
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/learning_signals/shard-00000.parquet
+...
+```
+
+(`AnalyticsTableWriter.learning_table_shard_uri`.) Shard files nest under a
+per-table subdirectory so a human/tool listing the export's tree sees
+"one directory per table" rather than hundreds of files flattened
+together with the manifest -- purely for debuggability; the manifest, not
+this path structure, is what any reader must actually use to enumerate
+shards.
+
+## 22. Logical-schema preservation
+
+Unchanged, verified by construction and by tests:
+
+- `build_learning_steps_table`/`build_learning_signals_table` (Request
+  2.5) are called **completely unmodified** -- once per shard, over that
+  shard's entries subset, never touched by this request. The column set,
+  types, and per-row semantics are byte-identical to what the legacy
+  single-file writer produces for the same entries.
+- ABSENT vs. MISSING: unchanged (§14's new ABSENT/MISSING variation
+  exercises the *existing* frozen contract via realistic data, it does
+  not add a new state or change how either is represented).
+  `test_extra_channel_goes_absent_and_missing_but_core_never_does`
+  verifies both states are producible and that core channels never
+  exhibit either.
+- `EpisodeRef` identity (`episode_id` + `aligned_artifact_checksum`):
+  unchanged; `test_scaled_fixture_exposes_every_episode_ref`-style checks
+  and the new multi-revision test confirm two revisions of one
+  `episode_id` remain distinct `EpisodeRef`s through the sharded path.
+- `FeatureProjection`/`FeatureSchema`, `SequenceSampler` window semantics,
+  external adapter semantics: unchanged and exercised unmodified by the
+  full existing test suite (§26) plus `make e2e-lerobot-container`'s real
+  container round-trip (§26), all passing against the new production
+  writer path.
+
+## 23. Old-layout cleanup
+
+No cleanup performed, deliberately: the old single-file writer
+(`write_learning_table`/`learning_table_uri`) and the corresponding reader
+path (`table_uris[name]` resolution in `SceneOpsDataset`) are **kept**,
+unmodified, because:
+
+- `interop_dataset.py` (the frozen correctness golden fixture) uses it and
+  must keep doing so -- Request 5.2's own instruction not to replace
+  correctness fixtures with scale fixtures.
+- `scripts/e2e/e2e_fixture_bootstrap.py` (the persistent E2E "interop"
+  fixture backing `make e2e-lerobot`/`make e2e-lerobot-container`) uses it
+  -- changing it risks perturbing a golden LeRobot round-trip comparison
+  for no physical-layout benefit, since that E2E's subject is adapter
+  correctness, not storage layout.
+- Five more test files (`test_learning_dataset.py`,
+  `test_sequence_sampler.py`, `test_torch_adapter.py`,
+  `test_external_adapters.py`, `test_learning_consumer_adapter.py`) build
+  fixtures inline via the same old writer -- none of them are testing
+  physical layout, so there is no correctness reason to migrate them, and
+  every one of them still passes unmodified (§26).
+
+This is the practical instantiation of "prefer one clean production
+layout" (the production `EXPORT_LEARNING_DATA` job now writes only the
+new sharded layout) without requiring "backward-compat-free" to also mean
+"delete the single-file code path" -- that path remains because other,
+unrelated things still legitimately depend on it, not because of a
+compatibility guarantee to external consumers.
+
+## 24. Requirements handed to Request 5.3
+
+Request 5.3 owns turning §15-19's layout into actual selective I/O. What
+it needs, already in place:
+
+- **`ArtifactStore` needs a range-read primitive.** `read_bytes(uri)` is
+  still whole-object-only on both backends (Request 5.1 §2, unchanged) --
+  nothing above helps until something like `read_range(uri, offset,
+  length)` exists, or 5.3 accepts "download whole shard, then use
+  row-group metadata to slice in memory" as an interim step (shard-level
+  selectivity without byte-range selectivity).
+- **A `LearningDataShardIndex`-aware lookup**: given an `EpisodeRef`, scan
+  `shard_index.<table>` (a handful to ~50 entries at realistic scale) to
+  find `(shard, member)`; `member.row_group_index` is then the exact
+  `pyarrow.dataset`/`ParquetFile` row group to fetch. §20 intentionally
+  left this as "scan the manifest," not a reverse index -- 5.3 may want a
+  `dict[EpisodeRef, ...]` built once at `open()` time for O(1) repeated
+  lookups, which is a trivial addition over the data already present.
+- **PyArrow Dataset/Scanner, not DuckDB, as the primary read primitive**
+  (per Request 5.1 §10's unchanged recommendation) -- partition pruning by
+  shard file (skip whole shards whose manifest entry doesn't contain the
+  target `EpisodeRef`) plus row-group-level predicate pushdown (skip row
+  groups by `step_index` range within a shard, once 5.3 also sorts/bounds
+  steps within an episode's own row group, which today's per-episode
+  row-group design already guarantees implicitly -- one row group already
+  *is* one episode's full step range).
+- **`SceneOpsDataset`'s current eager-whole-table-per-instance cache
+  (`_steps_df`/`_signals_df`, unchanged, §17) is the thing 5.3 must
+  actually replace** -- §21's re-run confirms today's reader still
+  concatenates every shard for a table on first need, so none of §18's
+  measured amplification is realized yet; that gap is exactly what 5.3
+  closes.
+- **The unbounded `_episode_steps_cache`/`_schema_cache` (Request 5.1 §7)
+  remains a live concern** -- once per-shard/per-episode reads are cheap,
+  an unbounded per-EpisodeRef cache stops making sense as a default and
+  should likely become bounded/evictable in the same request that makes
+  reads selective (Request 5.1 §10, unchanged recommendation).
+
+## 25. Verification
+
+- `make test` -- 1295 passed, 5 skipped (up from Request 5.1's 1289 --
+  the new scale-fixture tests, §14)
+- `make lint` -- all checks passed
+- `make lerobot-test` -- 36 passed
+- `make test-integration` -- 35 passed (real Postgres/MinIO via `make
+  local-up`) -- confirms the legacy single-file reader/writer path
+  (exercised by `scripts/e2e/e2e_fixture_bootstrap.py`, §23) is unaffected
+  by any change in this request
+- `make e2e-lerobot-container` -- **PASSED**: built the
+  `lerobot-integration` image fresh, ran the full three-environment
+  round-trip (persistent "interop" fixture -- still legacy single-file,
+  §23 -- through the container -> real LeRobot v3 dataset -> official
+  LeRobot reader -> golden semantic comparison), including its Step 4
+  negative-path check (rerun against an already-populated target fails
+  cleanly, target untouched). `exported_episode_count=3,
+  exported_step_count=22, total_frames_readback=22` -- confirms the
+  production job handler's changed write path (§17) doesn't regress this
+  real container-boundary integration (this E2E's own fixture predates
+  this request's writer switch, so it specifically exercises "does the
+  changed reader still handle old-format manifests," not the new sharded
+  write path directly -- see §26 for what *is* new-writer-path coverage).
+
+## 26. Remaining limitations
+
+- **`large` scale is 10,000 episodes but deliberately shallow (30
+  steps/episode, 10 channels)**, not "10,000 episodes at `medium`'s
+  depth" -- building the latter with today's unmodified, per-row Python
+  `build_learning_steps_table`/`build_learning_signals_table` (Request
+  2.5, explicitly out of this request's scope to rewrite) was
+  impractical in this environment's time budget (§6's Request 5.1 finding
+  that this builder scales roughly linearly in row count, confirmed again
+  here: `large`'s build took ~83s at 300K/2.7M steps/signals rows).
+  Whoever eventually needs true "10,000 episodes at realistic depth"
+  numbers should expect proportionally longer builds until that writer is
+  vectorized -- a pre-existing, not newly-introduced, limitation.
+- **The residual PyArrow-vs-Polars writer size gap (§16) is unexplained**
+  beyond "Polars likely applies additional encoding optimizations
+  (possibly `BYTE_STREAM_SPLIT` for floats) that PyArrow's writer doesn't
+  enable by default" -- a real follow-up investigation for whoever wants
+  to shrink the measured storage overhead further, not resolved here.
+- **`ShardPolicy.max_rows_per_shard` sizes against `learning_steps`' row
+  count for both tables** (documented on `ShardPolicy` itself) --
+  `learning_signals`' actual row count depends on channel-presence
+  variation too (§14's ABSENT semantics), so a very wide or very sparse
+  channel schema could produce a `learning_signals` shard noticeably
+  larger or smaller than the row bound alone would suggest. Not observed
+  as a problem at the scales/channel-counts measured here, but worth
+  revisiting if a real export's channel width differs substantially from
+  this benchmark's ~10-13 channels.
+- **No real S3/MinIO latency was measured for this request either**
+  (same gap Request 5.1 §13 flagged, still open) -- `LocalArtifactStore`
+  only. The object-count reduction bounded-default provides (§15) should
+  matter *more* under real network latency, not less, but that is an
+  expectation, not a measurement.
+- **Incremental/backfill shard-rebalancing is not implemented** (§15's
+  "under-full last shard" is accepted as-is) -- a real backfill workflow
+  that wants to keep shards close to `max_episodes_per_shard` over many
+  incremental exports would need explicit shard-rebalancing logic this
+  request does not provide.

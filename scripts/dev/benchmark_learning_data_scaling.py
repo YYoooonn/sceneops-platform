@@ -175,13 +175,17 @@ async def _run_scale(spec: ScaleSpec, tmp_root: Path) -> dict:
     io["F_sampler_create_and_iterate_all"] = _io_delta(io_before_f, _io_snapshot(store))
 
     with _phase(phases, "G_curate_filter_episodes_in_memory"):
-        _ = [ref for ref in dataset.episodes() if dataset.get_episode(ref).step_count > 0]
+        _ = [
+            ref for ref in dataset.episodes() if dataset.get_episode(ref).step_count > 0
+        ]
     io["G_curate_filter_episodes_in_memory"] = _io_delta(
         io_before_f, _io_snapshot(store)
     )  # unchanged from F's end; isolates G's own (zero) I/O
 
     # ---- Pass 2: fresh dataset instance, single-pass full-dataset export ----
-    export_store = CountingArtifactStore(LocalArtifactStore(root_uri=artifacts.storage_root_uri))
+    export_store = CountingArtifactStore(
+        LocalArtifactStore(root_uri=artifacts.storage_root_uri)
+    )
     with _phase(phases, "H_cold_open_plus_full_dataset_export"):
         export_dataset = await SceneOpsDataset.open(
             learning_manifest=artifacts.learning_manifest,
@@ -200,7 +204,9 @@ async def _run_scale(spec: ScaleSpec, tmp_root: Path) -> dict:
     phases["H_cold_open_plus_full_dataset_export"]["exported_steps"] = exported_steps
     io["H_cold_open_plus_full_dataset_export"] = _io_snapshot(export_store)
 
-    report["ru_maxrss_kb_after_scale"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    report["ru_maxrss_kb_after_scale"] = resource.getrusage(
+        resource.RUSAGE_SELF
+    ).ru_maxrss
     return report
 
 
@@ -218,10 +224,12 @@ async def _main_async(scale_names: list[str]) -> list[dict]:
         tmp_root = Path(tmp_root_str)
         for name in scale_names:
             spec = ladder_by_name[name]
-            print(f"--- running scale={spec.name} "
-                  f"(episodes={spec.num_episodes} steps/ep={spec.steps_per_episode} "
-                  f"channels={spec.num_observation_channels + spec.num_action_channels}) ---",
-                  file=sys.stderr)
+            print(
+                f"--- running scale={spec.name} "
+                f"(episodes={spec.num_episodes} steps/ep={spec.steps_per_episode} "
+                f"channels={spec.num_observation_channels + spec.num_action_channels}) ---",
+                file=sys.stderr,
+            )
             reports.append(await _run_scale(spec, tmp_root))
     tracemalloc.stop()
     return reports
@@ -234,8 +242,10 @@ def _print_summary(reports: list[dict]) -> None:
         print(f"  table_file_bytes     : {report['table_file_bytes']}")
         print(f"  table_row_counts     : {report['table_row_counts']}")
         for phase_name, phase in report["phases"].items():
-            print(f"  {phase_name:45s} wall={phase['wall_seconds']:>10.6f}s "
-                  f"traced_peak={phase['traced_peak_bytes']:>10d}B")
+            print(
+                f"  {phase_name:45s} wall={phase['wall_seconds']:>10.6f}s "
+                f"traced_peak={phase['traced_peak_bytes']:>10d}B"
+            )
         print("  io deltas:")
         for key, val in report["io"].items():
             print(f"    {key:45s} {val}")
@@ -249,7 +259,9 @@ def main() -> None:
         default=",".join(spec.name for spec in DEFAULT_SCALE_LADDER),
         help="comma-separated scale names to run (default: all)",
     )
-    parser.add_argument("--out", default=None, help="write full JSON report to this path")
+    parser.add_argument(
+        "--out", default=None, help="write full JSON report to this path"
+    )
     args = parser.parse_args()
 
     scale_names = [s.strip() for s in args.scales.split(",") if s.strip()]

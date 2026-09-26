@@ -64,6 +64,40 @@ async def _read_parquet_table(artifact_store: ArtifactStore, uri: str) -> pl.Dat
     return pl.read_parquet(io.BytesIO(data))
 
 
+def _table_shard_uris(
+    learning_manifest: LearningDataExportManifest, table_name: str
+) -> list[str] | None:
+    """Every physical Parquet object backing ``table_name``, regardless of
+    layout (SceneOps V2 Request 5.2) -- ``None`` if ``table_name`` is absent
+    under both. ``learning_episodes`` is never sharded, so it always
+    resolves via ``table_uris`` alone; ``learning_steps``/
+    ``learning_signals`` resolve via ``table_uris`` (single-file layout,
+    still supported unchanged) or, if that key is absent, via
+    ``shard_index`` (sharded layout) -- never both for the same table in
+    one manifest."""
+    if table_name in learning_manifest.table_uris:
+        return [learning_manifest.table_uris[table_name]]
+    shard_index = learning_manifest.shard_index
+    if shard_index is not None:
+        shards = getattr(shard_index, table_name, None)
+        if shards:
+            return [shard.uri for shard in shards]
+    return None
+
+
+async def _read_parquet_tables(
+    artifact_store: ArtifactStore, uris: list[str]
+) -> pl.DataFrame:
+    """Fetch and concatenate every shard backing one table (SceneOps V2
+    Request 5.2) -- still exactly one fetch per URI, still eager, still
+    cached by the caller thereafter; a single-URI list behaves identically
+    to the pre-5.2 single-file path. This is a physical-layout
+    accommodation only: no lazy/range-aware/partial reading is introduced
+    here (that is Request 5.3's job)."""
+    frames = [await _read_parquet_table(artifact_store, uri) for uri in uris]
+    return frames[0] if len(frames) == 1 else pl.concat(frames, how="vertical")
+
+
 def _check_curation_matches_export(
     curation_manifest: EpisodeCurationManifest,
     learning_manifest: LearningDataExportManifest,
@@ -176,7 +210,7 @@ class SceneOpsDataset:
         missing_tables = [
             name
             for name in _REQUIRED_TABLES
-            if name not in learning_manifest.table_uris
+            if _table_shard_uris(learning_manifest, name) is None
         ]
         if missing_tables:
             raise LearningTableMissingError(
@@ -309,18 +343,14 @@ class SceneOpsDataset:
 
     async def _get_steps_df(self) -> pl.DataFrame:
         if self._steps_df is None:
-            self._steps_df = await _read_parquet_table(
-                self._artifact_store,
-                self._learning_manifest.table_uris["learning_steps"],
-            )
+            uris = _table_shard_uris(self._learning_manifest, "learning_steps")
+            self._steps_df = await _read_parquet_tables(self._artifact_store, uris)
         return self._steps_df
 
     async def _get_signals_df(self) -> pl.DataFrame:
         if self._signals_df is None:
-            self._signals_df = await _read_parquet_table(
-                self._artifact_store,
-                self._learning_manifest.table_uris["learning_signals"],
-            )
+            uris = _table_shard_uris(self._learning_manifest, "learning_signals")
+            self._signals_df = await _read_parquet_tables(self._artifact_store, uris)
         return self._signals_df
 
     # ------------------------------------------------------------------

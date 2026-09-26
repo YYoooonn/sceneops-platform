@@ -137,6 +137,17 @@ def _make_context(
             size_bytes=123,
         )
 
+    async def _write_learning_table_shard(table_name, df, row_group_sizes, **kwargs):
+        write_calls.append(f"{table_name}:shard{kwargs['shard_index']}")
+        return AnalyticsTableWriteResult(
+            uri=(
+                f"mem://learning/{kwargs['export_id']}/{table_name}/"
+                f"shard-{kwargs['shard_index']:05d}.parquet"
+            ),
+            checksum=f"sha256:shard-{table_name}-{kwargs['shard_index']}",
+            size_bytes=123,
+        )
+
     async def _write_manifest(manifest, **kwargs):
         write_calls.append("manifest")
         return AnalyticsTableWriteResult(
@@ -147,6 +158,9 @@ def _make_context(
 
     context.analytics_writer.write_learning_table = AsyncMock(
         side_effect=_write_learning_table
+    )
+    context.analytics_writer.write_learning_table_shard = AsyncMock(
+        side_effect=_write_learning_table_shard
     )
     context.analytics_writer.write_learning_export_manifest = AsyncMock(
         side_effect=_write_manifest
@@ -215,7 +229,12 @@ class TestSuccessfulExport:
         result = await ExportLearningDataJobHandler().run(request)
 
         assert result.episode_count == 2
-        assert set(result.table_uris) == {
+        # learning_episodes stays single-file; learning_steps/
+        # learning_signals are sharded (SceneOps V2 Request 5.2) -- both
+        # episodes fit in one shard each under the default policy.
+        assert set(result.table_uris) == {"learning_episodes"}
+        assert result.shard_counts == {"learning_steps": 1, "learning_signals": 1}
+        assert set(result.row_counts) == {
             "learning_episodes",
             "learning_steps",
             "learning_signals",
@@ -224,11 +243,11 @@ class TestSuccessfulExport:
         assert result.manifest_uri is not None
         assert set(context._write_calls) == {
             "learning_episodes",
-            "learning_steps",
-            "learning_signals",
+            "learning_steps:shard0",
+            "learning_signals:shard0",
             "manifest",
         }
-        # 3 table records + 1 manifest record
+        # 1 episodes table record + 1 steps shard + 1 signals shard + 1 manifest
         assert context.artifact_record_store.create.await_count == 4
         create_kinds = {
             call.kwargs["ref"].kind
@@ -264,8 +283,9 @@ class TestSuccessfulExport:
 
         result = await ExportLearningDataJobHandler().run(request)
 
-        assert set(result.table_uris) == {"learning_steps"}
-        # 1 table record + 1 manifest record
+        assert result.table_uris == {}
+        assert result.shard_counts == {"learning_steps": 1}
+        # 1 shard record + 1 manifest record
         assert context.artifact_record_store.create.await_count == 2
 
 
@@ -279,6 +299,7 @@ class TestArtifactNotFound:
             await ExportLearningDataJobHandler().run(request)
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
+        context.analytics_writer.write_learning_table_shard.assert_not_awaited()
         context.artifact_record_store.create.assert_not_called()
         context.commit.assert_not_called()
 
@@ -320,6 +341,7 @@ class TestChecksumMismatchBlocksWholeExport:
             await ExportLearningDataJobHandler().run(request)
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
+        context.analytics_writer.write_learning_table_shard.assert_not_awaited()
         context.artifact_record_store.create.assert_not_called()
         context.commit.assert_not_called()
 
@@ -361,5 +383,6 @@ class TestStructuralValidationFailureBlocksWholeExport:
             await ExportLearningDataJobHandler().run(request)
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
+        context.analytics_writer.write_learning_table_shard.assert_not_awaited()
         context.artifact_record_store.create.assert_not_called()
         context.commit.assert_not_called()
