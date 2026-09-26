@@ -16,6 +16,7 @@ setup. This module keeps only the deterministic, I/O-free golden-data
 definitions/expectations.
 """
 
+from .counting_artifact_store import CountingArtifactStore, IoStats
 from .interop_dataset import (
     EPISODE_A_REV1,
     EPISODE_A_REV1_REF,
@@ -35,6 +36,17 @@ from .interop_dataset import (
     build_interop_test_dataset,
     compute_expected_interop_episodes,
 )
+from .scale_fixture import (
+    DEFAULT_SCALE_LADDER,
+    ScaledDatasetArtifacts,
+    ScaleSpec,
+    build_scaled_entries,
+    episode_ref,
+    expected_action,
+    expected_observation,
+    feature_projection_for,
+    write_scaled_dataset_artifacts,
+)
 
 __all__ = [
     "EPISODE_A_REV1",
@@ -47,11 +59,22 @@ __all__ = [
     "INTEROP_DATASET_VERSION",
     "INTEROP_EPISODE_SPECS",
     "INTEROP_FEATURE_PROJECTION",
+    "DEFAULT_SCALE_LADDER",
+    "CountingArtifactStore",
     "ExpectedEpisode",
     "ExpectedStep",
     "InteropDatasetBootstrap",
     "InteropEpisodeSpec",
+    "IoStats",
+    "ScaleSpec",
+    "ScaledDatasetArtifacts",
     "build_interop_entries",
     "build_interop_test_dataset",
+    "build_scaled_entries",
     "compute_expected_interop_episodes",
+    "episode_ref",
+    "expected_action",
+    "expected_observation",
+    "feature_projection_for",
+    "write_scaled_dataset_artifacts",
 ]
