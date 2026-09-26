@@ -66,6 +66,63 @@ async def test_write_then_read_bytes_round_trips(store, bucket, unique_key):
     assert result == payload
 
 
+# ── read_range (SceneOps V2 Request 5.3) ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_range_returns_exact_slice(store, bucket, unique_key):
+    artifact_store, created = store
+    key = unique_key("range.bin")
+    created.append(key.rsplit("/", 1)[0])
+    uri = f"s3://{bucket}/{key}"
+
+    await artifact_store.write_bytes(uri, b"0123456789abcdef")
+    result = await artifact_store.read_range(uri, 3, 5)
+
+    assert result == b"34567"
+
+
+@pytest.mark.asyncio
+async def test_read_range_missing_object_raises_not_found(store, bucket, unique_key):
+    from sceneops_storage.exceptions import ArtifactNotFoundError
+
+    artifact_store, created = store
+    key = unique_key("never-written.bin")
+    created.append(key.rsplit("/", 1)[0])
+    uri = f"s3://{bucket}/{key}"
+
+    with pytest.raises(ArtifactNotFoundError):
+        await artifact_store.read_range(uri, 0, 4)
+
+
+@pytest.mark.asyncio
+async def test_read_range_negative_offset_raises(store, bucket, unique_key):
+    from sceneops_storage.exceptions import ArtifactReadError
+
+    artifact_store, created = store
+    key = unique_key("range-invalid.bin")
+    created.append(key.rsplit("/", 1)[0])
+    uri = f"s3://{bucket}/{key}"
+    await artifact_store.write_bytes(uri, b"0123456789")
+
+    with pytest.raises(ArtifactReadError):
+        await artifact_store.read_range(uri, -1, 4)
+
+
+@pytest.mark.asyncio
+async def test_read_range_past_end_of_object_raises(store, bucket, unique_key):
+    from sceneops_storage.exceptions import ArtifactReadError
+
+    artifact_store, created = store
+    key = unique_key("range-past-end.bin")
+    created.append(key.rsplit("/", 1)[0])
+    uri = f"s3://{bucket}/{key}"
+    await artifact_store.write_bytes(uri, b"0123456789")
+
+    with pytest.raises(ArtifactReadError):
+        await artifact_store.read_range(uri, 8, 100)
+
+
 # ── list ──────────────────────────────────────────────────────────────────────
 
 

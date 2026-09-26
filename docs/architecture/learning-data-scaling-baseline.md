@@ -1,10 +1,12 @@
-# Learning Data Scaling Baseline (Phase 5, Requests 5.1-5.2)
+# Learning Data Scaling Baseline (Phase 5, Requests 5.1-5.3)
 
 > Request 5.1: audit + measured baseline for `SceneOpsDataset`'s physical
 > storage/query path (§1 below). Request 5.2: the sharded physical layout
-> built on that baseline (§14 below). See
-> [Robot learning data layer](./robot-learning-data.md) for the frozen
-> Phase 2 domain contracts neither request touches, and
+> built on that baseline (§14 below). Request 5.3: selective
+> EpisodeRef/window reads over that layout -- the read path Request 5.1
+> measured and Request 5.2 made possible, finally exploited (§27 below).
+> See [Robot learning data layer](./robot-learning-data.md) for the frozen
+> Phase 2 domain contracts none of these requests touch, and
 > [Storage layout](./storage-layout.md) for `ArtifactStore`/Parquet URI
 > conventions.
 
@@ -1045,3 +1047,474 @@ it needs, already in place:
   that wants to keep shards close to `max_episodes_per_shard` over many
   incremental exports would need explicit shard-rebalancing logic this
   request does not provide.
+
+---
+
+# Request 5.3: Selective Artifact Access & Lazy Reads
+
+Everything below is new; §1-26 above (Requests 5.1-5.2) are historical
+record and unchanged. `SceneOpsDataset` remains the sole semantic access
+boundary (§27's audit); no storage detail leaks into
+`resolve_feature_schema`/`get_step`/`get_window`/`SequenceSampler`/
+external adapters, all of which are unmodified call sites.
+
+## 27. Minimum selective-read boundary (audit)
+
+Traced path: `SceneOpsDataset` -> `ArtifactStore` -> Parquet bytes ->
+Polars DataFrame -> episode/window reconstruction (Request 5.1 §1,
+confirmed unchanged in shape). The exact boundary selective I/O needed to
+cross, identified before writing any code:
+
+- **`ArtifactStore.read_bytes` is whole-object only** (Request 5.1 §2) --
+  the literal floor stopping anything selective. A new primitive was
+  required; §28/§29.
+- **Polars has no lazy/partial Parquet-over-arbitrary-bytes story that
+  fits this repo's storage abstraction** -- `pl.scan_parquet` operates on
+  paths/URLs its own I/O layer resolves directly, bypassing
+  `ArtifactStore` entirely (backend-specific logic exactly where the task
+  said not to put it). PyArrow, in contrast, accepts any Python file-like
+  object satisfying `read`/`seek`/`tell` -- the natural fit for wrapping
+  `ArtifactStore.read_range` without PyArrow (or Polars) ever knowing
+  which backend is underneath. This is why PyArrow is the selective-read
+  primitive here, not a Polars-vs-PyArrow preference in the abstract.
+- **The reconstruction boundary was already the right shape** --
+  `SceneOpsDataset._reconstruct_all_steps`/`get_step` were already the
+  single choke point every step/window/schema-resolution call funnels
+  through (Request 2.7B). Selective I/O only had to change *what feeds*
+  that choke point (a targeted row-group fetch instead of a whole-table
+  filter), never its signature or its callers.
+- **The shard lookup index (§30) is the only new *stateful* thing
+  `SceneOpsDataset` needed** -- built once at `open()`, from manifest
+  metadata already in memory; everything downstream (schema cache,
+  episode-steps cache) is the existing Request 2.7B/5.1 machinery,
+  unmodified.
+
+## 28. Final ArtifactStore selective-read interface
+
+One new Protocol method, `sceneops_core.artifacts.contracts.ArtifactStore`:
+
+```python
+async def read_range(self, uri: ArtifactUri, offset: int, length: int) -> bytes:
+    """Read exactly `length` bytes starting at byte `offset`."""
+```
+
+No seekable-file/random-access-object abstraction was added on top --
+`read_range` alone turned out sufficient once the PyArrow side (§31) took
+responsibility for deciding *how many* ranges to request and in what
+order; `ArtifactStore` itself stays a simple, backend-agnostic
+request/response contract, matching every other method on it.
+
+Contract, identical on both backends: `offset >= 0`, `length > 0` are the
+caller's responsibility; `ArtifactNotFoundError` if the artifact doesn't
+exist; `ArtifactReadError` for a negative/zero-length request or a range
+that exceeds the artifact's actual size (checked by comparing returned
+byte count to requested length -- S3 does not error on an out-of-bounds
+`Range` header by default, it silently clamps, so this check is required
+for a *consistent* contract across backends, not optional on either).
+
+## 29. Backend implementations
+
+- **`LocalArtifactStore`** (`packages/sceneops-storage/sceneops_storage/
+  backends/local.py`): `Path.open("rb")` + `seek(offset)` + `read(length)`.
+- **`S3ArtifactStore`** (`.../backends/s3.py`): `get_object(Bucket=...,
+  Key=..., Range=f"bytes={offset}-{offset+length-1}")`, run via the same
+  `asyncio.to_thread` wrapper every other S3ArtifactStore method already
+  uses. `InvalidRange`/`416` from a genuinely out-of-bounds request is
+  caught and re-raised as `ArtifactReadError`, alongside the
+  length-mismatch check above (MinIO/S3 don't always error the same way
+  for an out-of-bounds range, so both paths are handled).
+- **`CountingArtifactStore`** (test/benchmark-support,
+  `sceneops_analytics.testing`) gained matching `read_range_calls`/
+  `read_range_total`/`per_uri_range_*` counters, kept **separate** from
+  the existing `read_bytes_*` counters -- a workload that reads
+  selectively shows activity on one set, never the other, which is
+  exactly what makes §34's measurements legible.
+- Verified directly against both backends: `packages/sceneops-storage/
+  tests/test_local_artifact_store.py` (new, 6 tests, no infra) and
+  `packages/sceneops-storage/tests/test_s3_artifact_store.py` (+4 tests,
+  real MinIO).
+
+## 30. Shard lookup/index design
+
+Built once, at `SceneOpsDataset.open()` (`_build_shard_lookup`,
+`dataset.py`), directly from `LearningDataExportManifest.shard_index` --
+**no Parquet file is opened, no object-store listing happens**, exactly
+as required:
+
+```python
+dict[str, dict[EpisodeRef, tuple[LearningDataShard, ShardEpisodeMember]]]
+#    ^table_name        ^EpisodeRef -> exactly which shard + row group
+```
+
+`None` for a v1 (legacy single-file) manifest -- there is nothing to look
+up; `_get_steps_df`/`_get_signals_df` handle that layout directly and
+unchanged (§32). `SceneOpsDataset._is_sharded` (`shard_lookup is not
+None`) is computed once and dispatches every step/window read from then
+on.
+
+**Duplicate detection**: eager, at `open()` time -- if the same
+`EpisodeRef` appears in more than one shard (or twice in one shard) for
+one table, `ShardIndexMismatchError` is raised immediately while building
+the lookup, before any read is attempted. Verified by
+`test_duplicate_episode_ref_in_shard_index_raises_at_open`.
+
+**Missing-mapping detection**: necessarily lazy -- an `EpisodeRef` this
+dataset exposes (per `learning_episodes.parquet`) but that has no entry in
+`shard_lookup[table_name]` is only observable once that specific
+`EpisodeRef` is actually requested (`_fetch_episode_arrow_table` raises
+`ShardIndexMismatchError` there). Verified by
+`test_missing_episode_ref_in_shard_index_raises_on_access`.
+
+## 31. PyArrow selective-read path
+
+`sceneops_analytics/learning_dataset/parquet_range_reader.py` (new). The
+mechanism, after one real implementation attempt that had to be replaced
+(see the module's own header comment for the full story -- summarized
+here):
+
+**What was tried first and rejected**: manually parsing the Parquet
+trailer (8-byte footer-length + magic) and footer to precompute exact
+byte windows (footer region, target row group's exact byte span from
+column-chunk offsets), then handing PyArrow a synchronous file-like object
+that only ever served those two pre-fetched windows. This worked for
+normally-sized files but **broke for small shards**: PyArrow's own reader
+slurps small files whole rather than seeking (a reasonable internal
+optimization), which asks for byte ranges this approach never
+anticipated.
+
+**What shipped**: a genuinely lazy, on-demand file-like object
+(`_LazyRangeFile`) that fetches *whatever* range PyArrow asks for, via a
+synchronous callback bridging into `ArtifactStore.read_range` through
+`asyncio.run()` -- safe because the whole PyArrow interaction
+(`_read_row_group_sync`) runs inside `asyncio.to_thread`, a plain worker
+thread with no event loop of its own to conflict with. Every fetched
+range is memoized in-memory (`_windows`); a later request fully contained
+in an already-fetched window is served from memory, not re-fetched --
+without this, small files (where the footer-area read and the target row
+group's read can overlap heavily or fully contain each other) would fetch
+the same bytes twice, which is exactly what was measured happening before
+the fix (§34's MinIO test caught this: 50,981 bytes fetched for a shard
+whose total size was 46,973 -- more than 100%, a real, since-fixed bug,
+not a measurement artifact).
+
+Resulting flow for one EpisodeRef, one table:
+
+```text
+shard_lookup[table_name][ref] -> (shard, member)
+        -> read_episode_row_group(store, shard.uri, shard.size_bytes,
+                                   member.row_group_index,
+                                   cached_metadata=<from _shard_metadata_cache>)
+        -> asyncio.to_thread(_read_row_group_sync, ...)
+                -> pq.ParquetFile(_LazyRangeFile(...), metadata=cached_metadata)
+                -> .read_row_group(member.row_group_index)
+        -> pyarrow.Table -> .to_pylist() -> step_from_rows() (Request 2.7B, unchanged)
+```
+
+`shard.size_bytes` (already in the manifest, Request 5.2) means no
+separate stat/HEAD call is ever needed to bound the virtual file. A
+shard's parsed `FileMetaData` is cached per `SceneOpsDataset` instance,
+keyed `(table_name, shard.shard_index)` -- the first episode read from a
+shard pays a footer fetch; every subsequent episode from that same shard,
+in the same dataset instance, does not (§34's "warm" measurements).
+
+Content correctness verified directly against PyArrow's own full-file
+`read_row_group()` (byte-identical `pa.Table.equals()`) during
+development, and continuously by `test_v2_result_equivalent_to_legacy_v1_reader`
+(§38) thereafter.
+
+## 32. v1 fallback behavior
+
+Completely unmodified: `_get_steps_df`/`_get_signals_df` still read
+`table_uris["learning_steps"/"learning_signals"]` as one whole file each,
+cached per `SceneOpsDataset` instance, filtered in memory per episode --
+byte-for-byte the Request 2.7B/5.1 behavior. `_reconstruct_step` (the
+narrow single-step filter) is untouched and still the v1 single-step path.
+
+Still used by, unchanged:
+
+- `interop_dataset.py` (the frozen correctness golden fixture).
+- `scripts/e2e/e2e_fixture_bootstrap.py` (persistent "interop" E2E
+  fixture backing `make e2e-lerobot`/`make e2e-lerobot-container`).
+- Five test files that build fixtures inline via the legacy writer
+  (`test_learning_dataset.py`, `test_sequence_sampler.py`,
+  `test_torch_adapter.py`, `test_external_adapters.py`,
+  `test_learning_consumer_adapter.py`) -- none test physical layout, so
+  none were migrated (per this request's own instruction not to migrate
+  golden fixtures solely for this request).
+
+`get_step`/`_reconstruct_all_steps` each gained exactly one `if
+self._is_sharded:` branch -- the v1 branch inside each is the pre-existing
+code, moved, not rewritten.
+
+## 33. Removal of v2 whole-table materialization
+
+For a v2-sharded manifest, `_steps_df`/`_signals_df` are now **structurally
+unreachable** -- `_get_steps_df`/`_get_signals_df` are called from exactly
+one place each (`_reconstruct_all_steps`'s `else` branch), and that
+branch only executes when `self._is_sharded` is `False`. There is no code
+path left by which a v2 dataset could populate those fields; `_reconstruct_
+all_steps_sharded`/`_fetch_episode_arrow_table` (the entire v2 path) never
+reference them.
+
+`_table_shard_uris`'s original 5.2-era "concatenate every shard into one
+DataFrame" behavior (used for v2's `_get_steps_df`/`_get_signals_df`
+before this request) was removed along with its caller -- the helper was
+renamed to `_table_is_present` and simplified to a pure existence check
+(still needed, unchanged in purpose, for `open()`'s missing-table
+validation, which must still work correctly for both layouts).
+
+## 34. Cold/warm EpisodeRef read measurements
+
+`scripts/dev/benchmark_selective_reads.py` (new), against the production
+shard policy (`default_shard_policy()`, 200 episodes/shard), at every
+scale in the Request 5.2 ladder:
+
+| scale | episodes | shards | total export bytes | A. open (bytes) | B. cold 1st episode (bytes) | C. warm 2nd episode, same shard (bytes) | D. cold episode, another shard (bytes) |
+|---|---|---|---|---|---|---|---|
+| tiny | 10 | 1 | 145,870 | 8,045 | 102,120 | 7,895 | n/a (1 shard) |
+| small | 100 | 1 | 1,774,030 | 8,953 | 499,428 | 12,115 | n/a (1 shard) |
+| medium | 1,000 | 6 | 11,808,009 | 10,016 | 783,581 | 8,869 | 782,465 |
+| large | 10,000 | 51 | 94,306,183 | 23,127 | 775,756 | 5,928 | 775,092 |
+
+Observations:
+
+- **A (open)** stays metadata-only, as in Request 5.1/5.2 -- bytes here
+  are `learning_episodes.parquet`'s own size, nothing from
+  steps/signals shards.
+- **B and D are consistently close to each other** (~775-800 KB at
+  medium/large) -- both pay one footer fetch + one row-group fetch;
+  *which* shard is cold makes no difference, only *whether* it's cold.
+- **C (warm) is dramatically smaller than B/D at every scale** (7.9 KB /
+  12.1 KB / 8.9 KB / 5.9 KB vs 100 KB-800 KB cold) -- confirms per-shard
+  metadata caching works: a second episode in an already-touched shard
+  pays only its own row-group fetch, no footer refetch.
+- **tiny/small show only modest B/D reduction** (footer overhead
+  dominates a single, whole-export-sized shard -- see §16's earlier
+  footer-size-scales-with-row-group-count finding) -- this is expected and
+  matches Request 5.2's own prediction, not a regression.
+
+## 35. Actual bytes/object read amplification
+
+Reduction factor (`old_baseline_bytes / new_bytes`, i.e. "how much smaller
+is a single-episode fetch now"), same benchmark:
+
+| scale | old baseline (100% of steps+signals) | v2 cold single-episode bytes | reduction factor |
+|---|---|---|---|
+| tiny | 145,870 | 102,120 | **1.4x** |
+| small | 1,774,030 | 499,428 | **3.6x** |
+| medium | 11,808,009 | 783,581 | **15.1x** |
+| large | 94,306,183 | 775,756 | **121.6x** |
+
+This is the direct, measured answer to Request 5.1's baseline finding
+("one EpisodeRef access reads 100% of learning_steps/learning_signals"):
+it no longer does, and the improvement **grows with scale** (more shards
+per export -> a cold single-episode fetch touches a shrinking fraction of
+the total) -- exactly the shape Request 5.2's shard-count-bounded design
+was chosen to produce. `distinct_uris_read`/`per_uri_range_calls` (not
+reproduced in the table, but part of `CountingArtifactStore`'s output)
+confirm zero *other* shard's URI is ever touched for a single-episode
+access -- proven directly, not inferred from byte counts alone, by
+`test_v2_single_episode_access_touches_only_its_own_shard` and its MinIO
+counterpart `test_v2_selective_window_access_works_against_real_minio`.
+
+## 36. Fixed-window behavior
+
+Measured directly (`E_fixed_window_vs_full_episode`, same benchmark): a
+3-step window and the full episode window, on two different fresh
+episodes at each scale, fetch **the same bytes** (within ~0.1-0.4%,
+attributable to `length_jitter_fraction`'s per-episode row-count
+variation, not to window width):
+
+| scale | narrow window (horizon=3) bytes | full-episode bytes |
+|---|---|---|
+| tiny | 110,127 | 109,735 |
+| small | 508,458 | 507,040 |
+| medium | 793,673 | 793,140 |
+| large | 798,816 | 798,812 |
+
+This is the honestly-documented limitation the task explicitly asked for,
+not a bug: one row group per episode (Request 5.2's chosen row-group
+strategy) is the finest granularity this physical layout supports, so
+`get_window(ref, start_step, horizon, ...)` always fetches the whole
+episode's row group in both tables regardless of `start_step`/`horizon`,
+then slices to the requested range **in memory**, after the fetch. Going
+finer (true sub-episode byte-range pruning) would require Parquet page
+indexes (`write_page_index=True`, not written by Request 5.2's writer) or
+splitting an episode across multiple row groups (which would break the
+"one row group per episode" invariant Request 5.2's manifest design
+(`row_group_index` == list position) depends on) -- out of this request's
+scope (`"do not repartition/rewrite the 5.2 physical layout"`), and
+recorded here as input to whatever eventually revisits row-group
+strategy.
+
+## 37. FeatureProjection I/O implications
+
+Confirmed unchanged after row-group selectivity, exactly as Request 5.1
+§9 predicted it would be (`F_narrow_vs_wide_projection`, same benchmark):
+a single-channel projection and the full projection, on two different
+fresh episodes, fetch statistically the same bytes at every scale (largest
+observed gap: 0.6%, well within per-episode row-count jitter):
+
+| scale | narrow projection bytes | wide projection bytes |
+|---|---|---|
+| tiny | 109,457 | 110,185 |
+| small | 508,138 | 509,223 |
+| medium | 793,166 | 793,672 |
+| large | 798,844 | 798,307 |
+
+Root cause, reconfirmed at the row-group level: `learning_signals`' tall/
+long schema (one row per `(step, channel)`, not one column per channel)
+still has no per-channel *column* to project away -- narrowing
+`FeatureProjection` only changes which channels the pure projection layer
+(`sceneops_core.episodes.learning`, Request 2.7A) selects from an
+already-fully-reconstructed `LearningStep`, never what PyArrow fetches or
+decodes from the row group. This is recorded as a known, unresolved
+physical-layout limitation (not something this request's scope permits
+fixing -- doing so would mean redesigning `learning_signals`' logical
+schema into a wide/columnar-per-channel shape, explicitly out of bounds:
+`"do not redesign FeatureProjection"`/`"do not change the Phase 2 logical
+schemas"`).
+
+## 38. Logical-result equivalence
+
+`test_v2_result_equivalent_to_legacy_v1_reader`: builds the *same*
+entries (same `ScaleSpec`, same realistic variation) under both the
+legacy v1 single-file layout and the new v2 sharded layout, opens both,
+and asserts byte-identical `observation`/`action`/`timestamps_us` for
+every window and every projected step, across every `EpisodeRef` the
+fixture produces (including multi-revision episodes). Passing.
+
+Also verified, all via the real v2 selective path (not mocked):
+
+- **Window ordering/timestamps**
+  (`test_window_ordering_and_timestamps_preserved_via_v2`): strictly
+  increasing, distinct per step, matching the independent reference
+  formula exactly.
+- **Multiple revisions of the same `episode_id`**
+  (`test_multiple_revisions_resolve_independently_via_v2`): two
+  `EpisodeRef`s sharing `episode_id` but differing
+  `aligned_artifact_checksum` resolve to distinct, independently-correct
+  content through the shard lookup -- `EpisodeRef` revision identity
+  (Request 2.7A §3) survives sharding and selective reads unchanged.
+- **ABSENT vs MISSING** (`test_absent_and_missing_preserved_through_v2_round_trip`):
+  core channels are always present and `RESOLVED`; extra channels are
+  observed both genuinely ABSENT (omitted from the reconstructed
+  `LearningStep.observations`/`.actions` dict) and genuinely `MISSING`
+  (present, `status=MISSING`) after the full v2 write -> selective-read
+  round trip -- the frozen Request 2.5A contract is unaffected by
+  selective I/O.
+
+## 39. Tests/integration results
+
+New test files:
+
+- `packages/sceneops-storage/tests/test_local_artifact_store.py` (new, 6
+  tests) -- `read_range` correctness/error behavior, no infra.
+- `packages/sceneops-storage/tests/test_s3_artifact_store.py` (+4 tests)
+  -- same, against real MinIO.
+- `packages/sceneops-analytics/tests/test_selective_reads.py` (new, 8
+  tests) -- shard lookup, duplicate/missing detection, no-unrelated-shard
+  selectivity, warm-metadata reuse, v1/v2 equivalence, multi-revision,
+  window ordering, ABSENT/MISSING preservation (§30/§35/§38 above).
+- `scripts/e2e/tests/test_selective_reads_minio_integration.py` (new, 1
+  test) -- the same selectivity proof, against real MinIO, added to `make
+  test-integration` (not `make test`, matching this repo's "real infra
+  stays out of the fast tier by directory placement" convention -- see
+  `makefiles/setup.mk`'s updated comment).
+
+Verification commands, all green:
+
+- `make test` -- **1303 passed, 5 skipped** (up from Request 5.2's 1295 --
+  the 8 new `test_selective_reads.py` tests).
+- `make lint` -- all checks passed.
+- `make test-integration` -- **46 passed** (up from Request 5.2's 35 -- 6
+  local `read_range` tests + 4 MinIO `read_range` tests + 1 MinIO
+  selective-Parquet-read test).
+- `make lerobot-test` -- 36 passed, unchanged.
+- `make e2e-lerobot-container` -- **PASSED** (fresh image rebuild):
+  `exported_episode_count=3, exported_step_count=22,
+  total_frames_readback=22`. This exercises the (unchanged) v1 reader
+  branch specifically, since the persistent "interop" E2E fixture stays
+  on the legacy layout (§32) -- it proves this request's `SceneOpsDataset`
+  changes did not regress the v1 path in a real container/adapter
+  round-trip, not that the v2 path works (that is what §34-38's direct
+  tests, built from the real, unmocked `write_sharded_learning_tables` and
+  `SceneOpsDataset.open()`, already establish).
+- **Not run**: a full `make e2e-episode-curation`-style production E2E
+  exercising `EXPORT_LEARNING_DATA` through the real API/worker stack
+  end-to-end. The local compose stack's `.env.local` was absent in this
+  environment and Postgres/MinIO/API were reachable through some other
+  already-running setup, making a full ingestion -> scene-building ->
+  episode-building -> curation chain (this E2E's real prerequisite state)
+  a nontrivial, environment-specific undertaking unrelated to this
+  request's code changes. Given `test_export_learning_data_handler.py`
+  already exercises the real (unmocked) `write_sharded_learning_tables`
+  orchestration inside the real job handler, and §34-38's tests exercise
+  the real (unmocked) reader against real Parquet files on both
+  `LocalArtifactStore` and real MinIO, this was judged sufficient
+  coverage of the actual code path change; flagged here rather than
+  silently skipped.
+
+## 40. Limitations handed to Request 5.4
+
+- **Caching stayed intentionally minimal, as instructed.** The only new
+  cache is `_shard_metadata_cache` (bounded by shards actually touched --
+  at most ~50-100 entries at the scales measured, one `FileMetaData`
+  object each, not row data). The pre-existing `_episode_steps_cache`
+  (Request 2.7B, unbounded by EpisodeRef count) is unchanged and
+  unaddressed -- Request 5.1 §7/§10 already flagged this as needing
+  eviction once selective reads make re-fetching cheap; that need is now
+  measurably real (§34/§35 show a cold fetch is cheap enough that
+  "re-fetch instead of cache forever" is a genuinely viable alternative
+  for high-cardinality access patterns), but implementing it is
+  explicitly Request 5.4's job, not this one's.
+- **Bulk/full-dataset access patterns were not optimized for.**
+  `SequenceSampler.create()` still resolves every contributing episode's
+  schema individually (Request 2.7C, unchanged) -- under v2, each of those
+  now issues its own selective fetch rather than one shared whole-table
+  load. For a workload that genuinely touches every episode anyway (a
+  full training epoch, `SequenceSampler.create()` itself, a full-dataset
+  export), this trades "one big sequential read" for "many small
+  targeted reads" -- cheaper in *bytes* (§35) but not necessarily in
+  *round trips*, especially over real network latency (§41's frozen
+  unknown). A future optimization -- detect "this access pattern will
+  touch every episode in a shard anyway, fall back to one bulk shard
+  read" -- was considered and deliberately not implemented, as it borders
+  on the caching/access-pattern-strategy territory this request was told
+  to leave to 5.4.
+- **`asyncio.run()`-per-read has real but currently-invisible overhead.**
+  Every `_LazyRangeFile.read()` call spins up and tears down a fresh
+  event loop (§31) -- fine at the read counts measured here (a handful of
+  reads per row-group fetch), but this cost was not isolated/measured
+  separately from network/disk I/O itself. If Request 5.4 (or a future
+  request) needs to push selective-read throughput further, this is a
+  candidate for a proper async-native PyArrow integration instead of the
+  sync bridge used here.
+- **Real S3/MinIO *latency* still hasn't been measured** (Request 5.1 §13,
+  Request 5.2 §26, still open) -- §39's MinIO test proves correctness and
+  selectivity, not that this request's read-count-per-episode (2-4 range
+  reads) is *fast* over a real network vs. a local disk. Given
+  selective reads meaningfully increase the *number* of round trips for
+  bulk access patterns (previous point), this is now a more load-bearing
+  unknown than it was in Request 5.1/5.2.
+
+## 41. Frozen boundary for Request 5.4
+
+Everything Request 5.1's §10/§13 already asked of "whoever comes next" is
+now genuinely actionable, not just planned:
+
+- `_episode_steps_cache`/`_schema_cache` bounded/evictable caching --
+  the concrete data needed to size a sensible policy (per-episode cold-vs-
+  warm cost, §34) now exists.
+- Real S3/MinIO latency measurement, to weigh "many small selective
+  reads" against "fewer large sequential reads" for bulk access patterns
+  (§40) -- this is the one new question Request 5.3 raises that Request
+  5.1/5.2 didn't have grounds to ask yet.
+- Everything else frozen unchanged: `EpisodeRef` identity,
+  `aligned_artifact_checksum` revision semantics,
+  `learning_episodes`/`learning_steps`/`learning_signals` logical
+  schemas, ABSENT vs MISSING, `FeatureProjection`/`FeatureSchema`,
+  `SequenceSampler` window semantics, external adapter semantics,
+  `Artifact`/lineage ownership -- none of this request's changes touch
+  any of them (§38's equivalence tests are the proof, not just the
+  claim).

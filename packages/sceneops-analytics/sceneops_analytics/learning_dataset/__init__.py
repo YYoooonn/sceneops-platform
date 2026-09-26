@@ -7,6 +7,7 @@ from .errors import (
     LearningTableMissingError,
     SamplerSchemaMismatchError,
     SceneOpsDatasetError,
+    ShardIndexMismatchError,
     StepOutOfRangeError,
 )
 from .numpy_adapter import (
@@ -37,6 +38,7 @@ __all__ = [
     "SceneOpsDataset",
     "SceneOpsDatasetError",
     "SequenceSampler",
+    "ShardIndexMismatchError",
     "StepOutOfRangeError",
     "materialize_sequences",
     "to_numpy",

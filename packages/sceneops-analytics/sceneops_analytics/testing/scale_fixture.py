@@ -559,6 +559,8 @@ async def write_scaled_dataset_artifacts(
     *,
     dataset_id: str | None = None,
     shard_policy: ShardPolicy | None = None,
+    artifact_store: ArtifactStore | None = None,
+    storage_root_uri: str | None = None,
 ) -> ScaledDatasetArtifacts:
     """Write one scale point's learning_episodes (single file) +
     learning_steps/learning_signals (sharded, SceneOps V2 Request 5.2) +
@@ -566,16 +568,28 @@ async def write_scaled_dataset_artifacts(
     ``write_sharded_learning_tables`` orchestration -- exactly the physical
     layout ``EXPORT_LEARNING_DATA`` produces in production.
 
-    Returns identifiers only (no open SceneOpsDataset, no ArtifactStore) --
-    callers construct their own ArtifactStore against ``storage_root_uri``
-    and call ``SceneOpsDataset.open()`` themselves so open()'s cost is part
-    of what gets measured, not fixture setup.
+    Returns identifiers only (no open SceneOpsDataset) -- callers
+    construct their own ArtifactStore against ``storage_root_uri`` (or, if
+    they passed one in, reuse it) and call ``SceneOpsDataset.open()``
+    themselves so open()'s cost is part of what gets measured, not fixture
+    setup.
+
+    ``artifact_store``/``storage_root_uri`` default to a fresh
+    ``LocalArtifactStore`` under ``tmp_path`` (the Request 5.1/5.2
+    behavior, unchanged) -- pass both explicitly to target a different
+    backend (e.g. a real ``S3ArtifactStore`` for MinIO integration
+    coverage, SceneOps V2 Request 5.3); ``tmp_path`` is still used for
+    ``AnalyticsTableWriter``'s own root (any object supporting ``/`` and
+    ``str()`` works, not necessarily a filesystem path).
     """
     dataset_id = dataset_id or f"bench-{spec.name}"
     dataset_version = "v1"
     policy = shard_policy or default_shard_policy()
-    storage_root_uri = str(tmp_path / "storage")
-    artifact_store: ArtifactStore = LocalArtifactStore(root_uri=storage_root_uri)
+    if artifact_store is None:
+        storage_root_uri = str(tmp_path / "storage")
+        artifact_store = LocalArtifactStore(root_uri=storage_root_uri)
+    elif storage_root_uri is None:
+        raise ValueError("storage_root_uri is required when artifact_store is given")
 
     entries = build_scaled_entries(spec)
 

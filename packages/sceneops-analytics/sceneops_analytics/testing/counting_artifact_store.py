@@ -1,9 +1,11 @@
 """CountingArtifactStore: a thin ArtifactStore wrapper that records call
-counts and byte volumes per URI (SceneOps V2 Request 5.1) -- used only by
-the learning-data scaling benchmark harness
-(``scripts/dev/benchmark_learning_data_scaling.py``) to answer "how many
-files, and how many bytes, did this workload actually touch" without
-guessing from Parquet file sizes on disk.
+counts and byte volumes per URI (SceneOps V2 Request 5.1, extended by
+Request 5.3 for ``read_range``) -- used by the learning-data
+scaling/selective-read benchmark harnesses
+(``scripts/dev/benchmark_learning_data_scaling.py``,
+``scripts/dev/benchmark_learning_data_layout.py``, and their Request 5.3
+successor) to answer "how many files, and how many bytes, did this
+workload actually touch" without guessing from Parquet file sizes on disk.
 
 Test/benchmark-support code only -- never imported by production code, and
 adds no retry/caching/backoff behavior of its own; every call is forwarded
@@ -21,35 +23,54 @@ from sceneops_core.common.schemas import ArtifactUri
 
 @dataclass
 class IoStats:
-    """Cumulative counters since construction or the last ``reset()``."""
+    """Cumulative counters since construction or the last ``reset()``.
+    ``read_bytes_*`` (whole-object) and ``read_range_*`` (Request 5.3
+    targeted range reads) are tracked separately -- a workload that reads
+    selectively should show activity on ``read_range_*`` only, never
+    ``read_bytes_*``, and the reverse for the legacy whole-table path."""
 
     read_bytes_calls: int = 0
     read_bytes_total: int = 0
+    read_range_calls: int = 0
+    read_range_total: int = 0
     write_bytes_calls: int = 0
     write_bytes_total: int = 0
     per_uri_read_bytes: Counter[str] = field(default_factory=Counter)
     per_uri_read_calls: Counter[str] = field(default_factory=Counter)
+    per_uri_range_bytes: Counter[str] = field(default_factory=Counter)
+    per_uri_range_calls: Counter[str] = field(default_factory=Counter)
 
     def reset(self) -> None:
         self.read_bytes_calls = 0
         self.read_bytes_total = 0
+        self.read_range_calls = 0
+        self.read_range_total = 0
         self.write_bytes_calls = 0
         self.write_bytes_total = 0
         self.per_uri_read_bytes.clear()
         self.per_uri_read_calls.clear()
+        self.per_uri_range_bytes.clear()
+        self.per_uri_range_calls.clear()
 
     @property
     def distinct_uris_read(self) -> int:
-        return len(self.per_uri_read_calls)
+        return len(set(self.per_uri_read_calls) | set(self.per_uri_range_calls))
+
+    @property
+    def total_bytes_read(self) -> int:
+        """Combined whole-object + range bytes -- the fair "actual bytes
+        moved" figure regardless of which primitive a given path uses."""
+        return self.read_bytes_total + self.read_range_total
 
 
 class CountingArtifactStore(ArtifactStore):
     """Wraps any ArtifactStore, forwarding every call unchanged while
-    recording ``read_bytes``/``write_bytes`` volume in ``self.stats``. Every
-    other ArtifactStore method (``exists``/``read_json``/``write_json``/
-    ``list_json``/``delete_prefix``/``public_url``/``join_uri``) is
-    forwarded without counting -- the learning-data access path this
-    benchmark cares about never calls those for step/signal data."""
+    recording ``read_bytes``/``read_range``/``write_bytes`` volume in
+    ``self.stats``. Every other ArtifactStore method
+    (``exists``/``read_json``/``write_json``/``list_json``/
+    ``delete_prefix``/``public_url``/``join_uri``) is forwarded without
+    counting -- the learning-data access path this benchmark cares about
+    never calls those for step/signal data."""
 
     def __init__(self, inner: ArtifactStore) -> None:
         self._inner = inner
@@ -73,6 +94,14 @@ class CountingArtifactStore(ArtifactStore):
         self.stats.read_bytes_total += len(data)
         self.stats.per_uri_read_bytes[uri] += len(data)
         self.stats.per_uri_read_calls[uri] += 1
+        return data
+
+    async def read_range(self, uri: ArtifactUri, offset: int, length: int) -> bytes:
+        data = await self._inner.read_range(uri, offset, length)
+        self.stats.read_range_calls += 1
+        self.stats.read_range_total += len(data)
+        self.stats.per_uri_range_bytes[uri] += len(data)
+        self.stats.per_uri_range_calls[uri] += 1
         return data
 
     async def write_bytes(self, uri: ArtifactUri, data: bytes) -> None:

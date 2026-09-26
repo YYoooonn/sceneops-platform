@@ -200,7 +200,7 @@ domain-specific docs below for Scene/Episode flow.
 | Scene domain (build -> quality -> API) | [scene-domain.md](./scene-domain.md) |
 | Episode domain (build -> quality -> API) | [episode-domain.md](./episode-domain.md) |
 | Robot learning data layer (alignment -> curation -> native dataset -> consumer adapters) | [robot-learning-data.md](./robot-learning-data.md) |
-| Learning data scaling baseline (Phase 5 audit + benchmark, physical layout recommendations) | [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md) |
+| Learning data scaling (Phase 5: audit/benchmark, sharded physical layout, selective reads) | [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md) |
 | Dataset interoperability (external adapter contract, LeRobot semantic mapping, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
 | External integration runtime (IntegrationRequest/Result, IntegrationExecutor, HTTP transport, nuScenes + LeRobot isolated runtimes) | [external-integration-runtime.md](./external-integration-runtime.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
