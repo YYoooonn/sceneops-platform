@@ -1980,3 +1980,355 @@ optimization target.
   physical layout, `Artifact`/lineage ownership -- none of this
   request's changes touch any of them (§52's equivalence tests are the
   proof).
+
+---
+
+# Request 5.5: Incremental Learning Data Export
+
+Everything below is new; §1-55 above (Requests 5.1-5.4) are historical
+record and unchanged. This request adds a second export path --
+incremental, deriving a new immutable export from a prior one by reusing
+unchanged physical shards -- strictly *alongside* the existing full-export
+path. No change to the Request 5.2 shard/row-group layout, no change to
+`SceneOpsDataset`, no new scheduler, no deletion/tombstone/compaction
+support.
+
+## 56. Current export lifecycle (audit)
+
+Before this request, `EXPORT_LEARNING_DATA` (`export_learning_data.py`)
+had exactly one mode: resolve/verify/validate every pinned input, compute
+`export_id` as a pure content hash of the sorted aligned checksums plus
+`export_config`/`schema_version` (`learning_data_export_id`, Request 2.5),
+then build and write every requested table from scratch --
+`learning_episodes` as one file, `learning_steps`/`learning_signals` via
+`write_sharded_learning_tables`, which calls `plan_shards_for_entries` to
+**re-bin every input from scratch** on every call (sorts the full entry
+set by `(episode_id, aligned_artifact_checksum)`, then bin-packs under
+`ShardPolicy`) -- so even a single new EpisodeRef added to an existing
+1000-episode export would, before this request, rewrite effectively all
+of that export's shards, one ArtifactRecord per shard, one manifest, one
+`context.commit()` as the sole atomicity boundary. This full-rebuild-only
+behavior is exactly what made incremental addition worth building:
+`plan_shards_for_entries`'s own re-binning is deterministic given the
+same entry *set*, but any set change shifts bin boundaries downstream of
+the change, so nothing was reusable without new machinery.
+
+## 57. Chosen incremental semantics
+
+An incremental export (`base_export_id` set) is **pure addition only**:
+its final exposed EpisodeRef set must be a superset of `base_export_id`'s
+own set -- never a replacement or removal. Concretely:
+
+- **Append new EpisodeRefs** -- new `episode_id`s land in freshly-binned
+  shards; the base's own shards are untouched.
+- **New revision of an existing `episode_id`** -- since `EpisodeRef`
+  identity is always `(episode_id, aligned_artifact_checksum)`, never
+  `episode_id` alone, a second aligned revision of an already-exported
+  episode is just another new key -- both revisions coexist as distinct,
+  independently-addressable `EpisodeRef`s in the resulting export. No
+  special-casing was needed for this in the planner; it falls out of
+  treating identity as the full pair (verified directly by
+  `test_plan_supports_new_revision_of_existing_episode_id` and
+  `test_incremental_export_new_revision_of_existing_episode`).
+- **Never dedup by `episode_id` alone** -- confirmed at every layer: the
+  planner's key sets, the job handler's revision merge, and the manifest's
+  `inputs` list all key on the full pair.
+- The job handler's own params contract makes the "no removal" guarantee
+  structural, not just enforced by a check: `ExportLearningDataJobParams.
+  inputs` for an incremental job is **only the delta**, and the handler
+  always computes `all_revisions = base_manifest.inputs + inputs` --
+  there is no field a caller can set to make a base EpisodeRef disappear
+  from the merged target set. `plan_incremental_export`'s own
+  base-subset-of-target check (§59) is therefore unreachable from this
+  job's params in practice; it remains as defense-in-depth for the pure
+  function's other, hypothetical callers, and is exercised directly by
+  `packages/sceneops-core/tests/test_incremental_export_planner.py`
+  rather than through the job handler.
+
+## 58. Selected shard-reuse strategy
+
+Two candidates were considered:
+
+| | tail-shard rewrite | **append-only delta shards (chosen)** |
+|---|---|---|
+| base shards touched | the (typically under-full) last shard is rewritten to top it off | **none, ever** |
+| new ArtifactRecords | 1 replacement record for the rewritten tail shard + N for new shards | **only N for genuinely new shards** |
+| bytes rewritten | O(1 shard) extra, regardless of delta size | **zero** |
+| determinism | requires deciding *which* shard is "the tail" and whether to re-open it, adding a stateful edge case | pure set diff -- base's shards are always 100% reused under the pure-addition precondition (§57), no partial-shard-membership logic needed at all |
+| long-run shard-size distribution | stays closer to `ShardPolicy`'s target size over many increments | many small increments leave many small trailing shards -- accepted, deferred to a future, separate compaction operation (§66) |
+
+Append-only delta shards won on simplicity and determinism, at the
+explicitly accepted cost of the long-run shard-size distribution -- this
+request's own non-goals rule out building compaction to offset that cost
+(§66). A key simplifying consequence of the pure-addition precondition
+(§57): once `base_manifest`'s own EpisodeRef set is confirmed to be a
+subset of the target set, **all** of the base's shards are always fully
+reusable -- there is no per-shard partial-membership case to detect or
+handle, because nothing about an existing shard's membership can ever
+become invalid under addition-only semantics.
+
+## 59. Planner design
+
+`packages/sceneops-core/sceneops_core/episodes/learning_export/
+incremental.py` -- pure, no DB/ArtifactStore/Parquet access:
+
+```
+plan_incremental_export(base_manifest, target_revisions) -> IncrementalExportPlan
+```
+
+- Validates `base_manifest.shard_index is not None` (a v1 single-file
+  base has nothing physical to reuse) --
+  `IncrementalExportUnsupportedBaseError` otherwise.
+- Validates `target_revisions` has no duplicate `(episode_id,
+  aligned_artifact_checksum)` keys -- `IncrementalExportOverlapError`
+  otherwise (this is what actually fires from the job handler when a
+  caller's delta accidentally redeclares an already-included base
+  revision, §57's last bullet).
+- Validates `base_manifest.inputs`' key set is a subset of
+  `target_revisions`' key set -- `IncrementalExportUnsupportedBaseError`
+  otherwise, directing the caller to a full export.
+- Returns `IncrementalExportPlan`: `base_export_id`,
+  `reused_learning_steps_shards`/`reused_learning_signals_shards` (the
+  base's own `LearningDataShard` objects, verbatim -- same
+  `uri`/`checksum`/`size_bytes`), `reused_episode_refs`/
+  `new_episode_refs` (both sorted, deterministic), and
+  `start_shard_index` (`len(base's own shard list)`, so new shards can
+  never collide with a reused one's index/URI).
+
+**Deliberately does not take `ShardPolicy` as a parameter**, despite the
+task's own conceptual formula (base manifest + target EpisodeRefs +
+ShardPolicy -> plan) naming it as an input: under the pure-addition
+precondition, reuse decisions are pure set-membership diffs, entirely
+independent of any bin-packing policy -- policy only matters when
+actually binning the *new* episodes into shards, which requires each
+new episode's real row count (from its parsed `AlignedEpisodeArtifact`,
+not available at this identity-only planning layer). That binning step
+lives in the execution layer instead
+(`write_incremental_sharded_learning_tables` in
+`sceneops_analytics/learning_tables_sharded.py`), which reuses the
+existing, unmodified `plan_episode_shards`/`plan_shards_for_entries` --
+only now called over the delta alone, numbered from
+`plan.start_shard_index`, then the plan's reused shards are prepended
+verbatim. `write_sharded_learning_tables` itself gained one new
+optional parameter, `start_shard_index: int = 0`, to support this
+without any change to its existing (full-export) call sites' behavior.
+
+Determinism, reuse correctness, "no removal" rejection, duplicate-key
+rejection, and the new-revision-of-existing-episode_id case are all
+covered directly and pass:
+`packages/sceneops-core/tests/test_incremental_export_planner.py`
+(7 tests, no I/O).
+
+## 60. Files changed
+
+- **New**: `packages/sceneops-core/sceneops_core/episodes/learning_export/
+  incremental.py` (`IncrementalExportPlan`, `plan_incremental_export`,
+  `IncrementalExportUnsupportedBaseError`, `IncrementalExportOverlapError`).
+- **New**: `packages/sceneops-core/tests/test_incremental_export_planner.py`,
+  `apps/worker/tests/jobs/test_export_learning_data_incremental.py`,
+  `scripts/dev/benchmark_incremental_export.py`.
+- `packages/sceneops-core/sceneops_core/episodes/learning_export/
+  schemas.py` -- additive `LearningDataExportManifest.base_export_id:
+  str | None = None` (lineage/traceability only; readers never need it
+  to interpret `table_uris`/`shard_index`, which are always already
+  complete and self-describing).
+- `packages/sceneops-core/sceneops_core/episodes/learning_export/
+  __init__.py` -- exports the four new symbols.
+- `packages/sceneops-core/sceneops_core/jobs/schemas/params/episodes.py`
+  -- additive `ExportLearningDataJobParams.base_export_id: str | None =
+  None`.
+- `packages/sceneops-core/sceneops_core/jobs/schemas/results/episodes.py`
+  -- additive `ExportLearningDataJobResult.base_export_id`,
+  `.reused_shard_counts`, `.new_shard_counts`.
+- `packages/sceneops-analytics/sceneops_analytics/learning_tables_sharded.py`
+  -- `start_shard_index` param on `_write_sharded_table`/
+  `write_sharded_learning_tables`; new
+  `write_incremental_sharded_learning_tables`.
+- `packages/sceneops-analytics/sceneops_analytics/writer.py` -- new
+  `AnalyticsTableWriter.read_learning_table` (whole-file read-back, used
+  only for the small `learning_episodes` table's incremental merge --
+  never for sharded tables, which stay selectively read per Request 5.3).
+- `packages/sceneops-analytics/sceneops_analytics/__init__.py` -- exports
+  `write_incremental_sharded_learning_tables`.
+- `apps/worker/sceneops_worker/jobs/dataset/export_learning_data.py` --
+  the incremental branch: base-manifest resolution
+  (`_resolve_base_export_manifest`,
+  `BaseLearningExportNotFoundError`), revision merge, table-set
+  consistency validation (§61), `learning_episodes` merge (§57),
+  incremental shard writing, reused-shard ArtifactRecord skip (§62).
+- `docs/architecture/learning-data-scaling-baseline.md` -- this section.
+
+## 61. Table-set consistency guard
+
+Not explicitly requested, but a gap discovered during design: nothing
+stops a caller from requesting an incremental export whose `tables` param
+omits a sharded table the base already included (or the reverse). Either
+would silently produce a manifest whose declared table set disagrees
+with what the base already committed to. Guarded explicitly in the job
+handler: for each of `learning_steps`/`learning_signals`, if the base has
+shards for that table, the incremental request must also request it
+(and vice versa) -- otherwise a clear `ValueError` directs the caller to
+a full export instead. This keeps every incremental export's table set
+identical to its base's, which is what makes `write_incremental_
+sharded_learning_tables`'s unconditional reuse of both of the plan's
+shard lists correct without further per-table conditionals.
+
+## 62. ArtifactRecord/lineage behavior
+
+- **New physical objects get new records, exactly as a full export
+  always has**: the merged `learning_episodes` file (always rewritten --
+  see below), each newly-written shard, and the new manifest.
+- **Reused shards get zero new records.** The job handler collects every
+  reused shard's `uri` from the plan
+  (`plan.reused_learning_steps_shards`/`reused_learning_signals_shards`)
+  into a set, then skips `artifact_record_store.create()` for any shard
+  in `shard_index` whose `uri` is in that set -- the base export's own
+  record remains the sole, correct lineage entry. No upsert-by-checksum
+  mechanism exists in `ArtifactRepository` (confirmed by reading it
+  directly, §60 audit) or was needed -- "reuse" is simply "don't call
+  `.create()` again."
+- **`learning_episodes` is always fully rewritten as one new file**,
+  even though most of its rows are unchanged -- a deliberate exception to
+  "never rewrite unchanged data," justified because this table is always
+  metadata-scale (one row per exposed EpisodeRef, never sharded) and
+  because merging by concatenation (base's existing rows + a freshly-
+  built delta-only sub-table) is far simpler and more auditable than
+  trying to patch an existing Parquet file in place. Reused rows keep
+  their **original** `export_id`/`dataset_id`/`dataset_version` column
+  values unchanged (never rewritten to the new export's own identifiers)
+  -- verified `SceneOpsDataset.open()` never reads these three columns
+  for anything (it reads `episode_id`/`aligned_artifact_checksum` plus
+  the metadata columns), so preserving them is both simpler and more
+  honest provenance than overwriting them.
+- The new manifest's own `base_export_id` field (§60) records the
+  lineage edge at the manifest level too, purely informational.
+
+## 63. Atomicity / retry model
+
+Mirrors the existing full-export model exactly -- no new distributed-
+transaction machinery was added or needed:
+
+- Every Parquet/manifest write happens first; `context.commit()` (the
+  DB-side ArtifactRecord commit) remains the single commit boundary, at
+  the very end, unchanged in position or semantics.
+- **A failure at any point before that final commit leaves the base
+  export exactly as valid as it was before the incremental job ran** --
+  the base's shards/manifest/records are never touched, read-only inputs
+  to this job. A crash mid-write leaves orphaned new Parquet objects on
+  disk (partial delta artifacts) but zero ArtifactRecords pointing at
+  them and zero references to them from any manifest -- indistinguishable
+  from garbage, never "partially complete" from any reader's perspective,
+  since nothing durable (a DB record, a manifest a caller could resolve)
+  ever pointed at them.
+- **Retries are deterministic for the same reason full-export retries
+  already were**: `export_id` is a pure content hash
+  (`learning_data_export_id`, unchanged, frozen) of the *merged* checksum
+  set, so retrying an incremental job with the same `base_export_id` and
+  the same delta recomputes the identical `export_id`, writes to the
+  identical content-addressed URIs, and (if the first attempt partially
+  wrote some delta shards before crashing) simply overwrites them with
+  byte-identical content -- never a duplicate-with-different-bytes state.
+- No two-phase commit, no saga, no new scheduler was introduced --
+  exactly per this request's explicit non-goals.
+
+## 64. Benchmark results (write amplification)
+
+`scripts/dev/benchmark_incremental_export.py`, base = 1000 episodes
+(default shard policy, realistic length-jitter fixture), against a real
+`LocalArtifactStore` via `CountingArtifactStore` (actual `write_bytes`
+calls/bytes, not inferred from file sizes):
+
+| scenario | reused shards | new shards | rewritten | bytes reused | bytes written (incremental) | bytes written (full rebuild) | write amplification |
+|---|---|---|---|---|---|---|---|
+| +10 new | 10 | 2 | 0 | 13,945,492 | 145,700 | 14,040,571 | **0.010** |
+| +100 new | 10 | 2 | 0 | 13,945,492 | 1,413,714 | 15,306,583 | **0.092** |
+| +10 revisions | 10 | 2 | 0 | 13,945,492 | 156,404 | 14,051,218 | **0.011** |
+| mixed (+10 new, +10 revisions) | 10 | 2 | 0 | 13,945,492 | 298,831 | 14,187,638 | **0.021** |
+
+(`new shards` = 2 because the delta is small enough in every scenario to
+land in one new `learning_steps` shard + one new `learning_signals`
+shard under the default policy's 200-episodes/200,000-rows bounds;
+`rewritten` is always 0 by construction -- append-only never rewrites.)
+Incremental export wrote **1-9% of the bytes** a full rebuild of the
+same target set would have, confirming the core design bet: cost scales
+with delta size, not base size, at this scale. `write_bytes` **call**
+count for the incremental path was 2 in every scenario (one call per new
+shard) versus 12 for a full rebuild (10 base-sized shards worth of
+churn at this scale) -- fewer objects touched, not just fewer bytes.
+`+10 revisions`' `target_episode_count` stays at 1000 (unique
+`episode_id`s unchanged) while still writing 10 new revision rows/shards
+worth of data -- the expected signature of "new revision, not new
+episode" (§57).
+
+## 65. Reader equivalence
+
+`apps/worker/tests/jobs/test_export_learning_data_incremental.py::
+test_full_build_and_incremental_export_expose_identical_logical_data`:
+runs the real `ExportLearningDataJobHandler` twice over the same final
+5-episode target set -- once as a single full export, once as a base
+(3 episodes) plus an incremental follow-up (2 episodes) -- then opens
+`SceneOpsDataset.open()` over both resulting manifests and asserts
+`episodes()` returns the identical sorted `EpisodeRef` list, and every
+`get_step(ref, step_index)` result is pairwise equal between the two
+datasets, for every episode and every step. **Zero incremental-specific
+code exists anywhere in `sceneops_analytics/learning_dataset/` --**
+confirmed by grep as well as by this test: `SceneOpsDataset.open()`
+doesn't know or care whether a manifest's shards came from one export
+call or were assembled from a base plus a delta; it only ever reads
+`shard_index`/`table_uris`, which are always already complete.
+
+## 66. Verification results
+
+- `make test` -- **1,333 passed, 5 skipped** (up from Request 5.4's
+  1,322 -- 11 new tests: 7 planner unit tests +
+  4 job-handler/reader-equivalence tests).
+- `make lint` -- all checks passed.
+- `make test-integration` -- 46 passed, unchanged from Request 5.4 (no
+  new integration-tier tests added -- the incremental-export benchmark,
+  §64, is a manually-run script against a real `LocalArtifactStore`, not
+  a pytest integration test needing real Postgres/MinIO).
+- `make lerobot-test` -- 36 passed, unchanged.
+- `make e2e-lerobot-container` -- **PASSED** (fresh container run):
+  `exported_episode_count=3, exported_step_count=22,
+  total_frames_readback=22` -- identical to Request 5.4's numbers,
+  confirming the incremental-export addition doesn't regress the real
+  container/adapter round-trip (this fixture is a v1, non-incremental,
+  single-export-call path, so it specifically re-confirms that path is
+  untouched).
+
+## 67. Remaining limitations / deferred, and boundary for Request 5.6
+
+- **No compaction.** Many small incremental deltas over time leave many
+  small trailing shards (§58's accepted cost) -- there is no operation in
+  this request that merges/repacks them back toward `ShardPolicy`'s
+  target size. Explicitly out of scope (task's own non-goal); a future
+  request would need to design compaction as a distinct operation (likely
+  itself needing its own planning/atomicity story, since it *would*
+  rewrite existing shards, unlike anything here).
+- **No deletion/tombstones.** An EpisodeRef, once exposed by any export,
+  can never be removed via this mechanism -- by design (task's own
+  non-goal), but worth restating as a hard boundary: any future
+  "supersede/retract an episode" requirement needs new machinery this
+  request deliberately does not provide.
+- **Table-set consistency (§61) requires an incremental export's `tables`
+  param to exactly match its base's** -- a caller cannot use this
+  mechanism to *add* a previously-unexported table (e.g. base only ever
+  built `learning_steps`, now also wants `learning_signals`) to an
+  existing export lineage; that would require a full export today.
+- **`learning_episodes`' merge-by-full-rewrite (§62)** is metadata-scale
+  and cheap today, but if EpisodeRef counts grow into the hundreds of
+  thousands, this table's size (still a single, ever-growing file) would
+  eventually deserve its own sharding story -- not attempted here, since
+  Request 5.2 explicitly scoped `learning_episodes` as always single-file
+  and nothing in this request's measurements showed that assumption
+  breaking.
+- **Boundary for Request 5.6**: this request leaves a working, measured,
+  atomic incremental-export path with append-only delta shards, full
+  ArtifactRecord/lineage reuse, and proven reader equivalence.
+  Request 5.6 (or later) inherits this as a second, coexisting export
+  mode -- not a replacement for full export, which remains available and
+  unchanged. Everything frozen through Request 5.4 (§55) remains frozen;
+  additionally now frozen: `IncrementalExportPlan`'s shape and the
+  append-only shard-reuse strategy (a future request wanting compaction
+  must add a new, distinct operation rather than change what this one
+  does).

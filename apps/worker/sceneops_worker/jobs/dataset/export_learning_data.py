@@ -13,9 +13,12 @@ and persistence only.
 
 from __future__ import annotations
 
+import polars as pl
+
 from sceneops_analytics import (
     LEARNING_TABLE_BUILDERS,
     build_learning_episodes_table,
+    write_incremental_sharded_learning_tables,
     write_sharded_learning_tables,
 )
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
@@ -32,11 +35,13 @@ from sceneops_core.episodes.learning_export import (
     LEARNING_DATA_LAYOUT_VERSION_SINGLE_FILE,
     LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
+    IncrementalExportPlan,
     LearningDataExportConfig,
     LearningDataExportManifest,
     LearningDataShardIndex,
     default_shard_policy,
     learning_data_export_id,
+    plan_incremental_export,
 )
 from sceneops_core.jobs.schemas import (
     ExportLearningDataJobParams,
@@ -44,6 +49,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
+from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.jobs.dataset._aligned_episode_resolution import (
     resolve_and_verify_aligned_artifact,
@@ -57,6 +63,36 @@ _validator = AlignedEpisodeValidator()
 # learning_signals are the sharded tables -- see write_sharded_learning_tables.
 _SHARDED_TABLE_NAMES = frozenset({"learning_steps", "learning_signals"})
 _SHARD_POLICY = default_shard_policy()
+
+
+class BaseLearningExportNotFoundError(Exception):
+    """``base_export_id`` has no manifest at its expected content-addressed
+    URI -- either the export_id is wrong, or that export was never actually
+    published. No separate checksum-pinning is needed here (unlike
+    manifest_artifact_id-based resolution elsewhere): export_id is itself a
+    content hash of the base export's own inputs/config (SceneOps V2 Request
+    5.5 §6), so resolving by export_id already is resolving by content."""
+
+
+async def _resolve_base_export_manifest(
+    context: WorkerContext,
+    *,
+    dataset_id: str,
+    dataset_version: str,
+    base_export_id: str,
+) -> LearningDataExportManifest:
+    uri = context.analytics_writer.learning_export_manifest_uri(
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        export_id=base_export_id,
+    )
+    raw_bytes = await context.analytics_writer.read_learning_export_manifest_bytes(uri)
+    if raw_bytes is None:
+        raise BaseLearningExportNotFoundError(
+            f"base_export_id {base_export_id!r} has no manifest at {uri!r} "
+            f"(dataset_id={dataset_id!r}, dataset_version={dataset_version!r})"
+        )
+    return LearningDataExportManifest.model_validate_json(raw_bytes)
 
 
 class ExportLearningDataJobHandler(
@@ -90,6 +126,18 @@ class ExportLearningDataJobHandler(
         dataset_id = params.dataset_id
         dataset_version = params.dataset_version
 
+        base_manifest: LearningDataExportManifest | None = None
+        if params.base_export_id is not None:
+            base_manifest = await _resolve_base_export_manifest(
+                context,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                base_export_id=params.base_export_id,
+            )
+
+        # entries/revisions are only the delta being added (SceneOps V2
+        # Request 5.5 §1) when base_manifest is set -- merged with
+        # base_manifest.inputs below to get the full target set.
         entries: list[tuple[str, AlignedEpisodeArtifact]] = []
         revisions: list[AlignedArtifactRevision] = []
 
@@ -126,9 +174,17 @@ class ExportLearningDataJobHandler(
                 )
             )
 
+        # The full target set: base's own inputs plus this delta (identical
+        # to `revisions` when this is an ordinary, non-incremental export).
+        all_revisions = (
+            [*base_manifest.inputs, *revisions]
+            if base_manifest is not None
+            else revisions
+        )
+
         export_config = LearningDataExportConfig(tables=params.tables)
         export_id = learning_data_export_id(
-            aligned_checksums=[checksum for checksum, _ in entries],
+            aligned_checksums=[r.aligned_artifact_checksum for r in all_revisions],
             export_config=export_config,
             schema_version=LEARNING_DATA_SCHEMA_VERSION,
         )
@@ -137,18 +193,57 @@ class ExportLearningDataJobHandler(
             set(params.tables) if params.tables else set(LEARNING_TABLE_BUILDERS)
         )
 
+        incremental_plan: IncrementalExportPlan | None = None
+        if base_manifest is not None:
+            incremental_plan = plan_incremental_export(base_manifest, all_revisions)
+            for table_name in _SHARDED_TABLE_NAMES:
+                base_has_table = bool(
+                    base_manifest.shard_index
+                    and getattr(base_manifest.shard_index, table_name)
+                )
+                requested = table_name in requested_tables
+                if base_has_table and not requested:
+                    raise ValueError(
+                        "export_learning_data: incremental export must "
+                        f"include {table_name!r} -- base export "
+                        f"{params.base_export_id!r} already includes it"
+                    )
+                if requested and not base_has_table:
+                    raise ValueError(
+                        f"export_learning_data: incremental export cannot "
+                        f"add {table_name!r} -- base export "
+                        f"{params.base_export_id!r} does not include it; "
+                        "use a full export instead"
+                    )
+
         table_uris: dict[str, str] = {}
         table_checksums: dict[str, str] = {}
         table_size_bytes: dict[str, int] = {}
         row_counts: dict[str, int] = {}
 
         if "learning_episodes" in requested_tables:
-            df = build_learning_episodes_table(
+            delta_df = build_learning_episodes_table(
                 dataset_id=dataset_id,
                 dataset_version=dataset_version,
                 export_id=export_id,
                 entries=entries,
             )
+            base_episodes_uri = (
+                base_manifest.table_uris.get("learning_episodes")
+                if base_manifest is not None
+                else None
+            )
+            if base_episodes_uri is not None:
+                # Reused rows keep their original export_id/dataset_id/
+                # dataset_version column values (SceneOps V2 Request 5.5
+                # §3) -- SceneOpsDataset never reads these columns, so
+                # rewriting them would only add risk for no benefit.
+                base_df = await context.analytics_writer.read_learning_table(
+                    base_episodes_uri
+                )
+                df = pl.concat([base_df, delta_df], how="vertical")
+            else:
+                df = delta_df
             write_result = await context.analytics_writer.write_learning_table(
                 "learning_episodes",
                 df,
@@ -163,28 +258,50 @@ class ExportLearningDataJobHandler(
 
         requested_sharded_tables = requested_tables & _SHARDED_TABLE_NAMES
         shard_index: LearningDataShardIndex | None = None
+        reused_shard_counts: dict[str, int] = {}
+        new_shard_counts: dict[str, int] = {}
+        reused_shard_uris: set[str] = set()
         if requested_sharded_tables:
-            shard_index = await write_sharded_learning_tables(
-                context.analytics_writer,
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
-                export_id=export_id,
-                entries=entries,
-                policy=_SHARD_POLICY,
-                table_names=requested_sharded_tables,
-            )
+            if incremental_plan is not None:
+                shard_index = await write_incremental_sharded_learning_tables(
+                    context.analytics_writer,
+                    dataset_id=dataset_id,
+                    dataset_version=dataset_version,
+                    export_id=export_id,
+                    delta_entries=entries,
+                    policy=_SHARD_POLICY,
+                    plan=incremental_plan,
+                    table_names=requested_sharded_tables,
+                )
+                for table_name in requested_sharded_tables:
+                    reused = getattr(incremental_plan, f"reused_{table_name}_shards")
+                    reused_shard_uris.update(shard.uri for shard in reused)
+                    reused_shard_counts[table_name] = len(reused)
+                    new_shard_counts[table_name] = len(
+                        getattr(shard_index, table_name)
+                    ) - len(reused)
+            else:
+                shard_index = await write_sharded_learning_tables(
+                    context.analytics_writer,
+                    dataset_id=dataset_id,
+                    dataset_version=dataset_version,
+                    export_id=export_id,
+                    entries=entries,
+                    policy=_SHARD_POLICY,
+                    table_names=requested_sharded_tables,
+                )
             for table_name in requested_sharded_tables:
                 shards = getattr(shard_index, table_name)
                 row_counts[table_name] = sum(shard.row_count for shard in shards)
 
-        episode_count = len({item.episode_id for item in params.inputs})
+        episode_count = len({r.episode_id for r in all_revisions})
 
         manifest = LearningDataExportManifest(
             schema_version=LEARNING_DATA_SCHEMA_VERSION,
             export_id=export_id,
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            inputs=revisions,
+            inputs=all_revisions,
             export_config=export_config,
             table_uris=table_uris,
             table_checksums=table_checksums,
@@ -197,6 +314,7 @@ class ExportLearningDataJobHandler(
             shard_index=shard_index,
             episode_count=episode_count,
             metadata=params.metadata,
+            base_export_id=params.base_export_id,
         )
 
         manifest_write_result = (
@@ -232,10 +350,17 @@ class ExportLearningDataJobHandler(
         # One ArtifactRecord per physical shard file (SceneOps V2 Request
         # 5.2) -- every shard is its own real, independently-checksummed
         # artifact and gets its own lineage record, exactly like every
-        # other physical Parquet object this job writes above.
+        # other physical Parquet object this job writes above. Shards
+        # reused verbatim from an incremental export's base (SceneOps V2
+        # Request 5.5 §5) are skipped here -- their base export's own
+        # ArtifactRecord remains the sole, correct lineage entry; creating
+        # a second record for the same unchanged uri/checksum would be a
+        # duplicate, not real lineage.
         if shard_index is not None:
             for table_name in requested_sharded_tables:
                 for shard in getattr(shard_index, table_name):
+                    if shard.uri in reused_shard_uris:
+                        continue
                     await context.artifact_record_store.create(
                         artifact_id=generate_artifact_id(),
                         ref=ArtifactRef(
@@ -296,6 +421,9 @@ class ExportLearningDataJobHandler(
             table_uris=table_uris,
             row_counts=row_counts,
             shard_counts=shard_counts,
+            base_export_id=params.base_export_id,
+            reused_shard_counts=reused_shard_counts,
+            new_shard_counts=new_shard_counts,
             manifest_artifact_id=manifest_artifact_id,
             manifest_uri=manifest_write_result.uri,
         )

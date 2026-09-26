@@ -73,3 +73,10 @@ class LearningDataExportManifest(SceneOpsBaseModel):
 
     episode_count: int = 0
     metadata: JsonDict = Field(default_factory=dict)
+
+    # None for an ordinary full export. Set to the export_id this export was
+    # incrementally derived from (SceneOps V2 Request 5.5 §1) -- lineage only,
+    # informational; readers must never need this to interpret the export's
+    # own table_uris/shard_index, which are always already complete and
+    # self-describing regardless of how this export was produced.
+    base_export_id: str | None = None

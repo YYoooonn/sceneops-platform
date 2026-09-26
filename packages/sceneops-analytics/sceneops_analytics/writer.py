@@ -278,6 +278,17 @@ class AnalyticsTableWriter:
             return None
         return await self.artifact_store.read_bytes(uri)
 
+    async def read_learning_table(self, uri: str) -> pl.DataFrame:
+        """Read a whole single-file learning table back into a DataFrame --
+        used only for ``learning_episodes`` (always small, metadata-scale;
+        SceneOps V2 Request 5.5 §3's incremental-export path reads a base
+        export's existing ``learning_episodes`` table this way to merge it
+        with a delta). Never used for sharded learning_steps/learning_signals
+        tables -- those are read selectively (see parquet_range_reader.py),
+        never materialized whole."""
+        data = await self.artifact_store.read_bytes(uri)
+        return pl.read_parquet(io.BytesIO(data))
+
     # ------------------------------------------------------------------
     # Episode curation manifests (SceneOps V2 Request 2.6)
     # ------------------------------------------------------------------

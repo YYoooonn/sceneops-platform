@@ -49,6 +49,7 @@ from sceneops_analytics.learning_tables import (
 )
 from sceneops_analytics.learning_tables_sharded import (
     plan_shards_for_entries,
+    write_incremental_sharded_learning_tables,
     write_sharded_learning_tables,
 )
 from sceneops_analytics.query import query_parquet
@@ -81,6 +82,7 @@ __all__ = [
     "build_learning_steps_table",
     "build_learning_signals_table",
     "plan_shards_for_entries",
+    "write_incremental_sharded_learning_tables",
     "write_sharded_learning_tables",
     "AnalyticsTableWriter",
     "AnalyticsTableWriteResult",

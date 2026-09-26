@@ -1,4 +1,10 @@
 from .identity import learning_data_export_id
+from .incremental import (
+    IncrementalExportOverlapError,
+    IncrementalExportPlan,
+    IncrementalExportUnsupportedBaseError,
+    plan_incremental_export,
+)
 from .schemas import (
     LEARNING_DATA_SCHEMA_VERSION,
     AlignedArtifactRevision,
@@ -25,9 +31,13 @@ __all__ = [
     "LearningDataExportManifest",
     "LearningDataShard",
     "LearningDataShardIndex",
+    "IncrementalExportOverlapError",
+    "IncrementalExportPlan",
+    "IncrementalExportUnsupportedBaseError",
     "ShardEpisodeMember",
     "ShardPolicy",
     "default_shard_policy",
     "learning_data_export_id",
     "plan_episode_shards",
+    "plan_incremental_export",
 ]
