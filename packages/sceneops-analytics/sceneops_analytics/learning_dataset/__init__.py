@@ -1,3 +1,4 @@
+from .cache_policy import DEFAULT_CACHE_POLICY, DISABLED_CACHE_POLICY, CachePolicy
 from .dataset import SceneOpsDataset
 from .errors import (
     CurationManifestMismatchError,
@@ -26,7 +27,10 @@ from .schemas import EpisodeMetadata
 # SceneOpsTorchDataset`.
 
 __all__ = [
+    "DEFAULT_CACHE_POLICY",
     "DEFAULT_DTYPE",
+    "DISABLED_CACHE_POLICY",
+    "CachePolicy",
     "CurationManifestMismatchError",
     "DatasetManifestMismatchError",
     "EpisodeMetadata",

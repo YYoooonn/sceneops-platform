@@ -19,6 +19,7 @@ functions unchanged.
 from __future__ import annotations
 
 import io
+from collections.abc import Sequence
 
 import polars as pl
 import pyarrow as pa
@@ -47,6 +48,7 @@ from sceneops_core.episodes.learning_export import (
 )
 from sceneops_storage import ArtifactStore
 
+from .cache_policy import DEFAULT_CACHE_POLICY, CachePolicy
 from .errors import (
     CurationManifestMismatchError,
     DatasetManifestMismatchError,
@@ -56,7 +58,8 @@ from .errors import (
     ShardIndexMismatchError,
     StepOutOfRangeError,
 )
-from .parquet_range_reader import read_episode_row_group
+from .lru_cache import BoundedCache
+from .parquet_range_reader import read_episode_row_group, read_shard_row_groups_bulk
 from .reconstruct import step_from_rows
 from .schemas import EpisodeMetadata
 
@@ -64,6 +67,7 @@ _REQUIRED_TABLES = ("learning_episodes", "learning_steps", "learning_signals")
 _SHARDED_TABLES = ("learning_steps", "learning_signals")
 
 ShardLocation = tuple[LearningDataShard, ShardEpisodeMember]
+SchemaCacheKey = tuple[EpisodeRef, tuple[str, ...], tuple[str, ...]]
 
 
 def _strip_sha_prefix(checksum: str) -> str:
@@ -125,6 +129,40 @@ def _build_shard_lookup(
                 table_lookup[member.episode_ref] = (shard, member)
         lookup[table_name] = table_lookup
     return lookup
+
+
+def _build_steps_from_tables(
+    steps_table: pa.Table,
+    signals_table: pa.Table,
+    *,
+    ref: EpisodeRef,
+    expected_step_count: int,
+) -> list[LearningStep]:
+    """Pure row->LearningStep reconstruction shared by the single-episode
+    selective path (``_reconstruct_all_steps_sharded``) and the bulk
+    preload path (``_bulk_load_shard``, SceneOps V2 Request 5.4 §3/§4) --
+    one EpisodeRef's steps+signals Arrow tables in, its ordered
+    ``list[LearningStep]`` out, identical either way."""
+    signals_by_step: dict[int, list[dict]] = {}
+    for row in signals_table.to_pylist():
+        signals_by_step.setdefault(row["step_index"], []).append(row)
+
+    steps_rows = sorted(steps_table.to_pylist(), key=lambda row: row["step_index"])
+    steps = [
+        step_from_rows(
+            timestamp_us=row["timestamp_us"],
+            signal_rows=signals_by_step.get(row["step_index"], []),
+        )
+        for row in steps_rows
+    ]
+
+    if len(steps) != expected_step_count:
+        raise LearningDataIntegrityError(
+            f"{ref!r}'s learning_steps shard row group has {len(steps)} rows, "
+            f"but learning_episodes.parquet declares step_count="
+            f"{expected_step_count}"
+        )
+    return steps
 
 
 def _check_curation_matches_export(
@@ -214,6 +252,7 @@ class SceneOpsDataset:
         episode_refs: list[EpisodeRef],
         metadata_by_ref: dict[EpisodeRef, EpisodeMetadata],
         shard_lookup: dict[str, dict[EpisodeRef, ShardLocation]] | None = None,
+        cache_policy: CachePolicy | None = None,
     ) -> None:
         self._artifact_store = artifact_store
         self._learning_manifest = learning_manifest
@@ -226,13 +265,26 @@ class SceneOpsDataset:
         self._shard_lookup = shard_lookup
         self._is_sharded = shard_lookup is not None
 
+        # SceneOps V2 Request 5.4 §2: bounded, per-instance caches -- never
+        # process-global, never part of logical semantics (see
+        # CachePolicy's own docstring). Defaults are small relative to
+        # realistic dataset sizes because a cached episode's reconstructed
+        # step list is the dominant memory cost (measured 0.6-2.7 MB/entry
+        # across the scale ladder, see learning-data-scaling-baseline.md
+        # §42) -- schema/shard-metadata entries are comparatively tiny.
+        self._cache_policy = cache_policy or DEFAULT_CACHE_POLICY
+
         self._steps_df: pl.DataFrame | None = None
         self._signals_df: pl.DataFrame | None = None
-        self._shard_metadata_cache: dict[tuple[str, int], pq.FileMetaData] = {}
-        self._episode_steps_cache: dict[EpisodeRef, list[LearningStep]] = {}
-        self._schema_cache: dict[
-            tuple[EpisodeRef, tuple[str, ...], tuple[str, ...]], FeatureSchema
-        ] = {}
+        self._shard_metadata_cache: BoundedCache[tuple[str, int], pq.FileMetaData] = (
+            BoundedCache(self._cache_policy.max_shard_metadata)
+        )
+        self._episode_steps_cache: BoundedCache[EpisodeRef, list[LearningStep]] = (
+            BoundedCache(self._cache_policy.max_episode_steps)
+        )
+        self._schema_cache: BoundedCache[SchemaCacheKey, FeatureSchema] = BoundedCache(
+            self._cache_policy.max_schemas
+        )
 
     # ------------------------------------------------------------------
     # construction
@@ -246,6 +298,7 @@ class SceneOpsDataset:
         learning_manifest_checksum: str,
         artifact_store: ArtifactStore,
         curation_manifest: EpisodeCurationManifest | None = None,
+        cache_policy: CachePolicy | None = None,
     ) -> "SceneOpsDataset":
         """Open a dataset over ``learning_manifest`` (already resolved and
         checksum-verified by the caller -- mirrors every other
@@ -261,6 +314,13 @@ class SceneOpsDataset:
         ``selected=True``. ``curation_manifest.source_learning_export``
         must pin this exact ``learning_manifest`` (by checksum, not
         export_id/dataset_id alone) or open() fails.
+
+        ``cache_policy`` (SceneOps V2 Request 5.4 §2) defaults to
+        ``DEFAULT_CACHE_POLICY`` (bounded) if omitted -- pass
+        ``DISABLED_CACHE_POLICY`` for benchmarking/debugging raw I/O cost,
+        or a custom ``CachePolicy`` for a different memory/reuse
+        trade-off. Purely a performance knob -- never changes what any
+        method returns, only what gets re-fetched vs reused.
         """
         missing_tables = [
             name
@@ -360,6 +420,7 @@ class SceneOpsDataset:
             episode_refs=episode_refs,
             metadata_by_ref=metadata_by_ref,
             shard_lookup=_build_shard_lookup(learning_manifest),
+            cache_policy=cache_policy,
         )
 
     # ------------------------------------------------------------------
@@ -454,7 +515,7 @@ class SceneOpsDataset:
             cached_metadata=cached_metadata,
         )
         if cache_key not in self._shard_metadata_cache:
-            self._shard_metadata_cache[cache_key] = metadata
+            self._shard_metadata_cache.put(cache_key, metadata)
         return table
 
     async def _reconstruct_all_steps_sharded(
@@ -472,27 +533,215 @@ class SceneOpsDataset:
         claimed as finer pruning than it is."""
         steps_table = await self._fetch_episode_arrow_table("learning_steps", ref)
         signals_table = await self._fetch_episode_arrow_table("learning_signals", ref)
+        return _build_steps_from_tables(
+            steps_table, signals_table, ref=ref, expected_step_count=metadata.step_count
+        )
 
-        signals_by_step: dict[int, list[dict]] = {}
-        for row in signals_table.to_pylist():
-            signals_by_step.setdefault(row["step_index"], []).append(row)
+    # ------------------------------------------------------------------
+    # v2 bulk preloading -- SceneOps V2 Request 5.4 §3/§4
+    # ------------------------------------------------------------------
 
-        steps_rows = sorted(steps_table.to_pylist(), key=lambda row: row["step_index"])
-        steps = [
-            step_from_rows(
-                timestamp_us=row["timestamp_us"],
-                signal_rows=signals_by_step.get(row["step_index"], []),
+    def group_by_shard(self, refs: Sequence[EpisodeRef]) -> list[list[EpisodeRef]]:
+        """Chunk ``refs`` into shard-contiguous groups, preserving overall
+        order -- for v1 (legacy single-file) datasets, always one group
+        covering every ref (there is no shard concept). Iterating the
+        returned groups in order, then each group's refs in order,
+        reproduces exactly the input order; this only changes *how* a
+        bulk caller batches its work, never the sequence it processes
+        `refs` in.
+
+        Intended for known bulk callers that want to interleave
+        ``preload_episodes`` with per-episode consumption one shard at a
+        time (``SequenceSampler.create()``) -- grouping and consuming
+        together, rather than preloading everything upfront, keeps a
+        bounded ``_episode_steps_cache`` from evicting one shard's
+        entries to make room for another before they are ever read (see
+        ``CachePolicy``'s own docstring and
+        ``docs/architecture/learning-data-scaling-baseline.md`` §44 for
+        the measured reasoning)."""
+        if not self._is_sharded:
+            return [list(refs)] if refs else []
+
+        groups: list[list[EpisodeRef]] = []
+        current: list[EpisodeRef] = []
+        current_shard_index: int | None = None
+        steps_lookup = self._shard_lookup["learning_steps"]
+        for ref in refs:
+            location = steps_lookup.get(ref)
+            shard_index = location[0].shard_index if location is not None else None
+            if current and shard_index != current_shard_index:
+                groups.append(current)
+                current = []
+            current.append(ref)
+            current_shard_index = shard_index
+        if current:
+            groups.append(current)
+        return groups
+
+    async def _bulk_fetch_shard_steps(
+        self, refs: list[EpisodeRef]
+    ) -> dict[EpisodeRef, list[LearningStep]]:
+        """Fetch + reconstruct every ref in one shard via one combined
+        read per table (SceneOps V2 Request 5.4 §3/§4) -- returns results
+        directly, keyed by ref, rather than relying on any cache still
+        holding them by the time the caller looks. Also opportunistically
+        writes each result into ``_episode_steps_cache`` (bounded,
+        evictable exactly like any other entry -- purely a bonus for a
+        *later* ``get_window``/``get_step`` call, never required for this
+        call's own correctness). ``refs`` must all belong to the same
+        shard (``group_by_shard`` guarantees this for its own output);
+        raises ``ShardIndexMismatchError`` for any ref missing a mapping
+        in either table, exactly as the single-episode path would."""
+        result: dict[EpisodeRef, list[LearningStep]] = {}
+        remaining = []
+        for ref in refs:
+            cached = self._episode_steps_cache.get(ref)
+            if cached is not None:
+                result[ref] = cached
+            else:
+                remaining.append(ref)
+        if not remaining:
+            return result
+
+        steps_lookup = self._shard_lookup["learning_steps"]
+        signals_lookup = self._shard_lookup["learning_signals"]
+        for ref in remaining:
+            if ref not in steps_lookup or ref not in signals_lookup:
+                raise ShardIndexMismatchError(
+                    f"{ref!r} has no shard mapping for learning_steps/"
+                    "learning_signals (export_id="
+                    f"{self._learning_manifest.export_id!r})"
+                )
+
+        steps_shard, _ = steps_lookup[remaining[0]]
+        signals_shard, _ = signals_lookup[remaining[0]]
+        steps_cache_key = ("learning_steps", steps_shard.shard_index)
+        signals_cache_key = ("learning_signals", signals_shard.shard_index)
+
+        steps_row_groups = sorted(
+            {steps_lookup[ref][1].row_group_index for ref in remaining}
+        )
+        signals_row_groups = sorted(
+            {signals_lookup[ref][1].row_group_index for ref in remaining}
+        )
+
+        steps_tables, steps_metadata = await read_shard_row_groups_bulk(
+            self._artifact_store,
+            steps_shard.uri,
+            steps_shard.size_bytes,
+            steps_row_groups,
+            cached_metadata=self._shard_metadata_cache.get(steps_cache_key),
+        )
+        if steps_cache_key not in self._shard_metadata_cache:
+            self._shard_metadata_cache.put(steps_cache_key, steps_metadata)
+
+        signals_tables, signals_metadata = await read_shard_row_groups_bulk(
+            self._artifact_store,
+            signals_shard.uri,
+            signals_shard.size_bytes,
+            signals_row_groups,
+            cached_metadata=self._shard_metadata_cache.get(signals_cache_key),
+        )
+        if signals_cache_key not in self._shard_metadata_cache:
+            self._shard_metadata_cache.put(signals_cache_key, signals_metadata)
+
+        for ref in remaining:
+            metadata = self.get_episode(ref)
+            steps_table = steps_tables[steps_lookup[ref][1].row_group_index]
+            signals_table = signals_tables[signals_lookup[ref][1].row_group_index]
+            steps = _build_steps_from_tables(
+                steps_table,
+                signals_table,
+                ref=ref,
+                expected_step_count=metadata.step_count,
             )
-            for row in steps_rows
+            result[ref] = steps
+            self._episode_steps_cache.put(ref, steps)
+        return result
+
+    async def preload_episodes(self, refs: Sequence[EpisodeRef]) -> None:
+        """Bulk-warm ``_episode_steps_cache`` for `refs`, grouped by shard
+        (SceneOps V2 Request 5.4 §3/§4) -- an explicit bulk primitive for
+        known bulk callers that already know they'll need most/all of a
+        shard's episodes, trading one combined fetch per shard for one
+        selective fetch per episode. Purely a cache-priming optimization
+        (see ``_bulk_fetch_shard_steps``): no guarantee an entry actually
+        survives in the *bounded* cache until later use -- if it doesn't,
+        a subsequent individual fetch falls back to the Request 5.3
+        selective path, cheaply, since the shard's footer metadata stays
+        warm regardless. Callers whose own correctness/efficiency
+        requires the fetched data *now*, not "if it's still cached later,"
+        should use ``_bulk_fetch_shard_steps``'s return value directly
+        instead (see ``resolve_feature_schemas_bulk``) rather than this
+        cache-priming-only method.
+
+        A no-op for v1 (legacy single-file) datasets (the whole table is
+        already loaded/cached as a unit) and a no-op when the episode-step
+        cache is disabled (``CachePolicy(max_episode_steps=0)``) -- there
+        would be nothing to warm.
+        """
+        if not self._is_sharded or not self._cache_policy.episode_steps_enabled:
+            return
+
+        pending = [
+            ref
+            for ref in dict.fromkeys(refs)
+            if ref not in self._episode_steps_cache and ref in self._metadata_by_ref
         ]
+        if not pending:
+            return
 
-        if len(steps) != metadata.step_count:
-            raise LearningDataIntegrityError(
-                f"{ref!r}'s learning_steps shard row group has {len(steps)} "
-                f"rows, but learning_episodes.parquet declares "
-                f"step_count={metadata.step_count}"
-            )
-        return steps
+        for shard_refs in self.group_by_shard(pending):
+            await self._bulk_fetch_shard_steps(shard_refs)
+
+    async def resolve_feature_schemas_bulk(
+        self, refs: Sequence[EpisodeRef], projection: FeatureProjection
+    ) -> dict[EpisodeRef, FeatureSchema]:
+        """Resolve ``FeatureSchema`` for many EpisodeRefs at once (SceneOps
+        V2 Request 5.4 §3/§4), grouping by shard internally so the
+        underlying I/O scales with shard count, not episode count. Each
+        ref's schema is still resolved fully independently -- callers
+        (``SequenceSampler.create()``) remain responsible for any
+        cross-episode consistency check; this method only batches the
+        fetch, never assumes or shares schemas across episodes.
+
+        Unlike ``preload_episodes``, this method's return value does not
+        depend on the bounded episode-steps cache still holding an entry
+        by the time it looks -- results come directly from
+        ``_bulk_fetch_shard_steps``'s own return value, so correctness
+        (and the I/O-amortization benefit) holds regardless of
+        ``CachePolicy``."""
+        result: dict[EpisodeRef, FeatureSchema] = {}
+        if not refs:
+            return result
+
+        for shard_group in self.group_by_shard(list(refs)):
+            steps_by_ref: dict[EpisodeRef, list[LearningStep]] = {}
+            if self._is_sharded:
+                pending = [
+                    ref
+                    for ref in shard_group
+                    if _schema_cache_key(ref, projection) not in self._schema_cache
+                ]
+                if pending:
+                    steps_by_ref = await self._bulk_fetch_shard_steps(pending)
+
+            for ref in shard_group:
+                cache_key = _schema_cache_key(ref, projection)
+                cached_schema = self._schema_cache.get(cache_key)
+                if cached_schema is not None:
+                    result[ref] = cached_schema
+                    continue
+                steps = steps_by_ref.get(ref)
+                if steps is None:
+                    # v1 dataset (no bulk path) -- normal per-episode path.
+                    result[ref] = await self.resolve_feature_schema(ref, projection)
+                    continue
+                self.get_episode(ref)  # EpisodeNotFoundError if ref isn't exposed
+                schema = _pure_resolve_feature_schema(steps, projection)
+                self._schema_cache.put(cache_key, schema)
+                result[ref] = schema
+        return result
 
     # ------------------------------------------------------------------
     # step reconstruction
@@ -603,7 +852,7 @@ class SceneOpsDataset:
                     f"{metadata.step_count}"
                 )
 
-        self._episode_steps_cache[ref] = steps
+        self._episode_steps_cache.put(ref, steps)
         return steps
 
     # ------------------------------------------------------------------
@@ -624,7 +873,7 @@ class SceneOpsDataset:
 
         steps = await self._reconstruct_all_steps(ref)
         schema = _pure_resolve_feature_schema(steps, projection)
-        self._schema_cache[cache_key] = schema
+        self._schema_cache.put(cache_key, schema)
         return schema
 
     async def project_step(

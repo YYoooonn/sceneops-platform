@@ -116,6 +116,16 @@ class SequenceSampler:
         schemas to be identical, raising SamplerSchemaMismatchError at the
         first disagreement rather than deferring the failure to some later
         ``get(i)`` call.
+
+        SceneOps V2 Request 5.4 §4: schema resolution for every
+        contributing Episode is batched via
+        ``dataset.resolve_feature_schemas_bulk`` -- one combined fetch per
+        shard instead of one independent selective fetch per Episode,
+        which is where this method's I/O previously scaled poorly
+        (Request 5.3 §41). Each Episode's schema is still resolved fully
+        independently (the bulk method never shares/assumes schemas
+        across Episodes); the consistency check below, and its failure
+        mode, are otherwise unchanged.
         """
         if horizon <= 0:
             raise ValueError(f"horizon must be > 0, got {horizon}")
@@ -129,9 +139,14 @@ class SequenceSampler:
             if count > 0:
                 episode_windows.append((ref, count))
 
+        contributing_refs = [ref for ref, _count in episode_windows]
+        schemas_by_ref = await dataset.resolve_feature_schemas_bulk(
+            contributing_refs, projection
+        )
+
         feature_schema: FeatureSchema | None = None
-        for ref, _count in episode_windows:
-            schema = await dataset.resolve_feature_schema(ref, projection)
+        for ref in contributing_refs:
+            schema = schemas_by_ref[ref]
             if feature_schema is None:
                 feature_schema = schema
             elif schema != feature_schema:

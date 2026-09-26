@@ -18,7 +18,10 @@ from sceneops_analytics.external_adapters import (
     UnsupportedSemanticPolicy,
 )
 from sceneops_analytics.learning_dataset import (
+    DEFAULT_CACHE_POLICY,
     DEFAULT_DTYPE,
+    DISABLED_CACHE_POLICY,
+    CachePolicy,
     CurationManifestMismatchError,
     DatasetManifestMismatchError,
     EpisodeMetadata,
@@ -94,6 +97,9 @@ __all__ = [
     "StepOutOfRangeError",
     "SamplerSchemaMismatchError",
     "ShardIndexMismatchError",
+    "CachePolicy",
+    "DEFAULT_CACHE_POLICY",
+    "DISABLED_CACHE_POLICY",
     "DEFAULT_DTYPE",
     "NumPySequenceSample",
     "materialize_sequences",
