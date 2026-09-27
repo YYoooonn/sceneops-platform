@@ -2332,3 +2332,484 @@ call or were assembled from a base plus a delta; it only ever reads
   append-only shard-reuse strategy (a future request wanting compaction
   must add a new, distinct operation rather than change what this one
   does).
+
+---
+
+# Request 5.6: Scale Benchmark & Distributed Boundary
+
+Everything below is new; §1-67 above (Requests 5.1-5.5) are historical
+record and unchanged. This request adds no new production code path --
+it validates the architecture built across Requests 5.1-5.5 at larger
+scale, audits the one bottleneck Request 5.4 identified but did not fix
+(Python object reconstruction), and defines, in writing only, the
+boundary between the current single-node PyArrow/Polars architecture and
+any future distributed system. Spark is not introduced.
+
+## 68. Final scale benchmark: ladder and methodology
+
+`scripts/dev/benchmark_phase5_final.py` -- a new, consolidated benchmark
+combining every workload category Requests 5.1/5.3/5.4/5.5 measured
+separately, run together against one instrumented store per scale so
+every number below comes from the same harness, same run, same
+methodology:
+
+- **Ladder**: `tiny`/`small`/`medium`/`large` (unchanged, `DEFAULT_SCALE_LADDER`,
+  10/100/1,000/10,000 episodes) plus one new **`xlarge`** tier defined for
+  this request (25,000 episodes, same per-episode shape as `large`) --
+  intended to confirm the scaling invariants (§71) continue to hold at
+  2.5x `large`'s episode count.
+- **`xlarge` was attempted and could not be completed within this
+  environment's execution-time ceiling** (a single command, foreground or
+  background, is capped at 10 minutes here). A standalone timing of
+  `large`'s fixture generation alone (`write_scaled_dataset_artifacts`,
+  no workloads yet) took 206s; `xlarge`'s harness run needs that same
+  fixture-generation step **three times** (once for the base dataset,
+  once for the standalone full-export-write phase, once for the
+  incremental delta's target spec) plus five O(episode-count) workload
+  phases on top -- well past 10 minutes in total. This is a **benchmark-
+  harness** ceiling, not a production-architecture one: `build_scaled_entries`
+  is an unvectorized, pure-Python per-row fixture generator (already
+  flagged as this harness's own practical ceiling in Request 5.2 §9's "at
+  what scale would this break" analysis and Request 5.2's scale-ladder
+  docstring), not the production `AlignedEpisodeArtifact` resolution path,
+  which never regenerates already-resolved artifacts from scratch.
+  `xlarge` is therefore excluded from the measured ladder below; the
+  4-tier ladder (a 1,000x episode-count span, tiny→large) plus one
+  targeted, cheaper follow-up check (§71, cache-boundedness at `large`
+  after touching all 10,050 episodes) is what this request's invariant
+  validation (§71) is actually based on. This itself is not a wasted data
+  point -- see §74 for what a benchmark harness "running out of practical
+  time to even generate its input" implies about where real distributed
+  processing would first become relevant, versus where it plainly would
+  not.
+- **Instrumentation**: every phase runs against a new
+  `_TimedCountingArtifactStore` (benchmark-only, this script) that
+  records call/byte counts (mirrors `CountingArtifactStore`) *and*
+  wall-clock time spent inside every awaited `ArtifactStore` call.
+  Per phase: `io_wall_seconds` (time inside the store) and
+  `reconstruction_seconds = wall_seconds - io_wall_seconds` (everything
+  else -- Parquet decode, Python/Pydantic object construction, Polars/
+  PyArrow table construction) are both reported, satisfying this
+  request's "separate I/O, Python reconstruction, and writer/build costs"
+  requirement without touching any production code.
+- **Workloads measured, every scale**: dataset open + enumerate refs;
+  cold single-episode full window; warm repeated access (5x) to the same
+  episode; cold second-episode access; `SequenceSampler.create()`; full
+  sampler window iteration; cold-open + full/high-density dataset
+  iteration; full export write (fresh `export_id`, entire entry set,
+  `write_sharded_learning_tables`); incremental export write (~1% new
+  episodes, `plan_incremental_export` + `write_incremental_sharded_learning_tables`,
+  same pattern as Request 5.5's own benchmark but now at every scale
+  instead of one).
+- **Python reconstruction isolation** (§72): for the two largest measured
+  scales (`medium`, `large`), a separate, targeted measurement fetches
+  each of 50 sampled episodes' raw `learning_steps`/`learning_signals`
+  Arrow row groups (`read_episode_row_group`, real I/O + Parquet decode)
+  and times that separately from calling `_build_steps_from_tables`
+  (pure Python/Pydantic `LearningStep` graph construction) on the
+  already-fetched tables -- a second, independent confirmation of the
+  `io_wall_seconds`/`reconstruction_seconds` split above, isolating the
+  one specific step (`LearningStep` object construction) Request 5.4
+  identified as the dominant cost.
+
+## 69. Final scaling measurements
+
+Wall time per workload (seconds), tiny→large (10 → 10,000 episodes, a
+1,000x span):
+
+| scale | episodes | A open | B cold 1-ep | C warm x5 | D cold 2nd-ep | E sampler.create | F iterate all windows | G full iteration | H full export write | I incremental write (Δ) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| tiny | 10 | 0.003 | 0.022 | 0.016 | 0.019 | 0.193 | 0.052 | 0.299 | 0.228 | 0.027 (+1) |
+| small | 100 | 0.007 | 0.033 | 0.029 | 0.031 | 4.376 | 5.354 | 5.716 | 4.281 | 0.100 (+1) |
+| medium | 1,000 | 0.062 | 0.033 | 0.019 | 0.021 | 24.926 | 34.837 | 36.276 | 26.352 | 0.276 (+10) |
+| large | 10,000 | 0.645 | 0.028 | 0.008 | 0.013 | 102.936 | 149.843 | 162.162 | 107.966 | 1.012 (+100) |
+
+Object/storage footprint and peak process memory, same runs:
+
+| scale | object count | shards (steps/signals) | total storage bytes | ru_maxrss after scale |
+|---|---|---|---|---|
+| tiny | 4 | 1 / 1 | 153,915 | 305 MB |
+| small | 4 | 1 / 1 | 1,782,983 | 1,411 MB |
+| medium | 14 | 6 / 6 | 11,818,025 | 2,707 MB |
+| large | 104 | 51 / 51 | 94,329,310 | 4,508 MB |
+
+I/O split (`io_wall_seconds` vs `reconstruction_seconds`) for the two
+most expensive workloads at each scale:
+
+| scale | E sampler.create (io / recon) | G full iteration (io / recon) |
+|---|---|---|
+| tiny | 0.0003s / 0.193s | 0.004s / 0.295s |
+| small | 0.0006s / 4.375s | 0.034s / 5.682s |
+| medium | 0.015s / 24.911s | 0.339s / 35.937s |
+| large | 0.148s / 102.788s | 2.835s / 159.327s |
+
+At every scale, **I/O is 0.1-2% of total wall time; reconstruction is
+98-99.9%** -- and this ratio does not improve at bigger scale (large's
+I/O share is actually *smaller* proportionally than tiny's), confirming
+this is a structural property of the current object-reconstruction path,
+not a cold-start artifact that amortizes away.
+
+`E` (bulk schema resolution) I/O calls track **shard count**, not
+episode count -- reconfirming §46's finding at a fresh run: 2 calls at
+tiny/small (1 shard each, unaffected by 10x more episodes), 31 calls at
+medium (6 shards), 301 calls at large (51 shards); ~5-6 calls/shard is
+stable across both. `F` (exhaustive per-episode iteration) necessarily
+scales with episode count instead (2,080 calls at medium, 20,100 at
+large, ~2/episode both times) -- expected, since touching every
+episode's own data once is an O(n) operation by nature, distinct from
+the shard-count invariant, which applies to *bulk metadata* operations
+only (§71).
+
+## 70. Bottleneck classification by workload
+
+| Workload | Dominant bottleneck | Evidence |
+|---|---|---|
+| `A` open + enumerate | learning-table construction (reading `learning_episodes.parquet`, small) | sub-millisecond to ~0.6s even at 10,000 episodes; scales with episode *metadata* row count only |
+| `B`/`D` cold single/second episode | Parquet decoding + Python reconstruction (I/O negligible) | §69's io/recon split: <1ms io, 20-30ms recon, flat across scale (§71 invariant 1) |
+| `C` warm repeated access | Python reconstruction only (zero I/O, `_episode_steps_cache` hit) | `io_wall_seconds=0.000` at every scale |
+| `E` `SequenceSampler.create()` | **Python object reconstruction**, overwhelmingly | 98-99.9% of wall time is `reconstruction_seconds` at every scale (§69); I/O call count tracks shard count, already optimal |
+| `F`/`G` full/high-density iteration | **Python object reconstruction**, overwhelmingly | same split; this is the workload real training-data consumption resembles most closely, and it is reconstruction-bound, not I/O-bound, at every measured scale |
+| `H` full export write | learning-table construction (Polars/PyArrow table building, zstd encoding) + Python fixture resolution | `io_wall_seconds` is 0.1-0.3% of `H`'s wall time at every scale; the rest is `build_learning_steps_table`/`build_learning_signals_table` (Request 2.5's pure-Python-per-row builders, already flagged in §6/Request 5.1) plus PyArrow's Parquet write |
+| `I` incremental export write | export writing, proportional to delta size only | wall time scales with *delta* episode count (1/1/10/100), not base size -- 0.027s→1.012s across a 10,000x base-size range while delta only grew 100x (§71 invariant 3) |
+| storage/object count | never independently limiting at any measured scale | object count (4→104) stays far below any practical object-store limit; shard count (1→51) grows sublinearly relative to episode count (10→10,000) under the bounded shard policy |
+| network round trips | never independently limiting | `LocalArtifactStore` has no network cost by construction; Request 5.4 §48's real-MinIO measurement (unchanged, not re-run here) already characterized this separately and found the `run_coroutine_threadsafe` bridge overhead (+11.3%), not round-trip count, as the residual real-network cost |
+
+No workload's bottleneck is attributable to distributed processing,
+Spark, or anything this benchmark cannot already explain with a specific,
+measured Python/PyArrow/Polars call.
+
+## 71. Scaling invariants: validated
+
+All four hold, with direct measurement at up to 10,000 episodes (and, for
+cache-boundedness, a dedicated 10,050-episode check):
+
+1. **Single-Episode I/O does not grow with total dataset bytes.**
+   `B`'s range-read bytes: tiny 102,120 B → small 499,428 B → medium
+   783,581 B → **large 775,756 B** -- flat from `small` onward (the small
+   variation reflects each scale's own per-episode step/channel shape,
+   not total dataset size) while total storage grew 153,915 B → 94,329,310 B,
+   a **613x** span. Directly reconfirms §35's reduction-factor table
+   (1.4x → 3.6x → 15.1x → **121.6x** at `large`, using the identical
+   numbers) at this request's fresh run.
+2. **Process cache memory remains bounded by CachePolicy.** Direct check:
+   opened a fresh `large`-scale dataset (default `CachePolicy`,
+   `max_episode_steps=64`) and called `get_window` for its full step
+   range on **every one of 10,050 exposed EpisodeRefs** (every revision,
+   not just 10,000 distinct episode_ids). Result: `_episode_steps_cache`
+   length == exactly **64** (its bound), `_schema_cache` == exactly
+   **128** (its bound), `_shard_metadata_cache` == **102** (2 entries/
+   shard x 51 shards, itself bounded by shard count, well under its 256
+   bound) -- after touching 157x more episodes than the cache's own
+   bound. **Holds.**
+3. **Incremental write cost scales primarily with delta size.** `I`'s
+   wall time: 0.027s (Δ1 episode, base=10) → 0.100s (Δ1, base=100) →
+   0.276s (Δ10, base=1,000) → 1.012s (Δ100, base=10,000). Base size grew
+   1,000x (10→10,000); delta size grew 100x (1→100); wall time grew
+   ~37x -- tracking delta size (sublinearly, since larger scales' shorter
+   `steps_per_episode` partially offsets per-new-episode cost), never
+   base size. New shard count stayed at exactly **2** (one
+   `learning_steps` + one `learning_signals` shard) at every scale
+   despite base shard count growing 1→51 -- reused shard count grows
+   with base size (1→1→12→102), confirming write cost is decoupled from
+   how large the thing being incrementally extended already is. Directly
+   reconfirms Request 5.5 §64's write-amplification benchmark (0.010-0.092
+   at 1,000 episodes) at a 10x larger base.
+4. **Bulk I/O calls scale with shard count rather than EpisodeRef count.**
+   §69/§70's `E` numbers: 2 calls (1 shard) at both tiny (10 episodes)
+   and small (100 episodes) -- **identical call count despite 10x more
+   episodes**, because both fit in the same one shard. 31 calls (6
+   shards) at medium, 301 calls (51 shards) -- ratio stable at ~5-6
+   calls/shard across a 8.5x shard-count range. Directly reconfirms §46's
+   finding (2,035→35 calls at medium for the pre-5.4→post-5.4 transition;
+   305 calls at `large` in that request's own measurement) at this
+   request's fresh run (31/301 vs the original 35/305 -- small
+   differences attributable to this benchmark's own horizon/sampling
+   parameters, not a regression).
+
+No invariant failed at any measured scale.
+
+## 72. Python reconstruction bottleneck (audit)
+
+Request 5.4 (§50, qualitatively) found large-scale `SequenceSampler.create()`
+dominated by `LearningStep` object-graph construction, not I/O, but did
+not isolate the two costs directly. This request does, via a dedicated
+measurement (§68) separate from the `io_wall_seconds`/`reconstruction_seconds`
+split above: fetch each sampled episode's raw Arrow row groups
+(`read_episode_row_group`, real I/O + Parquet decode -- but *not* Python
+object construction, since PyArrow's `Table.to_pylist()` inside
+`_build_steps_from_tables` is what actually builds Python dicts/objects)
+separately from timing `_build_steps_from_tables` itself on the
+already-fetched tables:
+
+| scale | sample size | I/O+decode/episode | Python reconstruction/episode | reconstruction's share |
+|---|---|---|---|---|
+| tiny | 13 (all) | 1.96 ms | 13.56 ms | 87.4% |
+| small | 50 | 2.86 ms | 32.66 ms | 92.0% |
+| medium | 50 | 2.08 ms | 17.32 ms | 89.3% |
+| large | 50 | 1.69 ms | 6.62 ms | 79.7% |
+
+Confirms, with a direct isolated measurement rather than an inference
+from total wall time, that **pure Python/Pydantic object-graph
+construction is 80-92% of the per-episode cost, at every scale** -- I/O
+and Parquet decode together are a small, roughly-constant few
+milliseconds per episode regardless of dataset size (consistent with
+invariant 1, §71). The per-episode absolute cost *shrinks* from small to
+large (32.7ms → 6.6ms) because larger scales in this ladder have fewer
+`steps_per_episode` (100 at small vs 30 at large) -- reconstruction cost
+is proportional to *step+signal row count per episode*, not to which
+scale tier it came from.
+
+**Recommended next optimization target** (not implemented here, per this
+request's own "no major semantic rewrite" constraint): the task's three
+candidates, evaluated against this measurement --
+
+- **Lighter intermediate representation** -- the most promising, lowest-
+  risk option. `LearningStep`/`AlignedSignal` are full Pydantic models
+  (validation, field aliasing, `__init__` overhead) built fresh per row;
+  a `SequenceSample`'s actual consumer (`FeatureProjection` resolution,
+  §37) only ever reads a small, fixed set of fields per signal to
+  assemble a dense vector. A lighter, validation-free intermediate
+  (e.g. plain tuples/slotted dataclasses, or reading directly off Arrow
+  arrays without a per-row Python dict roundtrip) between "Arrow table"
+  and "the dense vector `FeatureProjection` actually produces" would cut
+  the exact cost this measurement isolates, without touching
+  `LearningStep`'s own public/frozen shape (§ frozen semantics) if scoped
+  as an internal reconstruction-path change only.
+- **Vectorized table construction** -- addresses `H`'s writer-side cost
+  (Request 2.5's per-row `build_learning_steps_table`/
+  `build_learning_signals_table`, already flagged in Request 5.1 §6),
+  not this measurement's *read*-side cost directly; a real but separate
+  optimization target from the one this audit isolates.
+- **Arrow-native/columnar processing longer in the pipeline** -- the
+  largest-scope option (would mean `FeatureProjection` resolution and
+  `SequenceSample` assembly operating on Arrow arrays directly, deferring
+  Python object construction past where it happens today, or removing it
+  for the hot path entirely) -- correctly out of scope for "no major
+  semantic rewrite," but the direction this measurement's numbers point
+  toward if reconstruction cost ever needs to shrink by more than a
+  constant factor.
+
+This request does not implement any of the three -- consistent with its
+own "no major semantic rewrite" constraint -- but the isolated
+measurement above gives whoever picks this up next a concrete number to
+beat (6.6-32.7ms/episode of pure Python construction) rather than a
+qualitative impression.
+
+## 73. Two remaining Phase 5 semantics: reviewed and confirmed
+
+**`learning_episodes.export_id` (and `.dataset_id`/`.dataset_version`)
+for rows reused through an incremental export**: confirmed, by direct
+grep of `sceneops_analytics/learning_dataset/dataset.py`, that
+`SceneOpsDataset` never reads these three per-row columns for anything
+(only `learning_manifest.export_id`, the manifest's own field, is ever
+read -- for error messages and the shard-index/table-set consistency
+checks, never for row filtering or identity). The confirmed, now-frozen
+semantic: these columns mean **"the export_id/dataset_id/dataset_version
+of the export call that originally wrote this exact row's bytes"** --
+first-write provenance, not "which export currently exposes this row."
+For a base export's own rows, reused verbatim by any number of later
+incremental exports, this value stays permanently pinned to the base's
+own `export_id`, exactly as Request 5.5 §62 implemented it (never
+rewritten on reuse). The *current, authoritative* answer to "which
+export exposes this row" is always the `LearningDataExportManifest` you
+opened (its own `.export_id`, plus its `.inputs`, which correctly grows
+on every incremental export) -- never the per-row column. This mirrors,
+at the row-column layer, the same "reuse means never re-labeling"
+principle already applied at the `ArtifactRecord` layer (§62) --
+consistent within this request, and now an explicit, documented
+invariant for any future code (tooling, future compaction) to respect:
+**do not infer current export membership from these three columns.**
+
+**Append-only incremental shard fragmentation**: confirmed to require
+only a future, optional compaction operation, not any change to current
+incremental semantics. Reasoning, reconfirmed against this request's own
+measurements: (1) `plan_incremental_export`'s reuse decision is a pure
+set-membership diff under the addition-only precondition (Request 5.5
+§58) -- completely insensitive to how many prior increments produced the
+base's shard list, so an arbitrarily fragmented base plans identically
+to a freshly-compacted one; (2) reader correctness (§65's equivalence
+test) depends only on `shard_index`'s contents being self-consistent,
+never on shard *count* or *size distribution*; (3) the one place
+fragmentation could eventually matter is performance, not correctness:
+`_shard_metadata_cache`'s bound (256 by default) is sized against shard
+count (§71 invariant 2's `102 entries / 51 shards` measurement), so many
+more, smaller shards from repeated small increments would mean more
+distinct shard-metadata cache entries competing for that same bound,
+plausibly increasing footer-refetch rate under a very fragmented history
+-- a real, but purely quantitative, future motivation for compaction, not
+a correctness gap today. No compaction was implemented (none was
+warranted -- this request's own constraint, "do not implement compaction
+unless a correctness issue is discovered," and none was).
+
+## 74. Distributed-processing boundary
+
+**What remains appropriate for single-node PyArrow/Polars, based on
+§69-72's measurements**: essentially everything this benchmark
+exercises, at every scale measured (up to 10,000 episodes / 94 MB / 104
+objects). Every workload's bottleneck (§70) resolved to a specific,
+already-understood, already-optimized-where-warranted Python/PyArrow/
+Polars cost -- never to "too much data for one machine to hold or
+process." Reads (selective, bulk, and full/exhaustive iteration),
+exports (full and incremental), and the shard/manifest metadata layer
+all stayed single-node-appropriate through this request's entire tested
+range. Peak process memory (`ru_maxrss`, §69) grew from 305 MB to 4,508
+MB across the ladder -- comfortably within a single modern machine at
+every measured point, and growing with *touched working set*
+(`CachePolicy`-bounded, §71 invariant 2), not with total dataset size.
+
+**Which workloads could eventually justify Spark or another distributed
+engine**: none of the workloads this request measured, at the scales
+measured. The one candidate this request's own methodology surfaced is
+narrower and more specific than "large datasets" in general: **the
+per-row Python table-construction step** (`build_learning_steps_table`/
+`build_learning_signals_table`, §70's `H` bottleneck, and this request's
+own benchmark-harness fixture generator, `build_scaled_entries`, hitting
+this environment's execution-time ceiling at `xlarge`, §68) is the one
+place this investigation found itself running out of practical headroom
+-- and it is an unvectorized per-row Python loop, not an inherently
+distributed-shaped problem. A **vectorized rewrite of the same
+single-node code** (§72's "vectorized table construction" candidate)
+would very plausibly move that same headroom limit out by an order of
+magnitude or more before distributed processing would need to be
+considered for it at all -- so even this request's own closest brush
+with a real scaling wall points first at a single-node fix, not at
+Spark.
+
+**Is distributed execution needed for reads, exports, transformations,
+or only very large offline batch processing?** Based on measurements:
+not for reads (selective + bulk, §71 invariants 1/4), not for
+incremental export (§71 invariant 3, cost decoupled from base size), and
+not for full export at any measured scale (`H`'s cost is Python/PyArrow-
+bound, not distributed-shaped, §70). The only category where this
+request's own data leaves the question open is **very large, one-time,
+offline batch construction of a full export from scratch** (`H`/`build_seconds`)
+at scales this request's own harness could not reach (`xlarge`+) --
+and even there, per the previous paragraph, a vectorized single-node
+rewrite is the evidence-supported next step to try before a distributed
+one.
+
+**What dataset/workload characteristics should trigger reconsideration**
+(connected to this request's measured CPU/memory/I/O behavior, not an
+arbitrary size number):
+
+- **CPU-bound reconstruction time for a single logical operation
+  (a full export write, or a full-dataset training pass) exceeds what a
+  single machine can complete in the caller's required wall-clock
+  budget**, *after* the vectorization opportunities §72 identifies have
+  already been exhausted -- e.g. if `H`'s ~26s/1,000-episodes rate (§69)
+  still held (or worsened) after removing the per-row Python
+  construction cost, at whatever episode count the caller's actual
+  export-latency requirement demands.
+- **Peak working-set memory** (not total dataset size -- `CachePolicy`
+  already decouples those, invariant 2) **exceeds single-machine RAM for
+  a required access pattern** -- e.g. a training job that must genuinely
+  hold far more than `CachePolicy`'s bound of reconstructed episodes
+  resident simultaneously (this request found no such requirement in any
+  measured workload; `CachePolicy`'s bounds were sized against realistic
+  per-episode memory footprint in Request 5.4 §42, and reconfirmed still
+  correctly bounding memory here at 10,050 episodes).
+- **Object/shard count grows enough to make the in-memory shard-lookup
+  index itself, or per-shard metadata caching, the bottleneck** --
+  not observed here (104 objects, 51 shards at `large`; §70 confirms
+  storage/object count was never independently limiting at any measured
+  scale), but a real, specific, measurable trigger a future request
+  could check for directly (shard-lookup dict size, `_shard_metadata_cache`
+  hit rate) rather than guessing from total episode count.
+
+**Is Spark currently justified?** **No.** Nothing measured in this
+request -- across a 1,000x episode-count span, four workload categories,
+and both full and incremental export -- surfaced a bottleneck that a
+distributed engine would resolve and a single-node fix would not. The
+one place this request's own tooling ran out of headroom (`xlarge`
+fixture generation, §68) is a known, already-diagnosed (Request 5.1 §6,
+Request 5.2 §9), unvectorized single-node Python loop -- exactly the
+kind of problem Spark is the wrong tool for, not the right one.
+Introducing Spark now would add a second execution engine, a second
+deployment/ops surface, and a new class of distributed-correctness
+concerns (partitioning, shuffle, exactly-once semantics) to solve a
+problem this request's own measurements show does not yet exist.
+
+## 75. Phase 5 performance summary
+
+Before → after, Request 5.1's original baseline finding through this
+request's own fresh measurement, same benchmark methodology throughout
+(`CountingArtifactStore`/`_TimedCountingArtifactStore`, real Parquet, real
+`AlignedEpisodeArtifact` contracts, no mocked I/O):
+
+| Dimension | Before | After | Evidence |
+|---|---|---|---|
+| **Whole-table → selective read** | One EpisodeRef access reads 100% of `learning_steps`+`learning_signals`, every scale (Request 5.1 §5/§6) | One EpisodeRef access reads only its own shard's row group -- **121.6x fewer bytes at `large`** (94.3 MB → 776 KB), and the reduction factor *grows* with scale (1.4x → 3.6x → 15.1x → 121.6x, tiny→large) | §35, reconfirmed §71 invariant 1 |
+| **Episode-count I/O → shard-count bulk I/O** | Bulk schema resolution: 1 selective fetch per contributing episode (2,035 calls at medium/1,000 episodes) | 1 combined fetch per contributing *shard* (35 calls at medium/6 shards; **58x fewer calls**); confirmed unchanged at 10x scale (301 calls / 51 shards at `large`, ~stable calls/shard ratio) | §46, reconfirmed §71 invariant 4 |
+| **Unbounded → bounded cache** | `_episode_steps_cache`/`_schema_cache` grow with every distinct episode ever touched, no eviction (Request 5.4 §42 audit) | Bounded by `CachePolicy` (64/128/256 default) regardless of episodes touched -- confirmed still exactly at-bound after touching **10,050** episodes (157x the cache's own size) at `large` scale | §44, reconfirmed §71 invariant 2 |
+| **Full rebuild → incremental shard reuse** | Any new/changed EpisodeRef rewrites 100% of `learning_steps`/`learning_signals` shards | Write amplification **0.010-0.092** (1-9% of full-rebuild bytes) at 1,000 episodes; reused-shard count tracks base size (1→1→12→102) while new-shard count stays flat (2) regardless of base size, confirmed at 10,000-episode base | Request 5.5 §64, reconfirmed §71 invariant 3 |
+
+The strongest single number from each request: **5.1** -- established
+the 100%-of-table baseline this whole phase improves on; **5.2** --
+shard/row-group physical layout, the enabling change for everything
+after it; **5.3** -- 121.6x byte reduction for single-episode access at
+`large`; **5.4** -- 58x fewer bulk I/O calls, cache exactly bounded
+after 10,050-episode exhaustive touch; **5.5** -- 0.010 write
+amplification (99% bytes saved) for a +10-episode incremental export at
+1,000-episode scale; **5.6** -- every one of the above reconfirmed at up
+to 10,000 episodes with zero invariant failures, plus a first direct
+isolation of the remaining bottleneck (Python reconstruction, 80-92% of
+per-episode cost, §72).
+
+## 76. Verification results
+
+- `make test` -- all passing (see final count in this request's closing
+  summary; no test changed or added here beyond what already existed --
+  this request is benchmark/analysis/documentation only, no production
+  code changed).
+- `make lint` -- all checks passed.
+- `make test-integration` -- unchanged, all passing.
+- `make lerobot-test` -- unchanged, all passing.
+- `make e2e-lerobot-container` -- unchanged, PASSED (this request touches
+  no export/read/write code path this fixture exercises).
+- Final scale benchmark suite (`scripts/dev/benchmark_phase5_final.py`,
+  `tiny,small,medium,large`) -- results in §69-72 above; raw JSON
+  available via `--out`.
+
+## 77. Remaining Phase 5 limitations
+
+- **`xlarge` (25,000 episodes) could not be run in this environment**
+  (§68) -- a benchmark-harness fixture-generation ceiling, not a
+  production one; the 4-tier ladder plus the dedicated 10,050-episode
+  cache-bound check (§71 invariant 2) is what this request's conclusions
+  are actually based on, and no invariant showed any sign of degrading
+  as episode count grew across the tested 1,000x span.
+- **The Python-reconstruction bottleneck (§72) is measured and
+  attributed, not fixed** -- per this request's own "no major semantic
+  rewrite" constraint. A lighter intermediate representation is the
+  recommended next target, with a concrete number to beat
+  (6.6-32.7ms/episode).
+- **The writer-side per-row table construction cost** (`build_learning_steps_table`/
+  `build_learning_signals_table`, §70's `H` bottleneck) remains
+  unvectorized, unchanged since Request 5.1 §6 first flagged it --
+  distinct from, but related to, the read-side reconstruction cost §72
+  isolates.
+- **No compaction exists** (Request 5.5 §66/§73 -- confirmed still not
+  warranted; a purely quantitative, not correctness, motivation for a
+  future request).
+- **Real-network (MinIO) behavior was not re-measured at these larger
+  scales** -- Request 5.4 §48's characterization (against one local
+  MinIO instance) stands unchanged; this request's new measurements are
+  all against `LocalArtifactStore`, consistent with every prior
+  request's own local-benchmark tier.
+
+## 78. Frozen boundary for Request 5.7
+
+- Everything frozen through Request 5.5 (§67) remains frozen, unchanged
+  by this request (no production code was modified here).
+- Newly confirmed and now explicitly documented as frozen (§73):
+  `learning_episodes.export_id`/`.dataset_id`/`.dataset_version` are
+  first-write provenance only, never current-membership; no future code
+  may infer current export membership from these columns.
+- The Python-reconstruction cost (§72) and the writer-side per-row table
+  construction cost (§70's `H`) are both now explicitly measured,
+  attributed, and left as open, well-specified optimization targets for
+  a future request -- not compaction, not deletion/tombstones, and not
+  Spark or another distributed engine, per this request's own conclusion
+  (§74) that no measured workload currently justifies one.
+- Do not proceed to Request 5.7 in this session, per the standing
+  instruction.
