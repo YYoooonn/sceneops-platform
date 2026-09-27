@@ -770,7 +770,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 ### Current limitations
 
 * The default local dataset is nuScenes mini.
-* **(v2)** Episode has no `DatasetManifest`-equivalent index and no Parquet analytics table, and no `selectable_for_*` concept the way Scene has for detection evaluation.
+* **(v2)** Episode has no `DatasetManifest`-equivalent index the way Scene has for detection evaluation. (Episode does have its own Parquet analytics tables and a `selectable_for_*`-equivalent concept, scoped to aligned revisions rather than raw Episodes — `learning_*.parquet` + `EpisodeCurationManifest`; see [Robot learning data layer](docs/architecture/robot-learning-data.md) and, for the scaled production physical layout, [Scalable learning data](docs/architecture/scalable-learning-data.md).)
 * The platform is local-first and optimized for architecture validation, not large-scale production throughput.
 * GroundingDINO evaluation results are integration signals, not production model benchmarks.
 * Scenario curation is implemented but still marked `experimental=True`.
@@ -798,7 +798,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * **(v2)** Write decoded camera/LiDAR payloads to the Artifact Store and wire `RosbagAdapter` into `build_scenes` for full `SceneRecord` registration from robot data, not just `RobotState`/`Mission`.
 * **(v2)** A real custom ROS2 `.msg` package for `/vehicle/control` and `/mission/status`, replacing the JSON-over-`std_msgs/String` bridge.
 * **(v2)** A ROS2 Data Gateway bridging live ROS2 topics to Kafka for real-time telemetry (roadmap Phase 7 / `ADR-005`), and eventual live robot control as its own service — not `apps/worker`.
-* **(v2)** Scale-testing with synthetic multi-robot telemetry (roadmap Phase 5: N virtual robots) to compare local (Polars/DuckDB) vs. distributed (Spark) processing.
+* **(v2)** Scale-testing with synthetic multi-robot telemetry (N virtual robots, robot-fleet/mission-ingestion throughput — unrelated to the completed learning-data "Phase 5" scaling work below) to compare local (Polars/DuckDB) vs. distributed (Spark) processing for that ingestion path specifically. (This is a distinct, still-open roadmap item, not to be confused with the learning-data storage/access "Phase 5" work, which already measured its own single-node-vs-distributed boundary and concluded Spark is not currently justified there — see [Scalable learning data](docs/architecture/scalable-learning-data.md) §10.)
 
 ---
 

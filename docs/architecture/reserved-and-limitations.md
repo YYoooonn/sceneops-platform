@@ -119,11 +119,14 @@ presence doesn't imply an export or deprecation workflow exists.
   [Storage layout](./storage-layout.md) §6.
 - Phase 2's robot learning data layer (alignment through
   `SceneOpsDataset`/`SequenceSampler`/consumer adapters) has its own
-  intentional v1 boundaries — no remote Parquet predicate pushdown, no
-  lazy/streaming Torch dataset, numeric-only dense projection, no
-  missing-value fill/mask policy — see
+  intentional boundaries — no lazy/streaming Torch dataset, numeric-only
+  dense projection, no missing-value fill/mask policy — see
   [Robot learning data layer](./robot-learning-data.md) §8 for the full,
-  verified list.
+  verified list. (Remote Parquet predicate pushdown was added by Phase 5
+  for the production sharded layout — selective/shard-aware-bulk reads via
+  `ArtifactStore.read_range` — and remains absent only on the legacy
+  single-file golden-fixture path; see
+  [Scalable learning data](./scalable-learning-data.md) §5.)
 - Phase 3's dataset interoperability layer (the `ExternalDatasetAdapter`
   contract and its one concrete LeRobot implementation) has its own
   intentional v1 boundaries — numeric-only, no image/video, no RLDS
