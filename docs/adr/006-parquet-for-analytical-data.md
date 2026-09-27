@@ -33,9 +33,15 @@ prefix ([storage layout](../architecture/storage-layout.md) §3) — 별도 저�
 - v1 구현 완료 범위는 `scenes`/`samples`/`sensor_frames`/`annotations` 4개 테이블이다.
   `predictions.parquet`/`evaluations.parquet`는 prediction shard enumeration이 별도로 필요해
   fast-follow로 남아있다 ([storage layout](../architecture/storage-layout.md) §3).
-- Parquet 파일은 스냅샷이지 append-only 로그가 아니다 — 매 export가 전체를 재작성한다. 증분
-  업데이트나 시간 파티셔닝이 필요해지면(로드맵 Phase 5 Spark 단계) 이 스냅샷 방식을 재검토해야
-  한다.
+- Parquet 파일은 스냅샷이지 append-only 로그가 아니다 — `EXPORT_ANALYTICS_SNAPSHOT`의
+  `scenes`/`samples`/`sensor_frames`/`annotations` 4개 테이블은 매 export가 전체를
+  재작성한다 (이 ADR이 다루는 `analytical/` 스냅샷 한정 — 별도 export 경로인
+  `EXPORT_LEARNING_DATA`의 `learning_steps`/`learning_signals`는 이후 완료된 학습 데이터
+  스케일링 작업에서 증분 export/shard 재사용을 이미 지원하게 되었다. 자세한 내용은
+  [Scalable learning data](../architecture/scalable-learning-data.md) §7 참고). 이 4개
+  스냅샷 테이블에도 증분 업데이트나 시간 파티셔닝이 필요해지면, 이 스냅샷 방식 자체를
+  재검토해야 한다 — 그 재검토가 분산 처리(Spark 등)를 요구할지는 그때의 실측 데이터로
+  판단할 문제이며, 현재 시점에 분산 처리가 필요하다고 가정하지 않는다.
 - 로드맵이 제안한 raw/curated 물리적 경로 구분([storage layout](../architecture/storage-layout.md) §4)은
   아직 적용하지 않았다 — 현재 `analytical/` prefix는 가공 단계와 무관하게 리소스 종류로만
-  분기한다. Spark 단계에서 파티셔닝 전략을 설계할 때 함께 재검토한다.
+  분기한다. 파티셔닝 전략을 다시 설계할 때 함께 재검토한다.

@@ -46,8 +46,8 @@ Learning Data Export                     (2.5)
         |
         v
 learning_episodes.parquet
-learning_steps.parquet
-learning_signals.parquet
+learning_steps / learning_signals        (bounded shards in production since
+                                           Phase 5 -- see scalable-learning-data.md)
         |
         v
 Episode Curation                         (2.6, selection over aligned revisions)
@@ -271,17 +271,29 @@ a later one.
 
 ## 8. Current intentional limitations
 
-These are deliberate v1 boundaries, not correctness bugs:
+These are deliberate Phase 2 boundaries, not correctness bugs. **Updated by
+Phase 5** (Requests 5.1-5.6, see
+[scalable-learning-data.md](./scalable-learning-data.md)): the first two
+bullets below described every `SceneOpsDataset` instance when this section
+was written, but now describe only the legacy, single-file physical
+layout (still used by the frozen golden fixture/regression path, see
+[scalable-learning-data.md](./scalable-learning-data.md) §11) -- not
+production. Production (`v2-sharded`, always produced by
+`EXPORT_LEARNING_DATA` since Request 5.2) does have a partial/range-read
+primitive (`ArtifactStore.read_range`, Request 5.3) and reads selectively
+or shard-aware-bulk rather than fetching a whole table, with bounded
+per-instance caches (Request 5.4) rather than the whole table staying
+resident for the instance's lifetime.
 
-- `SceneOpsDataset` lazy-loads `learning_steps`/`learning_signals` tables
-  (fetched at most once each, on first need) but has no true remote
-  predicate pushdown -- `ArtifactStore.read_bytes` has no partial/range-read
-  primitive, so a needed table's full bytes are always fetched once
-  regardless of backend (local disk or S3/MinIO).
-- After that first fetch, the full step/signal table for the whole
-  snapshot is held in memory for the life of the `SceneOpsDataset`
-  instance; only the row-level *reconstruction into Python objects* is
-  scoped per-Episode/per-step.
+- `SceneOpsDataset`, on the legacy single-file layout only, lazy-loads
+  `learning_steps`/`learning_signals` tables (fetched at most once each,
+  on first need) with no partial/range-read primitive, so a needed
+  table's full bytes are always fetched once regardless of backend
+  (local disk or S3/MinIO).
+- After that first fetch (legacy single-file layout only), the full
+  step/signal table for the whole snapshot is held in memory for the
+  life of the `SceneOpsDataset` instance; only the row-level
+  *reconstruction into Python objects* is scoped per-Episode/per-step.
 - Torch integration requires explicit pre-materialization
   (`materialize_sequences`) -- there is no lazy/streaming
   `torch.utils.data.Dataset` yet. `SequenceSampler.get(index)` is async;

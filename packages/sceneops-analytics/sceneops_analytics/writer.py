@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from sceneops_storage import ArtifactStore
 
@@ -154,6 +156,84 @@ class AnalyticsTableWriter:
             uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
         )
 
+    # ------------------------------------------------------------------
+    # Sharded learning_steps/learning_signals objects (SceneOps V2 Request
+    # 5.2) -- physical layout only, see sceneops_core.episodes.
+    # learning_export.sharding for the shard-assignment/manifest side and
+    # sceneops_analytics.learning_tables_sharded for the orchestration that
+    # decides what to pass here.
+    # ------------------------------------------------------------------
+
+    def learning_table_shard_uri(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        export_id: str,
+        table_name: str,
+        shard_index: int,
+    ) -> str:
+        return self.artifact_store.join_uri(
+            self.root_uri,
+            dataset_id,
+            dataset_version,
+            "learning",
+            export_id[:16],
+            table_name,
+            f"shard-{shard_index:05d}.parquet",
+        )
+
+    async def write_learning_table_shard(
+        self,
+        table_name: str,
+        df: pl.DataFrame,
+        row_group_sizes: list[int],
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        export_id: str,
+        shard_index: int,
+    ) -> AnalyticsTableWriteResult:
+        """Write one shard of a sharded learning_steps/learning_signals
+        table (SceneOps V2 Request 5.2 §3) with exactly one Parquet row
+        group per entry in ``row_group_sizes`` (episode-aligned row
+        groups) -- ``sum(row_group_sizes) == df.height`` is the caller's
+        responsibility (this method does not itself know episode
+        boundaries; see learning_tables_sharded.py for how the sizes and
+        ``df``'s row order are kept consistent). Uses PyArrow directly
+        (not ``df.write_parquet``) because Polars' writer does not expose
+        per-call row-group boundary control."""
+        uri = self.learning_table_shard_uri(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            export_id=export_id,
+            table_name=table_name,
+            shard_index=shard_index,
+        )
+        arrow_table = df.to_arrow()
+        sink = pa.BufferOutputStream()
+        # zstd level 3, matching Polars' write_parquet default exactly
+        # (used by every other write path in this module) -- PyArrow's own
+        # ParquetWriter defaults to "snappy" at an effective level-1 zstd
+        # equivalent, which measurably under-compresses this schema's
+        # low-cardinality string/categorical columns; see
+        # docs/architecture/learning-data-scaling-baseline.md's shard
+        # size-distribution measurements.
+        with pq.ParquetWriter(
+            sink, arrow_table.schema, compression="zstd", compression_level=3
+        ) as pq_writer:
+            offset = 0
+            for size in row_group_sizes:
+                pq_writer.write_table(
+                    arrow_table.slice(offset, size), row_group_size=size
+                )
+                offset += size
+        data = sink.getvalue().to_pybytes()
+        await self.artifact_store.write_bytes(uri, data)
+        return AnalyticsTableWriteResult(
+            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
+        )
+
     def learning_export_manifest_uri(
         self,
         *,
@@ -197,6 +277,17 @@ class AnalyticsTableWriter:
         if not await self.artifact_store.exists(uri):
             return None
         return await self.artifact_store.read_bytes(uri)
+
+    async def read_learning_table(self, uri: str) -> pl.DataFrame:
+        """Read a whole single-file learning table back into a DataFrame --
+        used only for ``learning_episodes`` (always small, metadata-scale;
+        SceneOps V2 Request 5.5 §3's incremental-export path reads a base
+        export's existing ``learning_episodes`` table this way to merge it
+        with a delta). Never used for sharded learning_steps/learning_signals
+        tables -- those are read selectively (see parquet_range_reader.py),
+        never materialized whole."""
+        data = await self.artifact_store.read_bytes(uri)
+        return pl.read_parquet(io.BytesIO(data))
 
     # ------------------------------------------------------------------
     # Episode curation manifests (SceneOps V2 Request 2.6)

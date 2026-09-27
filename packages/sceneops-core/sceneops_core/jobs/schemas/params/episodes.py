@@ -193,6 +193,15 @@ class ExportLearningDataJobParams(BaseJobParams):
     revisions) if the caller wants that. Each input's checksum is resolved
     at Job-creation time exactly like VALIDATE_ALIGNED_EPISODE/
     PROFILE_ALIGNED_EPISODE (Request 2.4), before execution-key computation.
+
+    ``base_export_id`` (SceneOps V2 Request 5.5 §1/§6) makes this an
+    *incremental* export: ``inputs`` then represents only the delta being
+    added on top of ``base_export_id``'s own inputs, not the full merged
+    set -- the handler resolves the base manifest, merges
+    ``base.inputs + inputs``, and reuses every one of the base export's
+    physical shards unchanged. ``None`` (the default) is an ordinary full
+    export, unchanged from Request 2.5 -- ``inputs`` then must be the
+    complete target set, exactly as before.
     """
 
     dataset_id: str
@@ -203,6 +212,10 @@ class ExportLearningDataJobParams(BaseJobParams):
     # None -> build all learning tables (learning_episodes, learning_steps,
     # learning_signals), mirroring ExportAnalyticsSnapshotJobParams.tables.
     tables: list[str] | None = None
+
+    # None -> ordinary full export. Set -> incremental export deriving from
+    # that already-published export_id (SceneOps V2 Request 5.5 §1).
+    base_export_id: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

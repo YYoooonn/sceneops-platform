@@ -18,7 +18,10 @@ from sceneops_analytics.external_adapters import (
     UnsupportedSemanticPolicy,
 )
 from sceneops_analytics.learning_dataset import (
+    DEFAULT_CACHE_POLICY,
     DEFAULT_DTYPE,
+    DISABLED_CACHE_POLICY,
+    CachePolicy,
     CurationManifestMismatchError,
     DatasetManifestMismatchError,
     EpisodeMetadata,
@@ -30,6 +33,7 @@ from sceneops_analytics.learning_dataset import (
     SceneOpsDataset,
     SceneOpsDatasetError,
     SequenceSampler,
+    ShardIndexMismatchError,
     StepOutOfRangeError,
     materialize_sequences,
     to_numpy,
@@ -42,6 +46,11 @@ from sceneops_analytics.learning_tables import (
     build_learning_episodes_table,
     build_learning_signals_table,
     build_learning_steps_table,
+)
+from sceneops_analytics.learning_tables_sharded import (
+    plan_shards_for_entries,
+    write_incremental_sharded_learning_tables,
+    write_sharded_learning_tables,
 )
 from sceneops_analytics.query import query_parquet
 from sceneops_analytics.tables import (
@@ -72,6 +81,9 @@ __all__ = [
     "build_learning_episodes_table",
     "build_learning_steps_table",
     "build_learning_signals_table",
+    "plan_shards_for_entries",
+    "write_incremental_sharded_learning_tables",
+    "write_sharded_learning_tables",
     "AnalyticsTableWriter",
     "AnalyticsTableWriteResult",
     "query_parquet",
@@ -86,6 +98,10 @@ __all__ = [
     "EpisodeNotFoundError",
     "StepOutOfRangeError",
     "SamplerSchemaMismatchError",
+    "ShardIndexMismatchError",
+    "CachePolicy",
+    "DEFAULT_CACHE_POLICY",
+    "DISABLED_CACHE_POLICY",
     "DEFAULT_DTYPE",
     "NumPySequenceSample",
     "materialize_sequences",

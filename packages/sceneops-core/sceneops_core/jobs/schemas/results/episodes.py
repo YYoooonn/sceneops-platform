@@ -124,8 +124,21 @@ class ExportLearningDataJobResult(BaseJobResult):
     export_id: str
     episode_count: int = 0
 
+    # learning_episodes only -- learning_steps/learning_signals are sharded
+    # (SceneOps V2 Request 5.2), so they have no single URI; see
+    # shard_counts for their physical file count instead.
     table_uris: dict[str, str] = Field(default_factory=dict)
     row_counts: dict[str, int] = Field(default_factory=dict)
+    shard_counts: dict[str, int] = Field(default_factory=dict)
+
+    # None for an ordinary full export. Set to the base's export_id for an
+    # incremental export (SceneOps V2 Request 5.5 §1) -- reused_shard_counts/
+    # new_shard_counts then partition shard_counts's totals into shards
+    # carried over from base_export_id untouched vs. newly written for this
+    # export's delta.
+    base_export_id: str | None = None
+    reused_shard_counts: dict[str, int] = Field(default_factory=dict)
+    new_shard_counts: dict[str, int] = Field(default_factory=dict)
 
     manifest_artifact_id: str | None = None
     manifest_uri: str | None = None

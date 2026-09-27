@@ -1,3 +1,4 @@
+from .cache_policy import DEFAULT_CACHE_POLICY, DISABLED_CACHE_POLICY, CachePolicy
 from .dataset import SceneOpsDataset
 from .errors import (
     CurationManifestMismatchError,
@@ -7,6 +8,7 @@ from .errors import (
     LearningTableMissingError,
     SamplerSchemaMismatchError,
     SceneOpsDatasetError,
+    ShardIndexMismatchError,
     StepOutOfRangeError,
 )
 from .numpy_adapter import (
@@ -25,7 +27,10 @@ from .schemas import EpisodeMetadata
 # SceneOpsTorchDataset`.
 
 __all__ = [
+    "DEFAULT_CACHE_POLICY",
     "DEFAULT_DTYPE",
+    "DISABLED_CACHE_POLICY",
+    "CachePolicy",
     "CurationManifestMismatchError",
     "DatasetManifestMismatchError",
     "EpisodeMetadata",
@@ -37,6 +42,7 @@ __all__ = [
     "SceneOpsDataset",
     "SceneOpsDatasetError",
     "SequenceSampler",
+    "ShardIndexMismatchError",
     "StepOutOfRangeError",
     "materialize_sequences",
     "to_numpy",

@@ -104,15 +104,24 @@ multiple learning-data export snapshots and curation runs must coexist per
 (`learning_data_export_id`/`episode_curation_id`):
 
 ```text
-{dataset_id}/{dataset_version}/learning/{export_id[:16]}/{table_name}.parquet
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/learning_episodes.parquet
+{dataset_id}/{dataset_version}/learning/{export_id[:16]}/{table_name}/shard-{shard_index:05d}.parquet
 {dataset_id}/{dataset_version}/learning/{export_id[:16]}/manifest.json
 {dataset_id}/{dataset_version}/curation/{curation_id[:16]}/manifest.json
 ```
 
-Written by `EXPORT_LEARNING_DATA`/`CURATE_EPISODES` via
-`AnalyticsTableWriter.write_learning_table`/`write_learning_export_manifest`/
-`write_curation_manifest` — see
-[Robot learning data layer](./robot-learning-data.md).
+`learning_episodes` is always a single file (metadata-scale, never
+sharded). `learning_steps`/`learning_signals` are bounded, sharded
+Parquet objects in production (Phase 5, `v2-sharded` layout, always
+produced by `EXPORT_LEARNING_DATA` since Request 5.2) — the single-file
+scheme (`{table_name}.parquet`, no `shard-NNNNN` segment) is legacy,
+still used by the frozen golden-fixture/regression path only; see
+[Scalable learning data](./scalable-learning-data.md) §4/§11. Written by
+`EXPORT_LEARNING_DATA`/`CURATE_EPISODES` via
+`AnalyticsTableWriter.write_learning_table`/`write_learning_table_shard`/
+`write_learning_export_manifest`/`write_curation_manifest` — see
+[Robot learning data layer](./robot-learning-data.md) and
+[Scalable learning data](./scalable-learning-data.md).
 
 ### Raw source data
 

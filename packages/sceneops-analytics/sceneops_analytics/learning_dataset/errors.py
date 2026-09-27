@@ -51,6 +51,19 @@ class StepOutOfRangeError(SceneOpsDatasetError):
     window-specific case, which this module re-raises unchanged."""
 
 
+class ShardIndexMismatchError(SceneOpsDatasetError):
+    """SceneOps V2 Request 5.3: LearningDataShardIndex's per-table
+    ``episodes`` lists disagree with the exposed EpisodeRef set for a
+    sharded (v2) manifest -- either the same EpisodeRef appears in more
+    than one shard for one table (ambiguous, would make selective lookup
+    non-deterministic), or an EpisodeRef this dataset exposes (per
+    learning_episodes.parquet) has no shard mapping at all for a required
+    table. Raised eagerly, at SceneOpsDataset.open() time for duplicates
+    (§3's lookup-index construction) and at first access time for a
+    missing mapping (only discovered when that specific EpisodeRef's rows
+    are actually needed)."""
+
+
 class SamplerSchemaMismatchError(SceneOpsDatasetError):
     """SceneOps V2 Request 2.7C: two EpisodeRefs exposed by the same
     SceneOpsDataset resolve one FeatureSchema's FeatureProjection to

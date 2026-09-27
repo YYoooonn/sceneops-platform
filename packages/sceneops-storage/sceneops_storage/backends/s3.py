@@ -54,6 +54,13 @@ class S3ArtifactStore(ArtifactStore):
     async def read_bytes(self, uri: ArtifactUri) -> bytes:
         return await asyncio.to_thread(self._read_bytes, uri)
 
+    async def read_range(self, uri: ArtifactUri, offset: int, length: int) -> bytes:
+        if offset < 0 or length <= 0:
+            raise ArtifactReadError(
+                f"Invalid range for {uri}: offset={offset}, length={length}"
+            )
+        return await asyncio.to_thread(self._read_range, uri, offset, length)
+
     async def write_bytes(self, uri: ArtifactUri, data: bytes) -> None:
         await asyncio.to_thread(self._write_bytes, uri, data)
 
@@ -110,6 +117,33 @@ class S3ArtifactStore(ArtifactStore):
             if self._is_not_found(exc):
                 raise ArtifactNotFoundError(uri) from exc
             raise ArtifactReadError(f"Failed to read binary artifact: {uri}") from exc
+
+    def _read_range(self, uri: ArtifactUri, offset: int, length: int) -> bytes:
+        bucket, key = self._parse(uri)
+        range_header = f"bytes={offset}-{offset + length - 1}"
+        try:
+            response = self._client.get_object(
+                Bucket=bucket, Key=key, Range=range_header
+            )
+            data = response["Body"].read()
+        except ClientError as exc:
+            if self._is_not_found(exc):
+                raise ArtifactNotFoundError(uri) from exc
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in {"InvalidRange", "416"}:
+                raise ArtifactReadError(
+                    f"Requested range [{offset}, {offset + length}) is out of "
+                    f"bounds for {uri}"
+                ) from exc
+            raise ArtifactReadError(
+                f"Failed to read range from artifact: {uri}"
+            ) from exc
+        if len(data) != length:
+            raise ArtifactReadError(
+                f"Requested range [{offset}, {offset + length}) exceeds "
+                f"artifact size for {uri} (got {len(data)} bytes)"
+            )
+        return data
 
     def _write_bytes(self, uri: ArtifactUri, data: bytes) -> None:
         bucket, key = self._parse(uri)
