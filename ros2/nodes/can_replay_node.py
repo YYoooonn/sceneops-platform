@@ -80,6 +80,40 @@ class CanReplayNode(Node):
             f"Loaded {len(self._timeline)} CAN messages for {scene_name}"
         )
 
+    def _wait_for_subscribers(self, timeout_s: float = 15.0) -> None:
+        """DDS discovery between this freshly-started node and an
+        already-running `ros2 bag record` subscriber is not instantaneous --
+        a fixed startup delay in the calling shell/Make script (`sleep N`
+        before launching this node) does not reliably bound it, since the
+        discovery handshake only begins once THIS node exists and can take
+        a variable amount of time afterward, independent of how long the
+        caller waited first. Publishing before discovery completes silently
+        drops messages -- no error, no redelivery -- which is exactly how a
+        recording can end up missing `/mission/status`'s single "running"
+        message and break MISSION_BOUNDARY episode segmentation downstream
+        (found via a real, reproducible flake recording nuScenes scene-0103/
+        scene-0553: `ros2 bag info` showed `/mission/status` count=1 instead
+        of the expected 2). Block briefly on actual subscriber-count
+        confirmation instead of guessing a delay."""
+        publishers = (
+            self._odom_pub,
+            self._imu_pub,
+            self._status_pub,
+            self._control_pub,
+            self._mission_pub,
+        )
+        deadline = time.monotonic() + timeout_s
+        for pub in publishers:
+            while pub.get_subscription_count() == 0:
+                if time.monotonic() > deadline:
+                    self.get_logger().warn(
+                        f"Timed out after {timeout_s}s waiting for a "
+                        f"subscriber on {pub.topic_name} -- proceeding "
+                        "anyway; early messages on this topic may be lost."
+                    )
+                    break
+                time.sleep(0.1)
+
     def _publish_mission_status(self, operation_state: str) -> None:
         msg = String()
         msg.data = json.dumps(
@@ -148,6 +182,7 @@ class CanReplayNode(Node):
         self._control_pub.publish(control)
 
     def replay(self) -> None:
+        self._wait_for_subscribers()
         self._publish_mission_status("running")
 
         prev_utime: int | None = None

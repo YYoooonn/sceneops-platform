@@ -136,9 +136,24 @@ echo ""
 echo "--- 0. Select scenes (CAN-bus eligibility check) ---"
 echo "  nuScenes v1.0-mini total scenes: $TOTAL_SCENE_COUNT"
 
+# Captured ONCE via command substitution -- never piped live into a
+# short-circuiting consumer (`grep -q`, `head -n`). Under `set -o pipefail`
+# (this script's own shebang line), a consumer that exits before draining
+# its producer sends the producer SIGPIPE, which pipefail then reports as
+# pipeline failure EVEN THOUGH the consumer itself found what it was
+# looking for -- e.g. `list_eligible_scene_names | grep -qx "$SCENE"`
+# spuriously reported "not found" for a real match once `grep -q` returned
+# before the producer's slower per-file eligibility checks had finished
+# writing every line. Command substitution always drains its subshell to
+# completion first, so operating on the captured string afterward
+# (here-strings, not pipes) is race-free.
+ELIGIBLE_SCENES="$(list_eligible_scene_names)"
+ELIGIBLE_COUNT="$(wc -l <<< "$ELIGIBLE_SCENES" | tr -d ' ')"
+[ -n "$ELIGIBLE_SCENES" ] || ELIGIBLE_COUNT=0
+
 declare -a SCENES
 if [ -n "${SCENE:-}" ]; then
-  if ! list_eligible_scene_names | grep -qx "$SCENE"; then
+  if ! grep -qx "$SCENE" <<< "$ELIGIBLE_SCENES"; then
     echo "❌ SCENE=$SCENE has no CAN-bus data (pose/ms_imu/vehicle_monitor) under $CAN_BUS_DIR — cannot run e2e-robot-learning against it." >&2
     exit 1
   fi
@@ -147,9 +162,8 @@ if [ -n "${SCENE:-}" ]; then
 else
   REQUESTED_N="${MAX_SCENES:-1}"
   while read -r eligible_name; do
-    SCENES+=("$eligible_name")
-  done < <(list_eligible_scene_names | head -n "$REQUESTED_N")
-  ELIGIBLE_COUNT="$(list_eligible_scene_names 2>/dev/null | wc -l | tr -d ' ')"
+    [ -n "$eligible_name" ] && SCENES+=("$eligible_name")
+  done < <(head -n "$REQUESTED_N" <<< "$ELIGIBLE_SCENES")
   echo "  mode=MAX_SCENES  eligible=$ELIGIBLE_COUNT/$TOTAL_SCENE_COUNT  requested=$REQUESTED_N  selected=${#SCENES[@]}"
   if [ "${#SCENES[@]}" -eq 0 ]; then
     echo "❌ No CAN-bus-eligible scenes found under $NUSCENES_ROOT" >&2
