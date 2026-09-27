@@ -97,7 +97,26 @@ async def ingest_nuscenes_scenes(
     results: list[IngestedScene] = []
 
     for ns_scene in scenes:
-        scene_id = ns_scene["name"]
+        # Scoped by canonical (dataset_id, dataset_version), never the bare
+        # external nuScenes scene name alone (SceneOps V2 Scene-persistence
+        # bug fix). `scenes.scene_id` is this table's sole primary key
+        # (packages/sceneops-db/sceneops_db/models/scenes.py) -- an unscoped
+        # scene_id here meant any two DatasetVersions ingesting the same
+        # real nuScenes scene (extremely common: nuScenes scene names are
+        # fixed, and every E2E/manual run defaults to "scene-0061") silently
+        # stole each other's row via register_scene's scene_id-only
+        # get()/update() (apps/worker/sceneops_worker/jobs/dataset/
+        # register_scene.py), because the LAST writer's dataset_id/
+        # dataset_version simply overwrote the row in place -- no error, no
+        # duplicate, just silent reassignment. This mirrors the SAME
+        # dataset-scoping strategy the raw-log path already uses (real
+        # scene_ids there are always raw_log_id-prefixed, e.g.
+        # "test-e2e-raw-log-test-v1-scene-0061-fw0000" -- see
+        # apps/worker/sceneops_worker/scenes/building/segmentation.py's
+        # _make_segment_id), which never exhibited this bug. `source_scene_ids`
+        # filtering above still matches the bare external name -- only the
+        # canonical scene_id assigned below changes.
+        scene_id = f"{dataset_id}-{dataset_version}-{ns_scene['name']}"
 
         manifest = build_scene_manifest(
             nusc=nusc,

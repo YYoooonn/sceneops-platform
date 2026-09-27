@@ -94,7 +94,7 @@ class TestIngestNuscenesScenesFiltering:
                 max_source_scenes=2,
             )
 
-        assert [s.scene_id for s in ingested] == ["scene-0001", "scene-0002"]
+        assert [s.scene_id for s in ingested] == ["d-v1-scene-0001", "d-v1-scene-0002"]
 
     @pytest.mark.asyncio
     async def test_no_filters_ingests_all_scenes_up_to_max(
@@ -114,10 +114,48 @@ class TestIngestNuscenesScenesFiltering:
             )
 
         assert [s.scene_id for s in ingested] == [
-            "scene-0000",
-            "scene-0001",
-            "scene-0002",
+            "d-v1-scene-0000",
+            "d-v1-scene-0001",
+            "d-v1-scene-0002",
         ]
+
+    @pytest.mark.asyncio
+    async def test_scene_id_is_scoped_by_dataset_identity_not_bare_external_name(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression for the Scene-persistence bug: two different canonical
+        DatasetVersions ingesting the SAME real nuScenes scene (identical
+        external name -- routine, since nuScenes scene names are fixed and
+        every E2E/manual run defaults to "scene-0061") must produce two
+        DISTINCT scene_ids. Before the fix, scene_id was the bare external
+        name alone; since `scenes.scene_id` is the table's sole primary key,
+        the second dataset's register_scene call would silently steal the
+        first dataset's row (scene_store.get(scene_id)/update() matched by
+        scene_id only, with no dataset_id/dataset_version in the lookup)."""
+        scenes = [_mock_scene("scene-0061", "tok-61")]
+        store = LocalArtifactStore(root_uri=str(tmp_path))
+
+        with patch("nuscenes.nuscenes.NuScenes", return_value=_mock_nusc(scenes)):
+            ingested_a = await ingest_nuscenes_scenes(
+                artifact_store=store,
+                source_root_uri="/data/raw/nuscenes",
+                source_format_version="v1.0-mini",
+                dataset_id="dataset-a",
+                dataset_version="v1",
+                scene_manifest_root_uri=str(tmp_path / "scenes-a"),
+            )
+            ingested_b = await ingest_nuscenes_scenes(
+                artifact_store=store,
+                source_root_uri="/data/raw/nuscenes",
+                source_format_version="v1.0-mini",
+                dataset_id="dataset-b",
+                dataset_version="v1",
+                scene_manifest_root_uri=str(tmp_path / "scenes-b"),
+            )
+
+        assert ingested_a[0].scene_id != ingested_b[0].scene_id
+        assert ingested_a[0].scene_id == "dataset-a-v1-scene-0061"
+        assert ingested_b[0].scene_id == "dataset-b-v1-scene-0061"
 
     @pytest.mark.asyncio
     async def test_each_scene_written_under_root_uri(self, tmp_path: Path) -> None:
@@ -135,7 +173,7 @@ class TestIngestNuscenesScenesFiltering:
                 scene_manifest_root_uri=root,
             )
 
-        assert ingested[0].manifest_uri == f"{root}/scene-0001.json"
+        assert ingested[0].manifest_uri == f"{root}/d-v1-scene-0001.json"
         assert await store.exists(ingested[0].manifest_uri)
 
 
@@ -201,19 +239,28 @@ class TestRuntimeModeDispatch:
             )
 
         assert set(result.produced_artifacts) == {
-            "scene_manifest:scene-0001",
-            "scene_manifest:scene-0002",
+            "scene_manifest:d-v1-scene-0001",
+            "scene_manifest:d-v1-scene-0002",
         }
         for scene_id, ref in (
-            ("scene-0001", result.produced_artifacts["scene_manifest:scene-0001"]),
-            ("scene-0002", result.produced_artifacts["scene_manifest:scene-0002"]),
+            (
+                "d-v1-scene-0001",
+                result.produced_artifacts["scene_manifest:d-v1-scene-0001"],
+            ),
+            (
+                "d-v1-scene-0002",
+                result.produced_artifacts["scene_manifest:d-v1-scene-0002"],
+            ),
         ):
             assert ref.kind == ArtifactKind.SCENE_MANIFEST
             assert ref.metadata["scene_id"] == scene_id
             assert ref.checksum is not None
 
         assert result.result_metadata["scene_count"] == 2
-        assert set(result.result_metadata["scene_ids"]) == {"scene-0001", "scene-0002"}
+        assert set(result.result_metadata["scene_ids"]) == {
+            "d-v1-scene-0001",
+            "d-v1-scene-0002",
+        }
 
 
 # ── real nuScenes fixture (skipped if not present) ──────────────────────────

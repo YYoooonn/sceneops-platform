@@ -242,6 +242,28 @@ fi
 echo "  OK"
 echo ""
 
+# ── 7b. Assert canonical Scene identity (not just count) ─────────────────────
+# Regression for the Scene-persistence bug (SceneOps V2): a matching COUNT
+# alone doesn't prove these rows are actually owned by THIS dataset/version --
+# the bug that slipped past every earlier assertion here was exactly a count
+# that looked right while ownership had silently been reassigned to a
+# different DatasetVersion (scene_id was, before the fix, the bare external
+# nuScenes scene name -- not scoped by dataset_id/dataset_version -- so a
+# LATER registration under a different dataset could overwrite these rows in
+# place with no error and no count change here). Every returned scene must
+# report ITS OWN datasetId/datasetVersion as this run's, not merely exist.
+
+echo "--- 7b. Assert canonical Scene identity ---"
+MISMATCHED_OWNER_COUNT="$(echo "$SCENES_JSON" | jq --arg d "$DATASET_ID" --arg v "$DATASET_VERSION" \
+  '[.scenes[] | select(.datasetId != $d or .datasetVersion != $v)] | length')"
+if [ "${MISMATCHED_OWNER_COUNT:-0}" -ne 0 ]; then
+  echo "❌ $MISMATCHED_OWNER_COUNT scene(s) returned by GET /scenes?dataset_id=$DATASET_ID do not actually report that ownership" >&2
+  echo "$SCENES_JSON" | jq '.scenes[] | {sceneId, datasetId, datasetVersion}' >&2
+  exit 1
+fi
+echo "  OK ($SCENE_COUNT/$SCENE_COUNT scenes correctly owned by $DATASET_ID:$DATASET_VERSION)"
+echo ""
+
 # ── 8. Assert dataset version ready + quality cache (folded in from e2e_pipeline_contracts.sh) ──
 
 echo "--- 8. Assert dataset version ---"
@@ -279,6 +301,38 @@ assert_json_gt "$QUALITY_JSON" '.counts.sceneCount' 0 "quality counts.sceneCount
 assert_json_equals "$QUALITY_JSON" '.groundTruth.hasGroundTruth' "true" "quality groundTruth.hasGroundTruth should be true"
 assert_json_not_empty "$QUALITY_JSON" '.manifestUri' "quality manifestUri should be non-empty"
 echo "  OK"
+echo ""
+
+# ── 8b. Canonical Scene-persistence invariant (SceneOps V2 Scene-persistence bug fix) ──
+# The exact assertion this bug slipped past: registered_scene_count (job
+# result) and DatasetVersion.scene.sceneCount (a write-once-per-pipeline-run
+# cached snapshot, itself derived from a live scoped query at write time --
+# see apps/worker/sceneops_worker/jobs/dataset/build_dataset_manifest.py)
+# both looked correct even while the real GET /scenes count -- and the real
+# canonical rows -- were 0, because a LATER, unrelated registration (this
+# script's own step 10 skip-test sub-run, or any other dataset ingesting the
+# same real nuScenes scene) silently reassigned ownership of the same
+# globally-keyed rows out from under this dataset AFTER this snapshot was
+# taken. This invariant must hold from a fresh, independent read of every
+# one of these four sources, not just internal self-consistency between
+# pipeline task results.
+
+echo "--- 8b. Assert canonical Scene-persistence invariant ---"
+QUALITY_SCENE_COUNT="$(echo "$QUALITY_JSON" | jq -r '.counts.sceneCount // 0')"
+echo "  registered_scene_count (job result)      = $REG_COUNT"
+echo "  DatasetVersion.scene.sceneCount (cache)   = $VERSION_SCENE_COUNT"
+echo "  GET /scenes count (canonical rows, live)  = $SCENE_COUNT"
+echo "  GET .../quality counts.sceneCount (live)  = $QUALITY_SCENE_COUNT"
+
+if [ "$REG_COUNT" != "$VERSION_SCENE_COUNT" ] || [ "$VERSION_SCENE_COUNT" != "$SCENE_COUNT" ] || [ "$SCENE_COUNT" != "$QUALITY_SCENE_COUNT" ]; then
+  echo "❌ Scene-persistence invariant violated: registered_scene_count=$REG_COUNT" >&2
+  echo "   DatasetVersion.scene.sceneCount=$VERSION_SCENE_COUNT  GET /scenes count=$SCENE_COUNT" >&2
+  echo "   GET .../quality counts.sceneCount=$QUALITY_SCENE_COUNT -- these must all agree." >&2
+  echo "   A pipeline that reports success while canonical Scene rows are missing or" >&2
+  echo "   reassigned must fail here, not silently pass." >&2
+  exit 1
+fi
+echo "  OK — pipeline output, cached summary, and live canonical rows all agree ($SCENE_COUNT)"
 echo ""
 
 # ── 9. Assert dataset manifest artifact ──────────────────────────────────────
@@ -350,6 +404,41 @@ for task_id in ingest_scenes register_scene validate_scene build_scene_index bui
   [ "$SKIP_TASK_STATUS" = "succeeded" ] || { echo "❌ Required task '$task_id' expected succeeded after optional skip, got '$SKIP_TASK_STATUS'" >&2; exit 1; }
 done
 echo "  Optional task skip: OK"
+echo ""
+
+# ── 11. Re-verify the Scene-persistence invariant AFTER a second, related ────
+#     registration (${DATASET_ID}-skip-test) has run.
+#
+# This is the exact scenario the original bug slipped past: step 8b's own
+# invariant checked out fine at the time, and it was ONLY this later,
+# unrelated dataset's registration (of what were, pre-fix, colliding bare
+# scene_ids) that silently reassigned the primary dataset's already-"passing"
+# rows. Checking the invariant only once, before this second registration
+# runs, would not have caught the bug at all -- it must be re-verified here,
+# against a fresh, independent read, after.
+
+echo "--- 11. Re-verify Scene-persistence invariant after a second, related registration ---"
+SCENES_JSON_AFTER="$(curl -sS "$(api_url "$API_BASE_URL" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION")")"
+SCENE_COUNT_AFTER="$(echo "$SCENES_JSON_AFTER" | jq '.scenes | length')"
+VERSION_JSON_AFTER="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
+VERSION_SCENE_COUNT_AFTER="$(echo "$VERSION_JSON_AFTER" | jq -r '.version.scene.sceneCount // 0')"
+echo "  GET /scenes count (after)                = $SCENE_COUNT_AFTER"
+echo "  DatasetVersion.scene.sceneCount (after)   = $VERSION_SCENE_COUNT_AFTER"
+
+if [ "$SCENE_COUNT_AFTER" != "$SCENE_COUNT" ]; then
+  echo "❌ $DATASET_ID:$DATASET_VERSION's own Scene rows changed after an unrelated" >&2
+  echo "   dataset's registration (${DATASET_ID}-skip-test) — was $SCENE_COUNT, now $SCENE_COUNT_AFTER." >&2
+  echo "   This is exactly the Scene-persistence bug: canonical rows silently" >&2
+  echo "   reassigned to a different DatasetVersion." >&2
+  exit 1
+fi
+MISMATCHED_OWNER_COUNT_AFTER="$(echo "$SCENES_JSON_AFTER" | jq --arg d "$DATASET_ID" --arg v "$DATASET_VERSION" \
+  '[.scenes[] | select(.datasetId != $d or .datasetVersion != $v)] | length')"
+[ "${MISMATCHED_OWNER_COUNT_AFTER:-0}" -eq 0 ] || {
+  echo "❌ $MISMATCHED_OWNER_COUNT_AFTER scene(s) no longer report ownership by $DATASET_ID:$DATASET_VERSION after the second registration" >&2
+  exit 1
+}
+echo "  OK — $DATASET_ID:$DATASET_VERSION's Scene rows are unchanged and still correctly owned"
 echo ""
 
 # ── Summary ───────────────────────────────────────────────────────────────────
