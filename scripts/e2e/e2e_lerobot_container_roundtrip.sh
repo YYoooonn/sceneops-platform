@@ -56,7 +56,7 @@
 # (below, before Step 1) -- the container itself never deletes
 # external_ref.uri; a fresh path every run is what makes reruns of THIS
 # script idempotent, never something the container does on its own (see
-# also scripts/e2e/lerobot_container_smoke.sh, Request 4.2's lighter-
+# also scripts/e2e/smoke_lerobot_container.sh, Request 4.2's lighter-
 # weight smoke test of the same container).
 #
 # Usage:
@@ -68,7 +68,7 @@
 #   make lerobot-sync       # tools/lerobot-integration/.venv, one-time (Step 3)
 #
 # Env overrides (defaults match scripts/e2e/e2e_lerobot_roundtrip.sh /
-# scripts/e2e/lerobot_container_smoke.sh):
+# scripts/e2e/smoke_lerobot_container.sh):
 #   SCENEOPS_DATABASE_URL       real Postgres DSN (host form)
 #   MINIO_ENDPOINT_URL          host-form MinIO URL for Step 1 (default: http://localhost:9000)
 #   MINIO_ROOT_USER / MINIO_ROOT_PASSWORD / MINIO_BUCKET   (Step 1, and used to derive

@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
-# e2e_api_smoke.sh — lightweight smoke test for the SceneOps Platform API
-# Tests read endpoints and minimal create operations.
-# Does NOT require worker execution to pass.
+# smoke_api.sh — lightweight transport/liveness smoke test for the SceneOps
+# Platform API (renamed from e2e_api_smoke.sh, SceneOps V2 E2E surface
+# cleanup). Answers "is the service reachable, does the transport contract
+# work, do read endpoints respond" only -- does NOT require worker
+# execution to pass.
+#
+# Strict rule (SceneOps V2 E2E surface cleanup, item 9): a smoke-* target
+# must not leave behind persistent application-domain records. The
+# previous e2e_api_smoke.sh created a real Dataset/DatasetVersion/Model/
+# PipelineRun on every single run, none of it ever cleaned up -- exactly
+# the kind of accumulating fixture debt this cleanup removes. Read-only
+# list endpoints (tolerant of an empty list) plus a 404/validation-error
+# check on a request that is guaranteed never to exist prove the same
+# "transport contract works, minimal request parses" property without
+# writing anything.
 #
 # Usage:
-#   API_BASE_URL=http://localhost:8000 bash scripts/e2e/e2e_api_smoke.sh
+#   API_BASE_URL=http://localhost:8000 bash scripts/e2e/smoke_api.sh
 #
 # Dependencies: curl, jq
 
@@ -22,15 +34,6 @@ url() { echo "${API_BASE_URL}${PREFIX}${1}"; }
 get() {
   local path="$1"
   curl -sf "$(url "$path")" -H "Accept: application/json"
-}
-
-post() {
-  local path="$1"
-  local body="$2"
-  curl -sf -X POST "$(url "$path")" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json" \
-    -d "$body"
 }
 
 check() {
@@ -58,6 +61,19 @@ check_field() {
   else
     echo "  ✅  $label ($val)"
     PASS=$((PASS + 1))
+  fi
+}
+
+check_status() {
+  local label="$1"
+  local expected="$2"
+  local actual="$3"
+  if [ "$actual" = "$expected" ]; then
+    echo "  ✅  $label (http $actual)"
+    PASS=$((PASS + 1))
+  else
+    echo "  ❌  $label — expected http $expected, got $actual"
+    FAIL=$((FAIL + 1))
   fi
 }
 
@@ -104,7 +120,7 @@ check "GET /pipelines/runs"              "$(get /pipelines/runs)"
 check "GET /executions"                  "$(get /executions)"
 check "GET /artifacts"                   "$(get /artifacts)"
 
-# ── domains: read endpoints ───────────────────────────────────────────────────
+# ── domains: read endpoints (list-only, tolerant of empty) ───────────────────
 
 echo ""
 echo "─── domains ─────────────────────────────────────────"
@@ -137,73 +153,33 @@ check_field "definitions count > 0" "$defs" '.count'
 def_count="$(echo "$defs" | jq -r '.count')"
 echo "  📋 ${def_count} built-in pipeline definitions"
 
-# ── create: dataset ───────────────────────────────────────────────────────────
+# ── transport contract: 404 / validation-error paths (no writes) ────────────
+#
+# Proves "a minimal request can be parsed" and "the read-not-found contract
+# works" without ever persisting anything: a lookup of an id that is
+# guaranteed never to exist, and a POST payload that is guaranteed to fail
+# request validation, both terminate before any row is written.
 
 echo ""
-echo "─── create smoke ────────────────────────────────────"
-# Deliberately hardcoded, not "${DATASET_ID:-...}" -- this smoke test never
-# accepts a caller-supplied dataset, it always creates+verifies its own
-# disposable one. "test-e2e-smoke-" matches the shared test-e2e-* default
-# identity convention (SceneOps V2 Request 3.2A, scripts/e2e/lib.sh) even
-# though this script deliberately doesn't source lib.sh (kept dependency-free
-# on purpose -- see the file header).
-DATASET_ID="test-e2e-smoke-$(date +%s)"
+echo "─── transport contract (no domain data written) ────"
+NEVER_EXISTS_ID="smoke-does-not-exist-$(date +%s%N)"
 
-dataset_resp="$(post /datasets "{
-  \"dataset_id\": \"${DATASET_ID}\",
-  \"name\": \"Smoke Test Dataset\",
-  \"type\": \"custom\"
-}")"
-check "POST /datasets" "$dataset_resp"
-check_field "dataset.datasetId" "$dataset_resp" '.dataset.datasetId'
+not_found_status="$(curl -sS -o /dev/null -w '%{http_code}' "$(url "/datasets/${NEVER_EXISTS_ID}")")"
+check_status "GET /datasets/{never-exists} -> 404" "404" "$not_found_status"
 
-# create dataset version
-version_resp="$(post "/datasets/${DATASET_ID}/versions" "{
-  \"version\": \"v1.0\",
-  \"status\": \"registered\"
-}")"
-check "POST /datasets/{id}/versions" "$version_resp"
-check_field "version.version" "$version_resp" '.version.version'
-
-# read back
-check "GET /datasets/{id}" "$(get "/datasets/${DATASET_ID}")"
-check "GET /datasets/{id}/versions" "$(get "/datasets/${DATASET_ID}/versions")"
-check "GET /datasets/{id}/versions/v1.0" "$(get "/datasets/${DATASET_ID}/versions/v1.0")"
-check "GET /datasets/{id}/versions/v1.0/quality" "$(get "/datasets/${DATASET_ID}/versions/v1.0/quality")"
-
-# create model
-MODEL_ID="test-e2e-smoke-model-$(date +%s)"
-model_resp="$(post /models "{
-  \"model_id\": \"${MODEL_ID}\",
-  \"name\": \"Smoke Test Model\"
-}")"
-check "POST /models" "$model_resp"
-
-model_version_resp="$(post "/models/${MODEL_ID}/versions" "{
-  \"version\": \"v1.0\",
-  \"backend\": \"mock\"
-}")"
-check "POST /models/{id}/versions" "$model_version_resp"
-
-# create pipeline run (detection_evaluation)
-pipe_resp="$(post /pipelines/runs "{
-  \"type\": \"detection_evaluation\",
-  \"dataset_id\": \"${DATASET_ID}\",
-  \"dataset_version\": \"v1.0\",
-  \"model_id\": \"${MODEL_ID}\",
-  \"model_version\": \"v1.0\"
-}")"
-check "POST /pipelines/runs" "$pipe_resp"
-PIPE_ID="$(echo "$pipe_resp" | jq -r '.pipelineRun.pipelineRunId')"
-check_field "pipelineRunId" "$pipe_resp" '.pipelineRun.pipelineRunId'
-check "GET /pipelines/runs/{id}" "$(get "/pipelines/runs/${PIPE_ID}")"
-check "GET /pipelines/runs/{id}/steps" "$(get "/pipelines/runs/${PIPE_ID}/tasks")"
+# Missing every required field -- FastAPI/pydantic must reject this at the
+# request-parsing boundary (422) before any handler code runs, so nothing is
+# ever persisted regardless of the response code's exact value.
+invalid_post_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$(url "/datasets")" \
+  -H "Content-Type: application/json" -d '{}')"
+check_status "POST /datasets {} -> 422 (validation, no write)" "422" "$invalid_post_status"
 
 # ── summary ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "═══════════════════════════════════════════════════"
 echo "  Smoke test complete: ✅ ${PASS} passed / ❌ ${FAIL} failed"
+echo "  (zero domain records created or persisted)"
 echo "═══════════════════════════════════════════════════"
 
 [ "$FAIL" -eq 0 ]

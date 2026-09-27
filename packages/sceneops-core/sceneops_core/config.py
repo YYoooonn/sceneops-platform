@@ -125,7 +125,7 @@ class IntegrationExecutionSettings(BaseModel):
 
     ``nuscenes_image``/``docker_network``/``host_data_root``/
     ``io_root_uri`` remain for ``ContainerIntegrationExecutor`` (Request
-    4.6), now a LOCAL/DEV-ONLY backend (``make nuscenes-container-smoke``,
+    4.6), now a LOCAL/DEV-ONLY backend (``make smoke-nuscenes-container``,
     direct runtime debugging) -- not the worker's production path since
     Request 4.6A. ``host_data_root``/``io_root_uri`` exist only because
     that backend runs `docker run` from inside an already-containerized

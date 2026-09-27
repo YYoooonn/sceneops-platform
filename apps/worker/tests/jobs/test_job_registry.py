@@ -33,7 +33,7 @@ def test_robot_jobs_are_intentionally_absent_from_every_pipeline():
     so the only way to invoke them is the generic Job API
     (POST /jobs {"type": "ingest_robot_states" | "export_robot_analytics_snapshot", ...}),
     exactly like scripts/e2e/e2e_robot_can_replay.sh and
-    scripts/e2e/e2e_analytics_export.sh already do live."""
+    scripts/e2e/e2e_scene_analytics_export.sh already do live."""
     robot_job_types = {
         JobType.INGEST_ROBOT_STATES,
         JobType.EXPORT_ROBOT_ANALYTICS_SNAPSHOT,

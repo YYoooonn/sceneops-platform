@@ -56,7 +56,7 @@ This container never deletes a caller-owned ``external_ref.uri`` target
 (Request 4.2 follow-up §1): it attempts the export and fails clearly (a
 wrapped ``IntegrationRuntimeError``) if the target already exists. Cleaning
 a known test-owned output directory between reruns is the test
-orchestrator's job (``scripts/e2e/lerobot_container_smoke.sh``), never this
+orchestrator's job (``scripts/e2e/smoke_lerobot_container.sh``), never this
 runtime's.
 """
 
@@ -181,7 +181,7 @@ def _resolve_export_root(uri: str) -> Path:
     not this function's to silently clear -- see ``execute()``'s own
     ``FileExistsError`` handling for that clear failure. Idempotent-rerun
     cleanup of a known test-owned directory belongs to the test
-    orchestrator (``scripts/e2e/lerobot_container_smoke.sh``), never this
+    orchestrator (``scripts/e2e/smoke_lerobot_container.sh``), never this
     runtime."""
     export_root = Path(uri)
     export_root.parent.mkdir(parents=True, exist_ok=True)

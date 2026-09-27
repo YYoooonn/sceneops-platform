@@ -10,7 +10,7 @@
 #   default command  -> HTTP service (service.py), what the worker calls
 #                        in production (compose/integrations.yaml)
 #   overridden command -> CLI entrypoint (entrypoint.py), used by
-#                        `make nuscenes-container-smoke` and direct local
+#                        `make smoke-nuscenes-container` and direct local
 #                        debugging: `docker run <image> -m
 #                        sceneops_integrations.nuscenes.entrypoint
 #                        --request-file ... --raw-log-id ... ...`

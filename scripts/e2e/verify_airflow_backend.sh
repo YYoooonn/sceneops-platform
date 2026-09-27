@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# e2e_airflow_pipeline.sh
+# verify_airflow_backend.sh (renamed from e2e_airflow_pipeline.sh, SceneOps
+# V2 E2E surface cleanup)
 #
-# E2E test for the Airflow pipeline execution backend PoC:
+# This is an alternate-orchestrator COMPATIBILITY CHECK, not a new domain
+# workflow -- it dispatches the exact same dataset_scene_ingestion workflow
+# e2e-scene already covers, just through Airflow's per-task DAG PoC instead
+# of Celery, to prove that substitution still works. It stays out of the
+# e2e-* namespace (and out of the default `make e2e-scene` acceptance path)
+# for the same reason: the Airflow backend is currently a PoC hardcoded to
+# dataset_scene_ingestion only (see docs/development/test-matrix.md), not a
+# general pipeline-backend substitution -- this name is intentionally
+# narrower than "e2e-scene BACKEND=airflow" would imply.
+#
+# Verifies the Airflow pipeline execution backend PoC:
 #   dispatch dataset_scene_ingestion via Airflow (per-task DAG,
 #   sceneops_pipeline_run) instead of Celery, and confirm it reaches
 #   `succeeded` with all 6 task runs succeeded — same outcome as
-#   e2e_dataset_scene_ingestion.sh, different execution backend.
+#   e2e_scene.sh, different execution backend.
 #
 # Precondition (cannot be automated by this script — it's a process-startup
 # setting, not a per-request one):
@@ -15,7 +26,7 @@
 #        docker compose up -d --build api
 #
 # Usage:
-#   bash scripts/e2e/e2e_airflow_pipeline.sh
+#   bash scripts/e2e/verify_airflow_backend.sh
 #
 # Env overrides (defaults come from the "core" E2E fixture, see
 # scripts/e2e/lib.sh's resolve_e2e_fixture):
@@ -24,7 +35,7 @@
 #   DATASET_VERSION (default: test-v1)
 #   SOURCE_FORMAT_VERSION (default: v1.0-mini)
 #   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
-#   MAX_SOURCE_SCENES (default: 2)
+#   MAX_SCENES (default: 2)
 #   POLL_TIMEOUT    max poll attempts, 10s each (default: 60 = 10 min —
 #                    Airflow scheduling adds latency vs. direct Celery dispatch)
 
@@ -35,7 +46,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-2}"
+MAX_SCENES="${MAX_SCENES:-2}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
@@ -71,7 +82,7 @@ PAYLOAD="$(cat <<JSON
       "source_format": "$SOURCE_FORMAT",
       "source_root_uri": "$SOURCE_ROOT_URI",
       "source_format_version": "$SOURCE_FORMAT_VERSION",
-      "max_source_scenes": $MAX_SOURCE_SCENES,
+      "max_source_scenes": $MAX_SCENES,
       "mode": "upsert"
     },
     "register_scene": {

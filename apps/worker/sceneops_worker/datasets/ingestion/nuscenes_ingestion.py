@@ -21,7 +21,7 @@ model (SceneOps V2 Request 4.6, HTTP transport in Request 4.6A):
 
     (build_nuscenes_container_config() -- LOCAL/DEV ONLY, see its own
     docstring -- builds the ContainerIntegrationExecutor equivalent for
-    raw-log mode, used by make nuscenes-container-smoke and direct runtime
+    raw-log mode, used by make smoke-nuscenes-container and direct runtime
     debugging, not by either job handler since Request 4.6A.)
 
 This module builds the inputs a generic ``IntegrationExecutor`` needs for
@@ -192,7 +192,7 @@ def build_nuscenes_container_config(
 ) -> ContainerRuntimeConfig:
     """Build the ``ContainerRuntimeConfig`` to run the isolated
     ``nuscenes-integration`` image for one raw log -- LOCAL/DEV ONLY since
-    Request 4.6A (``make nuscenes-container-smoke``, direct runtime
+    Request 4.6A (``make smoke-nuscenes-container``, direct runtime
     debugging); ``BuildScenesJobHandler`` no longer calls this (see
     ``build_nuscenes_http_config`` above for the production path). Image/
     network selection come from ``settings.integration_execution``

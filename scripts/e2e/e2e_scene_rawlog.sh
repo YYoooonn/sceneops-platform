@@ -1,28 +1,55 @@
 #!/usr/bin/env bash
-# e2e_raw_log_scene_building.sh
+# e2e_scene_rawlog.sh (renamed from e2e_raw_log_scene_building.sh, SceneOps
+# V2 E2E surface cleanup)
 #
 # E2E test for the raw_log_scene_building pipeline:
 #   build_scenes -> register_scene -> validate_scene -> profile_scene
 #   -> build_scene_index -> build_dataset_manifest
 #
-# Uses NuScenesRawLogMocker to flatten nuScenes into mock raw sensor frames.
+# Uses real nuScenes data through the RAW-LOG representation (source_type=
+# "nuscenes_raw_log_mock", read by
+# packages/sceneops-integrations/sceneops_integrations/nuscenes/raw_log.py's
+# read_nuscenes_raw_log()) -- NOT synthetic/fabricated data. "Mock" in that
+# source_type's name is a historical label from when this genuinely was a
+# transitional in-process mock (pre-Request 4.4); the current
+# implementation calls the real nuscenes-devkit SDK and walks real
+# sample/sample_data/calibrated_sensor/ego_pose records into real
+# RawSensorFrameManifests pointing at real on-disk filenames. It is a
+# frozen domain enum value (RawLogSourceType.NUSCENES_RAW_LOG_MOCK,
+# NuScenesRawLogMocker) out of scope for this E2E-surface cleanup to
+# rename -- this comment documents the terminology gap without touching it.
+#
+# What this uniquely exercises that e2e_scene.sh's direct SceneManifest
+# ingest does NOT: BuildScenesJobHandler's generic RawLogAdapter
+# segmentation (fixed_window)/sampling (anchor_channel) machinery -- the
+# SAME machinery RosbagAdapter (real robot MCAP, see e2e_robot_learning.sh)
+# depends on. This script is the cheap way to exercise that shared
+# machinery from real nuScenes data without needing the ROS2 sandbox, and
+# it is NOT redundant with the real CAN->ROS2->MCAP->RosbagAdapter path --
+# they are two different RawLogAdapter implementations of the same
+# Protocol, over two different real sources.
+#
+# Deliberately isolated from the "core" fixture's own DatasetVersion: this
+# pipeline registers non-ground-truth scenes, which measurably drags down
+# "core"'s aggregate /quality readiness if they share one DatasetVersion --
+# a real, previously-discovered data-requirement conflict, not an
+# oversight (see makefiles/e2e.mk's e2e-scene-rawlog comment).
 #
 # Usage:
-#   bash scripts/e2e/e2e_raw_log_scene_building.sh
+#   bash scripts/e2e/e2e_scene_rawlog.sh
 #
 # Env overrides (defaults come from the "raw-log" E2E fixture, see
 # scripts/e2e/lib.sh's resolve_e2e_fixture -- deliberately isolated from the
-# shared "core" fixture, see makefiles/e2e.mk's e2e-raw-log-scene-building
-# comment. DATASET_ID/DATASET_VERSION are SceneOps' own canonical identity;
-# SOURCE_FORMAT_VERSION is the separate, real nuScenes SDK version the
-# dataroot below actually contains -- SceneOps V2 Request 3.2B):
+# shared "core" fixture. DATASET_ID/DATASET_VERSION are SceneOps' own
+# canonical identity; SOURCE_FORMAT_VERSION is the separate, real nuScenes
+# SDK version the dataroot below actually contains):
 #   API_BASE_URL          (default: http://localhost:8000)
 #   DATASET_ID            (default: test-e2e-raw-log)
 #   DATASET_VERSION       (default: test-v1)
 #   SOURCE_FORMAT_VERSION (default: v1.0-mini)
 #   SOURCE_ROOT_URI       NuScenes dataroot registered on the dataset version
 #                         (default: /data/raw/nuscenes)
-#   MAX_SEQUENCES       (default: 10)
+#   MAX_SCENES            how many nuScenes sequences to flatten (default: 10)
 #   POLL_TIMEOUT        max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
@@ -32,7 +59,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture raw-log
-MAX_SEQUENCES="${MAX_SEQUENCES:-10}"
+MAX_SCENES="${MAX_SCENES:-10}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
@@ -42,7 +69,7 @@ SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 echo "=== raw_log_scene_building E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SEQUENCES=$MAX_SEQUENCES"
+echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SCENES=$MAX_SCENES"
 echo ""
 
 # ── 1. Ensure dataset and version exist ──────────────────────────────────────
@@ -70,7 +97,7 @@ PAYLOAD="$(cat <<JSON
       "source_type": "nuscenes_raw_log_mock",
       "source_format": "$SOURCE_FORMAT",
       "source_format_version": "$SOURCE_FORMAT_VERSION",
-      "max_source_sequences": $MAX_SEQUENCES,
+      "max_source_sequences": $MAX_SCENES,
       "segmentation": {
         "strategy": "fixed_window",
         "respect_sequence_id": true,

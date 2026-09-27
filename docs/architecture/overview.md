@@ -253,7 +253,7 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 semantic mapping, real Postgres/MinIO round-trip E2E (Phase 3, complete)
 - Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/`
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
-- E2E (local venv, not the container): `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh` (`make e2e-lerobot`)
+- E2E (local venv, not the container): `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh` (`make e2e-interop`)
 - Doc: [dataset-interoperability.md](./dataset-interoperability.md)
 
 **EXTERNAL INTEGRATION RUNTIME** — IntegrationRequest/IntegrationResult
@@ -264,7 +264,7 @@ isolated nuScenes + LeRobot runtimes/containers (Phase 4, complete)
 - nuScenes SDK-bound implementation: `packages/sceneops-integrations/sceneops_integrations/nuscenes/`
 - Isolated nuScenes environment/container: `tools/nuscenes-integration/`
 - Isolated LeRobot environment/container: `tools/lerobot-integration/`
-- E2E: `make nuscenes-container-smoke`, `make e2e-lerobot-container`
+- E2E: `make smoke-nuscenes-container`, `make e2e-lerobot-container`
 - Doc: [external-integration-runtime.md](./external-integration-runtime.md)
 
 **PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records

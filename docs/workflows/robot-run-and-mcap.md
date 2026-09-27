@@ -130,13 +130,25 @@ infrastructure.
 
 ## 5. Quickstart
 
+The primary path (SceneOps V2 E2E surface cleanup) records the CAN replay
+and builds/curates the resulting Episode(s) in one composed command:
+
 ```bash
 make local-up
-make ros2-up                        # ROS2 Jazzy sandbox (rclpy, rosbag2, MCAP storage plugin)
-make e2e-robot-can-replay           # CAN replay -> record -> register -> ingest, verified via API
+make e2e-robot-learning              # records CAN replay -> MCAP -> Episode -> alignment -> learning export -> curation
+make e2e-robot-learning SCENE=scene-0061
+make e2e-robot-learning MAX_SCENES=3  # first N CAN-bus-eligible nuScenes v1.0-mini scenes
 ```
 
-Or step by step:
+Or stage by stage, for debugging one step in isolation (kept as debug/stage
+targets, not the primary documented flow):
+
+```bash
+make ros2-up                        # ROS2 Jazzy sandbox (rclpy, rosbag2, MCAP storage plugin)
+make e2e-robot-can-replay           # CAN replay -> record -> register -> ingest_robot_states (RobotState/Mission telemetry)
+```
+
+Or fully manually:
 
 ```bash
 make ros2-can-replay-record SCENE=scene-0061 RATE=5.0

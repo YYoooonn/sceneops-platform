@@ -13,7 +13,7 @@ Two ``IntegrationExecutor`` backends:
   Docker container via the host's Docker daemon. No longer the worker's
   normal production path (that required a `docker` CLI + `/var/run/
   docker.sock` mount this worker no longer has) -- still used by
-  ``make nuscenes-container-smoke`` and direct local runtime testing.
+  ``make smoke-nuscenes-container`` and direct local runtime testing.
 """
 
 from .container import (

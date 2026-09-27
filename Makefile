@@ -1,6 +1,15 @@
 ENV_FILE     ?= .env.local
 COMPOSE      := docker compose --env-file $(ENV_FILE)
+# API_HOST -- used only by the pre-existing debug/status targets below
+# (api-health, show-pipeline, show-job-events, worker-cli helpers), which
+# predate and are out of scope for the E2E surface cleanup's variable
+# consolidation. Every E2E/smoke/verify script-facing target instead uses
+# API_BASE_URL directly (SceneOps V2 E2E surface cleanup, item 17) -- one
+# authoritative name for the same concept on that surface, no Makefile-side
+# translation needed. The two are NOT merged here because API_HOST also
+# serves targets this cleanup deliberately did not touch.
 API_HOST     ?= http://localhost:8000
+API_BASE_URL ?= http://localhost:8000
 API_PREFIX   ?= /api/v1
 ALEMBIC_CONFIG ?= migrations/alembic.ini
 POSTGRES_USER ?= sceneops
@@ -27,18 +36,35 @@ ROBOT_ID        ?=
 RUN_ID          ?=
 MCAP_URI        ?=
 
-MODEL_ID        ?= dummy-detector
-MODEL_VERSION   ?= v1
+# E2E selection knobs (SceneOps V2 E2E surface cleanup, item 15) -- the only
+# user-facing selection variables the primary E2E surface exposes.
+# MAX_SCENES is the one authoritative name across e2e-scene/e2e-scene-rawlog/
+# e2e-robot-learning (replaces the former per-script MAX_SOURCE_SCENES/
+# MAX_SEQUENCES aliases). BACKEND selects e2e-perception's inference
+# backend (mock|grounding_dino).
+MAX_SCENES      ?=
+MAX_SAMPLES     ?=
+BACKEND         ?=
+
+# MODEL_ID/MODEL_VERSION are deliberately NOT declared here (SceneOps V2 E2E
+# surface cleanup) -- e2e-perception derives the right model identity from
+# BACKEND itself (dummy-detector/v1 for mock, grounding-dino/tiny for
+# grounding_dino; see scripts/e2e/e2e_perception.sh), so a top-level
+# Makefile default would just be a second, redundant place the same value
+# lived. A manual override (`MODEL_ID=my-model make e2e-perception`) still
+# works via ordinary environment inheritance, with no Makefile declaration
+# needed for that to work.
 
 # SceneOps V2 Request 3.2A/3.2B: shared E2E fixture catalog ("core"/
 # "interop"/"raw-log", see scripts/e2e/lib.sh's resolve_e2e_fixture for the
 # full catalog doc) and canonical-vs-source identity separation.
 #
 # DATASET_ID/DATASET_VERSION below are the "core" fixture's default --
-# SceneOps' OWN canonical identity, used by pipeline-contracts,
-# dataset-ingestion, scenario-curation, detection-evaluation,
-# analytics-export, reliability, airflow-pipeline, episode-building, and
-# episode-curation. Canonical identity is never constrained by what an
+# SceneOps' OWN canonical identity, used by e2e-scene, e2e-perception
+# (scenario curation + detection evaluation), e2e-scene-analytics-export,
+# verify-reliability, verify-airflow-backend, e2e-robot-learning,
+# e2e-episode-building, and e2e-episode-curation. Canonical identity is
+# never constrained by what an
 # external format's SDK happens to require: SOURCE_FORMAT_VERSION below is
 # the separate, real nuScenes SDK version (apps/worker/sceneops_worker/
 # jobs/dataset/ingest_scenes.py reads this, never dataset_version, and
@@ -46,27 +72,37 @@ MODEL_VERSION   ?= v1
 # `nuscenes-devkit` `NuScenes(...)` call as of Request 4.6B -- apps/worker
 # itself no longer imports nuscenes-devkit at all). Request 3.2A initially
 # had to keep DATASET_VERSION pinned to the real "v1.0-mini" here (found by
-# actually running `make e2e-pipeline-contracts` against a renamed version
-# and hitting "Database version not found: /data/raw/nuscenes/test-v1");
+# actually running the pipeline-contracts E2E of the time -- since folded
+# into `make e2e-scene`, see scripts/e2e/e2e_scene.sh -- against a renamed
+# version and hitting "Database version not found: /data/raw/nuscenes/test-v1");
 # Request 3.2B's source_format_version param is what let DATASET_VERSION
 # become a free canonical identity too.
 #
-# See makefiles/e2e.mk for the raw-log fixture (RAW_LOG_DATASET_ID), which
-# stays isolated from "core" on purpose but shares this same
-# SOURCE_FORMAT_VERSION (both read the same physical nuScenes mini
-# fixture). An explicit `DATASET_ID=my-dataset make e2e-...` always
-# overrides these defaults and is never coerced into the test-e2e-* form.
+# See scripts/e2e/lib.sh's resolve_e2e_fixture "raw-log" case for the
+# raw-log fixture's own identity (test-e2e-raw-log), which stays isolated
+# from "core" on purpose but shares this same SOURCE_FORMAT_VERSION (both
+# read the same physical nuScenes mini fixture) -- resolved entirely
+# script-side (no separate RAW_LOG_DATASET_ID Makefile variable, removed by
+# the SceneOps V2 E2E surface cleanup as unnecessary indirection over the
+# same script-side default). An explicit `DATASET_ID=my-dataset make
+# e2e-...` always overrides these defaults and is never coerced into the
+# test-e2e-* form.
 DEFAULT_E2E_DATASET_PREFIX  ?= test-e2e
 DEFAULT_E2E_DATASET_VERSION ?= test-v1
 DATASET_ID            ?= $(DEFAULT_E2E_DATASET_PREFIX)-core
 DATASET_VERSION       ?= $(DEFAULT_E2E_DATASET_VERSION)
 
-SOURCE_FORMAT ?= nuscenes
+# SOURCE_FORMAT is deliberately NOT declared here (SceneOps V2 E2E surface
+# cleanup, item 16) -- every current E2E fixture is nuScenes, so exposing it
+# as a normal operator-overridable Make variable would misrepresent it as a
+# real choice. scripts/e2e/lib.sh's resolve_e2e_fixture still defaults it to
+# "nuscenes" internally; nothing here needs to override that today.
 SOURCE_FORMAT_VERSION ?= v1.0-mini
 SOURCE_ROOT_URI ?= /data/raw/nuscenes
 
-GDINO_MODEL_ID      ?= grounding-dino
-GDINO_MODEL_VERSION ?= tiny
+# GDINO_MODEL_ID/GDINO_MODEL_VERSION removed (SceneOps V2 E2E surface
+# cleanup) -- same reasoning as MODEL_ID/MODEL_VERSION above, superseded by
+# e2e-perception's own BACKEND=grounding_dino default.
 INFERENCE_ENDPOINT_URL ?= http://sceneops-inference:8001
 
 .DEFAULT_GOAL := help
@@ -84,7 +120,7 @@ help:
 	@echo "  make local-up                 Start full local stack (idempotent: infra -> health -> MinIO buckets -> migrate -> API + workers)"
 	@echo "  make test                     All infrastructure-independent unit tests"
 	@echo "  make test-integration         Real-Postgres/MinIO tests -- requires local-up"
-	@echo "  make e2e                      Full default-stack E2E suite (10 scripts) -- see 'E2E' below for what's NOT included"
+	@echo "  make e2e-cleanroom            THE full-platform acceptance workflow -- see 'E2E Workflows' below"
 	@echo "  make local-down               Stop services, KEEP all data"
 	@echo "  make status / make logs       Service status / follow logs"
 	@echo ""
@@ -95,9 +131,9 @@ help:
 	@echo "  make check                    Run pre-commit on all files"
 	@echo "  make lint / make format       Ruff check / format"
 	@echo ""
-	@echo "Testing (see docs/development/local-development.md):"
+	@echo "Tests (infrastructure-independent / real-infra, see docs/development/local-development.md):"
 	@echo "  make test                     worker+api+core+analytics+inference-server unit tests -- no infra needed"
-	@echo "  make test-integration         sceneops-db (real Postgres) + sceneops-storage (real MinIO) -- requires local-up"
+	@echo "  make test-integration         sceneops-db/storage (real Postgres/MinIO) + pipeline-definitions contract tests -- requires local-up"
 	@echo ""
 	@echo "Local stack (see docs/development/local-development.md):"
 	@echo "  make local-up                 Idempotent bootstrap, see Quick start"
@@ -153,24 +189,45 @@ help:
 	@echo "  make e2e-bootstrap-interop"
 	@echo "  make e2e-bootstrap-raw-log"
 	@echo ""
-	@echo "E2E -- default (make e2e = all 10 of these; needs only local-up):"
-	@echo "  make e2e"
-	@echo "  make e2e-api-smoke"
-	@echo "  make e2e-pipeline-contracts"
-	@echo "  make e2e-dataset-ingestion"
-	@echo "  make e2e-raw-log-scene-building"
-	@echo "  make e2e-episode-building                  Reuses the MCAP fixture from e2e-robot-can-replay"
-	@echo "  make e2e-episode-curation                  Reuses the episode registered by e2e-episode-building"
-	@echo "  make e2e-scenario-curation                 Prints scenario_set_id and pipeline_run_id"
-	@echo "  make e2e-detection-evaluation               Mock inference backend"
-	@echo "  make e2e-analytics-export"
-	@echo "  make e2e-reliability                       Asserts execution-key dedup/force semantics"
+	@echo "=================================================================="
+	@echo "E2E Workflows -- primary surface (needs only local-up, unless noted):"
+	@echo "=================================================================="
+	@echo "  make e2e-scene                              real nuScenes -> SceneRecord -> validation/profile/manifest"
+	@echo "  make e2e-robot-learning [SCENE=scene-0061 | MAX_SCENES=N]"
+	@echo "                                               real CAN bus -> ROS2 -> MCAP -> Episode -> learning export/curation"
+	@echo "                                               Requires: ROS2 sandbox (--profile ros2, built on demand)"
+	@echo "  make e2e-perception [BACKEND=mock|grounding_dino]"
+	@echo "                                               scenario curation -> prediction -> evaluation (default mock)"
+	@echo "                                               BACKEND=grounding_dino requires inference-local-up/-gpu-up"
+	@echo "  make e2e-interop                            real Postgres/MinIO -> SceneOpsDataset -> LeRobot -> golden comparison"
+	@echo "                                               Requires: make lerobot-sync (once)"
+	@echo "  make e2e-cleanroom                          THE full-platform acceptance workflow: local-reset -> e2e-scene ->"
+	@echo "                                               e2e-robot-learning -> e2e-perception(mock) -> persisted-state validation"
+	@echo "                                               [DESTRUCTIVE -- wipes Postgres/Redis/MinIO, preserves data/raw]"
 	@echo ""
-	@echo "E2E -- optional environment (NOT in make e2e; extra prerequisites):"
-	@echo "  make e2e-airflow-pipeline                  Requires: make airflow-up"
-	@echo "  make e2e-robot-can-replay                  Requires: ROS2 sandbox (--profile ros2); nuScenes CAN -> ROS2 -> rosbag2/MCAP -> RobotState/Mission"
-	@echo "  make e2e-detection-evaluation-groundingdino Requires: make inference-local-up (CPU) or inference-gpu-up (GPU)"
-	@echo "  make e2e-detection-evaluation-real          = e2e-detection-evaluation-groundingdino"
+	@echo "Secondary E2E (real nuScenes data, specialized/non-primary coverage):"
+	@echo "  make e2e-scene-rawlog                       real nuScenes via the raw-log representation (RawLogAdapter/"
+	@echo "                                               segmentation/sampling machinery, shared with the robot-log path)"
+	@echo "  make e2e-scene-analytics-export              Scene-domain analytical Parquet export (distinct from Phase 5's"
+	@echo "                                               EXPORT_LEARNING_DATA, which e2e-robot-learning already exercises)"
+	@echo "  make e2e-lerobot-container                  containerized variant of e2e-interop's golden round trip"
+	@echo ""
+	@echo "Smoke (transport/liveness only -- never creates persistent domain data):"
+	@echo "  make smoke-api"
+	@echo "  make smoke-nuscenes-container"
+	@echo "  make smoke-lerobot-container"
+	@echo ""
+	@echo "Verification (execution-model/backend-substitution properties, not domain workflows):"
+	@echo "  make verify-reliability                     execution-key dedup/force + partial-retry semantics"
+	@echo "  make verify-airflow-backend                 Requires: make airflow-up; alternate-orchestrator compatibility check"
+	@echo "                                               (dataset_scene_ingestion only -- not a general backend substitution)"
+	@echo ""
+	@echo "Debug / Stage commands (individual pipeline stages, for manual debugging -- not primary E2E workflows):"
+	@echo "  make e2e-robot-can-replay [SCENE=scene-0061 RATE=10.0]   one CAN replay -> record -> register -> ingest"
+	@echo "  make e2e-episode-building [SCENE=scene-0061]             one Episode build (reuses an existing MCAP recording)"
+	@echo "  make e2e-episode-curation [EPISODE_ID=... | RUN_ID=...]  align/profile/validate/export/curate for one episode"
+	@echo "                                                            (curation-policy selection/rejection mechanism test)"
+	@echo "  make e2e-scenario-curation                                one scenario_curation pipeline dispatch"
 	@echo "  make compare-detection PIPELINE_RUN_ID=pipe-xxx"
 	@echo ""
 	@echo "ROS2 (Jazzy dev sandbox):"

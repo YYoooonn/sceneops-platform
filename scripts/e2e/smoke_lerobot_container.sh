@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lerobot_container_smoke.sh (SceneOps V2 Request 4.2 §7)
+# smoke_lerobot_container.sh (SceneOps V2 Request 4.2 §7)
 #
 # Minimal container-level smoke test for the LeRobot integration container
 # (tools/lerobot-integration/Dockerfile): build image -> start container ->
@@ -36,7 +36,7 @@
 # this script is what makes repeated runs idempotent, not the container.
 #
 # Usage:
-#   bash scripts/e2e/lerobot_container_smoke.sh
+#   bash scripts/e2e/smoke_lerobot_container.sh
 #
 # Prerequisites (this script does not do either of these for you):
 #   make local-up        # Postgres + MinIO, on the sceneops-network

@@ -62,166 +62,237 @@ e2e-bootstrap-interop:
 e2e-bootstrap-raw-log:
 	$(E2E_BOOTSTRAP_ENV) $(E2E_BOOTSTRAP_NUSCENES_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture raw-log --verify
 
-# --------------------
-# E2E
+# ============================================================================
+# E2E Workflows -- primary surface (SceneOps V2 E2E surface cleanup)
 #
-# `make e2e` = every workflow E2E whose required services are provided by
-# `make local-up` alone (postgres/redis/minio/api/workers) — no Airflow,
-# ROS2, or a real inference-server/GPU required. Those live in the "Optional
-# environment E2E" section below (e2e-airflow-pipeline, e2e-robot-can-replay,
-# e2e-detection-evaluation-groundingdino / e2e-detection-evaluation-real).
+# Each target below is a meaningful domain workflow from a real source
+# through multiple production boundaries to a real persisted result --
+# engineering-level checks (transport smoke tests, execution-model
+# properties, backend-substitution PoCs) live under smoke-*/verify-*/
+# test-integration instead (further down this file).
 #
-# Assumes the standard local fixtures already exist under ./data/raw
-# (nuScenes mini, and — for e2e-episode-building specifically — the CAN-
-# replay MCAP recording from at least one prior `make e2e-robot-can-replay`
-# run). That's a one-time data precondition, not a service dependency; see
-# docs/development/local-development.md.
+# `make e2e` (the old "run all default-stack scripts" aggregate) has been
+# REMOVED, not aliased -- Scene/robot-learning/perception/interop have
+# materially different infrastructure requirements (default stack / ROS2
+# sandbox / inference service / isolated LeRobot venv respectively), and a
+# single aggregate hid which of those a failure actually needed. The only
+# full-platform acceptance entry point is now `make e2e-cleanroom`, which
+# is explicit about what it runs and in what order.
+# ============================================================================
+
+.PHONY: e2e-scene
+# The canonical Scene-domain E2E: real nuScenes -> Integration Runtime ->
+# Scene ingestion -> SceneRecord -> validation -> profile -> scene index ->
+# DatasetManifest. Renamed + merged from e2e-dataset-ingestion (folds in the
+# domain-relevant assertions formerly split into e2e-pipeline-contracts --
+# see scripts/e2e/e2e_scene.sh's own header). MAX_SCENES bounds how many
+# nuScenes scenes get ingested (default: 2, see the script).
+e2e-scene:
+	chmod +x scripts/e2e/e2e_scene.sh
+	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	scripts/e2e/e2e_scene.sh
+
+.PHONY: e2e-robot-learning
+# The canonical robot-learning-domain E2E: real nuScenes CAN bus -> ROS2
+# replay -> rosbag2/MCAP -> RosbagAdapter -> RobotRun -> Episode -> temporal
+# alignment -> profile/validation -> EXPORT_LEARNING_DATA (Phase 5
+# v2-sharded write path) -> episode curation. Composes the same real
+# CAN->ROS2->MCAP->RosbagAdapter path e2e-robot-can-replay/e2e-episode-
+# building/e2e-episode-curation exercise piecemeal (see "Debug / Stage"
+# below), with the two hidden cross-script dependencies those had when run
+# by hand fixed (see scripts/e2e/e2e_robot_learning.sh's own header).
+#
+# Selection: SCENE=<name> runs exactly that one scene; MAX_SCENES=<N>
+# selects the first N real, CAN-bus-eligible nuScenes v1.0-mini scenes
+# (deterministic, logged); providing both is a fail-fast error; providing
+# neither defaults to one scene. Requires the ROS2 sandbox image (built on
+# demand via --profile ros2) and the nuScenes CAN bus expansion at
+# data/raw/nuscenes/can_bus/.
+e2e-robot-learning:
+	chmod +x scripts/e2e/e2e_robot_learning.sh
+	API_BASE_URL=$(API_BASE_URL) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
+	RATE=$(or $(RATE),10.0) \
+	SCENE=$(SCENE) MAX_SCENES=$(MAX_SCENES) \
+	scripts/e2e/e2e_robot_learning.sh
+
+.PHONY: e2e-perception
+# The canonical perception-domain E2E: scenario curation -> scenario
+# selection -> prediction -> evaluation -> persisted metrics/lineage.
+# Merges the former e2e-detection-evaluation (mock)/e2e-detection-
+# evaluation-groundingdino scripts into one, with scenario curation always
+# composed in (no manual SCENARIO_SET_ID/PIPELINE_RUN_ID hand-off needed --
+# see scripts/e2e/e2e_perception.sh's own header). BACKEND=mock (default)
+# needs nothing beyond local-up; BACKEND=grounding_dino requires a real
+# inference server already running (make inference-local-up/-gpu-up).
+# Requires e2e-scene to have already run for DATASET_ID/DATASET_VERSION.
+e2e-perception:
+	chmod +x scripts/e2e/e2e_perception.sh
+	API_BASE_URL=$(API_BASE_URL) \
+	BACKEND=$(or $(BACKEND),mock) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	MAX_SCENES=$(MAX_SCENES) MAX_SAMPLES=$(MAX_SAMPLES) \
+	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) \
+	scripts/e2e/e2e_perception.sh
+
+.PHONY: e2e-cleanroom
+# THE full-platform acceptance workflow (SceneOps V2 E2E surface cleanup) --
+# the only place a fresh clone/environment should start from. DESTRUCTIVE:
+# runs `make local-reset` first (wipes Postgres/Redis/MinIO, PRESERVES
+# data/raw/nuscenes and the CAN bus expansion), then e2e-scene ->
+# e2e-robot-learning -> e2e-perception(BACKEND=mock) -> a final query of
+# real persisted API state. Does not require GPU, a real inference server,
+# Airflow, or the isolated LeRobot venv -- see scripts/e2e/e2e_cleanroom.sh's
+# own header for the optional follow-up verification commands.
+# Requires interactive confirmation (same as local-reset) unless FORCE=1.
+e2e-cleanroom:
+	chmod +x scripts/e2e/e2e_cleanroom.sh
+	API_BASE_URL=$(API_BASE_URL) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	scripts/e2e/e2e_cleanroom.sh
+
+# --------------------
+# Secondary E2E -- real nuScenes data, specialized/non-primary coverage.
+# Not part of e2e-cleanroom's core path.
 # --------------------
 
-.PHONY: e2e
-e2e: e2e-api-smoke e2e-pipeline-contracts e2e-dataset-ingestion e2e-raw-log-scene-building \
-	e2e-episode-building e2e-episode-curation e2e-scenario-curation e2e-detection-evaluation \
-	e2e-analytics-export e2e-reliability
+.PHONY: e2e-scene-rawlog
+# Real nuScenes data via the RAW-LOG representation -- NOT synthetic data
+# (see scripts/e2e/e2e_scene_rawlog.sh's own header for the "mock" naming
+# history). Uniquely exercises BuildScenesJobHandler's generic
+# RawLogAdapter segmentation/sampling machinery, the SAME machinery
+# RosbagAdapter (e2e-robot-learning) depends on -- not redundant with it,
+# two different RawLogAdapter implementations of the same Protocol.
+# Deliberately isolated from "core"'s own DatasetVersion (see the script).
+e2e-scene-rawlog:
+	chmod +x scripts/e2e/e2e_scene_rawlog.sh
+	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
+	MAX_SCENES=$(MAX_SCENES) \
+	scripts/e2e/e2e_scene_rawlog.sh
 
-.PHONY: e2e-api-smoke
-e2e-api-smoke:
-	chmod +x scripts/e2e/e2e_api_smoke.sh
-	API_PREFIX=$(API_PREFIX) scripts/e2e/e2e_api_smoke.sh
-
-.PHONY: e2e-pipeline-contracts
-e2e-pipeline-contracts:
-	chmod +x scripts/e2e/e2e_pipeline_contracts.sh
-	API_PREFIX=$(API_PREFIX) \
+.PHONY: e2e-scene-analytics-export
+# Scene-domain analytical Parquet export (scenes/samples/sensor_frames/
+# annotations) -- renamed from e2e-analytics-export to disambiguate from
+# Phase 5's EXPORT_LEARNING_DATA (exercised by e2e-robot-learning). These
+# are deliberately different concepts, not merged.
+e2e-scene-analytics-export:
+	chmod +x scripts/e2e/e2e_scene_analytics_export.sh
+	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	scripts/e2e/e2e_pipeline_contracts.sh
+	MAX_SCENES=$(MAX_SCENES) \
+	scripts/e2e/e2e_scene_analytics_export.sh
 
-.PHONY: e2e-dataset-ingestion
-e2e-dataset-ingestion:
-	chmod +x scripts/e2e/e2e_dataset_scene_ingestion.sh
-	API_PREFIX=$(API_PREFIX) \
+# ============================================================================
+# Smoke -- transport/liveness checks only. STRICT RULE: a smoke-* target
+# must never create or leave behind persistent application-domain data
+# (SceneOps V2 E2E surface cleanup, item 9).
+# ============================================================================
+
+.PHONY: smoke-api
+# Renamed from e2e-api-smoke -- read-only API liveness/transport check. The
+# former version created a real Dataset/DatasetVersion/Model/PipelineRun on
+# every run, none of it ever cleaned up; removed (see scripts/e2e/
+# smoke_api.sh's own header for the zero-seed-data rationale, item 12).
+smoke-api:
+	chmod +x scripts/e2e/smoke_api.sh
+	API_BASE_URL=$(API_BASE_URL) scripts/e2e/smoke_api.sh
+
+# smoke-nuscenes-container lives in makefiles/nuscenes.mk (renamed there
+# from nuscenes-container-smoke -- isolates "does the nuscenes-integration
+# container itself execute its IntegrationRequest -> IntegrationResult
+# contract" from "does the whole pipeline work", which e2e-scene already
+# covers through the running service).
+# smoke-lerobot-container lives in makefiles/lerobot.mk (renamed from
+# lerobot-container-smoke, same reasoning as smoke-nuscenes-container).
+
+# ============================================================================
+# Verification -- execution-model properties / alternate-orchestrator
+# compatibility checks, not domain workflows from a real source to a
+# persisted result.
+# ============================================================================
+
+.PHONY: verify-reliability
+# Renamed from e2e-reliability -- verifies Phase 2 reliability primitives
+# (execution-key dedup/force, pipeline partial-retry-after-BLOCKED), an
+# execution-model property, not a domain workflow.
+verify-reliability:
+	chmod +x scripts/e2e/verify_reliability.sh
+	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	scripts/e2e/e2e_dataset_scene_ingestion.sh
+	scripts/e2e/verify_reliability.sh
 
-.PHONY: e2e-raw-log-scene-building
-# Uses its own dataset id, not the shared "core" fixture's DATASET_ID
-RAW_LOG_DATASET_ID ?= $(DEFAULT_E2E_DATASET_PREFIX)-raw-log
-e2e-raw-log-scene-building:
-	chmod +x scripts/e2e/e2e_raw_log_scene_building.sh
-	API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(RAW_LOG_DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	SOURCE_FORMAT_VERSION=$(SOURCE_FORMAT_VERSION) \
-	scripts/e2e/e2e_raw_log_scene_building.sh
+.PHONY: verify-airflow-backend
+# Renamed from e2e-airflow-pipeline -- an ALTERNATE-ORCHESTRATOR
+# COMPATIBILITY CHECK, not a general pipeline-backend substitution: the
+# Airflow backend is currently a PoC hardcoded to dataset_scene_ingestion
+# only (see docs/development/test-matrix.md), so this name is deliberately
+# narrower than "e2e-scene BACKEND=airflow" would imply.
+# Requires: make airflow-up, AND the api service restarted with
+# SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow (see the script's own
+# header comment -- this is a process-startup setting, not automatable here).
+verify-airflow-backend:
+	chmod +x scripts/e2e/verify_airflow_backend.sh
+	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
+	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
+	scripts/e2e/verify_airflow_backend.sh
+
+# ============================================================================
+# Debug / Stage commands -- individual pipeline stages, kept runnable for
+# manual debugging (SceneOps V2 E2E surface cleanup, item 10). NOT presented
+# as primary E2E workflows in `make help`'s main E2E Workflows section --
+# use e2e-robot-learning/e2e-perception for the composed, primary path.
+# ============================================================================
+
+.PHONY: e2e-robot-can-replay
+# One real CAN replay -> record -> register -> ingest_robot_states
+# (RobotState/Mission telemetry, Phase 4) for a single scene. Standalone
+# stage of the real CAN->ROS2->MCAP chain e2e-robot-learning composes --
+# kept for debugging the replay/record/telemetry-ingest step in isolation.
+e2e-robot-can-replay:
+	chmod +x scripts/e2e/e2e_robot_can_replay.sh
+	API_BASE_URL=$(API_BASE_URL) \
+	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
+	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
+	scripts/e2e/e2e_robot_can_replay.sh
 
 .PHONY: e2e-episode-building
-# Reuses the MCAP fixture recorded by e2e-robot-can-replay (data/raw/rosbag/
-# <scene>/<scene>_0.mcap). Does not itself need the ROS2 profile/sandbox —
-# only the already-recorded file — so it stays in the default `make e2e` set.
-#
-# SceneOps V2 Request 3.2B: merged onto the shared "core" fixture (same
-# DATASET_ID/DATASET_VERSION as pipeline-contracts/dataset-ingestion) --
-# Scene and Episode each own an independent summary sub-object on
-# DatasetVersionRecord that never overwrites the other's (see
-# packages/sceneops-core/tests/test_dataset_version_summaries.py), so the
-# two families coexisting on one canonical DatasetVersion is safe by
-# design. Previously used its own isolated EPISODE_DATASET_ID/
-# EPISODE_DATASET_VERSION (Request 3.2A, itself a fix for a Stabilization
-# Request 4 bug where an `$(or $(DATASET_ID), episodes-e2e)` fallback was
-# silently dead code) -- no longer needed now that "core" is the one shared
-# default every scene/episode-family target already resolves to.
+# One real Episode build from an already-recorded MCAP -- standalone stage
+# of e2e-robot-learning, kept for debugging build_episodes/register_episode/
+# validate_episode/profile_episode in isolation. Reuses the MCAP fixture
+# recorded by a prior e2e-robot-can-replay (or e2e-robot-learning) run --
+# does not itself record one.
 e2e-episode-building:
 	chmod +x scripts/e2e/e2e_episode_building.sh
-	API_BASE_URL=$(API_HOST) \
+	API_BASE_URL=$(API_BASE_URL) \
 	SCENE=$(or $(SCENE),scene-0061) \
 	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_episode_building.sh
 
 .PHONY: e2e-episode-curation
-# Reuses the episode registered by e2e-episode-building (same shared "core"
-# DATASET_ID/DATASET_VERSION) — run that target at least once first.
-# Exercises ALIGN_EPISODE(x2) -> PROFILE/VALIDATE_ALIGNED_EPISODE(x2)
-# -> EXPORT_LEARNING_DATA -> CURATE_EPISODES (SceneOps V2 Request 2.6) as
-# standalone jobs (not a pipeline — no CURATE_EPISODES PipelineType exists
-# yet, by design).
+# The curation-POLICY-MECHANISM test (deliberately curates two revisions of
+# ONE episode via two different alignment configs, to force one selected/
+# one rejected and verify CurationEvaluator's selection semantics) -- NOT
+# the same as e2e-robot-learning's own curate_episodes step, which uses an
+# unrestricted policy over real, distinct episodes as an acceptance check.
+# Keep using this script directly to re-verify selection/rejection
+# mechanics specifically. EPISODE_ID (explicit) or RUN_ID (resolved via a
+# real API query scoped to that RobotRun) selects which episode to curate --
+# never reconstructed from a bash formula (see the script's own header).
 e2e-episode-curation:
 	chmod +x scripts/e2e/e2e_episode_curation.sh
-	API_BASE_URL=$(API_HOST) \
+	API_BASE_URL=$(API_BASE_URL) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_episode_curation.sh
 
 .PHONY: e2e-scenario-curation
+# One scenario_curation pipeline dispatch in isolation -- e2e-perception
+# composes this same step automatically; kept standalone for debugging
+# mine_scenarios/score_scenario_readiness without also running detection.
 e2e-scenario-curation:
 	chmod +x scripts/e2e/e2e_scenario_curation.sh
 	API_PREFIX=$(API_PREFIX) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_scenario_curation.sh
-
-.PHONY: e2e-detection-evaluation
-# Mock inference backend — no real model server required, stays in the
-# default set. For the real GroundingDINO path see e2e-detection-evaluation-
-# groundingdino under "Optional environment E2E" below.
-e2e-detection-evaluation:
-	chmod +x scripts/e2e/e2e_detection_evaluation.sh
-	API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	MODEL_ID=$(MODEL_ID) MODEL_VERSION=$(MODEL_VERSION) \
-	scripts/e2e/e2e_detection_evaluation.sh
-
-.PHONY: e2e-analytics-export
-e2e-analytics-export:
-	chmod +x scripts/e2e/e2e_analytics_export.sh
-	API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	scripts/e2e/e2e_analytics_export.sh
-
-.PHONY: e2e-reliability
-e2e-reliability:
-	chmod +x scripts/e2e/e2e_reliability.sh
-	API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	scripts/e2e/e2e_reliability.sh
-
-# --------------------
-# Optional environment E2E — each needs infrastructure beyond `make local-up`.
-# Not part of `make e2e`. See make help for the exact prerequisite per target.
-# --------------------
-
-.PHONY: e2e-airflow-pipeline
-# Requires: make airflow-up, AND the api service restarted with
-# SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow (see the script's own
-# header comment — this is a process-startup setting, not automatable here).
-e2e-airflow-pipeline:
-	chmod +x scripts/e2e/e2e_airflow_pipeline.sh
-	API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	scripts/e2e/e2e_airflow_pipeline.sh
-
-.PHONY: e2e-robot-can-replay
-# Requires: the ROS2 sandbox image (built on demand via --profile ros2).
-# The only ROS2-dependent E2E — this is "the ROS2 E2E".
-e2e-robot-can-replay:
-	chmod +x scripts/e2e/e2e_robot_can_replay.sh
-	API_BASE_URL=$(API_HOST) \
-	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
-	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
-	scripts/e2e/e2e_robot_can_replay.sh
-
-.PHONY: e2e-detection-evaluation-real
-e2e-detection-evaluation-real: e2e-detection-evaluation-groundingdino
-
-.PHONY: e2e-detection-evaluation-groundingdino
-# Requires: a real inference server reachable at INFERENCE_ENDPOINT_URL —
-# either `make inference-local-up` (CPU, real GroundingDINO weights) or
-# `make inference-gpu-up` (GPU). Same script either way; which one you start
-# determines whether this runs on CPU or GPU — there is no separate
-# `e2e-gpu` target, since it would just be this script again.
-e2e-detection-evaluation-groundingdino:
-	chmod +x scripts/e2e/e2e_detection_evaluation_groundingdino.sh
-	API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	MODEL_ID=$(GDINO_MODEL_ID) MODEL_VERSION=$(GDINO_MODEL_VERSION) \
-	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) \
-	SCENARIO_SET_ID=$(SCENARIO_SET_ID) \
-	SCENARIO_CURATION_PIPELINE_RUN_ID=$(SCENARIO_CURATION_PIPELINE_RUN_ID) \
-	PIPELINE_RUN_ID=$(PIPELINE_RUN_ID) \
-	scripts/e2e/e2e_detection_evaluation_groundingdino.sh

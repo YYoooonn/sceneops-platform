@@ -46,7 +46,7 @@ directly.
 make nuscenes-sync    # cd tools/nuscenes-integration && uv sync --group dev --locked
 make nuscenes-lock    # re-lock after changing this project's or nuscenes-devkit's own pin
 make nuscenes-image           # docker build ... -t sceneops-platform/nuscenes-integration:local
-make nuscenes-container-smoke # build IntegrationRequest -> run container -> verify IntegrationResult
+make smoke-nuscenes-container # build IntegrationRequest -> run container -> verify IntegrationResult
 
 # equivalent, run directly
 cd tools/nuscenes-integration

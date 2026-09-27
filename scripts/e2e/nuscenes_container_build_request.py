@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Build a real IntegrationRequest JSON for the nuScenes integration
 container's smoke test (SceneOps V2 Request 4.5) -- Step 1 of
-scripts/e2e/nuscenes_container_smoke.sh.
+scripts/e2e/smoke_nuscenes_container.sh.
 
 Unlike scripts/e2e/lerobot_container_build_request.py (an EXPORT, which
 must resolve an already-registered canonical artifact via sceneops-db

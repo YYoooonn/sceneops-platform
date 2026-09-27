@@ -266,22 +266,22 @@ ScenarioSet lineage is recorded in both inference and evaluation run metadata.
 ### Quickstart
 
 ```bash
-make e2e-dataset-ingestion        # dataset_scene_ingestion pipeline (10 nuScenes GT scenes)
-make e2e-raw-log-scene-building   # raw_log_scene_building pipeline (20 non-GT scenes)
+make e2e-scene                    # dataset_scene_ingestion pipeline (10 nuScenes GT scenes)
+make e2e-scene-rawlog             # raw_log_scene_building pipeline (20 non-GT scenes)
 make inference-local-up
-make e2e-scenario-curation        # prints scenario_set_id and scenario curation pipeline_run_id
-make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...
+make e2e-perception BACKEND=grounding_dino   # composes scenario curation -> prediction -> evaluation
 make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>
 ```
 
-Or pass the ScenarioSet ID directly:
+`e2e-perception` runs scenario curation internally and hands its `scenario_set_id`
+off automatically — no separate `make e2e-scenario-curation` step or
+`SCENARIO_SET_ID`/`SCENARIO_CURATION_PIPELINE_RUN_ID` variable to manage (that
+manual two-command flow, and the `PIPELINE_RUN_ID` alias it used, were removed
+in the SceneOps V2 E2E surface cleanup). Use the standalone
+`make e2e-scenario-curation` debug target only if you want to inspect scenario
+mining in isolation, without also running detection.
 
-```bash
-make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...
-```
-
-> `SCENARIO_CURATION_PIPELINE_RUN_ID` is the pipeline run ID printed by `e2e-scenario-curation`.
-> `PIPELINE_RUN_ID` in `compare-detection` is the detection-evaluation pipeline run ID — a different run.
+> `PIPELINE_RUN_ID` in `compare-detection` is the detection-evaluation pipeline run ID.
 
 ### Example output — 30-scene dataset: 10 GT (nuScenes) + 20 non-GT (raw-log-style)
 
@@ -353,15 +353,17 @@ The precision value (0.318803) reflects real GroundingDINO detections on this li
 
 ## Demo 2: real GroundingDINO detection evaluation
 
-SceneOps supports both a fast mock backend and a real GroundingDINO backend.
-The real E2E target requires a ScenarioSet — either a direct ID or a scenario curation pipeline run ID.
+SceneOps supports both a fast mock backend and a real GroundingDINO backend,
+both through the same `make e2e-perception` target (`BACKEND=mock` is the
+default; `BACKEND=grounding_dino` selects the real model). Scenario curation
+runs internally either way — no separate command or ScenarioSet ID to thread
+through by hand.
 
 ```bash
 make local-up
 make inference-local-up   # or make inference-gpu-up for GPU
-make e2e-dataset-ingestion
-make e2e-scenario-curation
-make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...
+make e2e-scene
+make e2e-perception BACKEND=grounding_dino
 ```
 
 **Validated flow:**
@@ -406,20 +408,15 @@ Scenario curation converts scene-level quality signals into a data-selection wor
 > No image or lidar data is loaded.
 
 ```bash
-make e2e-dataset-ingestion
+make e2e-scene
 make e2e-scenario-curation
 ```
 
-The script prints both `pipeline_run_id` and `scenario_set_id` on completion.
-Either can be passed directly to real detection evaluation:
-
-```bash
-# Use the printed pipeline_run_id:
-make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...
-
-# Or use the printed scenario_set_id directly:
-make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...
-```
+The script prints both `pipeline_run_id` and `scenario_set_id` on completion --
+useful for inspecting scenario mining in isolation. `make e2e-perception`
+(mock or `BACKEND=grounding_dino`) runs this same scenario curation step
+internally and hands its `scenario_set_id` off automatically; you don't need
+this standalone command or its printed IDs just to run detection evaluation.
 
 **Pipeline result shape:**
 
@@ -521,10 +518,25 @@ See [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.m
 
 The same decoded rosbag/MCAP recording that feeds `ingest_robot_states` also feeds a separate pipeline, `raw_log_episode_building`, which segments it into task-oriented `Episode` records instead of a raw telemetry time series. Segmentation defaults to one Episode per dated Mission (`EpisodeSegmentationStrategy.MISSION_BOUNDARY`); `WHOLE_RUN` and `FIXED_WINDOW` are also supported.
 
+The primary documented path is the composed `make e2e-robot-learning`, which
+records a real CAN replay and builds + curates the resulting Episode(s) in
+one command (see Demo 4 above for the topic mapping it records through):
+
 ```bash
 make local-up
+make e2e-robot-learning   # records CAN replay -> MCAP -> Episode -> alignment -> learning export -> curation
+```
+
+Or step by step, reusing an MCAP a prior `e2e-robot-can-replay`/
+`e2e-robot-learning` run already recorded at `data/raw/rosbag/<scene>/<scene>_0.mcap`
+(**a fresh environment must run one of those at least once first** — this is
+the runtime-generated recording, not the similarly-named committed
+unit-test fixture at `apps/worker/tests/fixtures/rosbag/`, which only unit
+tests use):
+
+```bash
 make ros2-up
-make e2e-episode-building   # reuses the committed MCAP fixture from e2e-robot-can-replay — no live ROS2 sandbox required
+make e2e-episode-building   # debug/stage target: one Episode build from an already-recorded MCAP
 ```
 
 **Pipeline:** `build_episodes → register_episode → validate_episode → profile_episode`
@@ -621,14 +633,13 @@ make local-up                       # idempotent: Postgres + Redis + MinIO + mig
 make register-nuscenes-dataset      # register nuScenes fixture
 make test                           # infrastructure-independent unit tests
 make test-integration               # real Postgres + MinIO tests
-make e2e                            # full default-stack E2E suite (mock backend) -- see [docs/development/local-development.md](docs/development/local-development.md)
+make e2e-cleanroom                  # the full-platform acceptance workflow (destructive local-reset + real E2E) -- see [docs/development/local-development.md](docs/development/local-development.md)
 ```
 
-**Robot data ingestion (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)). Everything else is self-contained in the `ros2/` Docker image.
+**Robot learning (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)). Everything else is self-contained in the `ros2/` Docker image.
 
 ```bash
-make ros2-up                        # ROS2 Jazzy sandbox
-make e2e-robot-can-replay           # CAN replay → rosbag2/MCAP → ingest, verified via API
+make e2e-robot-learning             # real CAN bus -> ROS2 -> rosbag2/MCAP -> Episode -> learning export/curation
 ```
 
 **Artifact storage backend** (`.env.local`):
@@ -673,26 +684,39 @@ See [`docs/development/local-development.md`](docs/development/local-development
 
 ### E2E
 
-`make e2e` runs the full default-stack suite (see [docs/development/local-development.md](docs/development/local-development.md)) — every E2E whose services are covered by `make local-up` alone. Airflow/ROS2/real-inference E2Es need extra setup and stay outside it.
+The generic `make e2e` aggregate has been removed (SceneOps V2 E2E surface
+cleanup) — Scene/robot-learning/perception/interop have materially different
+infrastructure requirements (default stack / ROS2 sandbox / inference service
+/ isolated LeRobot venv respectively), so one aggregate hid which of those a
+failure actually needed. `make e2e-cleanroom` is now the only full-platform
+acceptance entry point; see
+[docs/development/local-development.md](docs/development/local-development.md)
+for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
+
+**E2E Workflows (primary surface):**
 
 |  Command | Description |
 | --- | --- |
-| `make e2e` | Full default-stack suite: api-smoke + pipeline-contracts + dataset-ingestion + raw-log-scene-building + episode-building + episode-curation + scenario-curation + detection-evaluation (mock) + analytics-export + reliability |
-| `make e2e-api-smoke` | API smoke |
-| `make e2e-dataset-ingestion` | Ingestion pipeline |
-| `make e2e-raw-log-scene-building` | Raw log scene building |
-| `make e2e-detection-evaluation` | Detection evaluation (mock) |
-| `make e2e-scenario-curation` | Scenario curation pipeline; prints `scenario_set_id` and `pipeline_run_id` |
-| `make e2e-detection-evaluation-real SCENARIO_SET_ID=scset-...` | *(optional environment)* Detection evaluation with real GroundingDINO; requires `make inference-local-up`/`inference-gpu-up` and `SCENARIO_SET_ID` or `SCENARIO_CURATION_PIPELINE_RUN_ID` |
-| `make e2e-detection-evaluation-real SCENARIO_CURATION_PIPELINE_RUN_ID=pipe-...` | Same as above; resolves ScenarioSet from the curation pipeline run |
-| `make e2e-pipeline-contracts` | Pipeline contract validation  |
-| `make e2e-episode-building` | Episode domain build → register → validate → profile pipeline |
-| `make e2e-episode-curation` | Reuses the episode from `e2e-episode-building`; align → profile/validate → export → curate |
-| `make e2e-analytics-export` | Analytics snapshot export |
-| `make e2e-reliability` | Asserts pipeline execution-key dedup/force semantics |
-| `make e2e-airflow-pipeline` | *(optional environment)* Same pipeline, dispatched via Airflow — requires `make airflow-up` |
+| `make e2e-scene` | Real nuScenes → SceneRecord → validation/profile/manifest |
+| `make e2e-robot-learning [SCENE=scene-0061 \| MAX_SCENES=N]` | *(ROS2, built on demand)* Real CAN bus → ROS2 → MCAP → Episode → learning export/curation |
+| `make e2e-perception [BACKEND=mock\|grounding_dino]` | Scenario curation → prediction → evaluation (default `mock`; `grounding_dino` requires `inference-local-up`/`-gpu-up`) |
+| `make e2e-interop` | Real Postgres/MinIO → SceneOpsDataset → LeRobot → golden comparison; requires `make lerobot-sync` |
+| `make e2e-cleanroom` | **The full-platform acceptance workflow**: `local-reset` → `e2e-scene` → `e2e-robot-learning` → `e2e-perception`(mock) → persisted-state validation. **Destructive** (preserves `data/raw`) |
+
+**Secondary E2E:**
+
+|  Command | Description |
+| --- | --- |
+| `make e2e-scene-rawlog` | Real nuScenes via the raw-log representation (shares segmentation/sampling machinery with the robot-log path) |
+| `make e2e-scene-analytics-export` | Scene-domain analytical Parquet export (distinct from Phase 5's `EXPORT_LEARNING_DATA`) |
+| `make e2e-lerobot-container` | Containerized variant of `e2e-interop`'s golden round trip |
 | `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Dataset quality + detection run comparison; includes ScenarioSet lineage when available |
-| `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0` | *(optional environment, ROS2)* Robot data ingestion (v2): CAN replay → record → register → ingest → verify via API |
+
+**Smoke** (transport/liveness only — never creates persistent domain data): `make smoke-api`, `make smoke-nuscenes-container`, `make smoke-lerobot-container`.
+
+**Verification** (execution-model/backend-substitution properties, not domain workflows): `make verify-reliability`, `make verify-airflow-backend` *(requires `make airflow-up`; an alternate-orchestrator compatibility check for `dataset_scene_ingestion` only, not general backend substitution)*.
+
+**Debug / Stage commands** (individual pipeline stages, for manual debugging — not primary E2E workflows): `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0`, `make e2e-episode-building`, `make e2e-episode-curation` (the curation-policy selection/rejection mechanism test), `make e2e-scenario-curation`.
 
 
 ### ROS2 / Robot (v2)

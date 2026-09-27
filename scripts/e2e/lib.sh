@@ -73,13 +73,21 @@ DEFAULT_E2E_DATASET_VERSION="${DEFAULT_E2E_DATASET_VERSION:-test-v1}"
 
 # resolve_e2e_fixture <fixture-name>
 # Sets DATASET_ID/DATASET_VERSION (and, for fixtures with an external
-# nuScenes source, SOURCE_FORMAT/SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI, or
-# RAW_SOURCE_ROOT_URI for raw-log) to this fixture's defaults -- but ONLY
-# for whichever of those the caller's environment left unset, via bash's
-# `: "${VAR:=default}"` assign-if-unset idiom, so an explicit
-# `DATASET_ID=... make e2e-...` always wins untouched. Call once, right
-# after sourcing lib.sh; no further "${DATASET_ID:-...}" line is needed
-# afterward.
+# nuScenes source, SOURCE_FORMAT/SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI) to
+# this fixture's defaults -- but ONLY for whichever of those the caller's
+# environment left unset, via bash's `: "${VAR:=default}"` assign-if-unset
+# idiom, so an explicit `DATASET_ID=... make e2e-...` always wins untouched.
+# Call once, right after sourcing lib.sh; no further "${DATASET_ID:-...}"
+# line is needed afterward.
+#
+# SOURCE_ROOT_URI is the one authoritative name for "the nuScenes dataroot's
+# parent directory" across every fixture that has an external nuScenes
+# source (core and raw-log both read the same physical mini fixture) --
+# an earlier revision gave raw-log its own `RAW_SOURCE_ROOT_URI` name for no
+# functional reason (nothing outside this case block ever read it; the
+# script consuming the raw-log fixture always read `SOURCE_ROOT_URI`
+# itself), so that alias was removed rather than kept for back-compat (no
+# concrete consumer existed).
 resolve_e2e_fixture() {
   local fixture_name="$1"
   case "$fixture_name" in
@@ -100,13 +108,31 @@ resolve_e2e_fixture() {
       : "${DATASET_VERSION:=test-v1}"
       : "${SOURCE_FORMAT:=nuscenes}"
       : "${SOURCE_FORMAT_VERSION:=v1.0-mini}"
-      : "${RAW_SOURCE_ROOT_URI:=/data/raw/nuscenes}"
+      : "${SOURCE_ROOT_URI:=/data/raw/nuscenes}"
       ;;
     *)
       echo "❌ unknown E2E fixture: '$fixture_name' (expected core|interop|raw-log)" >&2
       return 1
       ;;
   esac
+}
+
+# require_mcap_file <path>
+# Fail-fast existence check for a recorded rosbag2/MCAP file, run BEFORE any
+# persistent API call (Robot/RobotRun/DatasetVersion upserts) so a missing
+# recording fails immediately and cleanly instead of partway through a
+# sequence of already-committed upserts. <path> is the REPO-ROOT-RELATIVE
+# path (e.g. /data/raw/rosbag/scene-0061/scene-0061_0.mcap) -- the caller is
+# responsible for resolving it against $REPO_ROOT on the host filesystem.
+require_mcap_file() {
+  local repo_root="$1"
+  local mcap_uri="$2"
+  if [ ! -f "${repo_root}${mcap_uri}" ]; then
+    echo "❌ Expected bag file not found: ${mcap_uri}" >&2
+    echo "   Record it first: make e2e-robot-can-replay SCENE=<scene>" >&2
+    echo "   (or run make e2e-robot-learning, which records it automatically)" >&2
+    exit 1
+  fi
 }
 
 # ── Service readiness ───────────────────────────────────────────────────────────
@@ -642,4 +668,106 @@ assert_artifact_kind_present() {
     echo "$artifacts_json" | jq . >&2
     exit 1
   fi
+}
+
+# ── Detection-evaluation shared assertions (SceneOps V2 E2E surface cleanup)
+#
+# Shared by e2e_perception.sh's mock and grounding_dino BACKEND branches --
+# previously copy-pasted near-verbatim across e2e_detection_evaluation.sh and
+# e2e_detection_evaluation_groundingdino.sh. Backend-specific checks
+# (lifting-metric counters, warmup/readiness polling) stay in the caller;
+# these cover only the fields every InferenceRunRecord/EvaluationRunRecord/
+# leaderboard entry must have regardless of backend.
+
+# assert_inference_run <api_base_url> <inference_run_id> <max_sample_count_or_empty>
+# Prints the fetched InferenceRunRecord JSON on success (caller captures it
+# for any backend-specific follow-up checks).
+assert_inference_run() {
+  local api_base_url="$1"
+  local inference_run_id="$2"
+  local max_sample_count="${3:-}"
+
+  local inference_json
+  inference_json="$(curl -sS "$(api_url "$api_base_url" "/inference/runs/$inference_run_id")")"
+
+  echo "  status=$(echo "$inference_json" | jq -r '.run.status')" >&2
+  echo "  predictionCount=$(echo "$inference_json" | jq -r '.run.predictionCount // 0')" >&2
+  echo "  predictionManifestUri=$(echo "$inference_json" | jq -r '.run.predictionManifestUri // empty')" >&2
+
+  assert_json_equals "$inference_json" '.run.status' 'succeeded' \
+    'inference run should be succeeded'
+  assert_json_not_empty "$inference_json" '.run.predictionManifestUri' \
+    'inference run predictionManifestUri'
+  if [ -n "$max_sample_count" ]; then
+    assert_json_less_or_equal "$inference_json" '.run.sampleCount' "$max_sample_count" \
+      "inference run sampleCount should be <= $max_sample_count"
+  else
+    assert_json_gt "$inference_json" '.run.sampleCount // 0' 0 'inference run sampleCount'
+  fi
+
+  echo "$inference_json"
+}
+
+# assert_evaluation_run <api_base_url> <evaluation_run_id>
+# Prints the fetched EvaluationRunRecord JSON on success.
+assert_evaluation_run() {
+  local api_base_url="$1"
+  local evaluation_run_id="$2"
+
+  local eval_json
+  eval_json="$(curl -sS "$(api_url "$api_base_url" "/evaluations/runs/$evaluation_run_id")")"
+
+  echo "  status=$(echo "$eval_json" | jq -r '.run.status')" >&2
+  echo "  primaryMetricName=$(echo "$eval_json" | jq -r '.run.primaryMetricName // empty')  primaryMetricValue=$(echo "$eval_json" | jq -r '.run.primaryMetricValue // empty')" >&2
+
+  assert_json_equals "$eval_json" '.run.status' 'succeeded' \
+    'evaluation run should be succeeded'
+  assert_json_not_empty "$eval_json" '.run.primaryMetricName' \
+    'evaluation run primaryMetricName'
+  assert_json_not_empty "$eval_json" '.run.primaryMetricValue' \
+    'evaluation run primaryMetricValue'
+  assert_json_not_empty "$eval_json" '.run.evaluationUnit' \
+    'evaluation run evaluationUnit'
+  assert_json_not_empty "$eval_json" '.run.evaluationManifestUri' \
+    'evaluation run evaluationManifestUri'
+
+  echo "$eval_json"
+}
+
+# assert_leaderboard_entry <api_base_url> <dataset_id> <dataset_version> <evaluation_run_id>
+# Never falls back to entries[0] under a persistent stack's accumulated
+# history -- that would silently validate a DIFFERENT, unrelated historical
+# run instead of catching that THIS run's own leaderboard entry is missing.
+assert_leaderboard_entry() {
+  local api_base_url="$1"
+  local dataset_id="$2"
+  local dataset_version="$3"
+  local evaluation_run_id="$4"
+
+  local lb_json lb_entry
+  lb_json="$(curl -sS "$(api_url "$api_base_url" "/leaderboards/evaluations?dataset_id=$dataset_id&dataset_version=$dataset_version")")"
+
+  local lb_count
+  lb_count="$(echo "$lb_json" | jq '.entries | length')"
+  if [ "${lb_count:-0}" -lt 1 ]; then
+    echo "❌ Expected at least 1 leaderboard entry" >&2
+    exit 1
+  fi
+
+  lb_entry="$(echo "$lb_json" | jq --arg eid "$evaluation_run_id" '.entries[] | select(.evaluationRunId == $eid)')"
+  if [ -z "$lb_entry" ]; then
+    echo "❌ No leaderboard entry found for this run's evaluation_run_id=$evaluation_run_id" >&2
+    echo "$lb_json" | jq '.entries[] | {evaluationRunId, primaryMetricName, primaryMetricValue}' >&2
+    exit 1
+  fi
+
+  local lb_primary_name lb_primary_value
+  lb_primary_name="$(echo "$lb_entry" | jq -r '.primaryMetricName // empty')"
+  lb_primary_value="$(echo "$lb_entry" | jq -r '.primaryMetricValue // empty')"
+  echo "  primaryMetricName=$lb_primary_name  primaryMetricValue=$lb_primary_value" >&2
+
+  [ -n "$lb_primary_name" ] || { echo "❌ Leaderboard entry missing primaryMetricName" >&2; exit 1; }
+  [ -n "$lb_primary_value" ] || { echo "❌ Leaderboard entry missing primaryMetricValue" >&2; exit 1; }
+
+  echo "$lb_entry"
 }

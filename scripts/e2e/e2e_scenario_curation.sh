@@ -4,7 +4,7 @@
 # Smoke test for the scenario_curation pipeline.
 #
 # Assumes dataset scene ingestion has already run (scenes registered + profiled).
-# Run `make e2e-dataset-ingestion` first if starting from scratch.
+# Run `make e2e-scene` first if starting from scratch.
 #
 # Usage:
 #   bash scripts/e2e/e2e_scenario_curation.sh

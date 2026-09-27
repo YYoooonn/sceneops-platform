@@ -18,7 +18,7 @@ of spawning it as a sibling container via the host's Docker daemon. The
 container CLI entrypoint (``entrypoint.py``) is unchanged and still the
 image's alternate ``docker run <image> -m
 sceneops_integrations.nuscenes.entrypoint ...`` invocation, used by
-``make nuscenes-container-smoke``/local debugging -- this module is the
+``make smoke-nuscenes-container``/local debugging -- this module is the
 image's new DEFAULT command (see ``tools/nuscenes-integration/Dockerfile``).
 
 Runtime ownership (unchanged from Request 4.4/4.5/4.6): this service may

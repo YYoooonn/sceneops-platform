@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# e2e_analytics_export.sh
+# e2e_scene_analytics_export.sh (renamed from e2e_analytics_export.sh,
+# SceneOps V2 E2E surface cleanup -- renamed to disambiguate from Phase 5's
+# EXPORT_LEARNING_DATA job. This is a Scene-domain analytical Parquet
+# export (scenes/samples/sensor_frames/annotations); it has nothing to do
+# with the episode/learning-data sharded-Parquet architecture exercised by
+# e2e_robot_learning.sh. Those two concepts are deliberately not merged.)
 #
 # E2E test for the export_analytics_snapshot job (Parquet analytical layer):
 #   1. Run dataset_scene_ingestion to ensure registered scenes exist.
@@ -7,8 +12,13 @@
 #   3. Assert scenes/samples/sensor_frames/annotations parquet tables were
 #      written and registered as analytics_table artifacts.
 #
+# Secondary/specialized E2E flow -- not part of the primary e2e-scene /
+# e2e-robot-learning / e2e-perception / e2e-interop surface, since it
+# verifies an analytical export layer downstream of e2e-scene rather than a
+# distinct real-source-to-persisted-result workflow of its own.
+#
 # Usage:
-#   bash scripts/e2e/e2e_analytics_export.sh
+#   bash scripts/e2e/e2e_scene_analytics_export.sh
 #
 # Env overrides (defaults come from the "core" E2E fixture, see
 # scripts/e2e/lib.sh's resolve_e2e_fixture):
@@ -17,7 +27,7 @@
 #   DATASET_VERSION (default: test-v1)
 #   SOURCE_FORMAT_VERSION (default: v1.0-mini)
 #   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
-#   MAX_SOURCE_SCENES (default: 2)
+#   MAX_SCENES      how many nuScenes scenes to ingest (default: 2)
 #   SKIP_INGESTION  set to "1" to reuse scenes already registered for
 #                   DATASET_ID/DATASET_VERSION instead of re-running ingestion
 #   POLL_TIMEOUT    max poll attempts, 5s each (default: 60 = 5 min)
@@ -29,7 +39,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-2}"
+MAX_SCENES="${MAX_SCENES:-2}"
 SKIP_INGESTION="${SKIP_INGESTION:-0}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
@@ -53,9 +63,9 @@ else
   DATASET_VERSION="$DATASET_VERSION" \
   SOURCE_FORMAT_VERSION="$SOURCE_FORMAT_VERSION" \
   SOURCE_ROOT_URI="$SOURCE_ROOT_URI" \
-  MAX_SOURCE_SCENES="$MAX_SOURCE_SCENES" \
+  MAX_SCENES="$MAX_SCENES" \
   POLL_TIMEOUT="$POLL_TIMEOUT" \
-    bash "$SCRIPT_DIR/e2e_dataset_scene_ingestion.sh"
+    bash "$SCRIPT_DIR/e2e_scene.sh"
 fi
 echo ""
 

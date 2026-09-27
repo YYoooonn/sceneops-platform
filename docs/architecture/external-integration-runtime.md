@@ -5,8 +5,8 @@
 > 3) and [robot-learning-data.md](./robot-learning-data.md) (Phase 2), this
 > is a "what's actually built" document, not aspirational — every claim
 > below was checked against the code and against real, live runs
-> (`make e2e-raw-log-scene-building`, `make e2e-dataset-ingestion`,
-> `make nuscenes-container-smoke`, `make e2e-lerobot-container`), not
+> (`make e2e-scene-rawlog`, `make e2e-scene`,
+> `make smoke-nuscenes-container`, `make e2e-lerobot-container`), not
 > against the original request planning documents.
 
 ## 1. Purpose
@@ -159,7 +159,7 @@ HttpIntegrationExecutor    PRODUCTION -- calls an integration runtime's
 ContainerIntegrationExecutor  LOCAL/DEV/DEBUG/SMOKE ONLY -- runs an
   (container.py, Request 4.6,  integration runtime as a sibling `docker run`
   demoted in 4.6A)              container via the HOST's Docker daemon.
-                                 Still used by `make nuscenes-container-smoke`
+                                 Still used by `make smoke-nuscenes-container`
                                  and direct local runtime testing; no longer
                                  called by any job handler.
 
@@ -243,10 +243,11 @@ contains zero annotation-handling code and never sets
 is the *only* source of ground-truth-annotated scenes in the repository,
 consumed downstream by `sceneops_worker.evaluation.detection` (detection
 evaluation against real GT boxes) and `sceneops_worker.jobs.scenarios`
-(scenario readiness scoring) — both exercised by `make e2e`'s
-`e2e-detection-evaluation`/`e2e-scenario-curation`, which run against the
+(scenario readiness scoring) — both exercised by `make e2e-perception`
+(composes scenario curation + detection evaluation) and standalone
+`make e2e-scenario-curation`, which run against the
 `test-e2e-core` scenes `mode=scene_manifest` produces via the
-`dataset_scene_ingestion` pipeline (`make e2e-dataset-ingestion`). Removing
+`dataset_scene_ingestion` pipeline (`make e2e-scene`). Removing
 this path instead of migrating it would have silently broken both of those
 E2E suites and removed ground-truth evaluation from the platform entirely.
 
@@ -279,7 +280,7 @@ command (what `compose/integrations.yaml`'s `nuscenes-integration` service
 and the worker's `HttpIntegrationExecutor` use); the original CLI
 entrypoint (`--request-file`/`--raw-log-id`/... argv) is still reachable
 by overriding the container's command, used by
-`make nuscenes-container-smoke` and local debugging — neither was deleted
+`make smoke-nuscenes-container` and local debugging — neither was deleted
 in favor of the other.
 
 ## 6. LeRobot final architecture
@@ -450,7 +451,7 @@ Phase 4 -- External Integration Runtime      COMPLETE
   4.5   nuScenes Integration Container
         Extracted code moved into packages/sceneops-integrations +
         tools/nuscenes-integration; CLI container proven
-        (make nuscenes-container-smoke)
+        (make smoke-nuscenes-container)
   4.6   Generic Integration Execution Model
         IntegrationExecutor Protocol + Container/InProcess backends;
         worker's raw-log path migrated onto it (still via Docker socket)
@@ -498,8 +499,8 @@ which this phase does not touch.
 - nuScenes SDK-bound implementation: `packages/sceneops-integrations/sceneops_integrations/nuscenes/{raw_log,scene_ingest,runtime,entrypoint,service}.py`
 - Isolated nuScenes environment/container: `tools/nuscenes-integration/` (`pyproject.toml`, `uv.lock`, `Dockerfile`, `README.md`)
 - nuScenes compose service: `compose/integrations.yaml`
-- nuScenes container/HTTP smoke: `scripts/e2e/nuscenes_container_smoke.sh`, `scripts/e2e/nuscenes_container_build_request.py`
+- nuScenes container/HTTP smoke: `scripts/e2e/smoke_nuscenes_container.sh`, `scripts/e2e/nuscenes_container_build_request.py`
 - LeRobot container entrypoint: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/entrypoint.py`
 - Isolated LeRobot environment/container: `tools/lerobot-integration/` (`pyproject.toml`, `uv.lock`, `Dockerfile`, `README.md`)
-- LeRobot container round-trip E2E: `scripts/e2e/e2e_lerobot_container_roundtrip.sh`, `scripts/e2e/lerobot_container_smoke.sh`
-- Makefile targets: `makefiles/nuscenes.mk` (`nuscenes-sync`/`nuscenes-lock`/`nuscenes-test`/`nuscenes-image`/`nuscenes-container-smoke`), `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-test`/`lerobot-image`/`lerobot-container-smoke`/`e2e-lerobot-container`)
+- LeRobot container round-trip E2E: `scripts/e2e/e2e_lerobot_container_roundtrip.sh`, `scripts/e2e/smoke_lerobot_container.sh`
+- Makefile targets: `makefiles/nuscenes.mk` (`nuscenes-sync`/`nuscenes-lock`/`nuscenes-test`/`nuscenes-image`/`smoke-nuscenes-container`), `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-test`/`lerobot-image`/`smoke-lerobot-container`/`e2e-lerobot-container`)

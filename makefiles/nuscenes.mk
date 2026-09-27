@@ -49,11 +49,16 @@ nuscenes-image:
 # IntegrationResult, including reading the written artifacts back out of
 # MinIO directly. Exercises the container's CLI entrypoint (mode=raw_log),
 # not the HTTP service that's the image's default command as of Request
-# 4.6A -- see scripts/e2e/nuscenes_container_smoke.sh's own header for the
+# 4.6A -- see scripts/e2e/smoke_nuscenes_container.sh's own header for the
 # full two-process split and prerequisites (`make local-up`,
 # `make nuscenes-image`).
-.PHONY: nuscenes-container-smoke
-nuscenes-container-smoke:
-	chmod +x scripts/e2e/nuscenes_container_smoke.sh
+#
+# Renamed from nuscenes-container-smoke (SceneOps V2 E2E surface cleanup) --
+# an engineering/transport-boundary check, not a domain workflow, so it
+# moved to the smoke-* namespace (see makefiles/e2e.mk's "Smoke" section
+# for the sibling smoke-lerobot-container/smoke-api targets).
+.PHONY: smoke-nuscenes-container
+smoke-nuscenes-container:
+	chmod +x scripts/e2e/smoke_nuscenes_container.sh
 	MINIO_ROOT_USER=$(MINIO_ROOT_USER) MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) MINIO_BUCKET=$(MINIO_BUCKET) \
-	scripts/e2e/nuscenes_container_smoke.sh
+	scripts/e2e/smoke_nuscenes_container.sh

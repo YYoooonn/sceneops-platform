@@ -88,11 +88,10 @@ echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  SEGMENTATION_STRATEGY=$SEGMENTATION_STRATEGY"
 echo ""
 
-if [ ! -f "${REPO_ROOT}${MCAP_URI}" ]; then
-  echo "❌ Expected bag file not found: ${REPO_ROOT}${MCAP_URI}" >&2
-  echo "   Run e2e_robot_can_replay.sh first (or set SCENE to an existing bag)." >&2
-  exit 1
-fi
+# Fail-fast, before any Robot/RobotRun/DatasetVersion upsert below (SceneOps
+# V2 E2E surface cleanup -- centralized via lib.sh's require_mcap_file so
+# e2e_robot_learning.sh's composed flow uses the identical check).
+require_mcap_file "$REPO_ROOT" "$MCAP_URI"
 echo "  bag=${MCAP_URI}  OK"
 echo ""
 

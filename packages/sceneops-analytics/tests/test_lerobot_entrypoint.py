@@ -230,7 +230,7 @@ async def test_execute_never_deletes_a_preexisting_target(tmp_path):
 async def test_execute_fails_clearly_on_a_rerun_against_the_same_target(tmp_path):
     """A second execute() against the same external_ref.uri fails clearly
     rather than silently overwriting -- idempotent reruns are the test
-    orchestrator's responsibility (scripts/e2e/lerobot_container_smoke.sh),
+    orchestrator's responsibility (scripts/e2e/smoke_lerobot_container.sh),
     never this runtime's (SceneOps V2 Request 4.2 follow-up §1)."""
     bootstrap = await build_interop_test_dataset(tmp_path)
     manifest_ref = await _write_manifest_artifact(bootstrap, tmp_path)

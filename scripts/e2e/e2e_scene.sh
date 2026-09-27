@@ -1,12 +1,29 @@
 #!/usr/bin/env bash
-# e2e_dataset_scene_ingestion.sh
+# e2e_scene.sh (renamed + merged from e2e_dataset_scene_ingestion.sh,
+# SceneOps V2 E2E surface cleanup)
 #
-# E2E test for the dataset_scene_ingestion pipeline:
+# The canonical Scene-domain E2E:
+#   real nuScenes -> Integration Runtime -> Scene ingestion -> SceneRecord
+#     -> validation -> profile -> scene index -> DatasetManifest
+#
+# dataset_scene_ingestion pipeline:
 #   ingest_scenes -> register_scene -> validate_scene -> profile_scene
 #   -> build_scene_index -> build_dataset_manifest
 #
+# Folds in the domain-relevant assertions formerly split out into a
+# separate e2e_pipeline_contracts.sh (validation_run_id/profile_run_id +
+# their report URIs, dataset-version quality-cache readiness, the
+# scene-summary cross-check, and optional-task-skip behavior) -- those all
+# exercise the SAME real ingestion this script already runs, so there was
+# no reason for them to be a second, largely-overlapping pipeline dispatch
+# in a separate script. e2e_pipeline_contracts.sh's other half (pipeline-
+# definitions registry, unsupported-pipeline-type rejection) needed no
+# nuScenes data at all and moved to
+# scripts/e2e/tests/test_pipeline_contracts_integration.py (make
+# test-integration) instead.
+#
 # Usage:
-#   bash scripts/e2e/e2e_dataset_scene_ingestion.sh
+#   bash scripts/e2e/e2e_scene.sh
 #
 # Env overrides (defaults come from the "core" E2E fixture, see
 # scripts/e2e/lib.sh's resolve_e2e_fixture -- DATASET_ID/DATASET_VERSION are
@@ -17,8 +34,12 @@
 #   DATASET_VERSION         (default: test-v1)
 #   SOURCE_FORMAT_VERSION   (default: v1.0-mini)
 #   SOURCE_ROOT_URI         (default: /data/raw/nuscenes)
-#   MAX_SOURCE_SCENES     (default: 2)
-#   POLL_TIMEOUT   max poll attempts, 5s each (default: 60 = 5 min)
+#   MAX_SCENES              how many nuScenes scenes to ingest (default: 10 --
+#                           matches the original e2e_dataset_scene_ingestion.sh
+#                           default; scenario curation's own selectability
+#                           logic needs more than a handful of scenes to
+#                           produce a non-empty ScenarioSet, see e2e-perception)
+#   POLL_TIMEOUT            max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
 
@@ -27,17 +48,17 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-10}"
+MAX_SCENES="${MAX_SCENES:-10}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
 SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
 SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
-echo "=== dataset_scene_ingestion E2E ==="
+echo "=== e2e-scene: dataset_scene_ingestion E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SOURCE_SCENES=$MAX_SOURCE_SCENES"
+echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  SOURCE_ROOT_URI=$SOURCE_ROOT_URI  MAX_SCENES=$MAX_SCENES"
 echo ""
 
 # ── 1. Ensure dataset and version exist ──────────────────────────────────────
@@ -65,7 +86,7 @@ PAYLOAD="$(cat <<JSON
       "source_format": "$SOURCE_FORMAT",
       "source_root_uri": "$SOURCE_ROOT_URI",
       "source_format_version": "$SOURCE_FORMAT_VERSION",
-      "max_source_scenes": $MAX_SOURCE_SCENES,
+      "max_source_scenes": $MAX_SCENES,
       "mode": "upsert"
     },
     "register_scene": {
@@ -142,33 +163,67 @@ echo ""
 
 echo "--- 6b. Assert task refs ---"
 
-# ingest_scenes: scene_manifest_uris populated
 INGEST_URIS="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "ingest_scenes") | .result.refs.scene_manifest_uris | length // 0')"
 echo "  ingest_scenes scene_manifest_uris count=$INGEST_URIS"
 if [ "${INGEST_URIS:-0}" -lt 1 ]; then
   echo "❌ ingest_scenes: expected scene_manifest_uris" >&2; exit 1
 fi
 
-# register_scene: registered_scene_count > 0
 REG_COUNT="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "register_scene") | .result.summary.registered_scene_count // 0')"
 echo "  register_scene registered_scene_count=$REG_COUNT"
 if [ "${REG_COUNT:-0}" -lt 1 ]; then
   echo "❌ register_scene: expected registered_scene_count > 0" >&2; exit 1
 fi
 
-# build_scene_index: scene_index_uri exists
 SCENE_INDEX_URI="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_scene_index") | .result.artifacts.scene_index_uri // empty')"
 echo "  build_scene_index scene_index_uri=$SCENE_INDEX_URI"
 if [ -z "$SCENE_INDEX_URI" ]; then
   echo "❌ build_scene_index: expected scene_index_uri" >&2; exit 1
 fi
 
-# build_dataset_manifest: dataset_manifest_uri exists
 MANIFEST_URI_TASK="$(echo "$TASKS_JSON" | jq -r '.tasks[] | select(.pipelineTaskId == "build_dataset_manifest") | .result.refs.dataset_manifest_uri // empty')"
 echo "  build_dataset_manifest dataset_manifest_uri=$MANIFEST_URI_TASK"
 if [ -z "$MANIFEST_URI_TASK" ]; then
   echo "❌ build_dataset_manifest: expected dataset_manifest_uri" >&2; exit 1
 fi
+echo "  OK"
+echo ""
+
+# ── 6c. Assert validate_scene result refs (folded in from e2e_pipeline_contracts.sh) ──
+
+echo "--- 6c. Assert validate_scene result refs ---"
+VALIDATE_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "validate_scene")')"
+
+VALIDATION_RUN_ID="$(echo "$VALIDATE_TASK" | jq -r '.result.refs.validation_run_id // empty')"
+VALIDATION_REPORT_URI="$(echo "$VALIDATE_TASK" | jq -r '.result.artifacts.validation_report_uri // empty')"
+VALIDATION_STATUS="$(echo "$VALIDATE_TASK" | jq -r '.result.summary.validation_status // empty')"
+CHECKED_COUNT="$(echo "$VALIDATE_TASK" | jq -r '.result.summary.checked_scene_count // 0')"
+
+echo "  validation_run_id=$VALIDATION_RUN_ID"
+echo "  validation_report_uri=$VALIDATION_REPORT_URI"
+echo "  validation_status=$VALIDATION_STATUS"
+echo "  checked_scene_count=$CHECKED_COUNT"
+
+[ -n "$VALIDATION_RUN_ID" ] || { echo "❌ validate_scene: missing validation_run_id in result refs" >&2; exit 1; }
+[ -n "$VALIDATION_REPORT_URI" ] || { echo "❌ validate_scene: missing validation_report_uri" >&2; exit 1; }
+[ -n "$VALIDATION_STATUS" ] || { echo "❌ validate_scene: missing validation_status" >&2; exit 1; }
+[ "${CHECKED_COUNT:-0}" -ge 1 ] || { echo "❌ validate_scene: checked_scene_count should be >= 1, got $CHECKED_COUNT" >&2; exit 1; }
+echo "  OK"
+echo ""
+
+# ── 6d. Assert profile_scene result refs (folded in from e2e_pipeline_contracts.sh) ───
+
+echo "--- 6d. Assert profile_scene result refs ---"
+PROFILE_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "profile_scene")')"
+
+PROFILE_RUN_ID="$(echo "$PROFILE_TASK" | jq -r '.result.refs.profile_run_id // empty')"
+PROFILE_REPORT_URI="$(echo "$PROFILE_TASK" | jq -r '.result.artifacts.profile_report_uri // empty')"
+
+echo "  profile_run_id=$PROFILE_RUN_ID"
+echo "  profile_report_uri=$PROFILE_REPORT_URI"
+
+[ -n "$PROFILE_RUN_ID" ] || { echo "❌ profile_scene: missing profile_run_id" >&2; exit 1; }
+[ -n "$PROFILE_REPORT_URI" ] || { echo "❌ profile_scene: missing profile_report_uri" >&2; exit 1; }
 echo "  OK"
 echo ""
 
@@ -187,7 +242,7 @@ fi
 echo "  OK"
 echo ""
 
-# ── 8. Assert dataset version ready ──────────────────────────────────────────
+# ── 8. Assert dataset version ready + quality cache (folded in from e2e_pipeline_contracts.sh) ──
 
 echo "--- 8. Assert dataset version ---"
 VERSION_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
@@ -200,9 +255,29 @@ echo "  status=$VERSION_STATUS"
 echo "  sceneCount=$VERSION_SCENE_COUNT  sampleCount=$SAMPLE_COUNT"
 echo "  manifestUri=$MANIFEST_URI"
 
-# DatasetVersion.status no longer tracks Scene workflow progress (SceneOps V2
-# Request 05) — Scene readiness is the presence of a built manifest instead.
 assert_json_not_empty "$VERSION_JSON" '.version.scene.manifestUri' 'dataset version scene.manifestUri'
+
+echo "$VERSION_JSON" | jq '.version.scene | {
+  latestValidationRunId, validationStatus, shouldBlockPipeline, validationReportUri,
+  latestProfileRunId, profileReportUri
+}' 2>/dev/null || true
+
+assert_json_not_empty "$VERSION_JSON" '.version.scene.latestValidationRunId' "scene summary latestValidationRunId"
+assert_json_equals "$VERSION_JSON" '.version.scene.shouldBlockPipeline' "false" "scene summary shouldBlockPipeline should be false"
+assert_json_not_empty "$VERSION_JSON" '.version.scene.latestProfileRunId' "scene summary latestProfileRunId"
+
+QUAL_VALIDATION_RUN_ID="$(echo "$VERSION_JSON" | jq -r '.version.scene.latestValidationRunId // empty')"
+QUAL_PROFILE_RUN_ID="$(echo "$VERSION_JSON" | jq -r '.version.scene.latestProfileRunId // empty')"
+[ "$QUAL_VALIDATION_RUN_ID" = "$VALIDATION_RUN_ID" ] || { echo "❌ scene summary latestValidationRunId ($QUAL_VALIDATION_RUN_ID) != task result ($VALIDATION_RUN_ID)" >&2; exit 1; }
+[ "$QUAL_PROFILE_RUN_ID" = "$PROFILE_RUN_ID" ] || { echo "❌ scene summary latestProfileRunId ($QUAL_PROFILE_RUN_ID) != task result ($PROFILE_RUN_ID)" >&2; exit 1; }
+echo "  run-id cross-check: OK"
+
+QUALITY_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION/quality")")"
+echo "$QUALITY_JSON" | jq '{readiness, counts, groundTruth, manifestUri}' 2>/dev/null || true
+assert_json_equals "$QUALITY_JSON" '.readiness' "ready" "quality readiness should be ready"
+assert_json_gt "$QUALITY_JSON" '.counts.sceneCount' 0 "quality counts.sceneCount should be > 0"
+assert_json_equals "$QUALITY_JSON" '.groundTruth.hasGroundTruth' "true" "quality groundTruth.hasGroundTruth should be true"
+assert_json_not_empty "$QUALITY_JSON" '.manifestUri' "quality manifestUri should be non-empty"
 echo "  OK"
 echo ""
 
@@ -214,9 +289,73 @@ assert_artifact_kind_present "$ARTIFACTS_JSON" "dataset_manifest" "expected at l
 echo "  OK"
 echo ""
 
+# ── 10. Optional-task-skip regression (folded in from e2e_pipeline_contracts.sh) ──
+# Confirms profile_scene is correctly marked SKIPPED (not a failure) when no
+# caller params are given, and every required task still succeeds around it
+# -- isolated under its own dataset_id so this second, deliberately-partial
+# registration doesn't skew the main run's aggregate /quality readiness on
+# the shared "core" fixture.
+
+echo "--- 10. Verify optional task skip (no validate/profile params) ---"
+SKIP_TEST_DATASET_ID="${DATASET_ID}-skip-test"
+upsert_dataset "$API_BASE_URL" "$SKIP_TEST_DATASET_ID" "nuScenes (skip-test)" >/dev/null 2>&1 || true
+
+SKIP_PAYLOAD="$(cat <<JSON
+{
+  "type": "dataset_scene_ingestion",
+  "dataset_id": "$SKIP_TEST_DATASET_ID",
+  "dataset_version": "$DATASET_VERSION",
+  "force": true,
+  "params": {
+    "ingest_scenes": {
+      "source_format": "$SOURCE_FORMAT",
+      "source_root_uri": "$SOURCE_ROOT_URI",
+      "source_format_version": "$SOURCE_FORMAT_VERSION",
+      "max_source_scenes": $MAX_SCENES,
+      "mode": "upsert"
+    },
+    "register_scene": {
+      "replace_existing": true
+    },
+    "build_scene_index": {},
+    "build_dataset_manifest": {}
+  }
+}
+JSON
+)"
+
+SKIP_CREATE_RESP="$(create_pipeline_run "$API_BASE_URL" "$SKIP_PAYLOAD")"
+SKIP_RUN_ID="$(extract_pipeline_run_id "$SKIP_CREATE_RESP")"
+echo "  skip pipeline_run_id=$SKIP_RUN_ID"
+
+SKIP_EXEC_RESP="$(dispatch_pipeline_run "$API_BASE_URL" "$SKIP_RUN_ID")"
+SKIP_EXEC_STATUS="$(echo "$SKIP_EXEC_RESP" | jq -r '.execution.status // "error"')"
+if [ "$SKIP_EXEC_STATUS" = "error" ]; then
+  echo "$SKIP_EXEC_RESP" | jq . >&2
+  exit 1
+fi
+
+SKIP_PIPELINE_JSON="$(poll_pipeline_terminal "$API_BASE_URL" "$SKIP_RUN_ID" "$POLL_TIMEOUT" 5)"
+assert_pipeline_succeeded "$SKIP_PIPELINE_JSON" 'skip-test pipeline should succeed' "$API_BASE_URL" "$SKIP_RUN_ID"
+
+SKIP_TASKS_JSON="$(fetch_pipeline_tasks "$API_BASE_URL" "$SKIP_RUN_ID")"
+echo "$SKIP_TASKS_JSON" | jq -r '.tasks[] | "  \(.pipelineTaskId): \(.status)"'
+
+for task_id in profile_scene; do
+  SKIP_TASK_STATUS="$(echo "$SKIP_TASKS_JSON" | jq -r --arg t "$task_id" '.tasks[] | select(.pipelineTaskId == $t) | .status // empty')"
+  [ "$SKIP_TASK_STATUS" = "skipped" ] || { echo "❌ Task '$task_id' expected skipped (no params), got '$SKIP_TASK_STATUS'" >&2; exit 1; }
+done
+for task_id in ingest_scenes register_scene validate_scene build_scene_index build_dataset_manifest; do
+  SKIP_TASK_STATUS="$(echo "$SKIP_TASKS_JSON" | jq -r --arg t "$task_id" '.tasks[] | select(.pipelineTaskId == $t) | .status // empty')"
+  [ "$SKIP_TASK_STATUS" = "succeeded" ] || { echo "❌ Required task '$task_id' expected succeeded after optional skip, got '$SKIP_TASK_STATUS'" >&2; exit 1; }
+done
+echo "  Optional task skip: OK"
+echo ""
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo "=== PASSED ==="
 echo "  pipeline_run_id=$PIPELINE_RUN_ID"
 echo "  scenes=$SCENE_COUNT  samples=$SAMPLE_COUNT"
 echo "  manifest_uri=$MANIFEST_URI"
+echo "  validation_run_id=$VALIDATION_RUN_ID  profile_run_id=$PROFILE_RUN_ID"

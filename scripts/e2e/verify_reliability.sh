@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# e2e_reliability.sh
+# verify_reliability.sh (renamed from e2e_reliability.sh, SceneOps V2 E2E
+# surface cleanup -- this verifies an execution-model property, not a
+# domain workflow from a real source to a persisted result, so it moved out
+# of the e2e-* namespace into verify-*, same tier as verify_airflow_backend.sh)
 #
-# E2E test for Phase 2 reliability primitives:
+# Verifies Phase 2 reliability primitives:
 #   1. Job execution_key idempotency (identical create -> same job; force ->
 #      new job; different params -> new job).
 #   2. Pipeline partial retry: a pipeline BLOCKED by a quality gate
@@ -9,7 +12,7 @@
 #      (register_scene) is NOT re-executed.
 #
 # Usage:
-#   bash scripts/e2e/e2e_reliability.sh
+#   bash scripts/e2e/verify_reliability.sh
 #
 # Env overrides (defaults come from the "core" E2E fixture, see
 # scripts/e2e/lib.sh's resolve_e2e_fixture):
@@ -18,7 +21,7 @@
 #   DATASET_VERSION (default: test-v1)
 #   SOURCE_FORMAT_VERSION (default: v1.0-mini)
 #   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
-#   MAX_SOURCE_SCENES (default: 2)
+#   MAX_SCENES (default: 2)
 #   POLL_TIMEOUT    max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
@@ -28,7 +31,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-MAX_SOURCE_SCENES="${MAX_SOURCE_SCENES:-2}"
+MAX_SCENES="${MAX_SCENES:-2}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
@@ -105,7 +108,7 @@ PIPELINE_PAYLOAD="$(cat <<JSON
       "source_format": "$SOURCE_FORMAT",
       "source_root_uri": "$SOURCE_ROOT_URI",
       "source_format_version": "$SOURCE_FORMAT_VERSION",
-      "max_source_scenes": $MAX_SOURCE_SCENES,
+      "max_source_scenes": $MAX_SCENES,
       "mode": "upsert"
     },
     "register_scene": {

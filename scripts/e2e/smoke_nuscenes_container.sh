@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# nuscenes_container_smoke.sh (SceneOps V2 Request 4.5)
+# smoke_nuscenes_container.sh (SceneOps V2 Request 4.5)
 #
 # Minimal container-level smoke test for the nuScenes integration container
 # (tools/nuscenes-integration/Dockerfile): build image -> start container ->
 # parse a real IntegrationRequest -> read a real local nuScenes dataroot via
 # real nuscenes-devkit -> write raw-log artifacts to a real MinIO
 # ArtifactStore -> return a valid IntegrationResult. Mirrors
-# scripts/e2e/lerobot_container_smoke.sh's own structure (Request 4.2 §7).
+# scripts/e2e/smoke_lerobot_container.sh's own structure (Request 4.2 §7).
 #
 # Two processes:
 #
@@ -29,7 +29,7 @@
 #           sceneops-db (the image has neither installed).
 #
 # Usage:
-#   bash scripts/e2e/nuscenes_container_smoke.sh
+#   bash scripts/e2e/smoke_nuscenes_container.sh
 #
 # Prerequisites (this script does not do either of these for you):
 #   make local-up          # MinIO, on the sceneops-network
@@ -43,7 +43,7 @@
 #   NUSCENES_CONTAINER_NETWORK   (default: sceneops-network -- must already exist, from `make local-up`)
 #   SOURCE_ROOT_URI              real nuScenes dataroot on the HOST (default: $REPO_ROOT/data/raw/nuscenes)
 #   SOURCE_FORMAT_VERSION        (default: v1.0-mini)
-#   MAX_SEQUENCES                (default: 2 -- kept small for a fast smoke test)
+#   MAX_SCENES                (default: 2 -- kept small for a fast smoke test)
 
 set -euo pipefail
 
@@ -59,7 +59,7 @@ NUSCENES_CONTAINER_NETWORK="${NUSCENES_CONTAINER_NETWORK:-sceneops-network}"
 SOURCE_ROOT_URI_HOST="${SOURCE_ROOT_URI:-$REPO_ROOT/data/raw/nuscenes}"
 SOURCE_ROOT_URI_CONTAINER="/data/raw/nuscenes"
 SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
-MAX_SEQUENCES="${MAX_SEQUENCES:-2}"
+MAX_SCENES="${MAX_SCENES:-2}"
 
 DATASET_ID="test-e2e-nuscenes-container-smoke"
 DATASET_VERSION="test-v1"
@@ -79,7 +79,7 @@ FRAME_INDEX_URI="s3://$MINIO_BUCKET/artifacts/datasets/$DATASET_ID/versions/$DAT
 
 echo "=== nuScenes container smoke test ==="
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION  RAW_LOG_ID=$RAW_LOG_ID"
-echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  MAX_SEQUENCES=$MAX_SEQUENCES"
+echo "  SOURCE_FORMAT_VERSION=$SOURCE_FORMAT_VERSION  MAX_SCENES=$MAX_SCENES"
 echo "  image=$NUSCENES_CONTAINER_IMAGE  network=$NUSCENES_CONTAINER_NETWORK"
 echo ""
 
@@ -90,7 +90,7 @@ uv run python scripts/e2e/nuscenes_container_build_request.py \
   --dataset-id "$DATASET_ID" \
   --dataset-version "$DATASET_VERSION" \
   --source-format-version "$SOURCE_FORMAT_VERSION" \
-  --max-source-sequences "$MAX_SEQUENCES" \
+  --max-source-sequences "$MAX_SCENES" \
   >"$IO_DIR/request.json"
 echo "  wrote $IO_DIR/request.json"
 echo ""

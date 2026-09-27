@@ -27,16 +27,23 @@ lerobot-test:
 	cd tools/lerobot-integration && uv run pytest -c pyproject.toml ../../packages/sceneops-analytics/tests/test_lerobot_adapter.py ../../packages/sceneops-analytics/tests/test_lerobot_entrypoint.py ../../scripts/e2e/tests/test_lerobot_roundtrip_golden.py -v
 
 # --------------------
-# LeRobot round-trip E2E (SceneOps V2 Request 3.4)
+# Interoperability round-trip E2E (SceneOps V2 Request 3.4)
 # --------------------
 #
 # Real persistent "interop" fixture (Postgres + MinIO) -> SceneOpsDataset ->
 # LeRobotDatasetAdapter (run from tools/lerobot-integration's isolated
 # venv) -> real LeRobot v3 dataset -> official LeRobot reader -> golden
 # comparison. See scripts/e2e/e2e_lerobot_roundtrip.sh's own header for the
-# full two-process/two-venv flow. Not part of `make e2e` (optional,
-# requires `make lerobot-sync` once first) -- same convention as the other
-# "Optional environment E2E" targets in makefiles/e2e.mk.
+# full two-process/two-venv flow. Not part of `make e2e-cleanroom`'s core
+# path (optional, requires `make lerobot-sync` once first) -- same
+# convention as the other secondary/optional E2E targets.
+#
+# Renamed to e2e-interop (SceneOps V2 E2E surface cleanup, from e2e-lerobot)
+# for the primary-surface naming convention (e2e-scene/e2e-robot-learning/
+# e2e-perception/e2e-interop/e2e-cleanroom) -- the underlying script/golden
+# fixture/semantics are completely unchanged; this is a Make-target rename
+# only. The LeRobot ingest direction has not been implemented and stays out
+# of scope here -- this is the export-direction round trip only, unchanged.
 #
 # Uses e2e.mk's E2E_BOOTSTRAP_ENV (same Postgres/MinIO host-side connection
 # convention as `make e2e-bootstrap-interop`) -- deliberately does NOT run
@@ -45,8 +52,8 @@ lerobot-test:
 # (matching every other `make e2e-*`/`make test` target's own use of `uv
 # run` with no separate explicit sync step), so this avoids forcing a full
 # dependency resolution on every run.
-.PHONY: e2e-lerobot
-e2e-lerobot:
+.PHONY: e2e-interop
+e2e-interop:
 	chmod +x scripts/e2e/e2e_lerobot_roundtrip.sh
 	$(E2E_BOOTSTRAP_ENV) scripts/e2e/e2e_lerobot_roundtrip.sh
 
@@ -77,15 +84,18 @@ lerobot-image:
 # Minimal container-level smoke test (Request 4.2 §7) -- build image ->
 # start container -> parse a real IntegrationRequest -> access a real MinIO
 # ArtifactStore -> run a real LeRobotDatasetAdapter.export() -> return a
-# valid IntegrationResult. See scripts/e2e/lerobot_container_smoke.sh's own
+# valid IntegrationResult. See scripts/e2e/smoke_lerobot_container.sh's own
 # header for the full two-process split and prerequisites (`make local-up`,
-# `make lerobot-image`). Request 4.3 owns the full containerized golden
-# round-trip E2E (official-reader/per-frame comparison) -- not duplicated
-# here.
-.PHONY: lerobot-container-smoke
-lerobot-container-smoke:
-	chmod +x scripts/e2e/lerobot_container_smoke.sh
-	$(E2E_BOOTSTRAP_ENV) scripts/e2e/lerobot_container_smoke.sh
+# `make lerobot-image`). e2e-lerobot-container (below) owns the full
+# containerized golden round-trip E2E (official-reader/per-frame
+# comparison) -- not duplicated here. Renamed from lerobot-container-smoke
+# (SceneOps V2 E2E surface cleanup) -- an engineering/transport-boundary
+# check, not a domain workflow, so it moved to the smoke-* namespace like
+# smoke-nuscenes-container.
+.PHONY: smoke-lerobot-container
+smoke-lerobot-container:
+	chmod +x scripts/e2e/smoke_lerobot_container.sh
+	$(E2E_BOOTSTRAP_ENV) scripts/e2e/smoke_lerobot_container.sh
 
 # --------------------
 # Containerized LeRobot round-trip E2E (SceneOps V2 Request 4.3)
@@ -94,7 +104,7 @@ lerobot-container-smoke:
 # The full Request 3.4 golden round-trip, with the export step running
 # through the LeRobot integration CONTAINER (above) instead of a second
 # host-side isolated-venv process. Checks the exact same frozen
-# expectations as `make e2e-lerobot` (scripts/e2e/
+# expectations as `make e2e-interop` (scripts/e2e/
 # lerobot_roundtrip_golden.py, shared unchanged) -- this proves the
 # container execution boundary preserves Phase 3's interoperability
 # semantics, it does not re-derive or duplicate them. Also verifies the
@@ -103,10 +113,11 @@ lerobot-container-smoke:
 # directly. See scripts/e2e/e2e_lerobot_container_roundtrip.sh's own header
 # for the full three-environment flow.
 #
-# Distinct from, and does not replace, `make e2e-lerobot` (host runtime) or
-# `make lerobot-container-smoke` (minimal container smoke test, no golden
-# comparison). Not part of `make e2e` -- same "optional environment E2E,
-# requires local build/sync steps first" convention as `make e2e-lerobot`.
+# Distinct from, and does not replace, `make e2e-interop` (host runtime) or
+# `make smoke-lerobot-container` (minimal container smoke test, no golden
+# comparison). Kept as its own target name (not folded into e2e-interop) --
+# it is a secondary/specialized containerized variant of the same interop
+# E2E, not part of the primary e2e-cleanroom path.
 .PHONY: e2e-lerobot-container
 e2e-lerobot-container:
 	chmod +x scripts/e2e/e2e_lerobot_container_roundtrip.sh

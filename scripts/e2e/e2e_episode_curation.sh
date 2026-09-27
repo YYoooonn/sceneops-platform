@@ -27,7 +27,7 @@
 #
 # Prereq:
 #   Run e2e_episode_building.sh at least once first (or otherwise have a
-#   registered EPISODE_MANIFEST for EPISODE_ID in DATASET_ID/DATASET_VERSION).
+#   registered EPISODE_MANIFEST reachable via EPISODE_ID or RUN_ID below).
 #
 # Env overrides (DATASET_ID/DATASET_VERSION default from the shared "core"
 # E2E fixture, see scripts/e2e/lib.sh's resolve_e2e_fixture -- merged onto
@@ -35,7 +35,18 @@
 #   API_BASE_URL     (default: http://localhost:8000)
 #   DATASET_ID       (default: test-e2e-core)
 #   DATASET_VERSION  (default: test-v1)
-#   EPISODE_ID       (default: test-e2e-core-test-v1-episodes-mission-scene-0061)
+#   EPISODE_ID       explicit episode to curate -- if unset, resolved via a
+#                    real API query scoped to RUN_ID (see below). Never
+#                    reconstructed by reimplementing build_episodes.py's own
+#                    ID-formatting formula in bash (SceneOps V2 E2E surface
+#                    cleanup, item 7B) -- that silently pointed at a
+#                    nonexistent episode with no clear error whenever the
+#                    worker-side formula changed.
+#   RUN_ID           RobotRun id whose episode(s) to resolve EPISODE_ID from
+#                    when EPISODE_ID is unset (default: run-scene-0061-episodes,
+#                    matching e2e_episode_building.sh's own SCENE=scene-0061
+#                    default). Scoped to one RobotRun -- never a global
+#                    "latest episode in the whole DB" lookup.
 #   POLL_TIMEOUT     max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
@@ -45,23 +56,41 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-# build_episodes derives raw_log_id as "{dataset_id}-{dataset_version}-episodes"
-# (apps/worker/sceneops_worker/jobs/dataset/build_episodes.py) and episode_id
-# as "{raw_log_id}-{mission_id}" -- this default must track DATASET_ID/
-# DATASET_VERSION's own default above, or it points at an episode
-# e2e_episode_building.sh never actually registered.
-EPISODE_ID="${EPISODE_ID:-${DATASET_ID}-${DATASET_VERSION}-episodes-mission-scene-0061}"
+RUN_ID="${RUN_ID:-run-scene-0061-episodes}"
+EPISODE_ID="${EPISODE_ID:-}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
 echo "=== CURATE_EPISODES E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
-echo "  EPISODE_ID=$EPISODE_ID"
 echo ""
 
-# ── 0. Verify the episode exists ─────────────────────────────────────────────
+# ── 0. Resolve + verify the episode exists ───────────────────────────────────
 
-echo "--- 0. Verify episode exists ---"
+if [ -z "$EPISODE_ID" ]; then
+  echo "--- 0. Resolve EPISODE_ID from RUN_ID=$RUN_ID (real API query, scoped to this RobotRun) ---"
+  BY_RUN_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes?robot_run_id=$RUN_ID&limit=100")")"
+  BY_RUN_COUNT="$(echo "$BY_RUN_JSON" | jq -r '.count // 0')"
+
+  if [ "${BY_RUN_COUNT:-0}" -eq 0 ]; then
+    echo "❌ No episodes found for robot_run_id=$RUN_ID -- run e2e_episode_building.sh (or e2e_robot_learning.sh) first," >&2
+    echo "   or pass EPISODE_ID explicitly." >&2
+    exit 1
+  fi
+  if [ "${BY_RUN_COUNT:-0}" -gt 1 ]; then
+    echo "❌ Ambiguous: $BY_RUN_COUNT episodes found for robot_run_id=$RUN_ID -- pass EPISODE_ID explicitly." >&2
+    echo "$BY_RUN_JSON" | jq -r '.episodes[] | "  \(.episodeId)"' >&2
+    exit 1
+  fi
+
+  EPISODE_ID="$(echo "$BY_RUN_JSON" | jq -r '.episodes[0].episodeId')"
+  echo "  resolved episode_id=$EPISODE_ID"
+  echo ""
+else
+  echo "--- 0. Verify explicit EPISODE_ID exists ---"
+fi
+
+echo "  EPISODE_ID=$EPISODE_ID"
 EPISODE_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes/$EPISODE_ID")")"
 echo "$EPISODE_JSON" | jq -e '.episode.episodeId' >/dev/null || {
   echo "❌ Episode not found: $EPISODE_ID -- run e2e_episode_building.sh first" >&2

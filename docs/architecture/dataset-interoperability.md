@@ -4,7 +4,7 @@
 > Like [robot-learning-data.md](./robot-learning-data.md), this is a "what's
 > actually built" document, not aspirational — every claim below was
 > checked against the code and against a real, live run of
-> `make e2e-lerobot` against Postgres/MinIO, not against the original
+> `make e2e-interop` against Postgres/MinIO, not against the original
 > request planning documents.
 
 ## 1. Purpose
@@ -72,7 +72,7 @@ LeRobot v3                                  (ExternalDatasetRef, export target)
 This is architecturally valid and exercised end-to-end by
 `core`'s own E2E suite (ingestion side) plus the adapter's own tests
 (export side) — but note the *specific, verified round-trip E2E*
-(`make e2e-lerobot`, §6 below) runs against the separate, deterministic
+(`make e2e-interop`, §6 below) runs against the separate, deterministic
 `interop` fixture, not a live nuScenes-sourced `core` Episode. See §6 for
 exactly what was proven end-to-end versus what is proven only
 compositionally (each half tested, not yet chained in one E2E).
@@ -307,7 +307,7 @@ venv (needs `sceneops-db` to query the real `ArtifactRecord`), prints the
 manifest's real `uri`/checksum; `scripts/e2e/e2e_lerobot_export.py` runs
 entirely inside `tools/lerobot-integration`'s isolated venv and does
 everything from opening the real `SceneOpsDataset` onward. Orchestrated by
-`scripts/e2e/e2e_lerobot_roundtrip.sh`, invoked as `make e2e-lerobot`.
+`scripts/e2e/e2e_lerobot_roundtrip.sh`, invoked as `make e2e-interop`.
 
 Verified fixture expectations (the deterministic `interop` golden fixture
 — `EPISODE_A_REV1`/`EPISODE_A_REV2`/`EPISODE_B`, Request 3.2):
@@ -330,7 +330,9 @@ misrepresent a relative, episode-local value as lossless (§5's
 classification logic.
 
 The exported LeRobot dataset lands at a fixed, test-owned location —
-`data/runs/e2e-lerobot/<repo-id>/` (`data/` is entirely gitignored; the
+`data/runs/e2e-lerobot/<repo-id>/` (the script's own `LEROBOT_OUTPUT_DIR`
+default, unchanged by the `e2e-lerobot`→`e2e-interop` Make-target rename
+below — `data/` is entirely gitignored; the
 platform's existing convention for disposable run output, see
 `makefiles/cleanup.mk`'s `clean-artifacts`). Only that one directory is
 ever removed, and only at the start of a run (`LeRobotDataset.create()`
@@ -358,7 +360,7 @@ raw-log    intentionally isolated (own DatasetVersion) -- non-ground-truth
            conflict, not an oversight.
 ```
 
-`make e2e-bootstrap-interop` and `make e2e-lerobot` are two different,
+`make e2e-bootstrap-interop` and `make e2e-interop` are two different,
 composable steps with a clean boundary between them:
 
 ```text
@@ -368,7 +370,7 @@ make e2e-bootstrap-interop
      ArtifactRecords. A *verified canonical prerequisite* -- never
      touches LeRobot, never writes anything export-format-specific.
 
-make e2e-lerobot
+make e2e-interop
   -> calls the exact same ensure_e2e_fixture("interop", ...) contract
      internally (no bootstrap logic re-derived), then exercises the
      *actual external export + official read-back* behavior on top of
@@ -378,7 +380,7 @@ make e2e-lerobot
 Bootstrapping the `interop` fixture never pre-creates any LeRobot output —
 the only thing `_bootstrap_interop`/`ensure_e2e_fixture` ever write is
 SceneOps' own canonical Parquet/manifest state; the LeRobot dataset is
-produced fresh by `make e2e-lerobot` (or a direct adapter call) every time,
+produced fresh by `make e2e-interop` (or a direct adapter call) every time,
 never cached or pre-seeded by the fixture bootstrap.
 
 ## 8. Component ownership
@@ -443,10 +445,10 @@ not correctness failures to fix before closing the phase:
   [External integration runtime](./external-integration-runtime.md) §6 for
   the current, accurate isolation rationale (general SDK/runtime
   isolation, not an active NumPy conflict).
-- `make e2e-lerobot` is optional and intentionally **not** part of
-  default `make e2e` — it requires the isolated environment
-  (`make lerobot-sync`) as a one-time prerequisite, unlike every script in
-  the default suite.
+- `make e2e-interop` is optional and intentionally **not** part of
+  `make e2e-cleanroom`'s core path — it requires the isolated environment
+  (`make lerobot-sync`) as a one-time prerequisite, unlike `e2e-scene`/
+  `e2e-robot-learning`/`e2e-perception`.
 - RLDS is not implemented — `ExternalDatasetAdapter`/`ExternalDatasetWriter`
   are format-neutral and already support a second concrete adapter, but
   none exists yet.
@@ -481,7 +483,7 @@ Phase 3 -- Dataset Interoperability          COMPLETE
   3.3A  Dependency isolation (tools/lerobot-integration, independent
         uv.lock, [tool.uv.conflicts] evaluated and rejected)
   3.4   LeRobot round-trip E2E against real persistent infrastructure
-        (make e2e-lerobot)
+        (make e2e-interop)
   3.5   Architecture/documentation freeze (this document)
 ```
 
@@ -510,5 +512,5 @@ those remain frozen by this document, unchanged.
 - Persistent E2E fixture bootstrap: `scripts/e2e/e2e_fixture_bootstrap.py`, `scripts/e2e/bootstrap_e2e_fixtures.py`
 - LeRobot round-trip E2E: `scripts/e2e/e2e_lerobot_resolve.py`, `scripts/e2e/e2e_lerobot_export.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh`
 - E2E fixture catalog (bash side): `scripts/e2e/lib.sh`'s `resolve_e2e_fixture`
-- Makefile targets: `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-lock`/`lerobot-test`/`e2e-lerobot`), `makefiles/e2e.mk` (`e2e-bootstrap-interop`)
+- Makefile targets: `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-lock`/`lerobot-test`/`e2e-interop`), `makefiles/e2e.mk` (`e2e-bootstrap-interop`)
 - `ExternalDatasetRef`: `packages/sceneops-core/sceneops_core/datasets/schemas/external.py`

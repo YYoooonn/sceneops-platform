@@ -3,12 +3,12 @@ backend (introduced as the production path in SceneOps V2 Request 4.6,
 demoted in Request 4.6A once ``HttpIntegrationExecutor`` -- ``http.py`` --
 became the worker's normal production boundary). Runs one
 ``IntegrationRequest`` through an isolated ``docker run`` container,
-exactly the way ``scripts/e2e/nuscenes_container_smoke.sh``/
-``lerobot_container_smoke.sh`` already do by hand (Request 4.2/4.5), just
+exactly the way ``scripts/e2e/smoke_nuscenes_container.sh``/
+``smoke_lerobot_container.sh`` already do by hand (Request 4.2/4.5), just
 invoked from Python instead of bash.
 
 Still useful for direct local runtime testing/debugging and
-``make nuscenes-container-smoke`` -- but the worker no longer calls this
+``make smoke-nuscenes-container`` -- but the worker no longer calls this
 class during real job execution (Request 4.6A §4/§5): that required the
 worker container to have a `docker` CLI and a `/var/run/docker.sock`
 bind mount (Docker-outside-of-Docker, granting the worker root-equivalent

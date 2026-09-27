@@ -7,7 +7,7 @@ just that it passes against already-correct data (which every real E2E run
 -- no I/O, no lerobot dataset on disk -- so these are cheap, pure-Python
 mismatch-detection tests. ``verify_official_readback`` needs a real LeRobot
 dataset on disk to read back and is exercised at the full-E2E level
-(``make e2e-lerobot``/``make e2e-lerobot-container``) instead; fabricating
+(``make e2e-interop``/``make e2e-lerobot-container``) instead; fabricating
 a deliberately-wrong on-disk LeRobot dataset purely to unit-test its
 mismatch branches was judged lower value than the effort it costs here
 (SceneOps V2 Request 4.3 §7 scope decision).

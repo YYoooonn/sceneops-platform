@@ -5,6 +5,21 @@
 > notes under each row for the specific evidence. "Lower layer touched it"
 > does not earn a `PASS` on its own; each column is judged independently.
 
+> **Naming note (SceneOps V2 E2E surface cleanup, post-dates this matrix):**
+> the generic `make e2e` aggregate referenced below has been removed (not
+> aliased); the scripts it ran were renamed/reorganized (`e2e-dataset-
+> ingestion`→`e2e-scene`, `e2e-raw-log-scene-building`→`e2e-scene-rawlog`,
+> `e2e-episode-building`/`e2e-episode-curation`→demoted to debug/stage
+> targets composed by the new `e2e-robot-learning`, `e2e-detection-
+> evaluation`/`-groundingdino`→merged into `e2e-perception`,
+> `e2e-analytics-export`→`e2e-scene-analytics-export`, `e2e-reliability`→
+> `verify-reliability`, `e2e-airflow-pipeline`→`verify-airflow-backend`,
+> `e2e-api-smoke`→`smoke-api`). The verification evidence below is
+> unchanged and still accurate against the current code; only the command
+> names it refers to have moved. See
+> [local-development.md](./local-development.md)'s "E2E scope" section for
+> the current surface.
+
 ## Legend
 
 | State | Meaning |
@@ -23,7 +38,7 @@
 | Service/API | API-layer test (fake-repository service test, or a live HTTP call against a running stack) |
 | DB/Storage | `make test-integration` — real Postgres/MinIO |
 | Job/Pipeline | A real Job/PipelineRun dispatched against the live worker |
-| Default E2E | One of `make e2e`'s 9 default-stack scripts |
+| Default E2E | One of the default-stack E2E scripts run at the time (`make e2e`'s 9 scripts — that aggregate has since been removed; see the naming note above for where this coverage lives today) |
 | Optional/Real | ROS2 / Airflow / real GroundingDINO inference — optional runtimes |
 | Clean Room | Verified from an empty Postgres/MinIO/Redis state (Stabilization Request 7) |
 | Restart | Verified to survive an app-only restart and/or a full `local-down`/`local-up` cycle (Stabilization Request 8) |
