@@ -1,7 +1,6 @@
-"""Persistent E2E fixture bootstrap (SceneOps V2 Request 3.2C, hardened by
-Request 3.2C.1): materializes the shared E2E fixture catalog
-(scripts/e2e/lib.sh's ``resolve_e2e_fixture`` -- core/interop/raw-log,
-SceneOps V2 Request 3.2B) into real PostgreSQL + MinIO/ArtifactStore, using
+"""Persistent E2E fixture bootstrap: materializes the shared E2E fixture
+catalog (scripts/e2e/lib.sh's ``resolve_e2e_fixture`` -- core/interop/
+raw-log) into real PostgreSQL + MinIO/ArtifactStore, using
 only real SceneOps abstractions (sceneops-db repositories, ArtifactStore,
 AnalyticsTableWriter) -- never raw SQL or direct boto3/MinIO calls.
 
@@ -9,7 +8,7 @@ Lives in scripts/e2e/, not packages/sceneops-analytics/, because this
 module needs sceneops-db (real Postgres repositories) purely to set up
 test/E2E prerequisite state. sceneops-analytics is a production package
 (the columnar analytics export layer); it must not depend on sceneops-db
-just to support E2E bootstrap (SceneOps V2 Request 3.2C.1 §1). Only the
+just to support E2E bootstrap. Only the
 deterministic, DB-free golden-data definitions
 (``sceneops_analytics.testing.interop_dataset``'s
 ``build_interop_entries``/``compute_expected_interop_episodes``, etc.)
@@ -41,12 +40,12 @@ whose production is the behavior under test):
               about *producing* this snapshot is itself under test by any
               current or planned E2E -- future external-adapter/round-trip
               tests read FROM it, so materializing it fully is prerequisite
-              state, not a tested output. Reuses Request 3.2's
+              state, not a tested output. Reuses the
               interop_dataset module for the golden data itself
               (build_interop_entries/compute_expected_interop_episodes) --
               never redefined here.
 
-Create/reuse/verify contract (SceneOps V2 Request 3.2C.1 §2) -- every
+Create/reuse/verify contract -- every
 successful return from ``bootstrap_e2e_fixtures``/``ensure_e2e_fixture``
 means the fixture is actually ready (verified), not merely that a matching
 manifest/DatasetVersion record exists:
@@ -60,7 +59,7 @@ manifest/DatasetVersion record exists:
 ``verify_e2e_fixture`` remains separately callable (e.g. ``--verify-only``)
 to re-check already-bootstrapped state without writing anything.
 
-Partial-write recovery (SceneOps V2 Request 3.2C.1 §3): there is no
+Partial-write recovery: there is no
 transaction spanning the Postgres commit and the MinIO writes for the
 ``interop`` fixture's tables/manifest -- writes to MinIO happen first,
 then one Postgres commit registers all four ArtifactRecords together. A
@@ -121,11 +120,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 FIXTURE_CATALOG_VERSION = "sceneops-e2e-v1"
 FIXTURE_NAMES: tuple[str, ...] = ("core", "interop", "raw-log")
 
-# Mirrors scripts/e2e/lib.sh's resolve_e2e_fixture (SceneOps V2 Request
-# 3.2B). Kept as a separate, documented Python source of truth -- like
-# INTEROP_DATASET_ID/VERSION already were before this request -- rather
-# than parsed out of the shell script; there is no automatic sync between
-# the two, so a change to one must be mirrored in the other by hand.
+# Mirrors scripts/e2e/lib.sh's resolve_e2e_fixture. Kept as a separate,
+# documented Python source of truth rather than parsed out of the shell
+# script; there is no automatic sync between the two, so a change to one
+# must be mirrored in the other by hand.
 #
 # "/data/raw/nuscenes" is the E2E pipelines' own default -- correct from
 # *inside* the api/worker containers, where `./data:/data` is bind-mounted
@@ -153,8 +151,7 @@ class FixtureConflictError(Exception):
     """An existing persisted fixture's content disagrees with what the
     current golden-data definition would produce -- e.g. interop_dataset's
     formulas changed after the fixture was already bootstrapped once. Never
-    auto-resolved; requires a human decision (SceneOps V2 Request 3.2C
-    §5)."""
+    auto-resolved; requires a human decision."""
 
 
 class FixtureVerificationError(Exception):
@@ -162,18 +159,17 @@ class FixtureVerificationError(Exception):
     existing record reused) but its persisted state failed independent
     verification -- a missing MinIO object, a checksum mismatch, a missing
     DatasetVersion row, a missing external source directory, etc. Never
-    auto-repaired (SceneOps V2 Request 3.2C.1 §2/§3): the caller must
+    auto-repaired: the caller must
     `make local-reset` and re-run bootstrap."""
 
 
 @dataclass
 class FixtureBootstrapResult:
-    """Machine-readable result of bootstrapping one E2E fixture (SceneOps
-    V2 Request 3.2C §6). Stable field names for scripting -- future E2Es
-    should consume this, never scrape human-readable logs. Returned only
-    after the fixture has also been independently verified (SceneOps V2
-    Request 3.2C.1 §2) -- a return here always means "ready", never merely
-    "a matching record exists"."""
+    """Machine-readable result of bootstrapping one E2E fixture. Stable
+    field names for scripting -- future E2Es should consume this, never
+    scrape human-readable logs. Returned only after the fixture has also
+    been independently verified -- a return here always means "ready",
+    never merely "a matching record exists"."""
 
     fixture_catalog_version: str
     fixture_name: str
@@ -204,8 +200,7 @@ class FixtureBootstrapResult:
 
 @dataclass
 class FixtureVerificationResult:
-    """Machine-readable result of verifying one E2E fixture (SceneOps V2
-    Request 3.2C §8)."""
+    """Machine-readable result of verifying one E2E fixture."""
 
     fixture_name: str
     ok: bool
@@ -506,7 +501,7 @@ async def _bootstrap_interop(
     ]
     if matching:
         # existing, matching semantic identity -> verify -> success only if
-        # valid (SceneOps V2 Request 3.2C.1 §2). Commit not needed: nothing
+        # valid. Commit not needed: nothing
         # is written on this path.
         record = matching[0]
         verification = await _verify_interop(session, artifact_store=artifact_store)
@@ -649,8 +644,8 @@ async def _bootstrap_interop(
     )
     await session.commit()
 
-    # missing -> create -> verify -> success (SceneOps V2 Request 3.2C.1
-    # §2). Re-reads what was just written through the same independent
+    # missing -> create -> verify -> success. Re-reads what was just
+    # written through the same independent
     # path a standalone `verify_e2e_fixture` call would use -- catches a
     # write that silently didn't persist (e.g. a MinIO write that
     # succeeded locally but the object never became readable) before ever
@@ -696,11 +691,10 @@ async def bootstrap_e2e_fixtures(
     artifact_store: ArtifactStore,
     analytics_root_uri: str,
 ) -> list[FixtureBootstrapResult]:
-    """Idempotently materialize one or all shared E2E fixtures (SceneOps V2
-    Request 3.2C) into real Postgres + ``artifact_store``, following the
-    create/reuse/verify contract documented at module level (SceneOps V2
-    Request 3.2C.1 §2) -- a successful return always means the fixture is
-    verified-ready.
+    """Idempotently materialize one or all shared E2E fixtures into real
+    Postgres + ``artifact_store``, following the create/reuse/verify
+    contract documented at module level -- a successful return always
+    means the fixture is verified-ready.
 
     ``fixture`` is one of ``"all"``/``"core"``/``"interop"``/``"raw-log"``,
     matching ``scripts/e2e/lib.sh``'s ``resolve_e2e_fixture`` catalog
@@ -746,7 +740,7 @@ async def verify_e2e_fixture(
     fixture: str, *, session: AsyncSession, artifact_store: ArtifactStore
 ) -> list[FixtureVerificationResult]:
     """Independently verify one or all shared E2E fixtures already exist
-    and match their frozen definition (SceneOps V2 Request 3.2C §8). Never
+    and match their frozen definition. Never
     writes anything. ``bootstrap_e2e_fixtures`` already runs this
     internally before returning success -- call this separately only to
     re-check existing state without also attempting to create/reuse
@@ -792,12 +786,11 @@ async def ensure_e2e_fixture(
     """Convenience alias for :func:`bootstrap_e2e_fixtures` -- the name an
     E2E workflow calls before its own execution to guarantee known
     prerequisite state exists, without depending on any other E2E having
-    run first (SceneOps V2 Request 3.2C §10). Identical semantics -- both
+    run first. Identical semantics -- both
     names exist because "bootstrap" reads naturally standalone (a CLI
     entry point) and "ensure" reads naturally inline (a one-line guard at
-    the top of another workflow). Per SceneOps V2 Request 3.2C.1 §2,
-    "ensures" now means what it says: the fixture is verified-ready, not
-    merely that a matching record exists."""
+    the top of another workflow). "Ensures" here means what it says: the
+    fixture is verified-ready, not merely that a matching record exists."""
     return await bootstrap_e2e_fixtures(
         fixture,
         session=session,

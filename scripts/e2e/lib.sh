@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 # lib.sh — shared helpers for SceneOps E2E scripts
 
-# ── Default E2E resource identity (SceneOps V2 Request 3.2A) ──────────────────
+# ── Default E2E resource identity ──────────────────────────────────────────────
 #
 # Every E2E workflow that auto-creates a dataset (the caller supplied no
 # DATASET_ID/DATASET_VERSION) must default to an identity that is
 # unambiguously test-owned -- never something a real developer might
-# independently choose for genuine local-dev data. The old "nuscenes"/
-# "v1.0-mini" default was exactly that collision: `make register-nuscenes-
+# independently choose for genuine local-dev data. `make register-nuscenes-
 # dataset` (scripts/fixtures/register_nuscenes_dataset.sh, unrelated to this
 # convention and deliberately left as "nuscenes") registers a real,
-# intentionally-named local fixture under that same identity for manual
-# UI/API exploration, which every E2E script's identical default silently
-# shared/mutated.
+# intentionally-named local fixture for manual UI/API exploration under a
+# separate identity, so it never collides with the test-e2e-* identities
+# below.
 #
 # An explicit DATASET_ID/DATASET_VERSION from the environment always wins;
 # these are only the fallback when the caller supplies neither. This is
@@ -22,13 +21,10 @@
 DEFAULT_E2E_DATASET_PREFIX="${DEFAULT_E2E_DATASET_PREFIX:-test-e2e}"
 DEFAULT_E2E_DATASET_VERSION="${DEFAULT_E2E_DATASET_VERSION:-test-v1}"
 
-# ── E2E fixture catalog: sceneops-e2e-v1 (SceneOps V2 Request 3.2B) ────────────
+# ── E2E fixture catalog: sceneops-e2e-v1 ───────────────────────────────────────
 #
-# Request 3.2A gave each workflow its OWN derived identity
-# ("${DEFAULT_E2E_DATASET_PREFIX}-scene", "-episode", "-raw-log", ...) --
-# workable, but it meant one canonical Dataset/DatasetVersion per workflow
-# even where nothing about the data actually required that. This catalog
-# replaces that per-script derivation with two shared logical fixtures:
+# Two shared logical fixtures cover every E2E workflow, rather than one
+# derived identity per workflow:
 #
 #   core     Scene ingestion, analytics export, detection evaluation,
 #            scenario/episode curation, episode building. Canonical
@@ -44,32 +40,26 @@ DEFAULT_E2E_DATASET_VERSION="${DEFAULT_E2E_DATASET_VERSION:-test-v1}"
 #   interop  External-adapter/interoperability round-trip tests. Canonical
 #            test-e2e-interop/test-v1. Source: the deterministic golden
 #            learning fixture built by
-#            sceneops_analytics.testing.interop_dataset (Request 3.2) --
-#            no shell ingestion path exists for it yet (Python-only today).
+#            sceneops_analytics.testing.interop_dataset -- no shell
+#            ingestion path exists for it yet (Python-only today).
 #
 # raw-log-scene-building deliberately stays its OWN identity, OUTSIDE
 # `core`: it produces non-ground-truth scenes that measurably drag down
 # `core`'s aggregate /quality readiness if they share one DatasetVersion
-# (see makefiles/e2e.mk's comment on e2e-raw-log-scene-building) -- a real,
+# (see makefiles/e2e.mk's comment on e2e-scene-rawlog) -- a real,
 # previously-discovered data-requirement conflict, not an oversight. It
 # still uses this same resolver for consistency.
 #
-# CANONICAL vs. SOURCE identity (Request 3.2B §2): DATASET_ID/
-# DATASET_VERSION below are SceneOps' own canonical identity ONLY -- never
-# constrained by what an external format's SDK happens to require.
-# SOURCE_FORMAT/SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI describe the external
-# nuScenes source separately. This is what closes the identity ambiguity
-# Request 3.2A left open (DATASET_VERSION had to stay "v1.0-mini" there
-# because dataset_scene_ingestion/raw_log_scene_building passed it straight
-# into `nuscenes-devkit`'s `NuScenes(version=..., ...)`); the job handlers
-# now read the `source_format_version` param instead
-# (apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py,
-# datasets/ingestion/nuscenes_raw_log.py) -- Request 3.2B.1 removed the
-# short-lived fallback to dataset_version entirely: source_format_version
-# is required whenever the source format needs one (nuScenes), enforced by
-# IngestScenesJobParams/BuildScenesJobParams at job-creation time, so a
-# caller that omits it fails clearly instead of silently reusing
-# dataset_version.
+# CANONICAL vs. SOURCE identity: DATASET_ID/DATASET_VERSION below are
+# SceneOps' own canonical identity ONLY -- never constrained by what an
+# external format's SDK happens to require. SOURCE_FORMAT/
+# SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI describe the external nuScenes
+# source separately. The job handlers read the `source_format_version`
+# param for this (apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py,
+# datasets/ingestion/nuscenes_raw_log.py) -- it is required whenever the
+# source format needs one (nuScenes), enforced by IngestScenesJobParams/
+# BuildScenesJobParams at job-creation time, so a caller that omits it
+# fails clearly instead of silently reusing dataset_version.
 
 # resolve_e2e_fixture <fixture-name>
 # Sets DATASET_ID/DATASET_VERSION (and, for fixtures with an external
@@ -139,10 +129,8 @@ require_mcap_file() {
 
 # require_service <name> <health_url> [max_attempts=1] [sleep_seconds=1] [hint]
 # Polls <health_url> with `curl -sf` until it responds successfully, or exits
-# with a clear, actionable error. Centralizes what e2e_api_smoke.sh (a
-# polling wait_for_health loop) and e2e_detection_evaluation_groundingdino.sh
-# (a one-shot check) each implemented independently (SceneOps V2 Request
-# 3.2A) -- one call site covers both by varying max_attempts.
+# with a clear, actionable error. One call site covers both a polling wait
+# (max_attempts > 1) and a one-shot readiness check (max_attempts=1).
 require_service() {
   local name="$1"
   local health_url="$2"
@@ -501,10 +489,9 @@ upsert_dataset_version() {
   local api_base_url="$1"
   local dataset_id="$2"
   local version="$3"
-  # raw_source_root_uri is Scene-owned (SceneOps V2 Request 04) — Episode
-  # dataset versions have no use for it (their source is RobotRun.mcap_uri),
-  # so it's optional here. Omit it to create/patch a version with no Scene
-  # raw-source config at all.
+  # raw_source_root_uri is Scene-owned -- Episode dataset versions have no
+  # use for it (their source is RobotRun.mcap_uri), so it's optional here.
+  # Omit it to create/patch a version with no Scene raw-source config at all.
   local raw_source_root_uri="${4:-}"
 
   local existing
@@ -640,11 +627,10 @@ fetch_evaluation_run_metrics() {
 }
 
 # fetch_artifacts_by_owner <api_base_url> <owner_type> <owner_id>
-# Generic GET /artifacts?owner_type=...&owner_id=... fetch -- centralizes
-# what e2e_dataset_scene_ingestion.sh, e2e_analytics_export.sh, and
-# e2e_episode_curation.sh each wrote as an inline curl call (SceneOps V2
-# Request 3.2A). Pair with assert_artifact_kind_present below rather than
-# re-deriving a count with ad hoc jq.
+# Generic GET /artifacts?owner_type=...&owner_id=... fetch, shared by every
+# E2E script that needs to check an owner's registered artifacts. Pair with
+# assert_artifact_kind_present below rather than re-deriving a count with ad
+# hoc jq.
 fetch_artifacts_by_owner() {
   local api_base_url="$1"
   local owner_type="$2"
@@ -670,11 +656,11 @@ assert_artifact_kind_present() {
   fi
 }
 
-# ── Detection-evaluation shared assertions (SceneOps V2 E2E surface cleanup)
+# ── Detection-evaluation shared assertions ─────────────────────────────────────
 #
-# Shared by e2e_perception.sh's mock and grounding_dino BACKEND branches --
-# previously copy-pasted near-verbatim across e2e_detection_evaluation.sh and
-# e2e_detection_evaluation_groundingdino.sh. Backend-specific checks
+# Shared by e2e_perception.sh's mock and grounding_dino BACKEND branches, so
+# the assertion logic exists in exactly one place regardless of backend.
+# Backend-specific checks
 # (lifting-metric counters, warmup/readiness polling) stay in the caller;
 # these cover only the fields every InferenceRunRecord/EvaluationRunRecord/
 # leaderboard entry must have regardless of backend.

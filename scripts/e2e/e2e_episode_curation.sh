@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # e2e_episode_curation.sh
 #
-# E2E test for CURATE_EPISODES (SceneOps V2 Request 2.6):
+# E2E test for CURATE_EPISODES:
 #   ALIGN_EPISODE (x2, two TemporalAlignmentConfig revisions of the SAME
 #   episode) -> PROFILE_ALIGNED_EPISODE/VALIDATE_ALIGNED_EPISODE (x2)
 #     -> EXPORT_LEARNING_DATA (both revisions pinned into one snapshot)
@@ -10,10 +10,9 @@
 #        rejected)
 #
 # Deliberately curates two revisions of ONE episode_id rather than two
-# different episodes — this is the strongest demonstration of Request 2.6
-# §13/§18's "selection is over aligned revisions, not merely episode_id"
-# requirement: same episode_id, two different aligned_artifact_checksums,
-# independently selected/rejected.
+# different episodes -- this is the strongest demonstration that selection
+# is over aligned revisions, not merely episode_id: same episode_id, two
+# different aligned_artifact_checksums, independently selected/rejected.
 #
 # The curation policy's max_overall_missing_ratio threshold is computed at
 # runtime as the midpoint between the two real PROFILE_ALIGNED_EPISODE
@@ -31,17 +30,16 @@
 #
 # Env overrides (DATASET_ID/DATASET_VERSION default from the shared "core"
 # E2E fixture, see scripts/e2e/lib.sh's resolve_e2e_fixture -- merged onto
-# the same fixture e2e_episode_building.sh uses, SceneOps V2 Request 3.2B):
+# the same fixture e2e_episode_building.sh uses):
 #   API_BASE_URL     (default: http://localhost:8000)
 #   DATASET_ID       (default: test-e2e-core)
 #   DATASET_VERSION  (default: test-v1)
 #   EPISODE_ID       explicit episode to curate -- if unset, resolved via a
 #                    real API query scoped to RUN_ID (see below). Never
 #                    reconstructed by reimplementing build_episodes.py's own
-#                    ID-formatting formula in bash (SceneOps V2 E2E surface
-#                    cleanup, item 7B) -- that silently pointed at a
-#                    nonexistent episode with no clear error whenever the
-#                    worker-side formula changed.
+#                    ID-formatting formula in bash -- that silently pointed
+#                    at a nonexistent episode with no clear error whenever
+#                    the worker-side formula changed.
 #   RUN_ID           RobotRun id whose episode(s) to resolve EPISODE_ID from
 #                    when EPISODE_ID is unset (default: run-scene-0061-episodes,
 #                    matching e2e_episode_building.sh's own SCENE=scene-0061
@@ -337,7 +335,7 @@ echo ""
 
 echo "--- 6. Verify persisted manifest content (real MinIO) via decisions ---"
 # No dedicated GET endpoint exposes EpisodeCurationManifest content (no
-# LearningDataset/curation resource API exists per Request 2.6 §12/§17) --
+# LearningDataset/curation resource API exists) --
 # fetch the bytes directly from MinIO (the same s3://sceneops bucket the
 # worker itself just wrote through ArtifactStore) via boto3, to prove the
 # persisted reason codes/decisions match what the job result summarized,

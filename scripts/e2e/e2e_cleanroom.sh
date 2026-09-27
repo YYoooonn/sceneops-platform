@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e_cleanroom.sh (new, SceneOps V2 E2E surface cleanup)
+# e2e_cleanroom.sh
 #
 # The ONLY full-platform acceptance workflow. Proves SceneOps can
 # reconstruct its operational/canonical state from empty application state

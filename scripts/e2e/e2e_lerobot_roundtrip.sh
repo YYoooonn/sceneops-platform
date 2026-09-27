@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e_lerobot_roundtrip.sh (SceneOps V2 Request 3.4)
+# e2e_lerobot_roundtrip.sh
 #
 # Real end-to-end round-trip:
 #
@@ -10,7 +10,7 @@
 #           -> official LeRobot reader
 #           -> golden semantic comparison (sceneops_analytics.testing.interop_dataset)
 #
-# Two Python processes, two venvs, on purpose (SceneOps V2 Request 3.3A's
+# Two Python processes, two venvs, on purpose (tools/lerobot-integration's
 # dependency isolation is frozen, not renegotiated here):
 #
 #   Step 1  scripts/e2e/e2e_lerobot_resolve.py, run from the MAIN workspace

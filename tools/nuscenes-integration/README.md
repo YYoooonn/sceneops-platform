@@ -1,10 +1,8 @@
 # nuScenes integration environment
 
 Isolated, reproducible dependency environment for
-`sceneops_integrations.nuscenes` (SceneOps V2 Request 4.4, isolated into
-this project/container in Request 4.5, HTTP transport in Request 4.6A).
-Serves two INGEST capabilities behind the same `/execute` transport
-(Request 4.6B):
+`sceneops_integrations.nuscenes`. Serves two INGEST capabilities behind the
+same `/execute` HTTP transport:
 
 - `mode=raw_log` -- `BuildScenesJobHandler`'s raw-log ingest, feeding the
   raw-log -> `BUILD_SCENES` segmentation/sampling pipeline.
@@ -12,23 +10,21 @@ Serves two INGEST capabilities behind the same `/execute` transport
   Scene ingest, one `SceneManifest` per real nuScenes scene, including
   ground-truth annotations. This is the repository's only source of
   ground-truth-bearing scenes (consumed by `sceneops_worker.evaluation.
-  detection`/`sceneops_worker.jobs.scenarios`) -- migrated here, not
-  removed, when its formerly in-process `nuscenes-devkit` call was
-  audited (see `sceneops_integrations.nuscenes.scene_ingest`'s own
-  docstring).
+  detection`/`sceneops_worker.jobs.scenarios`) -- see
+  `sceneops_integrations.nuscenes.scene_ingest`'s own docstring.
 
 ## Why this exists
 
 `sceneops-integrations` (a `[tool.uv.workspace]` member) does **not**
-declare `nuscenes-devkit` as a dependency of itself. As of Request 4.6B,
-`apps/worker` no longer depends on `nuscenes-devkit` at all -- both
-nuScenes job handlers (`BuildScenesJobHandler`, `IngestScenesJobHandler`)
-run through this project's HTTP service instead of importing the SDK
-in-process. So unlike `../lerobot-integration` (whose isolation exists to
-dodge lerobot's `numpy>=2` vs. nuscenes-devkit's `numpy<2` pin), isolating
-nuScenes here was never primarily about a version conflict -- it's about
-giving the **container image** a minimal, reproducible, DB/Celery-free
-dependency closure (Request 4.5 §1/§7). Building straight off the root
+declare `nuscenes-devkit` as a dependency of itself. `apps/worker` does not
+depend on `nuscenes-devkit` at all -- both nuScenes job handlers
+(`BuildScenesJobHandler`, `IngestScenesJobHandler`) run through this
+project's HTTP service instead of importing the SDK in-process. So unlike
+`../lerobot-integration` (whose isolation exists to dodge lerobot's
+`numpy>=2` vs. nuscenes-devkit's `numpy<2` pin), isolating nuScenes here
+was never primarily about a version conflict -- it's about giving the
+**container image** a minimal, reproducible, DB/Celery-free dependency
+closure. Building straight off the root
 workspace's `uv.lock` would pull in `sceneops-db`, Celery, `onnxruntime`,
 and everything else `apps/worker` happens to need, none of which this
 runtime may ever depend on.
@@ -62,8 +58,8 @@ make test
 
 ## Notes
 
-- As of Request 4.6B, `nuscenes-devkit` is no longer installed in the
-  *base* workspace venv at all (apps/worker no longer depends on it) --
+- `nuscenes-devkit` is not installed in the *base* workspace venv at all
+  (apps/worker does not depend on it) --
   `packages/sceneops-integrations/tests/test_nuscenes_runtime.py`/
   `test_nuscenes_scene_ingest.py`/`test_nuscenes_service.py` are skipped,
   not failed, there (`pytest.importorskip("nuscenes")`, same convention

@@ -1,5 +1,5 @@
-"""Real MinIO/S3-compatible coverage for SceneOps V2 Request 5.3's
-selective-read path -- confirms the Parquet-range-read mechanism
+"""Real MinIO/S3-compatible coverage for the selective-read path --
+confirms the Parquet-range-read mechanism
 (``ArtifactStore.read_range`` -> lazy PyArrow file-like -> row-group
 fetch) works against a real S3-compatible backend, not only
 ``LocalArtifactStore``. Complements ``packages/sceneops-storage/tests/

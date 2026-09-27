@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e_perception.sh (new, SceneOps V2 E2E surface cleanup -- merges
+# e2e_perception.sh (merges
 # e2e_detection_evaluation.sh and e2e_detection_evaluation_groundingdino.sh)
 #
 # The canonical perception-domain E2E, composing:

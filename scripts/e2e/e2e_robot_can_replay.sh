@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # e2e_robot_can_replay.sh
 #
-# E2E test for the full roadmap Phase 4 (ROS2 Robot Data Source) chain:
+# E2E test for the real ROS2 robot-data-source chain:
 #   nuScenes CAN bus data -> ros2/nodes/can_replay_node.py (real rclpy
 #   publisher, run inside the ros2 Docker sandbox) -> `ros2 bag record
 #   --storage mcap` -> ingest_robot_states job (RosbagAdapter ->
@@ -45,7 +45,7 @@ MCAP_URI="${BAG_DIR}/${SCENE}_0.mcap"
 
 COMPOSE="docker compose -f $REPO_ROOT/compose.yaml"
 
-echo "=== robot_can_replay (Phase 4) E2E ==="
+echo "=== robot_can_replay E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  SCENE=$SCENE  RATE=$RATE  ROBOT_ID=$ROBOT_ID  RUN_ID=$RUN_ID"
 echo ""

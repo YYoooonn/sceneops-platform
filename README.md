@@ -275,11 +275,9 @@ make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>
 
 `e2e-perception` runs scenario curation internally and hands its `scenario_set_id`
 off automatically — no separate `make e2e-scenario-curation` step or
-`SCENARIO_SET_ID`/`SCENARIO_CURATION_PIPELINE_RUN_ID` variable to manage (that
-manual two-command flow, and the `PIPELINE_RUN_ID` alias it used, were removed
-in the SceneOps V2 E2E surface cleanup). Use the standalone
-`make e2e-scenario-curation` debug target only if you want to inspect scenario
-mining in isolation, without also running detection.
+`SCENARIO_SET_ID`/`SCENARIO_CURATION_PIPELINE_RUN_ID` variable to manage. Use
+the standalone `make e2e-scenario-curation` debug target only if you want to
+inspect scenario mining in isolation, without also running detection.
 
 > `PIPELINE_RUN_ID` in `compare-detection` is the detection-evaluation pipeline run ID.
 
@@ -666,7 +664,7 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | ------------------ | ----------------------------------------------------- |
 | `make local-up`    | Idempotent bootstrap: infra → health → MinIO buckets → migrate → API + workers |
 | `make local-down`  | Stop services, **preserve** Postgres/Redis/MinIO data  |
-| `make local-reset` | **Destructive** — wipe all local data, rebuild clean   |
+| `make local-reset` | **Destructive** — wipe all local Postgres/Redis/MinIO data, bring up a fresh stack from the same images (no rebuild — run `make compose-build` first if source changed) |
 | `make status` / `make logs` | Service status / follow logs                 |
 | `make db-migrate`  | Run Alembic upgrade head (also run by `local-up`)      |
 
@@ -684,12 +682,11 @@ See [`docs/development/local-development.md`](docs/development/local-development
 
 ### E2E
 
-The generic `make e2e` aggregate has been removed (SceneOps V2 E2E surface
-cleanup) — Scene/robot-learning/perception/interop have materially different
-infrastructure requirements (default stack / ROS2 sandbox / inference service
-/ isolated LeRobot venv respectively), so one aggregate hid which of those a
-failure actually needed. `make e2e-cleanroom` is now the only full-platform
-acceptance entry point; see
+There is no bare `make e2e` aggregate — Scene/robot-learning/perception/
+interop have materially different infrastructure requirements (default stack
+/ ROS2 sandbox / inference service / isolated LeRobot venv respectively), so
+one aggregate would hide which of those a failure actually needed.
+`make e2e-cleanroom` is the only full-platform acceptance entry point; see
 [docs/development/local-development.md](docs/development/local-development.md)
 for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 

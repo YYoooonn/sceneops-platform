@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# e2e_scene_analytics_export.sh (renamed from e2e_analytics_export.sh,
-# SceneOps V2 E2E surface cleanup -- renamed to disambiguate from Phase 5's
-# EXPORT_LEARNING_DATA job. This is a Scene-domain analytical Parquet
-# export (scenes/samples/sensor_frames/annotations); it has nothing to do
-# with the episode/learning-data sharded-Parquet architecture exercised by
-# e2e_robot_learning.sh. Those two concepts are deliberately not merged.)
+# e2e_scene_analytics_export.sh -- a Scene-domain analytical Parquet export
+# (scenes/samples/sensor_frames/annotations); it has nothing to do with the
+# episode/learning-data sharded-Parquet architecture exercised by
+# e2e_robot_learning.sh (the EXPORT_LEARNING_DATA job). Those two concepts
+# are deliberately not merged.
 #
 # E2E test for the export_analytics_snapshot job (Parquet analytical layer):
 #   1. Run dataset_scene_ingestion to ensure registered scenes exist.

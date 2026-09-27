@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# smoke_nuscenes_container.sh (SceneOps V2 Request 4.5)
+# smoke_nuscenes_container.sh
 #
 # Minimal container-level smoke test for the nuScenes integration container
 # (tools/nuscenes-integration/Dockerfile): build image -> start container ->
 # parse a real IntegrationRequest -> read a real local nuScenes dataroot via
 # real nuscenes-devkit -> write raw-log artifacts to a real MinIO
 # ArtifactStore -> return a valid IntegrationResult. Mirrors
-# scripts/e2e/smoke_lerobot_container.sh's own structure (Request 4.2 §7).
+# scripts/e2e/smoke_lerobot_container.sh's own structure.
 #
 # Two processes:
 #
@@ -22,8 +22,8 @@
 #           nuScenes dataroot (mounted read-only), --raw-log-id/
 #           --manifest-uri/--frame-index-uri (the destination URIs, which
 #           this script -- not the container -- computes, exactly like
-#           ObservationArtifactStore's own layout policy: Request 4.5's own
-#           entrypoint.py docstring), and SCENEOPS_INTEGRATION_ARTIFACT__*
+#           ObservationArtifactStore's own layout policy, per entrypoint.py's
+#           own docstring), and SCENEOPS_INTEGRATION_ARTIFACT__*
 #           env vars, it independently runs nuscenes-devkit and writes the
 #           two raw-log artifacts -- never touching Postgres or
 #           sceneops-db (the image has neither installed).
@@ -101,12 +101,13 @@ echo "--- 2. Run the container (isolated nuScenes image, no DB access) ---"
 # never a hardcoded backend inside the entrypoint. MinIO is simply what
 # this smoke test's local stack provides.
 #
-# SceneOps V2 Request 4.6A: this image's default command now starts the
-# HTTP service (sceneops_integrations.nuscenes.service, what the worker
-# calls in production, compose/integrations.yaml). This smoke test
-# deliberately still exercises the CLI entrypoint instead (Request 4.6A
-# §5 -- "do not delete the existing container CLI entrypoint or container
-# smoke paths") by overriding the container's command.
+# This image's default command starts the HTTP service
+# (sceneops_integrations.nuscenes.service, what the worker calls in
+# production, compose/integrations.yaml). This smoke test deliberately
+# still exercises the CLI entrypoint instead -- the container CLI
+# entrypoint and its own smoke coverage are kept intact regardless of what
+# the image's default command starts -- by overriding the container's
+# command.
 docker run --rm \
   --network "$NUSCENES_CONTAINER_NETWORK" \
   -e SCENEOPS_INTEGRATION_ARTIFACT__BACKEND="minio" \

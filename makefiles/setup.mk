@@ -30,13 +30,12 @@ check:
 .PHONY: test
 # All infrastructure-independent automated tests — no Postgres/MinIO/network/
 # GPU/model weights required. apps/inference-server/tests is included: every
-# test there mocks GroundingDinoModel/ImageResolver (confirmed during
-# Stabilization Request 4's audit — there is currently no runtime/model-
-# dependent pytest suite; that path is exercised only by
-# e2e-detection-evaluation-groundingdino). scripts/e2e/tests/
+# test there mocks GroundingDinoModel/ImageResolver -- there is no runtime/
+# model-dependent pytest suite; that path is only exercised by
+# `make e2e-perception BACKEND=grounding_dino`. scripts/e2e/tests/
 # test_e2e_fixture_bootstrap.py is the E2E fixture bootstrap's own unit
-# suite (SceneOps V2 Request 3.2C.1) — Postgres is faked in-memory there,
-# so it belongs in the fast tier alongside everything else.
+# suite — Postgres is faked in-memory there, so it belongs in the fast tier
+# alongside everything else.
 test:
 	uv run pytest apps/worker/tests/ apps/api/tests/ apps/inference-server/tests/ packages/sceneops-analytics/tests/ packages/sceneops-core/tests/ packages/sceneops-integrations/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap.py -v
 
@@ -49,17 +48,15 @@ test:
 # integration.py/test_pipeline_contracts_integration.py are never included
 # in `make test`'s testpaths, so directory/file separation alone is enough
 # (see docs/development/local-development.md). test_e2e_fixture_bootstrap_
-# integration.py additionally persists the shared E2E fixture catalog
-# (SceneOps V2 Request 3.2C) — E2E_BOOTSTRAP_SOURCE_ROOT_URI points its
-# nuScenes-source check at the host filesystem path, mirroring `make
-# e2e-bootstrap`'s own override. test_selective_reads_minio_integration.py
-# (SceneOps V2 Request 5.3) needs only MinIO, not Postgres/nuScenes, but
-# runs here for the same "real infra, not the fast tier" reason.
-# test_pipeline_contracts_integration.py (SceneOps V2 E2E surface cleanup --
-# moved out of the former e2e-pipeline-contracts shell script) is the one
-# test here that talks to the live `api` HTTP service rather than a direct
-# DB/MinIO client -- `make local-up` already starts `api`, so this adds no
-# new infrastructure requirement beyond what this target already documents.
+# integration.py additionally persists the shared E2E fixture catalog --
+# E2E_BOOTSTRAP_SOURCE_ROOT_URI points its nuScenes-source check at the host
+# filesystem path, mirroring `make e2e-bootstrap`'s own override.
+# test_selective_reads_minio_integration.py needs only MinIO, not
+# Postgres/nuScenes, but runs here for the same "real infra, not the fast
+# tier" reason. test_pipeline_contracts_integration.py is the one test here
+# that talks to the live `api` HTTP service rather than a direct DB/MinIO
+# client -- `make local-up` already starts `api`, so this adds no new
+# infrastructure requirement beyond what this target already documents.
 test-integration:
 	SCENEOPS_DATABASE_URL="postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$${POSTGRES_PORT:-5432}/$(POSTGRES_DB)" \
 	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \

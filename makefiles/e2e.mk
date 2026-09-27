@@ -8,8 +8,7 @@ register-nuscenes-dataset:
 	API_PREFIX=$(API_PREFIX) scripts/fixtures/register_nuscenes_dataset.sh
 
 # --------------------
-# Persistent E2E fixture bootstrap (SceneOps V2 Request 3.2C, hardened by
-# Request 3.2C.1)
+# Persistent E2E fixture bootstrap
 #
 # Materializes the shared E2E fixture catalog (core/interop/raw-log --
 # scripts/e2e/lib.sh's resolve_e2e_fixture, mirrored in Python by
@@ -17,9 +16,9 @@ register-nuscenes-dataset:
 # `make local-up` already started, so future E2Es can start from known
 # fixture state instead of recreating ad-hoc datasets independently.
 # Idempotent -- safe to re-run; bootstrap itself always verifies before
-# reporting success (create/reuse/verify contract, SceneOps V2 Request
-# 3.2C.1 §2), and --verify additionally re-checks that state independently
-# afterward (for interop: through a real SceneOpsDataset).
+# reporting success (create/reuse/verify contract), and --verify
+# additionally re-checks that state independently afterward (for interop:
+# through a real SceneOpsDataset).
 #
 # Connects from the HOST, like `make test-integration` -- overrides
 # SCENEOPS_DATABASE_URL/MINIO_ENDPOINT_URL to their localhost forms rather
@@ -27,11 +26,10 @@ register-nuscenes-dataset:
 #
 # Common infra config (all fixtures) vs. source-specific config (only
 # fixtures whose verification actually reads an external source fixture
-# from disk -- SceneOps V2 Request 3.2C.1 §4) are kept in separate
-# variables: interop's bootstrap/verification never touches the nuScenes
-# source path, only core/raw-log's does.
-# E2E_BOOTSTRAP_SOURCE_ROOT_URI overrides that nuScenes source check to the
-# host filesystem path -- the pipelines' own in-container default
+# from disk) are kept in separate variables: interop's bootstrap/
+# verification never touches the nuScenes source path, only core/raw-log's
+# does. E2E_BOOTSTRAP_SOURCE_ROOT_URI overrides that nuScenes source check
+# to the host filesystem path -- the pipelines' own in-container default
 # ("/data/raw/nuscenes") only resolves inside api/worker, where
 # ./data:/data is bind-mounted; from the host it's $(CURDIR)/data/raw/nuscenes.
 # --------------------
@@ -63,7 +61,7 @@ e2e-bootstrap-raw-log:
 	$(E2E_BOOTSTRAP_ENV) $(E2E_BOOTSTRAP_NUSCENES_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture raw-log --verify
 
 # ============================================================================
-# E2E Workflows -- primary surface (SceneOps V2 E2E surface cleanup)
+# E2E Workflows -- primary surface
 #
 # Each target below is a meaningful domain workflow from a real source
 # through multiple production boundaries to a real persisted result --
@@ -71,22 +69,21 @@ e2e-bootstrap-raw-log:
 # properties, backend-substitution PoCs) live under smoke-*/verify-*/
 # test-integration instead (further down this file).
 #
-# `make e2e` (the old "run all default-stack scripts" aggregate) has been
-# REMOVED, not aliased -- Scene/robot-learning/perception/interop have
-# materially different infrastructure requirements (default stack / ROS2
-# sandbox / inference service / isolated LeRobot venv respectively), and a
-# single aggregate hid which of those a failure actually needed. The only
-# full-platform acceptance entry point is now `make e2e-cleanroom`, which
-# is explicit about what it runs and in what order.
+# There is no bare `make e2e` aggregate -- Scene/robot-learning/perception/
+# interop have materially different infrastructure requirements (default
+# stack / ROS2 sandbox / inference service / isolated LeRobot venv
+# respectively), and a single aggregate would hide which of those a failure
+# actually needed. The only full-platform acceptance entry point is
+# `make e2e-cleanroom`, which is explicit about what it runs and in what
+# order.
 # ============================================================================
 
 .PHONY: e2e-scene
 # The canonical Scene-domain E2E: real nuScenes -> Integration Runtime ->
 # Scene ingestion -> SceneRecord -> validation -> profile -> scene index ->
-# DatasetManifest. Renamed + merged from e2e-dataset-ingestion (folds in the
-# domain-relevant assertions formerly split into e2e-pipeline-contracts --
-# see scripts/e2e/e2e_scene.sh's own header). MAX_SCENES bounds how many
-# nuScenes scenes get ingested (default: 2, see the script).
+# DatasetManifest (see scripts/e2e/e2e_scene.sh's own header for the full
+# assertion set). MAX_SCENES bounds how many nuScenes scenes get ingested
+# (default: 10, see the script).
 e2e-scene:
 	chmod +x scripts/e2e/e2e_scene.sh
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
@@ -96,12 +93,11 @@ e2e-scene:
 .PHONY: e2e-robot-learning
 # The canonical robot-learning-domain E2E: real nuScenes CAN bus -> ROS2
 # replay -> rosbag2/MCAP -> RosbagAdapter -> RobotRun -> Episode -> temporal
-# alignment -> profile/validation -> EXPORT_LEARNING_DATA (Phase 5
-# v2-sharded write path) -> episode curation. Composes the same real
-# CAN->ROS2->MCAP->RosbagAdapter path e2e-robot-can-replay/e2e-episode-
-# building/e2e-episode-curation exercise piecemeal (see "Debug / Stage"
-# below), with the two hidden cross-script dependencies those had when run
-# by hand fixed (see scripts/e2e/e2e_robot_learning.sh's own header).
+# alignment -> profile/validation -> EXPORT_LEARNING_DATA (v2-sharded write
+# path) -> episode curation. Composes the same real CAN->ROS2->MCAP->
+# RosbagAdapter path e2e-robot-can-replay/e2e-episode-building/e2e-episode-
+# curation exercise piecemeal (see "Debug / Stage" below); see
+# scripts/e2e/e2e_robot_learning.sh's own header for the full assertion set.
 #
 # Selection: SCENE=<name> runs exactly that one scene; MAX_SCENES=<N>
 # selects the first N real, CAN-bus-eligible nuScenes v1.0-mini scenes
@@ -121,13 +117,12 @@ e2e-robot-learning:
 .PHONY: e2e-perception
 # The canonical perception-domain E2E: scenario curation -> scenario
 # selection -> prediction -> evaluation -> persisted metrics/lineage.
-# Merges the former e2e-detection-evaluation (mock)/e2e-detection-
-# evaluation-groundingdino scripts into one, with scenario curation always
-# composed in (no manual SCENARIO_SET_ID/PIPELINE_RUN_ID hand-off needed --
-# see scripts/e2e/e2e_perception.sh's own header). BACKEND=mock (default)
-# needs nothing beyond local-up; BACKEND=grounding_dino requires a real
-# inference server already running (make inference-local-up/-gpu-up).
-# Requires e2e-scene to have already run for DATASET_ID/DATASET_VERSION.
+# Scenario curation is always composed in (no manual SCENARIO_SET_ID/
+# PIPELINE_RUN_ID hand-off needed -- see scripts/e2e/e2e_perception.sh's own
+# header). BACKEND=mock (default) needs nothing beyond local-up;
+# BACKEND=grounding_dino requires a real inference server already running
+# (make inference-local-up/-gpu-up). Requires e2e-scene to have already run
+# for DATASET_ID/DATASET_VERSION.
 e2e-perception:
 	chmod +x scripts/e2e/e2e_perception.sh
 	API_BASE_URL=$(API_BASE_URL) \
@@ -138,15 +133,15 @@ e2e-perception:
 	scripts/e2e/e2e_perception.sh
 
 .PHONY: e2e-cleanroom
-# THE full-platform acceptance workflow (SceneOps V2 E2E surface cleanup) --
-# the only place a fresh clone/environment should start from. DESTRUCTIVE:
-# runs `make local-reset` first (wipes Postgres/Redis/MinIO, PRESERVES
-# data/raw/nuscenes and the CAN bus expansion), then e2e-scene ->
-# e2e-robot-learning -> e2e-perception(BACKEND=mock) -> a final query of
-# real persisted API state. Does not require GPU, a real inference server,
-# Airflow, or the isolated LeRobot venv -- see scripts/e2e/e2e_cleanroom.sh's
-# own header for the optional follow-up verification commands.
-# Requires interactive confirmation (same as local-reset) unless FORCE=1.
+# THE full-platform acceptance workflow -- the only place a fresh clone/
+# environment should start from. DESTRUCTIVE: runs `make local-reset` first
+# (wipes Postgres/Redis/MinIO, PRESERVES data/raw/nuscenes and the CAN bus
+# expansion), then e2e-scene -> e2e-robot-learning ->
+# e2e-perception(BACKEND=mock) -> a final query of real persisted API
+# state. Does not require GPU, a real inference server, Airflow, or the
+# isolated LeRobot venv -- see scripts/e2e/e2e_cleanroom.sh's own header for
+# the optional follow-up verification commands. Requires interactive
+# confirmation (same as local-reset) unless FORCE=1.
 e2e-cleanroom:
 	chmod +x scripts/e2e/e2e_cleanroom.sh
 	API_BASE_URL=$(API_BASE_URL) \
@@ -159,13 +154,12 @@ e2e-cleanroom:
 # --------------------
 
 .PHONY: e2e-scene-rawlog
-# Real nuScenes data via the RAW-LOG representation -- NOT synthetic data
-# (see scripts/e2e/e2e_scene_rawlog.sh's own header for the "mock" naming
-# history). Uniquely exercises BuildScenesJobHandler's generic
-# RawLogAdapter segmentation/sampling machinery, the SAME machinery
-# RosbagAdapter (e2e-robot-learning) depends on -- not redundant with it,
-# two different RawLogAdapter implementations of the same Protocol.
-# Deliberately isolated from "core"'s own DatasetVersion (see the script).
+# Real nuScenes data via the RAW-LOG representation -- not synthetic data.
+# Uniquely exercises BuildScenesJobHandler's generic RawLogAdapter
+# segmentation/sampling machinery, the SAME machinery RosbagAdapter
+# (e2e-robot-learning) depends on -- not redundant with it, two different
+# RawLogAdapter implementations of the same Protocol. Deliberately isolated
+# from "core"'s own DatasetVersion (see the script).
 e2e-scene-rawlog:
 	chmod +x scripts/e2e/e2e_scene_rawlog.sh
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
@@ -174,9 +168,8 @@ e2e-scene-rawlog:
 
 .PHONY: e2e-scene-analytics-export
 # Scene-domain analytical Parquet export (scenes/samples/sensor_frames/
-# annotations) -- renamed from e2e-analytics-export to disambiguate from
-# Phase 5's EXPORT_LEARNING_DATA (exercised by e2e-robot-learning). These
-# are deliberately different concepts, not merged.
+# annotations) -- a deliberately different concept from EXPORT_LEARNING_DATA
+# (exercised by e2e-robot-learning), not merged with it.
 e2e-scene-analytics-export:
 	chmod +x scripts/e2e/e2e_scene_analytics_export.sh
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
@@ -186,26 +179,23 @@ e2e-scene-analytics-export:
 
 # ============================================================================
 # Smoke -- transport/liveness checks only. STRICT RULE: a smoke-* target
-# must never create or leave behind persistent application-domain data
-# (SceneOps V2 E2E surface cleanup, item 9).
+# must never create or leave behind persistent application-domain data.
 # ============================================================================
 
 .PHONY: smoke-api
-# Renamed from e2e-api-smoke -- read-only API liveness/transport check. The
-# former version created a real Dataset/DatasetVersion/Model/PipelineRun on
-# every run, none of it ever cleaned up; removed (see scripts/e2e/
-# smoke_api.sh's own header for the zero-seed-data rationale, item 12).
+# Read-only API liveness/transport check -- creates no persistent
+# Dataset/DatasetVersion/Model/PipelineRun (see scripts/e2e/smoke_api.sh's
+# own header for the zero-seed-data rationale).
 smoke-api:
 	chmod +x scripts/e2e/smoke_api.sh
 	API_BASE_URL=$(API_BASE_URL) scripts/e2e/smoke_api.sh
 
-# smoke-nuscenes-container lives in makefiles/nuscenes.mk (renamed there
-# from nuscenes-container-smoke -- isolates "does the nuscenes-integration
-# container itself execute its IntegrationRequest -> IntegrationResult
-# contract" from "does the whole pipeline work", which e2e-scene already
-# covers through the running service).
-# smoke-lerobot-container lives in makefiles/lerobot.mk (renamed from
-# lerobot-container-smoke, same reasoning as smoke-nuscenes-container).
+# smoke-nuscenes-container lives in makefiles/nuscenes.mk -- isolates "does
+# the nuscenes-integration container itself execute its IntegrationRequest
+# -> IntegrationResult contract" from "does the whole pipeline work", which
+# e2e-scene already covers through the running service.
+# smoke-lerobot-container lives in makefiles/lerobot.mk (same reasoning as
+# smoke-nuscenes-container).
 
 # ============================================================================
 # Verification -- execution-model properties / alternate-orchestrator
@@ -214,9 +204,9 @@ smoke-api:
 # ============================================================================
 
 .PHONY: verify-reliability
-# Renamed from e2e-reliability -- verifies Phase 2 reliability primitives
-# (execution-key dedup/force, pipeline partial-retry-after-BLOCKED), an
-# execution-model property, not a domain workflow.
+# Verifies reliability primitives (execution-key dedup/force, pipeline
+# partial-retry-after-BLOCKED) -- an execution-model property, not a domain
+# workflow.
 verify-reliability:
 	chmod +x scripts/e2e/verify_reliability.sh
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
@@ -224,11 +214,11 @@ verify-reliability:
 	scripts/e2e/verify_reliability.sh
 
 .PHONY: verify-airflow-backend
-# Renamed from e2e-airflow-pipeline -- an ALTERNATE-ORCHESTRATOR
-# COMPATIBILITY CHECK, not a general pipeline-backend substitution: the
-# Airflow backend is currently a PoC hardcoded to dataset_scene_ingestion
-# only (see docs/development/test-matrix.md), so this name is deliberately
-# narrower than "e2e-scene BACKEND=airflow" would imply.
+# An ALTERNATE-ORCHESTRATOR COMPATIBILITY CHECK, not a general
+# pipeline-backend substitution: the Airflow backend is currently a PoC
+# hardcoded to dataset_scene_ingestion only (see
+# docs/development/test-matrix.md), so this name is deliberately narrower
+# than "e2e-scene BACKEND=airflow" would imply.
 # Requires: make airflow-up, AND the api service restarted with
 # SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow (see the script's own
 # header comment -- this is a process-startup setting, not automatable here).
@@ -240,16 +230,16 @@ verify-airflow-backend:
 
 # ============================================================================
 # Debug / Stage commands -- individual pipeline stages, kept runnable for
-# manual debugging (SceneOps V2 E2E surface cleanup, item 10). NOT presented
-# as primary E2E workflows in `make help`'s main E2E Workflows section --
-# use e2e-robot-learning/e2e-perception for the composed, primary path.
+# manual debugging. NOT presented as primary E2E workflows in `make help`'s
+# main E2E Workflows section -- use e2e-robot-learning/e2e-perception for
+# the composed, primary path.
 # ============================================================================
 
 .PHONY: e2e-robot-can-replay
 # One real CAN replay -> record -> register -> ingest_robot_states
-# (RobotState/Mission telemetry, Phase 4) for a single scene. Standalone
-# stage of the real CAN->ROS2->MCAP chain e2e-robot-learning composes --
-# kept for debugging the replay/record/telemetry-ingest step in isolation.
+# (RobotState/Mission telemetry) for a single scene. Standalone stage of
+# the real CAN->ROS2->MCAP chain e2e-robot-learning composes -- kept for
+# debugging the replay/record/telemetry-ingest step in isolation.
 e2e-robot-can-replay:
 	chmod +x scripts/e2e/e2e_robot_can_replay.sh
 	API_BASE_URL=$(API_BASE_URL) \

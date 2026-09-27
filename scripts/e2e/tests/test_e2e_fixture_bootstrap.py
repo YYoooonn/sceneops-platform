@@ -1,6 +1,6 @@
-"""Tests for scripts/e2e/e2e_fixture_bootstrap.py (SceneOps V2 Request
-3.2C, hardened by Request 3.2C.1): idempotent create/reuse/verify decision
-logic for the shared E2E fixture catalog (core/interop/raw-log).
+"""Tests for scripts/e2e/e2e_fixture_bootstrap.py: idempotent
+create/reuse/verify decision logic for the shared E2E fixture catalog
+(core/interop/raw-log).
 
 Postgres repositories are faked here with small in-memory stand-ins (unit
 -level, no real DB needed) -- the interop fixture's actual Parquet/manifest
@@ -10,9 +10,8 @@ AnalyticsTableWriter/SceneOpsDataset path for real). A separate live-infra
 test (test_e2e_fixture_bootstrap_integration.py, `make test-integration`)
 covers the real-Postgres round trip.
 
-Fakes over MagicMock-based repo patching (Request 3.2C's original
-approach) because Request 3.2C.1 §2 requires ``bootstrap_e2e_fixtures`` to
-call verification *within the same call* that created or matched a
+Fakes over MagicMock-based repo patching because ``bootstrap_e2e_fixtures``
+must call verification *within the same call* that created or matched a
 fixture -- verification re-reads the DatasetVersion/ArtifactRecord state
 through the exact same repository, so the fake must actually behave like
 a small persistent store across the ensure-then-verify sequence, not just
@@ -322,8 +321,7 @@ async def test_bootstrap_interop_creates_and_verifies_when_missing(tmp_path):
 
 async def test_bootstrap_interop_does_not_require_nuscenes_source_path(tmp_path):
     """Interop's create+verify path must never touch CORE_SOURCE_ROOT_URI --
-    only core/raw-log's DatasetVersion verification does (SceneOps V2
-    Request 3.2C.1 §7)."""
+    only core/raw-log's DatasetVersion verification does."""
     artifact_store = LocalArtifactStore(root_uri=str(tmp_path / "storage"))
     p1, p2, p3, _stores = _fake_repos()
 

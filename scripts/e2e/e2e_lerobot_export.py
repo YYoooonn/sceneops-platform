@@ -1,15 +1,14 @@
 #!/usr/bin/env python
-"""LeRobot round-trip E2E, Step 2 (SceneOps V2 Request 3.4): open the real
+"""LeRobot round-trip E2E, Step 2: open the real
 persistent "interop" SceneOpsDataset (resolved by
 scripts/e2e/e2e_lerobot_resolve.py, Step 1), export it through
 LeRobotDatasetAdapter, reopen the result with LeRobot's own official
 reader, and compare every claim (structure, features, task, FPS/timestamps,
 episode revisions, semantic-loss classification) against the frozen
-Request 3.2 golden expectations
-(sceneops_analytics.testing.interop_dataset).
+golden expectations (sceneops_analytics.testing.interop_dataset).
 
-Runs ONLY inside tools/lerobot-integration's isolated venv (SceneOps V2
-Request 3.3A) -- this is the reason Step 1/Step 2 are two separate
+Runs ONLY inside tools/lerobot-integration's isolated venv -- this is the
+reason Step 1/Step 2 are two separate
 scripts/processes: this one imports ``lerobot`` and
 ``sceneops_analytics.external_adapters.lerobot``, neither available (nor
 wanted) in the main workspace venv, and deliberately never imports
@@ -21,7 +20,7 @@ independently re-fetches+re-verifies the manifest bytes itself via a real
 ``S3ArtifactStore`` pointed at the same MinIO -- this script never receives
 a parsed manifest object or a LocalArtifactStore fixture from Step 1, only
 those two strings, so the entire "open a real, persistent SceneOpsDataset"
-path (SceneOps V2 Request 3.4 §2) genuinely happens through real
+path genuinely happens through real
 infrastructure in this process, not something Step 1 did on its behalf.
 
 Usage (always from within tools/lerobot-integration/, see
@@ -32,7 +31,7 @@ scripts/e2e/e2e_lerobot_roundtrip.sh):
 Env overrides -- identical to scripts/e2e/e2e_lerobot_resolve.py:
     MINIO_ENDPOINT_URL, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, MINIO_BUCKET
 
-Output location (SceneOps V2 Request 3.4 §3): <repo_root>/data/runs/
+Output location: <repo_root>/data/runs/
 e2e-lerobot/<repo-id>/ -- data/ is entirely gitignored and already the
 platform's convention for disposable run output (makefiles/cleanup.mk's
 ``clean-artifacts``). This script owns that one exact directory: it is
@@ -43,9 +42,9 @@ registered as a SceneOps Dataset/DatasetVersion, never gets an
 ArtifactRecord, and no production DB entity is created for it.
 
 The golden verification itself (``verify_export_report``/
-``verify_official_readback``, Request 3.4 §4-§7/§11) lives in
+``verify_official_readback``) lives in
 ``scripts/e2e/lerobot_roundtrip_golden.py`` -- shared unchanged with
-``scripts/e2e/e2e_lerobot_container_verify.py`` (SceneOps V2 Request 4.3),
+``scripts/e2e/e2e_lerobot_container_verify.py``,
 which checks an ``IntegrationResult`` the LeRobot integration container
 produced against the exact same expectations, never a second copy of them.
 """
@@ -103,8 +102,8 @@ def _build_artifact_store() -> S3ArtifactStore:
 async def _open_persistent_interop_dataset(
     *, manifest_uri: str, manifest_checksum: str, artifact_store: S3ArtifactStore
 ) -> SceneOpsDataset:
-    """SceneOps V2 Request 3.4 §2: open the real, persistent SceneOpsDataset
-    through the normal SceneOpsDataset.open() path -- never a
+    """Open the real, persistent SceneOpsDataset through the normal
+    SceneOpsDataset.open() path -- never a
     LocalArtifactStore/in-memory fixture. ``manifest_uri``/
     ``manifest_checksum`` are exactly what Step 1
     (e2e_lerobot_resolve.py, running in the main workspace venv with real
@@ -143,7 +142,7 @@ async def _run(args: argparse.Namespace) -> int:
     print(
         f"--- 2. Export via LeRobotDatasetAdapter -> {export_root} ---", file=sys.stderr
     )
-    # Cleanup rule (SceneOps V2 Request 3.4 §3): only this one known
+    # Cleanup rule: only this one known
     # test-owned directory is ever removed, and only at the start of a run
     # (LeRobotDataset.create() requires the target not already exist).
     shutil.rmtree(export_root, ignore_errors=True)

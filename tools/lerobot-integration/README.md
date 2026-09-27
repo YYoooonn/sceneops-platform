@@ -1,8 +1,7 @@
 # LeRobot integration environment
 
 Isolated, reproducible dependency environment for
-`sceneops_analytics.external_adapters.lerobot` (SceneOps V2 Request 3.3,
-dependency-isolated in Request 3.3A).
+`sceneops_analytics.external_adapters.lerobot`.
 
 ## Why this exists
 

@@ -1,18 +1,17 @@
 #!/usr/bin/env python
 """Build a real IntegrationRequest JSON for the nuScenes integration
-container's smoke test (SceneOps V2 Request 4.5) -- Step 1 of
+container's smoke test -- Step 1 of
 scripts/e2e/smoke_nuscenes_container.sh.
 
 Unlike scripts/e2e/lerobot_container_build_request.py (an EXPORT, which
 must resolve an already-registered canonical artifact via sceneops-db
 before it can build a request), a nuScenes INGEST request names no
-pre-existing canonical artifact at all -- canonical_ref is bare identity
-(SceneOps V2 Request 4.1A), and canonical_inputs is legitimately empty for
-this format today. So this script needs no DB session, no sceneops-db
-import, and no async fixture resolution: it just prints one
-IntegrationRequest (sceneops_core.integration_runtime, Request 4.1/4.1A) as
-JSON to stdout, exactly like the container itself expects via
---request-file.
+pre-existing canonical artifact at all -- canonical_ref is bare identity,
+and canonical_inputs is legitimately empty for this format today. So this
+script needs no DB session, no sceneops-db import, and no async fixture
+resolution: it just prints one IntegrationRequest
+(sceneops_core.integration_runtime) as JSON to stdout, exactly like the
+container itself expects via --request-file.
 
 Usage:
     uv run python scripts/e2e/nuscenes_container_build_request.py \\

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""LeRobot containerized round-trip E2E, Step 3 (SceneOps V2 Request 4.3):
+"""LeRobot containerized round-trip E2E, Step 3:
 verify the ``IntegrationResult`` the LeRobot integration container
 produced, reconstruct its ``ExternalExportReport`` from
 ``result_metadata``, and reopen the exported LeRobot dataset with
@@ -10,13 +10,13 @@ unchanged).
 
 Runs ONLY inside tools/lerobot-integration's isolated venv (imports
 ``lerobot``) -- the SAME environment the host E2E's own Step 2
-(``e2e_lerobot_export.py``) already uses for this exact read-back purpose
-(SceneOps V2 Request 4.3 §4: reusing what already exists rather than
-standing up a second "read-back container"/generic service layer).
+(``e2e_lerobot_export.py``) already uses for this exact read-back purpose,
+reusing what already exists rather than standing up a second "read-back
+container"/generic service layer.
 
 The LeRobot EXPORT itself already happened inside the LeRobot integration
-container (``tools/lerobot-integration/Dockerfile``, SceneOps V2 Request
-4.2) -- this script never re-exports, never opens a SceneOpsDataset, and
+container (``tools/lerobot-integration/Dockerfile``) -- this script never
+re-exports, never opens a SceneOpsDataset, and
 never touches Postgres/sceneops-db; it only reads the container's own
 ``IntegrationResult`` JSON (``--result-file``) plus the LeRobot dataset
 files it wrote to the host-mounted export directory (``--export-root-
@@ -57,10 +57,9 @@ def _verify_integration_result(
     expected_export_root_container: str,
 ) -> None:
     """Everything checkable from the container's ``IntegrationResult``
-    alone (SceneOps V2 Request 4.3 §11), before touching the LeRobot
-    output on disk -- direction, canonical/external identity, and the
-    frozen "never duplicate the export target as an ArtifactRef" rule
-    (Request 4.1A §5 / 4.2 §2)."""
+    alone, before touching the LeRobot output on disk -- direction,
+    canonical/external identity, and the frozen "never duplicate the
+    export target as an ArtifactRef" rule."""
     check(
         result.operation is IntegrationOperation.EXPORT,
         f"operation={result.operation.value!r}, expected 'export'",
@@ -88,7 +87,7 @@ def _verify_integration_result(
         result.produced_artifacts == {},
         f"produced_artifacts={result.produced_artifacts!r}, expected {{}} -- "
         "the LeRobot dataset root must never be duplicated as an ArtifactRef "
-        "(Request 4.1A §5)",
+        "",
     )
 
 
@@ -109,10 +108,10 @@ def _run(args: argparse.Namespace) -> int:
 
     print("--- 3. Reconstruct + verify ExternalExportReport ---", file=sys.stderr)
     # result_metadata is opaque JSON at the IntegrationResult contract
-    # level (SceneOps V2 Request 4.1) -- reconstructing the real,
-    # strongly-typed ExternalExportReport from it here, once, is exactly
-    # what lets verify_export_report() (Request 3.4's own oracle) run
-    # unchanged against a container-produced result.
+    # level -- reconstructing the real, strongly-typed ExternalExportReport
+    # from it here, once, is exactly what lets verify_export_report() (the
+    # shared golden oracle) run unchanged against a container-produced
+    # result.
     report = ExternalExportReport.model_validate(result.result_metadata)
     verify_export_report(report)
     print("  OK", file=sys.stderr)

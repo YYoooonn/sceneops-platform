@@ -1,43 +1,43 @@
 #!/usr/bin/env bash
-# e2e_lerobot_container_roundtrip.sh (SceneOps V2 Request 4.3)
+# e2e_lerobot_container_roundtrip.sh
 #
-# Containerized counterpart to scripts/e2e/e2e_lerobot_roundtrip.sh
-# (Request 3.4) -- same real end-to-end round-trip, same frozen golden
-# expectations (scripts/e2e/lerobot_roundtrip_golden.py, shared unchanged),
-# but the export itself runs through the LeRobot integration CONTAINER
-# (tools/lerobot-integration/Dockerfile, Request 4.2) instead of a second
-# host-side isolated-venv process:
+# Containerized counterpart to scripts/e2e/e2e_lerobot_roundtrip.sh -- same
+# real end-to-end round-trip, same frozen golden expectations
+# (scripts/e2e/lerobot_roundtrip_golden.py, shared unchanged), but the
+# export itself runs through the LeRobot integration CONTAINER
+# (tools/lerobot-integration/Dockerfile) instead of a second host-side
+# isolated-venv process:
 #
 #   persistent "interop" SceneOps fixture (real Postgres + MinIO)
-#           -> IntegrationRequest (Request 4.1/4.1A)
-#           -> LeRobot integration container (Request 4.2, isolated, no DB)
+#           -> IntegrationRequest
+#           -> LeRobot integration container (isolated, no DB)
 #           -> IntegrationResult
 #           -> real LeRobot v3 dataset on disk (host-mounted)
 #           -> official LeRobot reader (host-side, isolated venv)
-#           -> golden semantic comparison (same oracle as Request 3.4)
+#           -> golden semantic comparison (same oracle as e2e_lerobot_roundtrip.sh)
 #
-# Three steps, three environments, on purpose (SceneOps V2 Request 3.3A's
-# dependency isolation is frozen, not renegotiated here; Request 4.2's
-# container runtime ownership -- no DB, no ArtifactRecord writes, never
-# deletes external_ref.uri -- is frozen too):
+# Three steps, three environments, on purpose (tools/lerobot-integration's
+# dependency isolation is frozen, not renegotiated here; the container's
+# runtime ownership -- no DB, no ArtifactRecord writes, never deletes
+# external_ref.uri -- is frozen too):
 #
 #   Step 1  scripts/e2e/lerobot_container_build_request.py, run from the
 #           MAIN workspace venv (needs sceneops-db). Resolves/verifies the
 #           real persistent interop fixture and prints one
-#           IntegrationRequest as JSON -- unchanged from Request 4.2.
+#           IntegrationRequest as JSON.
 #
 #   Step 2  `docker run` the built lerobot-integration image. Given only
 #           that IntegrationRequest JSON and SCENEOPS_INTEGRATION_
 #           ARTIFACT__* env vars, independently re-fetches+re-verifies the
 #           manifest, opens the real persistent SceneOpsDataset, and
 #           exports it -- never touching Postgres/sceneops-db, never
-#           deleting its export target (Request 4.2 follow-up §1).
+#           deleting its export target.
 #
 #   Step 3  scripts/e2e/e2e_lerobot_container_verify.py, run from
 #           tools/lerobot-integration's isolated venv (has lerobot, never
 #           sceneops-db) -- the SAME environment the host E2E's own Step 2
-#           already uses for this exact purpose (Request 4.3 §4: no new
-#           read-back service/runtime layer). Verifies the container's
+#           already uses for this exact purpose (no new read-back
+#           service/runtime layer). Verifies the container's
 #           IntegrationResult, reconstructs its ExternalExportReport, and
 #           reopens the exported dataset with LeRobot's own official
 #           reader -- identical assertions to e2e_lerobot_export.py's, via
@@ -46,18 +46,16 @@
 #   Step 4  Re-run the container directly against the now-populated target
 #           (no cleanup in between) and verify it fails clearly, with a
 #           non-zero exit and the target's file listing byte-for-byte
-#           unchanged (SceneOps V2 Request 4.3 §5/§7's "existing export
-#           target" failure-path coverage) -- proving the container-level
-#           behavior Request 4.2's own follow-up only unit-tested via
-#           execute() directly, this time through the real docker/CLI
-#           boundary.
+#           unchanged -- proving the container-level "existing export
+#           target" failure-path behavior through the real docker/CLI
+#           boundary, not just execute() directly.
 #
 # This script owns cleanup of its own known test-owned output directory
 # (below, before Step 1) -- the container itself never deletes
 # external_ref.uri; a fresh path every run is what makes reruns of THIS
 # script idempotent, never something the container does on its own (see
-# also scripts/e2e/smoke_lerobot_container.sh, Request 4.2's lighter-
-# weight smoke test of the same container).
+# also scripts/e2e/smoke_lerobot_container.sh, a lighter-weight smoke test
+# of the same container).
 #
 # Usage:
 #   bash scripts/e2e/e2e_lerobot_container_roundtrip.sh

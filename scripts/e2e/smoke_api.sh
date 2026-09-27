@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
 # smoke_api.sh — lightweight transport/liveness smoke test for the SceneOps
-# Platform API (renamed from e2e_api_smoke.sh, SceneOps V2 E2E surface
-# cleanup). Answers "is the service reachable, does the transport contract
-# work, do read endpoints respond" only -- does NOT require worker
+# Platform API. Answers "is the service reachable, does the transport
+# contract work, do read endpoints respond" only -- does NOT require worker
 # execution to pass.
 #
-# Strict rule (SceneOps V2 E2E surface cleanup, item 9): a smoke-* target
-# must not leave behind persistent application-domain records. The
-# previous e2e_api_smoke.sh created a real Dataset/DatasetVersion/Model/
-# PipelineRun on every single run, none of it ever cleaned up -- exactly
-# the kind of accumulating fixture debt this cleanup removes. Read-only
-# list endpoints (tolerant of an empty list) plus a 404/validation-error
-# check on a request that is guaranteed never to exist prove the same
-# "transport contract works, minimal request parses" property without
-# writing anything.
+# Strict rule: a smoke-* target must not leave behind persistent
+# application-domain records. Read-only list endpoints (tolerant of an
+# empty list) plus a 404/validation-error check on a request that is
+# guaranteed never to exist prove the "transport contract works, minimal
+# request parses" property without writing anything.
 #
 # Usage:
 #   API_BASE_URL=http://localhost:8000 bash scripts/e2e/smoke_api.sh

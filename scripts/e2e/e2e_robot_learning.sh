@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e_robot_learning.sh (new, SceneOps V2 E2E surface cleanup)
+# e2e_robot_learning.sh
 #
 # The canonical robot-learning-domain E2E -- composes the real, existing
 # chain end to end, over one or more real nuScenes scenes:
@@ -12,7 +12,7 @@
 #     -> raw_log_episode_building pipeline -> EpisodeRecord
 #     -> align_episode (real TemporalAlignmentConfig)
 #     -> profile_aligned_episode / validate_aligned_episode
-#     -> export_learning_data (Phase 5 v2-sharded write path)
+#     -> export_learning_data (v2-sharded write path)
 #     -> curate_episodes
 #
 # This uses the SAME real CAN->ROS2->MCAP->RosbagAdapter path
@@ -328,7 +328,7 @@ JSON
   echo ""
 done
 
-# ── 5. EXPORT_LEARNING_DATA (Phase 5 v2-sharded write path, all episodes) ────
+# ── 5. EXPORT_LEARNING_DATA (v2-sharded write path, all episodes) ───────────
 
 echo "--- 5. EXPORT_LEARNING_DATA (${#EXPORT_INPUTS[@]} episode(s)) ---"
 EXPORT_INPUTS_JSON="[$(IFS=,; echo "${EXPORT_INPUTS[*]}")]"

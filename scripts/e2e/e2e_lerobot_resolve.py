@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 """Resolve the persisted "interop" E2E fixture's real
-LearningDataExportManifest ArtifactRecord (SceneOps V2 Request 3.4) --
+LearningDataExportManifest ArtifactRecord --
 Step 1 of the LeRobot round-trip E2E (scripts/e2e/e2e_lerobot_roundtrip.sh).
 
 Runs in the MAIN SceneOps workspace venv (needs sceneops-db to query real
 Postgres) -- deliberately NOT in tools/lerobot-integration, which has no
-sceneops-db and must stay LeRobot-only (SceneOps V2 Request 3.3A). Prints
+sceneops-db and must stay LeRobot-only. Prints
 the manifest's real uri+checksum as JSON to stdout so the orchestrating
 shell script can hand them to Step 2
 (scripts/e2e/e2e_lerobot_export.py), which runs entirely inside
 tools/lerobot-integration's isolated venv and does the actual LeRobot
 export + official read-back + golden comparison.
 
-Reuses e2e_fixture_bootstrap.ensure_e2e_fixture (SceneOps V2 Request 3.2C)
+Reuses e2e_fixture_bootstrap.ensure_e2e_fixture
 completely unchanged -- never re-derives or duplicates its create/reuse/
 verify contract. A successful ``ensure_e2e_fixture("interop", ...)`` call
 already returns the manifest's real, already-verified uri/checksum

@@ -1,16 +1,13 @@
 """Live-API integration test for pipeline-definition/pipeline-run-creation
-contracts (SceneOps V2 E2E surface cleanup).
+contracts.
 
-Moved out of the former shell script e2e_pipeline_contracts.sh: this
-half of that script needed no nuScenes data and no worker execution at all
--- it only exercises the pipeline-definitions registry and the
-pipeline-run-creation request-validation boundary, both pure API/DB
-concerns. The domain-relevant half of that script (does
-dataset_scene_ingestion actually run end-to-end and populate
-validation/profile run ids + the quality cache) was folded into
-e2e_scene.sh instead, since that requires the real nuScenes data source
-e2e_scene.sh already needs anyway -- duplicating it here would just be a
-second, slower copy of the same real-data pipeline dispatch.
+Exercises the pipeline-definitions registry and the pipeline-run-creation
+request-validation boundary -- pure API/DB concerns that need no nuScenes
+data and no worker execution. Whether dataset_scene_ingestion actually runs
+end-to-end and populates validation/profile run ids + the quality cache is
+owned by e2e_scene.sh instead, since that requires the real nuScenes data
+source e2e_scene.sh already needs anyway -- duplicating it here would just
+be a second, slower copy of the same real-data pipeline dispatch.
 
 Requires a real, running `api` service (`make local-up`) -- skips (not
 fails) if API_BASE_URL is unreachable, matching every other

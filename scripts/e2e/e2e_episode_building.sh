@@ -1,39 +1,38 @@
 #!/usr/bin/env bash
 # e2e_episode_building.sh
 #
-# E2E test for the RAW_LOG_EPISODE_BUILDING pipeline (SceneOps V2 Request 14):
+# E2E test for the RAW_LOG_EPISODE_BUILDING pipeline:
 #   POST /pipelines/runs (type=raw_log_episode_building)
 #     -> execute -> build_episodes -> register_episode -> EpisodeRecord
 #
 # Deliberately routes through the real pipeline API rather than manually
 # dispatching build_episodes/register_episode as two standalone jobs and
-# hand-carrying episode_manifest_uris between them (the pre-Request-14
-# version of this script did that) — the generic
+# hand-carrying episode_manifest_uris between them -- the generic
 # PipelineInputResolver/PipelineTaskResultRecorder mechanism already
 # propagates build_episodes' REF-kind `episode_manifest_uris` output into
 # register_episode's params, the same way it does for every other pipeline
 # (e.g. build_scenes -> register_scene), so no Episode-specific glue is
 # needed here.
 #
-# Deliberately separate from e2e_robot_can_replay.sh (Phase 4's
-# ingest_robot_states chain) — this exercises the *Episode* domain built on
-# top of the same RosbagAdapter/Robot infrastructure, not Robot/Mission
+# Deliberately separate from e2e_robot_can_replay.sh's ingest_robot_states
+# chain -- this exercises the *Episode* domain built on top of the same
+# RosbagAdapter/Robot infrastructure, not Robot/Mission
 # ingestion itself. Reuses the MCAP already recorded by
 # e2e_robot_can_replay.sh (data/raw/rosbag/<scene>/<scene>_0.mcap) rather
 # than re-running the ROS2 recording step, to keep this test focused.
 #
 # Steps 1-10 are orchestration checks (pipeline/task status, job result
-# summaries). Steps 11+ (SceneOps V2 Request 16) use the real GET /episodes
-# and GET /episodes/{id} resource API as the canonical way to inspect what
-# actually got persisted — not just pipeline task JSON. There is still no
-# dedicated /episodes/{id}/artifacts or /episodes/{id}/manifest endpoint
-# (see app/domains/episodes/router.py's module docstring for why) — artifact
+# summaries). Steps 11+ use the real GET /episodes and GET /episodes/{id}
+# resource API as the canonical way to inspect what actually got persisted
+# — not just pipeline task JSON. There is still no dedicated
+# /episodes/{id}/artifacts or /episodes/{id}/manifest endpoint (see
+# app/domains/episodes/router.py's module docstring for why) — artifact
 # verification goes through the generic /artifacts API (owner_type=episode),
 # and the RobotRun relationship goes through the existing
 # GET /robot-runs/{run_id}. build_episodes is the sole registrar of the
-# EPISODE_MANIFEST ArtifactRecord (SceneOps V2 Request 15 removed
-# register_episode's duplicate registration of the same manifest URI) —
-# step 10 below asserts exactly one artifact per episode, not two.
+# EPISODE_MANIFEST ArtifactRecord (register_episode does not duplicate that
+# registration) — step 10 below asserts exactly one artifact per episode,
+# not two.
 #
 # force:true on pipeline-run creation (not a new mechanism — the same
 # CreatePipelineRunRequest.force already used by other E2E scripts) makes
@@ -53,7 +52,7 @@
 # E2E fixture, see scripts/e2e/lib.sh's resolve_e2e_fixture -- Episodes and
 # Scenes coexist on one DatasetVersion by design, see the catalog note
 # there, so this merges onto the same fixture pipeline-contracts/
-# dataset-ingestion use, SceneOps V2 Request 3.2B):
+# dataset-ingestion use):
 #   API_BASE_URL              (default: http://localhost:8000)
 #   SCENE                     nuScenes scene name whose bag to reuse (default: scene-0061)
 #   ROBOT_ID                  (default: robot-nuscenes-01)
@@ -88,9 +87,9 @@ echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  SEGMENTATION_STRATEGY=$SEGMENTATION_STRATEGY"
 echo ""
 
-# Fail-fast, before any Robot/RobotRun/DatasetVersion upsert below (SceneOps
-# V2 E2E surface cleanup -- centralized via lib.sh's require_mcap_file so
-# e2e_robot_learning.sh's composed flow uses the identical check).
+# Fail-fast, before any Robot/RobotRun/DatasetVersion upsert below --
+# centralized via lib.sh's require_mcap_file so e2e_robot_learning.sh's
+# composed flow uses the identical check.
 require_mcap_file "$REPO_ROOT" "$MCAP_URI"
 echo "  bag=${MCAP_URI}  OK"
 echo ""
@@ -104,9 +103,9 @@ upsert_robot_run "$API_BASE_URL" "$RUN_ID" "$ROBOT_ID" "$MCAP_URI" \
   | jq '.robotRun | {runId, robotId, mcapUri}'
 upsert_dataset "$API_BASE_URL" "$DATASET_ID" "Episode building E2E" \
   | jq '.dataset | {datasetId}'
-# No raw_source_root_uri — that's Scene-owned (SceneOps V2 Request 04) and
-# meaningless here; the episode source is RobotRun.mcap_uri (registered
-# above), not a dataset-version-level raw source root.
+# No raw_source_root_uri — that's Scene-owned and meaningless here; the
+# episode source is RobotRun.mcap_uri (registered above), not a
+# dataset-version-level raw source root.
 upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" \
   | jq '.version | {datasetId, version, status, scene, episode}'
 echo ""
@@ -229,7 +228,7 @@ assert_json_gt "$REGISTER_TASK" '.result.summary.registered_episode_count' 0 \
 echo "  OK"
 echo ""
 
-# ── 8b. Assert validate_episode outputs (SceneOps V2 Request 17) ────────────
+# ── 8b. Assert validate_episode outputs ────────────────────────────────────
 
 echo "--- 8b. Assert validate_episode outputs ---"
 VALIDATE_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "validate_episode")')"
@@ -281,8 +280,7 @@ echo ""
 # ── 10. Verify persisted EPISODE artifacts via the generic artifacts API ─────
 #
 # Exactly one ArtifactRecord per episode manifest — build_episodes is the
-# sole registrar (SceneOps V2 Request 15 removed register_episode's
-# duplicate registration of the same manifest URI).
+# sole registrar (register_episode does not duplicate that registration).
 
 echo "--- 10. Verify persisted episode artifacts (exactly one per episode) ---"
 ARTIFACTS_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/artifacts?owner_type=episode&pipeline_run_id=$PIPELINE_RUN_ID")")"
@@ -363,8 +361,8 @@ for EPISODE_ID in $(echo "$EPISODE_IDS" | jq -r '.[]'); do
     }
   fi
 
-  # ── RobotRun relationship (Request 16 §5): stable robot_run_id reference,
-  # resolved through the existing GET /robot-runs/{id} boundary — no nested
+  # ── RobotRun relationship: stable robot_run_id reference, resolved
+  # through the existing GET /robot-runs/{id} boundary — no nested
   # RobotRun object embedded in the Episode response.
   ROBOT_RUN_DETAIL="$(curl -sS "$(api_url "$API_BASE_URL" "/robot-runs/$RUN_ID")")"
   echo "$ROBOT_RUN_DETAIL" | jq -e '.robotRun.runId' >/dev/null || {
@@ -372,14 +370,14 @@ for EPISODE_ID in $(echo "$EPISODE_IDS" | jq -r '.[]'); do
     exit 1
   }
 
-  # ── Artifact relationship (Request 16 §7): no dedicated
-  # /episodes/{id}/artifacts endpoint — the generic Artifact API resolves the
-  # manifest by owner. Scoped to this pipeline_run_id too, not just owner_id:
-  # episode_id is deterministic (raw_log_id + mission_id), so a dataset that
-  # has had this exact episode built before (e.g. repeated scene-0061 runs
-  # against nuscenes/v1.0-mini) legitimately has more than one historical
-  # artifact row for the same owner_id — the Request 15 invariant is "one
-  # artifact per write event", i.e. exactly one *for this run*.
+  # ── Artifact relationship: no dedicated /episodes/{id}/artifacts endpoint
+  # — the generic Artifact API resolves the manifest by owner. Scoped to
+  # this pipeline_run_id too, not just owner_id: episode_id is deterministic
+  # (raw_log_id + mission_id), so a dataset that has had this exact episode
+  # built before (e.g. repeated scene-0061 runs against nuscenes/v1.0-mini)
+  # legitimately has more than one historical artifact row for the same
+  # owner_id — the invariant is "one artifact per write event", i.e.
+  # exactly one *for this run*.
   EPISODE_ARTIFACTS="$(curl -sS "$(api_url "$API_BASE_URL" "/artifacts?owner_type=episode&owner_id=$EPISODE_ID&pipeline_run_id=$PIPELINE_RUN_ID")")"
   EPISODE_ARTIFACT_COUNT="$(echo "$EPISODE_ARTIFACTS" | jq -r '.count // 0')"
   [ "$EPISODE_ARTIFACT_COUNT" = "1" ] || {
@@ -393,7 +391,7 @@ for EPISODE_ID in $(echo "$EPISODE_IDS" | jq -r '.[]'); do
     exit 1
   }
 
-  # ── Quality (SceneOps V2 Request 17): never BLOCKED/UNKNOWN for a
+  # ── Quality: never BLOCKED/UNKNOWN for a
   # successfully-built, successfully-validated episode — READY if it has
   # both observation and action data (e.g. the scene-0061 fixture, which has
   # steering/throttle/brake), WARNING if it's missing non-blocking data like

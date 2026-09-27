@@ -1,16 +1,16 @@
 #!/usr/bin/env python
-"""Bootstrap/verify the shared E2E fixture catalog (SceneOps V2 Request
-3.2C) against real PostgreSQL + MinIO -- so future E2Es can start from
-known fixture state instead of recreating ad-hoc datasets independently.
+"""Bootstrap/verify the shared E2E fixture catalog against real
+PostgreSQL + MinIO -- so future E2Es can start from known fixture state
+instead of recreating ad-hoc datasets independently.
 
 Uses the exact fixture identities frozen in this directory's
 e2e_fixture_bootstrap module (which itself mirrors scripts/e2e/lib.sh's
-resolve_e2e_fixture, SceneOps V2 Request 3.2B) -- this script is a thin CLI
-wrapper: all bootstrap/verify decision logic lives in that module, reusable
-directly from Python (e.g. a future E2E's own `ensure_e2e_fixture(...)`
-call). Moved here from sceneops_analytics.testing (SceneOps V2 Request
-3.2C.1 §1) so the production sceneops-analytics package never needs to
-depend on sceneops-db just to support E2E fixture setup.
+resolve_e2e_fixture) -- this script is a thin CLI wrapper: all
+bootstrap/verify decision logic lives in that module, reusable directly
+from Python (e.g. a future E2E's own `ensure_e2e_fixture(...)` call).
+Lives here rather than in sceneops_analytics.testing so the production
+sceneops-analytics package never needs to depend on sceneops-db just to
+support E2E fixture setup.
 
 Usage:
     uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture interop --verify

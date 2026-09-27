@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# verify_airflow_backend.sh (renamed from e2e_airflow_pipeline.sh, SceneOps
-# V2 E2E surface cleanup)
+# verify_airflow_backend.sh
 #
 # This is an alternate-orchestrator COMPATIBILITY CHECK, not a new domain
 # workflow -- it dispatches the exact same dataset_scene_ingestion workflow

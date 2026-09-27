@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """Build a real IntegrationRequest JSON for the LeRobot integration
-container's smoke test (SceneOps V2 Request 4.2 §7) -- Step 1 of
+container's smoke test -- Step 1 of
 scripts/e2e/smoke_lerobot_container.sh.
 
 Runs in the MAIN SceneOps workspace venv (needs sceneops-db to query real
 Postgres via ensure_e2e_fixture) -- deliberately NOT inside the isolated
-LeRobot container, which must stay DB-free (SceneOps V2 Request 4.2 §4).
-Reuses e2e_fixture_bootstrap.ensure_e2e_fixture (SceneOps V2 Request 3.2C)
+LeRobot container, which must stay DB-free.
+Reuses e2e_fixture_bootstrap.ensure_e2e_fixture
 completely unchanged, exactly like scripts/e2e/e2e_lerobot_resolve.py.
 
 Prints one IntegrationRequest (sceneops_core.integration_runtime, Request

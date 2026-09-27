@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# smoke_lerobot_container.sh (SceneOps V2 Request 4.2 §7)
+# smoke_lerobot_container.sh
 #
 # Minimal container-level smoke test for the LeRobot integration container
 # (tools/lerobot-integration/Dockerfile): build image -> start container ->
 # parse a real IntegrationRequest -> access a real MinIO ArtifactStore ->
 # run a real LeRobotDatasetAdapter.export() -> return a valid
 # IntegrationResult. Deliberately NOT the golden round-trip comparison
-# scripts/e2e/e2e_lerobot_roundtrip.sh already owns (Request 3.4) and
-# Request 4.3 will own containerized -- this only proves the container
-# itself executes the frozen IntegrationRequest -> IntegrationResult
-# contract end-to-end, without duplicating every per-frame/official-reader
-# assertion.
+# scripts/e2e/e2e_lerobot_roundtrip.sh and e2e_lerobot_container_roundtrip.sh
+# already own -- this only proves the container itself executes the frozen
+# IntegrationRequest -> IntegrationResult contract end-to-end, without
+# duplicating every per-frame/official-reader assertion.
 #
-# Two processes, like every other scripts/e2e/e2e_lerobot_*.py split
-# (Request 3.3A's dependency isolation, unchanged):
+# Two processes, like every other scripts/e2e/e2e_lerobot_*.py split (the
+# same dependency isolation as tools/lerobot-integration's isolated venv):
 #
 #   Step 1  scripts/e2e/lerobot_container_build_request.py, run from the
 #           MAIN workspace venv (needs sceneops-db). Resolves the real

@@ -1,21 +1,19 @@
 # --------------------
-# nuScenes integration (SceneOps V2 Request 4.4/4.5/4.6/4.6A/4.6B)
+# nuScenes integration
 # --------------------
 #
 # sceneops_integrations.nuscenes (packages/sceneops-integrations) is the
-# SDK-bound INGEST runtime extracted from apps/worker (Request 4.4,
-# raw-log; Request 4.6B, direct SceneManifest ingest with ground-truth
-# annotations -- see scene_ingest.py's own docstring for why that second
-# capability was migrated rather than deleted). It deliberately does NOT
-# declare `nuscenes-devkit` as its own dependency. As of Request 4.6B,
-# `apps/worker` no longer depends on `nuscenes-devkit` at all either --
-# both nuScenes job handlers run through this HTTP service instead of
-# importing the SDK in-process, so isolating nuScenes here was never
-# primarily about a version conflict (unlike LeRobot's): it's about giving
-# the CONTAINER image below a minimal, reproducible, DB/Celery-free
-# dependency closure. tools/nuscenes-integration/ is a separate,
-# non-workspace-member uv project with its own independent uv.lock that
-# depends on the *existing* sceneops-core/sceneops-storage/
+# SDK-bound INGEST runtime -- it covers both the raw-log ingestion path and
+# direct SceneManifest ingest with ground-truth annotations (see
+# scene_ingest.py's own docstring). It deliberately does NOT declare
+# `nuscenes-devkit` as its own dependency. `apps/worker` does not depend on
+# `nuscenes-devkit` at all either -- both nuScenes job handlers run through
+# this HTTP service instead of importing the SDK in-process, so isolating
+# nuScenes here was never primarily about a version conflict (unlike
+# LeRobot's): it's about giving the CONTAINER image below a minimal,
+# reproducible, DB/Celery-free dependency closure. tools/nuscenes-integration/
+# is a separate, non-workspace-member uv project with its own independent
+# uv.lock that depends on the *existing* sceneops-core/sceneops-storage/
 # sceneops-integrations code via editable path sources, plus
 # nuscenes-devkit directly -- nothing is duplicated, only re-locked in
 # isolation. See tools/nuscenes-integration/README.md for the full
@@ -42,21 +40,19 @@ nuscenes-test:
 nuscenes-image:
 	docker build -f tools/nuscenes-integration/Dockerfile -t sceneops-platform/nuscenes-integration:local .
 
-# Minimal container-level smoke test (Request 4.5 §6) -- build image ->
-# start container -> parse a real IntegrationRequest -> run real
-# nuscenes-devkit against the real /data/raw/nuscenes v1.0-mini fixture ->
-# write raw-log artifacts to a real MinIO ArtifactStore -> verify a valid
-# IntegrationResult, including reading the written artifacts back out of
-# MinIO directly. Exercises the container's CLI entrypoint (mode=raw_log),
-# not the HTTP service that's the image's default command as of Request
-# 4.6A -- see scripts/e2e/smoke_nuscenes_container.sh's own header for the
-# full two-process split and prerequisites (`make local-up`,
-# `make nuscenes-image`).
+# Minimal container-level smoke test -- build image -> start container ->
+# parse a real IntegrationRequest -> run real nuscenes-devkit against the
+# real /data/raw/nuscenes v1.0-mini fixture -> write raw-log artifacts to a
+# real MinIO ArtifactStore -> verify a valid IntegrationResult, including
+# reading the written artifacts back out of MinIO directly. Exercises the
+# container's CLI entrypoint (mode=raw_log), not the HTTP service that's the
+# image's default command -- see scripts/e2e/smoke_nuscenes_container.sh's
+# own header for the full two-process split and prerequisites
+# (`make local-up`, `make nuscenes-image`).
 #
-# Renamed from nuscenes-container-smoke (SceneOps V2 E2E surface cleanup) --
-# an engineering/transport-boundary check, not a domain workflow, so it
-# moved to the smoke-* namespace (see makefiles/e2e.mk's "Smoke" section
-# for the sibling smoke-lerobot-container/smoke-api targets).
+# An engineering/transport-boundary check, not a domain workflow -- lives in
+# the smoke-* namespace alongside smoke-lerobot-container/smoke-api (see
+# makefiles/e2e.mk's "Smoke" section).
 .PHONY: smoke-nuscenes-container
 smoke-nuscenes-container:
 	chmod +x scripts/e2e/smoke_nuscenes_container.sh

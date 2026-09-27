@@ -130,8 +130,8 @@ infrastructure.
 
 ## 5. Quickstart
 
-The primary path (SceneOps V2 E2E surface cleanup) records the CAN replay
-and builds/curates the resulting Episode(s) in one composed command:
+The primary path records the CAN replay and builds/curates the resulting
+Episode(s) in one composed command:
 
 ```bash
 make local-up

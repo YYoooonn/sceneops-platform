@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# e2e_scene.sh (renamed + merged from e2e_dataset_scene_ingestion.sh,
-# SceneOps V2 E2E surface cleanup)
+# e2e_scene.sh
 #
 # The canonical Scene-domain E2E:
 #   real nuScenes -> Integration Runtime -> Scene ingestion -> SceneRecord
@@ -10,17 +9,15 @@
 #   ingest_scenes -> register_scene -> validate_scene -> profile_scene
 #   -> build_scene_index -> build_dataset_manifest
 #
-# Folds in the domain-relevant assertions formerly split out into a
-# separate e2e_pipeline_contracts.sh (validation_run_id/profile_run_id +
-# their report URIs, dataset-version quality-cache readiness, the
-# scene-summary cross-check, and optional-task-skip behavior) -- those all
-# exercise the SAME real ingestion this script already runs, so there was
-# no reason for them to be a second, largely-overlapping pipeline dispatch
-# in a separate script. e2e_pipeline_contracts.sh's other half (pipeline-
-# definitions registry, unsupported-pipeline-type rejection) needed no
-# nuScenes data at all and moved to
-# scripts/e2e/tests/test_pipeline_contracts_integration.py (make
-# test-integration) instead.
+# Also owns the domain-relevant assertions for this same ingestion:
+# validation_run_id/profile_run_id + their report URIs, dataset-version
+# quality-cache readiness, the scene-summary cross-check, and
+# optional-task-skip behavior -- all of these exercise the SAME real
+# ingestion this script already runs, so they live here rather than in a
+# second, largely-overlapping pipeline dispatch. Pipeline-definitions
+# registry / unsupported-pipeline-type rejection need no nuScenes data at
+# all and live in scripts/e2e/tests/test_pipeline_contracts_integration.py
+# (make test-integration) instead.
 #
 # Usage:
 #   bash scripts/e2e/e2e_scene.sh
@@ -35,10 +32,9 @@
 #   SOURCE_FORMAT_VERSION   (default: v1.0-mini)
 #   SOURCE_ROOT_URI         (default: /data/raw/nuscenes)
 #   MAX_SCENES              how many nuScenes scenes to ingest (default: 10 --
-#                           matches the original e2e_dataset_scene_ingestion.sh
-#                           default; scenario curation's own selectability
-#                           logic needs more than a handful of scenes to
-#                           produce a non-empty ScenarioSet, see e2e-perception)
+#                           scenario curation's own selectability logic
+#                           needs more than a handful of scenes to produce
+#                           a non-empty ScenarioSet, see e2e-perception)
 #   POLL_TIMEOUT            max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
@@ -189,7 +185,7 @@ fi
 echo "  OK"
 echo ""
 
-# ── 6c. Assert validate_scene result refs (folded in from e2e_pipeline_contracts.sh) ──
+# ── 6c. Assert validate_scene result refs ──────────────────────────────────
 
 echo "--- 6c. Assert validate_scene result refs ---"
 VALIDATE_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "validate_scene")')"
@@ -211,7 +207,7 @@ echo "  checked_scene_count=$CHECKED_COUNT"
 echo "  OK"
 echo ""
 
-# ── 6d. Assert profile_scene result refs (folded in from e2e_pipeline_contracts.sh) ───
+# ── 6d. Assert profile_scene result refs ───────────────────────────────────
 
 echo "--- 6d. Assert profile_scene result refs ---"
 PROFILE_TASK="$(echo "$TASKS_JSON" | jq '.tasks[] | select(.pipelineTaskId == "profile_scene")')"
@@ -264,7 +260,7 @@ fi
 echo "  OK ($SCENE_COUNT/$SCENE_COUNT scenes correctly owned by $DATASET_ID:$DATASET_VERSION)"
 echo ""
 
-# ── 8. Assert dataset version ready + quality cache (folded in from e2e_pipeline_contracts.sh) ──
+# ── 8. Assert dataset version ready + quality cache ────────────────────────
 
 echo "--- 8. Assert dataset version ---"
 VERSION_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
@@ -343,7 +339,7 @@ assert_artifact_kind_present "$ARTIFACTS_JSON" "dataset_manifest" "expected at l
 echo "  OK"
 echo ""
 
-# ── 10. Optional-task-skip regression (folded in from e2e_pipeline_contracts.sh) ──
+# ── 10. Optional-task-skip regression ──────────────────────────────────────
 # Confirms profile_scene is correctly marked SKIPPED (not a failure) when no
 # caller params are given, and every required task still succeeds around it
 # -- isolated under its own dataset_id so this second, deliberately-partial

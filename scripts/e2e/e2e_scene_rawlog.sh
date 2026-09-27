@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# e2e_scene_rawlog.sh (renamed from e2e_raw_log_scene_building.sh, SceneOps
-# V2 E2E surface cleanup)
+# e2e_scene_rawlog.sh
 #
 # E2E test for the raw_log_scene_building pipeline:
 #   build_scenes -> register_scene -> validate_scene -> profile_scene
@@ -10,14 +9,13 @@
 # "nuscenes_raw_log_mock", read by
 # packages/sceneops-integrations/sceneops_integrations/nuscenes/raw_log.py's
 # read_nuscenes_raw_log()) -- NOT synthetic/fabricated data. "Mock" in that
-# source_type's name is a historical label from when this genuinely was a
-# transitional in-process mock (pre-Request 4.4); the current
-# implementation calls the real nuscenes-devkit SDK and walks real
-# sample/sample_data/calibrated_sensor/ego_pose records into real
-# RawSensorFrameManifests pointing at real on-disk filenames. It is a
-# frozen domain enum value (RawLogSourceType.NUSCENES_RAW_LOG_MOCK,
-# NuScenesRawLogMocker) out of scope for this E2E-surface cleanup to
-# rename -- this comment documents the terminology gap without touching it.
+# source_type's name is a historical label from an earlier transitional
+# in-process implementation; the current implementation calls the real
+# nuscenes-devkit SDK and walks real sample/sample_data/calibrated_sensor/
+# ego_pose records into real RawSensorFrameManifests pointing at real
+# on-disk filenames. It is a frozen domain enum value
+# (RawLogSourceType.NUSCENES_RAW_LOG_MOCK, NuScenesRawLogMocker), so this
+# comment documents the terminology gap rather than renaming it.
 #
 # What this uniquely exercises that e2e_scene.sh's direct SceneManifest
 # ingest does NOT: BuildScenesJobHandler's generic RawLogAdapter

@@ -1,15 +1,12 @@
 """Shared golden-fixture round-trip verification for the LeRobot interop
-E2E (SceneOps V2 Request 3.4 §4/§5/§6/§7/§11), extracted so
+E2E, extracted so
 ``scripts/e2e/e2e_lerobot_export.py`` (host/isolated-venv export) and
 ``scripts/e2e/e2e_lerobot_container_verify.py`` (container export, read
-back host-side, SceneOps V2 Request 4.3) check identical claims against
-identical expectations from one place, never two independently-maintained
-copies. Nothing here changed behavior when this module was extracted --
-every check, message, and expectation is verbatim what
-``e2e_lerobot_export.py`` already froze.
+back host-side) check identical claims against identical expectations
+from one place, never two independently-maintained copies.
 
 Imports ``lerobot`` (``OfficialLeRobotDataset``) -- runs ONLY inside
-``tools/lerobot-integration``'s isolated venv (SceneOps V2 Request 3.3A),
+``tools/lerobot-integration``'s isolated venv,
 same as both scripts above.
 """
 
@@ -28,8 +25,8 @@ from sceneops_analytics.testing.interop_dataset import (
     compute_expected_interop_episodes,
 )
 
-# The frozen Request 3.3 semantic-loss classification this E2E must observe
-# in the real report -- literal SemanticField/MappingKind values (the
+# The frozen semantic-loss classification this E2E must observe in the
+# real report -- literal SemanticField/MappingKind values (the
 # existing enums/contracts), never a re-derivation of *why* each field maps
 # that way (that logic lives, and stays, in LeRobotDatasetAdapter.
 # semantic_capabilities()). See adapter.py's own capability comments for
@@ -42,8 +39,8 @@ EXPECTED_LOSSY_OR_UNSUPPORTED: dict[SemanticField, MappingKind] = {
     SemanticField.SOURCE_REVISION_TRACEABILITY: MappingKind.LOSSY_EXPLICIT,
 }
 # LOSSLESS fields are never reported on ExternalExportReport.semantic_losses
-# at all (ExternalDatasetAdapter._resolve_semantic_losses, Request 3.1) --
-# their absence from the report IS the lossless claim.
+# at all (ExternalDatasetAdapter._resolve_semantic_losses) -- their absence
+# from the report IS the lossless claim.
 EXPECTED_LOSSLESS_FIELDS: set[SemanticField] = {
     SemanticField.STEP_ORDERING,
     SemanticField.OBSERVATION_ACTION_NAMESPACE,
@@ -54,7 +51,7 @@ EXPECTED_EPISODE_ORDER = [EPISODE_A_REV1_REF, EPISODE_A_REV2_REF, EPISODE_B_REF]
 
 
 class RoundtripAssertionError(AssertionError):
-    """A round-trip claim did not hold (SceneOps V2 Request 3.4 §7) --
+    """A round-trip claim did not hold --
     always caught at the top level and reported as a clear, single-line
     failure with a non-zero exit code, never a silent pass or a bare
     traceback."""
@@ -66,7 +63,7 @@ def check(condition: bool, message: str) -> None:
 
 
 def verify_export_report(report) -> None:
-    """SceneOps V2 Request 3.4 §4/§5/§11: everything checkable from an
+    """Everything checkable from an
     ``ExternalExportReport`` alone, before ever touching the LeRobot output
     on disk. ``report`` may be the real object an in-process ``adapter.
     export()`` returned, or one reconstructed via ``ExternalExportReport.
@@ -117,7 +114,7 @@ def verify_export_report(report) -> None:
 
 
 def verify_official_readback(root: Path, *, repo_id: str) -> dict:
-    """SceneOps V2 Request 3.4 §6: read back exclusively through LeRobot's
+    """Read back exclusively through LeRobot's
     own official ``LeRobotDataset`` API -- never by hand-parsing its
     Parquet/metadata files. Filesystem inspection (below, in the returned
     summary dict) is diagnostic only, never load-bearing for an
@@ -194,7 +191,7 @@ def verify_official_readback(root: Path, *, repo_id: str) -> dict:
             # docstring) -- it is compared here only against that same
             # relative expectation (step_index / fps), never against
             # SceneOps' absolute timestamp_us, which would misrepresent it
-            # as lossless (SceneOps V2 Request 3.4 §4's explicit warning).
+            # as lossless.
             actual_timestamp = item["timestamp"].item()
             expected_timestamp = step_index / ds.meta.fps
             check(
@@ -207,8 +204,7 @@ def verify_official_readback(root: Path, *, repo_id: str) -> dict:
                 if episode_index == 1:
                     # The second "ep-a" revision must be real, distinct
                     # content from the first -- not a coincidentally-equal
-                    # duplicate (SceneOps V2 Request 3.4 §4 episode-revision
-                    # check).
+                    # duplicate.
                     check(
                         previous_episode_observation_first_frame != actual_obs,
                         "EPISODE_A_REV1 and EPISODE_A_REV2 have identical "

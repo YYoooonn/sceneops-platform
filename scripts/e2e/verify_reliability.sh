@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# verify_reliability.sh (renamed from e2e_reliability.sh, SceneOps V2 E2E
-# surface cleanup -- this verifies an execution-model property, not a
-# domain workflow from a real source to a persisted result, so it moved out
-# of the e2e-* namespace into verify-*, same tier as verify_airflow_backend.sh)
+# verify_reliability.sh -- verifies an execution-model property, not a
+# domain workflow from a real source to a persisted result, so it lives in
+# the verify-* namespace rather than e2e-*, same tier as
+# verify_airflow_backend.sh.
 #
-# Verifies Phase 2 reliability primitives:
+# Verifies these reliability primitives:
 #   1. Job execution_key idempotency (identical create -> same job; force ->
 #      new job; different params -> new job).
 #   2. Pipeline partial retry: a pipeline BLOCKED by a quality gate

@@ -1,5 +1,5 @@
 """Live-infrastructure integration test for the persistent E2E fixture
-bootstrap (SceneOps V2 Request 3.2C, hardened by Request 3.2C.1). Requires
+bootstrap. Requires
 SCENEOPS_DATABASE_URL and the MinIO env vars pointing at a real, migrated
 Postgres + reachable MinIO -- `make test-integration` sets these against a
 running `make local-up` stack. Skips (not fails) if either is unreachable,
@@ -117,11 +117,10 @@ async def test_interop_bootstrap_idempotent_and_verifiable_against_real_infra():
     assert first.episode_refs is not None
     assert len(first.episode_refs) == 3
 
-    # Idempotency + strengthened reuse semantics (SceneOps V2 Request
-    # 3.2C.1 §2): a second bootstrap call (this run, or a prior one) must
-    # independently re-verify, then reuse -- never duplicate -- the
-    # persisted fixture. A successful return here already proves
-    # verification passed internally.
+    # Idempotency + strengthened reuse semantics: a second bootstrap call
+    # (this run, or a prior one) must independently re-verify, then reuse --
+    # never duplicate -- the persisted fixture. A successful return here
+    # already proves verification passed internally.
     async with async_session_scope() as session:
         [second] = await bootstrap_e2e_fixtures(
             "interop",
@@ -137,8 +136,8 @@ async def test_interop_bootstrap_idempotent_and_verifiable_against_real_infra():
     assert second.learning_manifest_uri == first.learning_manifest_uri
 
     # A standalone verify call must independently agree -- opens the real
-    # persisted snapshot through a real SceneOpsDataset and matches
-    # Request 3.2's frozen golden expectations.
+    # persisted snapshot through a real SceneOpsDataset and matches the
+    # frozen golden expectations.
     async with async_session_scope() as session:
         [verification] = await verify_e2e_fixture(
             "interop", session=session, artifact_store=artifact_store
