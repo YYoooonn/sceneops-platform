@@ -7,11 +7,14 @@
 > claim below is checked against the code and against real, live runs
 > (`make streaming-up && make smoke-streaming`, `make e2e-ros2-streaming`).
 >
-> Two parts: Part 1 covers the Kafka transport itself (envelope contract,
+> Three parts: Part 1 covers the Kafka transport itself (envelope contract,
 > wire format, delivery/ordering/partitioning semantics, configuration).
-> Part 2 covers the ROS2 streaming bridge built on top of it. Neither part
-> changes the other -- the bridge is a producer/consumer of the transport
-> contract in Part 1, not a modification of it.
+> Part 2 covers the ROS2 streaming bridge built on top of it. Part 3
+> covers durable MCAP capture -- a run-scoped Kafka consumer
+> (`ros2/capture/`) that writes what the bridge published back out to a
+> validated, rosbag2-compatible MCAP file. No part changes another --
+> each is a producer/consumer of the contract(s) established before it,
+> not a modification of them.
 
 ## 1. Goal and scope
 
@@ -31,10 +34,14 @@ binary robot telemetry
 **Not implemented by the transport itself:** an MCAP writer, `RobotRun`/
 `Episode` lifecycle integration, any Postgres/ArtifactStore write, a
 DLQ/retry policy, Schema Registry/Avro, or any UI (see §19 for the full
-current non-goals list, which also covers the ROS2 bridge). `make
-smoke-streaming` leaves zero canonical (Postgres/MinIO) state -- verified
-by construction: nothing in `sceneops-streaming` imports `sceneops-db` or
-an `ArtifactStore`.
+current non-goals list, which also covers the ROS2 bridge and Part 3's
+capture consumer). `make smoke-streaming` leaves zero canonical
+(Postgres/MinIO) state -- verified by construction: nothing in
+`sceneops-streaming` imports `sceneops-db` or an `ArtifactStore`. An MCAP
+writer exists as Part 3's separate run-scoped Kafka consumer
+(`ros2/capture/`), built on top of this transport -- it is not part of
+`sceneops-streaming`/`sceneops-core`, and does not change anything
+described in Part 1.
 
 The robot-runtime-communication (ROS2) vs. data-platform-event-stream
 (Kafka) boundary this transport lives on is decided in
@@ -678,27 +685,351 @@ bridge-observed order  -- the sequence_number ordering; arrival order at
 No other terms (`event time`, `sensor time`, etc.) are used as synonyms
 for `source_timestamp_ns` in this document.
 
-## 18. What comes next
+---
 
-Durable capture (writing streamed telemetry to MCAP) is the next
-downstream boundary. This document does not describe that as implemented
--- no Kafka consumer in this repository writes MCAP files today.
+# Part 3: Durable MCAP Capture
+
+## 18. Goal and scope
+
+A run-scoped Kafka consumer that writes what the ROS2 streaming bridge
+(Part 2) published back out to a validated, rosbag2/MCAP-compatible
+file, using the exact writer `ros2 bag record` itself uses
+(`rosbag2_py.SequentialWriter`) rather than a hand-rolled encoder:
 
 ```text
-ROS2 / live robot -> stream envelope -> Kafka -> durable capture -> MCAP
-  -> RobotRun -> existing Episode pipeline -> existing learning-data
-  pipeline
+real Kafka (Part 1) -> ros2/capture (run-scoped consumer)
+  -> validated, finalized local MCAP file
 ```
 
-## 19. Non-goals
+One invocation captures exactly one `(robot_id, robot_run_id)`. It
+creates no canonical `RobotRun`, `Scene`, `Episode`, or
+`ArtifactRecord`, and writes no Postgres/MinIO state -- verified by
+construction (`ros2/capture/` imports neither `sceneops-db` nor
+`ArtifactStore`) and by direct observation (`make e2e-streaming-capture`
+leaves canonical table row counts unchanged). Registering a captured
+file as a canonical `RobotRun` is the next, separate boundary (§27).
+
+## 19. Package layout and placement
+
+`ros2/capture/` -- flat scripts (no `__init__.py`), matching
+`ros2/nodes/`'s own convention (absolute imports, e.g. `from
+schema_registry import SUPPORTED_CHANNELS`, not relative ones -- these
+modules are loaded via `sys.path.insert`, not as installed packages).
+Runs inside the existing `ros2` Docker image/profile (`compose/ros2.yaml`
+mounts `./ros2/capture:/workspace/capture:ro`) -- not a new service or
+profile, and not inside `can_replay_node.py`, `streaming_bridge_node.py`,
+or `apps/worker`: it needs `rosbag2_py` (apt-installed only in the `ros2`
+image) for standard-format MCAP writing, and `mcap`/`mcap-ros2-support`
+(`ros2/Dockerfile`) for the mandatory pre-finalize read-back validation
+(§25) -- neither dependency leaks into `sceneops-core`, `apps/api`, or
+any general domain package.
+
+```text
+ros2/capture/
+  schema_registry.py    static v1 supported channel/type set
+  mcap_writer.py         McapCaptureWriter (rosbag2_py.SequentialWriter)
+  validation.py           pre-finalize MCAP read-back validation
+  finalize.py             temp/final bag directory lifecycle
+  capture_consumer.py     RunFilter, SequenceTracker, CaptureResult, run_capture()
+  cli.py                  CLI entry point (make e2e-streaming-capture)
+  tests/                  pytest, runs only inside the ros2 container
+```
+
+## 20. Frozen time mapping
+
+Audited directly against `apps/worker/sceneops_worker/datasets/ingestion/
+rosbag_raw_log.py`'s `RosbagAdapter` -- the actual downstream reader, not
+assumed. `_read_bag()` derives every timestamp (`RobotState.timestamp_us`,
+`Mission.started_at`/`ended_at`, frame timestamps, raw-log
+`time_range`) from `message.log_time` alone; `publish_time` and the
+CDR-decoded `header.stamp` are never read for timing anywhere in that
+file (`header.stamp` is only read for value fields, e.g.
+position/orientation).
+
+This contradicts the naive assignment (`publish_time = source`,
+`log_time = ingest`) -- so the mapping is the deliberate inverse:
+
+```text
+MCAP log_time      = TelemetryEnvelope.source_timestamp_ns
+MCAP publish_time   = TelemetryEnvelope.ingest_timestamp_ns
+```
+
+putting the envelope's real source-observation/event time in the one
+field `RosbagAdapter` actually reads. Verified both ways: a live
+write-then-readback probe (`rosbag2_py.SequentialWriter.write(topic,
+payload, log_time, publish_time)`, 4-arg form) against the real writer
+confirmed this exact argument-to-field mapping; `ros2/capture/tests/
+test_mcap_writer.py` asserts it as a permanent regression test. Mission
+segmentation is unaffected either way -- `_missions_from_bag` only
+compares mission messages against each other (`min`/`max` of `log_time`
+among `/mission/status` records), never against `RobotState` timestamps,
+so this mapping choice cannot silently break mission boundaries.
+
+One documented consequence: `/mission/status`'s `source_timestamp_ns` is
+a synthetic replay-boundary time, not a CAN observation (§11.1) -- an
+MCAP built from a streamed session will show `/mission/status`'s
+`log_time` far from the CAN-derived channels' `log_time` values (2018
+CAN data vs. present-day replay time). This is expected, a property of
+the data's actual semantics per §11.1, not a bug introduced by capture.
+
+## 21. Commit-boundary ordering (durability guarantee)
+
+Frozen, never reversed:
+
+```text
+consume -> write to the temp/partial MCAP -> close the writer (fsync)
+  -> validate by reading the file back -> atomically finalize
+  (rename + fsync parent dir) -> commit Kafka offsets
+```
+
+If anything before the Kafka commit fails, `run_capture()`
+(`capture_consumer.py`) raises without committing -- the partial bag is
+left in place for the next attempt to discard and rebuild from Kafka
+(§25), never appended to. `KafkaTelemetryConsumer` gained
+`enable_auto_commit`/`commit()` (Part 1's `consumer.py`) specifically for
+this: `enable.auto.commit=False` is REQUIRED for capture (durability must
+never depend on librdkafka's periodic background commit), and `commit()`
+synchronously commits only up through the most recently polled record,
+called exactly once, after finalize succeeds.
+
+A dedicated regression test enforces this ordering, not just the
+behavior: `test_run_capture_commits_only_after_finalize`
+(`ros2/capture/tests/test_capture_consumer.py`) spies on both
+`finalize_bag` and the consumer's `commit()` and asserts
+`call_order == ["finalize", "commit"]` -- it fails if `run_capture` is
+ever edited to call `commit()` before (or without) `finalize_bag()`.
+
+## 22. Supported channels (static v1 registry)
+
+`schema_registry.SUPPORTED_CHANNELS` is the only source of channel/type
+validation -- no dynamic ROS2 topic/type discovery. An envelope naming a
+channel or `message_type` outside this set raises
+`UnsupportedChannelError` and aborts the capture attempt (§21's ordering
+means nothing gets finalized or committed):
+
+```text
+/vehicle/odom       nav_msgs/msg/Odometry
+/vehicle/imu        sensor_msgs/msg/Imu
+/vehicle/status     sensor_msgs/msg/BatteryState
+/vehicle/control    std_msgs/msg/String
+/mission/status     std_msgs/msg/String
+```
+
+The same five channels Part 2's bridge publishes (§11) -- `mcap_writer.py`
+never needs an imported ROS2 message class to write a message:
+`rosbag2_py` resolves the schema from the type string alone against the
+installed ROS2 interface definitions, and the payload is opaque CDR
+bytes (§23 confirms these pass through byte-for-byte).
+
+## 23. Partition invariant and run filtering
+
+One `robot_run_id` must map to exactly one Kafka partition (Part 1's own
+partitioning contract, §6, gives this for free under a stable partition
+count) -- `_RunFilter` (`capture_consumer.py`) enforces it explicitly
+rather than assuming it: the first accepted message's partition is
+recorded, and any later message for the same `robot_run_id` on a
+different partition raises `PartitionInvariantError` immediately, aborting
+the capture (never silently merging two partitions' data into one file).
+`_RunFilter` also discards every message that doesn't match the target
+`(robot_id, robot_run_id)` -- one capture invocation only ever writes one
+run's messages, regardless of what else is interleaved on the topic.
+
+Raw CDR payload bytes are never touched: `Kafka record value ==
+TelemetryEnvelope.payload == the written MCAP Message.data`, verified
+both by a targeted unit test
+(`test_raw_cdr_payload_bytes_are_preserved_exactly`, all 256 byte values
+exercised) and by the real end-to-end run (§26).
+
+## 24. Sequence integrity and duplicate policy
+
+`_SequenceTracker` (`capture_consumer.py`) expects `sequence_number` 0
+through N-1 in the order Kafka delivers them, with a bounded v1 policy
+(no unbounded dedup table -- only the single last-accepted
+`(sequence, payload)` pair is ever remembered):
+
+```text
+first message's sequence must be 0                -> else fail
+in-order (sequence == last + 1)                    -> accept, write
+exact immediate redelivery (same sequence AND
+  same payload as the last accepted message)       -> skip (not an error)
+conflicting redelivery (same sequence, different
+  payload)                                          -> fail
+gap (sequence > expected next)                      -> fail
+late/out-of-order (sequence < expected next, not
+  the immediate-redelivery case above)               -> fail
+```
+
+"Fail" here means `SequenceIntegrityError`, which aborts the capture
+attempt the same way `PartitionInvariantError`/`UnsupportedChannelError`
+do -- per §21's ordering, nothing gets finalized or committed, so a
+restart safely rebuilds from the last committed offset rather than
+silently accepting corrupted sequencing.
+
+## 25. Temp/final file lifecycle
+
+`rosbag2_py.SequentialWriter` writes into a *directory* (`metadata.yaml`
+plus one or more `.mcap` files), not a single file -- the unit that must
+move atomically from "being written" to "durably captured" is that whole
+directory. Layout, per `robot_run_id`, under one capture `output_root`:
+
+```text
+<output_root>/.partial/<robot_run_id>/   -- write target (in progress)
+<output_root>/<robot_run_id>/            -- finalized (atomically renamed)
+```
+
+`prepare_partial_bag_dir()` (`finalize.py`) never appends to or resumes a
+stale `.partial` directory from a previous crashed/interrupted attempt --
+it discards it (`shutil.rmtree`) and lets the writer recreate it from
+scratch, because the source of truth for what belongs in a capture is
+Kafka, replayed from the last *committed* offset (always before anything
+a stale partial could contain under §21's ordering), never whatever bytes
+happen to already be on disk. `rosbag2_py.SequentialWriter.open()`
+itself refuses to open into a directory that already exists (even
+empty), verified directly -- so `prepare_partial_bag_dir()` guarantees
+the path does *not* exist and its parent does, rather than creating it
+itself.
+
+`finalize_bag()` performs the atomic transition: `os.replace()` (atomic
+within one filesystem, guaranteed here since both paths share
+`output_root`) followed by an `fsync` of `output_root`'s directory entry.
+It never overwrites an existing final bag -- a second finalize attempt
+for the same `robot_run_id` raises `FinalBagExistsError`, leaving both
+the original final bag and the new attempt's `.partial` directory
+untouched, rather than silently discarding either.
+
+Before finalizing, `validate_mcap_file()` (`validation.py`) reads the
+just-closed MCAP back with the same `mcap` reader package
+`RosbagAdapter` uses (never trusts the writer's own in-memory counters),
+and raises `McapValidationError` -- refusing to finalize -- on a
+corrupt/unreadable file, a written-vs-read-back message count mismatch,
+or zero messages.
+
+## 26. Capture lifecycle, configuration, and reliability scope
+
+**Lifecycle is externally controlled.** `run_capture()` has no built-in
+notion of "done" and never inspects `/mission/status` payload content to
+decide when to stop -- a caller supplies `stop_condition(message_count)`,
+polled before every Kafka poll. `cli.py` offers two mutually exclusive
+policies: `--max-messages N` (deterministic, used by `make
+e2e-streaming-capture`) and `--idle-timeout-seconds S` (stop after `S`
+seconds with no new matching message).
+
+**Configuration -- frozen in code, not environment variables:**
+
+```text
+CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
+  -- independent from Part 1's general SCENEOPS_STREAMING_KAFKA_
+     CONSUMER_GROUP_ID default; capture never shares committed-offset
+     state with any other consumer.
+auto.offset.reset = "earliest"   -- correctness-first: a capture that
+  starts after some of a run's messages were already published must
+  still see all of them, not just whatever arrives from "now".
+enable.auto.commit = False       -- required; see §21.
+```
+
+None of these are `SCENEOPS_STREAMING_KAFKA_*` settings and none are
+configurable via environment variable -- deliberately, matching Part 1's
+own "explicit code-level default until a demonstrated override need
+exists" policy (§9.1). No `MCAP_LOG_TIME_MODE`, `MCAP_PUBLISH_TIME_MODE`,
+`CAPTURE_DEDUP_MODE`, or `CAPTURE_OFFSET_RESET` variable exists.
+
+**`CaptureResult`** (`capture_consumer.py`), returned once Kafka offsets
+are committed:
+
+```text
+robot_id, robot_run_id, path, message_count, partition,
+first_offset, last_offset, first_sequence, last_sequence, sha256
+```
+
+Not a `RobotRun` -- it describes a local file and its Kafka provenance
+only; nothing here is a canonical record (§18).
+
+**Reliability scope (deferred, not this work):** process crash/restart
+across capture invocations, multi-instance coordination, and
+exactly-once capture guarantees beyond one invocation's own
+commit-after-finalize ordering are out of scope -- a reliability boundary
+for later work, matching Part 1's own DLQ/retry deferral (§7). A crashed
+capture's `.partial` directory is always safely discardable on the next
+attempt (§25); that is the extent of the crash-safety this work provides.
+
+## 27. Make surface and verification
+
+One target: `make e2e-streaming-capture` (`SCENE`/`RATE` overridable,
+same defaults as `e2e-ros2-streaming`). No `capture-up`/`-down`/CLI-only
+alias exists -- internal orchestration
+(`scripts/e2e/e2e_streaming_capture.sh`) stays an implementation detail.
+
+Five stages:
+
+1. `ros2/capture/tests/` -- pure unit tests (schema registry, writer,
+   finalize, validation, `RunFilter`/`SequenceTracker`/duplicate-policy
+   logic, and the durability-ordering test, §21), no Kafka, no live ROS
+   graph. 35 tests.
+2. Real `can_replay_node.py` + `streaming_bridge_node.py` -> Kafka (same
+   pattern as `e2e-ros2-streaming`, §16) -- the bridge's own reported
+   published count becomes this capture's `--max-messages` value.
+3. `cli.py` captures that run from the real broker into a finalized MCAP.
+4. A second, independent CAN replay recorded directly via
+   `ros2 bag record` (the existing oracle path,
+   `ros2-can-replay-record`'s own pattern) to a scratch path under
+   `data/tmp_streaming_capture/` -- never `data/raw/rosbag/<scene>`, the
+   canonical baseline dataset location.
+5. `scripts/e2e/mcap_capture_verify.py` (host, `uv run` -- `RosbagAdapter`
+   needs no ROS2/rclpy install) opens the captured MCAP through the same
+   `RosbagAdapter` apps/worker uses for real ingestion (mandatory
+   compatibility check, `extract_episode_source()` only -- no DB writes,
+   no `RobotRun`/`Episode` creation) and compares it against the
+   direct-recorded bag for **semantic** equivalence, not byte-identity:
+
+```text
+captured message_count == bridge's own published count
+captured first_sequence == 0
+captured and direct-recorded bags expose the same topic/schema set
+RosbagAdapter opens the captured MCAP without error
+captured bag: robot_states non-empty, missions non-empty
+robot_state count within tolerance of the direct-recorded bag's own
+  count (a few-message delta is expected -- two INDEPENDENT replay
+  invocations, each subject to its own ROS2 DDS discovery-lag at
+  startup, and RosbagAdapter dedupes RobotState by microsecond
+  timestamp; exact equality across two separately-timed replays is not
+  the right oracle)
+mission count and mission_ids match exactly between captured and
+  direct-recorded bags
+```
+
+Verified against real scene-0061 data: a real run captured all 2915
+bridge-published messages with `first_sequence=0`, and every check above
+passed, including the mandatory `RosbagAdapter` read-back. Zero
+Postgres/MinIO writes -- confirmed both by construction (§18) and by
+direct inspection of canonical table row counts before/after (unchanged).
+
+## 28. What comes next
+
+Durable capture (Part 3) closes the `Kafka -> MCAP` boundary. The next
+downstream boundary -- registering a captured MCAP as a canonical
+`RobotRun` (Postgres) and feeding it into the existing Episode pipeline
+-- is not implemented. Part 3's capture consumer produces a validated,
+local MCAP file and a `CaptureResult` describing it; nothing in this
+repository today takes that file and creates a `RobotRun`,
+`ArtifactRecord`, or Postgres/MinIO record from it.
+
+```text
+ROS2 / live robot -> stream envelope -> Kafka -> durable capture (Part 3)
+  -> validated local MCAP -> [not implemented] RobotRun registration
+  -> existing Episode pipeline -> existing learning-data pipeline
+```
+
+## 29. Non-goals
 
 Not built, not started, not partially wired -- listed so a future pass
 doesn't mistake absence for a bug:
 
 ```text
-MCAP writer / RobotRun streaming lifecycle
+RobotRun/Episode streaming lifecycle integration (registering a captured
+  MCAP as a canonical RobotRun; Part 3 produces the file, nothing
+  consumes it into Postgres yet)
 Episode generation from streamed data
-Any Postgres/ArtifactStore write from the streaming path
+Any Postgres/ArtifactStore write from the streaming or capture path
 Kafka Connect, Schema Registry, Avro
 Spark/Flink stream processing
 DLQ / automatic retry policy
@@ -710,9 +1041,16 @@ Timestamp correction beyond what the bridge already reads from source data
 Interpretation of /mission/status boundaries beyond proving transport
   preservation (Episode-building's use of mission boundaries is a
   downstream consumer's concern, not this transport's)
+Capture crash/restart reliability beyond the single-invocation,
+  single-partition guarantees Part 3 describes (§26) -- process
+  supervision, multi-instance coordination, and exactly-once capture
+  across restarts are a separate reliability boundary, deferred
+Multi-partition-per-robot_run_id support (Part 3 fails loudly instead,
+  §23) or dynamic capture topic/channel configuration (the supported
+  channel set is a static registry, §22)
 ```
 
-## 20. Source-of-truth map
+## 30. Source-of-truth map
 
 **Kafka transport:**
 
@@ -721,6 +1059,7 @@ Interpretation of /mission/status boundaries beyond proving transport
 - Kafka wire mapping + client implementation: `packages/sceneops-streaming/sceneops_streaming/{wire,producer,consumer,config,errors}.py`
 - Wire/decode unit tests (no broker required): `packages/sceneops-streaming/tests/test_wire.py`
 - Config surface/precedence unit tests (no broker required): `packages/sceneops-streaming/tests/test_config.py`
+- Manual-commit (`enable_auto_commit`/`commit()`) unit tests (no broker required): `packages/sceneops-streaming/tests/test_consumer.py`
 - Compose service: `compose/streaming.yaml`
 - Make targets: `makefiles/streaming.mk` (`streaming-up`/`streaming-down`/`smoke-streaming`)
 - Smoke test: `scripts/e2e/smoke_streaming.py`, `scripts/e2e/smoke_streaming.sh`
@@ -733,5 +1072,17 @@ Interpretation of /mission/status boundaries beyond proving transport
 - CAN replay node (message builders + timestamp mapping) + tests: `ros2/nodes/can_replay_node.py`, `ros2/nodes/tests/test_can_replay_node.py`
 - Container/runtime: `ros2/Dockerfile`, `compose/ros2.yaml`
 - E2E: `scripts/e2e/e2e_ros2_streaming.sh`, `scripts/e2e/ros2_streaming_verify.py`, `make e2e-ros2-streaming` (`makefiles/streaming.mk`)
+
+**Durable MCAP capture:**
+
+- Schema registry: `ros2/capture/schema_registry.py`, `ros2/capture/tests/test_schema_registry.py`
+- MCAP writer: `ros2/capture/mcap_writer.py`, `ros2/capture/tests/test_mcap_writer.py`
+- Pre-finalize validation: `ros2/capture/validation.py`, `ros2/capture/tests/test_validation.py`
+- Temp/final lifecycle: `ros2/capture/finalize.py`, `ros2/capture/tests/test_finalize.py`
+- Consumer orchestration (`RunFilter`/`SequenceTracker`/`CaptureResult`/`run_capture`, durability-ordering test): `ros2/capture/capture_consumer.py`, `ros2/capture/tests/test_capture_consumer.py`
+- CLI entry point: `ros2/capture/cli.py`
+- Container/runtime deps (`mcap`/`mcap-ros2-support`): `ros2/Dockerfile`, capture source mount: `compose/ros2.yaml`
+- E2E: `scripts/e2e/e2e_streaming_capture.sh`, `scripts/e2e/mcap_capture_verify.py`, `make e2e-streaming-capture` (`makefiles/streaming.mk`)
+- RosbagAdapter (the mandatory compatibility-check target): `apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`
 
 **Related ADRs:** [ADR-005](../adr/005-ros2-vs-kafka-boundary.md) (ROS2 vs. Kafka boundary), [ADR-003](../adr/003-batch-first-architecture.md) (why streaming waited until now)

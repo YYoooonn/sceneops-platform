@@ -41,3 +41,23 @@ e2e-ros2-streaming:
 	chmod +x scripts/e2e/e2e_ros2_streaming.sh
 	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
 	scripts/e2e/e2e_ros2_streaming.sh
+
+# --------------------
+# Durable MCAP capture -- real CAN replay -> ROS2 -> bridge -> real
+# Kafka -> ros2/capture (run-scoped Kafka consumer) -> validated,
+# finalized MCAP -> RosbagAdapter compatibility check -> semantic
+# comparison against a direct `ros2 bag record` of the same scene.
+# Independent of e2e-ros2-streaming (that proves messages reach Kafka;
+# this proves they can be durably captured back out of Kafka into a
+# rosbag2-compatible file) -- neither replaces the other. Creates zero
+# canonical RobotRun/Scene/Episode/ArtifactRecord and writes no
+# Postgres/MinIO state; captured/direct-recorded MCAPs are scratch files
+# under data/tmp_streaming_capture/, never the canonical
+# data/raw/rosbag/<scene> baseline location.
+# --------------------
+
+.PHONY: e2e-streaming-capture
+e2e-streaming-capture:
+	chmod +x scripts/e2e/e2e_streaming_capture.sh
+	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
+	scripts/e2e/e2e_streaming_capture.sh

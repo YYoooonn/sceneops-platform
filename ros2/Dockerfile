@@ -9,6 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+# The durable MCAP capture consumer (ros2/capture/) must validate a
+# finalized bag by reading it back with the same official MCAP reader
+# stack used elsewhere in SceneOps (apps/worker's RosbagAdapter), not by
+# trusting the writer -- pure-Python, no ROS2/rclpy dependency of its own.
+RUN pip3 install --break-system-packages --no-cache-dir \
+    "mcap>=1.4" \
+    "mcap-ros2-support>=0.5"
+
 # CanReplayNode (ros2/nodes/can_replay_node.py) reads nuScenes CAN bus data
 RUN pip3 install --break-system-packages --no-cache-dir nuscenes-devkit==1.2.0
 

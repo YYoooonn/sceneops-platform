@@ -25,6 +25,14 @@ class KafkaTelemetryConsumer:
     (``scripts/e2e/smoke_streaming.py``). This class never invents a
     suffix itself; group identity/rebalancing policy beyond the
     configured default is a caller concern, not a transport one.
+
+    ``enable_auto_commit`` defaults to ``True`` (unchanged default
+    behavior for every existing caller). A durability-sensitive caller
+    (e.g. the MCAP capture consumer, which must never acknowledge a
+    record as durably captured before the recording holding it is
+    finalized on disk) passes ``enable_auto_commit=False`` and calls
+    ``commit()`` explicitly once it has established its own durability
+    boundary -- never relying on librdkafka's periodic background commit.
     """
 
     def __init__(
@@ -34,14 +42,16 @@ class KafkaTelemetryConsumer:
         group_id: str | None = None,
         topic: str | None = None,
         auto_offset_reset: str = "earliest",
+        enable_auto_commit: bool = True,
     ) -> None:
         self._topic = topic or settings.telemetry_topic
+        self._last_message: object | None = None
         self._consumer = ConfluentConsumer(
             {
                 "bootstrap.servers": settings.bootstrap_servers,
                 "group.id": group_id or settings.consumer_group_id,
                 "auto.offset.reset": auto_offset_reset,
-                "enable.auto.commit": True,
+                "enable.auto.commit": enable_auto_commit,
             }
         )
         self._consumer.subscribe([self._topic])
@@ -70,12 +80,26 @@ class KafkaTelemetryConsumer:
                 str(exc), topic=topic, partition=partition, offset=offset
             ) from exc
 
+        self._last_message = msg
         return ConsumedTelemetryEnvelope(
             envelope=envelope,
             key=msg.key() or b"",
             topic=topic,
             partition=partition,
             offset=offset,
+        )
+
+    async def commit(self) -> None:
+        """Synchronously commit up through the most recently returned
+        record. Only meaningful with ``enable_auto_commit=False`` --
+        the caller is asserting its own durability boundary has been
+        reached (e.g. an MCAP recording has been validated and
+        atomically finalized), not merely that the record was consumed
+        into process memory."""
+        if self._last_message is None:
+            return
+        await asyncio.to_thread(
+            self._consumer.commit, message=self._last_message, asynchronous=False
         )
 
     async def close(self) -> None:
