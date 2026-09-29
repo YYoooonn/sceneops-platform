@@ -23,6 +23,34 @@ class RegisterEpisodeJobHandler(
     writes the manifest file and has the producing job_id/pipeline_run_id
     (see SceneOps V2 Request 15). This handler is a pure consumer: read the
     manifest, upsert EpisodeRecord, respect replace_existing.
+
+    Also the sole writer of ``DatasetVersionRecord.episode.episode_count``:
+    this is the point in the pipeline where EpisodeRecord rows actually
+    become canonical (``BuildEpisodesJobHandler`` runs first but only
+    produces manifests/artifacts, never an EpisodeRecord). The count is
+    always *recomputed* from a live ``EpisodeRepository.count()`` query
+    after this call's upserts are flushed, never incremented from this
+    dispatch's own ``registered_episode_count`` — a caller that dispatches
+    register_episode once per source scene (as
+    scripts/canonical/canonical_bootstrap.sh does) must still converge on
+    the true total, not just "however many this one dispatch touched".
+    Recomputing (rather than trusting a delta) is also what keeps this
+    correct under retry/upsert of an already-registered episode.
+
+    Concurrency: recompute-then-write is only safe against two *sequential*
+    dispatches on its own -- two independent dispatches whose count+write
+    steps genuinely overlap in time could otherwise both compute the same
+    stale count and both write it (lost update). Each touched DatasetVersion
+    is therefore locked (``dataset_store.lock_version_for_update`` — a real
+    ``SELECT ... FOR UPDATE`` row lock, see
+    ``PostgresDatasetVersionRepository.lock_for_update``'s own docstring)
+    immediately before the count+write pair, so at most one dispatch's
+    count+write section runs against a given DatasetVersion at a time; a
+    concurrent dispatch blocks at the lock until the first commits, then
+    sees its committed episode row(s) in its own count. ``touched_versions``
+    is iterated in sorted order so two dispatches that (atypically) touch
+    more than one DatasetVersion each always acquire locks in the same
+    global order, ruling out a lock-ordering deadlock between them.
     """
 
     @property
@@ -56,6 +84,7 @@ class RegisterEpisodeJobHandler(
 
         registered_ids: list[str] = []
         registered_uris: list[str] = []
+        touched_versions: set[tuple[str, str]] = set()
 
         for uri in params.episode_manifest_uris:
             manifest = await context.episode_artifact_store.load_episode_manifest(uri)
@@ -79,12 +108,34 @@ class RegisterEpisodeJobHandler(
             if existing is not None and not params.replace_existing:
                 registered_ids.append(episode_id)
                 registered_uris.append(uri)
+                if ds_id and ds_version:
+                    touched_versions.add((ds_id, ds_version))
                 continue
 
             await context.episode_store.upsert(record)
 
             registered_ids.append(episode_id)
             registered_uris.append(uri)
+            if ds_id and ds_version:
+                touched_versions.add((ds_id, ds_version))
+
+        # Refresh each touched DatasetVersion's Episode summary from live
+        # canonical membership -- same session, so this observes the
+        # upserts just flushed above -- before the commit below makes it
+        # durable. See this handler's own docstring for why this is a
+        # recompute (not an increment) AND why it's lock-then-count-then-
+        # write (not just recompute) -- sorted for a consistent global lock
+        # order across concurrent dispatches.
+        for ds_id, ds_version in sorted(touched_versions):
+            await context.dataset_store.lock_version_for_update(
+                dataset_id=ds_id, version=ds_version
+            )
+            episode_count = await context.episode_store.count(
+                dataset_id=ds_id, dataset_version=ds_version
+            )
+            await context.dataset_store.update_episode_summary(
+                dataset_id=ds_id, version=ds_version, episode_count=episode_count
+            )
 
         await context.commit()
 

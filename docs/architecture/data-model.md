@@ -58,7 +58,10 @@ Key fields:
 - `status`: `DatasetVersionStatus` — currently a single value, `registered`
   (see §2.1 below — this is intentional, not a placeholder).
 - `scene_count` / `sample_count` / `frame_count`: version-level statistics
-  (Scene-domain only — Episode has no equivalent DatasetVersion rollup yet).
+  (Scene-domain only).
+- `episode_count`: version-level Episode statistic (`EpisodeVersionSummary`
+  — its own independent rollup, not derived from or overwritten by the
+  Scene fields above; see the aggregate-summary contract below).
 - `channels` / `required_channels`: sensor channel lists (JSONB).
 - `manifest_uri`, `raw_source_root_uri`: ArtifactStore references.
 - `latest_validation_run_id` / `validation_status` / `should_block_pipeline`
@@ -73,11 +76,92 @@ read. Actual validate/profile execution history lives at scene scope
 `dataset_validation`/`dataset_profile` run types existed in an earlier
 version of the schema and were removed after confirming zero writers.
 
-Episode has no equivalent version-level cache: Episode readiness is always
+Episode has no equivalent quality-run cache: Episode readiness is always
 computed live from the latest `EpisodeValidationRunRecord`/
 `EpisodeProfileRunRecord` per episode (see
 [Episode domain](./episode-domain.md) §5) — there is currently no
-Episode-domain analogue to `DatasetVersion.validation_status`.
+Episode-domain analogue to `DatasetVersion.validation_status`. `episode_count`
+itself, however, *is* a real cached rollup (see below), independent of that
+quality-run caching question.
+
+#### 2.0.1 The aggregate-summary contract
+
+`SceneVersionSummary.scene_count` and `EpisodeVersionSummary.episode_count`
+(`packages/sceneops-core/sceneops_core/datasets/schemas/summaries.py`) are
+**cached aggregate projections of that DatasetVersion's current canonical
+membership** — `scene_count` must always equal a live count of `SceneRecord`
+rows owned by `(dataset_id, dataset_version)`, and `episode_count` a live
+count of `EpisodeRecord` rows, at the moment each was last written. They are
+**not** a metric of the latest ingest/build/register operation
+(`registered_episode_count` on `RegisterEpisodeJobResult`, or the number of
+scenes a single `build_scenes`/`ingest_scenes` dispatch happened to process,
+are the correct place for that — job results, never the DatasetVersion
+summary).
+
+Concretely, every writer recomputes from a live repository query
+(`EpisodeRepository.count(...)`, or `SceneRepository.list(...)` in
+`build_dataset_manifest`'s case) rather than incrementing a delta onto the
+previous cached value — this is what keeps the count correct under retry,
+upsert, duplicate input, and independent per-scene dispatches (as
+`scripts/canonical/canonical_bootstrap.sh` performs one `register_episode`
+dispatch per source scene): each dispatch converges on the true total, not
+just what that one dispatch touched. `RegisterEpisodeJobHandler` is the sole
+production writer of `episode_count` (it runs after `BuildEpisodesJobHandler`,
+which only produces manifests — never an `EpisodeRecord` — so writing the
+summary any earlier would count something that doesn't canonically exist
+yet); `build_dataset_manifest`'s job handler is `scene_count`'s final writer
+in both Scene pipelines, always re-querying every registered scene rather
+than trusting its own pipeline batch's input.
+
+#### 2.0.2 Concurrency: serializing aggregate mutation per DatasetVersion
+
+Recompute-from-live-count (§2.0.1) is correct for any single transaction,
+but two independent transactions recomputing and writing the *same*
+DatasetVersion's aggregate at overlapping times can still both compute a
+now-stale count and both persist it — a classic lost update (e.g. two
+concurrent `register_episode` dispatches for the same
+`(dataset_id, dataset_version)`, each seeing only its own not-yet-committed
+insert, both writing the same too-low count).
+
+The fix is a real PostgreSQL row-level lock, not a distributed lock or
+reconciliation process:
+`PostgresDatasetVersionRepository.lock_for_update` issues
+`SELECT ... FOR UPDATE` on the target DatasetVersion row, and
+`RegisterEpisodeJobHandler` acquires it (via
+`DatasetStore.lock_version_for_update`) immediately before its
+count-then-write pair, for every `(dataset_id, dataset_version)` it
+touched, in sorted order (a consistent lock-acquisition order across
+concurrent dispatches, so two dispatches that each touch more than one
+DatasetVersion can never deadlock against each other). A concurrent
+dispatch's own lock acquisition blocks until the first commits, and then
+observes that transaction's fully committed changes — turning "recompute,
+then write" into a real serialization point for the affected row.
+
+This only serializes Episode-vs-Episode aggregate mutation for the *same*
+row; it does not touch Scene's writers. That is safe, not incomplete,
+because Scene and Episode summaries occupy disjoint columns
+(`update_scene_summary`/`update_episode_summary` are both partial updates —
+`values_without_none` + per-attribute `setattr` — so SQLAlchemy's
+unit-of-work only marks the touched attributes dirty and emits an `UPDATE`
+naming only those columns). Postgres's ordinary row-level write lock
+already forces a concurrent Scene write and a concurrent Episode write to
+the same row to serialize with each other without either losing its own
+column's write, lock or no lock — proven by a genuine two-session
+concurrency test, not just reasoned about
+(`packages/sceneops-db/tests/test_episode_summary_aggregation.py`).
+
+**Guarantee after this fix:** committed same-DatasetVersion Episode
+aggregate mutations are fully serialized — the summary written by the last
+transaction to commit always equals live canonical membership at that
+point. **Residual limitation:** this guarantees correctness of *committed*
+state; it says nothing about a caller observing a value mid-flight between
+two overlapping transactions (ordinary READ COMMITTED behavior, not a new
+gap this introduces). Scene's own aggregate writers remain unlocked
+(current production usage never dispatches Scene ingestion more than once
+concurrently for the same DatasetVersion — see
+[Canonical baseline doc](../development/canonical-baseline.md) — so this is
+a documented, not a hidden, gap); the same `lock_for_update` primitive is
+reusable there without new architecture if that assumption ever changes.
 
 ### 2.1 Why `DatasetVersionStatus` has one value
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.episodes.schemas import EpisodeRecord, EpisodeStatus
@@ -82,6 +82,28 @@ class PostgresEpisodeRepository:
         )
         result = await self._session.execute(stmt)
         return [episode_model_to_record(m) for m in result.scalars().all()]
+
+    async def count(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status: EpisodeStatus | None = None,
+    ) -> int:
+        """Exact canonical membership count -- a real SQL COUNT, never
+        len(list(...)) (which would silently truncate at list()'s default
+        pagination limit). This is the authoritative source for
+        DatasetVersionRecord.episode.episode_count: current row count, not
+        an operation-local number from whichever job last ran."""
+        stmt = select(func.count()).select_from(EpisodeModel)
+        if dataset_id is not None:
+            stmt = stmt.where(EpisodeModel.dataset_id == dataset_id)
+        if dataset_version is not None:
+            stmt = stmt.where(EpisodeModel.dataset_version == dataset_version)
+        if status is not None:
+            stmt = stmt.where(EpisodeModel.status == enum_value(status))
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
 
 
 class PostgresEpisodeRunRepository:

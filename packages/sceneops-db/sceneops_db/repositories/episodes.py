@@ -36,6 +36,14 @@ class EpisodeRepository(Protocol):
         offset: int = 0,
     ) -> list[EpisodeRecord]: ...
 
+    async def count(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status: EpisodeStatus | None = None,
+    ) -> int: ...
+
 
 @runtime_checkable
 class EpisodeRunRepository(Protocol):

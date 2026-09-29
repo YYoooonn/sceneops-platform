@@ -50,7 +50,10 @@ def _manifest(episode_id: str = "ep-1", **overrides) -> EpisodeManifest:
 
 
 def _make_context(
-    *, manifest: EpisodeManifest | None, existing: EpisodeRecord | None
+    *,
+    manifest: EpisodeManifest | None,
+    existing: EpisodeRecord | None,
+    episode_count: int = 1,
 ) -> MagicMock:
     context = MagicMock()
     context.episode_artifact_store.load_episode_manifest = AsyncMock(
@@ -58,6 +61,9 @@ def _make_context(
     )
     context.episode_store.get = AsyncMock(return_value=existing)
     context.episode_store.upsert = AsyncMock()
+    context.episode_store.count = AsyncMock(return_value=episode_count)
+    context.dataset_store.lock_version_for_update = AsyncMock()
+    context.dataset_store.update_episode_summary = AsyncMock()
     context.artifact_record_store.create = AsyncMock()
     context.commit = AsyncMock()
     return context
@@ -156,6 +162,122 @@ class TestRegisterEpisodeDoesNotRegisterArtifacts:
         assert result.registered_episode_count == 0
         context.episode_store.upsert.assert_not_called()
         context.artifact_record_store.create.assert_not_called()
+
+
+class TestRegisterEpisodeUpdatesDatasetVersionSummary:
+    """register_episode, not build_episodes, is the sole writer of
+    DatasetVersionRecord.episode.episode_count (see register_episode.py's
+    own docstring) -- and it must always write a freshly recomputed live
+    count, never this dispatch's own registered_episode_count."""
+
+    @pytest.mark.asyncio
+    async def test_writes_live_recomputed_count_not_registered_count(self) -> None:
+        # This dispatch only registers 1 episode, but the live repository
+        # already has 3 (as if 2 prior independent dispatches had already
+        # registered their own episodes for the same DatasetVersion) --
+        # the summary must reflect the live 3, not this call's own 1.
+        context = _make_context(manifest=_manifest(), existing=None, episode_count=3)
+        request = _make_request(context)
+
+        await RegisterEpisodeJobHandler().run(request)
+
+        context.dataset_store.lock_version_for_update.assert_awaited_once_with(
+            dataset_id="d1", version="v1"
+        )
+        context.episode_store.count.assert_awaited_once_with(
+            dataset_id="d1", dataset_version="v1"
+        )
+        context.dataset_store.update_episode_summary.assert_awaited_once_with(
+            dataset_id="d1", version="v1", episode_count=3
+        )
+
+    @pytest.mark.asyncio
+    async def test_locks_before_counting_and_writing(self) -> None:
+        """The row lock must be acquired before the count query and before
+        the summary write -- that ordering (not just "all three calls
+        happened") is the actual serialization boundary against a
+        concurrent dispatch."""
+        context = _make_context(manifest=_manifest(), existing=None, episode_count=1)
+        request = _make_request(context)
+
+        call_order: list[str] = []
+        context.dataset_store.lock_version_for_update = AsyncMock(
+            side_effect=lambda **_: call_order.append("lock")
+        )
+        context.episode_store.count = AsyncMock(
+            side_effect=lambda **_: call_order.append("count") or 1
+        )
+        context.dataset_store.update_episode_summary = AsyncMock(
+            side_effect=lambda **_: call_order.append("update")
+        )
+
+        await RegisterEpisodeJobHandler().run(request)
+
+        assert call_order == ["lock", "count", "update"]
+
+    @pytest.mark.asyncio
+    async def test_retry_of_already_registered_episode_still_recomputes(self) -> None:
+        """Retrying/upserting an already-registered episode (existing is not
+        None, replace_existing=True) must still refresh the summary from a
+        live count -- not skip the write just because upsert() ran again on
+        the same row."""
+        existing = EpisodeRecord(episode_id="ep-1", status=EpisodeStatus.REGISTERED)
+        context = _make_context(
+            manifest=_manifest(), existing=existing, episode_count=3
+        )
+        request = _make_request(context, replace_existing=True)
+
+        await RegisterEpisodeJobHandler().run(request)
+
+        context.dataset_store.update_episode_summary.assert_awaited_once_with(
+            dataset_id="d1", version="v1", episode_count=3
+        )
+
+    @pytest.mark.asyncio
+    async def test_skipped_existing_without_replace_still_recomputes(self) -> None:
+        """Even when replace_existing=False skips the upsert entirely, the
+        summary must still be refreshed from a live count -- an earlier,
+        unrelated dispatch may have left it stale."""
+        existing = EpisodeRecord(episode_id="ep-1", status=EpisodeStatus.REGISTERED)
+        context = _make_context(
+            manifest=_manifest(), existing=existing, episode_count=5
+        )
+        request = _make_request(context, replace_existing=False)
+
+        await RegisterEpisodeJobHandler().run(request)
+
+        context.episode_store.upsert.assert_not_called()
+        context.dataset_store.update_episode_summary.assert_awaited_once_with(
+            dataset_id="d1", version="v1", episode_count=5
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_manifest_never_touches_summary(self) -> None:
+        """No manifest resolved -> nothing was registered -> no
+        (dataset_id, dataset_version) pair was touched -> no summary write."""
+        context = _make_context(manifest=None, existing=None)
+        request = _make_request(context)
+
+        await RegisterEpisodeJobHandler().run(request)
+
+        context.dataset_store.lock_version_for_update.assert_not_called()
+        context.episode_store.count.assert_not_called()
+        context.dataset_store.update_episode_summary.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_never_touches_scene_summary(self) -> None:
+        """Scene/Episode summary independence (SceneVersionSummary is
+        completely untouched by an Episode-domain write)."""
+        context = _make_context(manifest=_manifest(), existing=None)
+        request = _make_request(context)
+
+        await RegisterEpisodeJobHandler().run(request)
+
+        assert not [
+            call
+            for call in context.dataset_store.method_calls
+            if call[0] == "update_scene_summary"
+        ]
 
 
 class TestUsToDatetimeConversion:

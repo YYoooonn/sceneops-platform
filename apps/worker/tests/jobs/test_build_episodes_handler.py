@@ -71,7 +71,6 @@ def _make_context() -> WorkerContext:
         )
     )
     context.artifact_record_store.create = AsyncMock()
-    context.dataset_store.update_episode_summary = AsyncMock()
     context.commit = AsyncMock()
     return context
 
@@ -136,7 +135,9 @@ class TestBuildEpisodesDomainIsolation:
             assert ref.checksum == "sha256:deadbeef"
             assert ref.size_bytes == 123
 
-        context.dataset_store.update_episode_summary.assert_awaited_once()
+        # DatasetVersion.episode summary is written by RegisterEpisodeJobHandler,
+        # not this handler -- see register_episode.py's own docstring.
+        context.dataset_store.update_episode_summary.assert_not_called()
         context.commit.assert_awaited_once()
         assert result.segmentation_strategy == "mission_boundary"
 

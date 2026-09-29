@@ -629,6 +629,7 @@ cp .env.example .env.local          # configure storage backend, DB, Redis
 make setup                          # install deps + pre-commit hooks
 make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
 make register-nuscenes-dataset      # register nuScenes fixture
+make canonical-bootstrap            # create-or-verify the sceneops-canonical/v0.0 dev baseline -- see [docs/development/canonical-baseline.md](docs/development/canonical-baseline.md)
 make test                           # infrastructure-independent unit tests
 make test-integration               # real Postgres + MinIO tests
 make e2e-cleanroom                  # the full-platform acceptance workflow (destructive local-reset + real E2E) -- see [docs/development/local-development.md](docs/development/local-development.md)
@@ -667,6 +668,8 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | `make local-reset` | **Destructive** — wipe all local Postgres/Redis/MinIO data, bring up a fresh stack from the same images (no rebuild — run `make compose-build` first if source changed) |
 | `make status` / `make logs` | Service status / follow logs                 |
 | `make db-migrate`  | Run Alembic upgrade head (also run by `local-up`)      |
+| `make canonical-bootstrap` | Create-or-verify the frozen `sceneops-canonical/v0.0` dev baseline (+ its Scene-only/Episode-only siblings) — see [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
+| `make canonical-verify` | Read-only re-check of the same v0.0 contract |
 
 
 ### Development

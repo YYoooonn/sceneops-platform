@@ -48,6 +48,13 @@ class DatasetStore:
     ) -> DatasetVersionRecord:
         return await self._versions.upsert(version)
 
+    async def lock_version_for_update(
+        self, *, dataset_id: str, version: str
+    ) -> DatasetVersionRecord:
+        return await self._versions.lock_for_update(
+            dataset_id=dataset_id, version=version
+        )
+
     async def update_scene_summary(
         self,
         *,

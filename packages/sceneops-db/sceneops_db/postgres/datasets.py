@@ -115,6 +115,43 @@ class PostgresDatasetVersionRepository:
         await self._session.refresh(model)
         return dataset_version_model_to_record(model)
 
+    async def lock_for_update(
+        self, *, dataset_id: str, version: str
+    ) -> DatasetVersionRecord:
+        """Acquire a real PostgreSQL row-level lock (``SELECT ... FOR
+        UPDATE``) on this DatasetVersion row for the remainder of the
+        current transaction -- the serialization boundary for aggregate
+        Scene/Episode summary mutation (see
+        docs/architecture/data-model.md §2.0.2).
+
+        Blocks until any other transaction currently holding this same
+        row's lock commits or rolls back. Crucially, this call's own
+        *subsequent* reads within the same transaction (e.g. an
+        ``EpisodeRepository.count()`` called right after) then observe
+        that other transaction's fully committed changes under READ
+        COMMITTED, not a stale pre-lock snapshot -- each new statement
+        gets a fresh read of committed data, and the lock forces "my
+        count, then my write" to never interleave with another
+        transaction's "count, then write" for the same row. This is what
+        makes recompute-then-write safe under concurrent same-
+        DatasetVersion writers (two independent Episode registrations
+        completing at the same time, etc.) without incrementing a delta.
+
+        Raises the same as the other summary-update methods below if the
+        DatasetVersion doesn't exist.
+        """
+        version_id = make_dataset_version_id(dataset_id, version)
+        stmt = (
+            select(DatasetVersionModel)
+            .where(DatasetVersionModel.id == version_id)
+            .with_for_update()
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"DatasetVersion not found: {dataset_id}/{version}")
+        return dataset_version_model_to_record(model)
+
     async def update_scene_summary(
         self,
         *,

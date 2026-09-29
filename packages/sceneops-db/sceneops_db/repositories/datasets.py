@@ -41,6 +41,10 @@ class DatasetVersionRepository(Protocol):
 
     async def update(self, version: DatasetVersionRecord) -> DatasetVersionRecord: ...
 
+    async def lock_for_update(
+        self, *, dataset_id: str, version: str
+    ) -> DatasetVersionRecord: ...
+
     async def update_scene_summary(
         self,
         *,

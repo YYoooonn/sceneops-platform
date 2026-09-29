@@ -261,17 +261,25 @@ assert_json_equals "$PROFILE_TASK" '.result.summary.checked_episode_count' \
 echo "  OK"
 echo ""
 
-# ── 9. Verify DatasetVersion.episode.episodeCount matches what was persisted ─
+# ── 9. Verify DatasetVersion.episode.episodeCount matches live membership ───
+#
+# Compared against a live GET /episodes count for this DatasetVersion, never
+# this dispatch's own registered_episode_count -- episode_count is a cached
+# aggregate projection of CURRENT canonical membership (see
+# docs/architecture/data-model.md §2.0.1), which register_episode always
+# recomputes from a live EpisodeRepository.count() query. If this
+# DatasetVersion already had episodes registered by an earlier, independent
+# dispatch (e.g. a prior scene's own build_episodes/register_episode run
+# against the same dataset_id/dataset_version), the correct total here is
+# the sum of all of them, not just this dispatch's own contribution.
 
 echo "--- 9. Verify DatasetVersion episode summary ---"
 VERSION_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION")")"
 VERSION_EPISODE_COUNT="$(echo "$VERSION_JSON" | jq -r '.version.episode.episodeCount // 0')"
-echo "  dataset_version.episode.episodeCount=$VERSION_EPISODE_COUNT"
-# Compared against registered_episode_count (register_episode's own count of
-# rows it actually upserted into EpisodeStore), not build_episodes' count —
-# that's the closer match for "actual persisted EpisodeRecord count".
-[ "$VERSION_EPISODE_COUNT" = "$REGISTERED_COUNT" ] || {
-  echo "❌ DatasetVersion.episode.episodeCount ($VERSION_EPISODE_COUNT) != registered_episode_count ($REGISTERED_COUNT)" >&2
+LIVE_EPISODE_COUNT="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=200")" | jq -r '.count // (.episodes | length)')"
+echo "  dataset_version.episode.episodeCount=$VERSION_EPISODE_COUNT  live=$LIVE_EPISODE_COUNT"
+[ "$VERSION_EPISODE_COUNT" = "$LIVE_EPISODE_COUNT" ] || {
+  echo "❌ DatasetVersion.episode.episodeCount ($VERSION_EPISODE_COUNT) != live GET /episodes count ($LIVE_EPISODE_COUNT)" >&2
   exit 1
 }
 echo "  OK"

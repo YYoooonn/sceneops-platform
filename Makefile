@@ -100,6 +100,7 @@ help:
 	@echo "Quick start:"
 	@echo "  make setup                    Install deps, hooks"
 	@echo "  make local-up                 Start full local stack (idempotent: infra -> health -> MinIO buckets -> migrate -> API + workers)"
+	@echo "  make canonical-bootstrap      Create-or-verify the sceneops-canonical/v0.0 dev baseline (see below)"
 	@echo "  make test                     All infrastructure-independent unit tests"
 	@echo "  make test-integration         Real-Postgres/MinIO tests -- requires local-up"
 	@echo "  make e2e-cleanroom            THE full-platform acceptance workflow -- see 'E2E Workflows' below"
@@ -164,6 +165,13 @@ help:
 	@echo "  make show-pipeline PIPELINE_RUN_ID=pipe-xxx"
 	@echo "  make show-job-events JOB_ID=job-xxx"
 	@echo "  (worker logs: make worker-logs)"
+	@echo ""
+	@echo "=================================================================="
+	@echo "Canonical development baseline (docs/development/canonical-baseline.md):"
+	@echo "=================================================================="
+	@echo "  make canonical-bootstrap      Create-or-verify sceneops-scenes/episodes/canonical @ v0.0 from real"
+	@echo "                                nuScenes data (never mutates an already-matching baseline)"
+	@echo "  make canonical-verify         Read-only re-check of the same v0.0 contract"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Infrastructure:"
@@ -232,3 +240,4 @@ include makefiles/e2e.mk
 include makefiles/debug.mk
 include makefiles/lerobot.mk
 include makefiles/nuscenes.mk
+include makefiles/canonical.mk

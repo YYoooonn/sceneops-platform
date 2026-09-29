@@ -136,7 +136,13 @@ class BuildEpisodesJobHandler(
 
         await self._register_episode_artifacts(execution, build_result, write_results)
 
-        await self._update_dataset_version_episode_count(execution, build_result)
+        # DatasetVersion.episode.episode_count is written by
+        # RegisterEpisodeJobHandler, not here -- this handler only produces
+        # manifests/artifacts, never an EpisodeRecord (see SceneOps V2
+        # Request 15's own note above and register_episode.py's docstring).
+        # Writing it here from build_result.episode_count would be an
+        # operation-local count stamped before the row this DatasetVersion
+        # is meant to summarize even exists.
 
         if execution.robot_run is not None:
             await context.robot_store.save_run(
@@ -270,17 +276,3 @@ class BuildEpisodesJobHandler(
                 job_id=execution.job.job_id,
                 pipeline_run_id=execution.job.pipeline_run_id,
             )
-
-    @staticmethod
-    async def _update_dataset_version_episode_count(
-        execution: BuildEpisodesExecution,
-        build_result: EpisodeBuildResult,
-    ) -> None:
-        # Snapshot at build time, same convention/limitation as
-        # BuildScenesJobHandler._mark_dataset_version_ingested's scene_count.
-        version = execution.dataset_version_record
-        await execution.context.dataset_store.update_episode_summary(
-            dataset_id=version.dataset_id,
-            version=version.version,
-            episode_count=build_result.episode_count,
-        )

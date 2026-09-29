@@ -42,3 +42,14 @@ class EpisodeStore:
             limit=limit,
             offset=offset,
         )
+
+    async def count(
+        self,
+        *,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        status: EpisodeStatus | None = None,
+    ) -> int:
+        return await self._repo.count(
+            dataset_id=dataset_id, dataset_version=dataset_version, status=status
+        )
