@@ -204,6 +204,7 @@ domain-specific docs below for Scene/Episode flow.
 | Learning data scaling -- full chronological per-request record (Phase 5: audit/benchmark, sharded layout, selective reads, bounded cache/bulk access, incremental export, final scale validation + distributed-processing boundary) | [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md) |
 | Dataset interoperability (external adapter contract, LeRobot semantic mapping, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
 | External integration runtime (IntegrationRequest/Result, IntegrationExecutor, HTTP transport, nuScenes + LeRobot isolated runtimes) | [external-integration-runtime.md](./external-integration-runtime.md) |
+| **Streaming transport (Phase 6.1)** -- TelemetryEnvelope contract, Kafka wire/topic/partitioning contract, local Kafka dev stack, smoke test | [streaming-transport.md](./streaming-transport.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
 | Run records and derived quality/readiness | [quality-and-runs.md](./quality-and-runs.md) |

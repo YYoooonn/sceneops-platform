@@ -241,3 +241,4 @@ include makefiles/debug.mk
 include makefiles/lerobot.mk
 include makefiles/nuscenes.mk
 include makefiles/canonical.mk
+include makefiles/streaming.mk

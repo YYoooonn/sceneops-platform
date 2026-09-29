@@ -15,6 +15,8 @@ include:
     project_directory: .
   - path: ./compose/tools.yaml
     project_directory: .
+  - path: ./compose/streaming.yaml
+    project_directory: .
 
 networks:
   default:
