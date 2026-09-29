@@ -16,7 +16,7 @@ class KafkaTelemetryProducer:
     backed by ``confluent_kafka``. The only place in this package that owns
     a live broker connection for producing.
 
-    Delivery is at-least-once (request §2): ``publish`` buffers the record
+    Delivery is at-least-once: ``publish`` buffers the record
     client-side and returns once librdkafka has accepted it into its
     internal queue, not once the broker has acknowledged it -- call
     ``flush`` to block until every buffered record is actually delivered

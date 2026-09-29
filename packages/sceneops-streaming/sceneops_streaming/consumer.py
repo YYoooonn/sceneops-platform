@@ -16,8 +16,8 @@ class KafkaTelemetryConsumer:
     backed by ``confluent_kafka``.
 
     ``group_id`` defaults to ``settings.consumer_group_id`` (the one
-    configured application-level default, request §8) -- a caller that
-    doesn't need per-instance isolation can construct this with no
+    configured application-level default) -- a caller that doesn't need
+    per-instance isolation can construct this with no
     ``group_id`` at all. A caller that DOES need isolation (one group per
     RobotRun replay, one per smoke-test invocation) passes its own,
     derived from that same configured base rather than an unrelated

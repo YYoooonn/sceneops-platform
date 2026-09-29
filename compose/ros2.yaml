@@ -1,11 +1,23 @@
 services:
   ros2:
     build:
-      context: ./ros2
-      dockerfile: Dockerfile
+      # Repo root context (not ./ros2) -- the streaming bridge node needs
+      # packages/sceneops-core and packages/sceneops-streaming copied into
+      # this image, and Docker COPY cannot reach outside its build
+      # context, same reasoning as tools/nuscenes-integration/Dockerfile's
+      # own context: . comment.
+      context: .
+      dockerfile: ros2/Dockerfile
     image: sceneops-platform/ros2:local
+    env_file:
+      - .env.local
     volumes:
       - ./data:/data
       - ./ros2/nodes:/workspace/nodes:ro
+      # Read-only, matching compose/workers.yaml's identical mount for the
+      # worker service -- lets scripts/e2e/ros2_streaming_verify.py run
+      # inside this container (real rclpy deserialize_message for every
+      # ROS2 message type) without duplicating it into ros2/.
+      - ./scripts:/workspace/scripts:ro
     profiles:
       - ros2

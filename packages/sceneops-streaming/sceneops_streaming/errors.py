@@ -7,13 +7,13 @@ class EnvelopeDecodeError(ValueError):
     value that fails ``TelemetryEnvelope`` validation (unknown version,
     non-positive timestamp, etc).
 
-    Phase 6.1 request §14: malformed records are never silently coerced or
-    dropped -- this is the one typed failure raised for all of those cases,
-    always with topic/partition/offset context attached by the caller
-    (``KafkaTelemetryConsumer.poll``) so a bad record is diagnosable without
-    a debugger. No DLQ/retry policy exists yet (that's a reliability-phase
-    concern, explicitly out of scope here) -- the caller decides whether to
-    stop, skip, or surface the failure.
+    Malformed records are never silently coerced or dropped -- this is the
+    one typed failure raised for all of those cases, always with
+    topic/partition/offset context attached by the caller
+    (``KafkaTelemetryConsumer.poll``) so a bad record is diagnosable
+    without a debugger. No DLQ/retry policy exists -- that is a
+    reliability-boundary concern; the caller decides whether to stop,
+    skip, or surface the failure.
     """
 
     def __init__(

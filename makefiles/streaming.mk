@@ -1,6 +1,6 @@
 # --------------------
-# Kafka streaming transport (Phase 6.1) -- single-node KRaft broker, opt-in
-# via the `streaming` compose profile (compose/streaming.yaml), mirroring
+# Kafka streaming transport -- single-node KRaft broker, opt-in via the
+# `streaming` compose profile (compose/streaming.yaml), mirroring
 # ros2.mk's opt-in `ros2` profile (makefiles/ros2.mk). Never part of
 # `make local-up`'s default stack, and never a dependency of it -- Kafka is
 # non-canonical transport, proven by `make smoke-streaming` only.
@@ -27,3 +27,17 @@ streaming-down:
 smoke-streaming:
 	chmod +x scripts/e2e/smoke_streaming.sh
 	scripts/e2e/smoke_streaming.sh
+
+# --------------------
+# ROS2 streaming bridge -- real nuScenes CAN replay -> real ROS2 DDS ->
+# ros2/nodes/streaming_bridge_node.py -> real Kafka -> TelemetryConsumer.
+# Independent of smoke-streaming (that proves the Kafka transport itself;
+# this proves the ROS2 -> transport adapter) -- neither replaces the
+# other.
+# --------------------
+
+.PHONY: e2e-ros2-streaming
+e2e-ros2-streaming:
+	chmod +x scripts/e2e/e2e_ros2_streaming.sh
+	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
+	scripts/e2e/e2e_ros2_streaming.sh

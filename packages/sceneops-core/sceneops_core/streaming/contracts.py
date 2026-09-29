@@ -12,9 +12,9 @@ class ConsumedTelemetryEnvelope:
     was read from.
 
     Topic/partition/offset are transport metadata -- diagnostic and
-    reproduction-useful, never part of canonical robot telemetry semantics
-    (Phase 6.1 request §11). Kept as a separate wrapper rather than fields
-    on ``TelemetryEnvelope`` itself so the logical envelope stays exactly
+    reproduction-useful, never part of canonical robot telemetry
+    semantics. Kept as a separate wrapper rather than fields on
+    ``TelemetryEnvelope`` itself so the logical envelope stays exactly
     what a producer publishes, with nothing a consumer-only concept could
     leak backward into it.
     """

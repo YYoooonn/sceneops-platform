@@ -1,4 +1,4 @@
-"""Unit tests for the Kafka wire mapping (Phase 6.1 request §5/§18).
+"""Unit tests for the Kafka wire mapping.
 
 Pure functions only -- no ``confluent_kafka`` client is constructed, no
 broker connection is attempted. Kafka-backed behavior (real produce/

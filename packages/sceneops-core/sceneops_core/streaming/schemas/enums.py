@@ -5,10 +5,10 @@ from enum import StrEnum
 
 class TelemetryEnvelopeVersion(StrEnum):
     """Streaming-envelope schema version -- deliberately independent of
-    DatasetVersion, source-format version, and MCAP schema version (Phase
-    6.1 request §4). Only ``V1`` exists today; an envelope carrying any
-    other value fails Pydantic validation, which is what gives the
-    consumer's "unknown envelope version" rejection for free."""
+    DatasetVersion, source-format version, and MCAP schema version. Only
+    ``V1`` exists today; an envelope carrying any other value fails
+    Pydantic validation, which is what gives the consumer's "unknown
+    envelope version" rejection for free."""
 
     V1 = "v1"
 

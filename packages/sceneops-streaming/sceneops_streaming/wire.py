@@ -1,10 +1,10 @@
-"""Kafka wire mapping for ``TelemetryEnvelope`` (Phase 6.1 request §5).
+"""Kafka wire mapping for ``TelemetryEnvelope``.
 
 Pure functions only -- no ``confluent_kafka`` import, no network/broker
 dependency. This is what keeps "Kafka header encode/decode",
 "partition-key derivation", and "consumer reconstruction" unit-testable
-without a running broker (request §18); ``producer.py``/``consumer.py``
-are the thin, broker-connected layer built on top of this module.
+without a running broker; ``producer.py``/``consumer.py`` are the thin,
+broker-connected layer built on top of this module.
 
 Wire contract (frozen for v1):
 
@@ -60,8 +60,8 @@ class EncodedTelemetryRecord:
 def partition_key(envelope: TelemetryEnvelope) -> bytes:
     """Kafka partitioning key for v1 -- ``robot_run_id``, UTF-8 encoded.
     Routes every message for one RobotRun to the same partition
-    deterministically (request §6); never derived from ``channel`` or any
-    other field."""
+    deterministically; never derived from ``channel`` or any other
+    field."""
 
     return envelope.robot_run_id.encode("utf-8")
 
@@ -89,8 +89,8 @@ def encode_headers(envelope: TelemetryEnvelope) -> list[tuple[str, bytes]]:
 def encode_envelope(envelope: TelemetryEnvelope) -> EncodedTelemetryRecord:
     """Map a validated envelope onto the Kafka key/headers/value shape.
     ``envelope`` is already a validated ``TelemetryEnvelope`` instance by
-    construction (Pydantic) -- this is the "producer validates required
-    metadata" boundary from request §10; there is no second, looser
+    construction (Pydantic) -- this is the producer's own
+    validate-required-metadata boundary; there is no second, looser
     validation pass here."""
 
     return EncodedTelemetryRecord(
@@ -109,7 +109,7 @@ def decode_envelope(
     bytes. Raises ``EnvelopeDecodeError`` (never returns ``None``, never
     silently coerces) for any missing header, non-UTF-8 header, unparseable
     integer, or field that fails ``TelemetryEnvelope`` validation --
-    including an unknown ``version`` (request §14)."""
+    including an unknown ``version``."""
 
     header_map: dict[str, bytes] = {}
     for name, raw in headers or []:

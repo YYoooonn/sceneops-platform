@@ -1,7 +1,6 @@
-"""Unit tests for TelemetryEnvelope (Phase 6.1 streaming transport
-foundation, request §4/§14). Pure schema validation -- no Kafka broker
-involved; Kafka-backed behavior lives in sceneops-streaming's own tests /
-`make smoke-streaming`.
+"""Unit tests for TelemetryEnvelope. Pure schema validation -- no Kafka
+broker involved; Kafka-backed behavior lives in sceneops-streaming's own
+tests / `make smoke-streaming`.
 """
 
 from __future__ import annotations

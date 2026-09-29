@@ -1,7 +1,7 @@
-"""Tests for StreamingSettings (Phase 6.1 follow-up request §15) --
-defaults, the SCENEOPS_STREAMING_KAFKA_ env-var surface, and precedence
-(explicit kwarg > env var > field default; pydantic-settings' own
-built-in behavior, not a custom mechanism). No Kafka broker involved.
+"""Tests for StreamingSettings -- defaults, the SCENEOPS_STREAMING_KAFKA_
+env-var surface, and precedence (explicit kwarg > env var > field
+default; pydantic-settings' own built-in behavior, not a custom
+mechanism). No Kafka broker involved.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ def test_explicit_constructor_kwarg_overrides_env_var(monkeypatch) -> None:
 
 
 def test_unrelated_env_prefix_is_ignored(monkeypatch) -> None:
-    # Old Phase 6.1 naming (no _KAFKA_ infix) must not leak in -- proves
-    # the env_prefix rename is real, not just a docstring claim.
+    # Only the exact SCENEOPS_STREAMING_KAFKA_ prefix resolves this
+    # setting -- a near-miss variable name must have no effect.
     monkeypatch.setenv("SCENEOPS_STREAMING_BOOTSTRAP_SERVERS", "should-not-apply:9092")
 
     settings = StreamingSettings(_env_file=None)

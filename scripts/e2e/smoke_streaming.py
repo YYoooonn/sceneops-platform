@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kafka streaming transport smoke test (Phase 6.1 request §13).
+"""Kafka streaming transport smoke test.
 
 Publishes a deterministic run-A/run-B binary telemetry sequence to the
 real local Kafka broker (`make streaming-up`) through the real
@@ -9,13 +9,13 @@ robot_run_id partition key, and that source_timestamp_ns/
 ingest_timestamp_ns each round-trip to their own exact value -- including
 the case where they're numerically equal, since they are semantically
 distinct clocks, not values required to differ (run-B's fixture below).
-See docs/architecture/streaming-transport.md §5.
+See docs/architecture/streaming-transport.md §4.
 
 Uses the real ``StreamingSettings`` configuration path (bootstrap
 servers/topic/consumer group base) -- nothing here hardcodes a broker,
-topic, or consumer group independently of it (Phase 6.1 follow-up request
-§16); the only smoke-specific choice is deriving a per-invocation
-consumer group SUFFIX from the configured base, for rerunnability.
+topic, or consumer group independently of it; the only smoke-specific
+choice is deriving a per-invocation consumer group SUFFIX from the
+configured base, for rerunnability.
 
 Leaves zero Postgres/MinIO domain state -- the only side effect is Kafka
 topic data on the one configured telemetry topic, bounded by the broker's
@@ -125,7 +125,7 @@ def _build_fixtures(invocation_id: str) -> tuple[list[Fixture], str, str]:
                 # against the real broker that source_timestamp_ns ==
                 # ingest_timestamp_ns is legal and round-trips exactly.
                 # They are semantically distinct clocks, not values
-                # required to differ numerically (request §1/§3).
+                # required to differ numerically.
                 source_timestamp_ns=base_source_ns,
                 ingest_timestamp_ns=base_source_ns,
                 sequence_number=0,

@@ -1,7 +1,6 @@
-# Phase 6.1 streaming transport foundation. This is the single
-# authoritative source for the default telemetry topic name -- compose,
-# settings defaults, and docs all point back here rather than each
-# hardcoding their own copy of the literal.
+# Single authoritative source for the default telemetry topic name --
+# compose, settings defaults, and docs all point back here rather than
+# each hardcoding their own copy of the literal.
 DEFAULT_TELEMETRY_TOPIC = "sceneops.robot.telemetry.v1"
 
 # Kafka header key prefix used by the wire mapping in sceneops-streaming
