@@ -212,6 +212,7 @@ help:
 	@echo "  make e2e-ros2-streaming SCENE=scene-0061 RATE=10.0"
 	@echo "  make e2e-streaming-capture SCENE=scene-0061 RATE=10.0   Durable MCAP capture from Kafka"
 	@echo "  make e2e-robot-run-registration SCENE=scene-0061 RATE=10.0   Capture -> canonical RobotRun"
+	@echo "  make e2e-robot-run-learning SCENE=scene-0061 RATE=10.0   RobotRun -> materialize -> Episode -> learning data"
 	@echo "  make register-nuscenes-dataset"
 	@echo "  make e2e-bootstrap / e2e-bootstrap-core / e2e-bootstrap-interop / e2e-bootstrap-raw-log"
 	@echo "                                Persistent E2E fixture bootstrap (idempotent; requires local-up)"

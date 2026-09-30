@@ -1005,19 +1005,28 @@ direct inspection of canonical table row counts before/after (unchanged).
 
 ## 28. What comes next
 
-Durable capture (Part 3) closes the `Kafka -> MCAP` boundary. The next
-downstream boundary -- registering a captured MCAP as a canonical
-`RobotRun` (Postgres) and feeding it into the existing Episode pipeline
--- is not implemented. Part 3's capture consumer produces a validated,
-local MCAP file and a `CaptureResult` describing it; nothing in this
-repository today takes that file and creates a `RobotRun`,
-`ArtifactRecord`, or Postgres/MinIO record from it.
+The full chain from live telemetry through to a readable learning
+dataset is built: durable capture (Part 3) closes `Kafka -> MCAP`;
+canonical `RobotRun` registration (`sceneops-worker robots
+register-capture`, `docs/workflows/robot-run-and-mcap.md`) closes
+`MCAP -> ArtifactStore -> ArtifactRecord -> RobotRun`; and recording
+materialization (`sceneops_worker.robots.materialization`,
+`docs/workflows/robot-run-and-mcap.md` §3.1) closes
+`RobotRun -> existing Episode pipeline`, keeping `RosbagAdapter` itself
+storage-agnostic throughout.
 
 ```text
 ROS2 / live robot -> stream envelope -> Kafka -> durable capture (Part 3)
-  -> validated local MCAP -> [not implemented] RobotRun registration
-  -> existing Episode pipeline -> existing learning-data pipeline
+  -> validated local MCAP -> RobotRun registration
+  -> materialization -> existing Episode pipeline -> existing
+  learning-data pipeline
 ```
+
+Not implemented: `IngestRobotStatesJobHandler`/`BuildScenesJobHandler`
+consuming an ArtifactStore-backed `RobotRun.mcap_uri` (only
+`BuildEpisodesJobHandler` materializes today); reliability/scale
+concerns (crash recovery, backpressure at higher throughput, DLQ) remain
+the deferred boundary noted throughout this document (§19, §29).
 
 ## 29. Non-goals
 

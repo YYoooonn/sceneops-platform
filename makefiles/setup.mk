@@ -67,7 +67,7 @@ test-integration:
 	MINIO_BUCKET=$(MINIO_BUCKET) \
 	E2E_BOOTSTRAP_SOURCE_ROOT_URI=$(CURDIR)/data/raw/nuscenes \
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-	uv run pytest packages/sceneops-db/tests/ packages/sceneops-storage/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap_integration.py scripts/e2e/tests/test_selective_reads_minio_integration.py scripts/e2e/tests/test_pipeline_contracts_integration.py apps/worker/tests/robots/test_registration_integration.py -v
+	uv run pytest packages/sceneops-db/tests/ packages/sceneops-storage/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap_integration.py scripts/e2e/tests/test_selective_reads_minio_integration.py scripts/e2e/tests/test_pipeline_contracts_integration.py apps/worker/tests/robots/test_registration_integration.py apps/worker/tests/robots/test_materialization_integration.py -v
 
 .PHONY: lint
 lint:

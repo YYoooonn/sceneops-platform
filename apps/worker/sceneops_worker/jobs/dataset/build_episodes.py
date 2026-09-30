@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
+from sceneops_core.common.ids import (
+    generate_artifact_id,
+    robot_run_recording_artifact_id,
+)
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.episodes.schemas import EpisodeSource
 from sceneops_core.jobs.schemas import (
     BuildEpisodesJobParams,
     BuildEpisodesJobResult,
@@ -28,6 +32,7 @@ from sceneops_worker.episodes.building import (
     EpisodeSegmenter,
 )
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.robots.materialization import is_local_uri, materialize_recording
 
 
 @dataclass(frozen=True)
@@ -109,14 +114,7 @@ class BuildEpisodesJobHandler(
             mcap_uri=mcap_uri,
         )
 
-        adapter = RosbagAdapter(
-            source_store=context.raw_source_store,
-            source_root_uri=execution.mcap_uri,
-        )
-
-        source = adapter.extract_episode_source(
-            robot_id=params.robot_id, robot_run_id=params.robot_run_id
-        )
+        source = await self._extract_episode_source(execution)
 
         windows = EpisodeSegmenter().segment(source=source, config=params.segmentation)
 
@@ -163,6 +161,70 @@ class BuildEpisodesJobHandler(
             segmentation_strategy=params.segmentation.strategy.value,
             channels=sorted({frame.channel for frame in source.frames}),
         )
+
+    # ── recording read (materializes ArtifactStore-backed URIs; local paths
+    #    are read exactly as before) ──────────────────────────────────────────
+
+    @staticmethod
+    async def _extract_episode_source(
+        execution: BuildEpisodesExecution,
+    ) -> EpisodeSource:
+        """One reused path after input resolution, per the recording
+        materialization boundary (docs/architecture/streaming-transport.md):
+        a local ``mcap_uri``/``rosbag_uri`` (every pre-existing caller,
+        e.g. ``ros2 bag record`` output or the stopgap
+        ``register-run`` CLI) goes straight into ``RosbagAdapter`` exactly
+        as before -- unchanged behavior, zero new code on that path. An
+        ArtifactStore-backed URI (``s3://...``, e.g. a Phase 6.4-registered
+        streaming-captured RobotRun) is materialized to an execution-scoped
+        local temp file first -- ``RosbagAdapter`` itself never learns
+        about ``s3://``/MinIO/``ArtifactStore``/HTTP, only ever a local
+        path, either way.
+        """
+        params = execution.params
+        context = execution.context
+        mcap_uri = execution.mcap_uri
+
+        if is_local_uri(mcap_uri):
+            adapter = RosbagAdapter(
+                source_store=context.raw_source_store, source_root_uri=mcap_uri
+            )
+            return adapter.extract_episode_source(
+                robot_id=params.robot_id, robot_run_id=params.robot_run_id
+            )
+
+        expected_checksum = await BuildEpisodesJobHandler._resolve_expected_checksum(
+            context, execution.robot_run
+        )
+        async with materialize_recording(
+            artifact_store=context.artifact_store,
+            uri=mcap_uri,
+            expected_checksum=expected_checksum,
+        ) as local_path:
+            adapter = RosbagAdapter(
+                source_store=context.raw_source_store, source_root_uri=str(local_path)
+            )
+            return adapter.extract_episode_source(
+                robot_id=params.robot_id, robot_run_id=params.robot_run_id
+            )
+
+    @staticmethod
+    async def _resolve_expected_checksum(
+        context: WorkerContext, robot_run: RobotRunRecord | None
+    ) -> str | None:
+        """The RobotRun's own registered ArtifactRecord checksum (Phase
+        6.4's ``robot_run_recording_artifact_id`` -- the one canonical
+        artifact identity for this recording, never a second one) when
+        resolvable, ``None`` otherwise (e.g. no ``robot_run_id`` was given,
+        or this RobotRun predates artifact-backed registration) -- checksum
+        verification during materialization is then simply skipped, never
+        forced."""
+        if robot_run is None:
+            return None
+        artifact = await context.artifact_record_store.get(
+            robot_run_recording_artifact_id(robot_run.run_id)
+        )
+        return artifact.checksum if artifact is not None else None
 
     # ── version / source resolution ────────────────────────────────────────────
 
