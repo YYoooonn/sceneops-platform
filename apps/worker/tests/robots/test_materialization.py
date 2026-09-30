@@ -181,3 +181,53 @@ async def test_concurrent_materializations_of_same_uri_get_independent_paths() -
     # Both cleaned up independently, neither cross-deleted the other early.
     assert not paths[0].exists()
     assert not paths[1].exists()
+
+
+# ---------------------------------------------------------------------
+# Crash-leftover isolation (Phase 6.6 reliability matrix, item G): a
+# materialized temp dir orphaned by a simulated process crash (no
+# __aexit__ ever ran) must not interfere with a later, unrelated
+# materialize_recording() call -- each call's tempfile.mkdtemp-generated
+# directory is independent, so there is nothing to "resume" or collide
+# with. The container/worker process lifecycle (no persistent volume
+# backing the OS temp root) is what eventually reclaims an orphaned dir
+# like this -- documented, not built as a cleanup subsystem here.
+# ---------------------------------------------------------------------
+
+
+async def test_orphaned_temp_dir_from_simulated_crash_does_not_interfere_later() -> (
+    None
+):
+    store = _FakeArtifactStore({"s3://bucket/run-1.mcap": b"data-1"})
+
+    # Simulate a crash: enter the context manager's __anext__ manually and
+    # never call __aexit__/close it -- exactly what a SIGKILL mid-block
+    # would leave behind (this test's own teardown does not rely on the
+    # generator's cleanup running for this simulated-crash object).
+    ctx = materialize_recording(artifact_store=store, uri="s3://bucket/run-1.mcap")
+    orphaned_path = await ctx.__aenter__()
+    assert orphaned_path.exists()
+    orphaned_parent = orphaned_path.parent
+    # (Deliberately not calling ctx.__aexit__ -- this IS the crash.)
+
+    # A later, unrelated materialization must succeed normally and get
+    # its OWN independent path -- proves no shared/fixed temp location.
+    store2 = _FakeArtifactStore({"s3://bucket/run-2.mcap": b"data-2"})
+    async with materialize_recording(
+        artifact_store=store2, uri="s3://bucket/run-2.mcap"
+    ) as new_path:
+        assert new_path.exists()
+        assert new_path != orphaned_path
+        assert new_path.parent != orphaned_parent
+        assert new_path.read_bytes() == b"data-2"
+
+    # The orphaned dir from the "crash" is untouched by the later call --
+    # never cleaned up by someone else's context manager, exactly as
+    # documented (container-ephemeral /tmp is what eventually reclaims it).
+    assert orphaned_path.exists()
+
+    # Manual cleanup for this test only (standing in for the eventual
+    # container-lifecycle reclaim) -- not exercising any product code path.
+    import shutil
+
+    shutil.rmtree(orphaned_parent, ignore_errors=True)

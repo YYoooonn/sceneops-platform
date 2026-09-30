@@ -235,20 +235,34 @@ Everything else is self-contained in the `ros2/` Docker image.
   (replay -> record -> decode -> ingest), not real-time command/control —
   see [ADR-005](../adr/005-ros2-vs-kafka-boundary.md) for the intended
   boundary once/if a streaming path is built.
-- **`mission_boundary` Episode segmentation does not produce Episodes for
-  a Kafka-captured `RobotRun`.** `/mission/status`'s timestamp is
-  synthetic replay-event time (see
+- **`mission_boundary` Episode segmentation is not supported for a
+  Kafka-captured `RobotRun` — `BuildEpisodesJobHandler` rejects it with a
+  clear `UnsupportedSegmentationError` rather than silently returning
+  zero Episodes.** `/mission/status`'s timestamp is synthetic
+  replay-event time (see
   [Streaming transport](../architecture/streaming-transport.md)'s
   MCAP-readiness table); a durably-captured MCAP preserves that value as
   `log_time` verbatim, while CAN-derived channels' `log_time` is real
   historical CAN observation time — the two never overlap, so
-  `EpisodeBuilder`'s window-membership filter (§3 above) keeps zero
-  frames for every Mission window. A direct `ros2 bag record` capture
-  never hits this, because the recorder stamps every channel with its
-  own receipt time uniformly, never threading `source_timestamp_ns` into
-  `log_time` at all. Use `whole_run` segmentation (`build_episodes`'s
-  `segmentation.strategy` param) for a Kafka-captured `RobotRun` instead
-  — it needs no Mission/CAN timestamp alignment.
+  `EpisodeBuilder`'s window-membership filter (§3 above) would otherwise
+  keep zero frames for every Mission window and return an empty,
+  misleading success. `BuildEpisodesJobHandler` detects exactly this
+  outcome (Mission(s) present, `mission_boundary` requested, zero
+  Episodes produced) and raises instead
+  (`_reject_silent_zero_episode_mission_boundary`) — segmentation
+  behavior itself is unchanged, this is a validation guard, not a
+  redesign. The "no Missions at all" case still degrades to `whole_run`
+  silently, exactly as before; only the "Missions exist but never
+  overlap" case now fails loudly. A direct `ros2 bag record` capture
+  never hits either path, because the recorder stamps every channel with
+  its own receipt time uniformly, never threading `source_timestamp_ns`
+  into `log_time` at all. **`whole_run` is the supported Episode
+  segmentation strategy for a Kafka-captured `RobotRun`** (`build_episodes`'s
+  `segmentation.strategy` param) — it needs no Mission/CAN timestamp
+  alignment. There is no plan to introduce a separate replay/capture
+  timeline representation for this (it would risk corrupting the CAN
+  channels' real source-timestamp semantics for no clear benefit over
+  just using `whole_run`).
 - **Committed test fixture is real data**, not hand-crafted bytes:
   `apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap` (1.4MB)
   was produced by an actual `ros2 bag record` run. If CAN-replay logic

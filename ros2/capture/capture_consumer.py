@@ -17,6 +17,7 @@ caller decides, via ``stop_condition``.
 from __future__ import annotations
 
 import hashlib
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,9 +26,22 @@ from sceneops_core.streaming import ConsumedTelemetryEnvelope
 from sceneops_streaming.config import StreamingSettings
 from sceneops_streaming.consumer import KafkaTelemetryConsumer
 
-from finalize import finalize_bag, prepare_partial_bag_dir
+from finalize import (
+    FinalBagExistsError,
+    final_bag_path,
+    finalize_bag,
+    prepare_partial_bag_dir,
+)
 from mcap_writer import McapCaptureWriter
 from validation import validate_mcap_file
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 # Independent from the general-purpose streaming consumer group -- a
 # capture attempt must never share committed-offset state with any other
@@ -222,13 +236,37 @@ async def run_capture(
         validate_mcap_file(
             mcap_path, expected_message_count=writer.stats.message_count
         )
-        final_dir = finalize_bag(output_root, robot_run_id)
-        final_mcap_path = final_dir / Path(mcap_path).name
 
-        digest = hashlib.sha256()
-        with open(final_mcap_path, "rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                digest.update(chunk)
+        try:
+            final_dir = finalize_bag(output_root, robot_run_id)
+            final_mcap_path = final_dir / Path(mcap_path).name
+            digest_hex = _sha256_file(final_mcap_path)
+        except FinalBagExistsError:
+            # A prior attempt for this robot_run_id already reached
+            # finalize successfully but was killed/crashed before
+            # committing Kafka offsets (the exact "after finalize, before
+            # commit" crash boundary) -- Kafka never advanced past those
+            # records, so this attempt independently consumed, wrote, and
+            # validated the SAME messages again. That is convergence, not
+            # a conflict: if the bytes genuinely match, commit the offset
+            # now (the durability boundary this run reached is identical
+            # to the prior one) and report the existing final file --
+            # never silently overwrite it, and never loop forever
+            # crashing on the same already-finalized file either.
+            existing_final_dir = final_bag_path(output_root, robot_run_id)
+            existing_mcap_path = existing_final_dir / Path(mcap_path).name
+            new_digest = _sha256_file(mcap_path)
+            if (
+                not existing_mcap_path.is_file()
+                or _sha256_file(existing_mcap_path) != new_digest
+            ):
+                # A genuine conflict (different content under the same
+                # robot_run_id) -- never silently resolved, re-raise.
+                raise
+            final_dir = existing_final_dir
+            final_mcap_path = existing_mcap_path
+            digest_hex = new_digest
+            shutil.rmtree(Path(mcap_path).parent, ignore_errors=True)
 
         result = CaptureResult(
             robot_id=robot_id,
@@ -240,7 +278,7 @@ async def run_capture(
             last_offset=last_offset,
             first_sequence=tracker.first_sequence,
             last_sequence=tracker.last_sequence,
-            sha256=digest.hexdigest(),
+            sha256=digest_hex,
         )
 
         # Only now -- after the MCAP has been validated and durably,

@@ -1024,9 +1024,14 @@ ROS2 / live robot -> stream envelope -> Kafka -> durable capture (Part 3)
 
 Not implemented: `IngestRobotStatesJobHandler`/`BuildScenesJobHandler`
 consuming an ArtifactStore-backed `RobotRun.mcap_uri` (only
-`BuildEpisodesJobHandler` materializes today); reliability/scale
-concerns (crash recovery, backpressure at higher throughput, DLQ) remain
-the deferred boundary noted throughout this document (§19, §29).
+`BuildEpisodesJobHandler` materializes today).
+
+Reliability and scale characteristics of everything above -- crash
+boundaries, duplicate/gap/out-of-order handling, multi-RobotRun
+isolation, Kafka-outage behavior, backpressure, throughput/memory at
+scale, practical payload limits -- are measured and frozen in
+[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md),
+a point-in-time record, not a living contract.
 
 ## 29. Non-goals
 

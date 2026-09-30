@@ -11,7 +11,7 @@ from sceneops_core.common.ids import (
 )
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
-from sceneops_core.episodes.schemas import EpisodeSource
+from sceneops_core.episodes.schemas import EpisodeSegmentationStrategy, EpisodeSource
 from sceneops_core.jobs.schemas import (
     BuildEpisodesJobParams,
     BuildEpisodesJobResult,
@@ -33,6 +33,13 @@ from sceneops_worker.episodes.building import (
 )
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.robots.materialization import is_local_uri, materialize_recording
+
+
+class UnsupportedSegmentationError(ValueError):
+    """``mission_boundary`` segmentation was requested against a source
+    whose Mission window(s) never overlap any frame/robot-state
+    timestamp -- see ``BuildEpisodesJobHandler.
+    _reject_silent_zero_episode_mission_boundary``."""
 
 
 @dataclass(frozen=True)
@@ -127,6 +134,9 @@ class BuildEpisodesJobHandler(
             source=source,
             windows=windows,
             strategy=params.segmentation.strategy,
+        )
+        self._reject_silent_zero_episode_mission_boundary(
+            params=params, source=source, build_result=build_result
         )
 
         write_results = await self._write_episode_manifests(execution, build_result)
@@ -225,6 +235,55 @@ class BuildEpisodesJobHandler(
             robot_run_recording_artifact_id(robot_run.run_id)
         )
         return artifact.checksum if artifact is not None else None
+
+    @staticmethod
+    def _reject_silent_zero_episode_mission_boundary(
+        *,
+        params: BuildEpisodesJobParams,
+        source: EpisodeSource,
+        build_result: EpisodeBuildResult,
+    ) -> None:
+        """``mission_boundary`` segmentation (EpisodeSegmenter) already
+        falls back to ``whole_run`` when a source has NO dated Missions at
+        all -- that path is fine and unchanged. This guards the OTHER,
+        previously-silent failure mode: Mission(s) exist (so segmentation
+        produced real Mission-bounded windows), but not one single frame
+        or robot-state timestamp fell inside ANY of them, so
+        ``EpisodeBuilder`` produced zero Episodes -- a result that used to
+        look identical to "this run legitimately has no data", when it
+        actually means the Mission window(s) and the source data's
+        timestamps live on two incompatible clocks.
+
+        The most common real cause (Phase 6.6 finding) is a Kafka-captured
+        MCAP: ``/mission/status`` carries synthetic replay-event time while
+        CAN-derived channels carry real historical observation time under
+        the frozen MCAP ``log_time`` contract -- the two never overlap.
+        ``whole_run`` segmentation needs no such alignment and is the
+        supported choice for a streaming-captured RobotRun (see
+        docs/workflows/robot-run-and-mcap.md §6). This function does not
+        change segmentation behavior at all -- only fails loudly instead
+        of returning an empty, misleading success.
+        """
+        if params.segmentation.strategy != EpisodeSegmentationStrategy.MISSION_BOUNDARY:
+            return
+        if build_result.episode_count > 0:
+            return
+        if not source.missions:
+            return  # the real "no Missions at all" case -- already whole_run
+        raise UnsupportedSegmentationError(
+            f"mission_boundary segmentation produced zero Episodes even "
+            f"though {len(source.missions)} Mission(s) were present in the "
+            f"source -- no frame/robot-state timestamp fell inside any "
+            f"Mission's [started_at, ended_at) window. The most common "
+            f"cause is a Kafka-captured MCAP, where /mission/status carries "
+            f"synthetic replay-event time while CAN-derived channels carry "
+            f"real historical observation time -- the two never overlap "
+            f"under the current MCAP log_time contract (see "
+            f"docs/workflows/robot-run-and-mcap.md §6). Use "
+            f"segmentation.strategy=whole_run for a streaming-captured "
+            f"RobotRun instead; mission_boundary is only supported where "
+            f"every channel shares a compatible recording timeline."
+        )
 
     # ── version / source resolution ────────────────────────────────────────────
 
