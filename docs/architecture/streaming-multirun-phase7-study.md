@@ -1022,3 +1022,412 @@ strategy it's ultimately built on.
 ```bash
 git commit -m "perf(streaming): reduce Kafka consumer poll overhead"
 ```
+
+---
+
+## 19. Phase 7.1 — Continuous Capture Router core runtime (implemented)
+
+**Date:** 2026-10-01 (direct follow-up). **Commit at start:** same
+`531f743` (§§0-18 never advanced HEAD; this is the second and larger
+production-code change in this document's history, after §18's).
+No git commit was made, per instruction.
+
+### 19.1 Architecture implemented
+
+`ros2/capture/router.py`, new module, same package/dependency class as
+`capture_consumer.py` (needs `rosbag2_py` via `mcap_writer.py`, so it
+lives in `ros2/capture/`, live-mounted into the `ros2` container
+exactly like every existing capture module -- no image rebuild needed
+for this file itself, only for `packages/sceneops-streaming`'s
+`commit_offsets()` addition, §19.4):
+
+```text
+Kafka (real broker, real topic)
+  -> KafkaTelemetryConsumer (ONE continuous consumer, ROUTER_CONSUMER_
+     GROUP_ID -- a stable base, distinct from CAPTURE_CONSUMER_GROUP_ID,
+     so the router and RunScopedCapture never share committed-offset
+     state)
+  -> ContinuousCaptureRouter._route(): envelope.robot_run_id
+     -> dict lookup -> existing _ActiveRun, or a new one (bounded by
+        max_active_runs)
+  -> per-run, fully independent and REUSED-unmodified from
+     capture_consumer.py:
+       _RunFilter        (partition invariant + robot_id/robot_run_id
+                           identity check)
+       _SequenceTracker  (0..N-1 completeness, bounded duplicate policy)
+  -> McapCaptureWriter    (one open writer per active run -- reused
+                           unmodified from mcap_writer.py)
+  -> finalize_run()/finalize_all(): validate_mcap_file() -> finalize_
+     bag() -> CaptureResult (all reused unmodified from validation.py/
+     finalize.py/capture_consumer.py) -> commit_safe()
+```
+
+`RunScopedCapture` (`capture_consumer.run_capture()`) is completely
+untouched -- zero diff -- and remains the supported replay/backfill/
+debugging/recovery path, exactly as required. Every module the router
+composes (`_RunFilter`, `_SequenceTracker`, `McapCaptureWriter`,
+`finalize_bag`/`prepare_partial_bag_dir`/`partial_bag_path`/
+`final_bag_path`, `validate_mcap_file`, `CaptureResult`,
+`capture_consumer._sha256_file`) is imported and reused directly, never
+copy-pasted or reimplemented -- the "avoid duplicating existing capture
+logic" instruction is satisfied by construction, not by convention.
+
+### 19.2 Files changed
+
+```text
+New:
+  ros2/capture/router.py
+    -- ContinuousCaptureRouter, _ActiveRun, ActiveRunState,
+       MaxActiveRunsExceededError, RunIdentityConflictError,
+       UnknownRunError, ROUTER_CONSUMER_GROUP_ID
+  ros2/capture/tests/test_router.py
+    -- 18 unit tests, fake Kafka consumer + REAL McapCaptureWriter/
+       finalize/validate (same convention as test_capture_consumer.py)
+  ros2/capture/tests/test_router_integration.py
+    -- 2 tests against the REAL local Kafka broker (same convention as
+       test_multi_robot_run_integration.py)
+  scripts/dev/phase7/router_benchmark.py
+    -- real-Kafka multi-run benchmark harness (§19.8)
+
+Modified:
+  packages/sceneops-streaming/sceneops_streaming/consumer.py
+    -- new commit_offsets(offsets: dict[int, int]) method on
+       KafkaTelemetryConsumer (§19.4) -- commit()/poll()/close()
+       completely unchanged, zero behavior change for any existing
+       caller
+  packages/sceneops-streaming/tests/test_consumer.py
+    -- 3 new tests for commit_offsets(); fake ConfluentConsumer.commit()
+       extended to accept offsets= (previously message= only)
+
+Rebuilt (packages/sceneops-streaming is COPY+pip-installed into the
+ros2 image at build time, not live-mounted -- same staleness class
+Phase 6.7 §11 and this document's own §18.4 already flagged once each):
+  docker image sceneops-platform/ros2:local
+
+No change to: capture_consumer.py, finalize.py, mcap_writer.py,
+validation.py, group_id.py, schema_registry.py, sceneops-core/
+streaming/*, or anything canonical/RobotRun/ArtifactStore-related.
+```
+
+### 19.3 Active-run state design
+
+Runtime state only (per the brief's explicit framing), never a
+canonical domain model -- `_ActiveRun` (internal, mutable, owns the
+live `McapCaptureWriter`/`_RunFilter`/`_SequenceTracker`) and its
+read-only snapshot `ActiveRunState` (`robot_id`, `robot_run_id`,
+`partition`, `message_count`, `first_offset`/`last_offset`,
+`first_sequence`/`last_sequence`, `opened_monotonic`) -- exposed via
+`router.active_run_states()`. This mirrors `CaptureResult`'s own field
+set (Phase 7.0 study §9's prediction) plus the one execution-only field
+(`opened_monotonic`) a still-open run has that a finished
+`CaptureResult` doesn't need. `router.failed_runs` and
+`router.finalized_runs` provide the other two lifecycle views
+(abandoned, completed) for the same introspection purpose.
+
+### 19.4 Kafka offset/commit analysis and chosen policy
+
+**The correctness problem, stated precisely.** One continuous consumer
+group commits ONE position per partition, but serves many concurrently
+open per-run writers that reach their own durability boundary
+(validated + atomically finalized) at different times. Naively reusing
+`run_capture()`'s own policy ("commit up through the most recently
+returned record") would be actively wrong here: if the most recently
+consumed record belongs to still-open run B, and the committed offset
+advances past it, a crash before B ever finalizes means a restart's
+fresh consumer resumes AFTER that record -- Kafka will never redeliver
+it, and it was never durably written anywhere (B's `.partial` state is
+not assumed to survive a crash, matching `finalize.py`'s own "always
+discard and rebuild from Kafka" policy for partial bags). That is a
+genuine, silent durability violation, not a cosmetic one.
+
+**Chosen policy (implemented, §19's own `commit_safe()`):** per
+partition, never commit past the earliest `first_offset` of any
+currently-active run on that partition --
+
+```text
+safe_next_offset(partition) =
+    min(run.first_offset for run in active_runs on this partition)
+      if any run is active on it, else
+    last_consumed_offset(partition) + 1
+      once every run ever opened on it has been finalized or abandoned
+```
+
+This is monotonically non-decreasing: finalizing or abandoning a run
+only ever REMOVES its `first_offset` from the `min(...)`, which can
+only raise the bound, never lower it (a new run's `first_offset` is
+always >= the current consume position, itself always >= every prior
+run's `first_offset`). Verified directly by both a fake-consumer unit
+test tracking three successive `finalize_run()` calls
+(`test_commit_safe_is_monotonic_non_decreasing_across_successive_
+finalizes`: commits observed strictly `[0, 2, 3]`, never regressing)
+and, at real scale, by `kafka-consumer-groups.sh --describe` showing
+`LAG=0` (committed offset exactly equals log-end-offset) after
+`finalize_all()` in both the 100k- and 1M-message real-Kafka benchmarks
+(§19.8) -- once every run is finalized, the safe boundary correctly
+reaches the very end.
+
+**What this deliberately does NOT solve (conservative, as instructed):**
+a process restart does not attempt to recover any run's in-flight
+`.partial` state -- a fresh router simply resumes from the last safely
+committed position and Kafka redelivers everything after it, including
+a full replay of whatever any then-still-open run had already
+(uncommittedly) consumed. Full restart recovery is explicit Phase
+7.2/7.4 scope, not weakened durability -- nothing is ever committed
+past a record some active run still needs.
+
+**New capability, old contract preserved:** `commit_offsets()`
+(`consumer.py`) is an ADDITIVE new method on `KafkaTelemetryConsumer`
+-- `commit()`'s existing "commit the most recently returned record"
+behavior is completely untouched (still used verbatim by
+`run_capture()`), and `commit_offsets()` is the only thing router.py
+needs beyond `poll()`/`close()`. `confluent_kafka.TopicPartition`
+stays encapsulated inside `sceneops_streaming` (the one package
+documented to own that import, `streaming-transport.md` §2) --
+`router.py` itself never imports `confluent_kafka`, passing plain
+`dict[partition, offset]` across the boundary instead.
+
+### 19.5 Sequence/isolation behavior
+
+Every active run gets its OWN `_RunFilter`/`_SequenceTracker` instance
+-- gap detection, duplicate skipping, and conflicting-duplicate
+rejection are therefore independent BY CONSTRUCTION, not by any new
+logic this phase wrote. Verified directly:
+`test_independent_gap_detection_only_affects_the_gapped_run`,
+`test_independent_duplicate_handling_per_run`,
+`test_conflicting_duplicate_rejected_and_isolated_to_its_own_run` --
+each interleaves two runs, breaks ONE of them (gap / conflicting
+duplicate), and asserts the other's message count and active state are
+completely unaffected.
+
+**Per-run failure isolation (a design decision this phase had to make,
+not fully specified by the brief).** A `PartitionInvariantError`/
+`SequenceIntegrityError`/`UnsupportedChannelError` for one run's stream
+is caught in `_route()`, that run's writer is closed and its
+`.partial` directory discarded (never finalized), the failure is
+recorded in `failed_runs`, and the router keeps serving every other
+active run unaffected in the same loop iteration onward --
+`test_one_run_failure_does_not_corrupt_another_runs_writer_or_disk_
+state` confirms this against real MCAP I/O (a good run finalizes to
+exactly its own 3 messages while a bad run's partition-invariant
+violation is isolated alongside it). A later message for an
+already-failed `robot_run_id` is dropped, not silently reopened with
+fresh state (`test_late_message_for_an_already_failed_run_is_dropped_
+not_reopened`) -- recovering an abandoned run is what `RunScopedCapture`
+replay/backfill remains for.
+
+A record that fails to DECODE at all (`EnvelopeDecodeError`, no
+reliable `robot_run_id` to attribute it to) is handled differently from
+a per-run failure -- deliberately, a judgment call documented in
+`router.py`'s own class docstring: it cannot be isolated to one run, so
+letting it propagate would abort ingestion for EVERY currently active
+run (a much larger blast radius than `run_capture()`'s single-run
+case). `run_once()` catches `EnvelopeDecodeError` around the `poll()`
+call itself (before `_route()` ever runs, since there is no run to
+route to), appends `{topic, partition, offset, error}` to
+`stats.poison_messages` (never silently discarded), still advances
+that partition's `_last_consumed_offset_by_partition` bookkeeping (so
+§19.4's commit-safety accounting stays correct), and continues the
+loop -- every other active run is completely unaffected. Verified by
+`test_poison_undecodable_record_is_recorded_not_fatal_and_does_not_
+stop_routing`: a malformed record between two messages of `run-good`
+is recorded in `poison_messages` and `run-good` still finalizes with
+both its own messages, `failed_runs` empty (a poison record belongs to
+no run, so it is never attributed to one). This was caught and fixed
+during this same phase, not left as a gap to a later one -- an initial
+draft of this document (and the initial `router.py`) stated this intent
+without `run_once()` actually implementing it; both were corrected
+together once noticed.
+
+### 19.6 Resource-bound behavior
+
+`max_active_runs` (constructor parameter, no default policy invented
+beyond "fail loudly") is checked before opening a NEW run only --
+`test_max_active_runs_is_enforced_and_fails_loudly` confirms a 3rd
+distinct `robot_run_id` beyond the configured limit of 2 raises
+`MaxActiveRunsExceededError` and leaves exactly the first two runs
+active; `test_max_active_runs_does_not_block_a_third_run_once_one_
+finalizes` confirms finalizing one active run frees its slot for a
+new one. No eviction, no silent auto-finalization of the
+longest-idle run -- exactly as instructed ("Do not invent eviction
+semantics or silently finalize a run").
+
+### 19.7 Tests
+
+`ros2/capture/tests/test_router.py` -- 19 tests, fake Kafka consumer
+(records every `consume`-equivalent call and every `commit_offsets`
+call for direct assertion, and can inject a raised `EnvelopeDecodeError`
+into the poll sequence to exercise poison-record handling) but the REAL
+`McapCaptureWriter`/`finalize_bag`/`validate_mcap_file` pipeline, same
+convention as `test_capture_consumer.py`:
+
+```text
+test_two_interleaved_runs_each_produce_only_their_own_messages
+test_no_cross_run_mcap_records_when_heavily_interleaved
+test_byte_exact_payload_and_timestamp_mapping_preserved
+test_many_interleaved_runs_all_independently_correct       (12 runs)
+test_independent_gap_detection_only_affects_the_gapped_run
+test_independent_duplicate_handling_per_run
+test_conflicting_duplicate_rejected_and_isolated_to_its_own_run
+test_one_run_failure_does_not_corrupt_another_runs_writer_or_disk_state
+test_late_message_for_an_already_failed_run_is_dropped_not_reopened
+test_poison_undecodable_record_is_recorded_not_fatal_and_does_not_stop_routing
+test_max_active_runs_is_enforced_and_fails_loudly
+test_max_active_runs_does_not_block_a_third_run_once_one_finalizes
+test_finalize_run_leaves_other_active_runs_untouched
+test_finalize_run_on_unknown_run_id_raises
+test_finalize_all_finalizes_every_active_run
+test_commit_safe_never_advances_past_an_active_runs_first_offset
+test_commit_safe_advances_past_everything_once_all_runs_finalized
+test_commit_safe_is_monotonic_non_decreasing_across_successive_finalizes
+test_close_does_not_finalize_active_runs
+```
+
+`ros2/capture/tests/test_router_integration.py` -- 2 tests against the
+REAL local broker (no monkeypatching), each on its own disposable,
+per-invocation-unique topic (necessary: the shared default topic had
+already grown past 1M messages from this document's own §4/§5/§18.4
+benchmarks, and a fresh router consumer group always scans from
+`earliest` -- reusing it, or even one topic shared across these two
+tests, would make this "small/fast" integration test scan an unrelated
+backlog first; a known, accepted, minor cleanup item, same tradeoff
+class as the default topic's own local-dev growth):
+
+```text
+test_router_isolates_two_heavily_interleaved_runs_against_real_kafka
+test_router_handles_five_interleaved_runs_in_one_continuous_pass
+```
+
+`packages/sceneops-streaming/tests/test_consumer.py` -- 3 new tests for
+`commit_offsets()` (empty-mapping no-op, correct `TopicPartition`
+construction per partition, independence from the existing `commit()`
+path).
+
+**Existing run-scoped capture tests kept passing unchanged:** verified
+directly -- `ros2/capture/tests/test_capture_consumer.py`,
+`test_crash_boundaries.py`, `test_multi_robot_run_integration.py`, and
+every other pre-existing file in that directory are unmodified (zero
+diff) and re-ran green as part of the full suite (§19.9).
+
+### 19.8 Real-Kafka multi-run benchmark
+
+`scripts/dev/phase7/router_benchmark.py`, isolated disposable topics
+(1 partition, matching the production default's current configuration
+-- not touched), interleaved workload produced via the existing
+`producer.py multirun` mode:
+
+| Total messages | RobotRuns | Per-run size | Consume duration | Consume throughput | Total (incl. finalize) | Peak RSS | Correctness |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 100,000 | 10 | 10,000 | 6.39s | 15,660 msg/s | 7.04s | 138MB | 10/10 finalized, exactly 10,000 msgs each, 0 failed, 0 poison, `LAG=0` |
+| 1,000,000 | 10 | 100,000 | 16.18s | 61,822 msg/s | 22.15s | 161MB | 10/10 finalized, exactly 100,000 msgs each, 0 failed, 0 poison, `LAG=0` |
+
+Correctness was independently re-verified, not just trusted from the
+router's own in-memory counters: a separate, standalone `mcap` reader
+pass over two of the finalized 100,000-message files
+(`phase71-r1m-0000`, `phase71-r1m-0009`) confirmed exactly 100,000
+messages each, matching both the router's report and each producer
+call's own published count. `kafka-consumer-groups.sh --describe`
+(host-side, both benchmark groups) confirmed `LAG=0` after
+`finalize_all()` in both runs -- the committed offset reached exactly
+the topic's log-end-offset, the expected result once every run on the
+topic has been finalized (§19.4's policy).
+
+### 19.9 Comparison with Phase 7.0
+
+Phase 7.0 §5's run-scoped multi-run result (10 RobotRuns, 2,000
+messages each = 20,000 TARGET messages, against ~1,012,000-1,032,000
+pre-existing history, sequential `run_capture()` calls, production code
+unmodified): **1,144.91s total, ~9,815 msg/s raw scan rate.**
+
+This phase's router, processing 50x MORE total useful data (1,000,000
+messages, all of it meaningful -- no "history to skip past" concept
+exists for the router, every message belongs to some run) across the
+same 10-RobotRun shape: **22.15s total, 61,822 msg/s.** Effective
+per-useful-message throughput: Phase 7.0's run-scoped path delivered
+20,000 useful messages in 1,144.91s (17.5 useful msg/s); the router
+delivered 1,000,000 useful messages in 22.15s (45,147 useful msg/s) --
+**over 2,500x** the effective useful-data throughput, while writing 10
+real, independently-finalized, validated MCAP files, not just counting.
+
+Against Phase 7.0's own continuous-router PROTOTYPE (§7, counting-only,
+no MCAP writing, no per-run sequence/partition validation, no
+finalization): 1,032,000 messages in 11.54s (87,672 msg/s). This
+phase's real router, doing substantially more work per message (full
+`_SequenceTracker`/`_RunFilter` validation AND real `rosbag2_py` MCAP
+writes AND validate-before-finalize AND the offset-safety bookkeeping),
+reached 61,822 msg/s at 1,000,000 messages -- about 70% of the
+prototype's pure-counting rate, which is the expected, reasonable cost
+of turning a counting exercise into a real, durable, per-run-isolated
+capture pipeline. §8's `R×` amplification finding is fully closed: the
+router's cost does not multiply by RobotRun count the way run-scoped
+capture's did (10 runs cost roughly the same total wall time here as 1
+run consuming the same total message volume would -- amplification
+factor ≈ 1x, not ≈R).
+
+### 19.10 Tests/regression
+
+| Target | Result |
+|---|---|
+| `make lint` | PASS |
+| `make test` | PASS -- 1,432 passed (1,429 + 3 new `commit_offsets` tests), 14 skipped, 0 failed |
+| `make test-integration` | PASS -- 65 passed, 0 failed |
+| `make smoke-streaming` | PASS -- 39/0 failed |
+| `make e2e-streaming-capture` | PASS -- 76 unit tests (55 pre-existing + 19 router unit + 2 router real-Kafka integration, all in `ros2/capture/tests/`) + 8 verification checks / 0 failed |
+| `make canonical-verify` | PASS -- baseline unchanged |
+
+No dedicated new Make target was added for the router's own E2E/smoke
+coverage -- the two real-Kafka integration tests already run as part of
+`ros2/capture/tests/`, which `make e2e-streaming-capture`'s stage 1
+already executes, satisfying "only if it materially improves
+repeatability" without growing the public Make surface.
+
+### 19.11 Known limitations intentionally deferred to 7.2/7.4
+
+```text
+CaptureSession persistence -- ActiveRunState is in-process only, lost
+  on process exit; no Redis/DB-backed representation (Phase 7.0 study
+  §9's own recommendation, not contradicted here, just not yet built)
+Transport run-start/run-end control events -- finalize_run()/
+  finalize_all() are explicit, caller/test/API-driven operations only;
+  no automatic trigger exists (Phase 7.0 study §10's recommended
+  mechanism is still unbuilt)
+Idle-timeout lifecycle policy -- run_for()'s idle_timeout_seconds is a
+  BENCHMARK/TEST convenience for "when to stop polling," not a
+  production per-run auto-finalization policy; a genuinely idle
+  RobotRun stays open (and un-finalized) indefinitely under real
+  continuous operation until something explicit finalizes it
+Restart recovery -- a fresh router after a crash/restart does not
+  reconstruct which runs were active or resume their .partial state;
+  it simply starts consuming from the last safe commit and lets Kafka
+  redeliver (§19.4) -- correct, not lossy, but not automatic recovery
+Kafka rebalance recovery -- the router uses a single KafkaTelemetryConsumer
+  instance; multi-member group rebalance behavior (partition
+  reassignment mid-session) is unexercised
+Multiple capture workers -- one router = one consumer = (today) one
+  partition's worth of parallelism; Phase 7.3 scope
+Canonical RobotRun registration / ArtifactStore upload / Episode-
+  Learning integration -- CaptureResult stops exactly where
+  run_capture()'s always has; register_robot_run_capture() is
+  untouched and would need to be called separately, per finalized run,
+  exactly as it already is for RunScopedCapture output today
+Camera/LiDAR large-payload strategy -- unrelated to this phase, still
+  the ~999KB ceiling from Phase 6.6 §7
+```
+
+### 19.12 Blockers before Phase 7.2
+
+None structural. The router's core runtime is real, tested (unit +
+real-Kafka integration + real-Kafka scale benchmark), and durability-
+correct under the conservative commit policy. One item worth resolving
+during 7.2, not blocking its start: whether `ActiveRunState`'s eventual
+persisted form (Phase 7.0 study §9) should be able to reconstruct
+enough of `_SequenceTracker`'s state to resume validation after a
+restart, or whether restart recovery always means "start that run over
+from its own `first_offset`" -- a real design question for 7.4, but not
+one that changes anything about 7.2's own scope (the run-lifecycle
+control event).
+
+**Suggested commit** (not created, per instruction):
+
+```bash
+git commit -m "feat(streaming): add continuous multi-run capture router"
+```
