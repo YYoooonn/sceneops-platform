@@ -165,7 +165,12 @@ def _install_fake_consumer(monkeypatch, queue):
     created: list[_FakeConsumer] = []
 
     def factory(*, settings, group_id, auto_offset_reset, enable_auto_commit):
-        assert group_id == CAPTURE_CONSUMER_GROUP_ID
+        # Run-scoped (Phase 6.6.1), never the bare base literally -- every
+        # test in this file targets robot_run_id="run-1", so the derived
+        # group is deterministic; this only checks it's actually DERIVED
+        # (prefixed by the base), not the exact digest suffix.
+        assert group_id.startswith(CAPTURE_CONSUMER_GROUP_ID + "-")
+        assert group_id != CAPTURE_CONSUMER_GROUP_ID
         assert auto_offset_reset == "earliest"
         assert enable_auto_commit is False
         consumer = _FakeConsumer(queue=queue)

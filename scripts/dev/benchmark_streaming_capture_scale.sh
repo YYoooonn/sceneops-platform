@@ -26,11 +26,16 @@ PAYLOAD_BYTES="${2:-64}"
 ROBOT_RUN_ID="bench-$(date +%s)-$$"
 
 COMPOSE="docker compose --env-file .env.local"
-GROUP_ID="sceneops-mcap-capture"
 
+# The run-scoped group (Phase 6.6.1) is derived from ROBOT_RUN_ID by the
+# SAME shared helper (ros2/capture/group_id.py) run_capture() itself
+# uses -- never reimplemented/guessed here. The produce-phase JSON below
+# reports it (benchmark_streaming_capture_scale.py computes it via
+# derive_capture_group_id), read via jq once that phase completes.
 _lag() {
+  local group_id="$1"
   docker exec sceneops-kafka-1 /opt/kafka/bin/kafka-consumer-groups.sh \
-    --bootstrap-server localhost:9092 --describe --group "$GROUP_ID" 2>/dev/null \
+    --bootstrap-server localhost:9092 --describe --group "$group_id" 2>/dev/null \
     | awk '$1 != "GROUP" && $6 ~ /^[0-9-]+$/ { sum += $6 } END { print (sum=="" ? "null" : sum) }'
 }
 
@@ -42,7 +47,10 @@ PRODUCE_JSON="$($COMPOSE --profile ros2 run --rm ros2 python3 \
   --message-count "$MESSAGE_COUNT" --payload-bytes "$PAYLOAD_BYTES")"
 echo "  produce: $PRODUCE_JSON" >&2
 
-LAG_AFTER_PRODUCE="$(_lag)"
+GROUP_ID="$(jq -r '.group_id' <<<"$PRODUCE_JSON")"
+echo "  group_id=$GROUP_ID" >&2
+
+LAG_AFTER_PRODUCE="$(_lag "$GROUP_ID")"
 echo "  kafka_lag_after_produce=$LAG_AFTER_PRODUCE" >&2
 
 CAPTURE_JSON="$($COMPOSE --profile ros2 run --rm ros2 python3 \
@@ -51,7 +59,7 @@ CAPTURE_JSON="$($COMPOSE --profile ros2 run --rm ros2 python3 \
   --message-count "$MESSAGE_COUNT" --payload-bytes "$PAYLOAD_BYTES")"
 echo "  capture: $CAPTURE_JSON" >&2
 
-LAG_AFTER_CAPTURE="$(_lag)"
+LAG_AFTER_CAPTURE="$(_lag "$GROUP_ID")"
 echo "  kafka_lag_after_capture=$LAG_AFTER_CAPTURE" >&2
 
 jq -n \

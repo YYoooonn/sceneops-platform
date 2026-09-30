@@ -195,9 +195,9 @@ document.
 
 ## 13. Known limits carried forward
 
-- Multi-RobotRun concurrent/overlapping capture is not isolated under
-  the shared, frozen `CAPTURE_CONSUMER_GROUP_ID` (§4) — v1 supports one
-  capture at a time per group.
+- ~~Multi-RobotRun concurrent/overlapping capture is not isolated under
+  the shared, frozen `CAPTURE_CONSUMER_GROUP_ID` (§4)~~ — **fixed in
+  Phase 6.6.1, see §14 below.**
 - Practical message-payload ceiling ~999 KB (§7) — camera/LiDAR-scale
   payloads need deliberate Kafka reconfiguration, not attempted here.
 - Peak RSS grows with message count, not flat (§6) — not concerning at
@@ -208,3 +208,44 @@ document.
 - This entire baseline is single-broker, single-partition,
   single-machine — no multi-broker, multi-partition, or network-
   partition scenarios were exercised.
+
+## 14. Addendum: run-scoped capture consumer groups (Phase 6.6.1)
+
+Follow-up to §4's finding, same day. `CAPTURE_CONSUMER_GROUP_ID` is now
+a **capture consumer-group base**, not the literal Kafka `group.id` a
+capture attempt uses — every capture derives its own group from the
+base plus its `robot_run_id` (`ros2/capture/group_id.py`,
+`derive_capture_group_id`), so independent RobotRuns never share
+committed-offset state, even when interleaved on the same (still
+single-) partition.
+
+**Re-verified against real Kafka**
+(`ros2/capture/tests/test_multi_robot_run_integration.py::test_sequential_independent_captures_each_see_complete_sequence`):
+the exact scenario §4 documented as failing — run A's capture reading
+past run B's interleaved messages to reach its own target count — no
+longer causes run B's later, independent capture to miss its early
+messages. Both runs now see their own complete `0..N-1` sequence and
+write only their own messages, regardless of processing order.
+
+**Historical-rescan tradeoff, measured directly.** Consumer-group
+isolation is not partition scalability — this fix trades correctness
+for repeated historical rescanning. Every run-scoped group starts with
+no committed offset, so `auto.offset.reset=earliest` means a brand-new
+group may scan the ENTIRE accumulated topic before reaching its own
+messages. Directly observed: the same 3,000-message capture benchmark
+(§6) that took 3.47s against a lightly-used topic took **43.9s** once
+the local dev topic had accumulated roughly 150,000 prior messages from
+this document's own earlier benchmark runs — over 12x slower, entirely
+attributable to the rescan, not to capture logic itself (Kafka lag
+still reached exactly `0` at the end; correctness held, only latency
+changed). This is the expected, accepted cost of per-run isolation on a
+single, ever-growing topic — not a regression, and not fixed here (no
+partitions added, no topic redesign attempted, matching this follow-up's
+explicit scope).
+
+**Practical implication:** local dev/CI topics that accumulate a lot of
+history across repeated test runs will make future run-scoped captures
+progressively slower to start seeing their own data. A production
+deployment would want either topic retention tuned to bound this, or
+enough partitions that a fresh group's `earliest` scan stays cheap
+(neither implemented here).

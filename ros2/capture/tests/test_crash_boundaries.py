@@ -80,7 +80,11 @@ def _install_fake_consumer(monkeypatch, queue):
     created: list[_FakeConsumer] = []
 
     def factory(*, settings, group_id, auto_offset_reset, enable_auto_commit):
-        assert group_id == CAPTURE_CONSUMER_GROUP_ID
+        # Run-scoped (Phase 6.6.1) -- see test_capture_consumer.py's
+        # identical factory for why this checks "derived from" rather
+        # than exact equality.
+        assert group_id.startswith(CAPTURE_CONSUMER_GROUP_ID + "-")
+        assert group_id != CAPTURE_CONSUMER_GROUP_ID
         assert auto_offset_reset == "earliest"
         assert enable_auto_commit is False
         consumer = _FakeConsumer(queue=queue)

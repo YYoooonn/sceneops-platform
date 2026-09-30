@@ -918,14 +918,51 @@ seconds with no new matching message).
 
 ```text
 CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
-  -- independent from Part 1's general SCENEOPS_STREAMING_KAFKA_
-     CONSUMER_GROUP_ID default; capture never shares committed-offset
-     state with any other consumer.
+  -- a CAPTURE CONSUMER-GROUP BASE, not the literal Kafka group.id any
+     capture attempt actually uses (see below) -- independent from Part
+     1's general SCENEOPS_STREAMING_KAFKA_CONSUMER_GROUP_ID default;
+     capture never shares committed-offset state with any other
+     consumer, generic or otherwise.
 auto.offset.reset = "earliest"   -- correctness-first: a capture that
   starts after some of a run's messages were already published must
   still see all of them, not just whatever arrives from "now".
 enable.auto.commit = False       -- required; see §21.
 ```
+
+**Run-scoped consumer groups (`ros2/capture/group_id.py`).** Every
+capture attempt derives its own Kafka `group.id` from the base above and
+its target `robot_run_id` (`derive_capture_group_id`) -- it never passes
+the bare base to `KafkaTelemetryConsumer` directly. Two independent
+RobotRuns therefore never share committed-offset state, even when
+interleaved on the same partition: one run's poll loop reading past
+another run's messages (to reach its own target count) can no longer
+silently advance the other run's committed position, because there is
+no longer one shared position to advance. The same `robot_run_id`
+always derives the same group (a pure function of its inputs, never
+Python's randomized `hash()`), so retries land on the same group and
+offset lifecycle every time; different `robot_run_id`s derive different
+groups with cryptographic-hash collision resistance (a SHA-256 digest
+suffix, not the human-readable slug prefix alone, which is cosmetic
+only). Centralized in one module so capture code and any tooling that
+needs to know a run's own group (tests, ops/benchmark scripts querying
+Kafka consumer-group lag) derive it identically, never ad hoc.
+
+**Tradeoff, not fully solved:** this provides correct, isolated replay
+per RobotRun -- it does not provide efficient large-scale multi-run
+capture. Each run-scoped group is, the first time it's used, a brand
+new Kafka consumer group with no committed offset, so `auto.offset.reset
+= earliest` means it may scan the topic's entire historical record
+before reaching its own messages. On a topic that has accumulated a
+large volume of unrelated history (this repeatedly happens in local
+dev, where the same topic persists across many test/benchmark runs),
+that rescan cost can dominate a capture's wall-clock time -- measured
+directly: a 3,000-message capture that took ~3.4s against a
+lightly-used topic took ~44s once the topic had accumulated roughly
+150,000 prior messages from earlier benchmark runs. This is an accepted
+tradeoff for v1 correctness, not a regression to chase -- see
+[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md)'s
+Phase 6.6.1 addendum. Adding partitions or otherwise redesigning topic
+layout to bound this cost is explicitly out of scope here.
 
 None of these are `SCENEOPS_STREAMING_KAFKA_*` settings and none are
 configurable via environment variable -- deliberately, matching Part 1's
@@ -1094,6 +1131,8 @@ Multi-partition-per-robot_run_id support (Part 3 fails loudly instead,
 - Pre-finalize validation: `ros2/capture/validation.py`, `ros2/capture/tests/test_validation.py`
 - Temp/final lifecycle: `ros2/capture/finalize.py`, `ros2/capture/tests/test_finalize.py`
 - Consumer orchestration (`RunFilter`/`SequenceTracker`/`CaptureResult`/`run_capture`, durability-ordering test): `ros2/capture/capture_consumer.py`, `ros2/capture/tests/test_capture_consumer.py`
+- Run-scoped consumer-group derivation: `ros2/capture/group_id.py`, `ros2/capture/tests/test_group_id.py`
+- Multi-RobotRun isolation (real Kafka): `ros2/capture/tests/test_multi_robot_run_integration.py`
 - CLI entry point: `ros2/capture/cli.py`
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `ros2/Dockerfile`, capture source mount: `compose/ros2.yaml`
 - E2E: `scripts/e2e/e2e_streaming_capture.sh`, `scripts/e2e/mcap_capture_verify.py`, `make e2e-streaming-capture` (`makefiles/streaming.mk`)

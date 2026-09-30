@@ -39,7 +39,8 @@ sys.path.insert(0, "/workspace/capture")
 from sceneops_core.streaming import EnvelopeEncoding, TelemetryEnvelope  # noqa: E402
 from sceneops_streaming import KafkaTelemetryProducer, StreamingSettings  # noqa: E402
 
-from capture_consumer import run_capture  # noqa: E402
+from capture_consumer import CAPTURE_CONSUMER_GROUP_ID, run_capture  # noqa: E402
+from group_id import derive_capture_group_id  # noqa: E402
 
 
 async def _publish(*, robot_run_id: str, message_count: int, payload_bytes: int) -> float:
@@ -88,6 +89,15 @@ def main() -> int:
     parser.add_argument("--output-root", default="/data/tmp_scale_bench")
     args = parser.parse_args()
 
+    # Same derivation run_capture() itself uses (group_id.py) -- never
+    # reimplemented here, just called, so the lag query the orchestrating
+    # shell script runs between phases targets the SAME run-scoped group
+    # capture will actually use (Phase 6.6.1: one shared literal group no
+    # longer exists).
+    group_id = derive_capture_group_id(
+        base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=args.robot_run_id
+    )
+
     if args.phase == "produce":
         duration = asyncio.run(
             _publish(
@@ -103,6 +113,7 @@ def main() -> int:
             "payload_bytes": args.payload_bytes,
             "duration_s": round(duration, 3),
             "msgs_per_s": round(rate, 1),
+            "group_id": group_id,
         }))
         return 0
 

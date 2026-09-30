@@ -32,6 +32,7 @@ from finalize import (
     finalize_bag,
     prepare_partial_bag_dir,
 )
+from group_id import derive_capture_group_id
 from mcap_writer import McapCaptureWriter
 from validation import validate_mcap_file
 
@@ -43,9 +44,16 @@ def _sha256_file(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
-# Independent from the general-purpose streaming consumer group -- a
-# capture attempt must never share committed-offset state with any other
-# consumer, generic or otherwise. Frozen; not a configurable env var.
+
+# The capture consumer-group BASE (conceptually
+# SCENEOPS_STREAMING_KAFKA_CAPTURE_CONSUMER_GROUP_ID -- frozen as a code
+# constant, not an actual environment variable, since Phase 6.3; this
+# follow-up does not change that). Never used as a literal Kafka
+# group.id directly -- every capture derives its own run-scoped group
+# from this base (see derive_capture_group_id, group_id.py), so a
+# capture attempt never shares committed-offset state with any other
+# consumer, generic or otherwise, NOR with an independent RobotRun's own
+# capture (Phase 6.6.1).
 CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
 
 
@@ -195,9 +203,15 @@ async def run_capture(
     run_filter = _RunFilter(robot_id=robot_id, robot_run_id=robot_run_id)
     tracker = _SequenceTracker()
 
+    # Run-scoped, not the literal base -- see group_id.py's own docstring
+    # for why (Phase 6.6.1): a group shared across every RobotRun let one
+    # run's capture silently advance another's committed offset.
+    group_id = derive_capture_group_id(
+        base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=robot_run_id
+    )
     consumer = KafkaTelemetryConsumer(
         settings=settings,
-        group_id=CAPTURE_CONSUMER_GROUP_ID,
+        group_id=group_id,
         auto_offset_reset="earliest",
         enable_auto_commit=False,
     )
