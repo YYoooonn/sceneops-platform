@@ -61,3 +61,25 @@ e2e-streaming-capture:
 	chmod +x scripts/e2e/e2e_streaming_capture.sh
 	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
 	scripts/e2e/e2e_streaming_capture.sh
+
+# --------------------
+# Canonical RobotRun registration -- real CAN replay -> ROS2 -> bridge ->
+# real Kafka -> ros2/capture -> finalized MCAP -> ArtifactStore (real
+# MinIO) -> ArtifactRecord -> canonical RobotRun (real Postgres) ->
+# retrieve stored MCAP -> RosbagAdapter, plus idempotent-retry and
+# conflict verification. Independent of e2e-streaming-capture (that
+# proves the MCAP is durably captured; this proves it can be registered
+# as canonical state) -- neither replaces the other. Prerequisite:
+# `make local-up` (Postgres/MinIO/worker-cli's deps) in addition to
+# `make streaming-up`. Creates real RobotRun/ArtifactRecord/MinIO-object
+# canonical state for a fresh, uniquely-generated robot_run_id each run
+# -- that is this E2E's own deliverable, not a leak; the frozen
+# sceneops-canonical/v0.0 baseline dataset is untouched (different
+# tables entirely).
+# --------------------
+
+.PHONY: e2e-robot-run-registration
+e2e-robot-run-registration:
+	chmod +x scripts/e2e/e2e_robot_run_registration.sh
+	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
+	scripts/e2e/e2e_robot_run_registration.sh

@@ -32,6 +32,17 @@ class RobotStore:
     async def get_run(self, run_id: str) -> RobotRunRecord | None:
         return await self._runs.get(run_id)
 
+    async def create_run(self, run: RobotRunRecord) -> RobotRunRecord:
+        """Raw insert -- raises on an existing ``run_id`` (the table's own
+        primary key) rather than silently updating it, unlike
+        ``upsert_run``. Canonical registration (SceneOps V2 Request:
+        RobotRun Integration) needs this distinction: a caller that has
+        already decided "this is a genuinely new RobotRun" must find out
+        immediately, via a real constraint violation, if a concurrent
+        registration attempt won the race first -- never overwrite
+        whatever that other attempt wrote."""
+        return await self._runs.create(run)
+
     async def save_run(self, run: RobotRunRecord) -> RobotRunRecord:
         return await self._runs.update(run)
 

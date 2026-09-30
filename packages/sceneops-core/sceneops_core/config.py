@@ -28,6 +28,7 @@ class ArtifactSettings(StorageSettings):
     run_prefix: str = "runs"
     model_prefix: str = "models"
     analytics_prefix: str = "analytical"
+    robot_run_prefix: str = "robot_runs"
 
     # Unused legacy fields — kept for backward compatibility only.
     bucket: str | None = None
@@ -40,6 +41,10 @@ class ArtifactSettings(StorageSettings):
     @property
     def run_root_uri(self) -> str:
         return join_uri(self.root_uri, self.run_prefix)
+
+    @property
+    def robot_run_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.robot_run_prefix)
 
     @property
     def model_root_uri(self) -> str:
