@@ -14,7 +14,7 @@ RESULTS_FILE="${1:?Usage: $0 RESULTS_FILE CHECKPOINT [CHECKPOINT...]}"
 shift
 CHECKPOINTS=("$@")
 
-TOPIC="sceneops.robot.telemetry.v1"
+TOPIC="${PHASE7_BENCH_TOPIC:-sceneops.robot.telemetry.v1}"
 TARGET_COUNT=3000
 COMPOSE="docker compose --env-file .env.local"
 
@@ -38,13 +38,13 @@ for CHECKPOINT in "${CHECKPOINTS[@]}"; do
   NEEDED=$((CHECKPOINT - CURRENT))
   echo "=== checkpoint=$CHECKPOINT current_offset=$CURRENT needed_noise=$NEEDED ===" >&2
   if [ "$NEEDED" -gt 0 ]; then
-    uv run python scripts/dev/phase7/producer.py noise --count "$NEEDED" --num-runs 200 \
+    uv run python scripts/dev/phase7/producer.py --topic "$TOPIC" noise --count "$NEEDED" --num-runs 200 \
       --run-prefix "phase7-rescan-noise" >&2
   fi
   HISTORY_BEFORE_TARGET="$(_end_offset)"
 
   ROBOT_RUN_ID="phase7-rescan-$CHECKPOINT-$(date +%s)"
-  PRODUCE_JSON="$(uv run python scripts/dev/phase7/producer.py run \
+  PRODUCE_JSON="$(uv run python scripts/dev/phase7/producer.py --topic "$TOPIC" run \
     --robot-run-id "$ROBOT_RUN_ID" --count "$TARGET_COUNT")"
   echo "  produce: $PRODUCE_JSON" >&2
   TARGET_PARTITION="$(jq -r '.partition' <<<"$PRODUCE_JSON")"
@@ -52,7 +52,7 @@ for CHECKPOINT in "${CHECKPOINTS[@]}"; do
   GROUP_ID="sceneops-mcap-capture-study-lookup"  # placeholder; real group computed below
 
   CAPTURE_JSON="$($COMPOSE --profile ros2 run --rm ros2 python3 \
-    /workspace/scripts/dev/phase7/capture_runner.py --output-root /data/tmp_phase7_bench \
+    /workspace/scripts/dev/phase7/capture_runner.py --output-root /data/tmp_phase7_bench --topic "$TOPIC" \
     runscoped --robot-run-id "$ROBOT_RUN_ID" --count "$TARGET_COUNT")"
   echo "  runscoped capture: $CAPTURE_JSON" >&2
   GROUP_ID="$(jq -r '.group_id' <<<"$CAPTURE_JSON")"
@@ -63,10 +63,10 @@ for CHECKPOINT in "${CHECKPOINTS[@]}"; do
   # consumer-group-join overhead from pure scan-volume cost (section 6
   # covers the true multi-partition case on an isolated topic).
   ROBOT_RUN_ID_PA="phase7-rescan-pa-$CHECKPOINT-$(date +%s)"
-  uv run python scripts/dev/phase7/producer.py run \
+  uv run python scripts/dev/phase7/producer.py --topic "$TOPIC" run \
     --robot-run-id "$ROBOT_RUN_ID_PA" --count "$TARGET_COUNT" >&2
   PA_JSON="$($COMPOSE --profile ros2 run --rm ros2 python3 \
-    /workspace/scripts/dev/phase7/capture_runner.py --output-root /data/tmp_phase7_bench \
+    /workspace/scripts/dev/phase7/capture_runner.py --output-root /data/tmp_phase7_bench --topic "$TOPIC" \
     partitionaware --robot-run-id "$ROBOT_RUN_ID_PA" --count "$TARGET_COUNT" --partition 0)"
   echo "  partitionaware capture: $PA_JSON" >&2
 

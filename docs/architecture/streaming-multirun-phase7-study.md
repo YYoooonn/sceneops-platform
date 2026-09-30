@@ -616,7 +616,7 @@ near-free win (§13, 7.0.1) worth taking either way.
 ## 13. Proposed Phase 7 roadmap
 
 ```text
-7.0.1  Poll-loop implementation fix
+7.0.1  Poll-loop implementation fix -- DONE (§18)
        Stop wrapping every single ros2/capture Kafka poll() call in
        asyncio.to_thread -- §4.1 measured this as ~85-90% of A's
        apparent rescan cost at 1M-message history, entirely
@@ -624,9 +624,13 @@ near-free win (§13, 7.0.1) worth taking either way.
        partition questions. Cheap, low-risk (no protocol/contract
        change), and benefits A, B, AND any future C implementation
        equally, since C will need its own hot poll loop regardless of
-       which of A/B/C's consumption strategy it's built on. Do this
-       FIRST, or at minimum in parallel with 7.1 -- it is not gated on
-       any of the architecture decisions below.
+       which of A/B/C's consumption strategy it's built on.
+       Implemented same-day (§18): batched confluent_kafka.consume()
+       + bounded internal buffer, poll_batch_size=64 (benchmarked),
+       zero external API change. Measured 2.8x-7.0x speedup at
+       100k/500k/1M history against the real production run_capture()
+       path; remaining cost now correctly attributed to consumer-group
+       join/rebalance protocol, not async-dispatch overhead.
 
 7.1    Continuous Capture Router
        Build the real router: single long-lived consumer (or a small,
@@ -761,4 +765,260 @@ event's wire format (§10 recommends the mechanism, not the schema),
 and whether CaptureSession state (§9) lives in-process or in Redis --
 both are 7.2-scoped decisions, not blockers to starting 7.1's router
 consumption/routing/writer-reuse work.
+```
+
+---
+
+## 18. Phase 7.0.1 addendum — poll-loop fix (implemented)
+
+**Date:** 2026-09-30 (same day, direct follow-up). **Commit at start:**
+same `531f743` (§0's HEAD was never advanced by §1-17; this addendum's
+own diff is the first production-code change in this document's
+history). No git commit was made here either, per instruction.
+
+### 18.1 Exact pre-fix bottleneck
+
+`KafkaTelemetryConsumer.poll()` (`packages/sceneops-streaming/
+sceneops_streaming/consumer.py`) called
+`await asyncio.to_thread(self._consumer.poll, timeout_seconds)` --
+one broker-facing blocking call, and one `asyncio.to_thread` executor
+dispatch, PER MESSAGE, including every message a run-scoped capture's
+`_RunFilter` immediately discards as not belonging to its target
+`robot_run_id`. At ~1M-message topic history, §4.1 isolated this as
+~85-90% of the run-scoped capture path's apparent rescan cost --
+confirmed here end-to-end against the real production `run_capture()`
+path (§18.4), not just the isolation probe.
+
+### 18.2 Chosen batching/buffering design
+
+`poll()`'s external contract is byte-for-byte unchanged (still
+`async def poll(self, timeout_seconds: float = 1.0) -> ConsumedTelemetryEnvelope | None`,
+same class, same call sites, zero caller changes anywhere in the
+repo). Internally:
+
+```text
+poll(timeout_seconds):
+  if internal buffer non-empty:
+    pop and decode/return the next buffered record -- synchronous,
+    no broker call, no thread dispatch, timeout_seconds unused
+  else:
+    ONE asyncio.to_thread(self._consumer.consume,
+                           num_messages=poll_batch_size,
+                           timeout=timeout_seconds)
+    -- one bounded blocking C call for up to poll_batch_size records
+    if the batch is empty (timeout elapsed, nothing available):
+      return None                          -- same as before
+    else:
+      buffer the batch, pop and decode/return the first record
+```
+
+`confluent_kafka.Consumer.consume(num_messages, timeout)` (audited
+directly: `help(Consumer.consume)`, confirmed present in the installed
+`confluent-kafka==2.15.1`) was confirmed suitable before use: it
+returns a plain `list[Message]` (possibly empty on timeout), each
+individually checkable via `.error()` exactly like a single-record
+`poll()` result, blocks for at most `timeout` regardless of
+`num_messages` (never multiplies the wait), and participates in the
+same background rebalance/heartbeat callback handling `poll()` always
+did ("Callbacks may be executed as a side effect of calling this
+method" -- same note in both methods' docstrings). It works identically
+under `subscribe()` (baseline A/production) and `assign()` (prototype
+B) -- confirmed by construction, not just documentation, since §18.4
+re-ran both through the real `ros2/capture` pipeline.
+
+Decode/error-checking happens lazily, one message per `poll()` call,
+in strict buffer order -- not eagerly for the whole batch at fetch
+time. This preserves two things exactly: (1) `_last_message` (what
+`commit()` acknowledges) always reflects the single most recently
+RETURNED-to-caller record, whether served fresh or from the buffer,
+so `commit()`'s semantics are untouched; (2) a decode/Kafka error for
+message K of a batch is raised on the K-th `poll()` call that reaches
+it, never earlier and never for a message the caller hasn't asked for
+yet -- identical to the pre-fix one-call-one-message behavior, just
+sourced from a local buffer instead of a fresh broker round trip.
+
+### 18.3 Selected batch size and evidence
+
+`poll_batch_size` is a constructor keyword (`KafkaTelemetryConsumer.
+__init__`), defaulting to a module constant `DEFAULT_POLL_BATCH_SIZE`
+-- **not** an environment variable (no demonstrated per-deployment
+override need, matching this package's existing policy for `acks`/
+`retries`/`linger.ms`/etc.).
+
+`scripts/dev/phase7/poll_batch_size_benchmark.py` (new, host-side,
+exercises the real `KafkaTelemetryConsumer` class directly against
+real Kafka, no MCAP writing needed to isolate consumer throughput)
+swept candidates against the already-populated ~1,032,000-message
+default topic, repeated for stability:
+
+| `poll_batch_size` | Run 1 | Run 2 | Run 3 |
+|---:|---:|---:|---:|
+| 8 | 56,496 msg/s | -- | -- |
+| 16 | 69,013 msg/s | -- | -- |
+| 32 | 75,213 / 74,883 / 74,266 / 74,817 msg/s | | |
+| 64 | 78,177 / 79,062 / 78,155 msg/s | | |
+| 128 | 69,186 / 68,837 msg/s | | |
+| 256 | 68,572 msg/s | -- | -- |
+| 512 | 70,905 / 71,254 msg/s | | |
+
+Throughput rises sharply from 8→32 (amortizing the per-fetch dispatch
+cost that motivated this fix at all), peaks reproducibly at **64**
+(~78-79k msg/s across 3 repeated runs, each ~5-6% ahead of every other
+candidate tested), then plateaus/mildly degrades from 128-512 (more
+buffered state per fetch, no further throughput benefit at this
+message/payload size). **`DEFAULT_POLL_BATCH_SIZE = 64`** — the
+empirically fastest candidate, and on the small/bounded side (keeps
+the worst-case buffered-but-uncommitted replay window modest, §18.5).
+
+### 18.4 Real-Kafka before/after benchmark
+
+Same methodology as §4 (`scripts/dev/phase7/run_rescan_benchmark.sh`,
+now parametrized with a `PHASE7_BENCH_TOPIC` override so this
+comparison could run against a fresh, isolated, disposable topic --
+`sceneops.robot.telemetry.phase701study.v1`, 1 partition, dropped
+after use — rather than resetting the shared default topic). The
+`ros2` Docker image was rebuilt first (`docker compose build ros2`) --
+required, since `packages/sceneops-streaming` is `COPY`+`pip install`-ed
+into that image at build time, not live-mounted (the same staleness
+class of issue Phase 6.7 §11 already flagged once for this exact
+image). Real production `run_capture()` path, completely unmodified,
+now running on top of the fixed `KafkaTelemetryConsumer`:
+
+| History before target | Before (§4, async-wrapped) | After (batched, this fix) | Speedup | Kafka lag after |
+|---:|---:|---:|---:|---:|
+| 100,000 | 15.19s | 5.44s | 2.8x | 0 |
+| 500,000 | 56.75s | 9.82s | 5.8x | 0 |
+| 1,000,000 | 102.51s | 14.56s | 7.0x | 0 |
+
+Correctness held throughout: Kafka lag reached exactly 0 after every
+capture (no message lost or left uncommitted), and the after-fix 1M
+number (14.56s) lands almost exactly where §4.1's `subscribed-sync`
+isolation probe predicted (13.66s) -- strong independent confirmation
+that this fix closes the gap §4.1 attributed to it, not some other
+variable. The remaining ~14.6s at 1M history (vs. prototype B's 10.73s
+on the same checkpoint, re-measured here too) is the genuine,
+un-removed consumer-group-join/rebalance-protocol cost §4.1 already
+identified as the minority remaining contributor -- exactly the
+"remaining history-dependent slowdown... attributed to run-scoped
+rescanning rather than the async wrapper" the acceptance criterion
+asks for.
+
+### 18.5 RSS / result-order correctness
+
+Peak RSS at 1M history: 154MB (after-fix) vs. 155-157MB (before-fix,
+§4/§6) -- no meaningful change, as expected (the buffer holds at most
+`poll_batch_size=64` `Message` objects at a time, negligible next to
+the writer/MCAP-side memory already dominating this figure per Phase
+6.6's own finding). Result ordering: verified both by the new unit
+tests (§18.6 -- `test_record_ordering_preserved_across_batches`,
+strict sequence-number and offset assertions) and by every real-Kafka
+capture in §18.4 reporting `first_sequence=0`/contiguous
+`last_sequence` with zero `SequenceIntegrityError`s -- `_SequenceTracker`
+(unmodified) never observed an out-of-order or gapped delivery from
+the new batched buffer.
+
+### 18.6 Tests added
+
+`packages/sceneops-streaming/tests/test_consumer.py` -- fake
+`ConfluentConsumer` extended with a `consume(num_messages, timeout)`
+method (replacing the now-unused fake `poll()`) that records every
+call's `(num_messages, timeout)` args, enabling direct assertions that
+N returned records required far fewer underlying fetch calls than N.
+10 new tests (4 pre-existing commit/construction tests untouched):
+
+```text
+test_one_batch_fetch_serves_multiple_poll_calls
+test_bounded_buffer_refetches_once_drained
+test_record_ordering_preserved_across_batches
+test_poll_returns_none_on_timeout_with_no_messages
+test_timeout_not_multiplied_by_batch_size
+test_buffered_poll_calls_do_not_repeat_the_timeout_wait
+test_decode_error_mid_batch_does_not_lose_or_reorder_later_records
+test_malformed_record_raises_decode_error_with_location
+test_commit_commits_the_last_record_even_when_served_from_buffer
+test_close_with_buffered_unreturned_messages_does_not_raise
+```
+
+"Same RobotRun capture retry semantics unchanged" was not re-tested
+with NEW tests -- it didn't need new ones: `ros2/capture/tests/
+test_capture_consumer.py` and `test_crash_boundaries.py` fake
+`capture_consumer.KafkaTelemetryConsumer` itself (a level above this
+fix), so they were structurally incapable of being affected by it;
+re-running them unmodified (§18.7) is the correct verification, not a
+gap.
+
+### 18.7 Regression
+
+| Target | Result |
+|---|---|
+| `make lint` | PASS |
+| `make test` | PASS -- 1,429 passed (1,419 + 10 new), 14 skipped, 0 failed (9.01s) |
+| `make test-integration` | PASS -- 65 passed, 0 failed (4.63s) |
+| `make smoke-streaming` | PASS -- 39/0 failed |
+| `make e2e-streaming-capture` | PASS -- 55 unit tests (`ros2/capture/tests/`, including both crash-boundary convergence tests and the real-Kafka multi-RobotRun isolation test) + 8 verification checks / 0 failed |
+
+`ros2/capture/tests/` was also run standalone
+(`docker compose ... run --rm ros2 python3 -m pytest /workspace/capture/tests -v`)
+to confirm every individual test name, not just the aggregate count --
+55/55, including `test_sequential_independent_captures_each_see_
+complete_sequence` (real Kafka, real multi-RobotRun interleaving) and
+both `test_boundary_c_.../test_boundary_d_...` crash/retry convergence
+tests, all passing unmodified against the real, fixed consumer.
+
+### 18.8 Files changed (this addendum)
+
+```text
+Modified:
+  packages/sceneops-streaming/sceneops_streaming/consumer.py
+    -- poll() batching, poll_batch_size param, DEFAULT_POLL_BATCH_SIZE
+  packages/sceneops-streaming/tests/test_consumer.py
+    -- 10 new tests, fake consumer gained consume()
+  scripts/dev/phase7/run_rescan_benchmark.sh
+    -- PHASE7_BENCH_TOPIC override + producer.py/capture_runner.py
+       --topic passthrough (so this addendum's before/after comparison
+       could target an isolated topic without resetting the shared
+       default one)
+
+New:
+  scripts/dev/phase7/poll_batch_size_benchmark.py
+
+Rebuilt (no source change, staleness-avoidance only, matching Phase
+6.7 §11's own precedent):
+  docker image sceneops-platform/ros2:local
+```
+
+No change to `ros2/capture/*`, `sceneops-core/streaming/*`,
+`RobotRunRecord`/registration, Kafka topic/partition/consumer-group
+configuration, `auto.offset.reset`, `enable.auto.commit`, or MCAP
+finalize-before-commit ordering -- confirmed by the unmodified §11
+preserved-contracts list plus this addendum's own file list above.
+
+### 18.9 Remaining rescan cost after the optimization
+
+Real, smaller, and now dominated by the consumer-group-join/rebalance
+protocol rather than by per-message dispatch overhead -- exactly the
+"repeated-history scanning" cost this follow-up was explicitly told
+not to try to solve. It still grows with topic history (100k: 5.44s →
+500k: 9.82s → 1M: 14.56s -- roughly logarithmic-looking across this
+range rather than as steeply linear as the before-fix numbers, though
+three points isn't enough to firmly characterize the post-fix growth
+curve's shape) and is the remaining, correctly-attributed case for
+§12/§13's Continuous Capture Router (7.1) and/or partition-aware
+capture (7.3) -- neither of which this addendum touches.
+
+### 18.10 Blockers before Phase 7.1
+
+None. This addendum is self-contained, backward-compatible (every
+existing caller of `KafkaTelemetryConsumer` -- `run_capture()`,
+`smoke_streaming.py`, `ros2_streaming_verify.py` -- required zero
+changes), and fully regression-tested. 7.1 (Continuous Capture Router)
+can proceed immediately and will inherit this fix's throughput
+improvement for free, since it will need its own `KafkaTelemetryConsumer`-
+or-equivalent hot poll loop regardless of which of A/B/C's consumption
+strategy it's ultimately built on.
+
+**Suggested commit** (not created, per instruction):
+
+```bash
+git commit -m "perf(streaming): reduce Kafka consumer poll overhead"
 ```
