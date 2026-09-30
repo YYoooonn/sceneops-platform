@@ -670,6 +670,7 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | `make db-migrate`  | Run Alembic upgrade head (also run by `local-up`)      |
 | `make canonical-bootstrap` | Create-or-verify the frozen `sceneops-canonical/v0.0` dev baseline (+ its Scene-only/Episode-only siblings) — see [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make canonical-verify` | Read-only re-check of the same v0.0 contract |
+| `make streaming-up` / `make streaming-down` | Opt-in local Kafka broker for the streaming transport — never part of `make local-up`; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
 
 
 ### Development
@@ -710,9 +711,10 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | `make e2e-scene-rawlog` | Real nuScenes via the raw-log representation (shares segmentation/sampling machinery with the robot-log path) |
 | `make e2e-scene-analytics-export` | Scene-domain analytical Parquet export (distinct from Phase 5's `EXPORT_LEARNING_DATA`) |
 | `make e2e-lerobot-container` | Containerized variant of `e2e-interop`'s golden round trip |
+| `make e2e-ros2-streaming [SCENE=scene-0061 \| RATE=10.0]` | Real nuScenes CAN → ROS2 → streaming bridge → real Kafka → consumer; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
 | `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Dataset quality + detection run comparison; includes ScenarioSet lineage when available |
 
-**Smoke** (transport/liveness only — never creates persistent domain data): `make smoke-api`, `make smoke-nuscenes-container`, `make smoke-lerobot-container`.
+**Smoke** (transport/liveness only — never creates persistent domain data): `make smoke-api`, `make smoke-nuscenes-container`, `make smoke-lerobot-container`, `make smoke-streaming` *(requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md))*.
 
 **Verification** (execution-model/backend-substitution properties, not domain workflows): `make verify-reliability`, `make verify-airflow-backend` *(requires `make airflow-up`; an alternate-orchestrator compatibility check for `dataset_scene_ingestion` only, not general backend substitution)*.
 
@@ -805,7 +807,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * The Airflow pipeline backend is a per-task DAG PoC hardcoded to `dataset_scene_ingestion`; other pipeline types still only run through Celery.
 * **(v2)** Binary sensor payloads (`sensor_msgs/Image`, `PointCloud2`) decode via CDR but aren't written to files yet — no real camera/LiDAR-publishing ROS2 node exists to test against.
 * **(v2)** `/vehicle/control` and `/mission/status` use a `std_msgs/String` + JSON bridge, not a proper custom `.msg` package (would need a `colcon` build step).
-* **(v2)** Robot data ingestion is batch/post-hoc (replay → record → decode → ingest) — there is no live robot control or real-time telemetry streaming; see `docs/adr/005-ros2-vs-kafka-boundary.md` for the intended boundary once that's built.
+* **(v2)** Robot data ingestion is still batch/post-hoc for canonical state (replay → record → decode → ingest) — there is no live robot control, and streamed telemetry doesn't feed MCAP/`RobotRun`/Episode yet. A real ROS2 → Kafka streaming bridge exists (`make e2e-ros2-streaming`) on top of the Kafka telemetry transport (`make streaming-up` / `make smoke-streaming`), but nothing wires it to MCAP capture or `RobotRun`/Episode persistence yet; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) and `docs/adr/005-ros2-vs-kafka-boundary.md` for the intended boundary once that's built.
 * **(v2)** DuckDB queries only work against locally-downloaded Parquet files; querying S3/MinIO-backed artifacts directly would need DuckDB's httpfs/S3 extension, which isn't wired up.
 
 ### Roadmap
@@ -821,7 +823,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * Cloud object storage hardening, including stronger artifact lifecycle and integrity checks.
 * **(v2)** Write decoded camera/LiDAR payloads to the Artifact Store and wire `RosbagAdapter` into `build_scenes` for full `SceneRecord` registration from robot data, not just `RobotState`/`Mission`.
 * **(v2)** A real custom ROS2 `.msg` package for `/vehicle/control` and `/mission/status`, replacing the JSON-over-`std_msgs/String` bridge.
-* **(v2)** A ROS2 Data Gateway bridging live ROS2 topics to Kafka for real-time telemetry (roadmap Phase 7 / `ADR-005`), and eventual live robot control as its own service — not `apps/worker`.
+* **(v2)** A durable MCAP capture path from the Kafka streaming bridge (roadmap Phase 6.3), plus `RobotRun`/Episode integration for streamed data and eventual live robot control as its own service — not `apps/worker`. The Kafka telemetry transport and the real ROS2 → Kafka streaming bridge (`make e2e-ros2-streaming`) are both done — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md); MCAP capture and canonical persistence from the streamed path are still open.
 * **(v2)** Scale-testing with synthetic multi-robot telemetry (N virtual robots, robot-fleet/mission-ingestion throughput — unrelated to the completed learning-data "Phase 5" scaling work below) to compare local (Polars/DuckDB) vs. distributed (Spark) processing for that ingestion path specifically. (This is a distinct, still-open roadmap item, not to be confused with the learning-data storage/access "Phase 5" work, which already measured its own single-node-vs-distributed boundary and concluded Spark is not currently justified there — see [Scalable learning data](docs/architecture/scalable-learning-data.md) §10.)
 
 ---

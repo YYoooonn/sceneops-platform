@@ -196,7 +196,8 @@ help:
 	@echo "  make worker-run-job JOB_ID=job-xxx"
 	@echo "  make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"
 	@echo "  make worker-run-pipeline-task PIPELINE_RUN_ID=pipe-xxx TASK_ID=task-xxx"
-	@echo "  make worker-register-robot-run ROBOT_ID=.. RUN_ID=.. MCAP_URI=.."
+	@echo "  make worker-register-robot-run ROBOT_ID=.. RUN_ID=.. MCAP_URI=..   Stopgap CLI (no ArtifactStore)"
+	@echo "  sceneops-worker robots register-capture --robot-id .. --robot-run-id .. --mcap-path ..   (via worker-cli; ArtifactStore + ArtifactRecord + RobotRun)"
 	@echo "  make inference-local-build / inference-local-up / inference-local-down / inference-local-logs   (CPU, opt-in)"
 	@echo "  make inference-gpu-build / inference-gpu-up / inference-gpu-down / inference-gpu-logs           (GPU, opt-in)"
 	@echo "  make check-inference-server / check-inference-server-ready"
@@ -206,6 +207,12 @@ help:
 	@echo "  make ros2-run ROS2_CMD='ros2 topic list'"
 	@echo "  make ros2-can-replay SCENE=scene-0061 RATE=1.0"
 	@echo "  make ros2-can-replay-record SCENE=scene-0061 RATE=5.0   (records to data/raw/rosbag/<scene>)"
+	@echo "  make streaming-up / streaming-down             Local Kafka broker (opt-in)"
+	@echo "  make smoke-streaming                            Kafka transport smoke test"
+	@echo "  make e2e-ros2-streaming SCENE=scene-0061 RATE=10.0"
+	@echo "  make e2e-streaming-capture SCENE=scene-0061 RATE=10.0   Durable MCAP capture from Kafka"
+	@echo "  make e2e-robot-run-registration SCENE=scene-0061 RATE=10.0   Capture -> canonical RobotRun"
+	@echo "  make e2e-robot-run-learning SCENE=scene-0061 RATE=10.0   RobotRun -> materialize -> Episode -> learning data"
 	@echo "  make register-nuscenes-dataset"
 	@echo "  make e2e-bootstrap / e2e-bootstrap-core / e2e-bootstrap-interop / e2e-bootstrap-raw-log"
 	@echo "                                Persistent E2E fixture bootstrap (idempotent; requires local-up)"
@@ -241,3 +248,4 @@ include makefiles/debug.mk
 include makefiles/lerobot.mk
 include makefiles/nuscenes.mk
 include makefiles/canonical.mk
+include makefiles/streaming.mk

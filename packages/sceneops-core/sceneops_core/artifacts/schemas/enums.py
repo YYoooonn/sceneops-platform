@@ -11,6 +11,14 @@ class ArtifactBackend(StrEnum):
 
 
 class ArtifactKind(StrEnum):
+    # Robot-level
+    # The raw ROS2 rosbag2/MCAP recording for one RobotRun -- transport-
+    # agnostic (a directly `ros2 bag record`-ed file and a Kafka-captured
+    # file, see ros2/capture/, are registered under this same kind; there
+    # is no separate STREAMING_MCAP kind, since the artifact itself is
+    # identical MCAP content regardless of how it reached local disk).
+    ROBOT_RUN_RECORDING = "robot_run_recording"
+
     # Observation-level
     RAW_LOG_MANIFEST = "raw_log_manifest"
     RAW_LOG_FRAME_INDEX = "raw_log_frame_index"

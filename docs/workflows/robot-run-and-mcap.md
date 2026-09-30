@@ -107,6 +107,63 @@ Storage: rosbag/MCAP originals don't have a dedicated prefix in
 convention, following `RawSourceSettings`' independent-root pattern for raw
 datasets, is `/data/raw/rosbag/{robot_id}/{run_id}.mcap` locally.
 
+### 3.1 Materialization: ArtifactStore-backed recordings
+
+`RosbagAdapter` stays storage-agnostic — it only ever opens a local
+filesystem path (`mcap.reader.make_reader(open(path, "rb"))`), never
+`s3://`, MinIO, `ArtifactStore`, or HTTP directly. A `RobotRun` whose
+`mcap_uri` is a local path (every example above, and every
+`ros2 bag record` recording) reaches `RosbagAdapter` completely
+unchanged, exactly as described in §3.
+
+A `RobotRun` whose `mcap_uri` is ArtifactStore-backed instead (e.g. a
+Kafka-captured recording registered through `sceneops-worker robots
+register-capture` — durable capture, `ros2/capture/`, is a separate,
+independent path covered in
+[Streaming transport](../architecture/streaming-transport.md) Part 3) is
+materialized to a local file first:
+
+```text
+RobotRun.mcap_uri (ArtifactStore-backed, e.g. s3://...)
+  -> materialize_recording() (sceneops_worker.robots.materialization)
+       -- reads the object via ArtifactStore.read_bytes(), writes it to
+          an execution-scoped local temp file (Python's own
+          tempfile.TemporaryDirectory -- a fresh, uniquely-named
+          directory per call), verifies it against the RobotRun's own
+          registered ArtifactRecord checksum when one is resolvable
+  -> RosbagAdapter(local_path) -- identical to the local-path case
+```
+
+`BuildEpisodesJobHandler` is the one caller wired to this today
+(`_extract_episode_source`) — it checks whether `mcap_uri` is already a
+local path (`materialization.is_local_uri`, a plain URI-scheme check)
+and only materializes when it isn't. `IngestRobotStatesJobHandler`/
+`BuildScenesJobHandler` still assume a local `mcap_uri` — an
+ArtifactStore-backed RobotRun is not yet consumable through those two.
+
+**Lifecycle.** The materialized local copy is temporary and
+execution-scoped: it exists only for the duration of the `async with
+materialize_recording(...)` block (in practice, exactly as long as
+`RosbagAdapter` needs to read it), and is deleted on that block's exit
+whether the caller's code completed normally or raised — never left
+behind by a normal exception. It is never a shared/cached path across
+job executions: two independent executions materializing the same
+`RobotRun` concurrently each get their own temp directory, with no
+coordination between them. A crashed process (`SIGKILL`, container
+death) can leave a materialized file behind with no `finally` having
+run — this is treated as disposable temp data, not a canonical resource
+requiring cleanup: nothing else in the platform reads it, and the
+container/worker process lifecycle (an ephemeral filesystem with no
+persistent volume backing the OS temp directory) already reclaims it on
+the next container recreation.
+
+**The canonical ArtifactStore object itself is immutable from this
+boundary's perspective** — materialization only ever reads it
+(`ArtifactStore.read_bytes`), never writes to or deletes it. Retrying
+Episode building for the same `RobotRun` (the existing job/pipeline
+`force`/idempotency semantics, unchanged) may materialize the recording
+again; that's an expected, cheap re-read, not a correctness concern.
+
 ## 4. Entity relationships
 
 ```text
@@ -178,6 +235,34 @@ Everything else is self-contained in the `ros2/` Docker image.
   (replay -> record -> decode -> ingest), not real-time command/control —
   see [ADR-005](../adr/005-ros2-vs-kafka-boundary.md) for the intended
   boundary once/if a streaming path is built.
+- **`mission_boundary` Episode segmentation is not supported for a
+  Kafka-captured `RobotRun` — `BuildEpisodesJobHandler` rejects it with a
+  clear `UnsupportedSegmentationError` rather than silently returning
+  zero Episodes.** `/mission/status`'s timestamp is synthetic
+  replay-event time (see
+  [Streaming transport](../architecture/streaming-transport.md)'s
+  MCAP-readiness table); a durably-captured MCAP preserves that value as
+  `log_time` verbatim, while CAN-derived channels' `log_time` is real
+  historical CAN observation time — the two never overlap, so
+  `EpisodeBuilder`'s window-membership filter (§3 above) would otherwise
+  keep zero frames for every Mission window and return an empty,
+  misleading success. `BuildEpisodesJobHandler` detects exactly this
+  outcome (Mission(s) present, `mission_boundary` requested, zero
+  Episodes produced) and raises instead
+  (`_reject_silent_zero_episode_mission_boundary`) — segmentation
+  behavior itself is unchanged, this is a validation guard, not a
+  redesign. The "no Missions at all" case still degrades to `whole_run`
+  silently, exactly as before; only the "Missions exist but never
+  overlap" case now fails loudly. A direct `ros2 bag record` capture
+  never hits either path, because the recorder stamps every channel with
+  its own receipt time uniformly, never threading `source_timestamp_ns`
+  into `log_time` at all. **`whole_run` is the supported Episode
+  segmentation strategy for a Kafka-captured `RobotRun`** (`build_episodes`'s
+  `segmentation.strategy` param) — it needs no Mission/CAN timestamp
+  alignment. There is no plan to introduce a separate replay/capture
+  timeline representation for this (it would risk corrupting the CAN
+  channels' real source-timestamp semantics for no clear benefit over
+  just using `whole_run`).
 - **Committed test fixture is real data**, not hand-crafted bytes:
   `apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap` (1.4MB)
   was produced by an actual `ros2 bag record` run. If CAN-replay logic

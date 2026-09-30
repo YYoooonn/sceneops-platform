@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
+from sceneops_core.common.ids import (
+    generate_artifact_id,
+    robot_run_recording_artifact_id,
+)
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
+from sceneops_core.episodes.schemas import EpisodeSegmentationStrategy, EpisodeSource
 from sceneops_core.jobs.schemas import (
     BuildEpisodesJobParams,
     BuildEpisodesJobResult,
@@ -28,6 +32,14 @@ from sceneops_worker.episodes.building import (
     EpisodeSegmenter,
 )
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.robots.materialization import is_local_uri, materialize_recording
+
+
+class UnsupportedSegmentationError(ValueError):
+    """``mission_boundary`` segmentation was requested against a source
+    whose Mission window(s) never overlap any frame/robot-state
+    timestamp -- see ``BuildEpisodesJobHandler.
+    _reject_silent_zero_episode_mission_boundary``."""
 
 
 @dataclass(frozen=True)
@@ -109,14 +121,7 @@ class BuildEpisodesJobHandler(
             mcap_uri=mcap_uri,
         )
 
-        adapter = RosbagAdapter(
-            source_store=context.raw_source_store,
-            source_root_uri=execution.mcap_uri,
-        )
-
-        source = adapter.extract_episode_source(
-            robot_id=params.robot_id, robot_run_id=params.robot_run_id
-        )
+        source = await self._extract_episode_source(execution)
 
         windows = EpisodeSegmenter().segment(source=source, config=params.segmentation)
 
@@ -129,6 +134,9 @@ class BuildEpisodesJobHandler(
             source=source,
             windows=windows,
             strategy=params.segmentation.strategy,
+        )
+        self._reject_silent_zero_episode_mission_boundary(
+            params=params, source=source, build_result=build_result
         )
 
         write_results = await self._write_episode_manifests(execution, build_result)
@@ -162,6 +170,119 @@ class BuildEpisodesJobHandler(
             action_frame_count=build_result.action_frame_count,
             segmentation_strategy=params.segmentation.strategy.value,
             channels=sorted({frame.channel for frame in source.frames}),
+        )
+
+    # ── recording read (materializes ArtifactStore-backed URIs; local paths
+    #    are read exactly as before) ──────────────────────────────────────────
+
+    @staticmethod
+    async def _extract_episode_source(
+        execution: BuildEpisodesExecution,
+    ) -> EpisodeSource:
+        """One reused path after input resolution, per the recording
+        materialization boundary (docs/architecture/streaming-transport.md):
+        a local ``mcap_uri``/``rosbag_uri`` (every pre-existing caller,
+        e.g. ``ros2 bag record`` output or the stopgap
+        ``register-run`` CLI) goes straight into ``RosbagAdapter`` exactly
+        as before -- unchanged behavior, zero new code on that path. An
+        ArtifactStore-backed URI (``s3://...``, e.g. a Phase 6.4-registered
+        streaming-captured RobotRun) is materialized to an execution-scoped
+        local temp file first -- ``RosbagAdapter`` itself never learns
+        about ``s3://``/MinIO/``ArtifactStore``/HTTP, only ever a local
+        path, either way.
+        """
+        params = execution.params
+        context = execution.context
+        mcap_uri = execution.mcap_uri
+
+        if is_local_uri(mcap_uri):
+            adapter = RosbagAdapter(
+                source_store=context.raw_source_store, source_root_uri=mcap_uri
+            )
+            return adapter.extract_episode_source(
+                robot_id=params.robot_id, robot_run_id=params.robot_run_id
+            )
+
+        expected_checksum = await BuildEpisodesJobHandler._resolve_expected_checksum(
+            context, execution.robot_run
+        )
+        async with materialize_recording(
+            artifact_store=context.artifact_store,
+            uri=mcap_uri,
+            expected_checksum=expected_checksum,
+        ) as local_path:
+            adapter = RosbagAdapter(
+                source_store=context.raw_source_store, source_root_uri=str(local_path)
+            )
+            return adapter.extract_episode_source(
+                robot_id=params.robot_id, robot_run_id=params.robot_run_id
+            )
+
+    @staticmethod
+    async def _resolve_expected_checksum(
+        context: WorkerContext, robot_run: RobotRunRecord | None
+    ) -> str | None:
+        """The RobotRun's own registered ArtifactRecord checksum (Phase
+        6.4's ``robot_run_recording_artifact_id`` -- the one canonical
+        artifact identity for this recording, never a second one) when
+        resolvable, ``None`` otherwise (e.g. no ``robot_run_id`` was given,
+        or this RobotRun predates artifact-backed registration) -- checksum
+        verification during materialization is then simply skipped, never
+        forced."""
+        if robot_run is None:
+            return None
+        artifact = await context.artifact_record_store.get(
+            robot_run_recording_artifact_id(robot_run.run_id)
+        )
+        return artifact.checksum if artifact is not None else None
+
+    @staticmethod
+    def _reject_silent_zero_episode_mission_boundary(
+        *,
+        params: BuildEpisodesJobParams,
+        source: EpisodeSource,
+        build_result: EpisodeBuildResult,
+    ) -> None:
+        """``mission_boundary`` segmentation (EpisodeSegmenter) already
+        falls back to ``whole_run`` when a source has NO dated Missions at
+        all -- that path is fine and unchanged. This guards the OTHER,
+        previously-silent failure mode: Mission(s) exist (so segmentation
+        produced real Mission-bounded windows), but not one single frame
+        or robot-state timestamp fell inside ANY of them, so
+        ``EpisodeBuilder`` produced zero Episodes -- a result that used to
+        look identical to "this run legitimately has no data", when it
+        actually means the Mission window(s) and the source data's
+        timestamps live on two incompatible clocks.
+
+        The most common real cause (Phase 6.6 finding) is a Kafka-captured
+        MCAP: ``/mission/status`` carries synthetic replay-event time while
+        CAN-derived channels carry real historical observation time under
+        the frozen MCAP ``log_time`` contract -- the two never overlap.
+        ``whole_run`` segmentation needs no such alignment and is the
+        supported choice for a streaming-captured RobotRun (see
+        docs/workflows/robot-run-and-mcap.md §6). This function does not
+        change segmentation behavior at all -- only fails loudly instead
+        of returning an empty, misleading success.
+        """
+        if params.segmentation.strategy != EpisodeSegmentationStrategy.MISSION_BOUNDARY:
+            return
+        if build_result.episode_count > 0:
+            return
+        if not source.missions:
+            return  # the real "no Missions at all" case -- already whole_run
+        raise UnsupportedSegmentationError(
+            f"mission_boundary segmentation produced zero Episodes even "
+            f"though {len(source.missions)} Mission(s) were present in the "
+            f"source -- no frame/robot-state timestamp fell inside any "
+            f"Mission's [started_at, ended_at) window. The most common "
+            f"cause is a Kafka-captured MCAP, where /mission/status carries "
+            f"synthetic replay-event time while CAN-derived channels carry "
+            f"real historical observation time -- the two never overlap "
+            f"under the current MCAP log_time contract (see "
+            f"docs/workflows/robot-run-and-mcap.md §6). Use "
+            f"segmentation.strategy=whole_run for a streaming-captured "
+            f"RobotRun instead; mission_boundary is only supported where "
+            f"every channel shares a compatible recording timeline."
         )
 
     # ── version / source resolution ────────────────────────────────────────────

@@ -35,9 +35,11 @@ check:
 # `make e2e-perception BACKEND=grounding_dino`. scripts/e2e/tests/
 # test_e2e_fixture_bootstrap.py is the E2E fixture bootstrap's own unit
 # suite — Postgres is faked in-memory there, so it belongs in the fast tier
-# alongside everything else.
+# alongside everything else. packages/sceneops-streaming/tests is pure
+# wire/schema unit tests (no Kafka broker) -- real-broker behavior is
+# `make smoke-streaming`, not this tier.
 test:
-	uv run pytest apps/worker/tests/ apps/api/tests/ apps/inference-server/tests/ packages/sceneops-analytics/tests/ packages/sceneops-core/tests/ packages/sceneops-integrations/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap.py -v
+	uv run pytest apps/worker/tests/ apps/api/tests/ apps/inference-server/tests/ packages/sceneops-analytics/tests/ packages/sceneops-core/tests/ packages/sceneops-integrations/tests/ packages/sceneops-streaming/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap.py -v
 
 .PHONY: test-integration
 # Real-infrastructure tests. Prerequisite: `make local-up` (Postgres + MinIO
@@ -65,7 +67,7 @@ test-integration:
 	MINIO_BUCKET=$(MINIO_BUCKET) \
 	E2E_BOOTSTRAP_SOURCE_ROOT_URI=$(CURDIR)/data/raw/nuscenes \
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-	uv run pytest packages/sceneops-db/tests/ packages/sceneops-storage/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap_integration.py scripts/e2e/tests/test_selective_reads_minio_integration.py scripts/e2e/tests/test_pipeline_contracts_integration.py -v
+	uv run pytest packages/sceneops-db/tests/ packages/sceneops-storage/tests/ scripts/e2e/tests/test_e2e_fixture_bootstrap_integration.py scripts/e2e/tests/test_selective_reads_minio_integration.py scripts/e2e/tests/test_pipeline_contracts_integration.py apps/worker/tests/robots/test_registration_integration.py apps/worker/tests/robots/test_materialization_integration.py apps/worker/tests/robots/test_episode_retry_integration.py -v
 
 .PHONY: lint
 lint:

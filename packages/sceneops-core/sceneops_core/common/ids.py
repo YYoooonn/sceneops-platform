@@ -79,6 +79,17 @@ def generate_robot_state_id() -> str:
     return generate_prefixed_id("robotstate")
 
 
+def robot_run_recording_artifact_id(robot_run_id: str) -> str:
+    """Deterministic (not random, unlike ``generate_artifact_id``) --
+    one RobotRun has exactly one raw recording artifact, and giving that
+    artifact's id a stable, derivable value lets a second registration
+    attempt for the same ``robot_run_id`` collide with the ``artifacts``
+    table's own primary key instead of silently creating a duplicate row,
+    mirroring ``sample_sensor_artifact_id``'s identical reasoning for its
+    own one-artifact-per-(sample, channel) identity."""
+    return f"art-robotrun-{robot_run_id}"
+
+
 def generate_comparison_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"cmp-{suffix}"
