@@ -39,7 +39,7 @@ async def _run(
     total_messages: int,
     max_active_runs: int,
     group_id: str,
-    idle_timeout_seconds: float,
+    loop_idle_timeout_seconds: float,
 ) -> dict:
     router = ContinuousCaptureRouter(
         settings=settings,
@@ -51,7 +51,7 @@ async def _run(
     t0 = time.monotonic()
     try:
         consumed = await router.run_for(
-            max_messages=total_messages, idle_timeout_seconds=idle_timeout_seconds
+            max_messages=total_messages, loop_idle_timeout_seconds=loop_idle_timeout_seconds
         )
         consume_duration = time.monotonic() - t0
         results = await router.finalize_all()
@@ -98,7 +98,7 @@ def main() -> int:
             total_messages=args.total_messages,
             max_active_runs=args.max_active_runs,
             group_id=args.group_id,
-            idle_timeout_seconds=args.idle_timeout_seconds,
+            loop_idle_timeout_seconds=args.idle_timeout_seconds,
         )
     )
     print(json.dumps(result))

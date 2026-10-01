@@ -9,3 +9,18 @@ DEFAULT_TELEMETRY_TOPIC = "sceneops.robot.telemetry.v1"
 # cross-referenced from one place even though sceneops-core itself never
 # imports a Kafka client.
 TELEMETRY_HEADER_PREFIX = "sceneops.envelope."
+
+# Reserved TelemetryEnvelope.channel value for run lifecycle control
+# events (Phase 7.2 -- sceneops_core.streaming.control). Additive: not a
+# real ROS2 topic, never subscribed to by the ROS2 bridge's own
+# TOPIC_SPECS, never written to MCAP (not in
+# ros2/capture/schema_registry.py's SUPPORTED_CHANNELS) -- a consumer
+# recognizes it by this channel name alone and intercepts it before any
+# telemetry-specific handling (sequence tracking, MCAP writing) ever
+# sees it. Carried on the SAME Kafka topic as telemetry, under the SAME
+# robot_run_id key, specifically so it orders consistently with that
+# run's own telemetry within one partition -- see
+# docs/architecture/streaming-multirun-phase7-study.md's Phase 7.2
+# section for the full "why the existing topic, not a separate one"
+# reasoning.
+SESSION_CONTROL_CHANNEL = "/session/control"

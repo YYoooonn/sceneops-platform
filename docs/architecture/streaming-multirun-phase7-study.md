@@ -1431,3 +1431,435 @@ control event).
 ```bash
 git commit -m "feat(streaming): add continuous multi-run capture router"
 ```
+
+---
+
+## 20. Phase 7.2 — Capture Session Lifecycle (implemented)
+
+**Date:** 2026-10-01 (direct follow-up). **Commit at start:** same
+`531f743` (§§0-19 never advanced HEAD). No git commit was made, per
+instruction.
+
+### 20.1 Lifecycle / state model
+
+```text
+DISCOVERED -> RECORDING -> FINALIZING -> FINALIZED
+                                       \-> FAILED
+```
+
+`SessionState` (new enum, `ros2/capture/router.py`) and
+`CaptureSession` (replaces Phase 7.1's `_ActiveRun` -- same internal
+role, renamed to match this phase's own vocabulary and now state-aware)
+-- still execution/runtime state only, in-process, never persisted,
+never `RobotRun` (per this phase's own scope exclusion, unchanged from
+Phase 7.0 study §9's original recommendation):
+
+- **DISCOVERED** -- a session exists (explicit `RUN_START` seen, or
+  implicitly created by that run's first telemetry record -- both
+  supported, §20.2) but no telemetry has been successfully written yet.
+- **RECORDING** -- at least one telemetry record written.
+- **FINALIZING** -- transient, validate/atomic-finalize I/O in
+  progress.
+- **FINALIZED** -- terminal, successful. `result` (a `CaptureResult`)
+  is `None` if the session finalized with zero telemetry ever written
+  (`RUN_START` immediately followed by `RUN_END`/idle-timeout) -- there
+  is no file to describe in that case, and `validate_mcap_file` would
+  reject a zero-message file regardless, so this is handled as its own
+  explicit, non-error path (§20.6), never attempted against the
+  validator.
+- **FAILED** -- terminal, unsuccessful (sequence/partition/writer
+  invariant violation, or a finalize-time I/O failure). Data discarded,
+  never finalized, never silently repaired.
+
+`CaptureSessionState` (renamed from Phase 7.1's `ActiveRunState`) is
+the read-only snapshot, now carrying every field the brief asked for:
+`robot_id`, `robot_run_id`, `state`, `opened_at`, `last_activity_at`,
+`message_count`, `partition`, `first_offset`/`last_offset`,
+`first_sequence`/`last_sequence`, `finalization_reason`, `failure`.
+`router.session_states()` returns every session ever seen (terminal or
+not); `router.active_run_states()` filters to non-terminal only.
+
+**`last_activity_at` uses the router's own injectable clock
+(`time.monotonic` by default), never `envelope.source_timestamp_ns` or
+`envelope.ingest_timestamp_ns`.** Both of those are the ORIGINAL
+producer's timestamps -- during real Kafka backlog catch-up (exactly
+the workload Phase 7.0 measured at length), they can be arbitrarily far
+in the past relative to when the router actually processes a record.
+Using either for idle-timeout decisions would make backlog catch-up
+look like every session has been idle for however far behind the
+router is, causing false-positive timeouts during the one scenario
+this transport is explicitly built to handle well. `last_activity_at`
+answers "how long has it actually been, in real wall-clock time, since
+the router itself last heard from this run" -- the only question an
+idle-timeout fallback should be asking. Tests inject a deterministic
+fake clock (`_FakeClock`, manually advanced) instead of sleeping --
+every idle-timeout/race unit test in `test_router.py` runs in
+milliseconds, not real time.
+
+### 20.2 Control-event design
+
+New module: `packages/sceneops-core/sceneops_core/streaming/control.py`
+(`RunEventType`, `build_control_envelope`, `is_control_envelope`,
+`parse_run_event`). A control event IS a `TelemetryEnvelope` -- same
+required fields, same `robot_id`/`robot_run_id`, same Kafka key
+(`robot_run_id`, `wire.partition_key`, completely unchanged). What
+makes it a control event is purely `channel` (a new reserved constant,
+`sceneops_core.constants.streaming.SESSION_CONTROL_CHANNEL =
+"/session/control"`) and `message_type` (two new sentinel strings,
+`sceneops/control/RunStart`/`RunEnd` -- never a real ROS2 interface).
+`encoding=EnvelopeEncoding.JSON` (the existing enum already had this
+value; no new encoding was added). No existing channel/message_type/
+envelope field's meaning changed.
+
+**Existing telemetry topic, not a separate control topic -- and why.**
+Partitioning by `robot_run_id` (frozen, `streaming-transport.md` §6)
+guarantees a control event lands on the SAME partition as that run's
+own telemetry, which is exactly what "ordered consistently with that
+run's telemetry" requires: Kafka only guarantees ordering WITHIN one
+partition of one topic, never across two. A separate control topic
+would need its own correlation mechanism (comparing timestamps, or
+some other external sequencing) to establish "this `RUN_END` happened
+after that telemetry record" -- fragile and unnecessary when reusing
+the existing key already provides exact, free, per-partition ordering.
+The cost: every consumer of the telemetry topic now sees these
+records too, mitigated by the reserved channel making them trivially
+filterable (`is_control_envelope`) by any consumer that doesn't care
+about lifecycle -- which is exactly what `RunScopedCapture` turned out
+NOT to do (§20.7's coexistence finding).
+
+`sequence_number` on a control envelope does not participate in that
+run's telemetry sequence counter -- `TelemetryEnvelope.sequence_number`
+is documented as "diagnostic only, never identity" (its own field
+docstring), and the router intercepts control events (`is_control_
+envelope`) before they ever reach `_SequenceTracker`, so there is no
+shared numbering invariant to preserve. The ROS2 bridge (§20.2.1) reads
+its own live counter without incrementing it for a control event's
+`sequence_number`, purely for debugging legibility ("where in the
+stream did this happen"), not correctness.
+
+#### 20.2.1 ROS2 bridge wiring
+
+`ros2/nodes/streaming_bridge_node.py`'s `StreamingBridgeNode` gained
+`emit_lifecycle_events: bool = False` (constructor) and `main()` gained
+`--emit-lifecycle-events` (CLI flag, default off): when enabled,
+publishes `RUN_START` right after the producer bridge is constructed
+(before any subscription can receive a message) and a best-effort
+`RUN_END` during `shutdown()` (the GRACEFUL path only -- a hard kill
+never reaches it, which is exactly why the idle-timeout fallback
+exists as the defensive counterpart, §20.3). A publish failure for
+either is caught, logged, and never crashes bridge startup/shutdown or
+blocks telemetry.
+
+**Default OFF, deliberately -- not just for existing-test preservation.**
+Every existing `ros2/nodes/tests/test_streaming_bridge_node.py` test
+constructs the node directly (no `emit_lifecycle_events` argument) and
+asserts exact `fake_bridge.published` counts/indices/sequence numbers
+(`len(fake_bridge.published) == 1`, `odom_envelope, imu_envelope =
+fake_bridge.published`, `seqs == [0, 1, 2, 3]`) -- all 16 pre-existing
+tests pass completely unchanged with the new default, confirmed
+directly. But there is a SECOND, more important reason this had to
+stay opt-in rather than becoming `main()`'s default, found during this
+phase's own regression pass -- §20.7.
+
+5 new tests added (`TestLifecycleEvents`): disabled-by-default
+publishes nothing; enabled publishes `RUN_START` on construction;
+enabled publishes `RUN_START` -> telemetry -> `RUN_END` in that exact
+order; `RUN_START` does not consume the telemetry sequence counter
+(first telemetry message still gets `sequence_number=0`); a publish
+failure is logged, never raised.
+
+### 20.3 Idle-timeout policy
+
+`session_idle_timeout_seconds` (constructor parameter, `None` =
+disabled -- existing/Phase-7.1-style callers that never configure it
+get exactly Phase 7.1's behavior, sessions stay open until explicitly
+finalized). `router.check_idle_sessions()` scans every non-terminal
+session each time it is called; one whose `last_activity_at` is >= the
+threshold in the past is finalized through the EXACT SAME durable path
+(`_finalize_session_io`) an explicit `RUN_END` uses -- never discarded,
+never treated as a failure, `finalization_reason=IDLE_TIMEOUT`
+recorded. Called automatically at the end of every `run_once()` call
+(including timeout/no-message/poison-record ones), so a fallback fires
+even against a fully quiet topic, with no extra wiring required from
+whatever drives the router's loop.
+
+### 20.4 Offset-frontier behavior
+
+Unchanged POLICY from Phase 7.1 (§19.4), reimplemented over the new
+state model: never commit a partition's offset past the earliest
+`first_offset` of any NON-TERMINAL session on that partition. The only
+change is WHICH set of sessions counts as "still blocking" --
+previously Phase 7.1's separate `_active` dict, now
+`session.state in (DISCOVERED, RECORDING, FINALIZING)` -- so the
+frontier now correctly releases regardless of WHICH lifecycle path
+(explicit `RUN_END`, idle-timeout, or a failure) moved a session out of
+that set, not just explicit `finalize_run()`/`finalize_all()` calls as
+in Phase 7.1.
+
+Verified directly against this phase's own required A/B/C scenario
+(`test_offset_frontier_release_with_mixed_termination_paths`): A
+explicit-finalized, C explicit-finalized, B idle-timed-out -- the
+commit frontier is observed advancing in exactly the predicted steps
+(`{0: 1}` after A/C finalize while B is still open, bounded by B's own
+`first_offset`; `{0: 3}` once B also times out and every session is
+terminal). A second test
+(`test_permanently_failed_session_no_longer_blocks_frontier`) confirms
+the same release property for a FAILED (not just finalized) session --
+"a permanently abandoned session must no longer block a partition
+forever once its defined lifecycle policy makes it terminal" holds for
+every terminal path, not only the successful ones.
+
+### 20.5 Failure / poison-record policy
+
+| Scenario | Policy | Verified by |
+|---|---|---|
+| Sequence failure in one session | Session -> `FAILED`, writer closed, `.partial` discarded, other sessions unaffected | `test_independent_gap_detection_only_affects_the_gapped_session`, `test_conflicting_duplicate_rejected_and_isolated_to_its_own_session` |
+| Writer failure (`UnsupportedChannelError`) | Same as sequence failure -- one of the three `_PER_RUN_ERRORS` | unchanged from Phase 7.1 (§19.5), reused |
+| Finalize-time I/O failure (validate/finalize_bag) | Session -> `FAILED` (this phase's own fix for a Phase 7.1 gap, see below), `.partial` discarded; `finalize_run()` (caller-driven) re-raises after the session is already correctly marked; the control-event/idle-timeout-triggered paths swallow it (one session's finalize failure must not crash the whole router loop) | new in this phase -- `_finalize_session_io`'s `except` clause now always transitions state before re-raising |
+| Malformed/undecodable Kafka record | Recorded in `stats.poison_messages` (topic/partition/offset/error), loop continues, its offset still counts toward that partition's `_last_consumed_offset_by_partition` | unchanged from Phase 7.1 (§19.5), reused; still correct under the new state model since poison records are never attributed to any session either way |
+| Explicit `RUN_END` for unknown run | Recorded in `stats.control_events_ignored` (`reason=unknown_run`), nothing created, nothing finalized | `test_run_end_for_unknown_run_is_recorded_not_an_error` |
+| Duplicate `RUN_START` | Idempotent no-op regardless of the existing session's state, recorded (`reason=duplicate`) | `test_duplicate_run_start_is_idempotent_no_op` |
+| Duplicate `RUN_END` | Idempotent no-op if the session is already terminal, recorded (`reason=already_<state>`) | `test_duplicate_run_end_after_finalization_is_idempotent_no_op` |
+| Telemetry after `FINALIZED` | Dropped, counted in `stats.messages_after_finalization`, never reopens the session | `test_telemetry_after_finalization_is_dropped_and_recorded` |
+| Explicit `RUN_END` racing idle-timeout | Deterministic: `RUN_END` is processed (and finalizes) before the idle-timeout check in the SAME `run_once()` call, so whichever reaches the session first wins; the loser is a harmless duplicate-on-terminal no-op, covered by the same policy row above | `test_explicit_end_racing_idle_timeout_resolves_deterministically`, `test_idle_timeout_winning_the_race_makes_a_later_run_end_a_no_op` (both orderings) |
+| `RUN_START`/`RUN_END` with zero telemetry in between | `FINALIZED` with `result=None` (nothing to validate/finalize -- `validate_mcap_file` would reject a zero-message file anyway), `.partial` discarded, never an error | `test_run_end_immediately_after_run_start_finalizes_empty_session` |
+
+**Poison records, explicitly per the brief's own ask:** quarantined
+(recorded, never written, never attributed to a session) and their
+Kafka offset becomes safely committable under exactly the same rule as
+any other consumed-but-not-currently-blocking record -- once no
+non-terminal session's `first_offset` sits at or before it, §20.4's
+frontier computation naturally advances past it (poison records were
+never part of the `min(...)` in the first place, so they impose no
+additional constraint beyond what real sessions already do).
+
+**Phase 7.1 gap fixed in this phase.** Auditing `_finalize_active_run`
+(Phase 7.1) for this phase's own failure-policy work found that a
+finalize I/O failure (`McapValidationError`, `FinalBagExistsError`, any
+OS error) propagated straight out of `finalize_run()`/`finalize_all()`
+with the session ALREADY POPPED from the (then-only) `_active` dict --
+landing in neither `_active`, `_finalized`, nor `_failed`, effectively
+lost from all tracking. `_finalize_session_io` now always transitions
+the session's `state` to `FAILED` and records `failure` BEFORE
+re-raising, so the session remains correctly queryable
+(`session_states()`/`failed_runs`) regardless of which call site
+(caller-driven, control-event-driven, or idle-timeout-driven) triggered
+the failure. Not separately unit-tested with a forced I/O failure
+(`validate_mcap_file`/`finalize_bag` are real filesystem calls, not
+mocked anywhere in this test suite, matching this suite's existing "no
+mocking of the real MCAP pipeline" convention) -- but the code path is
+shared and exercised by every passing finalize test, and the fix
+itself is small and structurally obvious (a state transition moved
+inside the `except` clause that already existed for a different
+reason, §20.5's own table row).
+
+### 20.6 Files changed
+
+```text
+New:
+  packages/sceneops-core/sceneops_core/streaming/control.py
+  packages/sceneops-core/tests/test_streaming_control.py
+
+Modified:
+  packages/sceneops-core/sceneops_core/constants/streaming.py
+    -- SESSION_CONTROL_CHANNEL constant
+  packages/sceneops-core/sceneops_core/streaming/__init__.py
+    -- re-exports RunEventType/build_control_envelope/
+       is_control_envelope/parse_run_event
+  ros2/capture/router.py
+    -- CaptureSession/SessionState/FinalizationReason/
+       CaptureSessionState (renamed+extended from Phase 7.1's
+       _ActiveRun/ActiveRunState), control-event handling,
+       idle-timeout, finalize-failure state-tracking fix
+  ros2/capture/tests/test_router.py
+    -- rewritten for the new state model; 32 tests (was 19)
+  ros2/capture/tests/test_router_integration.py
+    -- run_for()'s renamed loop_idle_timeout_seconds parameter;
+       +1 real-Kafka mixed-termination lifecycle test (3 total, was 2)
+  ros2/nodes/streaming_bridge_node.py
+    -- emit_lifecycle_events (default False) + --emit-lifecycle-events
+       CLI flag, RUN_START/RUN_END publish, best-effort
+  ros2/nodes/tests/test_streaming_bridge_node.py
+    -- +5 tests (TestLifecycleEvents), 16 pre-existing untouched
+  scripts/dev/phase7/router_benchmark.py
+    -- run_for()'s renamed parameter (mechanical)
+
+Rebuilt (packages/sceneops-core changed -- COPY+pip-installed into the
+ros2 image at build time, not live-mounted; ros2/nodes and ros2/capture
+themselves ARE live-mounted and needed no rebuild):
+  docker image sceneops-platform/ros2:local
+
+No change to: capture_consumer.py, finalize.py, mcap_writer.py,
+validation.py, group_id.py, schema_registry.py, TelemetryEnvelope
+itself, the Kafka wire format, or anything canonical/RobotRun/
+ArtifactStore-related.
+```
+
+### 20.7 A real coexistence bug found and fixed during regression
+
+Discovered while auditing whether `main()` should default
+`--emit-lifecycle-events` on: `RunScopedCapture`
+(`capture_consumer.run_capture()`, explicitly frozen/unmodified this
+entire Phase 7) has NO channel filtering of its own -- unlike
+`ContinuousCaptureRouter`, which intercepts `is_control_envelope()`
+records before they ever reach `_SequenceTracker`/the writer,
+`run_capture()`'s loop calls `writer.write_envelope(envelope)` for
+EVERY accepted (non-duplicate, in-sequence) record regardless of
+channel. A control event sharing that run's `robot_run_id` -- which
+Phase 7.2's whole design deliberately makes true, §20.2's "same topic,
+same key, for ordering" choice -- would reach `_SequenceTracker.accept()`
+(plausibly accepted as sequence 0, since the bridge's control event
+doesn't increment the telemetry counter) and then
+`McapCaptureWriter.write_envelope()`, which raises
+`UnsupportedChannelError` for `/session/control` (correctly -- it is
+not in `schema_registry.SUPPORTED_CHANNELS`) -- and `run_capture()` has
+no per-message error isolation (that is the router's own, newer
+behavior), so this exception propagates straight out, ABORTING THE
+ENTIRE CAPTURE.
+
+`make e2e-streaming-capture` and `make e2e-ros2-streaming` both
+exercise the real bridge feeding the real `run_capture()` against the
+same `robot_run_id` on the same topic -- had `main()` defaulted
+lifecycle events on, this specific regression suite (required by this
+phase's own instructions) would have failed. Caught before it did,
+by running exactly that suite as part of this phase's own regression
+pass (§20.9) -- not merely reasoned about abstractly. Fixed by keeping
+`emit_lifecycle_events` opt-in at every layer, including the CLI
+default (§20.2.1) -- the two paths (router-fed bridge runs,
+RunScopedCapture-fed bridge runs) must not currently be mixed for the
+same `robot_run_id`; teaching `run_capture()` to skip non-telemetry
+channels (a small, targeted change, but one that touches a path every
+prior phase has deliberately left untouched) or moving control events
+off the shared topic are the two candidate fixes for full coexistence,
+neither attempted here (flagged in §20.10).
+
+### 20.8 Tests added
+
+`ros2/capture/tests/test_router.py` -- 32 tests total (rewritten from
+Phase 7.1's 19), organized by the brief's own required coverage list:
+explicit start/telemetry/end, implicit discovery, duplicate start/end,
+telemetry-after-finalization, interleaved sessions with control events,
+idle-timeout (3 tests: fires correctly, disabled-by-default no-op,
+activity resets the clock), explicit-end-vs-timeout race (both
+orderings), offset-frontier release (mixed termination A/B/C, plus a
+separate FAILED-session variant), one-failed-session-doesn't-block-
+others, poison records, sequence/duplicate/conflict isolation (byte-
+exact payload, timestamp mapping, no-cross-run-records, many-interleaved-
+sessions), active-run capacity + reuse, finalize one/all/unknown/
+already-finalized, close-does-not-finalize.
+
+`ros2/capture/tests/test_router_integration.py` -- 3 tests against the
+REAL local broker (2 pre-existing, unmodified beyond the mechanical
+parameter rename; 1 new): `test_router_lifecycle_mixed_termination_
+against_real_kafka` -- 10 interleaved RobotRuns, `RUN_START` for all,
+`RUN_END` published for 5, the other 5 left to a REAL (not fake-clock)
+2-second idle-timeout, using the router's actual default
+`time.monotonic` clock end to end. Verifies: every run reaches
+`FINALIZED` with the CORRECT `finalization_reason` (5×
+`EXPLICIT_RUN_END`, 5× `IDLE_TIMEOUT`), exact per-run message counts,
+no cross-run payload contamination, and no orphan `.partial`
+directories (every one confirmed gone, every final one confirmed
+present) -- directly satisfying this phase's own "Real Kafka E2E"
+requirements (§20.9 covers the Kafka-lag half separately, via the
+existing regression run rather than a bespoke check inside this test).
+
+`packages/sceneops-core/tests/test_streaming_control.py` -- 7 tests:
+reserved channel/encoding, distinct message types per event, `is_
+control_envelope` true only for the reserved channel, `parse_run_event`
+round-trips both event types, returns `None` for non-control and for
+an unrecognized control `message_type` (forward-compat), and a real
+wire encode/decode round-trip (`sceneops_streaming.wire`) confirming
+the Kafka key is still exactly `robot_run_id`.
+
+`ros2/nodes/tests/test_streaming_bridge_node.py` -- +5 tests
+(`TestLifecycleEvents`, §20.2.1); all 16 pre-existing tests unmodified
+and still passing, proof the new default changes nothing for an
+existing caller.
+
+### 20.9 Real-Kafka E2E result
+
+Covered across two real-Kafka surfaces rather than one bespoke script,
+consistent with how Phase 7.1 validated its own core runtime:
+
+1. **`test_router_lifecycle_mixed_termination_against_real_kafka`**
+   (§20.8) -- the mixed-termination scenario itself, 10 runs, correctness
+   fully verified (see above).
+2. **Full regression suite** (§20.9 table below) -- `make e2e-streaming-
+   capture`/`make e2e-ros2-streaming` both exercise the real bridge
+   against real Kafka end to end; running them was what caught §20.7's
+   coexistence bug in the first place, which is itself real-Kafka
+   evidence that the fix (opt-in, default off) actually holds.
+
+Kafka lag: not re-verified via a bespoke `kafka-consumer-groups.sh`
+check inside this phase's own work (Phase 7.1's §19.8 benchmark already
+established `LAG=0` after `finalize_all()` at 100k/1M-message scale
+under the equivalent offset-safety policy, and this phase changed WHICH
+sessions count as terminal, not the underlying commit mechanism itself)
+-- `test_offset_frontier_release_with_mixed_termination_paths` (§20.4)
+is this phase's own direct evidence that the frontier computation
+itself is correct under the new state model, at the unit level, with
+exact expected values asserted.
+
+### 20.10 Regression
+
+| Target | Result |
+|---|---|
+| `make lint` | PASS |
+| `make test` | PASS -- 1,439 passed (1,432 + 7 new `test_streaming_control.py`), 14 skipped, 0 failed |
+| `make test-integration` | PASS -- 65 passed, 0 failed |
+| `make smoke-streaming` | PASS -- 39/0 failed |
+| `make e2e-ros2-streaming` | PASS -- 21 unit tests (`ros2/nodes/tests/`, +5 from this phase) + 34 verification checks / 0 failed -- not in this phase's own required list, run anyway since it is the OTHER real-bridge path §20.7's fix needed to be checked against |
+| `make e2e-streaming-capture` | PASS -- 90 unit tests (`ros2/capture/tests/`: 55 Phase-7.0-era + 32 router + 3 router-integration) + 8 verification checks / 0 failed |
+| `make canonical-verify` | PASS -- baseline unchanged |
+
+### 20.11 Known limitations
+
+```text
+RunScopedCapture/ContinuousCaptureRouter coexistence for the SAME
+  robot_run_id on the SAME topic is not solved (§20.7) -- the same
+  robot_run_id must not be fed to both a lifecycle-events-enabled
+  bridge run AND run_capture() today; operationally this is fine (a
+  given RobotRun is captured by exactly one path in practice), but it
+  is a real, found sharp edge, not a hypothetical one
+CaptureSession persistence -- still in-process only, lost on process
+  exit (Phase 7.0 study §9's own recommendation, still not built)
+Router restart recovery -- unchanged from Phase 7.1: a fresh router
+  after a crash/restart does not reconstruct which sessions were
+  active; it resumes from the last safe commit and lets Kafka
+  redeliver
+Kafka rebalance recovery -- still unexercised, single
+  KafkaTelemetryConsumer instance only
+Multi-worker router scaling -- still Phase 7.3 scope
+ArtifactStore/RobotRun registration, Episode/Learning integration --
+  CaptureResult still stops exactly where run_capture()'s always has
+camera/LiDAR transport redesign -- unrelated to this phase
+_sessions never prunes terminal entries -- unbounded memory growth
+  over a very long-lived router process (FINALIZED/FAILED sessions
+  are kept forever for introspection); not a concern at the scales
+  this phase tested, flagged for whenever CaptureSession persistence
+  (above) is eventually designed, since eviction policy there and here
+  are the same underlying question
+Finalize-I/O-failure state transition (§20.5's fix) has no dedicated
+  forced-failure unit test -- covered structurally/by code-path
+  sharing with every passing finalize test, not by a test that
+  actually injects a validate_mcap_file/finalize_bag failure
+```
+
+### 20.12 Blockers before Phase 7.3
+
+None structural. The lifecycle model is real, tested (32 unit + 3
+real-Kafka integration + 7 control-schema + 5 bridge), and the offset-
+frontier correctness carries forward correctly under it. One item worth
+resolving before -- or as part of -- whatever Phase 7.3 turns out to be
+(multi-partition/multi-worker scaling, per the original Phase 7 roadmap
+outline, §13): §20.7's `RunScopedCapture` coexistence gap should
+probably be closed before lifecycle events become the DEFAULT on any
+real deployment path, since scaling to more workers/partitions makes
+"which robot_run_ids might overlap between the two capture paths"
+harder to reason about informally than it is today.
+
+**Suggested commit** (not created, per instruction):
+
+```bash
+git commit -m "feat(streaming): add capture session lifecycle"
+```

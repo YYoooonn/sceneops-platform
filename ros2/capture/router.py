@@ -1,4 +1,5 @@
-"""Continuous multi-RobotRun capture router (Phase 7.1).
+"""Continuous multi-RobotRun capture router with explicit session
+lifecycle (Phase 7.1 core runtime + Phase 7.2 lifecycle).
 
 One long-lived Kafka consumer, routing each consumed record by
 ``TelemetryEnvelope.robot_run_id`` to that run's own, independently
@@ -7,21 +8,34 @@ full-topic-history rescans (one per ``run_capture()`` invocation, the
 existing ``RunScopedCapture`` path in ``capture_consumer.py``) with one
 continuous topic pass serving arbitrarily many concurrent RobotRuns.
 
+Phase 7.2 adds an explicit ``CaptureSession`` lifecycle
+(``SessionState``: ``DISCOVERED -> RECORDING -> FINALIZING ->
+FINALIZED``, or ``-> FAILED``), driven by two signals: an explicit,
+additive Kafka control event (``sceneops_core.streaming.control`` --
+``RUN_START``/``RUN_END``, reused unmodified) and a configurable
+per-session idle-timeout fallback for when a producer disappears
+without ever sending ``RUN_END``.
+
 This module composes ``capture_consumer.py``'s own building blocks
 (``_RunFilter``, ``_SequenceTracker``, ``_sha256_file``) and
 ``finalize.py``/``validation.py``/``mcap_writer.py`` directly -- it does
 not reimplement any of them, and it does not modify them. The frozen
 commit-boundary ordering they encode (write -> close/fsync -> validate
 -> atomically finalize -> only then advance Kafka position) is
-preserved per-run; see ``ContinuousCaptureRouter``'s own docstring for
-how that ordering composes across MANY simultaneously-open runs, which
-is genuinely new here (``run_capture()`` only ever had one run open at
-a time).
+preserved per-session; see ``ContinuousCaptureRouter``'s own docstring
+for how that ordering composes across MANY simultaneously-open
+sessions, and how the lifecycle model interacts with the conservative
+offset-commit-safety policy Phase 7.1 introduced.
 
 ``RunScopedCapture`` (``capture_consumer.run_capture``) is untouched and
 remains the supported path for replay/backfill/debugging/recovery --
 this module is an additional, independent consumer of the same frozen
 Kafka/envelope/MCAP contracts, not a replacement.
+
+``CaptureSession`` is execution/runtime state only -- in-process,
+never persisted, never a canonical domain record. It is not
+``RobotRun``, and nothing here writes to PostgreSQL/ArtifactStore
+(Phase 7.2's own explicit scope exclusions).
 """
 
 from __future__ import annotations
@@ -30,9 +44,15 @@ import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
-from sceneops_core.streaming import ConsumedTelemetryEnvelope
+from sceneops_core.streaming import (
+    ConsumedTelemetryEnvelope,
+    RunEventType,
+    is_control_envelope,
+    parse_run_event,
+)
 from sceneops_streaming.config import StreamingSettings
 from sceneops_streaming.consumer import KafkaTelemetryConsumer
 from sceneops_streaming.errors import EnvelopeDecodeError
@@ -55,16 +75,53 @@ ROUTER_CONSUMER_GROUP_ID = "sceneops-mcap-continuous-router"
 
 # Per-message errors that mean "this ONE RobotRun's stream is corrupt
 # or violates an invariant" -- never "the router itself is broken."
-# Caught and isolated per-run (see ContinuousCaptureRouter._route);
-# every other active run keeps being served normally.
+# Caught and isolated per-session (see ContinuousCaptureRouter._route);
+# every other session keeps being served normally.
 _PER_RUN_ERRORS = (PartitionInvariantError, SequenceIntegrityError, UnsupportedChannelError)
 
 
+class SessionState(StrEnum):
+    """``DISCOVERED`` -- a session exists (explicit ``RUN_START`` seen,
+    or implicitly created by that run's first telemetry record) but has
+    not yet had any telemetry successfully written.
+    ``RECORDING`` -- at least one telemetry record has been written.
+    ``FINALIZING`` -- transient: finalize I/O (validate/atomic-rename)
+    is in progress. Observable in principle, vanishingly short in
+    practice (single-threaded, synchronous file I/O).
+    ``FINALIZED`` -- terminal, successful. ``result`` may still be
+    ``None`` if the session finalized with zero telemetry ever written
+    (e.g. ``RUN_START`` immediately followed by ``RUN_END``) -- there
+    is no file to describe in that case.
+    ``FAILED`` -- terminal, unsuccessful (sequence/partition/writer
+    invariant violation, or a finalize-time I/O failure). Data is
+    discarded, never finalized, never silently repaired."""
+
+    DISCOVERED = "discovered"
+    RECORDING = "recording"
+    FINALIZING = "finalizing"
+    FINALIZED = "finalized"
+    FAILED = "failed"
+
+
+_NON_TERMINAL_STATES = (SessionState.DISCOVERED, SessionState.RECORDING, SessionState.FINALIZING)
+_TERMINAL_STATES = (SessionState.FINALIZED, SessionState.FAILED)
+
+
+class FinalizationReason(StrEnum):
+    """Why a session transitioned to ``FINALIZED`` -- recorded, never
+    inferred after the fact, so a caller/operator can always tell a
+    clean explicit end from a defensive timeout."""
+
+    EXPLICIT_RUN_END = "explicit_run_end"
+    IDLE_TIMEOUT = "idle_timeout"
+    MANUAL = "manual"  # caller-driven finalize_run()/finalize_all(), no RUN_END seen
+
+
 class MaxActiveRunsExceededError(RuntimeError):
-    """The router already has ``max_active_runs`` RobotRuns open and
-    refuses to silently evict one to make room for a new one -- fail
-    loudly; eviction/idle-timeout policy is explicitly Phase 7.2 scope,
-    not invented here."""
+    """The router already has ``max_active_runs`` non-terminal sessions
+    open and refuses to silently evict one to make room for a new one
+    -- fail loudly; eviction policy beyond idle-timeout is not invented
+    here."""
 
 
 class RunIdentityConflictError(RuntimeError):
@@ -75,42 +132,66 @@ class RunIdentityConflictError(RuntimeError):
 
 
 class UnknownRunError(RuntimeError):
-    """``finalize_run()`` was asked to finalize a ``robot_run_id`` that
-    is not currently active (never seen, already finalized, or already
-    abandoned after a per-run failure)."""
+    """``finalize_run()`` was asked to finalize a ``robot_run_id`` with
+    no non-terminal session (never seen, already finalized, or already
+    failed)."""
 
 
 @dataclass(frozen=True)
-class ActiveRunState:
-    """Read-only snapshot of one currently-open run's runtime state --
-    execution/runtime state (Phase 7.0 study §9), never a canonical
-    domain record. Mirrors ``CaptureResult``'s field set plus the
-    execution-only fields (``opened_monotonic``) a still-open run has
-    and a finished ``CaptureResult`` does not."""
+class CaptureSessionState:
+    """Read-only snapshot of one session's runtime state -- execution/
+    runtime state (Phase 7.0 study §9), never a canonical domain
+    record. Mirrors ``CaptureResult``'s field set plus the
+    execution-only fields (``state``, ``opened_at``,
+    ``last_activity_at``, ``finalization_reason``, ``failure``) a
+    finished ``CaptureResult`` alone cannot express."""
 
     robot_id: str
     robot_run_id: str
-    partition: int | None
+    state: SessionState
+    opened_at: float
+    last_activity_at: float
     message_count: int
+    partition: int | None
     first_offset: int | None
     last_offset: int | None
     first_sequence: int | None
     last_sequence: int | None
-    opened_monotonic: float
+    finalization_reason: FinalizationReason | None
+    failure: str | None
 
 
-class _ActiveRun:
-    """Internal, mutable per-run runtime state -- owns exactly one
+class CaptureSession:
+    """Internal, mutable per-RobotRun runtime state -- owns exactly one
     ``McapCaptureWriter`` (one open file), one ``_RunFilter`` (partition
     invariant + robot_id/robot_run_id identity check, reused unmodified
     from ``capture_consumer``), and one ``_SequenceTracker`` (reused
-    unmodified) so every active run's duplicate/gap/conflict handling
-    is exactly as strict, and exactly as independent, as a standalone
-    ``run_capture()`` invocation's always was."""
+    unmodified) so every session's duplicate/gap/conflict handling is
+    exactly as strict, and exactly as independent, as a standalone
+    ``run_capture()`` invocation's always was.
 
-    def __init__(self, *, robot_id: str, robot_run_id: str, output_root: Path) -> None:
+    ``last_activity_at`` is updated ONLY from the router's own
+    injectable clock (``time.monotonic`` by default), NEVER from
+    ``envelope.source_timestamp_ns`` or ``envelope.ingest_timestamp_ns``
+    -- both of those are the PRODUCER's timestamps, which can be
+    arbitrarily stale relative to when the router actually processes a
+    record (e.g. while catching up on real Kafka backlog, exactly the
+    scenario Phase 7.0 measured at length). Using either for
+    idle-timeout decisions would make backlog catch-up look like every
+    session has been "idle" for however far behind the router is,
+    causing false-positive timeouts during the one workload
+    (historical replay/backlog) this transport is explicitly built to
+    handle. ``last_activity_at`` answers "how long has it actually been,
+    in wall-clock reality, since the router itself last heard from this
+    run" -- the only question an idle-timeout fallback should be
+    asking."""
+
+    def __init__(
+        self, *, robot_id: str, robot_run_id: str, output_root: Path, clock: Callable[[], float]
+    ) -> None:
         self.robot_id = robot_id
         self.robot_run_id = robot_run_id
+        self._clock = clock
         partial_dir = prepare_partial_bag_dir(output_root, robot_run_id)
         self.writer = McapCaptureWriter(bag_uri=str(partial_dir))
         self.run_filter = capture_consumer._RunFilter(
@@ -119,19 +200,32 @@ class _ActiveRun:
         self.tracker = capture_consumer._SequenceTracker()
         self.first_offset: int | None = None
         self.last_offset: int | None = None
-        self.opened_monotonic = time.monotonic()
+        now = clock()
+        self.opened_at = now
+        self.last_activity_at = now
+        self.state = SessionState.DISCOVERED
+        self.finalization_reason: FinalizationReason | None = None
+        self.failure: str | None = None
+        self.result: CaptureResult | None = None
 
-    def state(self) -> ActiveRunState:
-        return ActiveRunState(
+    def touch(self) -> None:
+        self.last_activity_at = self._clock()
+
+    def snapshot(self) -> CaptureSessionState:
+        return CaptureSessionState(
             robot_id=self.robot_id,
             robot_run_id=self.robot_run_id,
-            partition=self.run_filter.partition,
+            state=self.state,
+            opened_at=self.opened_at,
+            last_activity_at=self.last_activity_at,
             message_count=self.writer.stats.message_count,
+            partition=self.run_filter.partition,
             first_offset=self.first_offset,
             last_offset=self.last_offset,
             first_sequence=self.tracker.first_sequence,
             last_sequence=self.tracker.last_sequence,
-            opened_monotonic=self.opened_monotonic,
+            finalization_reason=self.finalization_reason,
+            failure=self.failure,
         )
 
 
@@ -140,87 +234,61 @@ class _RouterStats:
     messages_routed: int = 0
     messages_written: int = 0
     messages_skipped_duplicate: int = 0
+    messages_after_finalization: int = 0
     poison_messages: list[dict] = field(default_factory=list)
+    control_events_ignored: list[dict] = field(default_factory=list)
 
 
 class ContinuousCaptureRouter:
     """One continuous Kafka consumer, routing to many concurrently-open,
-    independently-tracked per-RobotRun MCAP writers.
+    independently-tracked per-RobotRun ``CaptureSession``s.
 
-    **Kafka offset-commit correctness (the central question this phase
-    exists to answer).** A single continuous consumer group can only
-    commit ONE position per partition -- but it is serving many
-    downstream "consumers" (one open MCAP writer per active RobotRun)
-    that reach their own durability boundary (finalized-and-validated)
-    at different times. Naively committing "the most recently consumed
-    record" (``run_capture()``'s own, correct-for-ITS-case policy, since
-    it only ever has ONE run open) would be WRONG here: if record R for
-    still-open run B was consumed and the committed offset advanced
-    past R, then the process crashes before B ever finalizes, restarting
-    a fresh consumer in the same group resumes from a position that
-    already skips R -- run B's data is gone, un-redeliverable, and
-    B was never durably written anywhere. That is a real durability
-    violation, not a cosmetic one.
+    **Kafka offset-commit correctness.** A single continuous consumer
+    group can only commit ONE position per partition, but serves many
+    downstream "consumers" (one open MCAP writer per non-terminal
+    session) that reach their own durability boundary at different
+    times. Never commit a partition's offset past the earliest
+    first-consumed-offset of any session still NON-TERMINAL
+    (``DISCOVERED``/``RECORDING``/``FINALIZING``) on that partition::
 
-    The policy implemented here is the conservative one the Phase 7.1
-    brief asks for when full recovery infrastructure (Phase 7.2/7.4) is
-    not yet built: **never commit a partition's offset past the
-    earliest first-consumed-offset of any RobotRun still active on that
-    partition.** Concretely, per partition, the safe "next offset to
-    read" is::
-
-        min(run.first_offset for run in active_runs on this partition)
-        -- if any run is active on it, else
+        min(session.first_offset for session in non-terminal sessions
+            on this partition)
+        -- if any, else
         (last_consumed_offset_on_this_partition + 1)
-        -- once every run ever opened on it has been finalized (or
-           abandoned, see below)
+        -- once every session ever opened on it has reached a terminal
+           state (FINALIZED or FAILED)
 
-    This is monotonically non-decreasing (finalizing/abandoning a run
-    only ever removes its `first_offset` from the `min(...)`, which can
-    only raise the bound; a brand-new run's `first_offset` is always
-    >= the current consume position, which is always >= every prior
-    run's `first_offset`) -- so the safe boundary only ever advances,
-    never regresses, as runs complete. It is called automatically after
-    every ``finalize_run``/``finalize_all`` call, and may be called
-    directly (``commit_safe()``) at any other point a caller wants to
-    checkpoint progress.
+    Monotonically non-decreasing: a session leaving the non-terminal
+    set (finalized OR failed -- both are terminal) only ever removes
+    its `first_offset` from the `min(...)`, which can only raise the
+    bound. This is what makes §5's "offset frontier release" property
+    hold regardless of WHICH lifecycle path (explicit ``RUN_END``,
+    idle-timeout, or a failure) is what moved a session out of the
+    non-terminal set -- the commit-safety math only cares that it did,
+    not why.
 
-    **What this policy does NOT do (explicitly deferred, matching the
-    brief's scope exclusions):** it does not attempt to recover an
-    in-flight, not-yet-finalized run's `.partial` state after a process
-    restart -- a restart's fresh router simply starts consuming again
-    from the last safely-committed position, and Kafka redelivers
-    everything from there, including a full replay of whatever any
-    still-open run at crash time had already (uncommittedly) consumed.
-    Full restart recovery, idle-timeout-driven auto-finalization, and
-    Kafka-rebalance recovery are Phase 7.2/7.4 scope, not this module's.
-
-    **Per-run failure isolation.** A ``PartitionInvariantError``/
+    **Per-session failure isolation.** A ``PartitionInvariantError``/
     ``SequenceIntegrityError``/``UnsupportedChannelError`` for one
-    active run's stream (this run's own data violates an invariant --
-    never a router-level problem) is caught, that ONE run's writer is
-    closed and its ``.partial`` state discarded (never finalized, never
-    silently repaired), and the router keeps serving every OTHER active
-    run unaffected. The failed ``robot_run_id`` is permanently ignored
-    for the remainder of this router's lifetime (recorded in
-    ``failed_runs``) -- a later record for the same id is dropped
-    rather than silently reopening a run whose invariants already broke
-    once; recovering it is what ``RunScopedCapture`` (replay/backfill)
-    remains for.
+    session's stream is caught, that session's writer is closed and its
+    ``.partial`` state discarded (never finalized), the session
+    transitions to ``FAILED``, and the router keeps serving every OTHER
+    session unaffected. A FAILED session is permanently terminal --
+    later telemetry/control events for the same ``robot_run_id`` are
+    dropped, recorded, never silently reopened; recovering it is what
+    ``RunScopedCapture`` (replay/backfill) remains for.
 
-    A record that fails to DECODE at all (``EnvelopeDecodeError`` from
-    the underlying ``KafkaTelemetryConsumer.poll()`` itself, e.g. a
-    corrupt/malformed Kafka record with no reliable ``robot_run_id`` to
-    attribute it to) is a deliberate exception to "never silently drop
-    malformed records": it cannot be attributed to any one run, so
-    isolating it the way a per-run error is isolated is not possible,
-    and letting ONE poison record abort ingestion for every currently
-    active run (this module's blast radius is much larger than
-    ``run_capture()``'s single-run one) is a worse outcome than
-    recording it and continuing. It is never silently lost -- every
-    poison record is appended to ``poison_messages`` (topic/partition/
-    offset/error), queryable by any caller, just not raised
-    synchronously into the poll loop.
+    **Poison (undecodable) records.** A record that fails to DECODE at
+    all (``EnvelopeDecodeError``, no reliable ``robot_run_id``) cannot
+    be attributed to any one session, so it is recorded in
+    ``stats.poison_messages`` (topic/partition/offset/error, never
+    silently dropped) and the loop continues -- letting it abort every
+    currently-open session (this module's blast radius is much larger
+    than ``run_capture()``'s single-run one) would be a worse outcome.
+    Its own offset still counts toward that partition's
+    ``_last_consumed_offset_by_partition`` bookkeeping (it WAS
+    examined), so it can become safely committed exactly like any other
+    consumed-but-not-attributable-to-an-open-session record: once no
+    non-terminal session's `first_offset` sits at or before it.
     """
 
     def __init__(
@@ -231,15 +299,30 @@ class ContinuousCaptureRouter:
         max_active_runs: int = 64,
         group_id: str | None = None,
         poll_timeout_seconds: float = 1.0,
+        session_idle_timeout_seconds: float | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        """``session_idle_timeout_seconds`` -- defensive fallback (§3):
+        a non-terminal session whose ``last_activity_at`` is this many
+        clock-seconds in the past is automatically finalized through
+        the SAME durable path an explicit ``RUN_END`` uses (never
+        discarded), with ``finalization_reason=IDLE_TIMEOUT`` recorded.
+        ``None`` (default) disables it entirely -- existing callers that
+        never configure it get exactly Phase 7.1's behavior (sessions
+        stay open until explicitly finalized).
+
+        ``clock`` -- injectable time source (``time.monotonic`` by
+        default) used for ``opened_at``/``last_activity_at``/idle-
+        timeout comparisons. Tests inject a fake, deterministic clock
+        instead of sleeping."""
         self._settings = settings
         self._output_root = output_root
         self._max_active_runs = max_active_runs
         self._poll_timeout_seconds = poll_timeout_seconds
+        self._session_idle_timeout_seconds = session_idle_timeout_seconds
+        self._clock = clock
 
-        self._active: dict[str, _ActiveRun] = {}
-        self._finalized: dict[str, CaptureResult] = {}
-        self._failed: dict[str, str] = {}
+        self._sessions: dict[str, CaptureSession] = {}
         self._last_consumed_offset_by_partition: dict[int, int] = {}
         self.stats = _RouterStats()
 
@@ -254,37 +337,47 @@ class ContinuousCaptureRouter:
 
     @property
     def active_run_count(self) -> int:
-        return len(self._active)
+        return sum(1 for s in self._sessions.values() if s.state in _NON_TERMINAL_STATES)
 
-    def active_run_states(self) -> dict[str, ActiveRunState]:
-        return {run_id: run.state() for run_id, run in self._active.items()}
+    def session_states(self) -> dict[str, CaptureSessionState]:
+        """Every session this router has ever seen, terminal or not."""
+        return {run_id: s.snapshot() for run_id, s in self._sessions.items()}
+
+    def active_run_states(self) -> dict[str, CaptureSessionState]:
+        """Non-terminal sessions only -- convenience filter over
+        ``session_states()``."""
+        return {
+            run_id: s.snapshot()
+            for run_id, s in self._sessions.items()
+            if s.state in _NON_TERMINAL_STATES
+        }
 
     @property
     def finalized_runs(self) -> dict[str, CaptureResult]:
-        return dict(self._finalized)
+        return {
+            run_id: s.result
+            for run_id, s in self._sessions.items()
+            if s.state is SessionState.FINALIZED and s.result is not None
+        }
 
     @property
     def failed_runs(self) -> dict[str, str]:
-        return dict(self._failed)
+        return {
+            run_id: (s.failure or "")
+            for run_id, s in self._sessions.items()
+            if s.state is SessionState.FAILED
+        }
 
     # -- consumption ---------------------------------------------------
 
     async def run_once(self, timeout_seconds: float | None = None) -> bool:
-        """Poll once; route and write at most one message. Returns
-        ``True`` if a message was consumed (whether written, skipped as
-        a duplicate, or recorded as a per-run/poison failure), ``False``
-        on timeout with nothing available.
-
-        A record that fails to DECODE at all (``EnvelopeDecodeError``,
-        raised by the underlying ``KafkaTelemetryConsumer.poll()``
-        itself) has no reliable ``robot_run_id`` to attribute it to, so
-        it cannot be isolated the way a per-run failure is (§ class
-        docstring) -- it is caught here, appended to
-        ``stats.poison_messages`` (topic/partition/offset/error, never
-        silently discarded), and the loop continues. The record's own
-        offset still counts as "consumed" for this partition's safe-
-        commit bookkeeping (it WAS examined; the router is simply
-        unable to route it to any run's writer)."""
+        """Poll once; route at most one message, then check idle
+        sessions. Returns ``True`` if a message was consumed (whether
+        written, skipped as a duplicate, a control event, or recorded
+        as a per-session/poison failure), ``False`` on timeout with
+        nothing available. Idle-timeout checking (§3) runs on EVERY
+        call, including timeout/no-message ones, so a fallback
+        finalization fires even against a quiet topic."""
         try:
             consumed = await self._consumer.poll(
                 timeout_seconds if timeout_seconds is not None else self._poll_timeout_seconds
@@ -300,26 +393,34 @@ class ContinuousCaptureRouter:
                     "error": str(exc),
                 }
             )
+            await self.check_idle_sessions()
             return True
+
         if consumed is None:
+            await self.check_idle_sessions()
             return False
-        self._route(consumed)
+
+        await self._route(consumed)
+        await self.check_idle_sessions()
         return True
 
     async def run_for(
         self,
         *,
         max_messages: int | None = None,
-        idle_timeout_seconds: float = 5.0,
+        loop_idle_timeout_seconds: float = 5.0,
         poll_timeout_seconds: float | None = None,
     ) -> int:
         """Convenience driving loop for tests/benchmarks/a real
         long-lived session: keep polling until ``max_messages`` have
         been consumed (if given) or no message arrives for
-        ``idle_timeout_seconds``. Returns the number of messages
-        consumed. Not itself a production lifecycle policy -- a real
-        continuous deployment drives ``run_once()`` in its own loop
-        under whatever supervision it needs (Phase 7.2)."""
+        ``loop_idle_timeout_seconds`` (the LOOP's own "give up polling"
+        timeout -- distinct from ``session_idle_timeout_seconds``,
+        which finalizes one stale SESSION while the loop keeps running).
+        Returns the number of messages consumed. Not itself a
+        production lifecycle policy -- a real continuous deployment
+        drives ``run_once()`` in its own loop under whatever supervision
+        it needs (restart/rebalance recovery, Phase 7.4)."""
         consumed_count = 0
         last_progress = time.monotonic()
         while max_messages is None or consumed_count < max_messages:
@@ -327,116 +428,269 @@ class ContinuousCaptureRouter:
             if got:
                 consumed_count += 1
                 last_progress = time.monotonic()
-            elif time.monotonic() - last_progress > idle_timeout_seconds:
+            elif time.monotonic() - last_progress > loop_idle_timeout_seconds:
                 break
         return consumed_count
 
-    def _route(self, consumed: ConsumedTelemetryEnvelope) -> None:
+    async def _route(self, consumed: ConsumedTelemetryEnvelope) -> None:
         envelope = consumed.envelope
         robot_run_id = envelope.robot_run_id
         partition = consumed.partition
         self._last_consumed_offset_by_partition[partition] = consumed.offset
         self.stats.messages_routed += 1
 
-        if robot_run_id in self._failed:
+        if is_control_envelope(envelope):
+            await self._handle_control_event(robot_run_id, envelope)
             return
 
-        run = self._active.get(robot_run_id)
-        if run is None:
-            if len(self._active) >= self._max_active_runs:
-                raise MaxActiveRunsExceededError(
-                    f"cannot open a new active run for {robot_run_id!r}: "
-                    f"max_active_runs={self._max_active_runs} already reached "
-                    f"({sorted(self._active)!r})"
-                )
-            run = _ActiveRun(
-                robot_id=envelope.robot_id,
-                robot_run_id=robot_run_id,
-                output_root=self._output_root,
-            )
-            self._active[robot_run_id] = run
+        session = self._sessions.get(robot_run_id)
+        if session is not None and session.state in _TERMINAL_STATES:
+            self.stats.messages_after_finalization += 1
+            return
 
+        if session is None:
+            session = self._new_session(robot_run_id, envelope.robot_id)
+
+        session.touch()
         try:
-            if not run.run_filter.matches(consumed):
+            if not session.run_filter.matches(consumed):
                 raise RunIdentityConflictError(
                     f"robot_run_id={robot_run_id!r}: message robot_id="
-                    f"{envelope.robot_id!r} does not match this run's "
-                    f"established robot_id={run.robot_id!r}"
+                    f"{envelope.robot_id!r} does not match this session's "
+                    f"established robot_id={session.robot_id!r}"
                 )
-            should_write = run.tracker.accept(
+            should_write = session.tracker.accept(
                 sequence_number=envelope.sequence_number, payload=envelope.payload
             )
             if should_write:
-                run.writer.write_envelope(envelope)
+                session.writer.write_envelope(envelope)
                 self.stats.messages_written += 1
+                if session.state is SessionState.DISCOVERED:
+                    session.state = SessionState.RECORDING
             else:
                 self.stats.messages_skipped_duplicate += 1
-            if run.first_offset is None:
-                run.first_offset = consumed.offset
-            run.last_offset = consumed.offset
+            if session.first_offset is None:
+                session.first_offset = consumed.offset
+            session.last_offset = consumed.offset
         except (*_PER_RUN_ERRORS, RunIdentityConflictError) as exc:
-            self._abandon_run(robot_run_id, exc)
+            self._mark_failed(session, exc)
 
-    def _abandon_run(self, robot_run_id: str, exc: Exception) -> None:
-        run = self._active.pop(robot_run_id, None)
-        if run is not None:
-            try:
-                run.writer.close()
-            except Exception:
-                pass  # best-effort -- already abandoning this run due to exc
-            shutil.rmtree(
-                partial_bag_path(self._output_root, robot_run_id), ignore_errors=True
+    def _new_session(self, robot_run_id: str, robot_id: str) -> CaptureSession:
+        if self.active_run_count >= self._max_active_runs:
+            raise MaxActiveRunsExceededError(
+                f"cannot open a new session for {robot_run_id!r}: "
+                f"max_active_runs={self._max_active_runs} already reached "
+                f"({sorted(self.active_run_states())!r})"
             )
-        self._failed[robot_run_id] = f"{type(exc).__name__}: {exc}"
+        session = CaptureSession(
+            robot_id=robot_id,
+            robot_run_id=robot_run_id,
+            output_root=self._output_root,
+            clock=self._clock,
+        )
+        self._sessions[robot_run_id] = session
+        return session
+
+    def _mark_failed(self, session: CaptureSession, exc: Exception) -> None:
+        try:
+            session.writer.close()
+        except Exception:
+            pass  # best-effort -- already failing this session over exc
+        shutil.rmtree(
+            partial_bag_path(self._output_root, session.robot_run_id), ignore_errors=True
+        )
+        session.state = SessionState.FAILED
+        session.failure = f"{type(exc).__name__}: {exc}"
+
+    # -- control events (RUN_START / RUN_END) ---------------------------
+
+    async def _handle_control_event(self, robot_run_id: str, envelope) -> None:
+        event_type = parse_run_event(envelope)
+        session = self._sessions.get(robot_run_id)
+
+        if event_type is RunEventType.RUN_START:
+            if session is not None:
+                # Redelivery (at-least-once) or a genuine duplicate --
+                # idempotent no-op regardless of the existing session's
+                # state; never resets an in-progress or terminal session.
+                self.stats.control_events_ignored.append(
+                    {"robot_run_id": robot_run_id, "event": "RUN_START", "reason": "duplicate"}
+                )
+                return
+            self._new_session(robot_run_id, envelope.robot_id)
+            return
+
+        if event_type is RunEventType.RUN_END:
+            if session is None:
+                # No prior telemetry or RUN_START at all -- nothing to
+                # finalize; recorded, not silently dropped.
+                self.stats.control_events_ignored.append(
+                    {"robot_run_id": robot_run_id, "event": "RUN_END", "reason": "unknown_run"}
+                )
+                return
+            if session.state not in _NON_TERMINAL_STATES:
+                # Duplicate RUN_END, or racing an idle-timeout that
+                # already finalized/failed this session first -- the
+                # natural, deterministic race resolution: whichever
+                # terminalizes the session first wins, the other is a
+                # harmless no-op.
+                self.stats.control_events_ignored.append(
+                    {
+                        "robot_run_id": robot_run_id,
+                        "event": "RUN_END",
+                        "reason": f"already_{session.state.value}",
+                    }
+                )
+                return
+            try:
+                self._finalize_session_io(session, reason=FinalizationReason.EXPLICIT_RUN_END)
+            except Exception:
+                pass  # already recorded as FAILED inside _finalize_session_io
+            await self.commit_safe()
+            return
+
+        # Unrecognized message_type under the control channel --
+        # forward-compatible: ignore, never fatal (control.py's own
+        # parse_run_event docstring).
+        self.stats.control_events_ignored.append(
+            {
+                "robot_run_id": robot_run_id,
+                "event": envelope.message_type,
+                "reason": "unrecognized_control_event",
+            }
+        )
+
+    # -- idle-timeout fallback ------------------------------------------
+
+    async def check_idle_sessions(self) -> list[str]:
+        """Finalize every non-terminal session whose ``last_activity_at``
+        is >= ``session_idle_timeout_seconds`` in the past, through the
+        same durable finalize path ``RUN_END`` uses (never discards
+        data). Returns the ``robot_run_id``s finalized this way. A
+        no-op (returns ``[]``) if ``session_idle_timeout_seconds`` was
+        never configured."""
+        if self._session_idle_timeout_seconds is None:
+            return []
+        now = self._clock()
+        timed_out: list[str] = []
+        for robot_run_id, session in list(self._sessions.items()):
+            if session.state not in _NON_TERMINAL_STATES:
+                continue
+            if now - session.last_activity_at < self._session_idle_timeout_seconds:
+                continue
+            try:
+                self._finalize_session_io(session, reason=FinalizationReason.IDLE_TIMEOUT)
+            except Exception:
+                pass  # already recorded as FAILED inside _finalize_session_io
+            timed_out.append(robot_run_id)
+        if timed_out:
+            await self.commit_safe()
+        return timed_out
 
     # -- finalization ---------------------------------------------------
 
-    def _finalize_active_run(self, run: _ActiveRun) -> CaptureResult:
-        run.writer.close()
-        mcap_path = run.writer.mcap_file_path()
-        validate_mcap_file(mcap_path, expected_message_count=run.writer.stats.message_count)
-        final_dir = finalize_bag(self._output_root, run.robot_run_id)
-        final_mcap_path = final_dir / Path(mcap_path).name
-        digest_hex = capture_consumer._sha256_file(final_mcap_path)
-        return CaptureResult(
-            robot_id=run.robot_id,
-            robot_run_id=run.robot_run_id,
-            path=final_mcap_path,
-            message_count=run.writer.stats.message_count,
-            partition=run.run_filter.partition,
-            first_offset=run.first_offset,
-            last_offset=run.last_offset,
-            first_sequence=run.tracker.first_sequence,
-            last_sequence=run.tracker.last_sequence,
-            sha256=digest_hex,
-        )
+    def _finalize_session_io(
+        self, session: CaptureSession, *, reason: FinalizationReason
+    ) -> CaptureResult | None:
+        """Validate/finalize one session's MCAP and transition its
+        state -- always ends in ``FINALIZED`` (success, possibly with
+        ``result=None`` if zero telemetry was ever written) or
+        ``FAILED`` (this method re-raises on failure; every caller of
+        this method is responsible for deciding whether that should
+        propagate further or be swallowed, see call sites). Never
+        leaves a session stuck in ``FINALIZING`` or silently untracked
+        -- the Phase 7.1 gap this phase's own audit found (a finalize
+        I/O failure used to leave a session popped from tracking with
+        the exception simply propagating, effectively losing it)."""
+        session.state = SessionState.FINALIZING
+        try:
+            session.writer.close()
+            if session.writer.stats.message_count == 0:
+                # RUN_START (or first telemetry) followed immediately by
+                # RUN_END/idle-timeout with nothing captured in between
+                # -- validate_mcap_file would reject a zero-message file
+                # anyway; there is nothing to finalize, just discard the
+                # empty writer directory.
+                shutil.rmtree(
+                    partial_bag_path(self._output_root, session.robot_run_id),
+                    ignore_errors=True,
+                )
+                session.state = SessionState.FINALIZED
+                session.finalization_reason = reason
+                session.result = None
+                return None
 
-    async def finalize_run(self, robot_run_id: str) -> CaptureResult:
-        """Finalize exactly one active run -- validate/finalize/commit,
-        reusing the same durability pipeline ``run_capture()`` uses,
-        while every OTHER currently-active run stays open and
-        untouched. Advances the safe commit boundary afterward."""
-        run = self._active.pop(robot_run_id, None)
-        if run is None:
-            raise UnknownRunError(
-                f"no active run {robot_run_id!r} to finalize "
-                f"(active={sorted(self._active)!r}, "
-                f"already finalized={robot_run_id in self._finalized}, "
-                f"failed={robot_run_id in self._failed})"
+            mcap_path = session.writer.mcap_file_path()
+            validate_mcap_file(
+                mcap_path, expected_message_count=session.writer.stats.message_count
             )
-        result = self._finalize_active_run(run)
-        self._finalized[robot_run_id] = result
-        await self.commit_safe()
+            final_dir = finalize_bag(self._output_root, session.robot_run_id)
+            final_mcap_path = final_dir / Path(mcap_path).name
+            digest_hex = capture_consumer._sha256_file(final_mcap_path)
+            result = CaptureResult(
+                robot_id=session.robot_id,
+                robot_run_id=session.robot_run_id,
+                path=final_mcap_path,
+                message_count=session.writer.stats.message_count,
+                partition=session.run_filter.partition,
+                first_offset=session.first_offset,
+                last_offset=session.last_offset,
+                first_sequence=session.tracker.first_sequence,
+                last_sequence=session.tracker.last_sequence,
+                sha256=digest_hex,
+            )
+        except Exception as exc:
+            session.state = SessionState.FAILED
+            session.failure = f"{type(exc).__name__}: {exc}"
+            shutil.rmtree(
+                partial_bag_path(self._output_root, session.robot_run_id), ignore_errors=True
+            )
+            raise
+
+        session.state = SessionState.FINALIZED
+        session.finalization_reason = reason
+        session.result = result
+        return result
+
+    async def finalize_run(self, robot_run_id: str) -> CaptureResult | None:
+        """Finalize exactly one non-terminal session -- validate/
+        finalize/commit, reusing the same durability pipeline
+        ``run_capture()`` uses, while every OTHER session stays
+        untouched. Caller-driven (``finalization_reason=MANUAL``):
+        unlike the control-event/idle-timeout paths, a finalize failure
+        here PROPAGATES (the caller explicitly asked and should know),
+        though the session itself is already correctly transitioned to
+        ``FAILED`` by the time the exception reaches them, never left
+        untracked."""
+        session = self._sessions.get(robot_run_id)
+        if session is None or session.state not in _NON_TERMINAL_STATES:
+            raise UnknownRunError(
+                f"no non-terminal session {robot_run_id!r} to finalize "
+                f"(known={sorted(self._sessions)!r})"
+            )
+        try:
+            result = self._finalize_session_io(session, reason=FinalizationReason.MANUAL)
+        finally:
+            await self.commit_safe()
         return result
 
     async def finalize_all(self) -> dict[str, CaptureResult]:
-        """Finalize every currently-active run, then commit once."""
+        """Finalize every currently non-terminal session, then commit
+        once. A single session's finalize failure does not stop the
+        rest (it is recorded as FAILED internally by
+        ``_finalize_session_io`` and skipped in the returned mapping,
+        matching the per-session isolation principle used everywhere
+        else in this router)."""
         results: dict[str, CaptureResult] = {}
-        for robot_run_id in list(self._active.keys()):
-            run = self._active.pop(robot_run_id)
-            result = self._finalize_active_run(run)
-            self._finalized[robot_run_id] = result
-            results[robot_run_id] = result
+        for robot_run_id, session in list(self._sessions.items()):
+            if session.state not in _NON_TERMINAL_STATES:
+                continue
+            try:
+                result = self._finalize_session_io(session, reason=FinalizationReason.MANUAL)
+            except Exception:
+                continue  # already recorded as FAILED
+            if result is not None:
+                results[robot_run_id] = result
         await self.commit_safe()
         return results
 
@@ -444,18 +698,20 @@ class ContinuousCaptureRouter:
 
     def _safe_commit_offsets(self) -> dict[int, int]:
         safe: dict[int, int] = {}
-        active_first_offsets_by_partition: dict[int, list[int]] = {}
-        for run in self._active.values():
-            partition = run.run_filter.partition
-            if partition is None or run.first_offset is None:
-                continue  # this run has consumed nothing yet -- nothing to bound by
-            active_first_offsets_by_partition.setdefault(partition, []).append(
-                run.first_offset
+        non_terminal_firsts_by_partition: dict[int, list[int]] = {}
+        for session in self._sessions.values():
+            if session.state not in _NON_TERMINAL_STATES:
+                continue
+            partition = session.run_filter.partition
+            if partition is None or session.first_offset is None:
+                continue  # this session has consumed nothing yet -- nothing to bound by
+            non_terminal_firsts_by_partition.setdefault(partition, []).append(
+                session.first_offset
             )
 
         for partition, last_offset in self._last_consumed_offset_by_partition.items():
-            active_firsts = active_first_offsets_by_partition.get(partition)
-            safe[partition] = min(active_firsts) if active_firsts else last_offset + 1
+            firsts = non_terminal_firsts_by_partition.get(partition)
+            safe[partition] = min(firsts) if firsts else last_offset + 1
         return safe
 
     async def commit_safe(self) -> None:
@@ -468,14 +724,14 @@ class ContinuousCaptureRouter:
 
     async def close(self) -> None:
         """Release the underlying Kafka consumer only. Does NOT
-        finalize any still-active run -- finalization is always an
-        explicit, caller-driven decision (``finalize_run``/
-        ``finalize_all``), never implied by shutdown. Any run left
-        active when ``close()`` is called keeps its `.partial` state on
-        disk, un-finalized; because of the safe-commit policy above,
-        none of its already-consumed messages were ever committed past,
-        so a fresh router (or a `RunScopedCapture` backfill) can always
-        recover it from Kafka."""
+        finalize any non-terminal session -- finalization is always an
+        explicit (control event, idle-timeout, or caller-driven)
+        decision, never implied by shutdown. Any session left
+        non-terminal when ``close()`` is called keeps its `.partial`
+        state on disk, un-finalized; because of the safe-commit policy
+        above, none of its already-consumed messages were ever
+        committed past, so a fresh router (or a `RunScopedCapture`
+        backfill) can always recover it from Kafka."""
         await self._consumer.close()
 
     async def __aenter__(self) -> "ContinuousCaptureRouter":

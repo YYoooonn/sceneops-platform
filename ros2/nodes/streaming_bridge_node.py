@@ -41,7 +41,12 @@ from rclpy.serialization import serialize_message
 from sensor_msgs.msg import BatteryState, Imu
 from std_msgs.msg import String
 
-from sceneops_core.streaming import EnvelopeEncoding, TelemetryEnvelope
+from sceneops_core.streaming import (
+    EnvelopeEncoding,
+    RunEventType,
+    TelemetryEnvelope,
+    build_control_envelope,
+)
 from sceneops_streaming import KafkaTelemetryProducer, StreamingSettings
 
 logger = logging.getLogger("sceneops.ros2_streaming_bridge")
@@ -194,16 +199,34 @@ class StreamingBridgeNode(Node):
         robot_run_id: str,
         publish_timeout_seconds: float = 5.0,
         producer_bridge: object | None = None,
+        emit_lifecycle_events: bool = False,
     ) -> None:
         """``producer_bridge`` defaults to a real ``_AsyncProducerBridge``
         (real Kafka client). Tests inject a fake exposing the same
         ``publish(envelope)``/``close()`` shape instead, so envelope-
         construction logic is testable without Kafka and without
         constructing a real producer -- see
-        ros2/nodes/tests/test_streaming_bridge_node.py."""
+        ros2/nodes/tests/test_streaming_bridge_node.py.
+
+        ``emit_lifecycle_events`` (Phase 7.2, default ``False``) --
+        publish a ``RUN_START`` control event
+        (``sceneops_core.streaming.control``) right after construction
+        and a best-effort ``RUN_END`` during ``shutdown()``, for a
+        lifecycle-aware continuous consumer (e.g.
+        ``ros2/capture/router.py``'s ``ContinuousCaptureRouter``) to key
+        off. Defaults to ``False`` so every existing test that injects a
+        fake bridge and asserts exact published-envelope counts/indices/
+        sequence numbers keeps working completely unchanged -- ``main()``
+        (the real CLI entry point) is the one caller that turns it on.
+        The router does not require this: it discovers a run implicitly
+        from its first telemetry record regardless (Phase 7.0 study
+        §10) -- this only makes the SIGNAL explicit and enables the
+        router's ``EXPLICIT_RUN_END`` finalization path instead of
+        always falling back to its idle-timeout policy."""
         super().__init__("streaming_bridge_node")
         self._robot_id = robot_id
         self._robot_run_id = robot_run_id
+        self._emit_lifecycle_events = emit_lifecycle_events
 
         # One monotonically increasing sequence per (robot_id,
         # robot_run_id) bridge stream, across ALL channels -- represents
@@ -226,6 +249,9 @@ class StreamingBridgeNode(Node):
             bootstrap_servers, telemetry_topic = "<injected>", "<injected>"
         self._bridge = producer_bridge
 
+        if self._emit_lifecycle_events:
+            self._publish_lifecycle_event(RunEventType.RUN_START)
+
         self._subscriptions = [
             self.create_subscription(spec.message_type, topic, self._make_callback(topic, spec), 10)
             for topic, spec in TOPIC_SPECS.items()
@@ -242,6 +268,31 @@ class StreamingBridgeNode(Node):
         seq = self._sequence
         self._sequence += 1
         return seq
+
+    def _publish_lifecycle_event(self, event_type: RunEventType) -> None:
+        """Best-effort -- a control event failing to publish must never
+        crash bridge startup/shutdown or abort telemetry publishing;
+        the router's idle-timeout fallback exists specifically so a
+        missing lifecycle signal (this one included) is never a
+        correctness problem, only a slower detection of "this run is
+        done." Does NOT consume a telemetry sequence number (this
+        run's own counter is read, never incremented, for the control
+        event's own -- diagnostic-only -- sequence_number field;
+        TelemetryEnvelope.sequence_number's contract is "diagnostic
+        only, never identity")."""
+        try:
+            envelope = build_control_envelope(
+                event_type=event_type,
+                robot_id=self._robot_id,
+                robot_run_id=self._robot_run_id,
+                sequence_number=self._sequence,
+            )
+            self._bridge.publish(envelope)
+        except Exception as exc:
+            self.get_logger().error(
+                f"failed to publish {event_type.value} lifecycle event: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     def _make_callback(self, topic: str, spec: TopicSpec) -> Callable[[object], None]:
         def _callback(msg: object) -> None:
@@ -304,8 +355,20 @@ class StreamingBridgeNode(Node):
     def shutdown(self, timeout_seconds: float = 10.0) -> None:
         """Flush pending Kafka production and close the producer. Does
         NOT stop ROS2 spinning -- the caller (main()) stops spin_once
-        first, then calls this: stop accepting new callbacks -> flush ->
-        close producer -> destroy node."""
+        first, then calls this: stop accepting new callbacks -> publish
+        RUN_END (best-effort, if enabled) -> flush -> close producer ->
+        destroy node. RUN_END is published BEFORE flush/close so it is
+        handed to the SAME producer instance as every telemetry record,
+        ordered after all of them in publish order -- never a separate,
+        possibly-racing producer/connection.
+
+        This is the GRACEFUL path only -- a hard kill (SIGKILL, crash)
+        never reaches this method, which is exactly why the router's
+        idle-timeout fallback exists as the defensive counterpart:
+        RUN_END is the normal-case signal, never the only one a
+        consumer can rely on."""
+        if self._emit_lifecycle_events:
+            self._publish_lifecycle_event(RunEventType.RUN_END)
         self._bridge.close(timeout_seconds=timeout_seconds)
 
 
@@ -327,6 +390,25 @@ def main() -> None:
         default=5.0,
         help="Bound on how long a single publish() may block the ROS2 callback thread",
     )
+    parser.add_argument(
+        "--emit-lifecycle-events",
+        action="store_true",
+        default=False,
+        help=(
+            "Publish RUN_START/RUN_END control events (Phase 7.2, "
+            "sceneops_core.streaming.control) for a lifecycle-aware "
+            "continuous consumer (ContinuousCaptureRouter) to key off. "
+            "Default OFF: the existing RunScopedCapture path "
+            "(ros2/capture/capture_consumer.run_capture, frozen/"
+            "unmodified) has no channel filtering of its own and would "
+            "abort with UnsupportedChannelError if a control envelope "
+            "reached it under the same robot_run_id -- e2e-streaming-"
+            "capture and e2e-ros2-streaming exercise exactly that path "
+            "against this same bridge, so this must stay opt-in until "
+            "RunScopedCapture is taught to skip non-telemetry channels "
+            "(or control events move off the shared topic)."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -338,6 +420,7 @@ def main() -> None:
         robot_id=args.robot_id,
         robot_run_id=args.robot_run_id,
         publish_timeout_seconds=args.publish_timeout_seconds,
+        emit_lifecycle_events=args.emit_lifecycle_events,
     )
 
     shutdown_requested = threading.Event()

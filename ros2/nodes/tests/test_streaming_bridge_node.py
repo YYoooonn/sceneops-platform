@@ -34,7 +34,12 @@ from std_msgs.msg import String
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sceneops_core.streaming import EnvelopeEncoding, TelemetryEnvelope  # noqa: E402
+from sceneops_core.streaming import (  # noqa: E402
+    EnvelopeEncoding,
+    RunEventType,
+    TelemetryEnvelope,
+    parse_run_event,
+)
 
 from streaming_bridge_node import (  # noqa: E402
     TOPIC_SPECS,
@@ -345,3 +350,100 @@ class TestTopicSpecs:
     def test_json_string_channels_use_json_field_rule(self):
         assert TOPIC_SPECS["/vehicle/control"].timestamp_rule is SourceTimestampRule.JSON_FIELD
         assert TOPIC_SPECS["/mission/status"].timestamp_rule is SourceTimestampRule.JSON_FIELD
+
+
+class TestLifecycleEvents:
+    """Phase 7.2 -- emit_lifecycle_events is opt-in (default False),
+    verified by construction: every test above constructs the node with
+    no such argument and asserts exact published-envelope counts/
+    indices/sequence numbers, all still passing unchanged -- proof the
+    default genuinely changes nothing for an existing caller."""
+
+    def test_disabled_by_default_publishes_no_lifecycle_events(self, fake_bridge):
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID, robot_run_id=ROBOT_RUN_ID, producer_bridge=fake_bridge
+        )
+        try:
+            assert fake_bridge.published == []
+        finally:
+            node.destroy_node()
+
+    def test_enabled_publishes_run_start_on_construction(self, fake_bridge):
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            assert len(fake_bridge.published) == 1
+            envelope = fake_bridge.published[0]
+            assert parse_run_event(envelope) is RunEventType.RUN_START
+            assert envelope.robot_id == ROBOT_ID
+            assert envelope.robot_run_id == ROBOT_RUN_ID
+        finally:
+            node.destroy_node()
+
+    def test_enabled_publishes_run_start_then_telemetry_then_run_end_in_order(
+        self, fake_bridge
+    ):
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            node._handle_message(
+                "/vehicle/odom", TOPIC_SPECS["/vehicle/odom"], _make_odometry(1, 0)
+            )
+            node.shutdown()
+
+            assert len(fake_bridge.published) == 3
+            assert parse_run_event(fake_bridge.published[0]) is RunEventType.RUN_START
+            assert fake_bridge.published[1].channel == "/vehicle/odom"
+            assert parse_run_event(fake_bridge.published[2]) is RunEventType.RUN_END
+        finally:
+            node.destroy_node()
+
+    def test_run_start_does_not_consume_the_telemetry_sequence_counter(self, fake_bridge):
+        """The first TELEMETRY message must still get sequence_number=0
+        -- RUN_START reads the counter without incrementing it, exactly
+        matching every existing (emit_lifecycle_events=False) test's
+        assumption that telemetry sequencing starts at 0."""
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            node._handle_message(
+                "/vehicle/odom", TOPIC_SPECS["/vehicle/odom"], _make_odometry(1, 0)
+            )
+            telemetry_envelope = fake_bridge.published[1]
+            assert telemetry_envelope.sequence_number == 0
+        finally:
+            node.destroy_node()
+
+    def test_lifecycle_event_publish_failure_is_logged_and_never_raises(self):
+        class RaisingBridge:
+            def publish(self, envelope):
+                raise RuntimeError("simulated Kafka failure")
+
+            def close(self, timeout_seconds=10.0):
+                pass
+
+        # Must not raise out of __init__ even though the injected bridge
+        # always fails -- a broken control-event publish must never
+        # prevent the node from starting and serving real telemetry.
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=RaisingBridge(),
+            emit_lifecycle_events=True,
+        )
+        try:
+            node.shutdown()  # must also not raise
+        finally:
+            node.destroy_node()
