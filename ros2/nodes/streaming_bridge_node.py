@@ -229,12 +229,29 @@ class StreamingBridgeNode(Node):
         self._emit_lifecycle_events = emit_lifecycle_events
 
         # One monotonically increasing sequence per (robot_id,
-        # robot_run_id) bridge stream, across ALL channels -- represents
-        # bridge-observed arrival order, never source-timestamp order.
-        # No lock: the default rclpy executor (spin_once, used by main()
-        # below) runs every subscription callback sequentially on one
-        # thread, so callbacks never execute concurrently with each other.
+        # robot_run_id) bridge TELEMETRY stream, across all five sensor
+        # channels only -- represents bridge-observed arrival order,
+        # never source-timestamp order. No lock: the default rclpy
+        # executor (spin_once, used by main() below) runs every
+        # subscription callback sequentially on one thread, so callbacks
+        # never execute concurrently with each other.
         self._sequence = 0
+
+        # A SEPARATE, independent counter for lifecycle control events
+        # (Phase 7.2.1) -- RUN_START/RUN_END never share telemetry's own
+        # 0-start sequence space. Sharing it would collide: RUN_START
+        # published before any telemetry would land at the exact same
+        # sequence_number (0) the first REAL telemetry message also
+        # needs, and RunScopedCapture's _SequenceTracker (one tracker,
+        # one run) requires a clean 0..N-1 run with no two different
+        # payloads at the same position. Keeping the two spaces
+        # independent lets each be validated on its own terms: telemetry
+        # keeps its existing, unchanged 0-start/no-gap contract
+        # regardless of whether lifecycle events are enabled at all, and
+        # control events get their OWN gap/duplicate/conflict validation
+        # (capture_consumer.py's own second _SequenceTracker, Phase
+        # 7.2.1) without perturbing it.
+        self._lifecycle_sequence = 0
 
         self.published_count = 0
         self.failed_count = 0
@@ -269,23 +286,31 @@ class StreamingBridgeNode(Node):
         self._sequence += 1
         return seq
 
+    def _next_lifecycle_sequence_number(self) -> int:
+        seq = self._lifecycle_sequence
+        self._lifecycle_sequence += 1
+        return seq
+
     def _publish_lifecycle_event(self, event_type: RunEventType) -> None:
         """Best-effort -- a control event failing to publish must never
         crash bridge startup/shutdown or abort telemetry publishing;
         the router's idle-timeout fallback exists specifically so a
         missing lifecycle signal (this one included) is never a
         correctness problem, only a slower detection of "this run is
-        done." Does NOT consume a telemetry sequence number (this
-        run's own counter is read, never incremented, for the control
-        event's own -- diagnostic-only -- sequence_number field;
-        TelemetryEnvelope.sequence_number's contract is "diagnostic
-        only, never identity")."""
+        done." Uses the SEPARATE, independent lifecycle sequence counter
+        (``_next_lifecycle_sequence_number``, Phase 7.2.1) -- never the
+        telemetry one -- so RUN_START always gets a clean 0 and RUN_END
+        a clean 1, regardless of how many (or how few) telemetry
+        messages were published in between; RunScopedCapture validates
+        this stream's own 0..N-1 completeness independently of
+        telemetry's (capture_consumer.py's own second
+        ``_SequenceTracker``)."""
         try:
             envelope = build_control_envelope(
                 event_type=event_type,
                 robot_id=self._robot_id,
                 robot_run_id=self._robot_run_id,
-                sequence_number=self._sequence,
+                sequence_number=self._next_lifecycle_sequence_number(),
             )
             self._bridge.publish(envelope)
         except Exception as exc:

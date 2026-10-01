@@ -12,6 +12,21 @@ Lifecycle is externally controlled: this module has no notion of what a
 "mission" is and never inspects the content of ``/mission/status`` (or
 any other channel) to decide when to start or stop capturing -- the
 caller decides, via ``stop_condition``.
+
+**Lifecycle control envelopes (Phase 7.2.1).** ``RUN_START``/``RUN_END``
+(``sceneops_core.streaming.control``) share this run's Kafka key/
+partition like any other record for it, so they pass ``_RunFilter``
+same as telemetry -- but they are never sensor data: recognized via
+``is_control_envelope`` and routed to their OWN ``_SequenceTracker``
+(independent of the telemetry one), validated for gap/duplicate/
+conflict exactly as strictly as telemetry is, but never passed to
+``McapCaptureWriter.write_envelope`` (so they never appear in the
+finalized MCAP, and never hit ``UnsupportedChannelError`` -- that
+error is reserved for a genuinely unrecognized/unsupported channel,
+not a recognized control one). A legacy stream with no control events
+at all is completely unaffected: ``is_control_envelope`` is never true
+for it, so every record takes the exact same path this module always
+used.
 """
 
 from __future__ import annotations
@@ -22,7 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from sceneops_core.streaming import ConsumedTelemetryEnvelope
+from sceneops_core.streaming import ConsumedTelemetryEnvelope, is_control_envelope
 from sceneops_streaming.config import StreamingSettings
 from sceneops_streaming.consumer import KafkaTelemetryConsumer
 
@@ -202,6 +217,14 @@ async def run_capture(
     writer = McapCaptureWriter(bag_uri=str(partial_dir))
     run_filter = _RunFilter(robot_id=robot_id, robot_run_id=robot_run_id)
     tracker = _SequenceTracker()
+    # Lifecycle control events (Phase 7.2.1) get their OWN independent
+    # 0..N-1 validation, never merged with telemetry's -- they are
+    # published on a separate sequence counter (streaming_bridge_node.py),
+    # so conflating the two spaces would false-positive on the very
+    # first control event (RUN_START always lands at control-sequence 0,
+    # exactly where the first telemetry message also needs to land in
+    # ITS OWN space).
+    control_tracker = _SequenceTracker()
 
     # Run-scoped, not the literal base -- see group_id.py's own docstring
     # for why (Phase 6.6.1): a group shared across every RobotRun let one
@@ -229,6 +252,24 @@ async def run_capture(
                     continue
 
                 envelope = consumed.envelope
+                if is_control_envelope(envelope):
+                    # Validated (gap/duplicate/conflict) exactly as
+                    # strictly as telemetry, in its own independent
+                    # sequence space -- never silently bypassed -- but
+                    # never written to the MCAP: a control event is not
+                    # sensor data, and schema_registry.SUPPORTED_CHANNELS
+                    # deliberately never includes it (so a genuinely
+                    # unsupported/unknown channel still fails loudly,
+                    # unambiguously, via UnsupportedChannelError).
+                    control_tracker.accept(
+                        sequence_number=envelope.sequence_number,
+                        payload=envelope.payload,
+                    )
+                    if first_offset is None:
+                        first_offset = consumed.offset
+                    last_offset = consumed.offset
+                    continue
+
                 should_write = tracker.accept(
                     sequence_number=envelope.sequence_number,
                     payload=envelope.payload,

@@ -16,10 +16,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
+from mcap.reader import make_reader
 from sceneops_core.streaming import (  # noqa: E402
     ConsumedTelemetryEnvelope,
     EnvelopeEncoding,
+    RunEventType,
     TelemetryEnvelope,
+    build_control_envelope,
 )
 
 import capture_consumer  # noqa: E402
@@ -59,6 +62,58 @@ def _consumed(envelope: TelemetryEnvelope, *, partition: int = 0, offset: int = 
         partition=partition,
         offset=offset,
     )
+
+
+def _control(
+    event_type: RunEventType,
+    *,
+    robot_id: str = "robot-1",
+    robot_run_id: str = "run-1",
+    sequence_number: int = 0,
+    partition: int = 0,
+    offset: int = 0,
+    reason: str | None = None,
+):
+    # NOTE: build_control_envelope's payload only ever encodes `reason`
+    # (e.g. b"{}" for every call that omits one) -- it does NOT encode
+    # event_type, which lives in message_type instead. Two calls with
+    # different event_type but no reason therefore produce BYTE-IDENTICAL
+    # payloads; _SequenceTracker.accept() only ever compares payload
+    # bytes, so such a pair at the same sequence_number is a harmless
+    # duplicate to it, never a conflict. A test that wants a genuine
+    # conflicting-duplicate at the control-sequence level must give the
+    # two calls different `reason` values (or otherwise differing
+    # payloads) -- same requirement any real producer would have too.
+    envelope = build_control_envelope(
+        event_type=event_type,
+        robot_id=robot_id,
+        robot_run_id=robot_run_id,
+        sequence_number=sequence_number,
+        reason=reason,
+    )
+    return _consumed(envelope, partition=partition, offset=offset)
+
+
+def _mcap_channels(path) -> set[str]:
+    with open(path, "rb") as f:
+        reader = make_reader(f)
+        return {channel.topic for _schema, channel, _message in reader.iter_messages()}
+
+
+def _bounded_stop_condition(max_calls: int = 20):
+    """For tests expecting run_capture() to raise BEFORE writer.stats.
+    message_count ever satisfies a normal stop_condition (e.g. a
+    control-only queue, where nothing is ever written at all) -- caps
+    the number of poll iterations so a wrong assumption about WHEN the
+    expected exception fires produces a loud, fast assertion failure
+    instead of an infinite loop polling an empty fake queue forever."""
+    calls = {"n": 0}
+
+    def _stop(count: int) -> bool:
+        calls["n"] += 1
+        return calls["n"] > max_calls
+
+    return _stop
 
 
 # ---------------------------------------------------------------------
@@ -341,6 +396,182 @@ def test_run_capture_raises_on_unsupported_channel_and_does_not_finalize_or_comm
                 robot_run_id="run-1",
                 output_root=tmp_path,
                 stop_condition=lambda count: count >= 1,
+            )
+        )
+
+    assert created[0].committed is False
+    assert not final_bag_path(tmp_path, "run-1").exists()
+
+
+# ---------------------------------------------------------------------
+# Lifecycle control envelopes (Phase 7.2.1)
+# ---------------------------------------------------------------------
+
+
+def test_run_capture_handles_run_start_telemetry_run_end(tmp_path, monkeypatch) -> None:
+    telemetry = [_envelope(sequence_number=i) for i in range(2)]
+    queue = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0),
+        _consumed(telemetry[0], offset=1),
+        _consumed(telemetry[1], offset=2),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=3),
+    ]
+    created = _install_fake_consumer(monkeypatch, queue)
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            # Control events never count toward writer.stats.message_count
+            # -- stop_condition only ever sees telemetry, unchanged.
+            stop_condition=lambda count: count >= 2,
+        )
+    )
+
+    assert result.message_count == 2
+    assert result.first_sequence == 0
+    assert result.last_sequence == 1
+    # Kafka provenance (first/last offset) reflects every record this
+    # capture actually consumed, control events included -- first_offset
+    # is the RUN_START control event's own offset (0), not the first
+    # telemetry message's. last_offset stops at 2 (the second telemetry
+    # message), NOT the RUN_END at offset 3 -- stop_condition is checked
+    # BEFORE each poll and is already satisfied (writer.stats.
+    # message_count == 2) once the second telemetry message is written,
+    # so RUN_END is correctly never consumed in THIS test's configuration
+    # (control events interleaved with the stop boundary are covered
+    # separately by the real-Kafka lifecycle integration test, which
+    # consumes RUN_END too).
+    assert result.first_offset == 0
+    assert result.last_offset == 2
+    assert created[0].committed is True
+    assert _mcap_channels(result.path) == {"/vehicle/odom"}
+
+
+def test_run_capture_mcap_contains_no_control_channel_records(tmp_path, monkeypatch) -> None:
+    queue = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0),
+        _consumed(_envelope(sequence_number=0), offset=1),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=2),
+    ]
+    _install_fake_consumer(monkeypatch, queue)
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            stop_condition=lambda count: count >= 1,
+        )
+    )
+
+    assert "/session/control" not in _mcap_channels(result.path)
+    assert result.message_count == 1  # only the one real telemetry record
+
+
+def test_run_capture_control_events_interleaved_with_telemetry(tmp_path, monkeypatch) -> None:
+    queue = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0),
+        _consumed(_envelope(sequence_number=0), offset=1),
+        _consumed(_envelope(sequence_number=1), offset=2),
+        _consumed(_envelope(sequence_number=2), offset=3),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=4),
+    ]
+    _install_fake_consumer(monkeypatch, queue)
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            stop_condition=lambda count: count >= 3,
+        )
+    )
+
+    assert result.message_count == 3
+    assert result.first_sequence == 0
+    assert result.last_sequence == 2
+
+
+def test_run_capture_detects_gap_in_control_event_sequence(tmp_path, monkeypatch) -> None:
+    queue = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0),
+        _consumed(_envelope(sequence_number=0), offset=1),
+        # Control stream jumps straight to sequence 5 -- a gap in the
+        # control space specifically; telemetry's own sequence is fine.
+        _control(RunEventType.RUN_END, sequence_number=5, offset=2),
+    ]
+    created = _install_fake_consumer(monkeypatch, queue)
+
+    with pytest.raises(SequenceIntegrityError):
+        asyncio.run(
+            run_capture(
+                settings=object(),
+                robot_id="robot-1",
+                robot_run_id="run-1",
+                output_root=tmp_path,
+                stop_condition=_bounded_stop_condition(),
+            )
+        )
+
+    assert created[0].committed is False
+    assert not final_bag_path(tmp_path, "run-1").exists()
+
+
+def test_run_capture_duplicate_run_start_is_skipped_telemetry_unaffected(
+    tmp_path, monkeypatch
+) -> None:
+    # Exact immediate redelivery of RUN_START (same sequence, same
+    # payload) -- silently skipped, same policy telemetry already has.
+    run_start = build_control_envelope(
+        event_type=RunEventType.RUN_START,
+        robot_id="robot-1",
+        robot_run_id="run-1",
+        sequence_number=0,
+    )
+    queue = [
+        _consumed(run_start, offset=0),
+        _consumed(run_start, offset=1),  # exact duplicate redelivery
+        _consumed(_envelope(sequence_number=0), offset=2),
+    ]
+    _install_fake_consumer(monkeypatch, queue)
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            stop_condition=lambda count: count >= 1,
+        )
+    )
+    assert result.message_count == 1  # duplicate RUN_START never affected telemetry
+
+
+def test_run_capture_detects_conflicting_duplicate_control_event(tmp_path, monkeypatch) -> None:
+    queue = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0, reason="first"),
+        # Same control sequence number as above, genuinely different
+        # payload bytes (different `reason`) -- a real conflict, never
+        # silently resolved. (Two DIFFERENT event_types at the same
+        # sequence_number with no reason would NOT trigger this --
+        # see _control's own docstring note above.)
+        _control(RunEventType.RUN_START, sequence_number=0, offset=1, reason="second"),
+    ]
+    created = _install_fake_consumer(monkeypatch, queue)
+
+    with pytest.raises(SequenceIntegrityError):
+        asyncio.run(
+            run_capture(
+                settings=object(),
+                robot_id="robot-1",
+                robot_run_id="run-1",
+                output_root=tmp_path,
+                stop_condition=_bounded_stop_condition(),
             )
         )
 

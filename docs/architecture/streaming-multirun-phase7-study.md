@@ -1863,3 +1863,329 @@ harder to reason about informally than it is today.
 ```bash
 git commit -m "feat(streaming): add capture session lifecycle"
 ```
+
+---
+
+## 21. Phase 7.2.1 — Capture Path Control-Event Compatibility (implemented)
+
+**Date:** 2026-10-01 (direct follow-up). **Commit at start:** per `git
+log`, the three prior phases' suggested commits had already been made
+by this point (`26f8da1` capture session lifecycle, `08aa780`
+continuous router, `266385b` poll overhead) -- this phase's own work
+starts from a clean tree on top of `26f8da1`. No git commit was made
+for this phase either, per instruction.
+
+### 21.1 Confirmed sequence semantics (audit)
+
+- **Control envelopes DO pass `_RunFilter`** -- it only checks
+  `robot_id`/`robot_run_id`/partition, never `channel`, so a control
+  event for the target run was always correctly matched; the crash was
+  always downstream, in `_SequenceTracker`/the writer.
+- **Before this fix, control and telemetry sequence numbers could
+  collide.** The bridge's `_publish_lifecycle_event` (Phase 7.2) read
+  `self._sequence` WITHOUT incrementing it, so `RUN_START` always
+  landed at the exact sequence_number (0) the first REAL telemetry
+  message also needed. `_RunFilter`/`_SequenceTracker` were never the
+  problem for THIS specific collision (the router never even looks at
+  control-event sequence numbers, by design) -- `RunScopedCapture` was,
+  because it has exactly ONE `_SequenceTracker` for the whole stream,
+  with no concept of "control vs. telemetry" at all.
+- **The actual crash site:** `writer.write_envelope(envelope)` in
+  `run_capture()`'s main loop, called unconditionally for every
+  record `tracker.accept()` returned `True` for, regardless of channel
+  -- `McapCaptureWriter.write_envelope` raises `UnsupportedChannelError`
+  for any channel/message_type pair outside
+  `schema_registry.SUPPORTED_CHANNELS`, which `/session/control`
+  deliberately is not (§20.2 explicitly never added it there, since
+  control events are not sensor data). `run_capture()` has no
+  per-message error isolation (unlike the router), so this exception
+  always propagated straight out and aborted the entire capture.
+- **The rosbag2 semantic comparison script
+  (`scripts/e2e/mcap_capture_verify.py`) assumes a sensor-only channel
+  set** -- `_channel_schema_set` compares `(topic, schema)` tuples
+  between the captured and direct-recorded bags for EXACT set equality.
+  Had a control record ever been written into the captured MCAP, this
+  check would have failed (the direct-recorded bag, from `ros2 bag
+  record`, never has a `/session/control` channel at all). This script
+  needed NO changes -- the fix's own "never write control envelopes to
+  the MCAP" policy keeps its existing assumption true by construction.
+
+### 21.2 Compatibility policy (implemented)
+
+```text
+control envelope (is_control_envelope(envelope) is True)
+  -> participates in run filtering (_RunFilter, unchanged, already worked)
+  -> validated for gap/duplicate/conflict in its OWN independent
+     _SequenceTracker (capture_consumer.py gained a second one,
+     "control_tracker") -- NEVER merged with telemetry's own tracker
+  -> never passed to McapCaptureWriter.write_envelope -- never appears
+     in the finalized MCAP, never raises UnsupportedChannelError
+  -> still contributes to first_offset/last_offset (real consumed
+     Kafka records on this run's own partition, even though unwritten)
+```
+
+**Why two independent trackers, not one merged stream.** The brief's
+own preferred policy ("participate in sequence validation... do not
+silently bypass") ruled out simply skipping validation for control
+events entirely. But merging them into telemetry's own tracker would
+require the BRIDGE's telemetry and control counters to interleave into
+one clean 0..N-1 space -- which would mean `RUN_START` consuming
+telemetry sequence 0 and shifting every real telemetry message's own
+sequence number up by one, breaking the Continuous Router's existing,
+already-shipped, already-tested assumption that a session's first
+WRITTEN telemetry record is always sequence 0 (`SessionState.DISCOVERED
+-> RECORDING` and `_SequenceTracker`'s own "first sequence must be 0"
+invariant, §20.1/§19.5, both unmodified in this phase and both would
+have broken). Two independent spaces -- one per "channel class"
+(control vs. telemetry) -- let each be validated on its own terms
+without perturbing the other, and match a corresponding bridge-side
+change (§21.3): control events now get their OWN monotonic counter,
+never telemetry's.
+
+**Gap/duplicate/conflict in the control stream is real, not
+decorative.** Verified directly:
+`test_run_capture_detects_gap_in_control_event_sequence` (a control
+sequence jumping 0 -> 5 aborts the capture, `SequenceIntegrityError`,
+nothing finalized) and
+`test_run_capture_detects_conflicting_duplicate_control_event` (two
+control events at the same sequence number with genuinely different
+payload bytes -- same conflict policy telemetry already has). An
+EXACT immediate redelivery (same sequence, same payload) of a control
+event is silently skipped, exactly like telemetry's own duplicate
+policy (`test_run_capture_duplicate_run_start_is_skipped_telemetry_
+unaffected`).
+
+**One honestly-reported subtlety found while writing these tests (not
+a bug, a documented limitation of payload-only duplicate detection):**
+`_SequenceTracker.accept()` only ever compares `payload` bytes, never
+`message_type` -- and `build_control_envelope`'s payload only encodes
+an optional `reason` string (defaulting to the literal `b"{}"` for
+every call that omits one), never the event type itself (that lives in
+`message_type`). Two DIFFERENT event types (e.g. a hypothetical
+`RUN_START` and `RUN_END` colliding at the same sequence number) with
+no `reason` on either would therefore be treated as a harmless
+duplicate, not a conflict -- because their payload bytes are
+byte-identical. This is NOT exploitable against the real, fixed bridge
+(§21.3 guarantees `RUN_START`/`RUN_END` always get DIFFERENT sequence
+numbers from each other, so they can never collide in practice), but
+it is a real, narrow gap in payload-only duplicate detection a
+non-conforming external producer could in principle trigger. Flagged
+in §21.9, not silently left for a reader to discover -- and, in a
+concrete demonstration of why this matters, an earlier draft of this
+exact test exposed the gap directly: the first version of
+`test_run_capture_detects_conflicting_duplicate_control_event`
+constructed `RUN_START`/`RUN_END` with no `reason` on either, expecting
+a conflict that (correctly, given the policy above) never fired --
+`control_tracker.accept()` silently skipped the "duplicate," nothing
+raised, and the test's own unbounded `stop_condition=lambda count:
+count >= 99` (never satisfied, since control events never write
+anything) spun `run_capture()`'s poll loop forever against an emptied
+fake queue. Caught mid-session as two genuinely stuck, 100%-CPU `ros2`
+containers (one at 2+ hours, one at 4+ minutes) -- killed, root-caused,
+and fixed by (1) correcting the test to use genuinely different
+payloads (`reason="first"`/`reason="second"`) so the intended conflict
+actually fires, and (2) adding a bounded `_bounded_stop_condition()`
+helper to every control-only-queue test in this file as a defensive
+backstop, so a wrong assumption about WHEN an expected exception fires
+produces a fast, loud test failure instead of a silent infinite loop
+in future tests too. No production code was involved in that hang --
+`run_capture()`'s poll-until-stop_condition loop behaved exactly as
+documented/intended throughout.
+
+### 21.3 Bridge sequence-numbering fix
+
+`streaming_bridge_node.py` gained a SECOND, independent counter
+(`self._lifecycle_sequence`, `_next_lifecycle_sequence_number()`) --
+`RUN_START`/`RUN_END` now always get `0`/`1` respectively, regardless
+of how many (or how few) telemetry messages were published in between,
+and NEVER read or perturb `self._sequence` (telemetry's own counter,
+completely untouched). This is what makes §21.2's two-independent-
+trackers design correct end to end: the bridge produces genuinely
+independent sequences, and `run_capture()` validates them
+independently. Verified directly:
+`test_lifecycle_events_sequence_independently_starting_at_zero` (new)
+confirms `RUN_START.sequence_number == 0` and
+`RUN_END.sequence_number == 1` after publishing real telemetry in
+between; the pre-existing `test_run_start_does_not_consume_the_
+telemetry_sequence_counter` (Phase 7.2, docstring updated for accuracy,
+assertion unchanged) continues to confirm the first telemetry message
+still gets `sequence_number == 0`, now even more robustly true (the
+counters are not just "not incremented for control events," they are
+now fully separate objects).
+
+### 21.4 Files changed
+
+```text
+Modified:
+  ros2/capture/capture_consumer.py
+    -- is_control_envelope import, second _SequenceTracker
+       ("control_tracker"), main loop branches control events away
+       from the writer, module + inline docstrings updated
+  ros2/capture/tests/test_capture_consumer.py
+    -- +6 control-event tests, _control()/_mcap_channels()/
+       _bounded_stop_condition() helpers; all 16 pre-existing tests
+       unmodified
+  ros2/nodes/streaming_bridge_node.py
+    -- self._lifecycle_sequence + _next_lifecycle_sequence_number(),
+       _publish_lifecycle_event uses it instead of reading (without
+       incrementing) the telemetry counter
+  ros2/nodes/tests/test_streaming_bridge_node.py
+    -- +1 test (independent 0/1 sequencing), 1 existing test's
+       docstring corrected for accuracy (assertion itself unchanged)
+
+New:
+  ros2/capture/tests/test_lifecycle_integration.py
+    -- 2 tests against the REAL local broker (§21.6)
+
+No change to: finalize.py, mcap_writer.py, validation.py,
+schema_registry.py, group_id.py, router.py, control.py,
+TelemetryEnvelope, the Kafka wire format, or anything canonical/
+RobotRun/ArtifactStore-related. `main()`'s `--emit-lifecycle-events`
+default is UNCHANGED (still `False`) -- see §21.8.
+```
+
+### 21.5 Tests added
+
+`ros2/capture/tests/test_capture_consumer.py` -- 6 new tests (fake
+consumer, real MCAP I/O, same convention as every existing test in this
+file):
+
+```text
+test_run_capture_handles_run_start_telemetry_run_end
+test_run_capture_mcap_contains_no_control_channel_records
+test_run_capture_control_events_interleaved_with_telemetry
+test_run_capture_detects_gap_in_control_event_sequence
+test_run_capture_duplicate_run_start_is_skipped_telemetry_unaffected
+test_run_capture_detects_conflicting_duplicate_control_event
+```
+
+`ros2/nodes/tests/test_streaming_bridge_node.py` -- 1 new test
+(`test_lifecycle_events_sequence_independently_starting_at_zero`); all
+21 pre-existing tests (16 original + 5 from Phase 7.2) still pass
+unmodified.
+
+`ros2/capture/tests/test_lifecycle_integration.py` -- 2 new tests
+against the REAL local broker, matching
+`test_multi_robot_run_integration.py`'s own convention (no
+monkeypatching):
+
+```text
+test_run_capture_handles_real_lifecycle_enabled_stream
+test_run_capture_handles_real_lifecycle_events_interleaved_with_another_run
+```
+
+Both publish real `RUN_START`/telemetry/`RUN_END` sequences (the second
+test interleaves TWO such lifecycle-enabled runs on the same real
+topic/partition) via `KafkaTelemetryProducer`, then run the real,
+unmodified-at-the-call-site `run_capture()` against them, confirming:
+successful capture (no `UnsupportedChannelError`, no hang), correct
+`message_count`/`first_sequence`/`last_sequence` (telemetry-only,
+control events excluded), and the finalized MCAP contains ONLY
+`/vehicle/odom` (no `/session/control` channel).
+
+No dedicated new shell-script/Make-target E2E was added -- per the
+brief's own "if practical" framing, these real-Kafka pytest tests
+(already part of `make e2e-streaming-capture`'s stage 1, §21.7) satisfy
+"real-Kafka validation with lifecycle emission enabled" without growing
+the public Make surface, matching the precedent every prior Phase 7
+sub-phase has followed for this same question.
+
+### 21.6 Real-Kafka result
+
+Both `test_lifecycle_integration.py` tests pass against the real local
+broker: a solo `RUN_START`/5-telemetry/`RUN_END` stream captures
+cleanly (`message_count=5`, `first_sequence=0`, `last_sequence=4`,
+MCAP channel set `{"/vehicle/odom"}`), and two such streams interleaved
+on the same topic/partition isolate correctly via the existing,
+unmodified `_RunFilter` (target run's capture sees exactly its own 2
+telemetry messages, none of the other run's control events or
+telemetry). No `UnsupportedChannelError`, no hang, no stray `.partial`
+state.
+
+### 21.7 Legacy-path regression
+
+| Target | Result |
+|---|---|
+| `make lint` | PASS |
+| `make test` | PASS -- 1,439 passed (unchanged from Phase 7.2 -- this phase touched no `packages/`/`apps/` code), 14 skipped, 0 failed |
+| `make test-integration` | PASS -- 65 passed, 0 failed |
+| `make e2e-ros2-streaming` | PASS -- 22 unit tests (`ros2/nodes/tests/`, +1 from this phase) + 34 verification checks / 0 failed |
+| `make e2e-streaming-capture` | PASS -- 98 unit tests (`ros2/capture/tests/`: 90 Phase-7.2-era + 6 control-event + 2 real-Kafka lifecycle) + 8 verification checks / 0 failed |
+| `make canonical-verify` | PASS -- baseline unchanged |
+
+Both E2E targets run with `main()`'s default
+(`emit_lifecycle_events=False`) -- i.e. the EXACT legacy wire stream,
+zero control events, confirming this phase changed nothing observable
+about the already-shipped default path. The real evidence that the
+FIX itself works end to end against a real, lifecycle-enabled stream
+is §21.6's dedicated pytest coverage, not these two targets (which
+deliberately keep exercising the unchanged default).
+
+### 21.8 Can bridge lifecycle emission become default-on now?
+
+**Technically yes -- the compatibility gap that forced it opt-in is
+resolved and verified (unit + real-Kafka, solo and interleaved).**
+Not flipped in this phase, deliberately: the brief's own framing for
+this phase is "resolve this gap narrowly," and flipping `main()`'s
+default changes the real, observable Kafka wire output of every future
+real bridge invocation (not just this fix's own narrow surface) --
+a decision with broader operational reach than a compatibility patch,
+better made explicitly than as a side effect of fixing the thing that
+was blocking it. The evidence to make that call is now fully in place:
+
+```text
+RunScopedCapture + lifecycle events:  verified safe (§21.2, §21.6)
+ContinuousCaptureRouter + lifecycle events:  verified safe (Phase 7.2,
+  unaffected by this phase -- router.py has zero diff)
+Legacy (no lifecycle events) path:  verified unaffected (§21.7)
+```
+
+The one caveat Phase 7.2 §20.7/§20.10 already named still applies
+UNCHANGED by this fix: the SAME `robot_run_id` should still not be fed
+to both a lifecycle-enabled bridge run AND a `RunScopedCapture`
+invocation of a DIFFERENT run concurrently sharing partition-level
+Kafka consumer-group assumptions in ways neither path was designed to
+coordinate on -- this phase makes control events SAFE for
+`RunScopedCapture` to consume when they occur for ITS OWN target run,
+it does not add any new cross-run coordination. Recommended next step,
+if/when the default is flipped: do it as its own, explicit, reviewed
+decision (not bundled into a narrow compatibility fix), ideally
+alongside or after Phase 7.3's own scope is clearer.
+
+### 21.9 Known limitations
+
+```text
+Payload-only duplicate/conflict detection (§21.2's own found subtlety)
+  -- two different control event_types colliding at the same sequence
+  number with identical (reason-less) payloads would be treated as a
+  duplicate, not a conflict. Not reachable via the real, fixed bridge
+  (RUN_START/RUN_END always get different sequence numbers from each
+  other), but a real gap against a hypothetical non-conforming
+  producer. Fixing it properly would mean _SequenceTracker comparing
+  (message_type, payload) instead of payload alone -- a change to a
+  shared, frozen primitive capture_consumer.py AND router.py both
+  depend on, correctly out of scope for a "narrow" compatibility fix.
+main()'s --emit-lifecycle-events default remains False (§21.8) --
+  an explicit, deferred decision, not a limitation of the fix itself.
+Cross-path coexistence for the SAME robot_run_id (Phase 7.2 §20.7/
+  §20.11) is unchanged by this phase -- still a real operational
+  constraint, just no longer caused by a hard crash.
+```
+
+### 21.10 Blockers before Phase 7.3
+
+None. The compatibility gap is closed, verified against both the fake-
+consumer unit suite and a real broker (solo and interleaved), and the
+full legacy regression suite (including both real-bridge E2E targets)
+confirms zero behavioral change to the already-shipped default path.
+The one open decision (§21.8 -- flipping the bridge default) is
+explicitly NOT a blocker: Phase 7.3 (multi-partition/multi-worker
+scaling, per the original Phase 7 roadmap outline) can proceed with
+lifecycle events either on or off, since this phase proved both
+capture paths tolerate them correctly either way.
+
+**Suggested commit** (not created, per instruction):
+
+```bash
+git commit -m "fix(streaming): support lifecycle events in run-scoped capture"
+```

@@ -408,9 +408,10 @@ class TestLifecycleEvents:
 
     def test_run_start_does_not_consume_the_telemetry_sequence_counter(self, fake_bridge):
         """The first TELEMETRY message must still get sequence_number=0
-        -- RUN_START reads the counter without incrementing it, exactly
-        matching every existing (emit_lifecycle_events=False) test's
-        assumption that telemetry sequencing starts at 0."""
+        -- RUN_START uses its own, entirely separate lifecycle sequence
+        counter (Phase 7.2.1), never telemetry's, exactly matching every
+        existing (emit_lifecycle_events=False) test's assumption that
+        telemetry sequencing starts at 0."""
         node = StreamingBridgeNode(
             robot_id=ROBOT_ID,
             robot_run_id=ROBOT_RUN_ID,
@@ -423,6 +424,30 @@ class TestLifecycleEvents:
             )
             telemetry_envelope = fake_bridge.published[1]
             assert telemetry_envelope.sequence_number == 0
+        finally:
+            node.destroy_node()
+
+    def test_lifecycle_events_sequence_independently_starting_at_zero(self, fake_bridge):
+        """RUN_START and RUN_END occupy their OWN 0..1 sequence space
+        (Phase 7.2.1) -- regardless of how many telemetry messages were
+        published in between, never colliding with telemetry's own
+        sequence numbers."""
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            node._handle_message(
+                "/vehicle/odom", TOPIC_SPECS["/vehicle/odom"], _make_odometry(1, 0)
+            )
+            node._handle_message("/vehicle/imu", TOPIC_SPECS["/vehicle/imu"], _make_imu(1, 0))
+            node.shutdown()
+
+            run_start, _odom, _imu, run_end = fake_bridge.published
+            assert run_start.sequence_number == 0
+            assert run_end.sequence_number == 1
         finally:
             node.destroy_node()
 
