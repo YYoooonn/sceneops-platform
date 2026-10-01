@@ -1040,12 +1040,191 @@ passed, including the mandatory `RosbagAdapter` read-back. Zero
 Postgres/MinIO writes -- confirmed both by construction (§18) and by
 direct inspection of canonical table row counts before/after (unchanged).
 
-## 28. What comes next
+# Part 4: Continuous Multi-Run Capture
+
+## 28. Goal and scope
+
+One long-lived Kafka consumer that routes each consumed record by
+`TelemetryEnvelope.robot_run_id` to that run's own, independently
+sequence-tracked, independently written MCAP -- replacing N independent
+full-topic-history rescans (one per `RunScopedCapture` invocation,
+Part 3's own path) with one continuous topic pass serving arbitrarily
+many concurrent RobotRuns:
+
+```text
+real Kafka (Part 1) -> ContinuousCaptureRouter (one long-lived consumer)
+  -> N independently tracked, independently finalized local MCAP files
+```
+
+`ContinuousCaptureRouter` (`ros2/capture/router.py`) composes Part 3's
+own building blocks (`_RunFilter`, `_SequenceTracker`, `_sha256_file`,
+`finalize.py`/`validation.py`/`mcap_writer.py`) directly -- it does not
+reimplement or modify any of them. The frozen commit-boundary ordering
+Part 3 encodes (write -> close/fsync -> validate -> atomically finalize
+-> only then advance Kafka position, §21) is preserved per-session; see
+§31 for how that ordering composes across many simultaneously-open
+sessions sharing one partition's committed offset.
+
+`RunScopedCapture` (`capture_consumer.run_capture()`, Part 3) is
+untouched and remains the supported path for replay/backfill/debugging/
+recovery -- the router is an additional, independent consumer of the
+same frozen Kafka/envelope/MCAP contracts, not a replacement.
+
+## 29. CaptureSession lifecycle
+
+Each RobotRun the router observes gets its own `CaptureSession`,
+tracked through an explicit `SessionState`:
+
+```text
+DISCOVERED -> RECORDING -> FINALIZING -> FINALIZED
+                                       -> FAILED
+```
+
+- `DISCOVERED` -- a session exists (explicit `RUN_START` seen, or
+  implicitly created by that run's first telemetry record) but has not
+  yet had any telemetry successfully written.
+- `RECORDING` -- at least one telemetry record has been written.
+- `FINALIZING` -- transient: finalize I/O (validate/atomic-rename) in
+  progress.
+- `FINALIZED` -- terminal, successful. `result` may still be `None` if
+  the session finalized with zero telemetry ever written (e.g.
+  `RUN_START` immediately followed by `RUN_END`) -- there is no file to
+  describe in that case.
+- `FAILED` -- terminal, unsuccessful (sequence/partition/writer
+  invariant violation, or a finalize-time I/O failure). Data is
+  discarded, never finalized, never silently repaired.
+
+A session reaches `FINALIZED`/`FAILED` through one of three signals: an
+explicit `RUN_END` control envelope (§30), a per-session idle-timeout
+fallback (`session_idle_timeout_seconds`, `None` disables it) for when
+a producer disappears without ever sending `RUN_END`, or caller-driven
+shutdown. A per-run error (`PartitionInvariantError`,
+`SequenceIntegrityError`, `UnsupportedChannelError`) moves only that
+session to `FAILED` -- the router keeps serving every other session
+unaffected.
+
+`max_active_runs` (default `64`) bounds concurrent non-terminal
+sessions; exceeding it raises `MaxActiveRunsExceededError` rather than
+silently evicting one -- no eviction policy beyond idle-timeout exists.
+
+`CaptureSession`/`SessionState` is execution/runtime state only --
+in-process, never persisted, never a canonical domain record. It is
+not `RobotRun`, and nothing here writes to PostgreSQL/ArtifactStore
+(matching Part 3's own scope, §18).
+
+## 30. Lifecycle control envelopes
+
+`RUN_START`/`RUN_END` (`sceneops_core.streaming.control`) are an
+additive signal layered onto the existing `TelemetryEnvelope`/topic/
+wire contract -- not a new schema, not a new topic. A control event IS
+a `TelemetryEnvelope`: same required fields, same
+`robot_id`/`robot_run_id`, same Kafka key (`robot_run_id`, via
+`wire.partition_key`, entirely unchanged), same topic. What makes it a
+control event rather than telemetry is purely its `channel`/
+`message_type` (`SESSION_CONTROL_CHANNEL = "/session/control"`,
+reserved, never a real ROS2 topic/interface, and never present in
+`ros2/capture/schema_registry.py`'s `SUPPORTED_CHANNELS`).
+
+Reusing the existing topic/key, rather than a separate control topic,
+is deliberate: partitioning by `robot_run_id` (frozen, §6) guarantees a
+control event lands on the same partition as that run's own telemetry,
+which is what "ordered consistently with that run's telemetry"
+requires -- Kafka only guarantees ordering within one partition of one
+topic, never across two. The cost is that every consumer of the topic
+sees these records too; `is_control_envelope()` makes them trivially
+filterable by any consumer that doesn't care about lifecycle.
+
+A control envelope's `sequence_number` does not share that run's
+telemetry sequence counter -- the bridge reads its own, independent
+live counter without incrementing it, so `RUN_START` always lands at
+sequence_number `0`, the same position the first real telemetry
+message also needs in its own space (§32 covers why this is safe).
+
+## 31. Offset-commit safety across concurrent sessions
+
+One continuous consumer group can only commit one position per
+partition, but the router serves many sessions at different points in
+that partition's history at the same time. The router never commits a
+partition's offset past the earliest position any still-active
+(non-terminal) session on it still needs:
+
+```text
+safe_offset(partition) = min(session.first_offset for session in
+  non-terminal sessions on that partition), or last_consumed_offset + 1
+  when no session is currently active
+```
+
+`commit_safe()` applies this after every finalize and periodically
+during polling. Consequence: if the router crashes, every
+not-yet-finalized session's partial state is left on disk,
+un-finalized, with Kafka offsets never committed past it -- a fresh
+router (or a `RunScopedCapture`, re-consuming from the committed
+position under its own run-scoped group) sees that data again rather
+than silently losing it.
+
+## 32. RunScopedCapture compatibility with control envelopes
+
+`RunScopedCapture` (Part 3) is unmodified in its core loop and remains
+fully supported; it did not originally filter by channel at all -- any
+record its `_SequenceTracker` accepted was passed unconditionally to
+`McapCaptureWriter.write_envelope()`. Because a control envelope now
+legitimately shares that run's `robot_run_id` (§30's design), an
+unfiltered control envelope would reach the writer and raise
+`UnsupportedChannelError` for `/session/control` (correctly -- it is
+not in `SUPPORTED_CHANNELS`) -- and `run_capture()` has no per-message
+error isolation (that is the router's own, newer behavior), so the
+exception would propagate straight out and abort the entire capture.
+
+Fixed: control envelopes are recognized via `is_control_envelope()` and
+routed to their own, independent `_SequenceTracker` ("control
+tracker") -- validated for gap/duplicate/conflict exactly as strictly
+as telemetry, in a sequence space that never collides with telemetry's
+own (both legitimately start at `0`, in independent spaces, per §30) --
+but never passed to the MCAP writer, so a control envelope never
+appears in a finalized MCAP and never triggers
+`UnsupportedChannelError`. A legacy stream with no control events at
+all is completely unaffected: `is_control_envelope()` is never true
+for it, so every record takes the exact path this module always used.
+
+## 33. Make surface, verification, and current limitations
+
+No CLI entry point or make/e2e target runs `ContinuousCaptureRouter`
+against a live scenario the way `cli.py`/`make e2e-streaming-capture`
+exercises `RunScopedCapture`. Verification is unit tests
+(`ros2/capture/tests/test_router.py`,
+`test_lifecycle_integration.py`) plus real-Kafka integration tests
+(`test_router_integration.py`, `test_lifecycle_integration.py`'s
+real-broker cases) -- these already run as part of
+`make e2e-streaming-capture`'s stage 1 (the full `ros2/capture/tests/`
+suite, §27), so router/lifecycle correctness is covered by the
+existing make surface without a dedicated new target.
+
+Current limitations, verified against code:
+
+```text
+No persistence of CaptureSession across process restart -- a crashed
+  router loses all in-memory session state; recovery relies entirely
+  on Kafka's committed-offset safety (§31), not on reconstructing
+  session state.
+No Kafka consumer-group rebalance recovery -- the router assumes one
+  process holding one partition assignment for its whole lifetime.
+No multi-worker / multi-partition router -- one ContinuousCaptureRouter
+  instance serves one partition.
+RunScopedCapture and a lifecycle-enabled bridge run can now coexist on
+  the same robot_run_id (control envelopes are tolerated, §32), but
+  the bridge's --emit-lifecycle-events still defaults to False at
+  every layer, including the CLI -- not flipped on by default, since
+  doing so changes the real Kafka wire output of every consumer of
+  that topic, not just router-fed ones.
+```
+
+## 34. What comes next
 
 The full chain from live telemetry through to a readable learning
-dataset is built: durable capture (Part 3) closes `Kafka -> MCAP`;
-canonical `RobotRun` registration (`sceneops-worker robots
-register-capture`, `docs/workflows/robot-run-and-mcap.md`) closes
+dataset is built: durable capture (Part 3) or continuous multi-run
+capture (Part 4) both close `Kafka -> MCAP`; canonical `RobotRun`
+registration (`sceneops-worker robots register-capture`,
+`docs/workflows/robot-run-and-mcap.md`) closes
 `MCAP -> ArtifactStore -> ArtifactRecord -> RobotRun`; and recording
 materialization (`sceneops_worker.robots.materialization`,
 `docs/workflows/robot-run-and-mcap.md` §3.1) closes
@@ -1053,11 +1232,17 @@ materialization (`sceneops_worker.robots.materialization`,
 storage-agnostic throughout.
 
 ```text
-ROS2 / live robot -> stream envelope -> Kafka -> durable capture (Part 3)
-  -> validated local MCAP -> RobotRun registration
+ROS2 / live robot -> stream envelope -> Kafka -> durable capture
+  (Part 3, one run) or continuous capture (Part 4, many concurrent
+  runs) -> validated local MCAP -> RobotRun registration
   -> materialization -> existing Episode pipeline -> existing
   learning-data pipeline
 ```
+
+RobotRun registration today is a manual step -- `sceneops-worker robots
+register-capture` must be invoked explicitly against a finalized MCAP;
+nothing in the capture or router path triggers it automatically on
+finalize.
 
 Not implemented: `IngestRobotStatesJobHandler`/`BuildScenesJobHandler`
 consuming an ArtifactStore-backed `RobotRun.mcap_uri` (only
@@ -1067,18 +1252,19 @@ Reliability and scale characteristics of everything above -- crash
 boundaries, duplicate/gap/out-of-order handling, multi-RobotRun
 isolation, Kafka-outage behavior, backpressure, throughput/memory at
 scale, practical payload limits -- are measured and frozen in
-[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md),
-a point-in-time record, not a living contract.
+[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md)
+and [Multi-run streaming architecture study](./streaming-multirun-phase7-study.md),
+point-in-time records, not living contracts.
 
-## 29. Non-goals
+## 35. Non-goals
 
 Not built, not started, not partially wired -- listed so a future pass
 doesn't mistake absence for a bug:
 
 ```text
-RobotRun/Episode streaming lifecycle integration (registering a captured
-  MCAP as a canonical RobotRun; Part 3 produces the file, nothing
-  consumes it into Postgres yet)
+Automatic triggering of RobotRun registration from a finalized capture
+  (the mechanism exists -- sceneops-worker robots register-capture --
+  but nothing invokes it without an explicit operator/caller step, §34)
 Episode generation from streamed data
 Any Postgres/ArtifactStore write from the streaming or capture path
 Kafka Connect, Schema Registry, Avro
@@ -1099,9 +1285,14 @@ Capture crash/restart reliability beyond the single-invocation,
 Multi-partition-per-robot_run_id support (Part 3 fails loudly instead,
   §23) or dynamic capture topic/channel configuration (the supported
   channel set is a static registry, §22)
+ContinuousCaptureRouter session persistence across restart, Kafka
+  rebalance recovery, and multi-worker/multi-partition router
+  instances (Part 4, §33)
+Bridge lifecycle-event emission on by default (technically compatible
+  since §32, deliberately not flipped -- §33)
 ```
 
-## 30. Source-of-truth map
+## 36. Source-of-truth map
 
 **Kafka transport:**
 
@@ -1137,5 +1328,17 @@ Multi-partition-per-robot_run_id support (Part 3 fails loudly instead,
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `ros2/Dockerfile`, capture source mount: `compose/ros2.yaml`
 - E2E: `scripts/e2e/e2e_streaming_capture.sh`, `scripts/e2e/mcap_capture_verify.py`, `make e2e-streaming-capture` (`makefiles/streaming.mk`)
 - RosbagAdapter (the mandatory compatibility-check target): `apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`
+
+**Continuous multi-run capture:**
+
+- Router, `CaptureSession`/`SessionState`, offset-commit safety: `ros2/capture/router.py`
+- Router unit tests: `ros2/capture/tests/test_router.py`
+- Router real-Kafka integration tests: `ros2/capture/tests/test_router_integration.py`
+- Lifecycle control envelopes (`RunEventType`, `build_control_envelope`/`is_control_envelope`/`parse_run_event`): `packages/sceneops-core/sceneops_core/streaming/control.py`, `packages/sceneops-core/tests/test_streaming_control.py`
+- `SESSION_CONTROL_CHANNEL` constant: `packages/sceneops-core/sceneops_core/constants/streaming.py`
+- Bridge lifecycle-event publishing (`--emit-lifecycle-events`): `ros2/nodes/streaming_bridge_node.py`, `ros2/nodes/tests/test_streaming_bridge_node.py`
+- `RunScopedCapture` control-envelope compatibility (`control_tracker`): `ros2/capture/capture_consumer.py`, `ros2/capture/tests/test_capture_consumer.py`
+- Real-Kafka lifecycle integration (solo and interleaved runs): `ros2/capture/tests/test_lifecycle_integration.py`
+- Point-in-time design/benchmark record: [Multi-run streaming architecture study](./streaming-multirun-phase7-study.md)
 
 **Related ADRs:** [ADR-005](../adr/005-ros2-vs-kafka-boundary.md) (ROS2 vs. Kafka boundary), [ADR-003](../adr/003-batch-first-architecture.md) (why streaming waited until now)

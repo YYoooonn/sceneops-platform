@@ -4,6 +4,9 @@
 
 Accepted
 
+*(아래 "로드맵"과 그 섹션 번호(§7 등) 참조는 이 ADR 작성 당시 존재했던 기획 문서를 가리키는
+역사적 기록이다 — 그 문서는 현재 저장소에 보존되어 있지 않다.)*
+
 ## Context
 
 PostgreSQL은 운영 메타데이터(상태, 카운트, URI 참조)에는 적합하지만 ([ADR-001](./001-postgresql-operational-metadata.md)),

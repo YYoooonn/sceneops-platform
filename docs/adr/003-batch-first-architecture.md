@@ -4,6 +4,9 @@
 
 Accepted
 
+*(아래 "로드맵"과 그 섹션 번호(§4.1/§4.2 등) 참조는 이 ADR 작성 당시 존재했던 기획 문서를
+가리키는 역사적 기록이다 — 그 문서는 현재 저장소에 보존되어 있지 않다.)*
+
 ## Context
 
 로드맵(§4.2)은 "Reliable Batch → Distributed Batch → Streaming" 순서로 진화하는 것을 원칙으로

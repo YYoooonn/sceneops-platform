@@ -2,14 +2,24 @@
 
 ## Status
 
-Partially implemented — ROS2 쪽(로드맵 Phase 4)은 실제로 구현되었다: `CanReplayNode`가 real
-`rclpy`로 nuScenes CAN 데이터를 ROS2 토픽으로 replay하고, `ros2 bag record`가 real MCAP 파일로
-기록하며, `RosbagAdapter`가 실제 CDR 인코딩을 디코딩해 `RobotState`/`Mission`/`EpisodeRecord`로
-적재한다 — 자세한 내용은 [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) 참고. Kafka
-쪽(Phase 7, ROS2 Data Gateway)은 여전히 미착수다. 이 ADR이 설계한 경계(로봇 내부 통신=ROS2,
-데이터 플랫폼 이벤트 스트림=Kafka)는 ROS2 구현을 통해 아직 검증되지 않았다 — 지금 구현된 경로는
-순수 batch(replay → record → decode → ingest)이고 Data Gateway 자체는 아직 존재하지 않기
-때문이다. Kafka 쪽 착수 시점에 이 경계를 실제 구현 경험으로 재검토한다.
+Implemented on both sides. ROS2 쪽은 `CanReplayNode`가 real `rclpy`로 nuScenes CAN 데이터를
+ROS2 토픽으로 replay하고, `ros2 bag record`가 real MCAP 파일로 기록하며, `RosbagAdapter`가 실제
+CDR 인코딩을 디코딩해 `RobotState`/`Mission`/`EpisodeRecord`로 적재한다 — 자세한 내용은
+[robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) 참고. Kafka 쪽(ROS2 Data Gateway)도
+이제 구현되었다: `streaming_bridge_node.py`가 이 ADR이 설계한 바로 그 경계에서 ROS2 토픽을
+구독해 real Kafka 토픽(`robot.telemetry.v1` 등)으로 발행하고, 그 위에 durable MCAP capture
+(단일 run 및 continuous multi-run 모두), capture-session lifecycle, canonical `RobotRun`
+등록까지 이어진다 — 자세한 내용은
+[streaming-transport.md](../architecture/streaming-transport.md) 참고. 이 ADR이 설계한 경계
+(로봇 내부 통신=ROS2, 데이터 플랫폼 이벤트 스트림=Kafka, 그 경계를 넘는 유일한 컴포넌트=Data
+Gateway)는 실제 구현을 통해 검증되었다: ROS2 DDS ↔ Kafka 프로토콜을 모두 이해하는 코드는
+`streaming_bridge_node.py` 하나뿐이고, partitioning(`robot_run_id` 기준)·순서 보장·중복 전달
+문제는 실제로 제기되었으나 이 경계 설계와 충돌하지 않았다(`streaming-transport.md` §6, §21).
+남은 한계는 continuous multi-run capture의 프로세스 재시작/Kafka rebalance 복구가 아직
+구현되지 않았다는 점이며, 이는 이 ADR의 경계 설계 자체와는 무관한 별도의 신뢰성 과제다.
+
+*(아래 "로드맵"과 그 섹션 번호(§4.3/§13 등) 참조는 이 ADR 작성 당시 존재했던 기획 문서를
+가리키는 역사적 기록이다 — 그 문서는 현재 저장소에 보존되어 있지 않다.)*
 
 ## Context
 
@@ -56,6 +66,7 @@ Kafka
   원칙과 일치한다.
 - Data Gateway는 두 시스템의 프로토콜(ROS2 DDS ↔ Kafka)을 모두 이해해야 하는 유일한 컴포넌트가
   된다 — 이 경계를 넘는 코드가 늘어나면 Gateway를 별도 서비스로 분리해 책임을 명확히 유지한다.
-- 이 결정은 아직 검증되지 않았다 — Phase 4에서 실제 ROS2 노드를 붙여보고, Phase 7에서 Gateway를
-  구현하면서 partitioning(`robot_id` 기준), 순서 보장, 중복 전달 같은 실제 제약이 이 경계 설계와
-  충돌하는지 재확인해야 한다.
+- 이 결정은 실제 ROS2 노드(`CanReplayNode`)와 Gateway(`streaming_bridge_node.py`) 구현을 통해
+  검증되었다 — partitioning(`robot_run_id` 기준), 순서 보장, 중복 전달 같은 실제 제약이 이
+  경계 설계와 충돌하는지 재확인한 결과, 충돌 없이 그대로 성립했다 (Status 참고,
+  `streaming-transport.md` §6/§21).
