@@ -48,9 +48,13 @@ class RobotModel(Base):
         "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
+    # No delete cascade, and passive_deletes="all" so the ORM never deletes
+    # or nulls out RobotRuns either: deleting a Robot that has a RobotRun is
+    # refused by the database (ON DELETE RESTRICT), keeping immutable
+    # recording provenance and its ArtifactRecords intact (ADR-007 §10.4).
     runs: Mapped[list["RobotRunModel"]] = relationship(
         back_populates="robot",
-        cascade="all, delete-orphan",
+        passive_deletes="all",
     )
     missions: Mapped[list["MissionModel"]] = relationship(
         back_populates="robot",
@@ -68,7 +72,7 @@ class RobotRunModel(Base):
 
     robot_id: Mapped[str] = mapped_column(
         String(128),
-        ForeignKey("robots.robot_id", ondelete="CASCADE"),
+        ForeignKey("robots.robot_id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

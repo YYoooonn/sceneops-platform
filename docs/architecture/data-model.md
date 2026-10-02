@@ -248,13 +248,15 @@ finalized local MCAP
                         RobotRunRecord
 ```
 
-`robot_runs` columns: `run_id`, `robot_id`, `started_at`, `ended_at`,
-`recording_format`, `source_clock`, `recording_artifact_id`,
-`manifest_artifact_id` (both FK `artifacts`, `ON DELETE RESTRICT`),
-`manifest_checksum`, `registered_at`. A RobotRunRecord has no status, no
-dataset membership and no recording URI: the recording URI/checksum/size
-live on its recording ArtifactRecord, and channel/capture facts live only in
-the manifest. It is never updated. Re-registering the same manifest is a
+`robot_runs` columns: `run_id`, `robot_id` (FK `robots`, `ON DELETE
+RESTRICT`), `started_at`, `ended_at`, `recording_format`, `source_clock`,
+`recording_artifact_id`, `manifest_artifact_id` (both FK `artifacts`,
+`ON DELETE RESTRICT`), `manifest_checksum`, `registered_at`. A
+RobotRunRecord has no status, no dataset membership and no recording URI:
+the recording URI/checksum/size live on its recording ArtifactRecord, and
+channel/capture facts live only in the manifest. It is never updated, and
+neither a Robot nor a RobotRun ArtifactRecord can be deleted while a
+RobotRun references it. Re-registering the same manifest is a
 no-op; a different manifest for an existing `run_id` fails. A manifest
 `robot_platform` fills an empty `Robot.platform` once and fails registration
 if it contradicts a set one.
