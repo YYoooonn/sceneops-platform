@@ -25,7 +25,11 @@ from .scene import (
     SceneSampleValidationConfig,
     ValidateSceneJobParams,
 )
-from .robots import ExportRobotAnalyticsSnapshotJobParams, IngestRobotStatesJobParams
+from .robots import (
+    ExportRobotAnalyticsSnapshotJobParams,
+    IngestRobotStatesJobParams,
+    RegisterRobotRunJobParams,
+)
 from .episodes import (
     AlignEpisodeJobParams,
     BuildEpisodesJobParams,
@@ -42,6 +46,7 @@ from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
 
 __all__ = [
     "BaseJobParams",
+    "RegisterRobotRunJobParams",
     "IngestRobotStatesJobParams",
     "ExportRobotAnalyticsSnapshotJobParams",
     "BuildEpisodesJobParams",

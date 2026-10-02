@@ -54,10 +54,28 @@ From `.env.example` / `ArtifactSettings` (`sceneops_core/config.py`):
   runs/         ArtifactSettings.run_prefix
   models/       ArtifactSettings.model_prefix
   analytical/   ArtifactSettings.analytics_prefix   (Parquet analytics layer)
+  robot_runs/   ArtifactSettings.robot_run_prefix   (published robot recordings)
 ```
 
-Local: `/data/artifacts/{datasets,runs,models,analytical}/...`
-S3/MinIO: `s3://sceneops/artifacts/{datasets,runs,models,analytical}/...`
+Local: `/data/artifacts/{datasets,runs,models,analytical,robot_runs}/...`
+S3/MinIO: `s3://sceneops/artifacts/{datasets,runs,models,analytical,robot_runs}/...`
+
+### Published robot recordings: write-once per `run_id`
+
+The database-free Recording Publisher (`sceneops_integrations.recording`)
+writes two objects per run under the publication root (default
+`{ARTIFACT_ROOT_URI}/robot_runs`):
+
+```text
+{robot_run_root}/{run_id}/recording.mcap             the finalized MCAP
+{robot_run_root}/{run_id}/robot_run_manifest.json    canonical RobotRunManifest v1, written last
+```
+
+Both keys are write-once: an existing object with identical bytes is reused
+and different bytes are a hard conflict, never an overwrite. The manifest's
+`recording.uri` and the registered ArtifactRecords point at these exact
+URIs; `REGISTER_ROBOT_RUN` never moves or rewrites them. See
+[Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2.
 
 ### Raw-log artifacts: scoped by `raw_log_id`
 

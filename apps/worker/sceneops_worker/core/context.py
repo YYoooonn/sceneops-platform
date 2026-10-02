@@ -10,7 +10,6 @@ from sceneops_storage import ArtifactStore
 from sceneops_worker.config import WorkerSettings
 from sceneops_worker.datasets.artifacts import DatasetArtifactStore
 from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
-from sceneops_worker.robots.artifacts import RobotRunArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
@@ -50,7 +49,6 @@ class WorkerContext:
     scene_artifact_store: SceneArtifactStore
     episode_artifact_store: EpisodeArtifactStore
     run_artifact_store: RunArtifactStore
-    robot_run_artifact_store: RobotRunArtifactStore
     analytics_writer: AnalyticsTableWriter
 
     job_store: JobStore

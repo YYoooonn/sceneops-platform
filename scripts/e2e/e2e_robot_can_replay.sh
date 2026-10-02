@@ -4,16 +4,23 @@
 # E2E test for the real ROS2 robot-data-source chain:
 #   nuScenes CAN bus data -> ros2/nodes/can_replay_node.py (real rclpy
 #   publisher, run inside the ros2 Docker sandbox) -> `ros2 bag record
-#   --storage mcap` -> ingest_robot_states job (RosbagAdapter ->
-#   RobotState/Mission rows).
+#   --storage mcap` -> Recording Publisher + REGISTER_ROBOT_RUN ->
+#   ingest_robot_states job (RosbagAdapter -> RobotState/Mission rows).
 #
 # Requires data/raw/nuscenes/can_bus/ to exist locally (see docs on where to
 # unzip the nuScenes CAN bus expansion).
 #
-# Registration (POST /robots, POST /robot-runs) and verification (GET
-# /missions, GET /robot-states) both go through the real API —
-# apps/api/app/domains/robots/. `sceneops-worker robots register-run` also
-# exists as a CLI alternative to the same POST endpoints.
+# The RobotRun is published + registered through lib.sh's
+# publish_and_register_robot_run (POST /robot-runs:register); verification
+# (GET /missions, GET /robot-states) goes through the real API. RobotRuns are
+# immutable, and each invocation records new bytes, so the run id is unique
+# per invocation.
+#
+# ingest_robot_states is given the local MCAP path explicitly alongside
+# robot_run_id: with only robot_run_id it would read the registered
+# recording URI unmaterialized, which RosbagAdapter cannot open for an
+# object-storage backend until consumers use the verified recording resolver
+# (ADR-007 §12.4).
 #
 # Usage:
 #   bash scripts/e2e/e2e_robot_can_replay.sh
@@ -39,7 +46,7 @@ RECORD_DURATION="${RECORD_DURATION:-30}"
 ROBOT_ID="${ROBOT_ID:-robot-nuscenes-01}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
-RUN_ID="run-${SCENE}"
+RUN_ID="run-${SCENE}-$(date +%s)-$$"
 BAG_DIR="/data/raw/rosbag/${SCENE}"
 MCAP_URI="${BAG_DIR}/${SCENE}_0.mcap"
 
@@ -73,11 +80,12 @@ echo ""
 
 # ── 2. Register Robot + RobotRun via API ─────────────────────────────────────
 
-echo "--- 2. Register Robot + RobotRun ---"
+echo "--- 2. Register Robot + publish/register RobotRun ---"
 upsert_robot "$API_BASE_URL" "$ROBOT_ID" "nuscenes-can-replay" \
   | jq '.robot | {robotId, status}'
-upsert_robot_run "$API_BASE_URL" "$RUN_ID" "$ROBOT_ID" "$MCAP_URI" \
-  | jq '.robotRun | {runId, robotId, mcapUri}'
+publish_and_register_robot_run "$REPO_ROOT" "$API_BASE_URL" \
+  "$ROBOT_ID" "$RUN_ID" "$MCAP_URI" ros2_bag "nuscenes-can-replay" \
+  | jq '.job.result | {run_id, created, manifest_checksum}'
 echo ""
 
 # ── 3. Create ingest_robot_states job ────────────────────────────────────────
@@ -89,7 +97,8 @@ PAYLOAD="$(cat <<JSON
   "force": true,
   "params": {
     "robot_id": "$ROBOT_ID",
-    "robot_run_id": "$RUN_ID"
+    "robot_run_id": "$RUN_ID",
+    "mcap_uri": "$MCAP_URI"
   }
 }
 JSON

@@ -7,6 +7,14 @@ from sceneops_core.common.schemas import JsonDict
 from .base import BaseJobParams
 
 
+class RegisterRobotRunJobParams(BaseJobParams):
+    """REGISTER_ROBOT_RUN: verify a published RobotRunManifest and the
+    recording it references, then project them into ArtifactRecords + one
+    RobotRunRecord (ADR-007 §12.1). Not tied to a Dataset/DatasetVersion."""
+
+    manifest_uri: str = Field(min_length=1)
+
+
 class IngestRobotStatesJobParams(BaseJobParams):
     """Read robot runtime state topics from a rosbag2/MCAP file into RobotState rows.
 
@@ -17,7 +25,8 @@ class IngestRobotStatesJobParams(BaseJobParams):
     robot_id: str
     robot_run_id: str | None = None
 
-    # Falls back to the referenced RobotRun's mcap_uri/rosbag_uri when omitted.
+    # Falls back to the referenced RobotRun's recording ArtifactRecord URI
+    # when omitted.
     mcap_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

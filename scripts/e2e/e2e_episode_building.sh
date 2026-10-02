@@ -21,11 +21,10 @@
 # e2e_robot_can_replay.sh (data/raw/rosbag/<scene>/<scene>_0.mcap) rather
 # than re-running the ROS2 recording step, to keep this test focused.
 #
-# RobotRun registration uses the canonical, artifact-backed
-# `sceneops-worker robots register-capture` path (lib.sh's
-# register_robot_run_capture), not the metadata-only POST /robot-runs --
-# build_episodes requires a registered recording ArtifactRecord for any
-# robot_run_id it resolves (RobotRunNotMaterializedError otherwise).
+# The RobotRun is created the only canonical way: Recording Publisher +
+# REGISTER_ROBOT_RUN (lib.sh's publish_and_register_robot_run).
+# build_episodes resolves the recording through the RobotRun's registered
+# recording ArtifactRecord.
 #
 # Steps 1-10 are orchestration checks (pipeline/task status, job result
 # summaries). Steps 11+ use the real GET /episodes and GET /episodes/{id}
@@ -105,13 +104,13 @@ echo ""
 echo "--- 1. Register Robot + RobotRun (artifact-backed) + Dataset/DatasetVersion ---"
 upsert_robot "$API_BASE_URL" "$ROBOT_ID" "nuscenes-can-replay" \
   | jq '.robot | {robotId, status}'
-# Canonical, artifact-backed registration -- build_episodes (below) requires
-# a registered recording ArtifactRecord for the robot_run_id it resolves.
-register_robot_run_capture "$REPO_ROOT" "$ROBOT_ID" "$RUN_ID" "$MCAP_URI"
+publish_and_register_robot_run "$REPO_ROOT" "$API_BASE_URL" \
+  "$ROBOT_ID" "$RUN_ID" "$MCAP_URI" ros2_bag "nuscenes-can-replay" \
+  | jq '.job.result | {run_id, created, manifest_checksum}'
 upsert_dataset "$API_BASE_URL" "$DATASET_ID" "Episode building E2E" \
   | jq '.dataset | {datasetId}'
 # No raw_source_root_uri — that's Scene-owned and meaningless here; the
-# episode source is RobotRun.mcap_uri (registered above), not a
+# episode source is the RobotRun's recording (registered above), not a
 # dataset-version-level raw source root.
 upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" \
   | jq '.version | {datasetId, version, status, scene, episode}'

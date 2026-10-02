@@ -48,11 +48,13 @@ came from. `validate_episode`/`profile_episode` play the same role for
 Episode. See [Scene domain](./scene-domain.md) and
 [Episode domain](./episode-domain.md) for the domain-specific detail.
 
-Two Job types are deliberately **not** wrapped in any pipeline —
-`ingest_robot_states` and `export_robot_analytics_snapshot`. Robot/RobotRun
-is a separate domain from Dataset/DatasetVersion, so these dispatch as
-plain Jobs via `POST /jobs`, not through a named pipeline — see
-[Robot data ingestion](../workflows/robot-run-and-mcap.md).
+Three Job types are deliberately **not** wrapped in any pipeline —
+`register_robot_run`, `ingest_robot_states` and
+`export_robot_analytics_snapshot`. Robot/RobotRun is a separate domain from
+Dataset/DatasetVersion, so these dispatch as plain Jobs, not through a
+named pipeline. `register_robot_run` is submitted by
+`POST /robot-runs:register` (create + dispatch); the other two via
+`POST /jobs` — see [Robot data ingestion](../workflows/robot-run-and-mcap.md).
 
 ## 3. How data moves between tasks: output kind
 

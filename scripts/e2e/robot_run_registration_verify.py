@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Real streaming-capture -> RobotRun registration E2E verification.
+"""Real streaming-capture -> Recording Publisher -> REGISTER_ROBOT_RUN E2E
+verification.
 
 Runs on the HOST via `uv run` -- reaches Postgres/MinIO on their
 host-published local-stack ports (mirrors scripts/e2e/smoke_streaming.py's
 own host-vs-in-network split; docs/architecture/streaming-transport.md
 §9.3). Independently re-derives canonical state directly from Postgres/
-MinIO via their own repositories/ArtifactStore -- the registration CLI's
-own printed output is only a starting point for what to look up, never
-trusted as proof by itself.
+MinIO via their own repositories/ArtifactStore -- the publisher's and the
+registration Job's own output is only a starting point for what to look
+up, never trusted as proof by itself.
 
 Usage (normally invoked by scripts/e2e/e2e_robot_run_registration.sh):
     uv run python scripts/e2e/robot_run_registration_verify.py \\
-        --robot-id ROBOT --robot-run-id RUN \\
-        --expected-checksum sha256:...
+        --robot-id ROBOT --robot-run-id RUN --manifest-uri s3://... \\
+        --expected-checksum sha256:... [--expected-topic TOPIC]
 """
 
 from __future__ import annotations
@@ -26,10 +27,13 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from mcap.reader import make_reader
-
 from sceneops_core.artifacts.schemas import ArtifactOwnerType
+from sceneops_core.common.ids import (
+    robot_run_manifest_artifact_id,
+    robot_run_recording_artifact_id,
+)
 from sceneops_core.config import ArtifactSettings
+from sceneops_core.robots.manifest import load_canonical_robot_run_manifest
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.episodes import PostgresEpisodeRepository
 from sceneops_db.postgres.robots import PostgresRobotRunRepository
@@ -60,17 +64,55 @@ def _check(label: str, condition: bool, detail: str = "") -> None:
         _FAIL += 1
 
 
+def _sha256(data: bytes) -> str:
+    return f"sha256:{hashlib.sha256(data).hexdigest()}"
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(
-        description="RobotRun registration E2E verification"
+        description="RobotRun publication + registration E2E verification"
     )
     parser.add_argument("--robot-id", required=True)
     parser.add_argument("--robot-run-id", required=True)
+    parser.add_argument("--manifest-uri", required=True)
     parser.add_argument("--expected-checksum", required=True)
+    parser.add_argument("--expected-topic", default=None)
     args = parser.parse_args()
 
-    print("=== RobotRun registration E2E verification ===")
+    print("=== RobotRun publication + registration E2E verification ===")
     print(f"  robot_id={args.robot_id} robot_run_id={args.robot_run_id}")
+    print()
+
+    settings = ArtifactSettings(
+        backend="minio",
+        root_uri="s3://sceneops/artifacts",
+        endpoint_url=f"http://localhost:{os.environ.get('MINIO_API_PORT', '9000')}",
+        access_key_id=os.environ.get("MINIO_ROOT_USER", "minioadmin"),
+        secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
+    )
+    store = S3ArtifactStore(settings=settings)
+
+    print("--- published RobotRunManifest (real MinIO) ---")
+    manifest_bytes = await store.read_bytes(args.manifest_uri)
+    manifest = load_canonical_robot_run_manifest(manifest_bytes)
+    _check("manifest bytes are canonical RobotRunManifest v1", True)
+    _check("manifest.run_id matches", manifest.run_id == args.robot_run_id)
+    _check("manifest.robot_id matches", manifest.robot_id == args.robot_id)
+    _check(
+        "manifest recording checksum == CaptureResult sha256",
+        manifest.recording.checksum == args.expected_checksum,
+        f"manifest={manifest.recording.checksum} expected={args.expected_checksum}",
+    )
+    _check(
+        "manifest declares all 5 expected channels",
+        _EXPECTED_CHANNELS.issubset({c.topic for c in manifest.channels}),
+    )
+    if args.expected_topic is not None:
+        _check(
+            "manifest capture source is the Kafka topic",
+            manifest.capture.source.kind.value == "kafka"
+            and manifest.capture.source.topics == [args.expected_topic],
+        )
     print()
 
     sessionmaker = get_async_sessionmaker()
@@ -81,14 +123,29 @@ async def main() -> int:
 
         print("--- canonical DB state ---")
         robot_run = await run_repo.get(args.robot_run_id)
-        _check("RobotRun exists", robot_run is not None)
+        _check("RobotRunRecord exists", robot_run is not None)
         if robot_run is None:
-            print("cannot continue without a RobotRun row")
+            print("cannot continue without a RobotRunRecord")
             return 1
         _check(
-            "RobotRun.status == completed",
-            robot_run.status.value == "completed",
-            f"got {robot_run.status.value}",
+            "RobotRun.manifest_checksum == sha256(manifest bytes)",
+            robot_run.manifest_checksum == _sha256(manifest_bytes),
+        )
+        _check(
+            "RobotRun time range == manifest",
+            (robot_run.started_at, robot_run.ended_at)
+            == (manifest.started_at, manifest.ended_at),
+        )
+        _check(
+            "RobotRun.source_clock == manifest",
+            robot_run.source_clock == manifest.capture.source_clock,
+        )
+        _check(
+            "deterministic artifact ids",
+            robot_run.recording_artifact_id
+            == robot_run_recording_artifact_id(args.robot_run_id)
+            and robot_run.manifest_artifact_id
+            == robot_run_manifest_artifact_id(args.robot_run_id),
         )
 
         artifacts = await artifact_repo.list(
@@ -96,51 +153,44 @@ async def main() -> int:
             owner_id=args.robot_run_id,
             limit=10,
         )
+        by_kind = {a.kind: a for a in artifacts}
         _check(
-            "exactly one ArtifactRecord for this RobotRun",
-            len(artifacts) == 1,
-            f"got {len(artifacts)}",
+            "exactly two ArtifactRecords: recording + manifest",
+            len(artifacts) == 2
+            and set(by_kind) == {"robot_run_recording", "robot_run_manifest"},
+            f"got {[a.kind for a in artifacts]}",
         )
-        artifact = artifacts[0] if artifacts else None
-        if artifact is not None:
+        recording = by_kind.get("robot_run_recording")
+        manifest_artifact = by_kind.get("robot_run_manifest")
+        if recording is not None:
             _check(
-                "artifact checksum matches CaptureResult's own sha256",
-                artifact.checksum == args.expected_checksum,
-                f"artifact={artifact.checksum} expected={args.expected_checksum}",
+                "recording ArtifactRecord matches manifest (uri/checksum/size)",
+                (recording.uri, recording.checksum, recording.size_bytes)
+                == (
+                    manifest.recording.uri,
+                    manifest.recording.checksum,
+                    manifest.recording.size_bytes,
+                ),
             )
+        if manifest_artifact is not None:
             _check(
-                "RobotRun.mcap_uri == artifact.uri",
-                robot_run.mcap_uri == artifact.uri,
+                "manifest ArtifactRecord points at the published manifest",
+                manifest_artifact.uri == args.manifest_uri
+                and manifest_artifact.checksum == _sha256(manifest_bytes),
             )
 
         episodes = await episode_repo.list(robot_run_id=args.robot_run_id, limit=10)
         _check("zero Episodes created for this RobotRun", len(episodes) == 0)
         print()
 
-    if artifact is None:
+    if recording is None:
         return 1
 
-    print("--- stored artifact readback (real MinIO) ---")
-    settings = ArtifactSettings(
-        backend="minio",
-        root_uri="s3://sceneops/artifacts",
-        endpoint_url=f"http://localhost:{os.environ.get('MINIO_API_PORT', '9000')}",
-        access_key_id=os.environ.get("MINIO_ROOT_USER", "minioadmin"),
-        secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
-    )
-    store = S3ArtifactStore(settings=settings)
-
-    exists = await store.exists(artifact.uri)
-    _check("stored object exists in MinIO", exists, artifact.uri)
-    if not exists:
-        return 1
-
-    stored_bytes = await store.read_bytes(artifact.uri)
-    stored_checksum = f"sha256:{hashlib.sha256(stored_bytes).hexdigest()}"
+    print("--- stored recording readback (real MinIO) ---")
+    stored_bytes = await store.read_bytes(recording.uri)
     _check(
         "stored bytes checksum matches CaptureResult's own sha256",
-        stored_checksum == args.expected_checksum,
-        f"stored={stored_checksum} expected={args.expected_checksum}",
+        _sha256(stored_bytes) == args.expected_checksum,
     )
     print()
 
@@ -148,21 +198,12 @@ async def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         local_path = Path(tmp) / "retrieved.mcap"
         local_path.write_bytes(stored_bytes)
-
-        with open(local_path, "rb") as f:
-            reader = make_reader(f)
-            channels = {channel.topic for _s, channel, _m in reader.iter_messages()}
-        _check(
-            "retrieved MCAP exposes all 5 expected channels",
-            _EXPECTED_CHANNELS.issubset(channels),
-            f"got {channels}",
+        adapter = RosbagAdapter(
+            source_store=MagicMock(), source_root_uri=str(local_path)
         )
-
-        adapter = RosbagAdapter(source_store=MagicMock(), source_root_uri=str(local_path))
         source = adapter.extract_episode_source(
             robot_id=args.robot_id, robot_run_id=args.robot_run_id
         )
-        _check("RosbagAdapter opens the retrieved MCAP without error", source is not None)
         _check(
             "retrieved bag: robot_states non-empty",
             len(source.robot_states) > 0,
@@ -176,7 +217,10 @@ async def main() -> int:
     print()
 
     print("=" * 60)
-    print(f"  RobotRun registration E2E verification complete: {_PASS} passed / {_FAIL} failed")
+    print(
+        "  RobotRun publication + registration E2E verification complete: "
+        f"{_PASS} passed / {_FAIL} failed"
+    )
     print("=" * 60)
     return 0 if _FAIL == 0 else 1
 

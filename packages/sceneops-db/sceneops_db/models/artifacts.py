@@ -29,6 +29,10 @@ class ArtifactModel(Base):
     scenario_set_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Owning resource linkage (one of these will be set)
     run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The SceneOps Job execution that recorded this ArtifactRecord. Not
+    # necessarily the process that wrote the bytes: integration runtimes and
+    # the Recording Publisher write bytes outside any Job, and their physical
+    # provenance lives in the manifests they publish.
     job_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 

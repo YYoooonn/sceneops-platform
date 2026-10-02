@@ -18,6 +18,10 @@ class ArtifactKind(StrEnum):
     # is no separate STREAMING_MCAP kind, since the artifact itself is
     # identical MCAP content regardless of how it reached local disk).
     ROBOT_RUN_RECORDING = "robot_run_recording"
+    # The canonical RobotRunManifest (sceneops_core.robots.manifest) that
+    # publishes one recording; registered together with the recording by
+    # REGISTER_ROBOT_RUN.
+    ROBOT_RUN_MANIFEST = "robot_run_manifest"
 
     # Observation-level
     RAW_LOG_MANIFEST = "raw_log_manifest"

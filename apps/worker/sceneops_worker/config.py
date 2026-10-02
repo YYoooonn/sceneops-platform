@@ -68,10 +68,6 @@ class WorkerSettings(BaseSettings):
         return self.artifact.analytics_root_uri
 
     @property
-    def robot_run_root_uri(self) -> str:
-        return self.artifact.robot_run_root_uri
-
-    @property
     def raw_source_root_uri(self) -> str:
         return self.raw_source.root_uri
 

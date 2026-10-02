@@ -31,10 +31,10 @@ async def test_concurrent_materializations_of_same_object_do_not_collide(
     worker_context,
 ) -> None:
     data = _VALID_MCAP.read_bytes()
-    write_result = await worker_context.robot_run_artifact_store.write_recording(
-        robot_run_id="run-materialize-1", data=data
+    uri = worker_context.artifact_store.join_uri(
+        worker_context.settings.artifact_root_uri, "run-materialize-1", "recording.mcap"
     )
-    uri = write_result.uri
+    await worker_context.artifact_store.write_bytes(uri, data)
     original_checksum = _sha256(data)
     barrier = asyncio.Barrier(2)
 
@@ -68,10 +68,10 @@ async def test_materialization_failure_does_not_touch_canonical_object(
     from sceneops_worker.robots.materialization import MaterializationChecksumError
 
     data = _VALID_MCAP.read_bytes()
-    write_result = await worker_context.robot_run_artifact_store.write_recording(
-        robot_run_id="run-materialize-2", data=data
+    uri = worker_context.artifact_store.join_uri(
+        worker_context.settings.artifact_root_uri, "run-materialize-2", "recording.mcap"
     )
-    uri = write_result.uri
+    await worker_context.artifact_store.write_bytes(uri, data)
 
     with pytest.raises(MaterializationChecksumError):
         async with materialize_recording(

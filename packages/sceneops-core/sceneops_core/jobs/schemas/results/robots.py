@@ -7,6 +7,16 @@ from sceneops_core.common.schemas import JsonDict
 from .base import BaseJobResult
 
 
+class RegisterRobotRunJobResult(BaseJobResult):
+    run_id: str
+    robot_id: str
+    recording_artifact_id: str
+    manifest_artifact_id: str
+    manifest_checksum: str
+    # False => idempotent retry of an already-registered identical manifest.
+    created: bool
+
+
 class IngestRobotStatesJobResult(BaseJobResult):
     robot_id: str
     robot_run_id: str | None = None

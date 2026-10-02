@@ -30,8 +30,8 @@ class BuildEpisodesJobParams(BaseJobParams):
     robot_id: str
     robot_run_id: str | None = None
 
-    # Falls back to the referenced RobotRun's mcap_uri/rosbag_uri when
-    # omitted — same convention as IngestRobotStatesJobParams.
+    # Falls back to the referenced RobotRun's recording ArtifactRecord URI
+    # when omitted — same convention as IngestRobotStatesJobParams.
     mcap_uri: str | None = None
 
     raw_log_id: str | None = None

@@ -41,6 +41,9 @@ class JobType(StrEnum):
     PREDICT_DETECTION = "predict_detection"
     EVALUATE_DETECTION = "evaluate_detection"
 
+    # ── robot recording registration ──
+    REGISTER_ROBOT_RUN = "register_robot_run"
+
     # ── robot runtime ──
     INGEST_ROBOT_STATES = "ingest_robot_states"
     EXPORT_ROBOT_ANALYTICS_SNAPSHOT = "export_robot_analytics_snapshot"

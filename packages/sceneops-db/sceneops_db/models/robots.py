@@ -10,7 +10,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
-    Text,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -60,6 +59,9 @@ class RobotModel(Base):
 
 
 class RobotRunModel(Base):
+    """Immutable projection of one finalized, verified recording
+    (ADR-007 §10). Inserted once by REGISTER_ROBOT_RUN, never updated."""
+
     __tablename__ = "robot_runs"
 
     run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
@@ -71,44 +73,31 @@ class RobotRunModel(Base):
         index=True,
     )
 
-    status: Mapped[str] = mapped_column(
-        String(32),
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    recording_format: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_clock: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # RESTRICT: a RobotRun must never outlive the artifacts that prove it.
+    recording_artifact_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("artifacts.artifact_id", ondelete="RESTRICT"),
         nullable=False,
-        default="recording",
-        server_default=text("'recording'"),
-        index=True,
+        unique=True,
     )
+    manifest_artifact_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("artifacts.artifact_id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    manifest_checksum: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    dataset_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, index=True
-    )
-    dataset_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    raw_log_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, index=True
-    )
-
-    rosbag_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-    mcap_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    ended_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
+    registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=text("now()"),
-        onupdate=text("now()"),
-    )
-
-    metadata_: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
     robot: Mapped[RobotModel] = relationship(back_populates="runs")
@@ -229,7 +218,6 @@ class RobotStateModel(Base):
 
 
 Index("ix_robot_runs_robot_id", RobotRunModel.robot_id)
-Index("ix_robot_runs_status", RobotRunModel.status)
 Index("ix_missions_robot_id", MissionModel.robot_id)
 Index("ix_missions_status", MissionModel.status)
 Index(

@@ -5,10 +5,8 @@ from dataclasses import dataclass
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import (
-    generate_artifact_id,
-    robot_run_recording_artifact_id,
-)
+from sceneops_core.artifacts.schemas.records import ArtifactRecord
+from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
 from sceneops_core.episodes.schemas import EpisodeSegmentationStrategy, EpisodeSource
@@ -19,7 +17,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.robots.schemas import RobotRunRecord, RobotRunStatus
+from sceneops_core.robots.schemas import RobotRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.episodes.artifacts import (
@@ -158,13 +156,6 @@ class BuildEpisodesJobHandler(
         # operation-local count stamped before the row this DatasetVersion
         # is meant to summarize even exists.
 
-        if execution.robot_run is not None:
-            await context.robot_store.save_run(
-                execution.robot_run.model_copy(
-                    update={"status": RobotRunStatus.INGESTED}
-                )
-            )
-
         await context.commit()
 
         return BuildEpisodesJobResult(
@@ -249,26 +240,29 @@ class BuildEpisodesJobHandler(
     async def _require_expected_checksum(
         context: WorkerContext, robot_run: RobotRunRecord
     ) -> str:
-        """The RobotRun's own registered ArtifactRecord checksum
-        (``robot_run_recording_artifact_id`` -- the one canonical artifact
-        identity for this recording, never a second one) -- required,
-        never optional, whenever Episode building resolves its source
-        through a ``robot_run_id``. A RobotRun with no recording
-        ArtifactRecord was never registered through
-        ``register_robot_run_capture`` (e.g. it only went through the
-        bare-path, metadata-only ``POST /robot-runs``/``register-run``
-        surface) and must not be silently trusted as a materialization
-        source."""
-        artifact_id = robot_run_recording_artifact_id(robot_run.run_id)
-        artifact = await context.artifact_record_store.get(artifact_id)
-        if artifact is None:
-            raise RobotRunNotMaterializedError(
-                f"RobotRun {robot_run.run_id!r} has no registered recording "
-                f"ArtifactRecord ({artifact_id!r}) -- register it via "
-                f"`sceneops-worker robots register-capture` before building "
-                f"Episodes from it."
-            )
+        """The checksum of the RobotRun's registered recording ArtifactRecord
+        -- required whenever Episode building resolves its source through a
+        ``robot_run_id``, so the bytes actually read are verified against
+        the one canonical recording identity."""
+        artifact = await BuildEpisodesJobHandler._require_recording_artifact(
+            context, robot_run
+        )
         return artifact.checksum
+
+    @staticmethod
+    async def _require_recording_artifact(
+        context: WorkerContext, robot_run: RobotRunRecord
+    ) -> ArtifactRecord:
+        artifact = await context.artifact_record_store.get(
+            robot_run.recording_artifact_id
+        )
+        if artifact is None or artifact.checksum is None:
+            raise RobotRunNotMaterializedError(
+                f"RobotRun {robot_run.run_id!r} references recording "
+                f"ArtifactRecord {robot_run.recording_artifact_id!r}, which is "
+                f"missing or has no checksum -- inconsistent canonical state."
+            )
+        return artifact
 
     @staticmethod
     def _reject_silent_zero_episode_mission_boundary(
@@ -347,12 +341,13 @@ class BuildEpisodesJobHandler(
             robot_run = await context.robot_store.get_run(params.robot_run_id)
             if robot_run is None:
                 raise ValueError(f"RobotRun not found: {params.robot_run_id}")
-            mcap_uri = mcap_uri or robot_run.mcap_uri or robot_run.rosbag_uri
+            if not mcap_uri:
+                recording = await BuildEpisodesJobHandler._require_recording_artifact(
+                    context, robot_run
+                )
+                mcap_uri = recording.uri
         if not mcap_uri:
-            raise ValueError(
-                "build_episodes requires mcap_uri, or a robot_run_id whose "
-                "RobotRun has mcap_uri/rosbag_uri set."
-            )
+            raise ValueError("build_episodes requires mcap_uri or robot_run_id.")
         return robot_run, mcap_uri
 
     # ── setup ──────────────────────────────────────────────────────────────────

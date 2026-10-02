@@ -98,6 +98,11 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("compute_metrics", "Compute metrics"),
         step("save_metrics", "Save metrics"),
     ],
+    JobType.REGISTER_ROBOT_RUN: [
+        step("load_manifest", "Load and verify canonical RobotRunManifest"),
+        step("verify_recording", "Verify published recording"),
+        step("register_robot_run", "Register artifacts and RobotRun"),
+    ],
     JobType.INGEST_ROBOT_STATES: [
         step("load_rosbag", "Load rosbag/MCAP file"),
         step("extract_robot_states", "Extract robot states"),

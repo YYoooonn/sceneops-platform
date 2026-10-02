@@ -116,9 +116,9 @@ Phase 5 benchmark fixture, and no test suite depends on it being present.
 Each of the 10 scenes' real CAN replay → MCAP recording happens **once**
 per bootstrap run (fresh every time the CREATE path runs — `rm -rf` then a
 real ROS2 replay, same as `e2e_robot_learning.sh`) and is reused by
-reference (`RobotRun.mcap_uri`) to build Episodes into **both**
+reference (`robot_run_id`) to build Episodes into **both**
 `sceneops-episodes/v0.0` and `sceneops-canonical/v0.0` — `build_episodes`
-already resolves an Episode purely from the RobotRun's `mcap_uri` plus the
+resolves an Episode purely from the RobotRun's registered recording plus the
 dispatching pipeline's own `dataset_id`/`dataset_version`
 (`apps/worker/sceneops_worker/jobs/dataset/build_episodes.py`), so reusing
 one RobotRun across two independent, dataset-scoped Episode builds is

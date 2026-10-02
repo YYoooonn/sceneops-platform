@@ -3,7 +3,8 @@
 # boundary, end to end, over a streaming-captured RobotRun:
 #
 #   real nuScenes CAN -> ROS2 -> Kafka -> durable MCAP capture
-#     -> ArtifactStore (real MinIO) -> ArtifactRecord -> canonical RobotRun
+#     -> Recording Publisher (MCAP + RobotRunManifest, real MinIO)
+#     -> REGISTER_ROBOT_RUN (ArtifactRecords + canonical RobotRun)
 #     -> materialize (sceneops_worker.robots.materialization, execution-
 #        scoped local temp file, checksum-verified against the RobotRun's
 #        own ArtifactRecord) -> existing RosbagAdapter (unmodified,
@@ -116,13 +117,18 @@ EXPECTED_CHECKSUM="sha256:$CAPTURE_SHA256"
 echo "  captured sha256=$CAPTURE_SHA256"
 echo ""
 
-# ── 3. register: ArtifactStore + ArtifactRecord + canonical RobotRun ────────
+# ── 3. publish + REGISTER_ROBOT_RUN (real MinIO + Postgres) ─────────────────
 
-echo "--- 3. register canonical RobotRun (real Postgres + MinIO) ---"
-$COMPOSE --profile debug --profile worker run --rm worker-cli \
-  sceneops-worker robots register-capture \
-  --robot-id "$ROBOT_ID" --robot-run-id "$ROBOT_RUN_ID" \
-  --mcap-path "$MCAP_PATH"
+echo "--- 3. publish recording + register canonical RobotRun ---"
+REGISTER_JOB_JSON="$(publish_and_register_robot_run "$REPO_ROOT" "$API_BASE_URL" \
+  "$ROBOT_ID" "$ROBOT_RUN_ID" "$MCAP_PATH" kafka "" "sceneops.robot.telemetry.v1")"
+echo "$REGISTER_JOB_JSON" | jq '.job.result | {run_id, created, manifest_checksum}'
+REGISTERED_RECORDING_ID="$(echo "$REGISTER_JOB_JSON" | jq -r '.job.result.recording_artifact_id')"
+REGISTERED_CHECKSUM="$(curl -sS "$(api_url "$API_BASE_URL" "/artifacts/$REGISTERED_RECORDING_ID")" | jq -r '.artifact.checksum // empty')"
+if [ "$REGISTERED_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
+  echo "❌ registered recording checksum ($REGISTERED_CHECKSUM) != captured ($EXPECTED_CHECKSUM)" >&2
+  exit 1
+fi
 echo ""
 
 # ── 4. upsert Dataset/DatasetVersion (fresh, isolated -- never the frozen ───
@@ -136,8 +142,9 @@ echo ""
 
 # ── 5. raw_log_episode_building pipeline: build_episodes -> register_episode ─
 #      -> validate_episode / profile_episode. robot_run_id only, NO mcap_uri
-#      override -- forces resolution through RobotRunRecord.mcap_uri (the
-#      s3:// URI), exercising the materialization boundary for real.
+#      override -- forces resolution through the RobotRun's recording
+#      ArtifactRecord (the s3:// URI), exercising the materialization
+#      boundary for real.
 
 echo "--- 5. raw_log_episode_building pipeline ---"
 # Segmentation strategy is whole_run, not mission_boundary: a

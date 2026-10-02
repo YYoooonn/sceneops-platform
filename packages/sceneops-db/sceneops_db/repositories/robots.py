@@ -7,7 +7,6 @@ from sceneops_core.robots.schemas import (
     MissionStatus,
     RobotRecord,
     RobotRunRecord,
-    RobotRunStatus,
     RobotStateRecord,
     RobotStatus,
 )
@@ -20,6 +19,10 @@ class RobotRepository(Protocol):
     async def upsert(self, robot: RobotRecord) -> RobotRecord: ...
 
     async def get(self, robot_id: str) -> RobotRecord | None: ...
+
+    async def create_if_absent(self, robot: RobotRecord) -> None: ...
+
+    async def get_for_update(self, robot_id: str) -> RobotRecord | None: ...
 
     async def update(self, robot: RobotRecord) -> RobotRecord: ...
 
@@ -36,17 +39,12 @@ class RobotRepository(Protocol):
 class RobotRunRepository(Protocol):
     async def create(self, run: RobotRunRecord) -> RobotRunRecord: ...
 
-    async def upsert(self, run: RobotRunRecord) -> RobotRunRecord: ...
-
     async def get(self, run_id: str) -> RobotRunRecord | None: ...
-
-    async def update(self, run: RobotRunRecord) -> RobotRunRecord: ...
 
     async def list(
         self,
         *,
         robot_id: str | None = None,
-        status: RobotRunStatus | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[RobotRunRecord]: ...

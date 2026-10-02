@@ -52,10 +52,13 @@ worker-run-pipeline-task:
 		sceneops-worker run-pipeline-task --pipeline-run-id $(PIPELINE_RUN_ID) --task-id $(TASK_ID)
 
 .PHONY: worker-register-robot-run
+# REGISTER_ROBOT_RUN for an already-published RobotRunManifest (same
+# registrar as POST /robot-runs:register). Publish first with
+# `python -m sceneops_integrations.recording publish`.
 worker-register-robot-run:
-	@if [ -z "$(ROBOT_ID)" ] || [ -z "$(RUN_ID)" ] || [ -z "$(MCAP_URI)" ]; then \
-		echo "Usage: make worker-register-robot-run ROBOT_ID=robot-1 RUN_ID=run-1 MCAP_URI=/data/raw/rosbag/scene-0061/scene-0061_0.mcap"; \
+	@if [ -z "$(MANIFEST_URI)" ]; then \
+		echo "Usage: make worker-register-robot-run MANIFEST_URI=s3://sceneops/artifacts/robot_runs/run-1/robot_run_manifest.json"; \
 		exit 1; \
 	fi
 	$(COMPOSE) --profile debug run --rm worker-cli \
-		sceneops-worker robots register-run --robot-id $(ROBOT_ID) --run-id $(RUN_ID) --mcap-uri $(MCAP_URI)
+		sceneops-worker robots register --manifest-uri $(MANIFEST_URI)

@@ -28,6 +28,7 @@ from sceneops_worker.jobs.inference import PredictDetectionJobHandler
 from sceneops_worker.jobs.robots import (
     ExportRobotAnalyticsSnapshotJobHandler,
     IngestRobotStatesJobHandler,
+    RegisterRobotRunJobHandler,
 )
 from sceneops_worker.jobs.scenarios import (
     MineScenariosJobHandler,
@@ -75,6 +76,7 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
             EvaluateDetectionJobHandler(),
             MineScenariosJobHandler(),
             ScoreScenarioReadinessJobHandler(),
+            RegisterRobotRunJobHandler(),
             IngestRobotStatesJobHandler(),
             ExportRobotAnalyticsSnapshotJobHandler(),
             BuildEpisodesJobHandler(),

@@ -7,7 +7,6 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.robots.schemas import RobotRunStatus
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
@@ -25,8 +24,11 @@ class IngestRobotStatesJobHandler(
 
     Not part of any named SceneOps pipeline (dataset ingestion pipelines are a
     separate concept from RobotRun — docs/architecture/data-model.md §5). Dispatched
-    as a standalone Job, typically against a RobotRun that already has
-    mcap_uri/rosbag_uri set by whatever recorded it.
+    as a standalone Job. With only ``robot_run_id``, it reads the URI of the
+    RobotRun's registered recording ArtifactRecord; that path reaches
+    ``RosbagAdapter`` unmaterialized, so it only works for a local-backend
+    recording until consumers move to the verified recording resolver
+    (ADR-007 §12.4). An explicit ``mcap_uri`` is read as given.
     """
 
     @property
@@ -51,19 +53,25 @@ class IngestRobotStatesJobHandler(
         if robot is None:
             raise ValueError(f"Robot not found: {params.robot_id}")
 
-        robot_run = None
         mcap_uri = params.mcap_uri
         if params.robot_run_id is not None:
             robot_run = await context.robot_store.get_run(params.robot_run_id)
             if robot_run is None:
                 raise ValueError(f"RobotRun not found: {params.robot_run_id}")
-            mcap_uri = mcap_uri or robot_run.mcap_uri or robot_run.rosbag_uri
+            if not mcap_uri:
+                recording = await context.artifact_record_store.get(
+                    robot_run.recording_artifact_id
+                )
+                if recording is None:
+                    raise ValueError(
+                        f"RobotRun {params.robot_run_id!r} references missing "
+                        f"recording ArtifactRecord "
+                        f"{robot_run.recording_artifact_id!r}"
+                    )
+                mcap_uri = recording.uri
 
         if not mcap_uri:
-            raise ValueError(
-                "ingest_robot_states requires mcap_uri, or a robot_run_id whose "
-                "RobotRun has mcap_uri/rosbag_uri set."
-            )
+            raise ValueError("ingest_robot_states requires mcap_uri or robot_run_id.")
 
         # observation_store is required by RosbagAdapter's constructor but is
         # only used by build_raw_log() (scene frame manifests), not by
@@ -89,11 +97,6 @@ class IngestRobotStatesJobHandler(
         )
         for mission in missions:
             await context.robot_store.upsert_mission(mission)
-
-        if robot_run is not None:
-            await context.robot_store.save_run(
-                robot_run.model_copy(update={"status": RobotRunStatus.INGESTED})
-            )
 
         return IngestRobotStatesJobResult(
             robot_id=params.robot_id,

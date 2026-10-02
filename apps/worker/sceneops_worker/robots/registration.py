@@ -1,40 +1,34 @@
-"""Canonical RobotRun registration: finalized local MCAP + CaptureResult
--> ArtifactStore -> ArtifactRecord -> canonical RobotRun.
+"""REGISTER_ROBOT_RUN: the only way a RobotRunRecord comes into existence
+(ADR-007 §12.1).
 
-The next boundary after durable capture (ros2/capture/, frozen -- this
-module has no import of anything under ros2/) produces a validated,
-finalized local MCAP file. This module is what turns that local file into
-canonical state: an uploaded/verified object in ArtifactStore, one
-ArtifactRecord, and one RobotRunRecord, registered together.
+Input is the URI of a RobotRunManifest that the database-free Recording
+Publisher (``sceneops_integrations.recording``) already wrote as its
+publication marker. Registration verifies and projects; it never uploads,
+copies, moves or rewrites recording or manifest bytes (I-9).
 
-Frozen ordering, never reversed:
+    R1  read manifest bytes
+    R2  strict parse (unknown fields rejected; schema_version known)
+    R3  canonical-form check: canonical(parse(bytes)) == bytes
+    R4  manifest_checksum = sha256(bytes)
+    R5  existing RobotRunRecord(run_id): same checksum -> no-op;
+        different checksum -> hard conflict (no replacement, I-14)
+    R6  verify the recording: exists, size, sha256, opens as MCAP, and its
+        derived facts (time range, channels, counts) equal the manifest's
+    R7  Robot platform rule (fill once, conflict fails; never last-write-wins)
+    R8  one DB transaction: Robot create/fill, recording ArtifactRecord,
+        manifest ArtifactRecord, RobotRunRecord; commit
+    R9  unique-constraint race -> rollback, reload, resolve exactly as R5
 
-    validate finalized MCAP
-    -> determine artifact identity/key (deterministic, see
-       sceneops_core.common.ids.robot_run_recording_artifact_id)
-    -> upload or verify existing object
-    -> verify stored bytes
-    -> register ArtifactRecord + RobotRun
-    -> commit DB transaction
-
-ArtifactStore and PostgreSQL are two separate systems, never one
-transaction -- a retry after "upload succeeded, DB registration failed"
-is handled by re-running this function: the deterministic artifact
-key/URI means it finds and reuses the already-uploaded object (checksum
-verified) rather than re-uploading or erroring.
-
-Does not create Episodes, does not create Scenes, does not touch the
-frozen canonical baseline dataset -- this boundary stops at RobotRun.
+R1-R7 failures leave no DB change. The single R8 transaction makes a
+RobotRunRecord without both ArtifactRecords (or the reverse) impossible; if
+such state is ever observed it is reported, never repaired.
 """
 
 from __future__ import annotations
 
-import hashlib
+import io
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
-from mcap.reader import make_reader
 from sqlalchemy.exc import IntegrityError
 
 from sceneops_core.artifacts.schemas import (
@@ -43,217 +37,269 @@ from sceneops_core.artifacts.schemas import (
     ArtifactRecord,
     ArtifactRef,
 )
-from sceneops_core.common.ids import robot_run_recording_artifact_id
-from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord, RobotRunStatus
+from sceneops_core.common.ids import (
+    robot_run_manifest_artifact_id,
+    robot_run_recording_artifact_id,
+)
+from sceneops_core.robots.manifest import (
+    RobotRunManifest,
+    load_canonical_robot_run_manifest,
+)
+from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
+from sceneops_integrations.recording import (
+    RecordingValidationError,
+    derive_mcap_facts,
+    sha256_checksum,
+)
+from sceneops_storage import ArtifactNotFoundError
 
 from sceneops_worker.core.context import WorkerContext
 
-
-class RobotRunCaptureValidationError(ValueError):
-    """The local MCAP file failed validation and must not be registered
-    (missing, a ``.partial`` capture path, or unreadable/corrupt)."""
+RECORDING_MEDIA_TYPE = "application/octet-stream"
+MANIFEST_MEDIA_TYPE = "application/json"
 
 
-class RobotRunRegistrationConflictError(RuntimeError):
-    """A canonical RobotRun or stored object already exists with content
-    that conflicts with this registration attempt. Registration never
-    mutates existing state in this case -- the caller must resolve the
-    conflict (different robot_run_id, or investigate the mismatch)."""
+class RobotRunRegistrationError(RuntimeError):
+    """Base class for REGISTER_ROBOT_RUN failures. None of them leaves a
+    canonical DB change behind."""
 
 
-class InconsistentCanonicalStateError(RuntimeError):
-    """Canonical DB state contradicts itself (e.g. a RobotRun row exists
-    with no corresponding ArtifactRecord, or vice versa) -- reported,
-    never silently repaired. Should not occur under this module's own
-    single-transaction registration, but is not assumed impossible."""
+class PublishedArtifactMissingError(RobotRunRegistrationError):
+    """The manifest, or the recording it references, does not exist."""
+
+
+class RecordingVerificationError(RobotRunRegistrationError):
+    """The published recording does not match its manifest (size, checksum,
+    format, or derived facts)."""
+
+
+class RobotRunRegistrationConflictError(RobotRunRegistrationError):
+    """A RobotRunRecord already exists for this run_id with a different
+    manifest checksum. RobotRuns have no replacement semantics."""
+
+
+class RobotPlatformConflictError(RobotRunRegistrationError):
+    """The manifest asserts a robot_platform that contradicts the Robot's
+    already-set platform."""
+
+
+class InconsistentCanonicalStateError(RobotRunRegistrationError):
+    """Canonical DB state contradicts itself (e.g. a RobotRun artifact
+    exists without its RobotRunRecord). Reported, never silently repaired."""
 
 
 @dataclass(frozen=True)
-class RobotRunCaptureRegistration:
+class RobotRunRegistration:
     robot_run: RobotRunRecord
-    artifact: ArtifactRecord
+    recording_artifact: ArtifactRecord
+    manifest_artifact: ArtifactRecord
     created: bool  # False => idempotent retry; nothing new was written
 
 
-def _sha256_hex(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _validate_local_mcap(path: Path) -> int:
-    """Reject `.partial` capture paths, missing files, and invalid/corrupt
-    MCAP content. Returns the message count (also rejects zero messages).
-
-    A self-contained check, not an import from ros2/capture/validation.py
-    -- ros2/capture must remain free of DB/ArtifactStore dependencies, and
-    this module runs entirely on the worker side, which already depends
-    on the ``mcap`` package (RosbagAdapter, apps/worker/pyproject.toml).
-    """
-    if ".partial" in path.parts:
-        raise RobotRunCaptureValidationError(
-            f"refusing to register a .partial (not-yet-finalized) capture "
-            f"path: {path}"
-        )
-    if not path.is_file():
-        raise RobotRunCaptureValidationError(f"MCAP file not found: {path}")
-
-    message_count = 0
+async def _read_published(context: WorkerContext, uri: str, what: str) -> bytes:
     try:
-        with open(path, "rb") as f:
-            reader = make_reader(f)
-            for _schema, _channel, _message in reader.iter_messages():
-                message_count += 1
-    except RobotRunCaptureValidationError:
-        raise
-    except Exception as exc:
-        raise RobotRunCaptureValidationError(
-            f"MCAP file is unreadable/corrupt: {path}: {exc}"
-        ) from exc
-
-    if message_count == 0:
-        raise RobotRunCaptureValidationError(
-            f"MCAP file has zero messages, refusing to register: {path}"
-        )
-    return message_count
+        return await context.artifact_store.read_bytes(uri)
+    except (ArtifactNotFoundError, FileNotFoundError) as exc:
+        raise PublishedArtifactMissingError(f"{what} not found: {uri}") from exc
 
 
-async def _load_existing_registration(
-    *, context: WorkerContext, robot_run_id: str, artifact_id: str
-) -> tuple[RobotRunRecord, ArtifactRecord] | None:
-    existing_run = await context.robot_store.get_run(robot_run_id)
-    existing_artifact = await context.artifact_record_store.get(artifact_id)
+async def _resolve_existing(
+    context: WorkerContext, *, run_id: str, manifest_checksum: str
+) -> RobotRunRegistration | None:
+    """R5. Returns the existing registration for an identical manifest,
+    None when nothing is registered for run_id, and raises on conflict or
+    inconsistent state."""
+    recording_id = robot_run_recording_artifact_id(run_id)
+    manifest_id = robot_run_manifest_artifact_id(run_id)
+    existing_run = await context.robot_store.get_run(run_id)
 
-    if existing_run is None and existing_artifact is None:
+    if existing_run is None:
+        orphans = [
+            artifact_id
+            for artifact_id in (recording_id, manifest_id)
+            if await context.artifact_record_store.get(artifact_id) is not None
+        ]
+        if orphans:
+            raise InconsistentCanonicalStateError(
+                f"run_id={run_id!r} has RobotRun ArtifactRecord(s) {orphans} "
+                f"but no RobotRunRecord"
+            )
         return None
-    if existing_run is None or existing_artifact is None:
-        raise InconsistentCanonicalStateError(
-            f"robot_run_id={robot_run_id!r}: RobotRun and its artifact "
-            f"({artifact_id!r}) disagree on existence -- "
-            f"run_exists={existing_run is not None} "
-            f"artifact_exists={existing_artifact is not None}"
-        )
-    return existing_run, existing_artifact
 
-
-def _resolve_against_existing(
-    existing: tuple[RobotRunRecord, ArtifactRecord],
-    *,
-    expected_checksum: str,
-) -> RobotRunCaptureRegistration:
-    existing_run, existing_artifact = existing
-    if existing_artifact.checksum != expected_checksum:
+    if existing_run.manifest_checksum != manifest_checksum:
         raise RobotRunRegistrationConflictError(
-            f"robot_run_id={existing_run.run_id!r} is already registered "
-            f"with a different checksum (existing={existing_artifact.checksum}, "
-            f"new={expected_checksum}) -- refusing to mutate existing "
-            f"canonical state"
+            f"run_id={run_id!r} is already registered with a different "
+            f"RobotRunManifest (existing={existing_run.manifest_checksum}, "
+            f"new={manifest_checksum}); RobotRuns are never replaced"
         )
-    return RobotRunCaptureRegistration(
-        robot_run=existing_run, artifact=existing_artifact, created=False
+
+    recording = await context.artifact_record_store.get(
+        existing_run.recording_artifact_id
+    )
+    manifest = await context.artifact_record_store.get(
+        existing_run.manifest_artifact_id
+    )
+    if recording is None or manifest is None:
+        raise InconsistentCanonicalStateError(
+            f"RobotRunRecord {run_id!r} references missing ArtifactRecord(s): "
+            f"recording={recording is not None} manifest={manifest is not None}"
+        )
+    return RobotRunRegistration(
+        robot_run=existing_run,
+        recording_artifact=recording,
+        manifest_artifact=manifest,
+        created=False,
     )
 
 
-async def register_robot_run_capture(
+async def _verify_recording(context: WorkerContext, manifest: RobotRunManifest) -> None:
+    """R6. Reads the recording through ArtifactStore and requires it to be
+    exactly what the manifest describes."""
+    ref = manifest.recording
+    data = await _read_published(context, ref.uri, "recording")
+    if len(data) != ref.size_bytes:
+        raise RecordingVerificationError(
+            f"recording {ref.uri} size {len(data)} != manifest size_bytes "
+            f"{ref.size_bytes}"
+        )
+    actual_checksum = sha256_checksum(data)
+    if actual_checksum != ref.checksum:
+        raise RecordingVerificationError(
+            f"recording {ref.uri} checksum {actual_checksum} != manifest "
+            f"checksum {ref.checksum}"
+        )
+    try:
+        facts = derive_mcap_facts(
+            io.BytesIO(data), source_clock=manifest.capture.source_clock
+        )
+    except RecordingValidationError as exc:
+        raise RecordingVerificationError(
+            f"recording {ref.uri} is not a valid {ref.format.value}: {exc}"
+        ) from exc
+    if (
+        facts.started_at != manifest.started_at
+        or facts.ended_at != manifest.ended_at
+        or facts.channels != manifest.channels
+    ):
+        raise RecordingVerificationError(
+            f"recording {ref.uri} facts disagree with its manifest "
+            f"(started_at/ended_at/channels)"
+        )
+
+
+async def _apply_robot_platform_rule(
+    context: WorkerContext, manifest: RobotRunManifest
+) -> None:
+    """R7, inside the R8 transaction (ADR-007 §9). The Robot row is
+    created if absent and then locked, so concurrent registrations for the
+    same robot evaluate the fill-once rule serially."""
+    await context.robot_store.create_robot_if_absent(
+        RobotRecord(robot_id=manifest.robot_id, platform=manifest.robot_platform)
+    )
+    robot = await context.robot_store.get_robot_for_update(manifest.robot_id)
+    if robot is None:  # pragma: no cover - guaranteed by create_robot_if_absent
+        raise InconsistentCanonicalStateError(
+            f"Robot {manifest.robot_id!r} missing after create_if_absent"
+        )
+    asserted = manifest.robot_platform
+    if asserted is None or robot.platform == asserted:
+        return
+    if robot.platform is None:
+        await context.robot_store.save_robot(
+            robot.model_copy(update={"platform": asserted})
+        )
+        return
+    raise RobotPlatformConflictError(
+        f"robot_id={manifest.robot_id!r} has platform={robot.platform!r}; "
+        f"manifest asserts robot_platform={asserted!r}. Changing a robot's "
+        f"platform is an explicit Robot operation, not part of ingestion."
+    )
+
+
+async def register_robot_run(
     *,
     context: WorkerContext,
-    robot_id: str,
-    robot_run_id: str,
-    mcap_path: Path,
-    platform: str = "nuscenes-can-replay",
-    capture_metadata: dict[str, Any] | None = None,
-) -> RobotRunCaptureRegistration:
-    """Register one finalized local MCAP as a canonical RobotRun.
+    manifest_uri: str,
+    job_id: str | None = None,
+) -> RobotRunRegistration:
+    # R1-R4
+    manifest_bytes = await _read_published(context, manifest_uri, "RobotRunManifest")
+    manifest = load_canonical_robot_run_manifest(manifest_bytes)
+    manifest_checksum = sha256_checksum(manifest_bytes)
+    run_id = manifest.run_id
 
-    ``capture_metadata`` (optional) carries Kafka execution/provenance
-    only (topic, partition, offset range, sequence range, message count)
-    -- stored inside the ArtifactRecord's own generic ``metadata`` field,
-    never as new DB columns; a directly `ros2 bag record`-ed file (no
-    Kafka involved at all) simply omits it.
-    """
-    message_count = _validate_local_mcap(mcap_path)
-    local_bytes = mcap_path.read_bytes()
-    local_checksum = f"sha256:{_sha256_hex(local_bytes)}"
-    artifact_id = robot_run_recording_artifact_id(robot_run_id)
-
-    existing = await _load_existing_registration(
-        context=context, robot_run_id=robot_run_id, artifact_id=artifact_id
+    # R5
+    existing = await _resolve_existing(
+        context, run_id=run_id, manifest_checksum=manifest_checksum
     )
     if existing is not None:
-        # Exact retry (checksum matches) or a same-robot_run_id conflict
-        # (checksum differs) -- either way, nothing new is written here.
-        return _resolve_against_existing(existing, expected_checksum=local_checksum)
+        return existing
 
-    store = context.robot_run_artifact_store
-    uri = store.recording_uri(robot_run_id)
+    # R6
+    await _verify_recording(context, manifest)
 
-    if await store.exists(robot_run_id):
-        stored_bytes = await store.read_recording_bytes(robot_run_id)
-        stored_checksum = f"sha256:{_sha256_hex(stored_bytes)}"
-        if stored_checksum != local_checksum:
-            raise RobotRunRegistrationConflictError(
-                f"an object already exists at {uri} with a different "
-                f"checksum (stored={stored_checksum}, local={local_checksum}) "
-                f"-- refusing to overwrite"
-            )
-        size_bytes = len(stored_bytes)
-    else:
-        write_result = await store.write_recording(
-            robot_run_id=robot_run_id, data=local_bytes
-        )
-        # Verify stored bytes immediately after upload -- never trust the
-        # write call alone as proof the bytes landed correctly.
-        reread = await store.read_recording_bytes(robot_run_id)
-        reread_checksum = f"sha256:{_sha256_hex(reread)}"
-        if reread_checksum != local_checksum:
-            raise RobotRunRegistrationConflictError(
-                f"stored bytes at {uri} do not match the local checksum "
-                f"immediately after upload (stored={reread_checksum}, "
-                f"local={local_checksum})"
-            )
-        size_bytes = write_result.size_bytes
-
-    metadata: dict[str, Any] = {"message_count": message_count}
-    if capture_metadata:
-        metadata["capture"] = capture_metadata
-
+    # R7 + R8
+    recording_id = robot_run_recording_artifact_id(run_id)
+    manifest_id = robot_run_manifest_artifact_id(run_id)
     try:
-        await context.robot_store.upsert_robot(
-            RobotRecord(robot_id=robot_id, platform=platform)
-        )
-        artifact = await context.artifact_record_store.create(
-            artifact_id=artifact_id,
+        await _apply_robot_platform_rule(context, manifest)
+        recording_artifact = await context.artifact_record_store.create(
+            artifact_id=recording_id,
             ref=ArtifactRef(
                 kind=ArtifactKind.ROBOT_RUN_RECORDING,
-                uri=uri,
-                media_type="application/octet-stream",
-                size_bytes=size_bytes,
-                checksum=local_checksum,
-                metadata=metadata,
+                uri=manifest.recording.uri,
+                media_type=RECORDING_MEDIA_TYPE,
+                size_bytes=manifest.recording.size_bytes,
+                checksum=manifest.recording.checksum,
             ),
             owner_type=ArtifactOwnerType.ROBOT_RUN,
-            owner_id=robot_run_id,
+            owner_id=run_id,
+            job_id=job_id,
+        )
+        manifest_artifact = await context.artifact_record_store.create(
+            artifact_id=manifest_id,
+            ref=ArtifactRef(
+                kind=ArtifactKind.ROBOT_RUN_MANIFEST,
+                uri=manifest_uri,
+                media_type=MANIFEST_MEDIA_TYPE,
+                size_bytes=len(manifest_bytes),
+                checksum=manifest_checksum,
+            ),
+            owner_type=ArtifactOwnerType.ROBOT_RUN,
+            owner_id=run_id,
+            job_id=job_id,
         )
         robot_run = await context.robot_store.create_run(
             RobotRunRecord(
-                run_id=robot_run_id,
-                robot_id=robot_id,
-                status=RobotRunStatus.COMPLETED,
-                mcap_uri=uri,
+                run_id=run_id,
+                robot_id=manifest.robot_id,
+                started_at=manifest.started_at,
+                ended_at=manifest.ended_at,
+                recording_format=manifest.recording.format.value,
+                source_clock=manifest.capture.source_clock,
+                recording_artifact_id=recording_id,
+                manifest_artifact_id=manifest_id,
+                manifest_checksum=manifest_checksum,
             )
         )
         await context.commit()
-        return RobotRunCaptureRegistration(
-            robot_run=robot_run, artifact=artifact, created=True
-        )
     except IntegrityError:
-        # Another concurrent registration for this same robot_run_id won
-        # the race between our existence check above and this write.
-        # robots.robot_id / artifacts.artifact_id / robot_runs.run_id are
-        # all primary keys -- this is that real DB constraint doing its
-        # job, not a process-local or Redis lock.
+        # R9: a concurrent registration of the same run_id committed first
+        # (artifacts / robot_runs primary keys). Resolve against its result.
         await context.rollback()
-        existing = await _load_existing_registration(
-            context=context, robot_run_id=robot_run_id, artifact_id=artifact_id
+        existing = await _resolve_existing(
+            context, run_id=run_id, manifest_checksum=manifest_checksum
         )
         if existing is None:
             raise
-        return _resolve_against_existing(existing, expected_checksum=local_checksum)
+        return existing
+    except BaseException:
+        await context.rollback()
+        raise
+
+    return RobotRunRegistration(
+        robot_run=robot_run,
+        recording_artifact=recording_artifact,
+        manifest_artifact=manifest_artifact,
+        created=True,
+    )

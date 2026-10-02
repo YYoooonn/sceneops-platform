@@ -1,10 +1,10 @@
 """Materializes a canonical RobotRun recording (an ArtifactStore-backed
-MCAP, see Phase 6.4/registration.py) to an execution-scoped local temp
+MCAP registered by REGISTER_ROBOT_RUN) to an execution-scoped local temp
 file for ``RosbagAdapter``, which stays storage-agnostic -- it never
 learns about ``s3://``, MinIO, ``ArtifactStore``, or HTTP, only ever a
 local filesystem path (``open()``).
 
-    RobotRun.mcap_uri (ArtifactStore-backed)
+    recording ArtifactRecord URI (ArtifactStore-backed)
       -> materialize_recording() -- read + local temp copy + checksum verify
       -> RosbagAdapter(local_path) -- existing, unmodified
 
@@ -34,15 +34,10 @@ class MaterializationChecksumError(ValueError):
 
 
 class RobotRunNotMaterializedError(ValueError):
-    """A RobotRun was referenced by ``robot_run_id`` but has no registered
-    recording ArtifactRecord (``robot_run_recording_artifact_id``) -- it
-    was never registered through ``register_robot_run_capture``/
-    ``sceneops-worker robots register-capture``, or predates
-    artifact-backed registration (e.g. the legacy bare-path ``POST
-    /robot-runs`` / ``register-run`` metadata-only surface). Episode
-    building refuses to silently trust an unverified recording path in
-    this case -- register the RobotRun's recording through
-    ``register-capture`` first."""
+    """A RobotRun referenced by ``robot_run_id`` has no usable recording
+    ArtifactRecord. REGISTER_ROBOT_RUN creates both atomically, so this
+    indicates inconsistent canonical state; Episode building refuses to
+    read an unverified recording path in that case."""
 
 
 def is_local_uri(uri: str) -> bool:
@@ -68,7 +63,7 @@ def local_path_from_uri(uri: str) -> Path:
 def verify_local_recording_checksum(path: Path, *, expected_checksum: str) -> None:
     """Verify a local recording file's bytes match ``expected_checksum``
     in place, without an ArtifactStore round trip -- used when a
-    RobotRun's own ``mcap_uri`` is already a local path (RosbagAdapter
+    RobotRun's recording URI is already a local path (RosbagAdapter
     reads it directly either way) but the caller still referenced the
     RobotRun by ``robot_run_id``, so its registered ArtifactRecord
     checksum must be honored exactly as the ArtifactStore-backed branch in

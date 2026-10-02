@@ -30,11 +30,10 @@
 #       REAL values captured from build_episodes' own job/task result in
 #       this same process -- never reconstructed by reimplementing
 #       build_episodes.py's ID-formatting formula in bash;
-#   (c) RobotRun registration goes through the canonical, artifact-backed
-#       `sceneops-worker robots register-capture` path (lib.sh's
-#       register_robot_run_capture), not the metadata-only POST
-#       /robot-runs -- build_episodes requires a registered recording
-#       ArtifactRecord for any robot_run_id it resolves.
+#   (c) the RobotRun is created through the Recording Publisher +
+#       REGISTER_ROBOT_RUN (lib.sh's publish_and_register_robot_run), the
+#       only RobotRun creation path; build_episodes resolves the recording
+#       through the RobotRun's registered recording ArtifactRecord.
 #
 # Curation policy is deliberately the empty/unrestricted CurationPolicy
 # ("no restriction on any dimension" -- see
@@ -225,9 +224,9 @@ for SCENE_NAME in "${SCENES[@]}"; do
 
   echo "--- 3b. Register Robot + RobotRun (artifact-backed) ---"
   upsert_robot "$API_BASE_URL" "$ROBOT_ID" "nuscenes-can-replay" | jq '.robot | {robotId, status}'
-  # Canonical, artifact-backed registration -- build_episodes (3c) requires
-  # a registered recording ArtifactRecord for the robot_run_id it resolves.
-  register_robot_run_capture "$REPO_ROOT" "$ROBOT_ID" "$RUN_ID" "$MCAP_URI"
+  publish_and_register_robot_run "$REPO_ROOT" "$API_BASE_URL" \
+    "$ROBOT_ID" "$RUN_ID" "$MCAP_URI" ros2_bag "nuscenes-can-replay" \
+    | jq '.job.result | {run_id, created, manifest_checksum}'
   echo ""
 
   echo "--- 3c. Dispatch raw_log_episode_building pipeline ---"

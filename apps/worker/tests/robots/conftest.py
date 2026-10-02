@@ -1,4 +1,4 @@
-"""Shared fixtures for RobotRun registration tests.
+"""Shared fixtures for RobotRun publication/registration tests.
 
 This directory mixes pure-unit tests (test_registration.py -- fakes
 only, no infra) with real-Postgres + real-MinIO integration tests
@@ -140,3 +140,32 @@ async def cleanup_minio_prefix(worker_settings):
     store = S3ArtifactStore(settings=worker_settings.artifact)
     yield
     await store.delete_prefix(worker_settings.artifact_root_uri)
+
+
+@pytest.fixture()
+def publish(worker_settings):
+    """Publish a local MCAP through the real (DB-free) Recording Publisher
+    into this test's unique MinIO prefix -- the same prefix the worker
+    context reads from."""
+    from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
+    from sceneops_integrations.recording import publish_recording
+
+    async def _publish(
+        mcap_path,
+        *,
+        run_id: str,
+        robot_id: str,
+        robot_platform: str | None = None,
+    ):
+        return await publish_recording(
+            artifact_store=S3ArtifactStore(settings=worker_settings.artifact),
+            root_uri=worker_settings.artifact.robot_run_root_uri,
+            recording_path=mcap_path,
+            run_id=run_id,
+            robot_id=robot_id,
+            robot_platform=robot_platform,
+            capture_source=CaptureSource(kind=CaptureSourceKind.FILE),
+            source_clock="mcap_log_time",
+        )
+
+    return _publish

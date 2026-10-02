@@ -227,16 +227,42 @@ rather than pre-recorded sensor datasets:
 
 ```text
 Robot        static registry entry (robot_id, platform)
-RobotRun     one physical recording session (maps 1:1 to a rosbag2/MCAP file)
+RobotRun     one finalized, published and verified recording (immutable provenance)
 Mission      a run's lifecycle status (pending/running/completed/...), extracted from the bag
 RobotState   a runtime-state time series (position, orientation, velocity, battery, ...)
 ```
 
-`Robot`/`RobotRun` are registered directly via `POST` (no Job involved —
-same tier as Dataset registration). `Mission`/`RobotState` are populated by
-the `ingest_robot_states` Job, which reads a rosbag2/MCAP file through
-`RosbagAdapter`. See [Robot data ingestion](../workflows/robot-run-and-mcap.md)
-for the full pipeline and current limitations.
+`Robot` can be registered directly via `POST /robots`. A `RobotRun` comes
+into existence only through `REGISTER_ROBOT_RUN` (ADR-007 §12), over a
+recording the database-free Recording Publisher already published:
+
+```text
+finalized local MCAP
+  -> Recording Publisher (sceneops_integrations.recording, no DB)
+       {robot_run_root}/{run_id}/recording.mcap             write-once
+       {robot_run_root}/{run_id}/robot_run_manifest.json    canonical RobotRunManifest v1, written last
+  -> POST /robot-runs:register {manifest_uri}  ->  REGISTER_ROBOT_RUN Job
+       verify manifest (strict + canonical bytes) and recording (size, sha256, MCAP facts)
+       one transaction: Robot create / platform fill-once,
+                        ArtifactRecord(robot_run_recording), ArtifactRecord(robot_run_manifest),
+                        RobotRunRecord
+```
+
+`robot_runs` columns: `run_id`, `robot_id`, `started_at`, `ended_at`,
+`recording_format`, `source_clock`, `recording_artifact_id`,
+`manifest_artifact_id` (both FK `artifacts`, `ON DELETE RESTRICT`),
+`manifest_checksum`, `registered_at`. A RobotRunRecord has no status, no
+dataset membership and no recording URI: the recording URI/checksum/size
+live on its recording ArtifactRecord, and channel/capture facts live only in
+the manifest. It is never updated. Re-registering the same manifest is a
+no-op; a different manifest for an existing `run_id` fails. A manifest
+`robot_platform` fills an empty `Robot.platform` once and fails registration
+if it contradicts a set one.
+
+`Mission`/`RobotState` are populated by the `ingest_robot_states` Job, which
+reads a rosbag2/MCAP file through `RosbagAdapter`. See
+[Robot data ingestion](../workflows/robot-run-and-mcap.md) for the full
+pipeline and current limitations.
 
 Episode build (`build_episodes`) reads the *same* `RosbagAdapter` output
 (robot states + missions + sensor frames) as `ingest_robot_states` does, but
@@ -289,6 +315,7 @@ MINE_SCENARIOS, SCORE_SCENARIO_READINESS               # scenario-level
 AUTO_LABEL_DATASET, EXPORT_DATASET                     # dataset-version-level, reserved (no handler)
 EXPORT_ANALYTICS_SNAPSHOT                              # dataset-version-level
 PREDICT_DETECTION, EVALUATE_DETECTION                  # detection
+REGISTER_ROBOT_RUN                                     # published recording -> RobotRun, pipeline-less
 INGEST_ROBOT_STATES, EXPORT_ROBOT_ANALYTICS_SNAPSHOT   # robot runtime, pipeline-less
 BUILD_EPISODES, REGISTER_EPISODE                        # robot rosbag/MCAP -> episode
 VALIDATE_EPISODE, PROFILE_EPISODE                       # episode-level

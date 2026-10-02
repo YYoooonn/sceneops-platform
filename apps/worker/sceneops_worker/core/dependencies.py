@@ -9,7 +9,6 @@ from sceneops_worker.config import WorkerSettings, get_settings
 from sceneops_worker.core.context import RunStores, WorkerContext
 from sceneops_worker.datasets.artifacts import DatasetArtifactStore
 from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
-from sceneops_worker.robots.artifacts import RobotRunArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
@@ -79,10 +78,6 @@ def create_worker_context(
         run_artifact_store=RunArtifactStore(
             artifact_store=artifact_store,
             runs_root_uri=settings.run_root_uri,
-        ),
-        robot_run_artifact_store=RobotRunArtifactStore(
-            artifact_store=artifact_store,
-            robot_run_root_uri=settings.robot_run_root_uri,
         ),
         analytics_writer=AnalyticsTableWriter(
             artifact_store=artifact_store,

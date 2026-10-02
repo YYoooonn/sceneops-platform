@@ -16,6 +16,8 @@ nuScenes CAN bus data
        -> ROS2 topics -- /vehicle/odom, /vehicle/imu, /vehicle/status, /vehicle/control, /mission/status
             -> ros2 bag record --storage mcap
                  -> rosbag2/MCAP file
+                      -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
+                      -> POST /robot-runs:register -> REGISTER_ROBOT_RUN -> RobotRun (§3.2)
                       -> RosbagAdapter (apps/worker) -- decodes real CDR messages, no rclpy needed to read
                            +-> ingest_robot_states Job -> Postgres (RobotState, Mission)
                            |     -> export_robot_analytics_snapshot Job -> Parquet (Artifact Store)
@@ -102,29 +104,24 @@ behind that is nuScenes-mock or real MCAP. Same design payoff as
 `ArtifactStore` making storage-backend swaps code-change-free
 ([ADR-002](../adr/002-object-storage-for-assets.md)).
 
-Storage: rosbag/MCAP originals don't have a dedicated prefix in
-[Storage layout](../architecture/storage-layout.md) yet — the working
-convention, following `RawSourceSettings`' independent-root pattern for raw
-datasets, is `/data/raw/rosbag/{robot_id}/{run_id}.mcap` locally.
+Storage: locally recorded bags follow `RawSourceSettings`' independent-root
+convention (`/data/raw/rosbag/...`); a published recording lives under
+`{artifact root}/robot_runs/{run_id}/` (see
+[Storage layout](../architecture/storage-layout.md) §3).
 
 ### 3.1 Materialization: ArtifactStore-backed recordings
 
 `RosbagAdapter` stays storage-agnostic — it only ever opens a local
 filesystem path (`mcap.reader.make_reader(open(path, "rb"))`), never
-`s3://`, MinIO, `ArtifactStore`, or HTTP directly. A `RobotRun` whose
-`mcap_uri` is a local path (every example above, and every
-`ros2 bag record` recording) reaches `RosbagAdapter` completely
-unchanged, exactly as described in §3.
+`s3://`, MinIO, `ArtifactStore`, or HTTP directly. A local recording path
+reaches `RosbagAdapter` completely unchanged, exactly as described in §3.
 
-A `RobotRun` whose `mcap_uri` is ArtifactStore-backed instead (e.g. a
-Kafka-captured recording registered through `sceneops-worker robots
-register-capture` — durable capture, `ros2/capture/`, is a separate,
-independent path covered in
-[Streaming transport](../architecture/streaming-transport.md) Part 3) is
-materialized to a local file first:
+A RobotRun's recording lives in ArtifactStore (published by the Recording
+Publisher, §3.2), so Episode building materializes it to a local file
+first:
 
 ```text
-RobotRun.mcap_uri (ArtifactStore-backed, e.g. s3://...)
+RobotRun.recording_artifact_id -> recording ArtifactRecord.uri (e.g. s3://...)
   -> materialize_recording() (sceneops_worker.robots.materialization)
        -- reads the object via ArtifactStore.read_bytes(), writes it to
           an execution-scoped local temp file (Python's own
@@ -136,20 +133,17 @@ RobotRun.mcap_uri (ArtifactStore-backed, e.g. s3://...)
 
 **Canonical recording invariant.** `BuildEpisodesJobHandler`
 (`_extract_episode_source`) is the one caller wired to this today.
-Whenever a `robot_run_id` is given — local `mcap_uri` or
-ArtifactStore-backed alike — the referenced RobotRun's recording
-ArtifactRecord (`robot_run_recording_artifact_id`) is now **required**,
-and its checksum is verified against the bytes actually read
+Whenever a `robot_run_id` is given, the RobotRun's recording ArtifactRecord
+supplies the URI (unless an explicit `mcap_uri` overrides it) and its
+checksum is verified against the bytes actually read
 (`verify_local_recording_checksum` for a local path, `materialize_recording`'s
-own check otherwise). A RobotRun with no recording ArtifactRecord — e.g.
-one only ever registered through the bare-path, metadata-only `POST
-/robot-runs`/`register-run` surface (§6) — raises
-`RobotRunNotMaterializedError` rather than being silently trusted. A
-bare `mcap_uri` param with no `robot_run_id` at all (no RobotRun entity
-referenced) makes no canonical-recording claim and is unaffected.
-`IngestRobotStatesJobHandler`/`BuildScenesJobHandler` still assume a
-local `mcap_uri` and don't resolve this invariant — an ArtifactStore-backed
-RobotRun is not yet consumable through those two.
+own check otherwise). A missing recording ArtifactRecord is inconsistent
+canonical state and raises `RobotRunNotMaterializedError`. A bare
+`mcap_uri` param with no `robot_run_id` makes no canonical-recording claim
+and is not verified. `IngestRobotStatesJobHandler` reads the registered
+recording URI without materializing it, so with only `robot_run_id` it can
+read a local-backend recording but not an object-storage one; pass an
+explicit local `mcap_uri` alongside `robot_run_id` in that case (§6).
 
 **Lifecycle.** The materialized local copy is temporary and
 execution-scoped: it exists only for the duration of the `async with
@@ -174,18 +168,56 @@ Episode building for the same `RobotRun` (the existing job/pipeline
 `force`/idempotency semantics, unchanged) may materialize the recording
 again; that's an expected, cheap re-read, not a correctness concern.
 
+### 3.2 Publication and registration
+
+A RobotRun exists only for a recording that was published and verified
+(ADR-007 §7, §12):
+
+```text
+finalized local MCAP (ros2 bag record, or ros2/capture's CaptureResult.path)
+  -> python -m sceneops_integrations.recording publish     (DB-free, own process)
+       P1 validate MCAP, derive facts (time range, channels, counts), sha256 + size
+       P3 {robot_run_root}/{run_id}/recording.mcap            write-once, re-read + verified
+       P5 {robot_run_root}/{run_id}/robot_run_manifest.json   canonical RobotRunManifest v1, LAST
+  -> POST /robot-runs:register {"manifest_uri": ...}   (202, REGISTER_ROBOT_RUN Job)
+     or sceneops-worker robots register --manifest-uri ...  (same registrar, in-process)
+       verify manifest (strict, byte-canonical) + recording (exists, size, sha256, MCAP facts)
+       one transaction: Robot create / platform fill-once,
+                        ArtifactRecord(robot_run_recording), ArtifactRecord(robot_run_manifest),
+                        RobotRunRecord (immutable)
+```
+
+The manifest is the publication marker: a crash before it is written
+leaves no manifest, and a retry reuses the already-uploaded recording.
+Republishing identical inputs writes nothing; an existing key with
+different bytes is a hard conflict and is never overwritten. Registering
+the same manifest again is a no-op (`created=false`); a different manifest
+for a registered `run_id` fails, and so does a manifest `robot_platform`
+that contradicts the Robot's set platform. Registration never uploads,
+moves or rewrites bytes.
+
+`robot_run_root` defaults to the ArtifactSettings' `robot_run_root_uri`
+(`{artifact root}/robot_runs`); the publisher reads its ArtifactStore
+settings from `SCENEOPS_PUBLISHER_ARTIFACT__*`.
+
+Write-once enforcement is "check, write, re-read" on an ArtifactStore
+without conditional create. Two publishers racing on one `run_id` with
+different bytes are detected (post-write verification, registration and
+consumer checksums) rather than prevented; capture routing by
+`robot_run_id` provides the single-publisher assumption.
+
 ## 4. Entity relationships
 
 ```text
 Robot        robot_id, name, platform -- static metadata
-RobotRun     robot_id + raw_log_id, 1:1 -- "this robot's this run produced this raw log"
+RobotRun     run_id, robot_id -- one finalized recording; references its recording + manifest ArtifactRecords
 Mission      mission_id, robot_id, status -- referenced by RobotState.mission_id
 ```
 
 `RobotRun` is not the same concept as `PipelineRun` (see
 [Data model](../architecture/data-model.md) §5) — `PipelineRun` is a
 SceneOps-internal processing execution; `RobotRun` is a physical robot
-execution (one rosbag corresponds to one `RobotRun`).
+execution (one published recording corresponds to one `RobotRun`).
 
 `SceneRecord.parent_scene_id`/`lineage` (JSONB) is reused as-is to track
 which `RobotRun` a scene came from — no new lineage mechanism was built for
@@ -220,18 +252,22 @@ Or fully manually:
 ```bash
 make ros2-can-replay-record SCENE=scene-0061 RATE=5.0
 
-# Metadata-only registration -- fine ahead of ingest_robot_states, NOT
-# sufficient for Episode building (no ArtifactRecord is created):
-make worker-register-robot-run ROBOT_ID=robot-1 RUN_ID=run-1 MCAP_URI=/data/raw/rosbag/scene-0061/scene-0061_0.mcap
-# then dispatch `ingest_robot_states` via POST /api/v1/jobs, same as any other job
+# Publish (DB-free) -- prints {"manifest_uri": ..., ...}. Inside worker-cli,
+# map the worker's artifact settings to SCENEOPS_PUBLISHER_ARTIFACT__* (see
+# scripts/e2e/lib.sh publish_robot_run_recording):
+python -m sceneops_integrations.recording publish \
+  --mcap-path /data/raw/rosbag/scene-0061/scene-0061_0.mcap \
+  --run-id run-1 --robot-id robot-1 --robot-platform nuscenes-can-replay \
+  --source-kind ros2_bag
 
-# Canonical, artifact-backed registration -- required before a
-# raw_log_episode_building PipelineRun will accept this robot_run_id
-# (BuildEpisodesJobHandler raises RobotRunNotMaterializedError otherwise):
-docker compose run --rm worker-cli sceneops-worker robots register-capture \
-  --robot-id robot-1 --robot-run-id run-1 \
-  --mcap-path /data/raw/rosbag/scene-0061/scene-0061_0.mcap
-# then dispatch a raw_log_episode_building PipelineRun with the same robot_run_id, for episodes
+# Register (REGISTER_ROBOT_RUN Job; poll GET /api/v1/jobs/{job_id}):
+curl -X POST http://localhost:8000/api/v1/robot-runs:register \
+  -H 'Content-Type: application/json' -d '{"manifest_uri": "<manifest_uri>"}'
+# or: make worker-register-robot-run MANIFEST_URI=<manifest_uri>
+
+# then dispatch `ingest_robot_states` (robot_run_id + the local mcap_uri) via
+# POST /api/v1/jobs, or a raw_log_episode_building PipelineRun with the same
+# robot_run_id, for episodes
 ```
 
 Requires the nuScenes CAN bus expansion unzipped at
@@ -244,15 +280,16 @@ Everything else is self-contained in the `ros2/` Docker image.
   `PointCloud2` decode via CDR but `RawSensorFrameManifest.uri` stays empty
   — no camera/LiDAR-publishing ROS2 node exists yet to test a real write
   path against.
-- **No pre-registration flow for `Robot`/`RobotRun`.** `IngestRobotStatesJobHandler`
-  assumes both already exist in the DB. There's no dedicated API/CLI wizard
-  for creating them ahead of a CAN replay — today that's a direct `POST
-  /robots` + `POST /robot-runs` call, or `make worker-register-robot-run`.
-  Both are metadata-only (no upload, no checksum, no ArtifactRecord) and
-  exist only for this `ingest_robot_states`-adjacent use; a RobotRun
-  registered this way cannot be used as a materialization source by
-  Episode building (§3.1's canonical recording invariant) — use
-  `sceneops-worker robots register-capture` for that.
+- **Publication and registration are explicit steps.** Nothing triggers
+  the Recording Publisher from a finalized capture, or registration from a
+  published manifest; published-but-unregistered manifests are not
+  discovered automatically.
+- **Recording consumers do not yet share one verified resolver.**
+  `build_episodes` and `ingest_robot_states` still accept a bare `mcap_uri`
+  param that is read unverified, and `ingest_robot_states` with only
+  `robot_run_id` cannot read an object-storage recording (§3.1).
+- **Recordings are read whole into memory** by the publisher, registration
+  and materialization (`ArtifactStore.read_bytes`).
 - **`/vehicle/control` uses a JSON bridge, not a real `.msg` package** — a
   deliberate scope cut to avoid a `colcon` build step; revisit if real
   robot integration needs a first-class message type.

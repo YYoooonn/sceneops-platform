@@ -1222,10 +1222,10 @@ RunScopedCapture and a lifecycle-enabled bridge run can now coexist on
 
 The full chain from live telemetry through to a readable learning
 dataset is built: durable capture (Part 3) or continuous multi-run
-capture (Part 4) both close `Kafka -> MCAP`; canonical `RobotRun`
-registration (`sceneops-worker robots register-capture`,
-`docs/workflows/robot-run-and-mcap.md`) closes
-`MCAP -> ArtifactStore -> ArtifactRecord -> RobotRun`; and recording
+capture (Part 4) both close `Kafka -> MCAP`; the database-free Recording
+Publisher plus `REGISTER_ROBOT_RUN` (`docs/workflows/robot-run-and-mcap.md`
+§3.2) close `MCAP -> MCAP + RobotRunManifest -> ArtifactRecords + RobotRun`;
+and recording
 materialization (`sceneops_worker.robots.materialization`,
 `docs/workflows/robot-run-and-mcap.md` §3.1) closes
 `RobotRun -> existing Episode pipeline`, keeping `RosbagAdapter` itself
@@ -1234,18 +1234,20 @@ storage-agnostic throughout.
 ```text
 ROS2 / live robot -> stream envelope -> Kafka -> durable capture
   (Part 3, one run) or continuous capture (Part 4, many concurrent
-  runs) -> validated local MCAP -> RobotRun registration
+  runs) -> validated local MCAP -> Recording Publisher
+  -> REGISTER_ROBOT_RUN
   -> materialization -> existing Episode pipeline -> existing
   learning-data pipeline
 ```
 
-RobotRun registration today is a manual step -- `sceneops-worker robots
-register-capture` must be invoked explicitly against a finalized MCAP;
-nothing in the capture or router path triggers it automatically on
-finalize.
+Publication and registration are explicit steps today -- `python -m
+sceneops_integrations.recording publish` against a finalized MCAP, then
+`POST /robot-runs:register`; nothing in the capture or router path
+triggers either automatically on finalize. Capture itself stays DB-free
+and never writes RobotRun state.
 
 Not implemented: `IngestRobotStatesJobHandler`/`BuildScenesJobHandler`
-consuming an ArtifactStore-backed `RobotRun.mcap_uri` (only
+consuming an object-storage RobotRun recording (only
 `BuildEpisodesJobHandler` materializes today).
 
 Reliability and scale characteristics of everything above -- crash
@@ -1262,9 +1264,9 @@ Not built, not started, not partially wired -- listed so a future pass
 doesn't mistake absence for a bug:
 
 ```text
-Automatic triggering of RobotRun registration from a finalized capture
-  (the mechanism exists -- sceneops-worker robots register-capture --
-  but nothing invokes it without an explicit operator/caller step, §34)
+Automatic publication/registration of a finalized capture
+  (the mechanism exists -- Recording Publisher + POST /robot-runs:register
+  -- but nothing invokes it without an explicit operator/caller step, §34)
 Episode generation from streamed data
 Any Postgres/ArtifactStore write from the streaming or capture path
 Kafka Connect, Schema Registry, Avro

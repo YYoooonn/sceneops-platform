@@ -6,7 +6,7 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
-from .enums import MissionStatus, RobotOperationState, RobotRunStatus, RobotStatus
+from .enums import MissionStatus, RobotOperationState, RobotStatus
 
 
 class RobotRecord(SceneOpsBaseModel):
@@ -23,32 +23,32 @@ class RobotRecord(SceneOpsBaseModel):
 
 
 class RobotRunRecord(SceneOpsBaseModel):
-    """One physical recording session for a robot (maps to one rosbag2/MCAP file).
+    """Immutable, searchable projection of one finalized, published and
+    verified robot recording (ADR-007 §10).
 
-    Distinct from ``PipelineRun`` (a SceneOps-internal processing execution) — a
-    RobotRun is the real-world execution that produces the raw data a pipeline
-    later ingests. See docs/architecture/data-model.md §5.
+    Existence means the recording is finalized, durably published and
+    verified -- there is no lifecycle status. Created only by
+    ``REGISTER_ROBOT_RUN`` and never updated afterwards. Recording URI,
+    checksum and size live only on the recording ArtifactRecord; the full
+    source facts (channels, capture source) live only in the
+    RobotRunManifest. Not a DatasetVersion member.
     """
 
     run_id: str
     robot_id: str
 
-    status: RobotRunStatus = RobotRunStatus.RECORDING
+    started_at: datetime
+    ended_at: datetime
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-    raw_log_id: str | None = None
+    recording_format: str
+    source_clock: str
 
-    rosbag_uri: str | None = None
-    mcap_uri: str | None = None
+    recording_artifact_id: str
+    manifest_artifact_id: str
+    manifest_checksum: str
 
-    started_at: datetime | None = None
-    ended_at: datetime | None = None
-
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-
-    metadata: JsonDict = Field(default_factory=dict)
+    # DB insert time; not a manifest field.
+    registered_at: datetime | None = None
 
 
 class MissionRecord(SceneOpsBaseModel):

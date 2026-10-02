@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -60,6 +61,23 @@ def _write_mcap(path: str, messages: list[tuple[str, int, dict, str]]) -> None:
                 publish_time=log_time,
             )
         writer.finish()
+
+
+_REMOTE_URI = "s3://sceneops/artifacts/robot_runs/run-1/recording.mcap"
+
+
+def _robot_run() -> RobotRunRecord:
+    return RobotRunRecord(
+        run_id="run-1",
+        robot_id="robot-1",
+        started_at=datetime(2026, 1, 1, tzinfo=UTC),
+        ended_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+        recording_format="mcap",
+        source_clock="mcap_log_time",
+        recording_artifact_id="art-robotrun-run-1",
+        manifest_artifact_id="art-robotrunmanifest-run-1",
+        manifest_checksum="sha256:" + "1" * 64,
+    )
 
 
 def _sha256(data: bytes) -> str:
@@ -157,15 +175,8 @@ async def test_remote_mcap_uri_verifies_robot_run_artifact_checksum(tmp_path) ->
     data = _fixture_mcap_bytes(tmp_path)
     context = _make_context()
     context.artifact_store.read_bytes = AsyncMock(return_value=data)
-    context.robot_store.get_run = AsyncMock(
-        return_value=RobotRunRecord(
-            run_id="run-1",
-            robot_id="robot-1",
-            mcap_uri="s3://sceneops/artifacts/robot_runs/run-1/run-1.mcap",
-        )
-    )
-    context.robot_store.save_run = AsyncMock()
-    matching_artifact = MagicMock(checksum=_sha256(data))
+    context.robot_store.get_run = AsyncMock(return_value=_robot_run())
+    matching_artifact = MagicMock(checksum=_sha256(data), uri=_REMOTE_URI)
     context.artifact_record_store.get = AsyncMock(return_value=matching_artifact)
 
     job = JobManifest(
@@ -179,27 +190,21 @@ async def test_remote_mcap_uri_verifies_robot_run_artifact_checksum(tmp_path) ->
     result = await BuildEpisodesJobHandler().run(request)
 
     assert result.episode_count == 1
-    context.artifact_record_store.get.assert_awaited_once_with("art-robotrun-run-1")
+    assert {c.args for c in context.artifact_record_store.get.await_args_list} == {
+        ("art-robotrun-run-1",)
+    }
 
 
 async def test_remote_mcap_uri_with_robot_run_id_missing_artifact_raises(
     tmp_path,
 ) -> None:
-    """A robot_run_id was given, but its RobotRun has no registered
-    recording ArtifactRecord (e.g. it only went through the bare-path,
-    metadata-only POST /robot-runs/register-run surface) -- this must now
-    raise, never silently skip verification just because no artifact was
-    found."""
+    """A robot_run_id was given, but the recording ArtifactRecord its
+    RobotRunRecord references is missing (inconsistent canonical state) --
+    this must raise, never silently skip verification."""
     data = _fixture_mcap_bytes(tmp_path)
     context = _make_context()
     context.artifact_store.read_bytes = AsyncMock(return_value=data)
-    context.robot_store.get_run = AsyncMock(
-        return_value=RobotRunRecord(
-            run_id="run-1",
-            robot_id="robot-1",
-            mcap_uri="s3://sceneops/artifacts/robot_runs/run-1/run-1.mcap",
-        )
-    )
+    context.robot_store.get_run = AsyncMock(return_value=_robot_run())
     context.artifact_record_store.get = AsyncMock(return_value=None)
 
     job = JobManifest(
@@ -226,14 +231,8 @@ async def test_remote_mcap_uri_checksum_mismatch_raises_before_writing_anything(
     data = _fixture_mcap_bytes(tmp_path)
     context = _make_context()
     context.artifact_store.read_bytes = AsyncMock(return_value=data)
-    context.robot_store.get_run = AsyncMock(
-        return_value=RobotRunRecord(
-            run_id="run-1",
-            robot_id="robot-1",
-            mcap_uri="s3://sceneops/artifacts/robot_runs/run-1/run-1.mcap",
-        )
-    )
-    mismatched_artifact = MagicMock(checksum="sha256:" + "0" * 64)
+    context.robot_store.get_run = AsyncMock(return_value=_robot_run())
+    mismatched_artifact = MagicMock(checksum="sha256:" + "0" * 64, uri=_REMOTE_URI)
     context.artifact_record_store.get = AsyncMock(return_value=mismatched_artifact)
 
     job = JobManifest(
@@ -252,28 +251,23 @@ async def test_remote_mcap_uri_checksum_mismatch_raises_before_writing_anything(
     context.commit.assert_not_called()
 
 
-# ── robot_run_id + local mcap_uri: the exact gap this audit closed --
-#    previously a local RobotRun.mcap_uri was trusted unconditionally,
-#    with no ArtifactRecord check at all. ────────────────────────────────
+# ── robot_run_id + local recording URI: the bytes read are verified
+#    against the registered recording ArtifactRecord checksum, local or
+#    remote alike. ──────────────────────────────────────────────────────
 
 
 async def test_local_mcap_uri_with_robot_run_id_requires_registered_artifact(
     tmp_path,
 ) -> None:
-    """A robot_run_id was given and resolves to a LOCAL mcap_uri (e.g. a
-    bare-path-registered RobotRun, or one that predates artifact-backed
-    registration) -- must now raise rather than silently trusting the
-    path, exactly like the remote-URI case above."""
+    """A robot_run_id whose recording ArtifactRecord is missing must raise
+    rather than fall back to any path, exactly like the remote-URI case
+    above."""
     bag_path = str(tmp_path / "run.mcap")
     with open(bag_path, "wb") as f:
         f.write(_fixture_mcap_bytes(tmp_path))
 
     context = _make_context()
-    context.robot_store.get_run = AsyncMock(
-        return_value=RobotRunRecord(
-            run_id="run-1", robot_id="robot-1", mcap_uri=bag_path
-        )
-    )
+    context.robot_store.get_run = AsyncMock(return_value=_robot_run())
     context.artifact_record_store.get = AsyncMock(return_value=None)
 
     job = JobManifest(
@@ -306,13 +300,8 @@ async def test_local_mcap_uri_with_robot_run_id_and_matching_artifact_succeeds(
         f.write(data)
 
     context = _make_context()
-    context.robot_store.get_run = AsyncMock(
-        return_value=RobotRunRecord(
-            run_id="run-1", robot_id="robot-1", mcap_uri=bag_path
-        )
-    )
-    context.robot_store.save_run = AsyncMock()
-    matching_artifact = MagicMock(checksum=_sha256(data))
+    context.robot_store.get_run = AsyncMock(return_value=_robot_run())
+    matching_artifact = MagicMock(checksum=_sha256(data), uri=bag_path)
     context.artifact_record_store.get = AsyncMock(return_value=matching_artifact)
 
     job = JobManifest(
@@ -328,7 +317,9 @@ async def test_local_mcap_uri_with_robot_run_id_and_matching_artifact_succeeds(
     result = await BuildEpisodesJobHandler().run(request)
 
     assert result.episode_count == 1
-    context.artifact_record_store.get.assert_awaited_once_with("art-robotrun-run-1")
+    assert {c.args for c in context.artifact_record_store.get.await_args_list} == {
+        ("art-robotrun-run-1",)
+    }
 
 
 async def test_local_mcap_uri_with_robot_run_id_checksum_mismatch_raises(
@@ -343,12 +334,8 @@ async def test_local_mcap_uri_with_robot_run_id_checksum_mismatch_raises(
         f.write(data)
 
     context = _make_context()
-    context.robot_store.get_run = AsyncMock(
-        return_value=RobotRunRecord(
-            run_id="run-1", robot_id="robot-1", mcap_uri=bag_path
-        )
-    )
-    mismatched_artifact = MagicMock(checksum="sha256:" + "0" * 64)
+    context.robot_store.get_run = AsyncMock(return_value=_robot_run())
+    mismatched_artifact = MagicMock(checksum="sha256:" + "0" * 64, uri=bag_path)
     context.artifact_record_store.get = AsyncMock(return_value=mismatched_artifact)
 
     job = JobManifest(

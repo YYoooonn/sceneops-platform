@@ -1,31 +1,33 @@
 #!/usr/bin/env bash
 # e2e_robot_run_registration.sh — real-data E2E: nuScenes CAN replay ->
-# ROS2 -> Kafka -> durable MCAP capture (ros2/capture/) -> ArtifactStore
-# (real MinIO) -> ArtifactRecord -> canonical RobotRun (real Postgres) ->
-# retrieve stored MCAP -> RosbagAdapter, plus idempotent-retry and
-# conflict verification.
+# ROS2 -> Kafka -> durable MCAP capture (ros2/capture/) -> database-free
+# Recording Publisher (MCAP + canonical RobotRunManifest, real MinIO) ->
+# REGISTER_ROBOT_RUN via POST /robot-runs:register (ArtifactRecords +
+# immutable RobotRunRecord, real Postgres), plus idempotent-retry and
+# write-once conflict verification.
 #
 # Six stages:
 #   1. Real CAN replay -> ROS2 -> bridge -> Kafka (same pattern as
 #      e2e_ros2_streaming.sh / e2e_streaming_capture.sh).
 #   2. Durable MCAP capture (ros2/capture/cli.py) -> finalized local MCAP
 #      + CaptureResult.
-#   3. Register: `sceneops-worker robots register-capture` (worker-cli,
-#      real Postgres + real MinIO from .env.local -- the worker's normal
-#      configured backend, not a test double).
+#   3. Publish (python -m sceneops_integrations.recording, its own process)
+#      then register (POST /robot-runs:register -> REGISTER_ROBOT_RUN Job).
 #   4. Host-side verification (scripts/e2e/robot_run_registration_verify.py,
 #      `uv run`) -- independently re-derives canonical state from
-#      Postgres/MinIO directly, retrieves the stored MCAP, and opens it
-#      through RosbagAdapter.
-#   5. Idempotent retry: register the SAME file again -- must report
-#      created=False and leave canonical state unchanged.
-#   6. Conflict: register a DIFFERENT (real, valid) MCAP under the SAME
-#      robot_run_id -- must fail without mutating existing state. Uses
-#      the canonical baseline's own data/raw/rosbag/scene-0061/
-#      scene-0061_0.mcap, read-only.
+#      Postgres/MinIO, re-checks the manifest's canonical form and the
+#      recording checksum, and opens the stored MCAP through RosbagAdapter.
+#   5. Idempotent retry: publish + register the SAME file again -- the
+#      publisher writes nothing and the registration Job reports
+#      created=false.
+#   6. Conflict: publish a DIFFERENT (real, valid) MCAP under the SAME
+#      run id -- the publisher must refuse (write-once key) and canonical
+#      state must be unchanged. Uses the canonical baseline's own
+#      data/raw/rosbag/scene-0061/scene-0061_0.mcap, read-only.
 #
 # Prerequisites (this script does not do either of these for you):
-#   make local-up       # Postgres + MinIO + api (+ worker-cli's deps)
+#   make local-up       # Postgres + MinIO + api + workers (images built
+#                       # from the current tree)
 #   make streaming-up   # local Kafka broker
 #
 # Usage:
@@ -37,6 +39,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
+source "$SCRIPT_DIR/lib.sh"
+
+API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 
 SCENE="${SCENE:-scene-0061}"
 RATE="${RATE:-10.0}"
@@ -88,11 +93,7 @@ $COMPOSE --profile ros2 run --rm ros2 python3 /workspace/capture/cli.py \
 echo ""
 
 CAPTURE_MESSAGE_COUNT="$(grep -oE 'message_count=[0-9]+' "$CAPTURE_LOG" | tail -1 | cut -d= -f2)"
-CAPTURE_PARTITION="$(grep -oE 'partition=[0-9]+' "$CAPTURE_LOG" | tail -1 | cut -d= -f2)"
-CAPTURE_FIRST_OFFSET="$(grep -oE 'first_offset=[0-9]+' "$CAPTURE_LOG" | tail -1 | cut -d= -f2)"
-CAPTURE_LAST_OFFSET="$(grep -oE 'last_offset=[0-9]+' "$CAPTURE_LOG" | tail -1 | cut -d= -f2)"
 CAPTURE_FIRST_SEQ="$(grep -oE 'first_sequence=[0-9]+' "$CAPTURE_LOG" | tail -1 | cut -d= -f2)"
-CAPTURE_LAST_SEQ="$(grep -oE 'last_sequence=[0-9]+' "$CAPTURE_LOG" | tail -1 | cut -d= -f2)"
 CAPTURE_SHA256="$(grep -oE 'sha256=[0-9a-f]+' "$CAPTURE_LOG" | tail -1 | cut -d= -f2)"
 
 if [ "$CAPTURE_FIRST_SEQ" != "0" ] || [ "$CAPTURE_MESSAGE_COUNT" != "$PUBLISHED_COUNT" ] || [ -z "$CAPTURE_SHA256" ]; then
@@ -104,62 +105,76 @@ echo ""
 
 MCAP_PATH="$CAPTURED_ROOT/$ROBOT_RUN_ID/${ROBOT_RUN_ID}_0.mcap"
 EXPECTED_CHECKSUM="sha256:$CAPTURE_SHA256"
-CAPTURE_METADATA_JSON=$(printf '{"topic":"sceneops.robot.telemetry.v1","partition":%s,"first_offset":%s,"last_offset":%s,"first_sequence":%s,"last_sequence":%s,"message_count":%s}' \
-  "$CAPTURE_PARTITION" "$CAPTURE_FIRST_OFFSET" "$CAPTURE_LAST_OFFSET" "$CAPTURE_FIRST_SEQ" "$CAPTURE_LAST_SEQ" "$CAPTURE_MESSAGE_COUNT")
+KAFKA_TOPIC="sceneops.robot.telemetry.v1"
 
-echo "=== [3/6] register: ArtifactStore + ArtifactRecord + RobotRun (real Postgres + MinIO) ==="
-$COMPOSE --profile debug --profile worker run --rm worker-cli \
-  sceneops-worker robots register-capture \
-  --robot-id "$ROBOT_ID" --robot-run-id "$ROBOT_RUN_ID" \
-  --mcap-path "$MCAP_PATH" \
-  --capture-metadata-json "$CAPTURE_METADATA_JSON"
+echo "=== [3/6] publish (MinIO) + REGISTER_ROBOT_RUN (Postgres) ==="
+PUBLICATION="$(publish_robot_run_recording "$REPO_ROOT" "$ROBOT_ID" "$ROBOT_RUN_ID" \
+  "$MCAP_PATH" kafka "nuscenes-can-replay" "$KAFKA_TOPIC")"
+echo "  publication: $PUBLICATION"
+MANIFEST_URI="$(echo "$PUBLICATION" | jq -r '.manifest_uri')"
+JOB_JSON="$(register_robot_run "$API_BASE_URL" "$MANIFEST_URI")"
+assert_job_succeeded "$JOB_JSON" "REGISTER_ROBOT_RUN should succeed"
+echo "$JOB_JSON" | jq '.job.result'
+[ "$(echo "$JOB_JSON" | jq -r '.job.result.created')" = "true" ] || {
+  echo "❌ first registration did not report created=true" >&2
+  exit 1
+}
 echo ""
 
 echo "=== [4/6] host-side verification (real Postgres + MinIO, RosbagAdapter) ==="
-# Host-side overrides for the same real Postgres/MinIO the registration
-# stage above just wrote to, reached via their host-published local-stack
-# ports rather than in-network service names -- mirrors
-# makefiles/setup.mk's own test-integration env var convention and
-# smoke_streaming.sh's identical host-vs-in-network split.
+# Host-side overrides for the same real Postgres/MinIO the stages above
+# wrote to, via their host-published local-stack ports (same convention as
+# makefiles/setup.mk's test-integration).
 SCENEOPS_DATABASE_URL="postgresql+asyncpg://sceneops:sceneops@localhost:${POSTGRES_PORT:-5432}/sceneops" \
 MINIO_API_PORT="${MINIO_API_PORT:-9000}" \
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}" \
 MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}" \
 uv run python scripts/e2e/robot_run_registration_verify.py \
   --robot-id "$ROBOT_ID" --robot-run-id "$ROBOT_RUN_ID" \
-  --expected-checksum "$EXPECTED_CHECKSUM"
+  --manifest-uri "$MANIFEST_URI" \
+  --expected-checksum "$EXPECTED_CHECKSUM" \
+  --expected-topic "$KAFKA_TOPIC"
 echo ""
 
-echo "=== [5/6] idempotent retry (same file, same robot_run_id) ==="
-RETRY_LOG="$(mktemp)"
-trap 'rm -f "$BRIDGE_LOG" "$CAPTURE_LOG" "$RETRY_LOG"' EXIT
-$COMPOSE --profile debug --profile worker run --rm worker-cli \
-  sceneops-worker robots register-capture \
-  --robot-id "$ROBOT_ID" --robot-run-id "$ROBOT_RUN_ID" \
-  --mcap-path "$MCAP_PATH" \
-  2>&1 | tee "$RETRY_LOG"
-
-if ! grep -q "created=False" "$RETRY_LOG"; then
-  echo "❌ idempotent retry did not report created=False -- see $RETRY_LOG" >&2
+echo "=== [5/6] idempotent retry (same file, same run id) ==="
+RETRY_PUBLICATION="$(publish_robot_run_recording "$REPO_ROOT" "$ROBOT_ID" "$ROBOT_RUN_ID" \
+  "$MCAP_PATH" kafka "nuscenes-can-replay" "$KAFKA_TOPIC")"
+echo "  publication: $RETRY_PUBLICATION"
+if [ "$(echo "$RETRY_PUBLICATION" | jq -r '.recording_written, .manifest_written' | sort -u)" != "false" ]; then
+  echo "❌ identical republish wrote objects again" >&2
   exit 1
 fi
-echo "  ✅  idempotent retry correctly created nothing new"
+RETRY_JOB_JSON="$(register_robot_run "$API_BASE_URL" "$MANIFEST_URI")"
+assert_job_succeeded "$RETRY_JOB_JSON" "identical re-registration should succeed"
+[ "$(echo "$RETRY_JOB_JSON" | jq -r '.job.result.created')" = "false" ] || {
+  echo "❌ identical re-registration did not report created=false" >&2
+  exit 1
+}
+echo "  ✅  identical retry wrote and registered nothing new"
 echo ""
 
-echo "=== [6/6] conflict: different (real) MCAP under the same robot_run_id ==="
+echo "=== [6/6] conflict: different (real) MCAP under the same run id ==="
 CONFLICT_MCAP="$REPO_ROOT/data/raw/rosbag/scene-0061/scene-0061_0.mcap"
 if [ ! -f "$CONFLICT_MCAP" ]; then
   echo "  (skip) canonical baseline fixture not present at $CONFLICT_MCAP"
 else
-  if $COMPOSE --profile debug --profile worker run --rm worker-cli \
-    sceneops-worker robots register-capture \
-    --robot-id "$ROBOT_ID" --robot-run-id "$ROBOT_RUN_ID" \
-    --mcap-path "/data/raw/rosbag/scene-0061/scene-0061_0.mcap"; then
-    echo "❌ conflicting registration (same robot_run_id, different checksum) unexpectedly succeeded" >&2
+  if publish_robot_run_recording "$REPO_ROOT" "$ROBOT_ID" "$ROBOT_RUN_ID" \
+    "/data/raw/rosbag/scene-0061/scene-0061_0.mcap" kafka "nuscenes-can-replay" \
+    "$KAFKA_TOPIC"; then
+    echo "❌ conflicting publication (same run id, different bytes) unexpectedly succeeded" >&2
     exit 1
   fi
-  echo "  ✅  conflicting registration correctly refused (see traceback above)"
+  echo "  ✅  conflicting publication correctly refused (see error above)"
+  SCENEOPS_DATABASE_URL="postgresql+asyncpg://sceneops:sceneops@localhost:${POSTGRES_PORT:-5432}/sceneops" \
+  MINIO_API_PORT="${MINIO_API_PORT:-9000}" \
+  MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}" \
+  MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}" \
+  uv run python scripts/e2e/robot_run_registration_verify.py \
+    --robot-id "$ROBOT_ID" --robot-run-id "$ROBOT_RUN_ID" \
+    --manifest-uri "$MANIFEST_URI" \
+    --expected-checksum "$EXPECTED_CHECKSUM" \
+    --expected-topic "$KAFKA_TOPIC"
 fi
 
 echo ""
-echo "=== RobotRun registration E2E complete ==="
+echo "=== RobotRun publication + registration E2E complete ==="

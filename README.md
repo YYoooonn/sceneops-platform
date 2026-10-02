@@ -471,7 +471,10 @@ Or step by step:
 
 ```bash
 make ros2-can-replay-record SCENE=scene-0061 RATE=5.0
-make worker-register-robot-run ROBOT_ID=robot-1 RUN_ID=run-1 MCAP_URI=/data/raw/rosbag/scene-0061/scene-0061_0.mcap
+# publish the MCAP + RobotRunManifest (DB-free), then REGISTER_ROBOT_RUN:
+python -m sceneops_integrations.recording publish --mcap-path /data/raw/rosbag/scene-0061/scene-0061_0.mcap \
+  --run-id run-1 --robot-id robot-1 --source-kind ros2_bag
+make worker-register-robot-run MANIFEST_URI=<manifest_uri>   # or POST /api/v1/robot-runs:register
 # then dispatch `ingest_robot_states` via POST /api/v1/jobs, same as any other job
 ```
 
@@ -590,7 +593,7 @@ GET  /api/v1/models/{model_id}/versions/{v}
 
 # Robots (v2)
 POST /api/v1/robots
-POST /api/v1/robot-runs
+POST /api/v1/robot-runs:register                       # {manifest_uri} -> REGISTER_ROBOT_RUN Job
 GET  /api/v1/missions?robot_run_id={id}
 GET  /api/v1/robot-states?robot_run_id={id}
 
@@ -734,7 +737,7 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | `make ros2-check` | Smoke-test `rclpy` import + MCAP storage plugin |
 | `make ros2-can-replay SCENE=scene-0061 RATE=10.0` | Replay nuScenes CAN data as ROS2 topics (no recording) |
 | `make ros2-can-replay-record SCENE=scene-0061 RATE=5.0 DURATION=30` | Same, recorded to `data/raw/rosbag/<scene>/` as MCAP |
-| `make worker-register-robot-run ROBOT_ID=.. RUN_ID=.. MCAP_URI=..` | Register a Robot + RobotRun via CLI (alternative to `POST /robots`) — metadata-only, no ArtifactRecord; not usable as an Episode-building materialization source, see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) §3.1/§6 |
+| `make worker-register-robot-run MANIFEST_URI=..` | `REGISTER_ROBOT_RUN` for a RobotRunManifest published by `python -m sceneops_integrations.recording publish` (same registrar as `POST /robot-runs:register`), see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) §3.2 |
 
 
 ---
@@ -761,7 +764,7 @@ sceneops-platform/
 │           ├── evaluation/detection/  # CenterDistanceDetectionEvaluator, accumulator
 │           ├── inference/          # mock / ONNX / GroundingDINO + frustum-lift backends
 │           ├── stores/robots.py    # RobotStore (v2)
-│           ├── cli/robots.py       # `sceneops-worker robots register-run` (v2)
+│           ├── cli/robots.py       # `sceneops-worker robots register --manifest-uri` (v2)
 │           ├── core/               # WorkerContext, stores, DI
 │           ├── execution/          # Celery app factory, job dispatcher
 │           └── tests/              # unit tests
@@ -810,7 +813,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * The Airflow pipeline backend is a per-task DAG PoC hardcoded to `dataset_scene_ingestion`; other pipeline types still only run through Celery.
 * **(v2)** Binary sensor payloads (`sensor_msgs/Image`, `PointCloud2`) decode via CDR but aren't written to files yet — no real camera/LiDAR-publishing ROS2 node exists to test against.
 * **(v2)** `/vehicle/control` and `/mission/status` use a `std_msgs/String` + JSON bridge, not a proper custom `.msg` package (would need a `colcon` build step).
-* **(v2)** Streamed telemetry does feed MCAP and canonical `RobotRun` registration now (Kafka transport → ROS2 bridge → durable MCAP capture, single-run or continuous multi-run → `sceneops-worker robots register-capture` → existing Episode pipeline), but there is still no live robot control, no automatic trigger from a finalized capture into registration (it is an explicit CLI step), and no process-restart or Kafka-rebalance recovery for continuous multi-run capture; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) and `docs/adr/005-ros2-vs-kafka-boundary.md` for the current contract.
+* **(v2)** Streamed telemetry does feed MCAP and canonical `RobotRun` registration now (Kafka transport → ROS2 bridge → durable MCAP capture, single-run or continuous multi-run → Recording Publisher → `REGISTER_ROBOT_RUN` → existing Episode pipeline), but there is still no live robot control, no automatic trigger from a finalized capture into registration (publication and registration are explicit steps), and no process-restart or Kafka-rebalance recovery for continuous multi-run capture; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) and `docs/adr/005-ros2-vs-kafka-boundary.md` for the current contract.
 * **(v2)** DuckDB queries only work against locally-downloaded Parquet files; querying S3/MinIO-backed artifacts directly would need DuckDB's httpfs/S3 extension, which isn't wired up.
 
 ### Roadmap
@@ -826,7 +829,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * Cloud object storage hardening, including stronger artifact lifecycle and integrity checks.
 * **(v2)** Write decoded camera/LiDAR payloads to the Artifact Store and wire `RosbagAdapter` into `build_scenes` for full `SceneRecord` registration from robot data, not just `RobotState`/`Mission`.
 * **(v2)** A real custom ROS2 `.msg` package for `/vehicle/control` and `/mission/status`, replacing the JSON-over-`std_msgs/String` bridge.
-* **(v2)** Automatic triggering of `RobotRun` registration from a finalized streamed capture (today a manual `sceneops-worker robots register-capture` step), process-restart and Kafka-rebalance recovery for continuous multi-run capture, and eventual live robot control as its own service — not `apps/worker`. The Kafka telemetry transport, ROS2 → Kafka streaming bridge, durable MCAP capture (single-run and continuous multi-run, with capture-session lifecycle), and canonical `RobotRun` registration are all done — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md).
+* **(v2)** Automatic triggering of `RobotRun` registration from a finalized streamed capture (today explicit publish + `POST /robot-runs:register` steps), process-restart and Kafka-rebalance recovery for continuous multi-run capture, and eventual live robot control as its own service — not `apps/worker`. The Kafka telemetry transport, ROS2 → Kafka streaming bridge, durable MCAP capture (single-run and continuous multi-run, with capture-session lifecycle), and canonical `RobotRun` registration are all done — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md).
 * **(v2)** Scale-testing with synthetic multi-robot telemetry (N virtual robots, robot-fleet/mission-ingestion throughput — unrelated to the completed learning-data "Phase 5" scaling work below) to compare local (Polars/DuckDB) vs. distributed (Spark) processing for that ingestion path specifically. (This is a distinct, still-open roadmap item, not to be confused with the learning-data storage/access "Phase 5" work, which already measured its own single-node-vs-distributed boundary and concluded Spark is not currently justified there — see [Scalable learning data](docs/architecture/scalable-learning-data.md) §10.)
 
 ---

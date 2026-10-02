@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.robots.schemas import (
@@ -8,7 +9,6 @@ from sceneops_core.robots.schemas import (
     MissionStatus,
     RobotRecord,
     RobotRunRecord,
-    RobotRunStatus,
     RobotStateRecord,
     RobotStatus,
 )
@@ -56,6 +56,32 @@ class PostgresRobotRepository:
         model = result.scalar_one_or_none()
         return robot_model_to_record(model) if model is not None else None
 
+    async def create_if_absent(self, robot: RobotRecord) -> None:
+        """INSERT ... ON CONFLICT DO NOTHING. A concurrent insert of the
+        same robot_id blocks until that transaction finishes, so the row is
+        guaranteed to exist (for this transaction) once this returns."""
+        values = robot_record_to_values(robot)
+        values["metadata"] = values.pop("metadata_")
+        stmt = (
+            pg_insert(RobotModel.__table__)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["robot_id"])
+        )
+        await self._session.execute(stmt)
+
+    async def get_for_update(self, robot_id: str) -> RobotRecord | None:
+        """SELECT ... FOR UPDATE: serializes read-modify-write of one Robot
+        (e.g. the fill-once platform rule) across concurrent transactions."""
+        stmt = (
+            select(RobotModel)
+            .where(RobotModel.robot_id == robot_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return robot_model_to_record(model) if model is not None else None
+
     async def update(self, robot: RobotRecord) -> RobotRecord:
         stmt = select(RobotModel).where(RobotModel.robot_id == robot.robot_id)
         result = await self._session.execute(stmt)
@@ -85,21 +111,19 @@ class PostgresRobotRepository:
 
 
 class PostgresRobotRunRepository:
+    """Insert-only: a RobotRunRecord is immutable after registration."""
+
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def create(self, run: RobotRunRecord) -> RobotRunRecord:
+        """Raises IntegrityError on an existing run_id rather than
+        overwriting it."""
         model = RobotRunModel(**robot_run_record_to_values(run))
         self._session.add(model)
         await self._session.flush()
         await self._session.refresh(model)
         return robot_run_model_to_record(model)
-
-    async def upsert(self, run: RobotRunRecord) -> RobotRunRecord:
-        existing = await self.get(run.run_id)
-        if existing is None:
-            return await self.create(run)
-        return await self.update(run)
 
     async def get(self, run_id: str) -> RobotRunRecord | None:
         stmt = select(RobotRunModel).where(RobotRunModel.run_id == run_id)
@@ -107,32 +131,20 @@ class PostgresRobotRunRepository:
         model = result.scalar_one_or_none()
         return robot_run_model_to_record(model) if model is not None else None
 
-    async def update(self, run: RobotRunRecord) -> RobotRunRecord:
-        stmt = select(RobotRunModel).where(RobotRunModel.run_id == run.run_id)
-        result = await self._session.execute(stmt)
-        model = result.scalar_one_or_none()
-        if model is None:
-            raise ValueError(f"RobotRun not found: {run.run_id}")
-        apply_values(model, robot_run_record_to_values(run))
-        await self._session.flush()
-        await self._session.refresh(model)
-        return robot_run_model_to_record(model)
-
     async def list(
         self,
         *,
         robot_id: str | None = None,
-        status: RobotRunStatus | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[RobotRunRecord]:
         stmt = select(RobotRunModel)
         if robot_id is not None:
             stmt = stmt.where(RobotRunModel.robot_id == robot_id)
-        if status is not None:
-            stmt = stmt.where(RobotRunModel.status == enum_value(status))
         stmt = apply_pagination(
-            stmt.order_by(RobotRunModel.created_at.desc()), limit=limit, offset=offset
+            stmt.order_by(RobotRunModel.registered_at.desc()),
+            limit=limit,
+            offset=offset,
         )
         result = await self._session.execute(stmt)
         return [robot_run_model_to_record(m) for m in result.scalars().all()]

@@ -432,53 +432,89 @@ upsert_robot() {
     -d "{\"robot_id\": \"$robot_id\", \"platform\": \"$platform\"}"
 }
 
-# Metadata-only RobotRun registration (POST /robot-runs) -- no upload, no
-# checksum, no ArtifactRecord. Only safe for flows that never materialize
-# the recording through build_episodes (e.g. ingest_robot_states, see
-# e2e_robot_can_replay.sh). Episode-building callers must use
-# register_robot_run_capture() below instead -- build_episodes now
-# requires a registered recording ArtifactRecord for any robot_run_id it
-# resolves (RobotRunNotMaterializedError otherwise).
-upsert_robot_run() {
-  local api_base_url="$1"
-  local run_id="$2"
-  local robot_id="$3"
-  local mcap_uri="$4"
-
-  local existing
-  existing="$(curl -sS "$(api_url "$api_base_url" "/robot-runs/$run_id")")"
-
-  if echo "$existing" | jq -e '.robotRun' >/dev/null 2>&1; then
-    echo "$existing"
-    return 0
-  fi
-
-  curl -sS -X POST "$(api_url "$api_base_url" "/robot-runs")" \
-    -H "Content-Type: application/json" \
-    -d "{\"run_id\": \"$run_id\", \"robot_id\": \"$robot_id\", \"mcap_uri\": \"$mcap_uri\"}"
-}
-
-# Canonical, artifact-backed RobotRun registration: registers a finalized
-# local MCAP via the real worker-cli `register-capture` command
-# (ArtifactStore upload/verify + ArtifactRecord + RobotRun, atomically,
-# checksum-verified) -- the same command e2e_robot_run_registration.sh
-# already exercises directly (see apps/worker/sceneops_worker/cli/robots.py,
-# apps/worker/sceneops_worker/robots/registration.py). Idempotent: an exact
-# retry (same robot_run_id, same file content) reports created=False and
-# creates nothing new. mcap_path must be a path visible inside the
-# worker-cli container (the repo's bind-mounted ./data:/data, same
-# convention as every other container-internal MCAP path in these scripts).
-register_robot_run_capture() {
+# Canonical RobotRun creation (ADR-007 §7, §12): publish a finalized local
+# MCAP + its RobotRunManifest with the database-free Recording Publisher,
+# then submit REGISTER_ROBOT_RUN via POST /robot-runs:register and wait for
+# the Job. There is no other way to create a RobotRun.
+#
+# publish_robot_run_recording runs the publisher as its own process
+# (`python -m sceneops_integrations.recording publish`, never inside Celery)
+# in the worker-cli image, mapping the worker's ArtifactStore settings onto
+# the publisher's SCENEOPS_PUBLISHER_ARTIFACT__* env. mcap_path must be
+# visible inside that container (the repo's bind-mounted ./data:/data).
+# Prints the publication JSON; exits non-zero on failure (e.g. a write-once
+# conflict).
+#
+# Usage: publish_robot_run_recording REPO_ROOT ROBOT_ID RUN_ID MCAP_PATH
+#          [SOURCE_KIND=file] [ROBOT_PLATFORM] [SOURCE_TOPIC]
+publish_robot_run_recording() {
   local repo_root="$1"
   local robot_id="$2"
-  local robot_run_id="$3"
+  local run_id="$3"
   local mcap_path="$4"
+  local source_kind="${5:-file}"
+  local robot_platform="${6:-}"
+  local source_topic="${7:-}"
+
+  local -a extra_args=()
+  if [ -n "$robot_platform" ]; then
+    extra_args+=(--robot-platform "$robot_platform")
+  fi
+  if [ -n "$source_topic" ]; then
+    extra_args+=(--source-topic "$source_topic")
+  fi
 
   docker compose -f "$repo_root/compose.yaml" --env-file "$repo_root/.env.local" \
-    --profile debug --profile worker run --rm worker-cli \
-    sceneops-worker robots register-capture \
-    --robot-id "$robot_id" --robot-run-id "$robot_run_id" \
-    --mcap-path "$mcap_path"
+    --profile debug --profile worker run --rm -T worker-cli sh -c '
+      export SCENEOPS_PUBLISHER_ARTIFACT__BACKEND="$SCENEOPS_WORKER_ARTIFACT__BACKEND"
+      export SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI="$SCENEOPS_WORKER_ARTIFACT__ROOT_URI"
+      export SCENEOPS_PUBLISHER_ARTIFACT__ENDPOINT_URL="$SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL"
+      export SCENEOPS_PUBLISHER_ARTIFACT__REGION="$SCENEOPS_WORKER_ARTIFACT__REGION"
+      export SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID="$SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID"
+      export SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY="$SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY"
+      exec python -m sceneops_integrations.recording publish "$@"
+    ' publish \
+    --mcap-path "$mcap_path" --run-id "$run_id" --robot-id "$robot_id" \
+    --source-kind "$source_kind" ${extra_args[@]+"${extra_args[@]}"}
+}
+
+# Submits POST /robot-runs:register and prints the terminal Job JSON
+# (succeeded or failed -- callers assert).
+register_robot_run() {
+  local api_base_url="$1"
+  local manifest_uri="$2"
+
+  local submitted job_id
+  submitted="$(curl -sS -X POST "$(api_url "$api_base_url" "/robot-runs:register")" \
+    -H "Content-Type: application/json" \
+    -d "{\"manifest_uri\": \"$manifest_uri\"}")"
+  job_id="$(extract_job_id "$submitted")"
+  poll_job_terminal "$api_base_url" "$job_id" 60 2
+}
+
+# publish_robot_run_recording + register_robot_run, asserting success. Both
+# steps are idempotent: an identical retry re-uses the published objects
+# and the registration Job reports created=false. Prints the succeeded Job
+# JSON.
+#
+# Usage: publish_and_register_robot_run REPO_ROOT API_BASE_URL ROBOT_ID RUN_ID
+#          MCAP_PATH [SOURCE_KIND=file] [ROBOT_PLATFORM] [SOURCE_TOPIC]
+publish_and_register_robot_run() {
+  local repo_root="$1"
+  local api_base_url="$2"
+
+  local publication manifest_uri job_json
+  publication="$(publish_robot_run_recording "$repo_root" "${@:3}")"
+  echo "  published: $publication" >&2
+  manifest_uri="$(echo "$publication" | jq -r '.manifest_uri // empty')"
+  if [ -z "$manifest_uri" ]; then
+    echo "❌ Recording publication did not return a manifest_uri" >&2
+    exit 1
+  fi
+
+  job_json="$(register_robot_run "$api_base_url" "$manifest_uri")"
+  assert_job_succeeded "$job_json" "REGISTER_ROBOT_RUN should succeed for $4"
+  echo "$job_json"
 }
 
 fetch_missions() {

@@ -39,7 +39,7 @@ from sceneops_db.postgres.datasets import (
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.build_episodes import BuildEpisodesJobHandler
-from sceneops_worker.robots.registration import register_robot_run_capture
+from sceneops_worker.robots.registration import register_robot_run
 
 _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "rosbag"
 _VALID_MCAP = _FIXTURES_DIR / "can_replay_scene_0061.mcap"
@@ -47,7 +47,7 @@ _VALID_MCAP = _FIXTURES_DIR / "can_replay_scene_0061.mcap"
 
 @pytest.mark.usefixtures("cleanup_minio_prefix")
 async def test_episode_build_failure_after_materialization_then_retry_succeeds(
-    worker_context, unique_id
+    worker_context, publish, unique_id
 ) -> None:
     robot_id = unique_id("robot")
     robot_run_id = unique_id("run")
@@ -65,14 +65,13 @@ async def test_episode_build_failure_after_materialization_then_retry_succeeds(
     )
     await worker_context.session.commit()
 
-    # Real streaming-style registration: ArtifactStore-backed RobotRun.
-    registration = await register_robot_run_capture(
-        context=worker_context,
-        robot_id=robot_id,
-        robot_run_id=robot_run_id,
-        mcap_path=_VALID_MCAP,
+    # Real publication + registration: ArtifactStore-backed RobotRun.
+    publication = await publish(_VALID_MCAP, run_id=robot_run_id, robot_id=robot_id)
+    registration = await register_robot_run(
+        context=worker_context, manifest_uri=publication.manifest_uri
     )
-    original_checksum = registration.artifact.checksum
+    original_checksum = registration.recording_artifact.checksum
+    recording_uri = registration.recording_artifact.uri
 
     def _build_params() -> BuildEpisodesJobParams:
         return BuildEpisodesJobParams(
@@ -126,9 +125,7 @@ async def test_episode_build_failure_after_materialization_then_retry_succeeds(
     assert not materialized_path.parent.exists()
 
     # Canonical MCAP unchanged by the failed attempt.
-    stored_bytes = await worker_context.robot_run_artifact_store.read_recording_bytes(
-        robot_run_id
-    )
+    stored_bytes = await worker_context.artifact_store.read_bytes(recording_uri)
     assert f"sha256:{hashlib.sha256(stored_bytes).hexdigest()}" == original_checksum
 
     # No Episode-domain artifact state was written by the failed attempt
@@ -163,8 +160,8 @@ async def test_episode_build_failure_after_materialization_then_retry_succeeds(
     assert len(artifacts_after_retry) == result.episode_count
 
     # Still unchanged after a successful retry too.
-    stored_bytes_after_retry = (
-        await worker_context.robot_run_artifact_store.read_recording_bytes(robot_run_id)
+    stored_bytes_after_retry = await worker_context.artifact_store.read_bytes(
+        recording_uri
     )
     assert (
         f"sha256:{hashlib.sha256(stored_bytes_after_retry).hexdigest()}"

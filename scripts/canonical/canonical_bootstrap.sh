@@ -29,17 +29,15 @@
 # Each of the 10 scenes' real CAN replay -> MCAP recording happens exactly
 # ONCE per bootstrap run (fresh every CREATE, via `rm -rf` + real ROS2
 # replay — same as e2e_robot_learning.sh) and is reused by reference
-# (RobotRun.mcap_uri) to build Episodes into BOTH sceneops-episodes/v0.0 and
+# (robot_run_id) to build Episodes into BOTH sceneops-episodes/v0.0 and
 # sceneops-canonical/v0.0 — build_episodes resolves episodes purely from the
-# RobotRun's mcap_uri and the pipeline's own dataset_id/dataset_version, so
+# RobotRun's recording and the pipeline's own dataset_id/dataset_version, so
 # reusing one RobotRun for two independent dataset-scoped Episode builds is
 # already-safe existing behavior, not new architecture (see
-# apps/worker/sceneops_worker/jobs/dataset/build_episodes.py). Registration
-# is the canonical, artifact-backed `register-capture` path (lib.sh's
-# register_robot_run_capture) — build_episodes requires a registered
-# recording ArtifactRecord for any robot_run_id it resolves, and the one
-# RobotRun/ArtifactRecord pair registered per scene is exactly what both
-# build_episodes_for() calls below resolve through. Scene
+# apps/worker/sceneops_worker/jobs/dataset/build_episodes.py). The RobotRun
+# is created by the Recording Publisher + REGISTER_ROBOT_RUN (lib.sh's
+# publish_and_register_robot_run), and the one RobotRun per scene is
+# exactly what both build_episodes_for() calls below resolve through. Scene
 # ingestion (Postgres SceneRecord + ArtifactStore SceneManifest) is NOT
 # deduplicated between sceneops-scenes/v0.0 and sceneops-canonical/v0.0 --
 # doing so would require new cross-dataset ArtifactRecord ownership
@@ -249,10 +247,8 @@ for SCENE_NAME in "${BASELINE_SCENES[@]}"; do
   echo "  bag=${MCAP_URI}  OK"
 
   echo "--- Register RobotRun (artifact-backed; shared physical recording, reused by both Episode-bearing baselines) ---"
-  # Canonical, artifact-backed registration -- build_episodes_for (below)
-  # requires a registered recording ArtifactRecord for the robot_run_id it
-  # resolves (RobotRunNotMaterializedError otherwise).
-  register_robot_run_capture "$REPO_ROOT" "$ROBOT_ID" "$RUN_ID" "$MCAP_URI" >/dev/null
+  publish_and_register_robot_run "$REPO_ROOT" "$API_BASE_URL" \
+    "$ROBOT_ID" "$RUN_ID" "$MCAP_URI" ros2_bag "$ROBOT_PLATFORM" >/dev/null
   echo "  run_id=$RUN_ID"
 
   echo "--- build_episodes -> $EPISODES_DATASET_ID/$EPISODES_DATASET_VERSION ---"
