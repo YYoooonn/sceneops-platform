@@ -9,7 +9,6 @@ from sceneops_core.jobs.schemas import (
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
-from sceneops_worker.observations.artifacts import ObservationArtifactStore
 from sceneops_worker.robots.resolver import resolve_recording
 
 
@@ -54,16 +53,9 @@ class IngestRobotStatesJobHandler(
             artifact_record_store=context.artifact_record_store,
             artifact_store=context.artifact_store,
         ) as recording:
-            # observation_store is required by RosbagAdapter's constructor but
-            # is only used by build_raw_log() (scene frame manifests), not by
-            # extract_robot_states() — unused on this code path.
             adapter = RosbagAdapter(
                 source_store=context.raw_source_store,
                 source_root_uri=str(recording.local_path),
-                observation_store=ObservationArtifactStore(
-                    artifact_store=context.artifact_store,
-                    dataset_root_uri=context.settings.dataset_root_uri,
-                ),
             )
             # The RobotRunRecord is authoritative for which robot produced
             # the recording.

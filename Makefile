@@ -31,7 +31,6 @@ RATE            ?=
 DURATION        ?=
 ROBOT_ID        ?=
 RUN_ID          ?=
-MCAP_URI        ?=
 
 # E2E selection knobs -- the only user-facing selection variables the
 # primary E2E surface exposes. MAX_SCENES is the one authoritative name

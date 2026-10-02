@@ -109,9 +109,9 @@ resolve_e2e_fixture() {
 
 # require_mcap_file <path>
 # Fail-fast existence check for a recorded rosbag2/MCAP file, run BEFORE any
-# persistent API call (Robot/RobotRun/DatasetVersion upserts) so a missing
-# recording fails immediately and cleanly instead of partway through a
-# sequence of already-committed upserts. <path> is the REPO-ROOT-RELATIVE
+# persistent call (Robot/DatasetVersion upserts, RobotRun publication and
+# registration) so a missing recording fails immediately and cleanly instead
+# of partway through already-committed state. <path> is the REPO-ROOT-RELATIVE
 # path (e.g. /data/raw/rosbag/scene-0061/scene-0061_0.mcap) -- the caller is
 # responsible for resolving it against $REPO_ROOT on the host filesystem.
 require_mcap_file() {

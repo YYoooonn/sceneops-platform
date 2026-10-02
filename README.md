@@ -126,12 +126,12 @@ A separate domain from Dataset/Scene, for robot runtime data rather than pre-rec
 
 ```text
 Robot        static registry entry (robot_id, platform)
-RobotRun     one physical recording session (maps 1:1 to a rosbag2/MCAP file)
+RobotRun     immutable provenance of one finalized, published and verified MCAP recording
 Mission      a run's lifecycle status (pending/running/completed/...), extracted from the bag
 RobotState   a robot-runtime-state time series (position, orientation, velocity, battery, ...)
 ```
 
-`Robot`/`RobotRun` are registered directly (POST, no Job involved — same tier as Dataset registration). `Mission`/`RobotState` are populated by the `ingest_robot_states` Job, which reads a rosbag2/MCAP file through `RosbagAdapter`.
+`Robot` is registered directly (`POST /robots`). A `RobotRun` exists only once the `register_robot_run` Job has verified a RobotRunManifest written by the database-free Recording Publisher. It has no status and is never updated. `Mission`/`RobotState` are populated by the `ingest_robot_states` Job, which reads the RobotRun's registered recording through the verified recording resolver. See [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md).
 
 ### Episode (v2)
 
@@ -213,8 +213,11 @@ Pipeline
 
 Robot/RobotRun is a separate domain from Dataset/DatasetVersion (see [Core concepts](#robot--robotrun--mission--robotstate-v2)), so these dispatch as plain Jobs, not as part of a named pipeline:
 
+`register_robot_run`
+  verifies a published RobotRunManifest + recording → recording/manifest `ArtifactRecord`s + immutable `RobotRun`
+
 `ingest_robot_states`
-  reads a rosbag2/MCAP file via `RosbagAdapter` → `RobotState` + `Mission` rows
+  reads a RobotRun's registered recording (by `robot_run_id`, via the verified recording resolver) → `RobotState` + `Mission` rows
 
 `export_robot_analytics_snapshot`
   exports one RobotRun's `RobotState`/`Mission` rows to `robot_telemetry.parquet` / `missions.parquet`
@@ -227,10 +230,13 @@ nuScenes CAN bus data
        └─ ROS2 topics ── /vehicle/odom, /vehicle/imu, /vehicle/status, /vehicle/control, /mission/status
             └─ ros2 bag record --storage mcap
                  └─ rosbag2/MCAP file
-                      └─ RosbagAdapter (apps/worker) ── decodes real CDR messages, no rclpy needed to read
-                           └─ ingest_robot_states Job ─► Postgres (RobotState, Mission)
-                                └─ export_robot_analytics_snapshot Job ─► Parquet (Artifact Store)
-                                     └─ DuckDB query (sceneops_analytics.query_parquet)
+                      └─ Recording Publisher (DB-free) ─► MCAP + RobotRunManifest (Artifact Store)
+                           └─ register_robot_run Job ─► Postgres (ArtifactRecords, RobotRun)
+                                └─ resolve_recording(robot_run_id) ─► verified local copy
+                                     └─ RosbagAdapter (apps/worker) ── decodes real CDR messages, no rclpy needed to read
+                                          └─ ingest_robot_states Job ─► Postgres (RobotState, Mission)
+                                               └─ export_robot_analytics_snapshot Job ─► Parquet (Artifact Store)
+                                                    └─ DuckDB query (sceneops_analytics.query_parquet)
 ```
 
 Standard ROS2 messages (`nav_msgs/Odometry`, `sensor_msgs/Imu`, `sensor_msgs/BatteryState`) are used where they fit; `/vehicle/control` and `/mission/status` have no matching standard message, so `CanReplayNode` publishes them as `std_msgs/String` carrying flat JSON — `RosbagAdapter` recognizes the schema and unwraps it, rather than requiring a custom `.msg` colcon package.
