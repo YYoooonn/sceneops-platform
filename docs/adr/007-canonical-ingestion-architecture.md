@@ -47,6 +47,24 @@ date       2026-10-02
 "CURRENT IMPLEMENTATION" notes outside A1's sections still describe HEAD
 4123d33 (§23, rule 7).
 
+**Amendment A2 — source and provenance contract freeze (implementation step
+4).** Accepted. A2 closes the open questions that the Scene and Episode
+contract steps depend on: source timestamp precision and clock semantics,
+channel-boundary semantics, the nuScenes keyframe/sweep boundary,
+recording-derived payload ownership, external format identifiers,
+integration resolution, and the exact `ProducerInfo` / producer-fingerprint
+contract (§27). It adds §27 and invariants I-26–I-29. It refines the TARGET
+text of §13.9, §14.1, §15.2 and §20.5 in place to match, annotates §13.12
+item 6, and moves three step-4 items to step 5 (§27.1). It changes no decision about RobotRun,
+registration, identity, replacement or DatasetVersion. Its "CURRENT
+IMPLEMENTATION" notes were audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       ce56f8e fix(robots): preserve RobotRun provenance on Robot deletion
+date       2026-10-02
+```
+
 Relationship to earlier ADRs:
 
 - [ADR-001](./001-postgresql-operational-metadata.md),
@@ -309,9 +327,9 @@ Artifact   physical bytes + integrity/lineage metadata
 | Integration | Component | Format-specific, DB-free runtime that maps one external format onto canonical manifests (§20.3, §20.5). |
 | Source-preserving materialization | Stage | Copying the source payloads a canonical unit needs into SceneOps-owned artifacts without altering the observations (§13.9). |
 | Derived transformation | Stage | Lossy or workflow-specific transformation of canonical units, such as alignment, resampling, association or fusion (§13.6). Its output is never canonical. |
-| `ExternalUnitSource` | Value | Provenance block: unit came from an external dataset (§14). |
-| `RecordingSegmentSource` | Value | Provenance block: unit came from a registered recording (§14). |
-| `ProducerInfo` | Value | Provenance block: which producer semantics and configuration built the unit (§14, §15). |
+| `ExternalUnitSource` | Value | Provenance block: unit came from an external dataset (§14, §27.2). |
+| `RecordingSegmentSource` | Value | Provenance block: unit came from a registered recording (§14, §27.2). |
+| `ProducerInfo` | Value | Provenance block: which producer semantics and configuration built the unit (§14, §15, §27.7). |
 | `producer_fingerprint` | Value | Hash that identifies build semantics (§15). |
 | Registrar | Component | The only writer of canonical Scene/Episode records, membership and summaries for its domain (§17.5). |
 
@@ -1407,9 +1425,9 @@ SceneRecord / SceneManifest → external dataset root path
 For recording sources, the recording is already a SceneOps-owned,
 checksum-verified artifact (§7, §12.4). Canonical payload references for
 recording-derived units must also resolve only to SceneOps-owned verified
-artifacts. Whether they point to extracted per-observation artifacts or to
-addressable positions inside the registered recording artifact is decided
-by the Canonical Scene representation refactor.
+artifacts. A2 decides how: selected observation payloads are extracted into
+SceneOps-owned canonical payload artifacts, and the registered recording is
+retained as source provenance, not addressed into (§27.5).
 
 **Trade-off.** Materialization duplicates the ingested portion of an
 external dataset into SceneOps storage, and ingestion time includes copying
@@ -1522,8 +1540,8 @@ that §20.2 already lists are cross-referenced rather than repeated.
      reachable from `sample["data"]`. Non-keyframe sweeps inside the scene's
      window are not represented. The keyframe grouping itself is
      source-defined and is legitimately preserved (§13.6). The omission of
-     the sweeps is the debt, unless the Scene refactor explicitly defines a
-     keyframes-only boundary.
+     the sweeps is the debt. A2 rules out a keyframes-only boundary for
+     canonical nuScenes Scenes (§27.4).
 
 Already compliant: per-frame `timestamp_us` comes from the source frame, not
 from the sample timestamp, in both the nuScenes integration and the raw
@@ -1536,27 +1554,30 @@ observed rate, and alignment is already the derived `ALIGN_EPISODE`.
 
 ### 14.1 Building blocks (`sceneops-core`, TARGET)
 
+Frozen by A2 (§27.2, §27.7) and implemented in `sceneops_core.provenance`:
+
 ```text
 ExternalUnitSource
   source_kind        = "external"
-  external_ref       ExternalDatasetRef (format, format_version, external_name,
-                                         external_revision, checksum?, uri)
+  external_ref       ExternalDatasetRef (format, format_version, uri,
+                                         external_name?, external_revision?, checksum?)
   source_unit_key    str  (e.g. nuScenes scene token, LeRobot episode_index)
 
 RecordingSegmentSource
   source_kind        = "recording"
   robot_run_id       str
-  recording_artifact_id   str
+  recording_artifact_id   str  (= robot_run_recording_artifact_id(robot_run_id))
   recording_checksum      "sha256:…"
   source_clock       str  (copied from RobotRunRecord / manifest)
-  window_start, window_end   source-clock timestamps of the segment
+  start_timestamp_ns, end_timestamp_ns
+                     integer ns in source_clock; half-open [start, end)
   unit_key           builder-defined stable key within the recording
-                     (e.g. segment start timestamp, mission boundary key)
+                     (e.g. segment index, mission boundary key)
 
 ProducerInfo
   producer_id        stable producer identity (e.g. "sceneops.recording_scene_builder")
-  semantics_version  int, bumped per §15.3
-  build_config       normalized build configuration (canonical JSON value)
+  semantics_version  int ≥ 1, bumped per §15.3
+  build_config       normalized build configuration (canonical JSON object)
   producer_fingerprint   §15
 ```
 
@@ -1605,16 +1626,21 @@ builds are equivalent if and only if their fingerprints are equal.
 
 ```text
 producer_fingerprint = "sha256:" + hex(sha256(canonical_json({
+    "fingerprint_schema": "sceneops.producer_fingerprint/v1",
     "producer_id":        …,
     "semantics_version":  …,
     "build_config":       normalized build configuration,
-    "source_identity":    …
+    "source":             source revision
 })))
 
-source_identity
-  recording:  { "robot_run_id", "recording_checksum" }
-  external:   { "format", "format_version", "external_revision", "checksum"? }
+source revision
+  recording:  { "source_kind": "recording", "robot_run_id", "recording_checksum" }
+  external:   { "source_kind": "external", "format", "format_version",
+                "external_revision" | null, "checksum" | null }
 ```
+
+The exact contract, including why the source revision excludes the unit key
+and window, is §27.7.
 
 It is computed from **inputs**, so it is known before building. That allows
 the "same fingerprint → reuse" decision (§18.3) to short-circuit the build.
@@ -2055,7 +2081,9 @@ source channel → modality / sensor identity (§13.8), is the integration's
 responsibility. Mapping tests prove it.
 
 The mechanism that resolves a `format` to its integration runtime in v1 is
-configuration. A dynamic plugin registry is DEFERRED (§26).
+configuration or static registration in the integration/application layer,
+keyed by `(domain, format)` (§27.6). A dynamic plugin registry is DEFERRED
+(§26).
 
 ### 20.6 No universal adapter or data unit
 
@@ -2137,6 +2165,18 @@ I-25  A new external source format normally adds an integration (runtime, mappin
       registration / configuration, mapping tests), not a new core canonical type,
       record or DatasetVersion schema, PipelineType, or downstream workflow; external
       format identifiers are open values, not core enums.
+I-26  Canonical source timestamps are integer nanoseconds in a declared source clock;
+      (timestamp_ns, source_clock) together define temporal meaning. No floating-point
+      value and no imposed UTC interpretation participates in source-time identity.
+I-27  producer_fingerprint is computed only from the source revision, producer_id,
+      semantics_version and normalized build_config. It never includes execution state
+      (job / pipeline run ids, execution timestamps, hosts, paths) or the output
+      manifest checksum.
+I-28  External format, source clock and producer identifiers are canonical open
+      identifiers. They are validated, never normalized, once they enter a contract.
+I-29  Canonical observation payloads resolve to SceneOps-owned payload artifacts for
+      both source kinds; no canonical consumer parses a source recording or an
+      external dataset to read a canonical observation.
 ```
 
 Each invariant should be backed by at least one test at the layer that can
@@ -2145,7 +2185,9 @@ I-10/I-11/I-12/I-14 concurrency, and real MinIO for I-3/I-4/I-9/I-24.
 I-21–I-23 are backed by golden-manifest tests per producer and mapping /
 contract tests per integration (source fixture → expected canonical
 manifest). I-20 and I-25 are backed by import-boundary tests, which check
-that SceneOps core does not depend on any integration SDK.
+that SceneOps core does not depend on any integration SDK. I-26–I-28 are
+backed by contract tests on the step-4 primitives; I-29 by the step-5 and
+step-8 producer tests.
 
 ---
 
@@ -2479,6 +2521,7 @@ explicit removal of an external unit from a DatasetVersion
 streaming (non-in-memory) recording materialization
 conditional-write (If-None-Match) enforcement of write-once keys
 reference-only / zero-copy external source mode (§13.9; must not redefine canonical semantics)
+payload deduplication / content-addressed payload storage (§27.5)
 AlignedScene / ALIGN_SCENE as a shared derived contract (§13.11)
 dynamic integration discovery / plugin registry (v1: configuration, §20.5)
 generated / simulated / reconstructed Scene ingestion (former SCENE_REGISTRATION, origin types)
@@ -2491,3 +2534,349 @@ Scenario / Evaluation redesign beyond canonical-boundary migrations
 Future realtime tracking extends the **control plane** with a separate
 operational model. It never reintroduces mutable capture state into
 `RobotRunRecord`.
+
+---
+
+## 27. Amendment A2: source and provenance contract freeze (step 4)
+
+### 27.1 Scope and transitional state
+
+A2 freezes the shared, domain-neutral source and provenance contracts that
+the step-5 `SceneManifest` and step-8 `EpisodeManifest` will compose. They
+are implemented as SDK-independent, DB-free `sceneops-core` primitives:
+
+```text
+sceneops_core.common.identifiers     open identifier rule; external format,
+                                     source clock and producer id validation
+sceneops_core.datasets.schemas       ExternalDatasetRef (format validated, strict)
+sceneops_core.provenance.sources     ExternalUnitSource · RecordingSegmentSource
+                                     UnitSource (union) · ExternalSourceRevision ·
+                                     RecordingSourceRevision · SourceRevision (union)
+sceneops_core.provenance.source_time SourceTimestampNs · SourceTimeUnit · promote_to_ns
+sceneops_core.provenance.producer    ProducerInfo · normalize_build_config ·
+                                     compute_producer_fingerprint
+```
+
+**Transitional state (CURRENT IMPLEMENTATION).** No Scene or Episode
+manifest, record, job or workflow consumes these primitives yet.
+`SceneLineage` and `EpisodeLineage` remain the legacy, untyped lineage of
+the current manifests until steps 5 and 8 replace them. This is not two
+paths for one capability (§23 rule 5): the primitives are contracts with no
+runtime producer or consumer. The only runtime-visible change in step 4 is
+that `ExternalDatasetRef` now validates `format` and rejects unknown fields.
+
+**Moved from step 4 to step 5.** Three step-4 items in §24 describe
+observation- or manifest-storage-level structure, whose concrete shape step
+5 owns:
+
+```text
+checksum-qualified manifest key helpers      the §19 key rule itself stands
+source channel identity primitive            §13.8 semantics stand
+payload format / encoding primitive          §27.5 ownership rule stands
+```
+
+Defining them before the concrete Scene observation model would design that
+model in advance. A2 introduces no observation, frame or payload-collection
+type (§20.6).
+
+### 27.2 Source provenance
+
+Every canonical unit has exactly one source block, discriminated by
+`source_kind`. The union (`UnitSource`) is provenance only. It does not make
+Scene and Episode one type, and neither block carries Scene-, Episode- or
+format-specific fields. Both reject unknown fields and are immutable.
+
+**`ExternalDatasetRef`** (KEEP, EXTEND). The existing type already satisfies
+the requirements: serializable, SDK-independent, no DatasetVersion
+ownership, no Scene/Episode semantics, one shape for import and export.
+A2 adds only validation:
+
+```text
+format              canonical open identifier (§27.6); validated, never normalized
+format_version      that format's own version; non-empty
+uri                 location; non-empty; provenance only, never identity
+external_name       display only; never identity
+external_revision   source revision, where the source has one
+checksum            source content checksum, where available
+unknown fields      rejected
+```
+
+**`ExternalUnitSource`**: `source_kind = "external"`, `external_ref`,
+`source_unit_key`. `source_unit_key` is the source's own stable unit
+identity, kept verbatim (open alphabet; non-empty, at most 256 characters,
+no surrounding whitespace, no control characters). Source-specific needs
+never add fields here; genuinely new domain semantics amend the domain
+contract instead (§20.3).
+
+**`RecordingSegmentSource`**: `source_kind = "recording"`, `robot_run_id`,
+`recording_artifact_id`, `recording_checksum`, `source_clock`,
+`start_timestamp_ns`, `end_timestamp_ns`, `unit_key`.
+
+```text
+robot_run_id            source identity authority (RobotRunRecord)
+recording_artifact_id   must equal robot_run_recording_artifact_id(robot_run_id)
+recording_checksum      "sha256:<64 lowercase hex>"; pins the exact bytes
+source_clock            copied from the RobotRun; never defaulted
+window                  [start_timestamp_ns, end_timestamp_ns), half-open, non-empty,
+                        integer ns in source_clock
+unit_key                producer-defined stable key of the unit within the recording;
+                        derived from source + build configuration only
+excluded                recording URI, DatasetVersion, job / pipeline ids,
+                        execution timestamps, Scene/Episode fields
+```
+
+`unit_key` is kept from §14.1, so the registrar can derive recording unit
+identity (§18.1) from the source block alone, in the same way it uses
+`(format, source_unit_key)` for external units.
+
+**Source revision.** Each block projects the build-level identity of the
+exact source bytes it read, `source_revision()`:
+
+```text
+ExternalSourceRevision    format, format_version, external_revision, checksum
+RecordingSourceRevision   robot_run_id, recording_checksum
+```
+
+The unit key, window, `uri` and `external_name` are excluded. This revision
+is the fingerprint's source input (§27.7), so a manifest's fingerprint can
+be re-derived from the manifest alone.
+
+**Revision strength (known limitation).** If an integration supplies
+neither `external_revision` nor `checksum`, an external source revision is
+only `(format, format_version)`. Two different contents under the same
+version string then fingerprint equal, and §18.2 falls back to the manifest
+checksum comparison to detect the change. Integrations set
+`external_revision` whenever their source defines one.
+
+### 27.3 Source time precision and clock semantics
+
+Decision: **canonical source time is an integer count of nanoseconds in a
+declared source clock.**
+
+```text
+1. Source timestamp identity is an integer in its declared clock domain.
+2. Nanosecond sources (ROS2, MCAP) remain nanosecond-exact.
+3. Lower-precision sources are promoted exactly by integer multiplication
+   (promote_to_ns: s / ms / us → ns). Floats are refused, not rounded.
+4. No floating-point value participates in source-time identity or fingerprints.
+5. No UTC interpretation is forced onto a clock that is not a wall clock.
+6. Rendering a datetime is presentation, unless the clock is itself defined
+   as UTC / wall clock.
+```
+
+Field names carry the unit: `timestamp_ns`, `start_timestamp_ns`,
+`end_timestamp_ns`. Values are bounded to `[0, 2^63 − 1]` so they round-trip
+unchanged through PostgreSQL `BIGINT`, Parquet `INT64` and Arrow
+`timestamp[ns]`.
+
+**Clock semantics.** A source timestamp is not interpretable without its
+clock domain; `(timestamp_ns, source_clock)` together define temporal
+meaning. The shared representation is the smallest existing one: the open
+`source_clock` string that `RobotRunManifest.capture.source_clock` and
+`RobotRunRecord.source_clock` already carry, now with the canonical
+identifier rule (§27.6). No universal time system is introduced.
+
+```text
+SceneOps-defined clocks       unqualified       mcap_log_time (MCAP Message.log_time)
+dataset-defined timebases     <format>.<clock>  e.g. "nuscenes.<clock>"; the
+                                                 integration names and documents it
+```
+
+The clock identifier defines the semantics: sensor clock, log time,
+robot/system clock, UTC wall clock or a dataset timebase. Whether a clock is
+a wall clock is a property of its definition, never an assumption made by a
+consumer. Where a manifest declares the clock (per unit, per channel or per
+observation) is decided by steps 5 and 8, under one rule: every canonical
+source timestamp has exactly one declared clock reachable from the
+manifest.
+
+**Relation to `RobotRunManifest` v1** (unchanged). Its `started_at` /
+`ended_at` are microsecond, UTC-rendered summaries of `mcap_log_time`,
+truncated toward negative infinity (§8.3), and they rely on MCAP log time
+being Unix-epoch based. They are search and display projections, not
+source-time identity. Segment windows are derived from the recording bytes
+in nanoseconds. They are never derived from those fields, and never
+validated against them, since truncation can place a true nanosecond
+message time after `ended_at`. Supporting a recording clock that is not
+epoch-based would require `RobotRunManifest` v2.
+
+### 27.4 Channel boundary and the nuScenes v1 Scene boundary
+
+A2 confirms §13.5–§13.6 as a frozen rule:
+
+```text
+exclude an entire configured source channel      canonical boundary decision
+keep a channel but drop some of its observations derived (lossy sampling)
+keep only the frame nearest another sensor       derived (association)
+discard sweeps a downstream model does not need  derived
+```
+
+A channel selection is explicit, carried in `ProducerInfo.build_config` as
+a sorted list, and therefore part of the fingerprint. Source absence or
+corruption inside the boundary stays explicit where the source exposes it;
+an observation is never silently treated as if it did not exist.
+
+**nuScenes (v1 interpretation).** A canonical nuScenes Scene covers the
+selected source scene and the configured source channels, and preserves
+**all** available observations (keyframes and sweeps) of those channels
+within the scene. Keyframe membership is source semantics and may be
+marked. Annotations stay attached as the source defines them (keyframes
+only) and are never synthesized for sweeps. Keyframe-only selection for
+detection is a derived transformation. The migration happens in step 6
+(External Scene ingestion normalization), after step 5 defines the
+concrete `SceneManifest`.
+
+### 27.5 Payload ownership
+
+Decision: **selected canonical observation payloads are SceneOps-owned,
+immutable, checksummed artifacts for both source kinds.**
+
+```text
+RobotRun recording artifact ── provenance / original archive (retained)
+        ↓ resolve_recording()
+domain construction
+        ↓
+selected observation payload extraction
+        ↓
+SceneOps-owned canonical payload artifacts
+        ↓
+SceneManifest / EpisodeManifest references
+```
+
+External sources follow the same rule (§13.9): integration → SceneOps-owned
+artifacts → canonical manifest. Normal downstream payload access never
+needs an external dataset directory, an external SDK, an external root
+path, or MCAP parsing. The original source identity stays in the unit's
+source block.
+
+Accepted costs: extra storage, and payload extraction during
+canonicalization. Benefits: one payload access path for every source,
+independent payload verification, and source-format-independent downstream
+contracts. Deduplication and content-addressed payload storage are DEFERRED
+(§26), as is the reference-only external mode (§13.9). Step 4 implements no
+extraction; steps 5 and 7 define and implement the Scene payload
+representation, and step 8 the Episode one.
+
+### 27.6 External format identifiers and integration resolution
+
+**Identifier rule.** External format identifiers are open, stable strings:
+
+```text
+lowercase ASCII, [a-z0-9][a-z0-9._-]*, at most 64 characters
+e.g. nuscenes · lerobot · waymo-open-dataset
+```
+
+The stored identifier must already be canonical. It is validated and never
+lowercased or rewritten, because it enters unit identity (§18.1), the
+`external_format` projection (§13.3) and the fingerprint. Aliases for user
+input ("NuScenes") are resolved at the integration boundary before a value
+enters a contract. Renaming a canonical identifier is an identity-affecting
+migration, not a cosmetic edit. Format revision (`format_version`,
+`external_revision`, `checksum`) stays separate from format identity. The
+same rule applies to `source_clock` (§27.3) and to `producer_id` (up to 128
+characters). SceneOps-owned closed sets versioned by `schema_version`
+(`RobotRunManifest.recording.format`, `capture.source.kind`) are not
+external identifiers and are unaffected (§20.4).
+
+**Integration resolution.**
+
+```text
+SceneOps core                   open identifier strings + serialized contracts
+                                (ExternalDatasetRef, IntegrationRequest /
+                                 IntegrationResult, canonical manifests)
+integration / application layer resolves (domain, format) → integration runtime
+                                ("scene", "nuscenes")  → nuScenes runtime
+                                ("episode", "lerobot") → LeRobot runtime
+```
+
+In v1 the mapping is static registration or configuration in the
+application/integration layer. It is never a closed core enum. Dynamic
+plugin discovery is DEFERRED (§26). Step 4 freezes the ownership boundary
+only; the worker's current dispatch is migrated in steps 6 and 9 (§27.9).
+
+### 27.7 ProducerInfo, build configuration and the producer fingerprint
+
+**`ProducerInfo`**: `producer_id`, `semantics_version`, `build_config`,
+`producer_fingerprint`. It describes how the unit was constructed, never
+the execution that ran it. Unknown fields are rejected. `create(...)`
+computes the fingerprint; `verify(source_revision)` re-derives it from a
+parsed manifest's own source block.
+
+**`build_config`** contains only configuration that affects the semantics
+or the selected boundary of the produced unit:
+
+```text
+include   selected channels · segmentation policy · source-unit selection rule ·
+          domain-defining thresholds · explicit boundary configuration ·
+          limits that truncate the produced unit set (§15.2)
+exclude   temp directories · worker count · logging · job / pipeline ids ·
+          retry count · storage endpoints / output roots · execution timestamps
+```
+
+Normalization is split. The core does mechanical normalization: a JSON
+object of plain JSON values with string keys and finite floats only,
+round-tripped through the canonical serializer (§8.3). Sets are rejected
+because their iteration order is not deterministic. Well-known
+execution-scoped keys (`job_id`, `pipeline_run_id`, `pipeline_task_run_id`,
+`execution_id`, `generated_at`, `created_at`, `hostname`, `worker_hostname`)
+are rejected at any depth. That deny-list is a guard against the likeliest
+mistake, not a substitute for producer discipline. Semantic normalization
+is part of each producer's contract: defaults made explicit, semantically
+unordered collections sorted (selected channels as a sorted list), and
+fields without output effect omitted. The core cannot know which lists are
+unordered, so list order is significant to the fingerprint.
+
+**Fingerprint (exact definition).**
+
+```text
+producer_fingerprint = "sha256:" + hex(sha256(canonical_json_bytes({
+    "fingerprint_schema": "sceneops.producer_fingerprint/v1",
+    "producer_id":        producer_id,
+    "semantics_version":  semantics_version,
+    "build_config":       normalize_build_config(build_config),
+    "source":             source_revision          (§27.2; nulls emitted)
+})))
+```
+
+```text
+same source revision + same producer_id + same semantics_version
+  + same normalized build_config          → same fingerprint
+any of them different                     → different fingerprint
+```
+
+`fingerprint_schema` makes any future change to this definition explicit
+rather than silent. The source revision is build-scoped (no unit key, no
+window), which matches §18: one fingerprint per recording scope (§18.3),
+and one per external ingestion compared per unit together with the manifest
+checksum (§18.2). The fingerprint is computed from inputs before building.
+The output manifest checksum is never an input, because that would be
+circular. The §15.3 discipline is unchanged: if output semantics change for
+unchanged source and configuration, `semantics_version` must be bumped.
+
+### 27.8 Fingerprint, manifest checksum and manifest revision
+
+```text
+producer_fingerprint   semantic equivalence of construction      (inputs)
+manifest checksum      identity of the exact serialized bytes     (output)
+manifest_artifact_id   the exact registered manifest revision     (record pointer)
+```
+
+These are never collapsed. Two builds with equal fingerprints are
+semantically equivalent even if a non-semantic detail differs. Equal
+checksums mean byte-identical manifests. A record's current revision is
+exactly its `manifest_artifact_id`, never "latest" (§14.4). Step 4 does not
+migrate `SceneRecord` / `EpisodeRecord`; steps 5 and 8 do.
+
+### 27.9 CURRENT IMPLEMENTATION that conflicts with A2 (deferred)
+
+| CURRENT (HEAD ce56f8e) | Conflict | Resolved in |
+|---|---|---|
+| `timestamp_us` on `SceneSensorFrameManifest`, `SceneSampleManifest`, `SceneAnnotationManifest`, Episode frames, `EpisodeManifest.start/end_timestamp_us`, `RobotStateRecord` | microsecond, no declared clock (§27.3) | steps 5 / 8 (`RobotStateRecord` with the robot-state consumers, step 8 or 10) |
+| `SceneLineage`, `EpisodeLineage` (`raw_log_id`, `source_dataset_*`, free-form `metadata`) | untyped provenance; no source revision or producer | steps 5 / 8 compose `UnitSource` + `ProducerInfo` |
+| `SceneGenerationMetadata` (`generator_name`, `generator_version`, `params`) | producer identity without fingerprint | step 5 |
+| `MCAP_LOG_TIME_CLOCK` defined in `episodes/alignment/config.py` and imported by the Recording Publisher | shared clock identifier lives in an Episode module | step 7 or 8 (move to a shared location when a second consumer appears) |
+| nuScenes integration: keyframe `sample_data` only; frame `uri` relative to the dataroot | §27.4, §27.5 | step 6 |
+| `IngestScenesJobParams.source_format: DatasetType` + `if … == DatasetType.NUSCENES` dispatch; `NUSCENES_FORMAT` constant in the worker | closed-enum dispatch instead of `(domain, format)` resolution (§27.6) | step 6 |
+| LeRobot runtime: EXPORT-only, `SUPPORTED_FORMAT = "lerobot"` | no INGEST registration | step 9 |
+| `RobotRunManifest` v1 µs UTC `started_at` / `ended_at` | not source-time identity (§27.3) | no change; v2 only if a non-epoch clock is needed |
+| `ArtifactRef` (`metadata` free-form, extra fields ignored) | not a strict payload reference | step 5, if Scene payload references need a strict primitive |

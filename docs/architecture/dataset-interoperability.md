@@ -37,7 +37,12 @@ ExternalDatasetRef
   export is a property of the *operation* that uses it, never of the
   ref's own shape.
   format / format_version / uri (+ optional external_name /
-  external_revision / checksum)
+  external_revision / checksum); unknown fields rejected
+  format is a canonical open identifier ([a-z0-9][a-z0-9._-]*, at most 64
+  characters, e.g. "nuscenes", "lerobot"). It is validated, never
+  normalized: it becomes part of canonical identity, so aliases are
+  resolved by the integration before a ref is built (ADR-007 §27.6).
+  uri is location only, never identity.
   sceneops_core.datasets.ExternalDatasetRef
 
 Dataset / DatasetVersion
