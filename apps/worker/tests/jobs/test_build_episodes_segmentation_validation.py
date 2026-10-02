@@ -82,6 +82,7 @@ _CAN_FRAME_LOG_TIME = 1_500_000_000_000_000_000  # ~2018, real CAN time
 
 async def test_mission_boundary_raises_when_missions_never_overlap_frames(
     tmp_path,
+    register_local_recording,
 ) -> None:
     bag_path = str(tmp_path / "run.mcap")
     _write_mcap(
@@ -109,14 +110,15 @@ async def test_mission_boundary_raises_when_missions_never_overlap_frames(
     )
 
     context = _make_context()
+    with open(bag_path, "rb") as f:
+        await register_local_recording(context, f.read())
     job = JobManifest(
         job_id="job-2", type=JobType.BUILD_EPISODES, status=JobStatus.RUNNING
     )
     params = BuildEpisodesJobParams(
         dataset_id="d1",
         dataset_version="v1",
-        robot_id="robot-1",
-        mcap_uri=bag_path,
+        robot_run_id="run-1",
         segmentation=EpisodeSegmentationConfig(strategy="mission_boundary"),
     )
     request = JobHandlerRequest(job=job, params=params, context=context)
@@ -131,7 +133,9 @@ async def test_mission_boundary_raises_when_missions_never_overlap_frames(
     context.commit.assert_not_called()
 
 
-async def test_whole_run_succeeds_on_the_same_disjoint_timestamp_data(tmp_path) -> None:
+async def test_whole_run_succeeds_on_the_same_disjoint_timestamp_data(
+    tmp_path, register_local_recording
+) -> None:
     """The documented escape hatch: whole_run needs no Mission/CAN
     timestamp alignment, so it succeeds on exactly the data that makes
     mission_boundary raise above."""
@@ -155,14 +159,15 @@ async def test_whole_run_succeeds_on_the_same_disjoint_timestamp_data(tmp_path) 
     )
 
     context = _make_context()
+    with open(bag_path, "rb") as f:
+        await register_local_recording(context, f.read())
     job = JobManifest(
         job_id="job-3", type=JobType.BUILD_EPISODES, status=JobStatus.RUNNING
     )
     params = BuildEpisodesJobParams(
         dataset_id="d1",
         dataset_version="v1",
-        robot_id="robot-1",
-        mcap_uri=bag_path,
+        robot_run_id="run-1",
         segmentation=EpisodeSegmentationConfig(strategy="whole_run"),
     )
     request = JobHandlerRequest(job=job, params=params, context=context)
@@ -175,6 +180,7 @@ async def test_whole_run_succeeds_on_the_same_disjoint_timestamp_data(tmp_path) 
 
 async def test_mission_boundary_still_falls_back_to_whole_run_with_no_missions_at_all(
     tmp_path,
+    register_local_recording,
 ) -> None:
     """Unchanged, legitimate behavior: zero Missions (not "Missions that
     don't overlap") degrades to whole_run silently, exactly as before --
@@ -186,14 +192,15 @@ async def test_mission_boundary_still_falls_back_to_whole_run_with_no_missions_a
     )
 
     context = _make_context()
+    with open(bag_path, "rb") as f:
+        await register_local_recording(context, f.read())
     job = JobManifest(
         job_id="job-4", type=JobType.BUILD_EPISODES, status=JobStatus.RUNNING
     )
     params = BuildEpisodesJobParams(
         dataset_id="d1",
         dataset_version="v1",
-        robot_id="robot-1",
-        mcap_uri=bag_path,
+        robot_run_id="run-1",
         segmentation=EpisodeSegmentationConfig(strategy="mission_boundary"),
     )
     request = JobHandlerRequest(job=job, params=params, context=context)

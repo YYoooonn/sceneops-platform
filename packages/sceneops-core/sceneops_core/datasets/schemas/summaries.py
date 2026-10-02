@@ -13,8 +13,8 @@ class SceneVersionSummary(SceneOpsBaseModel):
     on DatasetVersionRecord).
 
     Groups build-time counts/channels, the raw source root for the Scene
-    build path (Request 04 — Episode sources come from RobotRun.mcap_uri
-    instead, so this never belonged as generic DatasetVersion state), and
+    build path (Request 04 — Episode sources come from a registered RobotRun
+    recording instead, so this never belonged as generic DatasetVersion state), and
     the latest validate_scene/profile_scene quality-cache pointers.
     Distribution fields are not present anywhere — nothing in the codebase
     ever wrote them, and they were dropped from DatasetVersionRecord

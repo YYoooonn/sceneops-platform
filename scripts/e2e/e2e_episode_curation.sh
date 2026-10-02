@@ -41,9 +41,9 @@
 #                    at a nonexistent episode with no clear error whenever
 #                    the worker-side formula changed.
 #   RUN_ID           RobotRun id whose episode(s) to resolve EPISODE_ID from
-#                    when EPISODE_ID is unset (default: run-scene-0061-episodes,
-#                    matching e2e_episode_building.sh's own SCENE=scene-0061
-#                    default). Scoped to one RobotRun -- never a global
+#                    when EPISODE_ID is unset (default: the RobotRun
+#                    e2e_episode_building.sh registers for its SCENE=scene-0061
+#                    default, lib.sh episode_building_run_id). Scoped to one RobotRun -- never a global
 #                    "latest episode in the whole DB" lookup.
 #   POLL_TIMEOUT     max poll attempts, 5s each (default: 60 = 5 min)
 
@@ -54,7 +54,8 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-RUN_ID="${RUN_ID:-run-scene-0061-episodes}"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RUN_ID="${RUN_ID:-$(episode_building_run_id "$REPO_ROOT" scene-0061)}"
 EPISODE_ID="${EPISODE_ID:-}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 

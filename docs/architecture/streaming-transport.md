@@ -1225,19 +1225,19 @@ dataset is built: durable capture (Part 3) or continuous multi-run
 capture (Part 4) both close `Kafka -> MCAP`; the database-free Recording
 Publisher plus `REGISTER_ROBOT_RUN` (`docs/workflows/robot-run-and-mcap.md`
 §3.2) close `MCAP -> MCAP + RobotRunManifest -> ArtifactRecords + RobotRun`;
-and recording
-materialization (`sceneops_worker.robots.materialization`,
+and the verified
+recording resolver (`sceneops_worker.robots.resolver`,
 `docs/workflows/robot-run-and-mcap.md` §3.1) closes
-`RobotRun -> existing Episode pipeline`, keeping `RosbagAdapter` itself
-storage-agnostic throughout.
+`RobotRun -> existing Episode pipeline / robot-state ingestion`, keeping
+`RosbagAdapter` itself storage-agnostic throughout.
 
 ```text
 ROS2 / live robot -> stream envelope -> Kafka -> durable capture
   (Part 3, one run) or continuous capture (Part 4, many concurrent
   runs) -> validated local MCAP -> Recording Publisher
   -> REGISTER_ROBOT_RUN
-  -> materialization -> existing Episode pipeline -> existing
-  learning-data pipeline
+  -> resolve_recording(robot_run_id) -> existing Episode pipeline
+  -> existing learning-data pipeline
 ```
 
 Publication and registration are explicit steps today -- `python -m
@@ -1246,9 +1246,9 @@ sceneops_integrations.recording publish` against a finalized MCAP, then
 triggers either automatically on finalize. Capture itself stays DB-free
 and never writes RobotRun state.
 
-Not implemented: `IngestRobotStatesJobHandler`/`BuildScenesJobHandler`
-consuming an object-storage RobotRun recording (only
-`BuildEpisodesJobHandler` materializes today).
+Not implemented: `BuildScenesJobHandler` consuming a RobotRun recording;
+its `REAL_ROBOT_LOG` path still reads `DatasetVersion.raw_source_root_uri`
+as a local path.
 
 Reliability and scale characteristics of everything above -- crash
 boundaries, duplicate/gap/out-of-order handling, multi-RobotRun

@@ -16,11 +16,10 @@
 # immutable, and each invocation records new bytes, so the run id is unique
 # per invocation.
 #
-# ingest_robot_states is given the local MCAP path explicitly alongside
-# robot_run_id: with only robot_run_id it would read the registered
-# recording URI unmaterialized, which RosbagAdapter cannot open for an
-# object-storage backend until consumers use the verified recording resolver
-# (ADR-007 §12.4).
+# ingest_robot_states takes only robot_run_id: the worker reads the
+# registered recording through the verified recording resolver (ADR-007
+# §12.4), whatever ArtifactStore backend holds it. The local bag path is
+# only the publisher's input.
 #
 # Usage:
 #   bash scripts/e2e/e2e_robot_can_replay.sh
@@ -96,9 +95,7 @@ PAYLOAD="$(cat <<JSON
   "type": "ingest_robot_states",
   "force": true,
   "params": {
-    "robot_id": "$ROBOT_ID",
-    "robot_run_id": "$RUN_ID",
-    "mcap_uri": "$MCAP_URI"
+    "robot_run_id": "$RUN_ID"
   }
 }
 JSON

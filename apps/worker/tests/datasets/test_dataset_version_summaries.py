@@ -7,7 +7,7 @@ untouched defaults — see SceneVersionSummary.is_unset()/
 EpisodeVersionSummary.is_unset(). As of Request 03, DatasetVersionRecord has
 no flat top-level duplicates of these fields at all — scene/episode are the
 only way to read them. Request 04 additionally moved raw_source_root_uri
-into scene (Scene-only; Episode sources come from RobotRun.mcap_uri) and
+into scene (Scene-only; Episode sources come from registered RobotRuns) and
 dropped the dead latest_distribution_run_id/distribution_report_uri fields
 entirely (no SQL columns for them anymore).
 """

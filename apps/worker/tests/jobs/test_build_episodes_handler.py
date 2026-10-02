@@ -77,7 +77,9 @@ def _make_context() -> WorkerContext:
 
 class TestBuildEpisodesDomainIsolation:
     @pytest.mark.asyncio
-    async def test_run_never_touches_scene_domain_collaborators(self, tmp_path) -> None:
+    async def test_run_never_touches_scene_domain_collaborators(
+        self, tmp_path, register_local_recording
+    ) -> None:
         bag_path = str(tmp_path / "run.mcap")
         _write_mcap(
             bag_path,
@@ -104,14 +106,15 @@ class TestBuildEpisodesDomainIsolation:
         )
 
         context = _make_context()
+        with open(bag_path, "rb") as f:
+            await register_local_recording(context, f.read())
         job = JobManifest(
             job_id="job-1", type=JobType.BUILD_EPISODES, status=JobStatus.RUNNING
         )
         params = BuildEpisodesJobParams(
             dataset_id="d1",
             dataset_version="v1",
-            robot_id="robot-1",
-            mcap_uri=bag_path,
+            robot_run_id="run-1",
         )
         request = JobHandlerRequest(job=job, params=params, context=context)
 
@@ -142,7 +145,9 @@ class TestBuildEpisodesDomainIsolation:
         assert result.segmentation_strategy == "mission_boundary"
 
     @pytest.mark.asyncio
-    async def test_fixed_window_strategy_selected_via_params(self, tmp_path) -> None:
+    async def test_fixed_window_strategy_selected_via_params(
+        self, tmp_path, register_local_recording
+    ) -> None:
         bag_path = str(tmp_path / "run.mcap")
         _write_mcap(
             bag_path,
@@ -158,14 +163,15 @@ class TestBuildEpisodesDomainIsolation:
         )
 
         context = _make_context()
+        with open(bag_path, "rb") as f:
+            await register_local_recording(context, f.read())
         job = JobManifest(
             job_id="job-2", type=JobType.BUILD_EPISODES, status=JobStatus.RUNNING
         )
         params = BuildEpisodesJobParams(
             dataset_id="d1",
             dataset_version="v1",
-            robot_id="robot-1",
-            mcap_uri=bag_path,
+            robot_run_id="run-1",
             segmentation=EpisodeSegmentationConfig(
                 strategy="fixed_window", fixed_window_duration_ms=30_000
             ),

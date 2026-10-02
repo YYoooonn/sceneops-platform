@@ -238,7 +238,6 @@ for SCENE_NAME in "${SCENES[@]}"; do
   "force": true,
   "params": {
     "build_episodes": {
-      "robot_id": "$ROBOT_ID",
       "robot_run_id": "$RUN_ID",
       "segmentation": {"strategy": "mission_boundary"}
     },

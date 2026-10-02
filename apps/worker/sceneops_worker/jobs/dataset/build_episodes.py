@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.artifacts.schemas.records import ArtifactRecord
 from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
@@ -17,7 +16,6 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.robots.schemas import RobotRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.episodes.artifacts import (
@@ -30,13 +28,7 @@ from sceneops_worker.episodes.building import (
     EpisodeSegmenter,
 )
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
-from sceneops_worker.robots.materialization import (
-    RobotRunNotMaterializedError,
-    is_local_uri,
-    local_path_from_uri,
-    materialize_recording,
-    verify_local_recording_checksum,
-)
+from sceneops_worker.robots.resolver import resolve_recording
 
 
 class UnsupportedSegmentationError(ValueError):
@@ -54,8 +46,6 @@ class BuildEpisodesExecution:
     params: BuildEpisodesJobParams
     context: WorkerContext
     raw_log_id: str
-    mcap_uri: str
-    robot_run: RobotRunRecord | None
     episode_artifact_store: EpisodeArtifactStore
     dataset_version_record: DatasetVersionRecord
 
@@ -116,16 +106,9 @@ class BuildEpisodesJobHandler(
             context, dataset_id, dataset_version
         )
 
-        robot_run, mcap_uri = await self._resolve_source(context, params)
+        execution = self._prepare_execution(request, version_record=version_record)
 
-        execution = self._prepare_execution(
-            request,
-            version_record=version_record,
-            robot_run=robot_run,
-            mcap_uri=mcap_uri,
-        )
-
-        source = await self._extract_episode_source(execution)
+        robot_id, source = await self._extract_episode_source(execution)
 
         windows = EpisodeSegmenter().segment(source=source, config=params.segmentation)
 
@@ -133,7 +116,7 @@ class BuildEpisodesJobHandler(
             dataset_id=version_record.dataset_id,
             dataset_version=version_record.version,
             raw_log_id=execution.raw_log_id,
-            robot_id=params.robot_id,
+            robot_id=robot_id,
             robot_run_id=params.robot_run_id,
             source=source,
             windows=windows,
@@ -169,100 +152,33 @@ class BuildEpisodesJobHandler(
             channels=sorted({frame.channel for frame in source.frames}),
         )
 
-    # ── recording read (materializes ArtifactStore-backed URIs; local paths
-    #    are read exactly as before) ──────────────────────────────────────────
+    # ── recording read ─────────────────────────────────────────────────────────
 
     @staticmethod
     async def _extract_episode_source(
         execution: BuildEpisodesExecution,
-    ) -> EpisodeSource:
-        """One reused path after input resolution, per the recording
-        materialization boundary (docs/architecture/streaming-transport.md).
-
-        Whenever a ``robot_run_id`` was given, the canonical recording
-        invariant applies regardless of whether the resolved ``mcap_uri``
-        turns out to be local or ArtifactStore-backed: the RobotRun must
-        have a registered recording ArtifactRecord
-        (``_require_expected_checksum`` raises ``RobotRunNotMaterializedError``
-        otherwise), and the bytes actually read are checksum-verified
-        against it -- ``verify_local_recording_checksum`` for a local URI,
-        ``materialize_recording``'s own check for an ArtifactStore-backed
-        one. This is what closes the SceneOps V2 domain-execution-boundary
-        audit's RobotRun-registration gap: a RobotRun is no longer
-        silently trusted as a materialization source just because its
-        ``mcap_uri`` happens to be a readable local path.
-
-        No ``robot_run_id`` at all (an explicit, pinned ``mcap_uri``
-        override with no RobotRun entity referenced) makes no canonical-
-        recording claim, so nothing is verified -- unchanged, existing
-        behavior for that case. ``RosbagAdapter`` itself never learns
-        about ``s3://``/MinIO/``ArtifactStore``/HTTP either way, only ever
-        a local path.
-        """
+    ) -> tuple[str, EpisodeSource]:
+        """Read the RobotRun's registered recording through the verified
+        recording resolver (ADR-007 §12.4) -- never from a caller-supplied
+        URI. ``RosbagAdapter`` only ever sees the resolver's verified local
+        copy, whatever ArtifactStore backend holds the recording. Returns
+        the RobotRun's robot_id with the source: the recording's robot is
+        never taken from the caller."""
         params = execution.params
         context = execution.context
-        mcap_uri = execution.mcap_uri
-        robot_run = execution.robot_run
-
-        expected_checksum: str | None = None
-        if robot_run is not None:
-            expected_checksum = (
-                await BuildEpisodesJobHandler._require_expected_checksum(
-                    context, robot_run
-                )
-            )
-
-        if is_local_uri(mcap_uri):
-            if expected_checksum is not None:
-                verify_local_recording_checksum(
-                    local_path_from_uri(mcap_uri), expected_checksum=expected_checksum
-                )
-            adapter = RosbagAdapter(
-                source_store=context.raw_source_store, source_root_uri=mcap_uri
-            )
-            return adapter.extract_episode_source(
-                robot_id=params.robot_id, robot_run_id=params.robot_run_id
-            )
-
-        async with materialize_recording(
+        async with resolve_recording(
+            robot_run_id=params.robot_run_id,
+            robot_store=context.robot_store,
+            artifact_record_store=context.artifact_record_store,
             artifact_store=context.artifact_store,
-            uri=mcap_uri,
-            expected_checksum=expected_checksum,
-        ) as local_path:
+        ) as recording:
             adapter = RosbagAdapter(
-                source_store=context.raw_source_store, source_root_uri=str(local_path)
+                source_store=context.raw_source_store,
+                source_root_uri=str(recording.local_path),
             )
-            return adapter.extract_episode_source(
-                robot_id=params.robot_id, robot_run_id=params.robot_run_id
+            return recording.robot_id, adapter.extract_episode_source(
+                robot_id=recording.robot_id, robot_run_id=params.robot_run_id
             )
-
-    @staticmethod
-    async def _require_expected_checksum(
-        context: WorkerContext, robot_run: RobotRunRecord
-    ) -> str:
-        """The checksum of the RobotRun's registered recording ArtifactRecord
-        -- required whenever Episode building resolves its source through a
-        ``robot_run_id``, so the bytes actually read are verified against
-        the one canonical recording identity."""
-        artifact = await BuildEpisodesJobHandler._require_recording_artifact(
-            context, robot_run
-        )
-        return artifact.checksum
-
-    @staticmethod
-    async def _require_recording_artifact(
-        context: WorkerContext, robot_run: RobotRunRecord
-    ) -> ArtifactRecord:
-        artifact = await context.artifact_record_store.get(
-            robot_run.recording_artifact_id
-        )
-        if artifact is None or artifact.checksum is None:
-            raise RobotRunNotMaterializedError(
-                f"RobotRun {robot_run.run_id!r} references recording "
-                f"ArtifactRecord {robot_run.recording_artifact_id!r}, which is "
-                f"missing or has no checksum -- inconsistent canonical state."
-            )
-        return artifact
 
     @staticmethod
     def _reject_silent_zero_episode_mission_boundary(
@@ -313,7 +229,7 @@ class BuildEpisodesJobHandler(
             f"every channel shares a compatible recording timeline."
         )
 
-    # ── version / source resolution ────────────────────────────────────────────
+    # ── version resolution ────────────────────────────────────────────
 
     @staticmethod
     async def _require_version(
@@ -330,26 +246,6 @@ class BuildEpisodesJobHandler(
             )
         return version
 
-    @staticmethod
-    async def _resolve_source(
-        context: WorkerContext,
-        params: BuildEpisodesJobParams,
-    ) -> tuple[RobotRunRecord | None, str]:
-        robot_run: RobotRunRecord | None = None
-        mcap_uri = params.mcap_uri
-        if params.robot_run_id is not None:
-            robot_run = await context.robot_store.get_run(params.robot_run_id)
-            if robot_run is None:
-                raise ValueError(f"RobotRun not found: {params.robot_run_id}")
-            if not mcap_uri:
-                recording = await BuildEpisodesJobHandler._require_recording_artifact(
-                    context, robot_run
-                )
-                mcap_uri = recording.uri
-        if not mcap_uri:
-            raise ValueError("build_episodes requires mcap_uri or robot_run_id.")
-        return robot_run, mcap_uri
-
     # ── setup ──────────────────────────────────────────────────────────────────
 
     def _prepare_execution(
@@ -357,8 +253,6 @@ class BuildEpisodesJobHandler(
         request: JobHandlerRequest[BuildEpisodesJobParams],
         *,
         version_record: DatasetVersionRecord,
-        robot_run: RobotRunRecord | None,
-        mcap_uri: str,
     ) -> BuildEpisodesExecution:
         context = request.context
         params = request.params
@@ -373,8 +267,6 @@ class BuildEpisodesJobHandler(
             params=params,
             context=context,
             raw_log_id=raw_log_id,
-            mcap_uri=mcap_uri,
-            robot_run=robot_run,
             episode_artifact_store=context.episode_artifact_store,
             dataset_version_record=version_record,
         )

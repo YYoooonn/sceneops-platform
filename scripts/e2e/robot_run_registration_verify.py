@@ -23,8 +23,6 @@ import asyncio
 import hashlib
 import os
 import sys
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from sceneops_core.artifacts.schemas import ArtifactOwnerType
@@ -40,6 +38,9 @@ from sceneops_db.postgres.robots import PostgresRobotRunRepository
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_storage.backends.s3 import S3ArtifactStore
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
+from sceneops_worker.robots.resolver import resolve_recording
+from sceneops_worker.stores.artifacts import ArtifactRecordStore
+from sceneops_worker.stores.robots import RobotStore
 
 _PASS = 0
 _FAIL = 0
@@ -194,26 +195,42 @@ async def main() -> int:
     )
     print()
 
-    print("--- RosbagAdapter compatibility (retrieved bytes, no DB writes) ---")
-    with tempfile.TemporaryDirectory() as tmp:
-        local_path = Path(tmp) / "retrieved.mcap"
-        local_path.write_bytes(stored_bytes)
-        adapter = RosbagAdapter(
-            source_store=MagicMock(), source_root_uri=str(local_path)
-        )
-        source = adapter.extract_episode_source(
-            robot_id=args.robot_id, robot_run_id=args.robot_run_id
-        )
+    print("--- verified recording resolver -> RosbagAdapter (no DB writes) ---")
+    async with sessionmaker() as session:
+        async with resolve_recording(
+            robot_run_id=args.robot_run_id,
+            robot_store=RobotStore(session),
+            artifact_record_store=ArtifactRecordStore(session),
+            artifact_store=store,
+        ) as resolved:
+            _check(
+                "resolved recording checksum == CaptureResult sha256",
+                resolved.checksum == args.expected_checksum,
+            )
+            _check(
+                "resolved robot_id is the RobotRun's robot",
+                resolved.robot_id == args.robot_id,
+            )
+            adapter = RosbagAdapter(
+                source_store=MagicMock(), source_root_uri=str(resolved.local_path)
+            )
+            source = adapter.extract_episode_source(
+                robot_id=resolved.robot_id, robot_run_id=args.robot_run_id
+            )
         _check(
-            "retrieved bag: robot_states non-empty",
-            len(source.robot_states) > 0,
-            f"got {len(source.robot_states)}",
+            "resolved local copy removed after use",
+            not resolved.local_path.exists(),
         )
-        _check(
-            "retrieved bag: missions non-empty",
-            len(source.missions) > 0,
-            f"got {len(source.missions)}",
-        )
+    _check(
+        "resolved bag: robot_states non-empty",
+        len(source.robot_states) > 0,
+        f"got {len(source.robot_states)}",
+    )
+    _check(
+        "resolved bag: missions non-empty",
+        len(source.missions) > 0,
+        f"got {len(source.missions)}",
+    )
     print()
 
     print("=" * 60)

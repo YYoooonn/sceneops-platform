@@ -10,6 +10,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
+from sceneops_worker.robots.resolver import resolve_recording
 
 
 class IngestRobotStatesJobHandler(
@@ -24,11 +25,9 @@ class IngestRobotStatesJobHandler(
 
     Not part of any named SceneOps pipeline (dataset ingestion pipelines are a
     separate concept from RobotRun — docs/architecture/data-model.md §5). Dispatched
-    as a standalone Job. With only ``robot_run_id``, it reads the URI of the
-    RobotRun's registered recording ArtifactRecord; that path reaches
-    ``RosbagAdapter`` unmaterialized, so it only works for a local-backend
-    recording until consumers move to the verified recording resolver
-    (ADR-007 §12.4). An explicit ``mcap_uri`` is read as given.
+    as a standalone Job. The recording is read only through the verified
+    recording resolver (ADR-007 §12.4), keyed by ``robot_run_id``, so it
+    works the same for every ArtifactStore backend.
     """
 
     @property
@@ -49,57 +48,41 @@ class IngestRobotStatesJobHandler(
         params = request.params
         context = request.context
 
-        robot = await context.robot_store.get_robot(params.robot_id)
-        if robot is None:
-            raise ValueError(f"Robot not found: {params.robot_id}")
-
-        mcap_uri = params.mcap_uri
-        if params.robot_run_id is not None:
-            robot_run = await context.robot_store.get_run(params.robot_run_id)
-            if robot_run is None:
-                raise ValueError(f"RobotRun not found: {params.robot_run_id}")
-            if not mcap_uri:
-                recording = await context.artifact_record_store.get(
-                    robot_run.recording_artifact_id
-                )
-                if recording is None:
-                    raise ValueError(
-                        f"RobotRun {params.robot_run_id!r} references missing "
-                        f"recording ArtifactRecord "
-                        f"{robot_run.recording_artifact_id!r}"
-                    )
-                mcap_uri = recording.uri
-
-        if not mcap_uri:
-            raise ValueError("ingest_robot_states requires mcap_uri or robot_run_id.")
-
-        # observation_store is required by RosbagAdapter's constructor but is
-        # only used by build_raw_log() (scene frame manifests), not by
-        # extract_robot_states() — unused on this code path.
-        adapter = RosbagAdapter(
-            source_store=context.raw_source_store,
-            source_root_uri=mcap_uri,
-            observation_store=ObservationArtifactStore(
-                artifact_store=context.artifact_store,
-                dataset_root_uri=context.settings.dataset_root_uri,
-            ),
-        )
-
-        states = adapter.extract_robot_states(
-            robot_id=params.robot_id,
+        async with resolve_recording(
             robot_run_id=params.robot_run_id,
-        )
+            robot_store=context.robot_store,
+            artifact_record_store=context.artifact_record_store,
+            artifact_store=context.artifact_store,
+        ) as recording:
+            # observation_store is required by RosbagAdapter's constructor but
+            # is only used by build_raw_log() (scene frame manifests), not by
+            # extract_robot_states() — unused on this code path.
+            adapter = RosbagAdapter(
+                source_store=context.raw_source_store,
+                source_root_uri=str(recording.local_path),
+                observation_store=ObservationArtifactStore(
+                    artifact_store=context.artifact_store,
+                    dataset_root_uri=context.settings.dataset_root_uri,
+                ),
+            )
+            # The RobotRunRecord is authoritative for which robot produced
+            # the recording.
+            robot_id = recording.robot_id
+            states = adapter.extract_robot_states(
+                robot_id=robot_id,
+                robot_run_id=params.robot_run_id,
+            )
+            missions = adapter.extract_missions(
+                robot_id=robot_id,
+                robot_run_id=params.robot_run_id,
+            )
+
         saved_states = await context.robot_store.create_states(states)
-
-        missions = adapter.extract_missions(
-            robot_id=params.robot_id,
-            robot_run_id=params.robot_run_id,
-        )
         for mission in missions:
             await context.robot_store.upsert_mission(mission)
 
         return IngestRobotStatesJobResult(
-            robot_id=params.robot_id,
+            robot_id=robot_id,
             robot_run_id=params.robot_run_id,
             state_count=len(saved_states),
             mission_count=len(missions),

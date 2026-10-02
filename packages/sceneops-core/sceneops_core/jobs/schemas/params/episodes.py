@@ -10,29 +10,20 @@ from sceneops_core.episodes.alignment import (
 from sceneops_core.episodes.curation import CurationPolicy
 from sceneops_core.episodes.schemas import EpisodeSegmentationConfig
 
-from .base import BaseJobParams
+from .base import BaseJobParams, RecordingConsumerJobParams
 
 
-class BuildEpisodesJobParams(BaseJobParams):
-    """Robot rosbag/MCAP -> episodes.
+class BuildEpisodesJobParams(RecordingConsumerJobParams):
+    """Registered RobotRun recording -> episodes.
 
-    Mirrors ``BuildScenesJobParams`` (raw log -> scenes), but the source
-    adapter is always ``RosbagAdapter`` (registered under
-    ``RawLogSourceType.REAL_ROBOT_LOG`` in this job's own adapter factory,
-    separate from ``build_scenes``'s) and segmentation is driven by
-    ``EpisodeSegmenter`` (see ``segmentation`` below) rather than a generic
-    gap/anchor scene segmenter.
+    The recording -- and the robot it belongs to -- is identified only by
+    ``robot_run_id`` (see ``RecordingConsumerJobParams``); it is decoded by ``RosbagAdapter`` and
+    segmented by ``EpisodeSegmenter`` (see ``segmentation`` below) rather
+    than a generic gap/anchor scene segmenter.
     """
 
     dataset_id: str
     dataset_version: str
-
-    robot_id: str
-    robot_run_id: str | None = None
-
-    # Falls back to the referenced RobotRun's recording ArtifactRecord URI
-    # when omitted — same convention as IngestRobotStatesJobParams.
-    mcap_uri: str | None = None
 
     raw_log_id: str | None = None
 

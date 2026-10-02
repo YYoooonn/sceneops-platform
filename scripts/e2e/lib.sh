@@ -125,6 +125,20 @@ require_mcap_file() {
   fi
 }
 
+# episode_building_run_id <repo_root> <scene>
+# The RobotRun id e2e_episode_building.sh registers for <scene>'s recorded
+# bag, derived from the bag's content. RobotRuns are immutable and a run's
+# recording key is write-once, while e2e-robot-can-replay re-records the bag
+# with new bytes: a rerun over the same bag reuses its RobotRun (idempotent
+# publish + registration), a re-recorded bag gets a new one.
+episode_building_run_id() {
+  local repo_root="$1"
+  local scene="$2"
+  local sha
+  sha="$(shasum -a 256 "${repo_root}/data/raw/rosbag/${scene}/${scene}_0.mcap" | cut -c1-12)"
+  echo "run-${scene}-episodes-${sha}"
+}
+
 # ── Service readiness ───────────────────────────────────────────────────────────
 
 # require_service <name> <health_url> [max_attempts=1] [sleep_seconds=1] [hint]
@@ -478,6 +492,17 @@ publish_robot_run_recording() {
     --source-kind "$source_kind" ${extra_args[@]+"${extra_args[@]}"}
 }
 
+# Submits POST /robot-runs:register and prints the submission response
+# ({job, execution}). An identical manifest_uri returns the existing
+# equivalent Job (execution-key dedup) with execution=null.
+submit_robot_run_registration() {
+  local api_base_url="$1"
+  local manifest_uri="$2"
+  curl -sS -X POST "$(api_url "$api_base_url" "/robot-runs:register")" \
+    -H "Content-Type: application/json" \
+    -d "{\"manifest_uri\": \"$manifest_uri\"}"
+}
+
 # Submits POST /robot-runs:register and prints the terminal Job JSON
 # (succeeded or failed -- callers assert).
 register_robot_run() {
@@ -485,9 +510,7 @@ register_robot_run() {
   local manifest_uri="$2"
 
   local submitted job_id
-  submitted="$(curl -sS -X POST "$(api_url "$api_base_url" "/robot-runs:register")" \
-    -H "Content-Type: application/json" \
-    -d "{\"manifest_uri\": \"$manifest_uri\"}")"
+  submitted="$(submit_robot_run_registration "$api_base_url" "$manifest_uri")"
   job_id="$(extract_job_id "$submitted")"
   poll_job_terminal "$api_base_url" "$job_id" 60 2
 }
@@ -556,7 +579,7 @@ upsert_dataset_version() {
   local dataset_id="$2"
   local version="$3"
   # raw_source_root_uri is Scene-owned -- Episode dataset versions have no
-  # use for it (their source is RobotRun.mcap_uri), so it's optional here.
+  # use for it (their source is a registered RobotRun), so it's optional here.
   # Omit it to create/patch a version with no Scene raw-source config at all.
   local raw_source_root_uri="${4:-}"
 

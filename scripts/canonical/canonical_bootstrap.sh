@@ -200,7 +200,6 @@ build_episodes_for() {
   "force": true,
   "params": {
     "build_episodes": {
-      "robot_id": "$ROBOT_ID",
       "robot_run_id": "$robot_run_id",
       "segmentation": {"strategy": "mission_boundary"}
     },

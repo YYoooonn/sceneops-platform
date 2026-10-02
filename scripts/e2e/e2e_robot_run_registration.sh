@@ -17,9 +17,17 @@
 #      `uv run`) -- independently re-derives canonical state from
 #      Postgres/MinIO, re-checks the manifest's canonical form and the
 #      recording checksum, and opens the stored MCAP through RosbagAdapter.
-#   5. Idempotent retry: publish + register the SAME file again -- the
-#      publisher writes nothing and the registration Job reports
-#      created=false.
+#   5. Idempotent retry: publish + register the SAME file again.
+#      - the publisher writes nothing;
+#      - the identical HTTP request (POST /robot-runs:register) returns the
+#        SAME, already-succeeded Job via execution-key dedup, with no new
+#        execution. Its result is that Job's original registrar result, so
+#        it still reads created=true: `created` describes the execution
+#        that produced the result, not the latest request;
+#      - a direct registrar re-run (sceneops-worker robots register, the
+#        same registrar the Job handler runs) actually executes and reports
+#        created=False;
+#      - RobotRun and its two ArtifactRecords are unchanged throughout.
 #   6. Conflict: publish a DIFFERENT (real, valid) MCAP under the SAME
 #      run id -- the publisher must refuse (write-once key) and canonical
 #      state must be unchanged. Uses the canonical baseline's own
@@ -137,6 +145,27 @@ uv run python scripts/e2e/robot_run_registration_verify.py \
 echo ""
 
 echo "=== [5/6] idempotent retry (same file, same run id) ==="
+FIRST_JOB_ID="$(echo "$JOB_JSON" | jq -r '.job.jobId')"
+FIRST_RESULT="$(echo "$JOB_JSON" | jq -cS '.job.result')"
+RUN_BEFORE="$(curl -sS "$(api_url "$API_BASE_URL" "/robot-runs/$ROBOT_RUN_ID")" | jq -cS '.robotRun')"
+ARTIFACTS_BEFORE="$(fetch_artifacts_by_owner "$API_BASE_URL" robot_run "$ROBOT_RUN_ID" \
+  | jq -cS '[.artifacts[] | {artifactId, kind, uri, checksum, sizeBytes, createdAt}] | sort_by(.artifactId)')"
+[ "$(echo "$ARTIFACTS_BEFORE" | jq -r '[.[].kind] | sort | join(",")')" = "robot_run_manifest,robot_run_recording" ] || {
+  echo "❌ expected exactly one recording + one manifest ArtifactRecord, got $ARTIFACTS_BEFORE" >&2
+  exit 1
+}
+
+# assert_registration_unchanged <label>: RobotRun (incl. registeredAt) and
+# both ArtifactRecords are byte-for-byte the same as after [3/6].
+assert_registration_unchanged() {
+  local run_now artifacts_now
+  run_now="$(curl -sS "$(api_url "$API_BASE_URL" "/robot-runs/$ROBOT_RUN_ID")" | jq -cS '.robotRun')"
+  artifacts_now="$(fetch_artifacts_by_owner "$API_BASE_URL" robot_run "$ROBOT_RUN_ID" \
+    | jq -cS '[.artifacts[] | {artifactId, kind, uri, checksum, sizeBytes, createdAt}] | sort_by(.artifactId)')"
+  [ "$run_now" = "$RUN_BEFORE" ] || { echo "❌ $1: RobotRun changed" >&2; exit 1; }
+  [ "$artifacts_now" = "$ARTIFACTS_BEFORE" ] || { echo "❌ $1: RobotRun ArtifactRecords changed" >&2; exit 1; }
+}
+
 RETRY_PUBLICATION="$(publish_robot_run_recording "$REPO_ROOT" "$ROBOT_ID" "$ROBOT_RUN_ID" \
   "$MCAP_PATH" kafka "nuscenes-can-replay" "$KAFKA_TOPIC")"
 echo "  publication: $RETRY_PUBLICATION"
@@ -144,13 +173,39 @@ if [ "$(echo "$RETRY_PUBLICATION" | jq -r '.recording_written, .manifest_written
   echo "❌ identical republish wrote objects again" >&2
   exit 1
 fi
-RETRY_JOB_JSON="$(register_robot_run "$API_BASE_URL" "$MANIFEST_URI")"
-assert_job_succeeded "$RETRY_JOB_JSON" "identical re-registration should succeed"
-[ "$(echo "$RETRY_JOB_JSON" | jq -r '.job.result.created')" = "false" ] || {
-  echo "❌ identical re-registration did not report created=false" >&2
+echo "  ✅  identical republish wrote nothing"
+
+# HTTP retry: Job-level dedup, no second registrar execution.
+RETRY_SUBMISSION="$(submit_robot_run_registration "$API_BASE_URL" "$MANIFEST_URI")"
+[ "$(echo "$RETRY_SUBMISSION" | jq -r '.job.jobId')" = "$FIRST_JOB_ID" ] || {
+  echo "❌ identical POST /robot-runs:register did not return the original Job" >&2
+  echo "$RETRY_SUBMISSION" | jq . >&2
   exit 1
 }
-echo "  ✅  identical retry wrote and registered nothing new"
+[ "$(echo "$RETRY_SUBMISSION" | jq -r '.execution')" = "null" ] || {
+  echo "❌ identical POST /robot-runs:register dispatched a new execution" >&2
+  exit 1
+}
+RETRY_JOB_JSON="$(fetch_job "$API_BASE_URL" "$FIRST_JOB_ID")"
+assert_job_succeeded "$RETRY_JOB_JSON" "deduplicated registration Job should remain succeeded"
+[ "$(echo "$RETRY_JOB_JSON" | jq -cS '.job.result')" = "$FIRST_RESULT" ] || {
+  echo "❌ deduplicated registration Job result changed" >&2
+  exit 1
+}
+assert_registration_unchanged "HTTP retry"
+echo "  ✅  HTTP retry returned the same succeeded Job ($FIRST_JOB_ID), no new execution, original result (created=true) unchanged"
+
+# Registrar retry: the registrar actually runs again and converges.
+REGISTRAR_RETRY="$(docker compose -f "$REPO_ROOT/compose.yaml" --env-file "$REPO_ROOT/.env.local" \
+  --profile debug --profile worker run --rm -T worker-cli \
+  sceneops-worker robots register --manifest-uri "$MANIFEST_URI" 2>&1)"
+echo "$REGISTRAR_RETRY" | tail -1
+echo "$REGISTRAR_RETRY" | grep -q "created=False" || {
+  echo "❌ direct registrar retry did not report created=False" >&2
+  exit 1
+}
+assert_registration_unchanged "registrar retry"
+echo "  ✅  direct registrar retry executed and reported created=False; RobotRun + ArtifactRecords unchanged"
 echo ""
 
 echo "=== [6/6] conflict: different (real) MCAP under the same run id ==="

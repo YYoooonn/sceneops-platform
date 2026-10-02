@@ -136,8 +136,8 @@ class EpisodeManifestValidator:
                 EpisodeValidationIssue(
                     type="missing_robot_run_reference",
                     message=(
-                        "Episode has no robot_run_id — valid for episodes built "
-                        "directly from an mcap_uri, but worth flagging"
+                        "Episode has no robot_run_id — it cannot be traced to "
+                        "a registered recording"
                     ),
                     blocking=False,
                     field="robot_run_id",

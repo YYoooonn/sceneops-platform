@@ -86,8 +86,8 @@ e2e-robot-run-registration:
 
 # --------------------
 # Episode / learning-data bridge -- real CAN replay -> ROS2 -> Kafka ->
-# MCAP capture -> ArtifactStore -> canonical RobotRun -> materialize
-# (sceneops_worker.robots.materialization) -> existing
+# MCAP capture -> ArtifactStore -> canonical RobotRun -> verified recording
+# resolver (sceneops_worker.robots.resolver) -> existing
 # raw_log_episode_building pipeline -> Episode -> existing align/profile/
 # validate/export jobs -> real SceneOpsDataset.open() + step reads
 # (scripts/canonical/verify_learning_export.py, reused unmodified).

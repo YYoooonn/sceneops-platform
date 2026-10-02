@@ -77,7 +77,6 @@ async def test_episode_build_failure_after_materialization_then_retry_succeeds(
         return BuildEpisodesJobParams(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            robot_id=robot_id,
             robot_run_id=robot_run_id,
         )
 
@@ -119,7 +118,7 @@ async def test_episode_build_failure_after_materialization_then_retry_succeeds(
     assert len(captured_local_paths) == 1
     materialized_path = captured_local_paths[0]
     # The materialized temp file existed for RosbagAdapter to (attempt to)
-    # read, and is cleaned up after the failure -- materialize_recording's
+    # read, and is cleaned up after the failure -- the recording resolver's
     # own guarantee, exercised here through the real handler, not a fake.
     assert not materialized_path.exists()
     assert not materialized_path.parent.exists()

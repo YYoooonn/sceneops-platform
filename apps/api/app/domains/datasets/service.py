@@ -129,8 +129,8 @@ class DatasetService:
         #
         # manifest_uri/required_channels/raw_source_root_uri are Scene-owned
         # (SceneOps V2 Request 03/04 — raw_source_root_uri only feeds the
-        # Scene raw-log build path; Episode sources come from
-        # RobotRun.mcap_uri instead) — they must NOT be embedded in this
+        # Scene raw-log build path; Episode sources come from a registered
+        # RobotRun recording instead) — they must NOT be embedded in this
         # generic record construction: on an existing version this record has
         # scene=None, and routing scene=None through the generic upsert()
         # would leave real scene columns untouched (see

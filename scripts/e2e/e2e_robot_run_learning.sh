@@ -5,10 +5,10 @@
 #   real nuScenes CAN -> ROS2 -> Kafka -> durable MCAP capture
 #     -> Recording Publisher (MCAP + RobotRunManifest, real MinIO)
 #     -> REGISTER_ROBOT_RUN (ArtifactRecords + canonical RobotRun)
-#     -> materialize (sceneops_worker.robots.materialization, execution-
-#        scoped local temp file, checksum-verified against the RobotRun's
-#        own ArtifactRecord) -> existing RosbagAdapter (unmodified,
-#        storage-agnostic -- it is handed a local path either way)
+#     -> verified recording resolver (sceneops_worker.robots.resolver,
+#        execution-scoped local copy, size + sha256-verified against the
+#        RobotRun's recording ArtifactRecord) -> existing RosbagAdapter
+#        (storage-agnostic -- it is only ever handed a local path)
 #     -> existing raw_log_episode_building pipeline
 #        (build_episodes -> register_episode -> validate/profile_episode)
 #     -> existing align_episode / profile_aligned_episode /
@@ -20,10 +20,8 @@
 # Every stage after "canonical RobotRun" reuses the existing Episode/
 # Phase 5 learning-data pipeline verbatim -- nothing here is a
 # streaming-specific Episode/alignment/validation/profile/export
-# implementation. The only new code this E2E exercises is the
-# materialization boundary itself (BuildEpisodesJobHandler now
-# materializes an ArtifactStore-backed mcap_uri before handing a local
-# path to RosbagAdapter, exactly as it already did for a local path).
+# implementation. Recording consumption goes through the verified
+# recording resolver: build_episodes receives only robot_run_id.
 #
 # Uses a fresh, isolated dataset_id per invocation (the "test-e2e-*"
 # prefix convention, scripts/e2e/lib.sh) -- never
@@ -141,10 +139,9 @@ upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" \
 echo ""
 
 # ── 5. raw_log_episode_building pipeline: build_episodes -> register_episode ─
-#      -> validate_episode / profile_episode. robot_run_id only, NO mcap_uri
-#      override -- forces resolution through the RobotRun's recording
-#      ArtifactRecord (the s3:// URI), exercising the materialization
-#      boundary for real.
+#      -> validate_episode / profile_episode. robot_run_id only -- the
+#      recording is resolved through the RobotRun's recording
+#      ArtifactRecord (the s3:// URI) by the verified recording resolver.
 
 echo "--- 5. raw_log_episode_building pipeline ---"
 # Segmentation strategy is whole_run, not mission_boundary: a
@@ -168,7 +165,6 @@ BUILD_PAYLOAD="$(cat <<JSON
   "force": true,
   "params": {
     "build_episodes": {
-      "robot_id": "$ROBOT_ID",
       "robot_run_id": "$ROBOT_RUN_ID",
       "segmentation": {"strategy": "whole_run"}
     },
@@ -334,7 +330,7 @@ RETRY_PIPELINE_RUN_ID="$(extract_pipeline_run_id "$RETRY_CREATE_RESP")"
 dispatch_pipeline_run "$API_BASE_URL" "$RETRY_PIPELINE_RUN_ID" >/dev/null
 RETRY_PIPELINE_JSON="$(poll_pipeline_terminal "$API_BASE_URL" "$RETRY_PIPELINE_RUN_ID" "$POLL_TIMEOUT" 3)"
 assert_pipeline_succeeded "$RETRY_PIPELINE_JSON" "raw_log_episode_building retry should succeed" "$API_BASE_URL" "$RETRY_PIPELINE_RUN_ID"
-echo "  ✅  retry succeeded (materialization re-ran; canonical MCAP untouched)"
+echo "  ✅  retry succeeded (recording re-resolved; canonical MCAP untouched)"
 
 RETRY_ROBOT_RUN_ARTIFACTS_JSON="$(fetch_artifacts_by_owner "$API_BASE_URL" "robot_run" "$ROBOT_RUN_ID")"
 RETRY_CHECKSUM="$(echo "$RETRY_ROBOT_RUN_ARTIFACTS_JSON" | jq -r '.artifacts[0].checksum')"

@@ -124,6 +124,38 @@ async def test_existing_equivalent_job_is_not_redispatched(harness) -> None:
     assert log == ["commit"]
 
 
+async def test_identical_retry_returns_original_execution_result(harness) -> None:
+    """An identical POST /robot-runs:register is answered by Job dedup: the
+    already-succeeded Job comes back with its original registrar result.
+    ``created`` describes the execution that produced that result, so it
+    stays True -- no second registrar execution happens, and nothing
+    rewrites the old result. A registrar that actually runs again reports
+    created=False (apps/worker/tests/robots/test_registration_integration.py)."""
+    service, repository, log = harness
+    first = await service.submit("s3://b/m.json")
+    original_result = {
+        "run_id": "run-1",
+        "robot_id": "robot-1",
+        "recording_artifact_id": "art-robotrun-run-1",
+        "manifest_artifact_id": "art-robotrunmanifest-run-1",
+        "manifest_checksum": "sha256:" + "1" * 64,
+        "created": True,
+    }
+    repository.jobs[first.job.job_id] = first.job.model_copy(
+        update={"status": JobStatus.SUCCEEDED, "result": original_result}
+    )
+    log.clear()
+
+    retry = await service.submit("s3://b/m.json")
+
+    assert list(repository.jobs) == [first.job.job_id]
+    assert retry.job.job_id == first.job.job_id
+    assert retry.job.status == JobStatus.SUCCEEDED
+    assert retry.job.result == original_result
+    assert retry.execution is None
+    assert log == ["commit"]
+
+
 async def test_empty_manifest_uri_rejected(harness) -> None:
     service, _, _ = harness
     with pytest.raises(ValueError):

@@ -260,7 +260,8 @@ no-op; a different manifest for an existing `run_id` fails. A manifest
 if it contradicts a set one.
 
 `Mission`/`RobotState` are populated by the `ingest_robot_states` Job, which
-reads a rosbag2/MCAP file through `RosbagAdapter`. See
+reads a RobotRun's registered recording, resolved by `robot_run_id`, through
+`RosbagAdapter`. See
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) for the full
 pipeline and current limitations.
 

@@ -4,7 +4,7 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict
 
-from .base import BaseJobParams
+from .base import BaseJobParams, RecordingConsumerJobParams
 
 
 class RegisterRobotRunJobParams(BaseJobParams):
@@ -15,19 +15,16 @@ class RegisterRobotRunJobParams(BaseJobParams):
     manifest_uri: str = Field(min_length=1)
 
 
-class IngestRobotStatesJobParams(BaseJobParams):
-    """Read robot runtime state topics from a rosbag2/MCAP file into RobotState rows.
+class IngestRobotStatesJobParams(RecordingConsumerJobParams):
+    """Read robot runtime state topics from a registered RobotRun recording
+    into RobotState rows.
 
     Not tied to a Dataset/DatasetVersion — RobotRun is a separate domain from
     SceneOps' dataset ingestion pipelines (docs/architecture/data-model.md §5).
+
+    The recording -- and the robot it belongs to -- is identified only by
+    ``robot_run_id`` (see ``RecordingConsumerJobParams``).
     """
-
-    robot_id: str
-    robot_run_id: str | None = None
-
-    # Falls back to the referenced RobotRun's recording ArtifactRecord URI
-    # when omitted.
-    mcap_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

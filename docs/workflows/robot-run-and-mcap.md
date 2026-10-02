@@ -18,6 +18,7 @@ nuScenes CAN bus data
                  -> rosbag2/MCAP file
                       -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
                       -> POST /robot-runs:register -> REGISTER_ROBOT_RUN -> RobotRun (§3.2)
+                      -> resolve_recording(robot_run_id) -- verified local copy (§3.1)
                       -> RosbagAdapter (apps/worker) -- decodes real CDR messages, no rclpy needed to read
                            +-> ingest_robot_states Job -> Postgres (RobotState, Mission)
                            |     -> export_robot_analytics_snapshot Job -> Parquet (Artifact Store)
@@ -109,64 +110,57 @@ convention (`/data/raw/rosbag/...`); a published recording lives under
 `{artifact root}/robot_runs/{run_id}/` (see
 [Storage layout](../architecture/storage-layout.md) §3).
 
-### 3.1 Materialization: ArtifactStore-backed recordings
+### 3.1 Recording consumption: the verified recording resolver
 
 `RosbagAdapter` stays storage-agnostic — it only ever opens a local
 filesystem path (`mcap.reader.make_reader(open(path, "rb"))`), never
-`s3://`, MinIO, `ArtifactStore`, or HTTP directly. A local recording path
-reaches `RosbagAdapter` completely unchanged, exactly as described in §3.
+`s3://`, MinIO, `ArtifactStore`, or HTTP directly.
 
-A RobotRun's recording lives in ArtifactStore (published by the Recording
-Publisher, §3.2), so Episode building materializes it to a local file
-first:
+Every job that reads a registered recording identifies it by
+`robot_run_id` only and obtains it through one resolver,
+`resolve_recording()` (`sceneops_worker.robots.resolver`, ADR-007 §12.4):
 
 ```text
-RobotRun.recording_artifact_id -> recording ArtifactRecord.uri (e.g. s3://...)
-  -> materialize_recording() (sceneops_worker.robots.materialization)
-       -- reads the object via ArtifactStore.read_bytes(), writes it to
-          an execution-scoped local temp file (Python's own
-          tempfile.TemporaryDirectory -- a fresh, uniquely-named
-          directory per call), verifies it against the RobotRun's own
-          registered ArtifactRecord checksum
-  -> RosbagAdapter(local_path) -- identical to the local-path case
+robot_run_id
+  -> RobotRunRecord                       missing -> RobotRunNotFoundError
+  -> recording ArtifactRecord             missing, wrong kind, or no
+     (RobotRunRecord.recording_artifact_id)  checksum/size -> inconsistent
+                                          canonical state, fails
+  -> ArtifactStore.read_bytes(uri)        any backend (LocalArtifactStore,
+                                          MinIO/S3); bytes absent -> fails
+  -> execution-scoped local copy          fresh tempfile.TemporaryDirectory
+  -> verify size, then sha256, of the     mismatch -> RecordingIntegrityError
+     local copy against the ArtifactRecord
+  -> VerifiedRecording(robot_run_id, robot_id, local_path, recording_format,
+                       source_clock, artifact_id, checksum, size_bytes)
+  -> RosbagAdapter(local_path)
 ```
 
-**Canonical recording invariant.** `BuildEpisodesJobHandler`
-(`_extract_episode_source`) is the one caller wired to this today.
-Whenever a `robot_run_id` is given, the RobotRun's recording ArtifactRecord
-supplies the URI (unless an explicit `mcap_uri` overrides it) and its
-checksum is verified against the bytes actually read
-(`verify_local_recording_checksum` for a local path, `materialize_recording`'s
-own check otherwise). A missing recording ArtifactRecord is inconsistent
-canonical state and raises `RobotRunNotMaterializedError`. A bare
-`mcap_uri` param with no `robot_run_id` makes no canonical-recording claim
-and is not verified. `IngestRobotStatesJobHandler` reads the registered
-recording URI without materializing it, so with only `robot_run_id` it can
-read a local-backend recording but not an object-storage one; pass an
-explicit local `mcap_uri` alongside `robot_run_id` in that case (§6).
+Consumers: `build_episodes` and `ingest_robot_states`. Their job params take
+`robot_run_id` (required); `mcap_uri`, `rosbag_uri` and `robot_id` are
+rejected at job creation, and there is no local-path parameter and no
+fallback to any other recording source. The RobotRunRecord's `robot_id` is
+authoritative for the robot that produced the recording: Episodes,
+RobotStates and Missions derived from it carry that robot, and a caller
+cannot relabel the recording as another robot's. A recording is never read unverified, and the
+registered ArtifactRecord's size and checksum are the only integrity
+reference — not a backend ETag, a filename, or a URI. Only the `mcap`
+recording format is supported.
 
-**Lifecycle.** The materialized local copy is temporary and
-execution-scoped: it exists only for the duration of the `async with
-materialize_recording(...)` block (in practice, exactly as long as
-`RosbagAdapter` needs to read it), and is deleted on that block's exit
-whether the caller's code completed normally or raised — never left
-behind by a normal exception. It is never a shared/cached path across
-job executions: two independent executions materializing the same
-`RobotRun` concurrently each get their own temp directory, with no
-coordination between them. A crashed process (`SIGKILL`, container
-death) can leave a materialized file behind with no `finally` having
-run — this is treated as disposable temp data, not a canonical resource
-requiring cleanup: nothing else in the platform reads it, and the
-container/worker process lifecycle (an ephemeral filesystem with no
-persistent volume backing the OS temp directory) already reclaims it on
-the next container recreation.
+**Lifecycle.** The resolver owns the local copy; the consumer borrows its
+path (read-only) for the duration of the `async with resolve_recording(...)`
+block. The copy is deleted when the block exits — after normal completion,
+a consumer or reader exception, or a verification failure. The local
+backend is copied like any other, so a consumer never holds a path to the
+stored artifact itself. Concurrent resolutions of the same RobotRun get
+independent copies; there is no shared cache. A killed process (`SIGKILL`,
+container death) can leave a copy behind with no `finally` having run;
+it is disposable temp data that nothing else reads, reclaimed with the
+container's ephemeral filesystem.
 
-**The canonical ArtifactStore object itself is immutable from this
-boundary's perspective** — materialization only ever reads it
-(`ArtifactStore.read_bytes`), never writes to or deletes it. Retrying
-Episode building for the same `RobotRun` (the existing job/pipeline
-`force`/idempotency semantics, unchanged) may materialize the recording
-again; that's an expected, cheap re-read, not a correctness concern.
+**Read-only.** The resolver never writes RobotRunRecords, ArtifactRecords,
+or stored recording bytes. Retrying a consumer resolves and verifies the
+recording again.
 
 ### 3.2 Publication and registration
 
@@ -190,11 +184,21 @@ finalized local MCAP (ros2 bag record, or ros2/capture's CaptureResult.path)
 The manifest is the publication marker: a crash before it is written
 leaves no manifest, and a retry reuses the already-uploaded recording.
 Republishing identical inputs writes nothing; an existing key with
-different bytes is a hard conflict and is never overwritten. Registering
-the same manifest again is a no-op (`created=false`); a different manifest
-for a registered `run_id` fails, and so does a manifest `robot_platform`
-that contradicts the Robot's set platform. Registration never uploads,
-moves or rewrites bytes.
+different bytes is a hard conflict and is never overwritten. Running the
+registrar again for the same manifest is a no-op that reports
+`created=false`; a different manifest for a registered `run_id` fails, and
+so does a manifest `robot_platform` that contradicts the Robot's set
+platform. Registration never uploads, moves or rewrites bytes.
+
+`created` describes the registrar execution that produced a Job result,
+not the HTTP request that returned it. `POST /robot-runs:register` goes
+through Job execution-key dedup (see
+[Jobs and pipelines](../architecture/jobs-and-pipelines.md)): an identical
+`manifest_uri` returns the existing pending, running or succeeded Job with
+`execution: null`, so a retry after success sees that Job's original
+result (`created=true`) and no second registration runs. The registrar
+runs again, and reports `created=false`, only through a new Job
+(`force: true` on `POST /jobs`) or `sceneops-worker robots register`.
 
 `robot_run_root` defaults to the ArtifactSettings' `robot_run_root_uri`
 (`{artifact root}/robot_runs`); the publisher reads its ArtifactStore
@@ -265,7 +269,7 @@ curl -X POST http://localhost:8000/api/v1/robot-runs:register \
   -H 'Content-Type: application/json' -d '{"manifest_uri": "<manifest_uri>"}'
 # or: make worker-register-robot-run MANIFEST_URI=<manifest_uri>
 
-# then dispatch `ingest_robot_states` (robot_run_id + the local mcap_uri) via
+# then dispatch `ingest_robot_states` (robot_run_id only) via
 # POST /api/v1/jobs, or a raw_log_episode_building PipelineRun with the same
 # robot_run_id, for episodes
 ```
@@ -284,12 +288,9 @@ Everything else is self-contained in the `ros2/` Docker image.
   the Recording Publisher from a finalized capture, or registration from a
   published manifest; published-but-unregistered manifests are not
   discovered automatically.
-- **Recording consumers do not yet share one verified resolver.**
-  `build_episodes` and `ingest_robot_states` still accept a bare `mcap_uri`
-  param that is read unverified, and `ingest_robot_states` with only
-  `robot_run_id` cannot read an object-storage recording (§3.1).
 - **Recordings are read whole into memory** by the publisher, registration
-  and materialization (`ArtifactStore.read_bytes`).
+  and the recording resolver (`ArtifactStore.read_bytes`), and the resolver
+  then writes a full local copy before verification.
 - **`/vehicle/control` uses a JSON bridge, not a real `.msg` package** — a
   deliberate scope cut to avoid a `colcon` build step; revisit if real
   robot integration needs a first-class message type.

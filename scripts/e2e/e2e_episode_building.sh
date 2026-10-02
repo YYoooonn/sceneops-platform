@@ -81,13 +81,12 @@ SEGMENTATION_STRATEGY="${SEGMENTATION_STRATEGY:-mission_boundary}"
 FIXED_WINDOW_DURATION_MS="${FIXED_WINDOW_DURATION_MS:-5000}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
 
-RUN_ID="run-${SCENE}-episodes"
 BAG_DIR="/data/raw/rosbag/${SCENE}"
 MCAP_URI="${BAG_DIR}/${SCENE}_0.mcap"
 
 echo "=== raw_log_episode_building pipeline E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
-echo "  SCENE=$SCENE  ROBOT_ID=$ROBOT_ID  RUN_ID=$RUN_ID"
+echo "  SCENE=$SCENE  ROBOT_ID=$ROBOT_ID"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo "  SEGMENTATION_STRATEGY=$SEGMENTATION_STRATEGY"
 echo ""
@@ -97,6 +96,11 @@ echo ""
 # composed flow uses the identical check.
 require_mcap_file "$REPO_ROOT" "$MCAP_URI"
 echo "  bag=${MCAP_URI}  OK"
+
+# Content-derived (see lib.sh): a re-recorded bag gets a new, immutable
+# RobotRun instead of a write-once conflict.
+RUN_ID="$(episode_building_run_id "$REPO_ROOT" "$SCENE")"
+echo "  RUN_ID=$RUN_ID"
 echo ""
 
 # ── 1. Register Robot + RobotRun + Dataset/DatasetVersion via API ───────────
@@ -135,7 +139,6 @@ PAYLOAD="$(cat <<JSON
   "force": true,
   "params": {
     "build_episodes": {
-      "robot_id": "$ROBOT_ID",
       "robot_run_id": "$RUN_ID",
       "segmentation": $SEGMENTATION_JSON
     },

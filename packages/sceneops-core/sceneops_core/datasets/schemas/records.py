@@ -33,7 +33,7 @@ class DatasetVersionRecord(SceneOpsBaseModel):
     under ``scene``/``episode`` now — there is no flat top-level duplicate.
     Request 04 additionally moved ``raw_source_root_uri`` into
     ``scene`` (it was only ever used by the Scene raw-log build path —
-    Episode sources come from ``RobotRun.mcap_uri`` instead) and dropped the
+    Episode sources come from a registered RobotRun recording instead) and dropped the
     dead ``latest_distribution_run_id``/``distribution_report_uri`` fields
     entirely (no writer/reader ever existed; see the Request 01/04 audits).
     The underlying ``dataset_versions`` SQL row is still flat; converters in
