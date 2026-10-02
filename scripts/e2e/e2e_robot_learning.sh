@@ -29,7 +29,12 @@
 #   (b) EPISODE_IDs feeding align/profile/validate/export/curate are the
 #       REAL values captured from build_episodes' own job/task result in
 #       this same process -- never reconstructed by reimplementing
-#       build_episodes.py's ID-formatting formula in bash.
+#       build_episodes.py's ID-formatting formula in bash;
+#   (c) RobotRun registration goes through the canonical, artifact-backed
+#       `sceneops-worker robots register-capture` path (lib.sh's
+#       register_robot_run_capture), not the metadata-only POST
+#       /robot-runs -- build_episodes requires a registered recording
+#       ArtifactRecord for any robot_run_id it resolves.
 #
 # Curation policy is deliberately the empty/unrestricted CurationPolicy
 # ("no restriction on any dimension" -- see
@@ -218,9 +223,11 @@ for SCENE_NAME in "${SCENES[@]}"; do
   echo "  bag=${MCAP_URI}  OK"
   echo ""
 
-  echo "--- 3b. Register Robot + RobotRun ---"
+  echo "--- 3b. Register Robot + RobotRun (artifact-backed) ---"
   upsert_robot "$API_BASE_URL" "$ROBOT_ID" "nuscenes-can-replay" | jq '.robot | {robotId, status}'
-  upsert_robot_run "$API_BASE_URL" "$RUN_ID" "$ROBOT_ID" "$MCAP_URI" | jq '.robotRun | {runId, robotId, mcapUri}'
+  # Canonical, artifact-backed registration -- build_episodes (3c) requires
+  # a registered recording ArtifactRecord for the robot_run_id it resolves.
+  register_robot_run_capture "$REPO_ROOT" "$ROBOT_ID" "$RUN_ID" "$MCAP_URI"
   echo ""
 
   echo "--- 3c. Dispatch raw_log_episode_building pipeline ---"

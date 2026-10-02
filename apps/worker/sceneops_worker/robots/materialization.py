@@ -33,6 +33,18 @@ class MaterializationChecksumError(ValueError):
     RosbagAdapter or any other downstream reader."""
 
 
+class RobotRunNotMaterializedError(ValueError):
+    """A RobotRun was referenced by ``robot_run_id`` but has no registered
+    recording ArtifactRecord (``robot_run_recording_artifact_id``) -- it
+    was never registered through ``register_robot_run_capture``/
+    ``sceneops-worker robots register-capture``, or predates
+    artifact-backed registration (e.g. the legacy bare-path ``POST
+    /robot-runs`` / ``register-run`` metadata-only surface). Episode
+    building refuses to silently trust an unverified recording path in
+    this case -- register the RobotRun's recording through
+    ``register-capture`` first."""
+
+
 def is_local_uri(uri: str) -> bool:
     """True for a URI RosbagAdapter/``open()`` can already read directly
     (no scheme, or the ``file://`` scheme) -- false for anything
@@ -42,6 +54,32 @@ def is_local_uri(uri: str) -> bool:
     (``sceneops_storage.backends.local``) rather than inventing a second
     URI classification rule."""
     return urlparse(uri).scheme in ("", "file")
+
+
+def local_path_from_uri(uri: str) -> Path:
+    """Resolve a URI already known to satisfy ``is_local_uri()`` into a
+    filesystem ``Path`` -- strips the optional ``file://`` scheme,
+    otherwise treats the URI as a bare path exactly as RosbagAdapter's own
+    ``open()`` already does."""
+    parsed = urlparse(uri)
+    return Path(parsed.path) if parsed.scheme == "file" else Path(uri)
+
+
+def verify_local_recording_checksum(path: Path, *, expected_checksum: str) -> None:
+    """Verify a local recording file's bytes match ``expected_checksum``
+    in place, without an ArtifactStore round trip -- used when a
+    RobotRun's own ``mcap_uri`` is already a local path (RosbagAdapter
+    reads it directly either way) but the caller still referenced the
+    RobotRun by ``robot_run_id``, so its registered ArtifactRecord
+    checksum must be honored exactly as the ArtifactStore-backed branch in
+    ``materialize_recording`` already does."""
+    actual_checksum = f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+    if actual_checksum != expected_checksum:
+        raise MaterializationChecksumError(
+            f"local recording at {path} does not match its registered "
+            f"RobotRun ArtifactRecord checksum (expected={expected_checksum}, "
+            f"actual={actual_checksum})"
+        )
 
 
 @asynccontextmanager

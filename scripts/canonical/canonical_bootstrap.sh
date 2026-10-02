@@ -34,7 +34,12 @@
 # RobotRun's mcap_uri and the pipeline's own dataset_id/dataset_version, so
 # reusing one RobotRun for two independent dataset-scoped Episode builds is
 # already-safe existing behavior, not new architecture (see
-# apps/worker/sceneops_worker/jobs/dataset/build_episodes.py). Scene
+# apps/worker/sceneops_worker/jobs/dataset/build_episodes.py). Registration
+# is the canonical, artifact-backed `register-capture` path (lib.sh's
+# register_robot_run_capture) — build_episodes requires a registered
+# recording ArtifactRecord for any robot_run_id it resolves, and the one
+# RobotRun/ArtifactRecord pair registered per scene is exactly what both
+# build_episodes_for() calls below resolve through. Scene
 # ingestion (Postgres SceneRecord + ArtifactStore SceneManifest) is NOT
 # deduplicated between sceneops-scenes/v0.0 and sceneops-canonical/v0.0 --
 # doing so would require new cross-dataset ArtifactRecord ownership
@@ -243,8 +248,11 @@ for SCENE_NAME in "${BASELINE_SCENES[@]}"; do
   require_mcap_file "$REPO_ROOT" "$MCAP_URI"
   echo "  bag=${MCAP_URI}  OK"
 
-  echo "--- Register RobotRun (shared physical recording, reused by both Episode-bearing baselines) ---"
-  upsert_robot_run "$API_BASE_URL" "$RUN_ID" "$ROBOT_ID" "$MCAP_URI" >/dev/null
+  echo "--- Register RobotRun (artifact-backed; shared physical recording, reused by both Episode-bearing baselines) ---"
+  # Canonical, artifact-backed registration -- build_episodes_for (below)
+  # requires a registered recording ArtifactRecord for the robot_run_id it
+  # resolves (RobotRunNotMaterializedError otherwise).
+  register_robot_run_capture "$REPO_ROOT" "$ROBOT_ID" "$RUN_ID" "$MCAP_URI" >/dev/null
   echo "  run_id=$RUN_ID"
 
   echo "--- build_episodes -> $EPISODES_DATASET_ID/$EPISODES_DATASET_VERSION ---"

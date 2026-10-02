@@ -432,6 +432,13 @@ upsert_robot() {
     -d "{\"robot_id\": \"$robot_id\", \"platform\": \"$platform\"}"
 }
 
+# Metadata-only RobotRun registration (POST /robot-runs) -- no upload, no
+# checksum, no ArtifactRecord. Only safe for flows that never materialize
+# the recording through build_episodes (e.g. ingest_robot_states, see
+# e2e_robot_can_replay.sh). Episode-building callers must use
+# register_robot_run_capture() below instead -- build_episodes now
+# requires a registered recording ArtifactRecord for any robot_run_id it
+# resolves (RobotRunNotMaterializedError otherwise).
 upsert_robot_run() {
   local api_base_url="$1"
   local run_id="$2"
@@ -449,6 +456,29 @@ upsert_robot_run() {
   curl -sS -X POST "$(api_url "$api_base_url" "/robot-runs")" \
     -H "Content-Type: application/json" \
     -d "{\"run_id\": \"$run_id\", \"robot_id\": \"$robot_id\", \"mcap_uri\": \"$mcap_uri\"}"
+}
+
+# Canonical, artifact-backed RobotRun registration: registers a finalized
+# local MCAP via the real worker-cli `register-capture` command
+# (ArtifactStore upload/verify + ArtifactRecord + RobotRun, atomically,
+# checksum-verified) -- the same command e2e_robot_run_registration.sh
+# already exercises directly (see apps/worker/sceneops_worker/cli/robots.py,
+# apps/worker/sceneops_worker/robots/registration.py). Idempotent: an exact
+# retry (same robot_run_id, same file content) reports created=False and
+# creates nothing new. mcap_path must be a path visible inside the
+# worker-cli container (the repo's bind-mounted ./data:/data, same
+# convention as every other container-internal MCAP path in these scripts).
+register_robot_run_capture() {
+  local repo_root="$1"
+  local robot_id="$2"
+  local robot_run_id="$3"
+  local mcap_path="$4"
+
+  docker compose -f "$repo_root/compose.yaml" --env-file "$repo_root/.env.local" \
+    --profile debug --profile worker run --rm worker-cli \
+    sceneops-worker robots register-capture \
+    --robot-id "$robot_id" --robot-run-id "$robot_run_id" \
+    --mcap-path "$mcap_path"
 }
 
 fetch_missions() {

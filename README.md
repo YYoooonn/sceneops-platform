@@ -734,7 +734,7 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | `make ros2-check` | Smoke-test `rclpy` import + MCAP storage plugin |
 | `make ros2-can-replay SCENE=scene-0061 RATE=10.0` | Replay nuScenes CAN data as ROS2 topics (no recording) |
 | `make ros2-can-replay-record SCENE=scene-0061 RATE=5.0 DURATION=30` | Same, recorded to `data/raw/rosbag/<scene>/` as MCAP |
-| `make worker-register-robot-run ROBOT_ID=.. RUN_ID=.. MCAP_URI=..` | Register a Robot + RobotRun via CLI (alternative to `POST /robots`) |
+| `make worker-register-robot-run ROBOT_ID=.. RUN_ID=.. MCAP_URI=..` | Register a Robot + RobotRun via CLI (alternative to `POST /robots`) — metadata-only, no ArtifactRecord; not usable as an Episode-building materialization source, see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) §3.1/§6 |
 
 
 ---

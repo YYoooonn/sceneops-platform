@@ -130,16 +130,26 @@ RobotRun.mcap_uri (ArtifactStore-backed, e.g. s3://...)
           an execution-scoped local temp file (Python's own
           tempfile.TemporaryDirectory -- a fresh, uniquely-named
           directory per call), verifies it against the RobotRun's own
-          registered ArtifactRecord checksum when one is resolvable
+          registered ArtifactRecord checksum
   -> RosbagAdapter(local_path) -- identical to the local-path case
 ```
 
-`BuildEpisodesJobHandler` is the one caller wired to this today
-(`_extract_episode_source`) — it checks whether `mcap_uri` is already a
-local path (`materialization.is_local_uri`, a plain URI-scheme check)
-and only materializes when it isn't. `IngestRobotStatesJobHandler`/
-`BuildScenesJobHandler` still assume a local `mcap_uri` — an
-ArtifactStore-backed RobotRun is not yet consumable through those two.
+**Canonical recording invariant.** `BuildEpisodesJobHandler`
+(`_extract_episode_source`) is the one caller wired to this today.
+Whenever a `robot_run_id` is given — local `mcap_uri` or
+ArtifactStore-backed alike — the referenced RobotRun's recording
+ArtifactRecord (`robot_run_recording_artifact_id`) is now **required**,
+and its checksum is verified against the bytes actually read
+(`verify_local_recording_checksum` for a local path, `materialize_recording`'s
+own check otherwise). A RobotRun with no recording ArtifactRecord — e.g.
+one only ever registered through the bare-path, metadata-only `POST
+/robot-runs`/`register-run` surface (§6) — raises
+`RobotRunNotMaterializedError` rather than being silently trusted. A
+bare `mcap_uri` param with no `robot_run_id` at all (no RobotRun entity
+referenced) makes no canonical-recording claim and is unaffected.
+`IngestRobotStatesJobHandler`/`BuildScenesJobHandler` still assume a
+local `mcap_uri` and don't resolve this invariant — an ArtifactStore-backed
+RobotRun is not yet consumable through those two.
 
 **Lifecycle.** The materialized local copy is temporary and
 execution-scoped: it exists only for the duration of the `async with
@@ -209,9 +219,19 @@ Or fully manually:
 
 ```bash
 make ros2-can-replay-record SCENE=scene-0061 RATE=5.0
+
+# Metadata-only registration -- fine ahead of ingest_robot_states, NOT
+# sufficient for Episode building (no ArtifactRecord is created):
 make worker-register-robot-run ROBOT_ID=robot-1 RUN_ID=run-1 MCAP_URI=/data/raw/rosbag/scene-0061/scene-0061_0.mcap
 # then dispatch `ingest_robot_states` via POST /api/v1/jobs, same as any other job
-# or dispatch a raw_log_episode_building PipelineRun with the same raw_log_id, for episodes
+
+# Canonical, artifact-backed registration -- required before a
+# raw_log_episode_building PipelineRun will accept this robot_run_id
+# (BuildEpisodesJobHandler raises RobotRunNotMaterializedError otherwise):
+docker compose run --rm worker-cli sceneops-worker robots register-capture \
+  --robot-id robot-1 --robot-run-id run-1 \
+  --mcap-path /data/raw/rosbag/scene-0061/scene-0061_0.mcap
+# then dispatch a raw_log_episode_building PipelineRun with the same robot_run_id, for episodes
 ```
 
 Requires the nuScenes CAN bus expansion unzipped at
@@ -228,6 +248,11 @@ Everything else is self-contained in the `ros2/` Docker image.
   assumes both already exist in the DB. There's no dedicated API/CLI wizard
   for creating them ahead of a CAN replay — today that's a direct `POST
   /robots` + `POST /robot-runs` call, or `make worker-register-robot-run`.
+  Both are metadata-only (no upload, no checksum, no ArtifactRecord) and
+  exist only for this `ingest_robot_states`-adjacent use; a RobotRun
+  registered this way cannot be used as a materialization source by
+  Episode building (§3.1's canonical recording invariant) — use
+  `sceneops-worker robots register-capture` for that.
 - **`/vehicle/control` uses a JSON bridge, not a real `.msg` package** — a
   deliberate scope cut to avoid a `colcon` build step; revisit if real
   robot integration needs a first-class message type.

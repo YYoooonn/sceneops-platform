@@ -1,10 +1,17 @@
 """BuildEpisodesJobHandler's recording-materialization boundary
-(sceneops_worker.robots.materialization): a local mcap_uri must behave
-exactly as before (never touches ArtifactStore); an ArtifactStore-backed
-(``s3://``) mcap_uri must be materialized to a local temp file first,
-with the RobotRun's own registered ArtifactRecord checksum verified when
-resolvable. Mirrors test_build_episodes_handler.py's own MCAP-fixture and
-mocked-WorkerContext conventions.
+(sceneops_worker.robots.materialization): a local mcap_uri with NO
+robot_run_id must behave exactly as before (never touches ArtifactStore,
+nothing to verify -- an explicit pinned-path override, no RobotRun
+referenced). An ArtifactStore-backed (``s3://``) mcap_uri must be
+materialized to a local temp file first. Whenever a robot_run_id IS given
+-- local or remote mcap_uri alike -- the RobotRun's own registered
+recording ArtifactRecord checksum is now REQUIRED and verified, never
+skipped just because no artifact was found (RobotRunNotMaterializedError)
+or the URI happened to be local (verify_local_recording_checksum): this
+is the RobotRun-registration-boundary invariant closing the domain/
+execution-boundary audit's gap, where a bare-path-registered RobotRun
+used to be trusted unconditionally. Mirrors test_build_episodes_handler.py's
+own MCAP-fixture and mocked-WorkerContext conventions.
 """
 
 from __future__ import annotations
@@ -27,7 +34,10 @@ from sceneops_core.robots.schemas import RobotRunRecord
 from sceneops_worker.episodes.artifacts import EpisodeArtifactWriteResult
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.build_episodes import BuildEpisodesJobHandler
-from sceneops_worker.robots.materialization import MaterializationChecksumError
+from sceneops_worker.robots.materialization import (
+    MaterializationChecksumError,
+    RobotRunNotMaterializedError,
+)
 
 
 def _write_mcap(path: str, messages: list[tuple[str, int, dict, str]]) -> None:
@@ -172,6 +182,44 @@ async def test_remote_mcap_uri_verifies_robot_run_artifact_checksum(tmp_path) ->
     context.artifact_record_store.get.assert_awaited_once_with("art-robotrun-run-1")
 
 
+async def test_remote_mcap_uri_with_robot_run_id_missing_artifact_raises(
+    tmp_path,
+) -> None:
+    """A robot_run_id was given, but its RobotRun has no registered
+    recording ArtifactRecord (e.g. it only went through the bare-path,
+    metadata-only POST /robot-runs/register-run surface) -- this must now
+    raise, never silently skip verification just because no artifact was
+    found."""
+    data = _fixture_mcap_bytes(tmp_path)
+    context = _make_context()
+    context.artifact_store.read_bytes = AsyncMock(return_value=data)
+    context.robot_store.get_run = AsyncMock(
+        return_value=RobotRunRecord(
+            run_id="run-1",
+            robot_id="robot-1",
+            mcap_uri="s3://sceneops/artifacts/robot_runs/run-1/run-1.mcap",
+        )
+    )
+    context.artifact_record_store.get = AsyncMock(return_value=None)
+
+    job = JobManifest(
+        job_id="job-remote-unregistered",
+        type=JobType.BUILD_EPISODES,
+        status=JobStatus.RUNNING,
+    )
+    params = BuildEpisodesJobParams(
+        dataset_id="d1", dataset_version="v1", robot_id="robot-1", robot_run_id="run-1"
+    )
+    request = JobHandlerRequest(job=job, params=params, context=context)
+
+    with pytest.raises(RobotRunNotMaterializedError, match="run-1"):
+        await BuildEpisodesJobHandler().run(request)
+
+    context.episode_artifact_store.write_episode_manifest.assert_not_called()
+    context.artifact_record_store.create.assert_not_called()
+    context.commit.assert_not_called()
+
+
 async def test_remote_mcap_uri_checksum_mismatch_raises_before_writing_anything(
     tmp_path,
 ) -> None:
@@ -190,6 +238,123 @@ async def test_remote_mcap_uri_checksum_mismatch_raises_before_writing_anything(
 
     job = JobManifest(
         job_id="job-4", type=JobType.BUILD_EPISODES, status=JobStatus.RUNNING
+    )
+    params = BuildEpisodesJobParams(
+        dataset_id="d1", dataset_version="v1", robot_id="robot-1", robot_run_id="run-1"
+    )
+    request = JobHandlerRequest(job=job, params=params, context=context)
+
+    with pytest.raises(MaterializationChecksumError):
+        await BuildEpisodesJobHandler().run(request)
+
+    context.episode_artifact_store.write_episode_manifest.assert_not_called()
+    context.artifact_record_store.create.assert_not_called()
+    context.commit.assert_not_called()
+
+
+# ── robot_run_id + local mcap_uri: the exact gap this audit closed --
+#    previously a local RobotRun.mcap_uri was trusted unconditionally,
+#    with no ArtifactRecord check at all. ────────────────────────────────
+
+
+async def test_local_mcap_uri_with_robot_run_id_requires_registered_artifact(
+    tmp_path,
+) -> None:
+    """A robot_run_id was given and resolves to a LOCAL mcap_uri (e.g. a
+    bare-path-registered RobotRun, or one that predates artifact-backed
+    registration) -- must now raise rather than silently trusting the
+    path, exactly like the remote-URI case above."""
+    bag_path = str(tmp_path / "run.mcap")
+    with open(bag_path, "wb") as f:
+        f.write(_fixture_mcap_bytes(tmp_path))
+
+    context = _make_context()
+    context.robot_store.get_run = AsyncMock(
+        return_value=RobotRunRecord(
+            run_id="run-1", robot_id="robot-1", mcap_uri=bag_path
+        )
+    )
+    context.artifact_record_store.get = AsyncMock(return_value=None)
+
+    job = JobManifest(
+        job_id="job-local-unregistered",
+        type=JobType.BUILD_EPISODES,
+        status=JobStatus.RUNNING,
+    )
+    params = BuildEpisodesJobParams(
+        dataset_id="d1", dataset_version="v1", robot_id="robot-1", robot_run_id="run-1"
+    )
+    request = JobHandlerRequest(job=job, params=params, context=context)
+
+    with pytest.raises(RobotRunNotMaterializedError, match="run-1"):
+        await BuildEpisodesJobHandler().run(request)
+
+    context.episode_artifact_store.write_episode_manifest.assert_not_called()
+    context.artifact_record_store.create.assert_not_called()
+    context.commit.assert_not_called()
+
+
+async def test_local_mcap_uri_with_robot_run_id_and_matching_artifact_succeeds(
+    tmp_path,
+) -> None:
+    """The positive case: a registered recording ArtifactRecord exists for
+    this RobotRun and its checksum matches the local file -- Episode
+    building proceeds exactly as it already does for the remote-URI case."""
+    data = _fixture_mcap_bytes(tmp_path)
+    bag_path = str(tmp_path / "run.mcap")
+    with open(bag_path, "wb") as f:
+        f.write(data)
+
+    context = _make_context()
+    context.robot_store.get_run = AsyncMock(
+        return_value=RobotRunRecord(
+            run_id="run-1", robot_id="robot-1", mcap_uri=bag_path
+        )
+    )
+    context.robot_store.save_run = AsyncMock()
+    matching_artifact = MagicMock(checksum=_sha256(data))
+    context.artifact_record_store.get = AsyncMock(return_value=matching_artifact)
+
+    job = JobManifest(
+        job_id="job-local-registered",
+        type=JobType.BUILD_EPISODES,
+        status=JobStatus.RUNNING,
+    )
+    params = BuildEpisodesJobParams(
+        dataset_id="d1", dataset_version="v1", robot_id="robot-1", robot_run_id="run-1"
+    )
+    request = JobHandlerRequest(job=job, params=params, context=context)
+
+    result = await BuildEpisodesJobHandler().run(request)
+
+    assert result.episode_count == 1
+    context.artifact_record_store.get.assert_awaited_once_with("art-robotrun-run-1")
+
+
+async def test_local_mcap_uri_with_robot_run_id_checksum_mismatch_raises(
+    tmp_path,
+) -> None:
+    """The registered ArtifactRecord's checksum doesn't match the local
+    file's actual bytes -- must refuse to build Episodes from it, exactly
+    like the remote-URI mismatch case above."""
+    data = _fixture_mcap_bytes(tmp_path)
+    bag_path = str(tmp_path / "run.mcap")
+    with open(bag_path, "wb") as f:
+        f.write(data)
+
+    context = _make_context()
+    context.robot_store.get_run = AsyncMock(
+        return_value=RobotRunRecord(
+            run_id="run-1", robot_id="robot-1", mcap_uri=bag_path
+        )
+    )
+    mismatched_artifact = MagicMock(checksum="sha256:" + "0" * 64)
+    context.artifact_record_store.get = AsyncMock(return_value=mismatched_artifact)
+
+    job = JobManifest(
+        job_id="job-local-mismatch",
+        type=JobType.BUILD_EPISODES,
+        status=JobStatus.RUNNING,
     )
     params = BuildEpisodesJobParams(
         dataset_id="d1", dataset_version="v1", robot_id="robot-1", robot_run_id="run-1"

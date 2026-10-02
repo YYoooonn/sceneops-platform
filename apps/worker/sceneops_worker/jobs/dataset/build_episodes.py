@@ -32,7 +32,13 @@ from sceneops_worker.episodes.building import (
     EpisodeSegmenter,
 )
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
-from sceneops_worker.robots.materialization import is_local_uri, materialize_recording
+from sceneops_worker.robots.materialization import (
+    RobotRunNotMaterializedError,
+    is_local_uri,
+    local_path_from_uri,
+    materialize_recording,
+    verify_local_recording_checksum,
+)
 
 
 class UnsupportedSegmentationError(ValueError):
@@ -180,22 +186,46 @@ class BuildEpisodesJobHandler(
         execution: BuildEpisodesExecution,
     ) -> EpisodeSource:
         """One reused path after input resolution, per the recording
-        materialization boundary (docs/architecture/streaming-transport.md):
-        a local ``mcap_uri``/``rosbag_uri`` (every pre-existing caller,
-        e.g. ``ros2 bag record`` output or the stopgap
-        ``register-run`` CLI) goes straight into ``RosbagAdapter`` exactly
-        as before -- unchanged behavior, zero new code on that path. An
-        ArtifactStore-backed URI (``s3://...``, e.g. a Phase 6.4-registered
-        streaming-captured RobotRun) is materialized to an execution-scoped
-        local temp file first -- ``RosbagAdapter`` itself never learns
-        about ``s3://``/MinIO/``ArtifactStore``/HTTP, only ever a local
-        path, either way.
+        materialization boundary (docs/architecture/streaming-transport.md).
+
+        Whenever a ``robot_run_id`` was given, the canonical recording
+        invariant applies regardless of whether the resolved ``mcap_uri``
+        turns out to be local or ArtifactStore-backed: the RobotRun must
+        have a registered recording ArtifactRecord
+        (``_require_expected_checksum`` raises ``RobotRunNotMaterializedError``
+        otherwise), and the bytes actually read are checksum-verified
+        against it -- ``verify_local_recording_checksum`` for a local URI,
+        ``materialize_recording``'s own check for an ArtifactStore-backed
+        one. This is what closes the SceneOps V2 domain-execution-boundary
+        audit's RobotRun-registration gap: a RobotRun is no longer
+        silently trusted as a materialization source just because its
+        ``mcap_uri`` happens to be a readable local path.
+
+        No ``robot_run_id`` at all (an explicit, pinned ``mcap_uri``
+        override with no RobotRun entity referenced) makes no canonical-
+        recording claim, so nothing is verified -- unchanged, existing
+        behavior for that case. ``RosbagAdapter`` itself never learns
+        about ``s3://``/MinIO/``ArtifactStore``/HTTP either way, only ever
+        a local path.
         """
         params = execution.params
         context = execution.context
         mcap_uri = execution.mcap_uri
+        robot_run = execution.robot_run
+
+        expected_checksum: str | None = None
+        if robot_run is not None:
+            expected_checksum = (
+                await BuildEpisodesJobHandler._require_expected_checksum(
+                    context, robot_run
+                )
+            )
 
         if is_local_uri(mcap_uri):
+            if expected_checksum is not None:
+                verify_local_recording_checksum(
+                    local_path_from_uri(mcap_uri), expected_checksum=expected_checksum
+                )
             adapter = RosbagAdapter(
                 source_store=context.raw_source_store, source_root_uri=mcap_uri
             )
@@ -203,9 +233,6 @@ class BuildEpisodesJobHandler(
                 robot_id=params.robot_id, robot_run_id=params.robot_run_id
             )
 
-        expected_checksum = await BuildEpisodesJobHandler._resolve_expected_checksum(
-            context, execution.robot_run
-        )
         async with materialize_recording(
             artifact_store=context.artifact_store,
             uri=mcap_uri,
@@ -219,22 +246,29 @@ class BuildEpisodesJobHandler(
             )
 
     @staticmethod
-    async def _resolve_expected_checksum(
-        context: WorkerContext, robot_run: RobotRunRecord | None
-    ) -> str | None:
-        """The RobotRun's own registered ArtifactRecord checksum (Phase
-        6.4's ``robot_run_recording_artifact_id`` -- the one canonical
-        artifact identity for this recording, never a second one) when
-        resolvable, ``None`` otherwise (e.g. no ``robot_run_id`` was given,
-        or this RobotRun predates artifact-backed registration) -- checksum
-        verification during materialization is then simply skipped, never
-        forced."""
-        if robot_run is None:
-            return None
-        artifact = await context.artifact_record_store.get(
-            robot_run_recording_artifact_id(robot_run.run_id)
-        )
-        return artifact.checksum if artifact is not None else None
+    async def _require_expected_checksum(
+        context: WorkerContext, robot_run: RobotRunRecord
+    ) -> str:
+        """The RobotRun's own registered ArtifactRecord checksum
+        (``robot_run_recording_artifact_id`` -- the one canonical artifact
+        identity for this recording, never a second one) -- required,
+        never optional, whenever Episode building resolves its source
+        through a ``robot_run_id``. A RobotRun with no recording
+        ArtifactRecord was never registered through
+        ``register_robot_run_capture`` (e.g. it only went through the
+        bare-path, metadata-only ``POST /robot-runs``/``register-run``
+        surface) and must not be silently trusted as a materialization
+        source."""
+        artifact_id = robot_run_recording_artifact_id(robot_run.run_id)
+        artifact = await context.artifact_record_store.get(artifact_id)
+        if artifact is None:
+            raise RobotRunNotMaterializedError(
+                f"RobotRun {robot_run.run_id!r} has no registered recording "
+                f"ArtifactRecord ({artifact_id!r}) -- register it via "
+                f"`sceneops-worker robots register-capture` before building "
+                f"Episodes from it."
+            )
+        return artifact.checksum
 
     @staticmethod
     def _reject_silent_zero_episode_mission_boundary(

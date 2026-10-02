@@ -30,10 +30,15 @@ def register_run_command(
 ) -> None:
     """Upsert a Robot + RobotRun so ingest_robot_states has something to attach to.
 
-    Stopgap CLI, not a REST API — Robot/RobotRun registration doesn't have
-    one yet (docs/workflows/robot-run-and-mcap.md §6 lists this as an open gap). This is
-    the fastest way to get a row in place before dispatching
-    ingest_robot_states against a recorded bag.
+    Metadata-only, equivalent to ``POST /robot-runs`` (which does exist as
+    a REST API, apps/api/app/domains/robots/router.py) -- this CLI is just
+    a local-shell alternative to the same upsert, not the canonical
+    recording registration path. ``mcap_uri`` is stored as-is with no
+    upload, no checksum, no ArtifactRecord. A RobotRun registered this way
+    cannot be used as a materialization source by Episode building
+    (``build_episodes`` requires a recording ArtifactRecord for any
+    ``robot_run_id`` it resolves). Use ``register-capture`` below to
+    register a recording for Episode building.
     """
     print("[bold cyan]SceneOps Worker - Register robot run[/bold cyan]")
     print(f"robot_id={robot_id} run_id={run_id} mcap_uri={mcap_uri}")
@@ -84,6 +89,12 @@ def register_capture_command(
     rather than creating anything new; a conflicting retry (same
     robot_run_id, different content) fails loudly without mutating
     existing state. See sceneops_worker.robots.registration.
+
+    This is the canonical recording registration path -- the RobotRun it
+    creates is the only kind Episode building (``build_episodes``) will
+    accept as a materialization source for a given ``robot_run_id``; the
+    bare-path ``register-run``/``POST /robot-runs`` surface above is
+    metadata-only and cannot be used for that purpose.
     """
     print("[bold cyan]SceneOps Worker - Register RobotRun capture[/bold cyan]")
     print(f"robot_id={robot_id} robot_run_id={robot_run_id} mcap_path={mcap_path}")
