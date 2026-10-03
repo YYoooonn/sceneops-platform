@@ -8,10 +8,24 @@
         --source-kind kafka --source-topic sceneops.robot.telemetry.v1 \\
         [--source-clock mcap_log_time] [--root-uri s3://sceneops/artifacts/robot_runs]
 
-On success prints one JSON object (``manifest_uri``, ``manifest_checksum``,
-``recording_uri``, ``recording_written``, ``manifest_written``) on stdout and
-exits 0; on failure prints the error on stderr and exits non-zero. The
-printed ``manifest_uri`` is what ``POST /robot-runs:register`` takes.
+On success prints one JSON object on stdout and exits 0; on failure prints
+the error on stderr and exits non-zero. The object is the machine-readable
+publication result::
+
+    run_id, manifest_uri, manifest_checksum,
+    recording_uri, recording_checksum, recording_size_bytes,
+    recording_written, manifest_written     (false => identical object existed)
+
+The printed ``manifest_uri`` is what ``POST /robot-runs:register`` takes;
+callers never derive storage keys themselves.
+
+::
+
+    python -m sceneops_integrations.recording check --mcap-path rec.mcap
+
+runs the L1 conformance suite (``conformance.py``) against a local MCAP,
+prints its JSON report and exits non-zero if the recording does not
+conform. It reads only the file: no ArtifactStore, no database.
 
 ArtifactStore backend/credentials come from environment variables via
 ``sceneops_core.config.ArtifactSettings``, e.g.::
@@ -39,10 +53,11 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from sceneops_core.config import ArtifactSettings
-from sceneops_core.episodes.alignment.config import MCAP_LOG_TIME_CLOCK
+from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
 from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
 from sceneops_storage import create_artifact_store
 
+from .conformance import check_l1_recording
 from .publisher import publish_recording
 
 
@@ -81,6 +96,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     publish.add_argument("--source-clock", default=MCAP_LOG_TIME_CLOCK)
     publish.add_argument("--root-uri", default=None)
+    check = sub.add_parser("check")
+    check.add_argument("--mcap-path", required=True, type=Path)
+    check.add_argument(
+        "--any-encoding-profile",
+        action="store_true",
+        help="Do not require the ros2/cdr/ros2msg encoding profile.",
+    )
     return parser.parse_args(argv)
 
 
@@ -101,16 +123,35 @@ async def _publish(args: argparse.Namespace) -> dict[str, object]:
         source_clock=args.source_clock,
     )
     return {
+        "run_id": publication.manifest.run_id,
         "manifest_uri": publication.manifest_uri,
         "manifest_checksum": publication.manifest_checksum,
         "recording_uri": publication.recording_uri,
+        "recording_checksum": publication.manifest.recording.checksum,
+        "recording_size_bytes": publication.manifest.recording.size_bytes,
         "recording_written": publication.recording_written,
         "manifest_written": publication.manifest_written,
     }
 
 
+def _check(args: argparse.Namespace) -> int:
+    report = check_l1_recording(
+        args.mcap_path, require_ros2_profile=not args.any_encoding_profile
+    )
+    print(json.dumps(report.to_dict(), sort_keys=True))
+    if not report.conforms:
+        print(
+            f"recording does not conform: {len(report.violations)} violation(s)",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.command == "check":
+        return _check(args)
     try:
         result = asyncio.run(_publish(args))
     except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero

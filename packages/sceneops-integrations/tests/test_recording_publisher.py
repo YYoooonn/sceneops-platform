@@ -29,6 +29,7 @@ from sceneops_integrations.recording import (
     RecordingPublicationIntegrityError,
     RecordingValidationError,
     publish_recording,
+    sha256_checksum,
 )
 from sceneops_storage import LocalArtifactStore
 
@@ -328,11 +329,36 @@ class TestCli:
         ]
         assert main(argv) == 0
         result = json.loads(capsys.readouterr().out)
+        assert set(result) == {
+            "run_id",
+            "manifest_uri",
+            "manifest_checksum",
+            "recording_uri",
+            "recording_checksum",
+            "recording_size_bytes",
+            "recording_written",
+            "manifest_written",
+        }
+        assert result["run_id"] == "run-cli"
         assert result["manifest_uri"] == str(
             root / "robot_runs" / "run-cli" / "robot_run_manifest.json"
         )
-        manifest = load_canonical_robot_run_manifest(
-            Path(result["manifest_uri"]).read_bytes()
+        manifest_bytes = Path(result["manifest_uri"]).read_bytes()
+        manifest = load_canonical_robot_run_manifest(manifest_bytes)
+        assert result["manifest_checksum"] == sha256_checksum(manifest_bytes)
+        recording_bytes = mcap.read_bytes()
+        assert (
+            result["recording_uri"],
+            result["recording_checksum"],
+            result["recording_size_bytes"],
+        ) == (
+            manifest.recording.uri,
+            sha256_checksum(recording_bytes),
+            len(recording_bytes),
+        )
+        assert (result["recording_written"], result["manifest_written"]) == (
+            True,
+            True,
         )
         assert manifest.capture.source.topics == ["t1", "t2"]
         assert manifest.robot_platform is None

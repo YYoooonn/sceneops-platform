@@ -1,0 +1,54 @@
+# Batch L1 acquisition (ADR-007 §29.4, §29.13): one-shot data-plane
+# containers, run with `docker compose run --rm`. Neither is part of the
+# FastAPI control plane; after publication, SceneOps is driven through the
+# API (POST /robot-runs:register -> REGISTER_ROBOT_RUN Job).
+#
+#   dataset-acquisition   external dataset (read-only) -> finalized MCAP in
+#                         the acquisition-recordings volume. Own image, no
+#                         SceneOps packages, no network, no credentials.
+#   recording-publisher   finalized MCAP (read-only) -> recording +
+#                         RobotRunManifest in the ArtifactStore. Also runs
+#                         the L1 conformance check. Database-free: it gets
+#                         ArtifactStore settings only, never DB settings.
+#
+# acquisition-recordings is the only hand-off between the two: the MCAP
+# never passes through the host or the API.
+services:
+  dataset-acquisition:
+    build:
+      context: ./tools/dataset-acquisition
+    image: sceneops-platform/dataset-acquisition:local
+    network_mode: none
+    volumes:
+      - ${ACQUISITION_NUSCENES_ROOT:-./data/raw/nuscenes}:/input/nuscenes:ro
+      - acquisition-recordings:/recordings
+    profiles:
+      - acquisition
+
+  recording-publisher:
+    # The publisher ships in the worker image (sceneops_integrations.recording);
+    # this service runs it with its own entrypoint and settings.
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: sceneops-platform/worker:local
+    entrypoint: ["python", "-m", "sceneops_integrations.recording"]
+    command: ["--help"]
+    # Publishes into the same ArtifactStore the workers verify from.
+    environment:
+      SCENEOPS_PUBLISHER_ARTIFACT__BACKEND: ${SCENEOPS_WORKER_ARTIFACT__BACKEND:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI: ${SCENEOPS_WORKER_ARTIFACT__ROOT_URI:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ENDPOINT_URL: ${SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__REGION: ${SCENEOPS_WORKER_ARTIFACT__REGION:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID: ${SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY: ${SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY:-}
+    volumes:
+      - acquisition-recordings:/recordings:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    profiles:
+      - acquisition
+
+volumes:
+  acquisition-recordings:

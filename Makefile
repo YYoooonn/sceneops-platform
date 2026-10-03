@@ -211,6 +211,8 @@ help:
 	@echo "  make e2e-ros2-streaming SCENE=scene-0061 RATE=10.0"
 	@echo "  make e2e-streaming-capture SCENE=scene-0061 RATE=10.0   Durable MCAP capture from Kafka"
 	@echo "  make e2e-robot-run-registration SCENE=scene-0061 RATE=10.0   Capture -> canonical RobotRun"
+	@echo "  make e2e-batch-acquisition SCENE=scene-0061   nuScenes -> dataset-acquisition MCAP -> RobotRun"
+	@echo "  make acquisition-test                       tools/dataset-acquisition tests (isolated venv)"
 	@echo "  make e2e-robot-run-learning SCENE=scene-0061 RATE=10.0   RobotRun -> resolve_recording -> Episode -> learning data"
 	@echo "  make register-nuscenes-dataset"
 	@echo "  make e2e-bootstrap / e2e-bootstrap-core / e2e-bootstrap-interop / e2e-bootstrap-raw-log"
@@ -248,3 +250,4 @@ include makefiles/lerobot.mk
 include makefiles/nuscenes.mk
 include makefiles/canonical.mk
 include makefiles/streaming.mk
+include makefiles/acquisition.mk

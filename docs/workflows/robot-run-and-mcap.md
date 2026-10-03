@@ -210,6 +210,66 @@ different bytes are detected (post-write verification, registration and
 consumer checksums) rather than prevented; capture routing by
 `robot_run_id` provides the single-publisher assumption.
 
+### 3.3 Batch acquisition and the L1 recording contract
+
+A recording that already exists — a robot's onboard recorder, or an
+external dataset converted by the acquisition tool — enters through the
+same publisher and registrar as a capture (ADR-007 §29.4). Only
+`capture.source.kind` (`file`) differs, and nothing downstream branches on
+it:
+
+```text
+external dataset (e.g. nuScenes v1.0-mini scene, read-only mount)
+  -> dataset-acquisition container      tools/dataset-acquisition; no SceneOps package,
+                                        no network, no credentials
+       -> finalized MCAP                 camera, CameraInfo, lidar, /tf_static, /tf,
+                                         CAN telemetry, mission events
+                                         (acquisition-recordings volume)
+  -> recording-publisher container      python -m sceneops_integrations.recording
+       check                             L1 conformance (optional, read-only)
+       publish --source-kind file        recording + RobotRunManifest -> ArtifactStore;
+                                         JSON result incl. manifest_uri
+  -> POST /robot-runs:register           REGISTER_ROBOT_RUN Job -> RobotRun
+```
+
+Both containers are one-shot compose services (`compose/acquisition.yaml`,
+profile `acquisition`). They are data-plane steps outside the API.
+`recording-publisher` runs the publisher from the worker image with
+ArtifactStore settings only. It receives no database settings. Recording
+bytes never pass through the API. Registration and everything after it go
+through FastAPI. `make e2e-batch-acquisition` exercises this path from the
+host with only Docker Compose, curl and jq.
+
+The tool stops at the MCAP. It never publishes, registers or calls
+SceneOps. Its channel mapping, timing policy and calibration representation
+are documented in
+[`tools/dataset-acquisition/README.md`](../../tools/dataset-acquisition/README.md).
+The source unit it converts (a nuScenes scene name) selects input only. It
+is not a SceneOps Scene, and the recording carries no Scene, Episode or
+DatasetVersion information.
+
+**L1 conformance.** `check_l1_recording()`
+(`sceneops_integrations.recording.conformance`, CLI `... recording check
+--mcap-path`) checks what the bytes of any L1 recording can prove: a
+finalized MCAP, one channel definition per topic, embedded schemas with
+the `ros2`/`cdr`/`ros2msg` profile, every payload decoding with its own
+schema, `log_time` non-decreasing in write order, per-channel sequence
+numbers increasing, camera / range-sensor frames connected by a transform
+recorded at or before their first message, CameraInfo for every image
+frame, and no SceneOps canonical identifiers in metadata or schemas. It
+reports per-channel facts (counts, `log_time` and source-stamp ranges,
+frame ids) and an optional `sceneops.acquisition_origin` metadata record,
+which it never interprets. Source-time fidelity and event timelines are
+writer obligations, checked by each writer's tests against its source
+data. Capture output does not conform yet: it writes the source timestamp
+into `log_time` (ADR-007 §29.20).
+
+**Acquisition origin.** The tool writes `sceneops.acquisition_origin`
+(tool, source format, version, unit) into the MCAP as an MCAP metadata
+record. It is covered by the recording checksum. It is not part of the
+RobotRunManifest, and publication, registration and the resolver never
+read it.
+
 ## 4. Entity relationships
 
 ```text
@@ -280,10 +340,12 @@ Everything else is self-contained in the `ros2/` Docker image.
 
 ## 6. Current limitations
 
-- **Binary sensor payloads aren't written to files.** `sensor_msgs/Image`/
-  `PointCloud2` decode via CDR but `RawSensorFrameManifest.uri` stays empty
-  — no camera/LiDAR-publishing ROS2 node exists yet to test a real write
-  path against.
+- **Sensor payloads are recorded but not consumed.** Batch acquisition
+  (§3.3) registers RobotRuns whose recordings carry camera, lidar,
+  CameraInfo and transform channels, but no consumer extracts them yet:
+  `RosbagAdapter` decodes `sensor_msgs/Image`/`PointCloud2` via CDR and
+  leaves `RawSensorFrameManifest.uri` empty. The streaming path (bridge,
+  capture) carries only the five telemetry channels of §2.
 - **Publication and registration are explicit steps.** Nothing triggers
   the Recording Publisher from a finalized capture, or registration from a
   published manifest; published-but-unregistered manifests are not

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import IO
 
-from sceneops_core.episodes.alignment.config import MCAP_LOG_TIME_CLOCK
+from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
 from sceneops_core.robots.manifest import ChannelFact
 
 # v1 derives started_at/ended_at from MCAP message log_time only; any other

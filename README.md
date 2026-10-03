@@ -779,6 +779,9 @@ sceneops-platform/
 │   ├── sceneops-db/                # SQLAlchemy models, async repositories, Alembic
 │   ├── sceneops-storage/           # LocalArtifactStore, S3ArtifactStore
 │   └── sceneops-analytics/         # Parquet table builders, DuckDB query helper (v2 adds robot tables)
+├── tools/                          # isolated uv projects, outside the workspace:
+│                                   #   dataset-acquisition (external dataset → L1 MCAP; no SceneOps deps),
+│                                   #   lerobot-integration, nuscenes-integration
 ├── ros2/                           # (v2) ROS2 Jazzy Docker sandbox
 │   ├── Dockerfile                  #   rclpy, rosbag2, MCAP storage plugin, nuscenes-devkit
 │   └── nodes/can_replay_node.py    #   CanReplayNode — nuScenes CAN → real ROS2 topics
