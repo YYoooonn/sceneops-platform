@@ -26,6 +26,7 @@ from sceneops_core.scenarios.schemas.runs import (
     ScenarioReadinessRunRecord,
 )
 from sceneops_core.runs.schemas import RunStatus, RunType
+from sceneops_core.scenes import SceneReadiness
 from sceneops_db.converters.scenarios import scenario_run_record_to_values
 
 from sceneops_worker.jobs.scenarios.mine_scenarios import (
@@ -46,27 +47,21 @@ def _candidate(
     scene_id: str = "scene-001",
     *,
     annotation_count: int = 1000,
-    sample_count: int = 40,
-    frame_count: int = 80,
+    keyframe_count: int = 40,
+    observation_count: int = 80,
     has_ground_truth: bool = True,
     channels: list[str] | None = None,
-    status: str = "profiled",
+    readiness: SceneReadiness = SceneReadiness.READY,
 ) -> dict:
     return {
         "scene_id": scene_id,
         "annotation_count": annotation_count,
-        "sample_count": sample_count,
-        "frame_count": frame_count,
+        "keyframe_count": keyframe_count,
+        "observation_count": observation_count,
         "has_ground_truth": has_ground_truth,
         "channels": channels or ["CAM_FRONT", "LIDAR_TOP"],
-        "status": status,
-        "validation_status": (
-            "ready"
-            if status in ("validated", "profiled")
-            else "blocked"
-            if status == "failed"
-            else "unknown"
-        ),
+        "readiness": readiness,
+        "validation_status": readiness.value,
     }
 
 
@@ -82,10 +77,8 @@ def _check_passes(scene: dict, params: MineScenariosJobParams) -> bool:
     profile = _get_profile_defaults(params.candidate_profile)
     passes, _ = _passes_filters(
         scene_id=scene["scene_id"],
-        status=scene["status"],
+        readiness=scene["readiness"],
         annotation_count=scene["annotation_count"],
-        sample_count=scene["sample_count"],
-        frame_count=scene["frame_count"],
         has_ground_truth=scene["has_ground_truth"],
         channels=scene["channels"],
         params=params,
@@ -100,38 +93,48 @@ def _check_passes(scene: dict, params: MineScenariosJobParams) -> bool:
 class TestDetectionReadyProfile:
     def test_gt_profiled_scene_passes(self) -> None:
         scene = _candidate(
-            has_ground_truth=True, annotation_count=500, status="profiled"
+            has_ground_truth=True, annotation_count=500, readiness=SceneReadiness.READY
         )
         params = _mining_params(candidate_profile="detection_ready")
         assert _check_passes(scene, params) is True
 
     def test_no_gt_rejected(self) -> None:
         scene = _candidate(
-            has_ground_truth=False, annotation_count=500, status="profiled"
+            has_ground_truth=False, annotation_count=500, readiness=SceneReadiness.READY
         )
         params = _mining_params(candidate_profile="detection_ready")
         assert _check_passes(scene, params) is False
 
     def test_zero_annotation_count_rejected(self) -> None:
-        scene = _candidate(has_ground_truth=True, annotation_count=0, status="profiled")
+        scene = _candidate(
+            has_ground_truth=True, annotation_count=0, readiness=SceneReadiness.READY
+        )
         params = _mining_params(candidate_profile="detection_ready")
         assert _check_passes(scene, params) is False
 
     def test_unvalidated_status_rejected(self) -> None:
         scene = _candidate(
-            has_ground_truth=True, annotation_count=500, status="registered"
+            has_ground_truth=True,
+            annotation_count=500,
+            readiness=SceneReadiness.UNKNOWN,
         )
         params = _mining_params(candidate_profile="detection_ready")
         assert _check_passes(scene, params) is False
 
     def test_validation_failed_rejected(self) -> None:
-        scene = _candidate(has_ground_truth=True, annotation_count=500, status="failed")
+        scene = _candidate(
+            has_ground_truth=True,
+            annotation_count=500,
+            readiness=SceneReadiness.BLOCKED,
+        )
         params = _mining_params(candidate_profile="detection_ready")
         assert _check_passes(scene, params) is False
 
     def test_validated_status_passes(self) -> None:
         scene = _candidate(
-            has_ground_truth=True, annotation_count=500, status="validated"
+            has_ground_truth=True,
+            annotation_count=500,
+            readiness=SceneReadiness.WARNING,
         )
         params = _mining_params(candidate_profile="detection_ready")
         assert _check_passes(scene, params) is True
@@ -143,7 +146,7 @@ class TestDetectionReadyProfile:
 class TestNoGtCandidatesProfile:
     def test_no_gt_scene_passes(self) -> None:
         scene = _candidate(
-            has_ground_truth=False, annotation_count=0, status="registered"
+            has_ground_truth=False, annotation_count=0, readiness=SceneReadiness.UNKNOWN
         )
         params = _mining_params(candidate_profile="no_gt_candidates")
         assert _check_passes(scene, params) is True
@@ -159,9 +162,9 @@ class TestNoGtCandidatesProfile:
 
 class TestAllProfile:
     def test_all_scenes_pass_by_default(self) -> None:
-        for status in ("registered", "validated", "profiled", "failed"):
+        for readiness in SceneReadiness:
             scene = _candidate(
-                has_ground_truth=False, annotation_count=0, status=status
+                has_ground_truth=False, annotation_count=0, readiness=readiness
             )
             params = _mining_params(candidate_profile="all")
             assert _check_passes(scene, params) is True
@@ -255,8 +258,8 @@ class TestScoringComponents:
         candidate = {
             "has_ground_truth": True,
             "annotation_count": 1000,
-            "sample_count": 40,
-            "frame_count": 80,
+            "keyframe_count": 40,
+            "observation_count": 80,
             "channels": ["CAM_FRONT", "LIDAR_TOP"],
             "validation_status": "ready",
         }
@@ -274,8 +277,8 @@ class TestScoringComponents:
         candidate = {
             "has_ground_truth": False,
             "annotation_count": 0,
-            "sample_count": 10,
-            "frame_count": 20,
+            "keyframe_count": 10,
+            "observation_count": 20,
             "channels": [],
             "validation_status": "unknown",
         }
@@ -286,8 +289,8 @@ class TestScoringComponents:
         candidate = {
             "has_ground_truth": False,
             "annotation_count": 0,
-            "sample_count": 10,
-            "frame_count": 20,
+            "keyframe_count": 10,
+            "observation_count": 20,
             "channels": [],
             "validation_status": "warning",
         }
@@ -298,8 +301,8 @@ class TestScoringComponents:
         candidate = {
             "has_ground_truth": False,
             "annotation_count": 0,
-            "sample_count": 1,
-            "frame_count": 1,
+            "keyframe_count": 1,
+            "observation_count": 1,
             "channels": ["CAM_FRONT"],
             "validation_status": "unknown",
         }
@@ -313,8 +316,8 @@ class TestScoringComponents:
         candidate = {
             "has_ground_truth": False,
             "annotation_count": 0,
-            "sample_count": 1,
-            "frame_count": 1,
+            "keyframe_count": 1,
+            "observation_count": 1,
             "channels": [],
             "validation_status": "unknown",
         }
@@ -328,8 +331,8 @@ class TestScoringComponents:
         candidate = {
             "has_ground_truth": True,
             "annotation_count": 500,
-            "sample_count": 20,
-            "frame_count": 40,
+            "keyframe_count": 20,
+            "observation_count": 40,
             "channels": ["CAM_FRONT"],
             "validation_status": "ready",
         }

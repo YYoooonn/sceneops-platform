@@ -93,7 +93,7 @@ foundation, verified accurate as of Stabilization Request 8:
 - `RobotRun`↔MCAP registration remains manual (no auto-binding of a freshly recorded MCAP to a `RobotRun`) — see [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) §6.
 - Camera/LiDAR binary payload materialization is incomplete — CDR-decoded but never written to the Artifact Store.
 - Scenario Curation remains `experimental=True`; scenario candidates are artifact-backed only, no per-scenario DB row.
-- `WORLD_STATE` remains reserved/unwired — see [../architecture/reserved-and-limitations.md](../architecture/reserved-and-limitations.md).
+- Legacy Scene producers emit non-registrable manifests — see [../architecture/reserved-and-limitations.md](../architecture/reserved-and-limitations.md) §2.
 - Temporal synchronization/alignment between Episode observation/action channels is not implemented (`EpisodeManifestValidator`'s own docstring defers this explicitly).
 - No Parquet/LeRobot-style canonical Episode export exists — Episode has no analytics-table equivalent of Scene's `export_analytics_snapshot`.
 - The Airflow pipeline backend is a per-task DAG proof of concept hardcoded to `dataset_scene_ingestion` — no other pipeline type (including `raw_log_episode_building`) can be sent through it without generalizing the DAG.

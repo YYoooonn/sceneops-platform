@@ -64,8 +64,8 @@ def _summary(
     non_selectable_for_detection_count: int = 0,
     ground_truth_scene_count: int = 10,
     annotated_scene_count: int = 10,
-    total_sample_count: int = 404,
-    total_frame_count: int = 808,
+    total_keyframe_count: int = 404,
+    total_observation_count: int = 808,
     total_annotation_count: int = 14982,
     exclusion_reason_counts: dict | None = None,
     observed_channels: list[str] | None = None,
@@ -80,8 +80,8 @@ def _summary(
         non_selectable_for_detection_count=non_selectable_for_detection_count,
         ground_truth_scene_count=ground_truth_scene_count,
         annotated_scene_count=annotated_scene_count,
-        total_sample_count=total_sample_count,
-        total_frame_count=total_frame_count,
+        total_keyframe_count=total_keyframe_count,
+        total_observation_count=total_observation_count,
         total_annotation_count=total_annotation_count,
         exclusion_reason_counts=exclusion_reason_counts or {},
         observed_channels=observed_channels or ["CAM_FRONT", "LIDAR_TOP"],
@@ -309,16 +309,16 @@ def test_counts_from_scene_aggregate_totals():
         version=_version(),
         summary=_summary(
             scene_count=10,
-            total_sample_count=404,
-            total_frame_count=808,
+            total_keyframe_count=404,
+            total_observation_count=808,
             total_annotation_count=14982,
             ground_truth_scene_count=10,
             selectable_for_detection_count=10,
         ),
     )
     assert result.counts.scene_count == 10
-    assert result.counts.sample_count == 404
-    assert result.counts.frame_count == 808
+    assert result.counts.keyframe_count == 404
+    assert result.counts.observation_count == 808
     assert result.counts.annotation_count == 14982
     assert result.counts.ground_truth_scene_count == 10
     assert result.counts.selectable_scene_count == 10

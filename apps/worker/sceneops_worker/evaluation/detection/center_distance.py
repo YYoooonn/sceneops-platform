@@ -3,7 +3,7 @@
 This module is specific to the center-distance matching algorithm.
 
 Evaluation policy:
-  - SceneManifest.annotation_count is the scene-level GT availability signal.
+  - A Scene with at least one source annotation is ground-truth-bearing.
   - If the selected dataset has no GT annotations at all, evaluation is skipped.
   - Prediction shards belonging to scenes without GT are skipped.
   - Samples inside GT-bearing scenes are evaluated even when that sample has
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
+from sceneops_worker.scenes.keyframes import KeyframeSample
 from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.artifacts import (
     write_final_evaluation_manifest,
@@ -229,7 +229,7 @@ async def evaluate_center_distance_detection(
 def evaluate_center_distance_sample_payload(
     *,
     sample_payload: dict[str, Any],
-    sample_index: dict[str, SceneSampleManifest],
+    sample_index: dict[str, KeyframeSample],
     match_distance_m: float,
 ) -> dict[str, Any]:
     """Run center-distance matching for one sample payload."""
@@ -342,15 +342,15 @@ def _policy_value(policy: Any) -> str:
 def _scene_index_summary(scene_index: EvaluationSceneIndex) -> dict[str, Any]:
     return {
         "scene_count": scene_index.scene_count,
-        "sample_count": scene_index.sample_count,
-        "frame_count": scene_index.frame_count,
+        "keyframe_count": scene_index.keyframe_count,
+        "observation_count": scene_index.observation_count,
         "annotation_count": scene_index.annotation_count,
         "ground_truth_scene_count": scene_index.ground_truth_scene_count,
         "scenes": [
             {
                 "scene_id": scene.scene_id,
-                "sample_count": scene.sample_count,
-                "frame_count": scene.frame_count,
+                "keyframe_count": scene.keyframe_count,
+                "observation_count": scene.observation_count,
                 "annotation_count": scene.annotation_count,
                 "has_ground_truth": scene.has_ground_truth,
                 "ground_truth_source": scene.ground_truth_source,

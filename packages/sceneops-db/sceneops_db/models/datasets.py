@@ -11,7 +11,6 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    Boolean,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -88,13 +87,15 @@ class DatasetVersionModel(Base):
         default=0,
         server_default=text("0"),
     )
-    sample_count: Mapped[int] = mapped_column(
+    # Scene membership summary: written only by the Scene registrar,
+    # recomputed from SceneRecord rows under this row's lock.
+    keyframe_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         default=0,
         server_default=text("0"),
     )
-    frame_count: Mapped[int] = mapped_column(
+    observation_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         default=0,
@@ -107,7 +108,7 @@ class DatasetVersionModel(Base):
         server_default=text("0"),
     )
 
-    channels: Mapped[list[str]] = mapped_column(
+    observed_channels: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
@@ -127,35 +128,6 @@ class DatasetVersionModel(Base):
     )
 
     raw_source_root_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    latest_validation_run_id: Mapped[str | None] = mapped_column(
-        String(128),
-        nullable=True,
-        index=True,
-    )
-    validation_status: Mapped[str | None] = mapped_column(
-        String(32),
-        nullable=True,
-        index=True,
-    )
-    should_block_pipeline: Mapped[bool | None] = mapped_column(
-        Boolean,
-        nullable=True,
-    )
-    validation_report_uri: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
-
-    latest_profile_run_id: Mapped[str | None] = mapped_column(
-        String(128),
-        nullable=True,
-        index=True,
-    )
-    profile_report_uri: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -182,19 +154,3 @@ class DatasetVersionModel(Base):
 
 Index("ix_dataset_versions_dataset_id", DatasetVersionModel.dataset_id)
 Index("ix_dataset_versions_status", DatasetVersionModel.status)
-Index(
-    "ix_dataset_versions_latest_validation_run_id",
-    DatasetVersionModel.latest_validation_run_id,
-)
-Index(
-    "ix_dataset_versions_latest_profile_run_id",
-    DatasetVersionModel.latest_profile_run_id,
-)
-Index(
-    "ix_dataset_versions_validation_status",
-    DatasetVersionModel.validation_status,
-)
-Index(
-    "ix_dataset_versions_should_block_pipeline",
-    DatasetVersionModel.should_block_pipeline,
-)

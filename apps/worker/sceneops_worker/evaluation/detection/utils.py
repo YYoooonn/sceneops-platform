@@ -3,10 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from sceneops_core.scenes.schemas.manifests import (
-    SceneAnnotationManifest as SampleAnnotationManifest,
-    SceneSampleManifest,
-)
+from sceneops_core.scenes.schemas import SceneAnnotation
+from sceneops_worker.scenes.keyframes import KeyframeSample
 
 
 def is_evaluable_prediction(pred: dict[str, Any]) -> bool:
@@ -20,7 +18,7 @@ def is_evaluable_prediction(pred: dict[str, Any]) -> bool:
 
 def evaluate_sample(
     *,
-    sample: SceneSampleManifest,
+    sample: KeyframeSample,
     predictions: list[dict[str, Any]],
     match_distance_m: float,
     dataset_id: str | None = None,
@@ -46,7 +44,7 @@ def evaluate_sample(
             if gt.category != prediction["category_name"]:
                 continue
 
-            distance = center_distance(gt.translation, prediction["translation"])
+            distance = center_distance(list(gt.box.center_m), prediction["translation"])
 
             if distance < best_distance:
                 best_distance = distance
@@ -104,8 +102,8 @@ def evaluate_sample(
 
 
 def _filter_supported_gt(
-    annotations: list[SampleAnnotationManifest],
-) -> list[SampleAnnotationManifest]:
+    annotations: list[SceneAnnotation],
+) -> list[SceneAnnotation]:
     supported_prefixes = (
         "vehicle.car",
         "human.pedestrian",
@@ -126,7 +124,7 @@ def center_distance(a: list[float], b: list[float]) -> float:
 
 def build_sample_class_metrics(
     *,
-    gt_annotations: list[SampleAnnotationManifest],
+    gt_annotations: list[SceneAnnotation],
     predictions: list[dict[str, Any]],
     matches: list[dict[str, Any]],
     matched_gt_indices: set[int],

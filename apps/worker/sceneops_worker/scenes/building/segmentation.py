@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections import defaultdict
 
 from sceneops_core.observations.schemas import RawSensorFrameManifest
-from sceneops_core.scenes.schemas import (
+from sceneops_core.scenes.legacy import (
     MissingSequencePolicy,
     SceneSegmentationConfig,
+    SceneSegment,
     SceneSegmentationStrategy,
 )
-from sceneops_core.scenes.schemas.segments import SceneSegment
 
 
 class SceneSegmenter:

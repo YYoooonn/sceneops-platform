@@ -1,26 +1,13 @@
-"""IngestScenesJobHandler: canonical SceneManifest ingestion (SceneOps V2
-Request 4.6B).
+"""LEGACY nuScenes Scene producer.
 
-Distinct from ``BuildScenesJobHandler``'s raw-log -> ``BUILD_SCENES`` flow:
-this job builds one canonical Scene directly per real source scene,
-including ground-truth annotations (nuScenes' own ``sample_annotation``
-records) -- no segmentation/sampling stage, no intermediate raw-log
-artifact. This is the repository's only source of ground-truth-bearing
-scenes (consumed by ``sceneops_worker.evaluation.detection`` and
-``sceneops_worker.jobs.scenarios``), which is why it was migrated rather
-than removed when its in-process ``nuscenes-devkit`` call was audited
-(see ``sceneops_integrations.nuscenes.scene_ingest``'s own docstring for
-the full audit).
-
-nuScenes ingestion now runs through the generic execution model exactly
-like ``BuildScenesJobHandler``'s raw-log path (Request 4.6/4.6A): this
-handler builds an ``IntegrationRequest``, runs it through
-``HttpIntegrationExecutor`` against the nuScenes integration HTTP service,
-then reads the produced ``SceneManifest`` artifacts back and does its own
-DB session / ``ArtifactRecord`` registration / ``DatasetVersion`` summary
-update -- unchanged from before this migration. The worker no longer
-imports ``nuscenes-devkit`` or ``nuscenes.nuscenes.NuScenes`` directly for
-this job.
+Runs the isolated nuScenes integration (``mode=scene_manifest``) through the
+generic execution model and records what it produced. The integration emits
+pre-canonical, sample-centric ``LegacySceneManifest`` documents whose
+payloads are paths relative to the nuScenes dataroot and which keep only
+keyframe sample data, so they cannot satisfy the canonical SceneManifest
+contract. They are stored as ``LEGACY_SCENE_MANIFEST`` artifacts, never
+registered as Scenes, and this job writes no Scene membership or
+DatasetVersion summary.
 """
 
 from __future__ import annotations
@@ -40,7 +27,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.scenes.schemas.manifests import SceneManifest
+from sceneops_core.scenes.legacy import LegacySceneManifest
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
@@ -86,7 +73,7 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
             )
 
         scene_ids: list[str] = []
-        scene_manifest_uris: list[str] = []
+        legacy_manifest_uris: list[str] = []
         total_samples = 0
         total_frames = 0
         all_channels: set[str] = set()
@@ -95,7 +82,7 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
 
         for scene_id, scene_manifest_uri, manifest in scenes:
             scene_ids.append(scene_id)
-            scene_manifest_uris.append(scene_manifest_uri)
+            legacy_manifest_uris.append(scene_manifest_uri)
             total_samples += manifest.sample_count
             total_frames += manifest.frame_count
             all_channels.update(manifest.channels)
@@ -103,7 +90,7 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
             await context.artifact_record_store.create(
                 artifact_id=generate_artifact_id(),
                 ref=ArtifactRef(
-                    kind=ArtifactKind.SCENE_MANIFEST,
+                    kind=ArtifactKind.LEGACY_SCENE_MANIFEST,
                     uri=scene_manifest_uri,
                     media_type="application/json",
                 ),
@@ -118,18 +105,9 @@ class IngestScenesJobHandler(JobHandler[IngestScenesJobParams, IngestScenesJobRe
 
         channels = sorted(all_channels)
 
-        await context.dataset_store.update_scene_summary(
-            dataset_id=dataset_id,
-            version=dataset_version,
-            scene_count=len(scene_ids),
-            sample_count=total_samples,
-            frame_count=total_frames,
-            channels=channels,
-        )
-
         return IngestScenesJobResult(
             scene_ids=scene_ids,
-            scene_manifest_uris=scene_manifest_uris,
+            legacy_scene_manifest_uris=legacy_manifest_uris,
             scene_count=len(scene_ids),
             sample_count=total_samples,
             frame_count=total_frames,
@@ -154,16 +132,10 @@ async def _ingest_nuscenes_scenes(
     context: WorkerContext,
     job: Any,
 ) -> list[tuple[str, str, Any]]:
-    """nuScenes direct-SceneManifest ingest via the generic execution model
-    (SceneOps V2 Request 4.6B): build an IntegrationRequest, run it through
-    the isolated nuscenes-integration HTTP service, then read each
-    produced SceneManifest artifact back into a typed object. The worker
-    remains solely responsible for everything downstream of this call
-    (DB session, ArtifactRecord registration, lineage, DatasetVersion
-    state -- unchanged, in run() above). The service itself stays
-    DB-free -- it only produces scene_manifest artifacts and reports their
-    URIs/checksums.
-    """
+    """Build an IntegrationRequest, run it through the isolated
+    nuscenes-integration HTTP service, then read each produced legacy scene
+    manifest back into a typed object. The service stays DB-free; the
+    worker registers the produced ArtifactRecords in run() above."""
     dataset_id = params.dataset_id
     dataset_version = params.dataset_version
 
@@ -190,7 +162,7 @@ async def _ingest_nuscenes_scenes(
         max_source_scenes=params.max_source_scenes,
     )
 
-    scene_manifest_root_uri = context.scene_artifact_store.scenes_root_uri(
+    scene_manifest_root_uri = context.scene_artifact_store.legacy_scenes_root_uri(
         dataset_id=dataset_id, dataset_version=dataset_version
     )
 
@@ -206,7 +178,7 @@ async def _ingest_nuscenes_scenes(
         raw = await context.scene_artifact_store.artifact_store.read_json(
             artifact_ref.uri
         )
-        manifest = SceneManifest.model_validate(raw)
+        manifest = LegacySceneManifest.model_validate(raw)
         results.append((scene_id, artifact_ref.uri, manifest))
 
     return results

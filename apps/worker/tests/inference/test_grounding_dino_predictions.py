@@ -9,9 +9,11 @@ from unittest.mock import MagicMock, patch
 from sceneops_worker.inference.detection.grounding_dino import _build_predictions
 
 
-def _make_sample(sample_id: str = "sample-001") -> MagicMock:
+def _make_sample(sample_id: str = "sample-001", *, lidar=True) -> MagicMock:
     sample = MagicMock()
     sample.sample_id = sample_id
+    sample.camera = MagicMock()
+    sample.lidar = _make_lidar_sensor() if lidar else None
     return sample
 
 
@@ -44,7 +46,6 @@ def _lift_result() -> dict:
 
 def test_build_predictions_lifting_succeeded():
     sample = _make_sample()
-    lidar = _make_lidar_sensor()
 
     with patch(
         "sceneops_worker.inference.detection.grounding_dino.frustum_lift",
@@ -53,11 +54,6 @@ def test_build_predictions_lifting_succeeded():
         preds = _build_predictions(
             sample=sample,
             detections_2d=[_det()],
-            camera_sensor=MagicMock(),
-            lidar_sensor=lidar,
-            calibrated_sensor_index={},
-            ego_pose_index={},
-            raw_root="/data",
             max_image_size=800,
         )
 
@@ -74,7 +70,6 @@ def test_build_predictions_lifting_succeeded():
 
 def test_build_predictions_lifting_failed(caplog):
     sample = _make_sample()
-    lidar = _make_lidar_sensor()
 
     with patch(
         "sceneops_worker.inference.detection.grounding_dino.frustum_lift",
@@ -84,11 +79,6 @@ def test_build_predictions_lifting_failed(caplog):
             preds = _build_predictions(
                 sample=sample,
                 detections_2d=[_det()],
-                camera_sensor=MagicMock(),
-                lidar_sensor=lidar,
-                calibrated_sensor_index={},
-                ego_pose_index={},
-                raw_root="/data",
                 max_image_size=800,
             )
 
@@ -106,13 +96,8 @@ def test_build_predictions_lifting_failed(caplog):
 
 def test_build_predictions_no_lidar():
     preds = _build_predictions(
-        sample=_make_sample(),
+        sample=_make_sample(lidar=False),
         detections_2d=[_det()],
-        camera_sensor=MagicMock(),
-        lidar_sensor=None,
-        calibrated_sensor_index={},
-        ego_pose_index={},
-        raw_root="/data",
         max_image_size=800,
     )
 
@@ -126,7 +111,6 @@ def test_build_predictions_no_lidar():
 
 def test_build_predictions_frustum_returns_none():
     sample = _make_sample()
-    lidar = _make_lidar_sensor()
 
     with patch(
         "sceneops_worker.inference.detection.grounding_dino.frustum_lift",
@@ -135,11 +119,6 @@ def test_build_predictions_frustum_returns_none():
         preds = _build_predictions(
             sample=sample,
             detections_2d=[_det()],
-            camera_sensor=MagicMock(),
-            lidar_sensor=lidar,
-            calibrated_sensor_index={},
-            ego_pose_index={},
-            raw_root="/data",
             max_image_size=800,
         )
 
@@ -153,7 +132,6 @@ def test_build_predictions_frustum_returns_none():
 def test_build_predictions_mixed_status():
     """Second detection fails lifting; first succeeds."""
     sample = _make_sample()
-    lidar = _make_lidar_sensor()
     call_count = [0]
 
     def side_effect(*_, **__):
@@ -169,11 +147,6 @@ def test_build_predictions_mixed_status():
         preds = _build_predictions(
             sample=sample,
             detections_2d=[_det(), _det("human.pedestrian.adult")],
-            camera_sensor=MagicMock(),
-            lidar_sensor=lidar,
-            calibrated_sensor_index={},
-            ego_pose_index={},
-            raw_root="/data",
             max_image_size=800,
         )
 

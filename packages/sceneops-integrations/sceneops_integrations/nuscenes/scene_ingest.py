@@ -1,32 +1,17 @@
-"""nuScenes-SDK-bound direct SceneManifest ingestion (SceneOps V2 Request
-4.6B).
+"""nuScenes-SDK-bound scene ingestion producing pre-canonical
+``LegacySceneManifest`` documents (one per nuScenes scene, with the
+source's keyframe ``sample_annotation`` boxes).
 
-Migrated from ``apps/worker/sceneops_worker/datasets/ingestion/
-nuscenes_scene.py`` (``build_scene_manifest`` and its helpers, unchanged
-logic) plus the scene-iteration/filtering loop from
-``apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py``'s
-``_ingest_nuscenes_scenes``, now living where every other nuScenes-SDK-bound
-code lives (``sceneops_integrations.nuscenes``, Request 4.4/4.5) instead of
-inside the worker process. Reached through the same ``runtime.execute()``
-entrypoint as ``raw_log.py`` (``config["mode"] == "scene_manifest"``, see
-``runtime.py``), so it shares the same HTTP/container transport
-(``service.py``/``entrypoint.py``) -- no new transport was added for this.
+The output is not a canonical SceneManifest: payload URIs are paths
+relative to the nuScenes dataroot and only keyframe sample data is kept.
+SceneOps stores it as a legacy artifact and never registers it as a Scene.
 
-This is a genuinely distinct capability from ``raw_log.py``: it builds one
-canonical ``SceneManifest`` per real nuScenes scene directly, INCLUDING
-ground-truth annotations (bounding boxes, velocity, attributes) from
-nuScenes' own ``sample_annotation`` records -- the raw-log ->
-``BUILD_SCENES`` flow never has and still does not produce annotations at
-all. Removing this path would remove the only source of ground-truth
-scenes in the repository (consumed downstream by
-``sceneops_worker.evaluation.detection`` and
-``sceneops_worker.jobs.scenarios``), which is why Request 4.6B migrates it
-instead of deleting it.
-
-May depend on: ``sceneops-core`` (schemas), an ``ArtifactStore``
-implementation, and the ``nuscenes-devkit`` SDK (imported lazily). Must
-never depend on ``sceneops-db``, worker job/Celery context, or
-artifact-record registration -- exactly like ``raw_log.py``.
+Reached through ``runtime.execute()`` (``config["mode"] ==
+"scene_manifest"``) over the same HTTP/container transport as
+``raw_log.py``. May depend on ``sceneops-core`` (schemas), an
+``ArtifactStore`` implementation and the ``nuscenes-devkit`` SDK (imported
+lazily); must never depend on ``sceneops-db``, worker job/Celery context or
+artifact-record registration.
 """
 
 from __future__ import annotations
@@ -34,11 +19,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sceneops_core.artifacts.contracts import ArtifactStore
-from sceneops_core.scenes.schemas.manifests import (
-    SceneAnnotationManifest,
-    SceneManifest,
-    SceneSampleManifest,
-    SceneSensorFrameManifest,
+from sceneops_core.scenes.legacy import (
+    LegacySceneAnnotationManifest,
+    LegacySceneManifest,
+    LegacySceneSampleManifest,
+    LegacySceneSensorFrameManifest,
 )
 from sceneops_core.sensors import SensorModality
 from sceneops_core.sensors.manifests import (
@@ -53,7 +38,7 @@ _TARGET_CHANNELS = {"CAM_FRONT", "LIDAR_TOP"}
 @dataclass(frozen=True)
 class IngestedScene:
     scene_id: str
-    manifest: SceneManifest
+    manifest: LegacySceneManifest
     manifest_uri: str
 
 
@@ -68,12 +53,9 @@ async def ingest_nuscenes_scenes(
     source_scene_ids: list[str] | None = None,
     max_source_scenes: int | None = None,
 ) -> list[IngestedScene]:
-    """Parse a local nuScenes dataroot into one ``SceneManifest`` per real
+    """Parse a local nuScenes dataroot into one ``LegacySceneManifest`` per real
     nuScenes scene (with ground-truth annotations) and persist each to
-    ``artifact_store`` under ``scene_manifest_root_uri`` -- the same
-    ``{scene_id}.json`` naming ``SceneArtifactStore.scene_manifest_uri``
-    already uses, so scenes registered from this path land at identical
-    URIs to before this extraction.
+    ``artifact_store`` as ``{scene_manifest_root_uri}/{scene_id}.json``.
 
     ``source_scene_ids`` filters by nuScenes scene name before
     ``max_source_scenes`` truncates -- same order Request 3.x's
@@ -147,9 +129,9 @@ def build_scene_manifest(
     dataset_id: str,
     dataset_version: str,
     scene_id: str,
-) -> SceneManifest:
+) -> LegacySceneManifest:
     sample_tokens = _collect_sample_tokens(nusc, scene["first_sample_token"])
-    samples: list[SceneSampleManifest] = []
+    samples: list[LegacySceneSampleManifest] = []
     all_channels: set[str] = set()
 
     calibrated_sensors_by_id: dict[str, SensorCalibrationManifest] = {}
@@ -182,7 +164,7 @@ def build_scene_manifest(
         for sf in sample_manifest.sensor_frames:
             all_channels.add(sf.channel)
 
-    return SceneManifest(
+    return LegacySceneManifest(
         scene_id=scene_id,
         dataset_id=dataset_id,
         dataset_version=dataset_version,
@@ -251,14 +233,14 @@ def _safe_box_velocity(*, nusc, annotation_token: str) -> list[float] | None:
 
 def _build_sample_annotations(
     *, nusc, sample: dict, sample_id: str
-) -> list[SceneAnnotationManifest]:
-    annotations: list[SceneAnnotationManifest] = []
+) -> list[LegacySceneAnnotationManifest]:
+    annotations: list[LegacySceneAnnotationManifest] = []
 
     for ann_token in sample.get("anns", []):
         ann = nusc.get("sample_annotation", ann_token)
 
         annotations.append(
-            SceneAnnotationManifest(
+            LegacySceneAnnotationManifest(
                 annotation_id=ann_token,
                 sample_id=sample_id,
                 source_annotation_id=ann_token,
@@ -289,11 +271,11 @@ def _build_sample_annotations(
 def _build_sample_sensor_frames(
     *, nusc, sample: dict, sample_id: str, annotation_ids: list[str]
 ) -> tuple[
-    list[SceneSensorFrameManifest],
+    list[LegacySceneSensorFrameManifest],
     dict[str, SensorCalibrationManifest],
     dict[str, EgoPoseManifest],
 ]:
-    sensor_frames: list[SceneSensorFrameManifest] = []
+    sensor_frames: list[LegacySceneSensorFrameManifest] = []
     calibrated_sensors_by_id: dict[str, SensorCalibrationManifest] = {}
     ego_poses_by_id: dict[str, EgoPoseManifest] = {}
 
@@ -353,7 +335,7 @@ def _build_sample_sensor_frames(
         )
 
         sensor_frames.append(
-            SceneSensorFrameManifest(
+            LegacySceneSensorFrameManifest(
                 frame_id=sample_data_token,
                 sample_id=sample_id,
                 timestamp_us=sample_data["timestamp"],
@@ -379,7 +361,7 @@ def _build_sample_sensor_frames(
 def _build_sample_manifest(
     *, nusc, scene_id: str, sample_id: str, sample: dict, frame_index: int
 ) -> tuple[
-    SceneSampleManifest,
+    LegacySceneSampleManifest,
     dict[str, SensorCalibrationManifest],
     dict[str, EgoPoseManifest],
 ]:
@@ -394,7 +376,7 @@ def _build_sample_manifest(
         )
     )
     return (
-        SceneSampleManifest(
+        LegacySceneSampleManifest(
             sample_id=sample_id,
             scene_id=scene_id,
             timestamp_us=sample["timestamp"],

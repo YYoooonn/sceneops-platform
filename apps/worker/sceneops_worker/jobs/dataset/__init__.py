@@ -11,7 +11,7 @@ from .profile_aligned_episode import ProfileAlignedEpisodeJobHandler
 from .profile_episode import ProfileEpisodeJobHandler
 from .profile_scene import ProfileSceneJobHandler
 from .register_episode import RegisterEpisodeJobHandler
-from .register_scene import RegisterSceneJobHandler
+from .register_scenes import RegisterScenesJobHandler
 from .validate_aligned_episode import ValidateAlignedEpisodeJobHandler
 from .validate_episode import ValidateEpisodeJobHandler
 from .validate_scene import ValidateSceneJobHandler
@@ -19,7 +19,7 @@ from .validate_scene import ValidateSceneJobHandler
 __all__ = [
     "AlignEpisodeJobHandler",
     "IngestScenesJobHandler",
-    "RegisterSceneJobHandler",
+    "RegisterScenesJobHandler",
     "ValidateSceneJobHandler",
     "ProfileSceneJobHandler",
     "BuildDatasetManifestJobHandler",

@@ -101,31 +101,19 @@ class PipelineInputResolver:
         # Scene fields exist.
         scene = version.scene
 
+        # Scene readiness is not summarized here: it is derived per Scene
+        # revision from run records, never cached on the DatasetVersion.
         refs: JsonDict = {}
-        if scene is not None:
-            if scene.validation_report_uri:
-                refs["validation_report_uri"] = scene.validation_report_uri
-            if scene.profile_report_uri:
-                refs["profile_report_uri"] = scene.profile_report_uri
-
         summary: JsonDict = {}
         if scene is not None:
             if scene.scene_count:
                 summary["scene_count"] = scene.scene_count
-            if scene.sample_count:
-                summary["sample_count"] = scene.sample_count
-            if scene.frame_count:
-                summary["frame_count"] = scene.frame_count
-            if scene.channels:
-                summary["channels"] = scene.channels
-            if scene.latest_validation_run_id:
-                summary["validation_run_id"] = scene.latest_validation_run_id
-            if scene.validation_status is not None:
-                summary["validation_status"] = str(scene.validation_status)
-            if scene.should_block_pipeline is not None:
-                summary["should_block_pipeline"] = scene.should_block_pipeline
-            if scene.latest_profile_run_id:
-                summary["profile_run_id"] = scene.latest_profile_run_id
+            if scene.keyframe_count:
+                summary["keyframe_count"] = scene.keyframe_count
+            if scene.observation_count:
+                summary["observation_count"] = scene.observation_count
+            if scene.observed_channels:
+                summary["observed_channels"] = scene.observed_channels
 
         return DatasetInputRef(
             dataset_id=pipeline_run.dataset_id,

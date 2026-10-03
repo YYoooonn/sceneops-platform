@@ -1,4 +1,5 @@
-"""Serialization round-trip tests for the registry-based scene manifest schemas.
+"""Serialization round-trip tests for the pre-canonical (legacy) scene
+manifest shape that the legacy Scene producers still emit.
 
 Covers:
 - SceneSensorFrameManifest with ID refs + image serializes/deserializes cleanly
@@ -11,10 +12,10 @@ Covers:
 from __future__ import annotations
 
 from sceneops_core.observations.schemas.frames import RawSensorFrameManifest
-from sceneops_core.scenes.schemas.manifests import (
-    SceneManifest,
-    SceneSampleManifest,
-    SceneSensorFrameManifest,
+from sceneops_core.scenes.legacy import (
+    LegacySceneManifest as SceneManifest,
+    LegacySceneSampleManifest as SceneSampleManifest,
+    LegacySceneSensorFrameManifest as SceneSensorFrameManifest,
 )
 from sceneops_core.sensors import SensorModality
 from sceneops_core.sensors.manifests import (

@@ -134,8 +134,7 @@ state recording are exactly the same code path as Celery; only the process
 boundary differs.
 
 ```text
-start -> ingest_scenes -> register_scene -> validate_scene
-      -> profile_scene -> build_scene_index -> build_dataset_manifest -> finalize
+start -> ingest_scenes -> finalize
 ```
 
 Pipeline-level status transitions (`RUNNING`/`SUCCEEDED`/`BLOCKED`/`FAILED`),
@@ -226,10 +225,12 @@ the doc over the code.
 - API: `apps/api/app/domains/datasets/`
 - Doc: [data-model.md](./data-model.md) §2
 
-**SCENE** — Scene build/register/validate/profile/quality
-- Pipeline definitions: `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
-  (`DATASET_SCENE_INGESTION_PIPELINE`, `RAW_LOG_SCENE_BUILDING_PIPELINE`,
-  `SCENE_REGISTRATION_PIPELINE`)
+**SCENE** — canonical SceneManifest, registration, validate/profile/quality
+- Schema: `packages/sceneops-core/sceneops_core/scenes/` (legacy producer
+  shapes in `scenes/legacy/`)
+- Registration / resolution: `apps/worker/sceneops_worker/scenes/`
+- Pipeline definitions (legacy producers): `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
+  (`DATASET_SCENE_INGESTION_PIPELINE`, `RAW_LOG_SCENE_BUILDING_PIPELINE`)
 - Job handlers: `apps/worker/sceneops_worker/jobs/dataset/`
 - Quality: `apps/api/app/domains/scenes/quality.py`
 - Doc: [scene-domain.md](./scene-domain.md)

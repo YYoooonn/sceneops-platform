@@ -44,13 +44,9 @@ PIPELINE_RUN_ID = "{{ dag_run.conf['pipeline_run_id'] }}"
 HOST_DATA_DIR = os.environ["HOST_DATA_DIR"]
 DATA_MOUNT = Mount(source=HOST_DATA_DIR, target="/data", type="bind")
 
+# Mirrors DATASET_SCENE_INGESTION_PIPELINE's tasks (sceneops_core.pipelines.builtin).
 PIPELINE_TASK_IDS = [
     "ingest_scenes",
-    "register_scene",
-    "validate_scene",
-    "profile_scene",
-    "build_scene_index",
-    "build_dataset_manifest",
 ]
 
 

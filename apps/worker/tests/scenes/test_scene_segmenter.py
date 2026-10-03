@@ -25,8 +25,8 @@ from __future__ import annotations
 import pytest
 
 from sceneops_core.observations.schemas.frames import RawSensorFrameManifest
-from sceneops_core.scenes.schemas import MissingSequencePolicy
-from sceneops_core.scenes.schemas.config import (
+from sceneops_core.scenes.legacy import (
+    MissingSequencePolicy,
     SceneSegmentationConfig,
     SceneSegmentationStrategy,
 )

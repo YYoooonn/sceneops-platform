@@ -206,11 +206,11 @@ added:
 
 ```text
 BuildScenesJobHandler                    IngestScenesJobHandler
-  raw-log ingest (mode=raw_log,            direct SceneManifest ingest
-  default)                                 (mode=scene_manifest, Request 4.6B)
-  -> feeds raw-log -> BUILD_SCENES         -> one canonical Scene per real
-     segmentation/sampling                    nuScenes scene, WITH
-                                               ground-truth annotations
+  raw-log ingest (mode=raw_log,            legacy scene manifest ingest
+  default)                                 (mode=scene_manifest)
+  -> feeds raw-log -> BUILD_SCENES         -> one legacy scene manifest per
+     segmentation/sampling                    nuScenes scene, WITH source
+                                               keyframe annotations
         \                                    /
          \                                  /
           v                                v
@@ -231,25 +231,15 @@ BuildScenesJobHandler                    IngestScenesJobHandler
            mode=scene_manifest:  {"scene_manifest:<scene_id>", ...}
                           |
                           v
-         worker registration (DB session, ArtifactRecord, DatasetVersion/
-         Scene state -- unchanged, worker-owned throughout Phase 4)
+         worker records the produced artifacts (LEGACY_SCENE_MANIFEST /
+         raw-log ArtifactRecords); no Scene membership is written
 ```
 
-**Why both modes remain, not just the raw-log one:** audited in Request
-4.6B against actual repository behavior, not assumption. The raw-log ->
-`BUILD_SCENES` flow (`apps/worker/sceneops_worker/scenes/building/`)
-contains zero annotation-handling code and never sets
-`SceneManifest.has_ground_truth`/`annotation_count`. `mode=scene_manifest`
-is the *only* source of ground-truth-annotated scenes in the repository,
-consumed downstream by `sceneops_worker.evaluation.detection` (detection
-evaluation against real GT boxes) and `sceneops_worker.jobs.scenarios`
-(scenario readiness scoring) — both exercised by `make e2e-perception`
-(composes scenario curation + detection evaluation) and standalone
-`make e2e-scenario-curation`, which run against the
-`test-e2e-core` scenes `mode=scene_manifest` produces via the
-`dataset_scene_ingestion` pipeline (`make e2e-scene`). Removing
-this path instead of migrating it would have silently broken both of those
-E2E suites and removed ground-truth evaluation from the platform entirely.
+**Output status:** both modes produce pre-canonical output. Their scene
+manifests reference payloads relative to the nuScenes dataroot, and
+`mode=scene_manifest` keeps only keyframe sample data, so neither satisfies
+the canonical SceneManifest contract and neither is registered as a Scene
+(see [Scene domain](./scene-domain.md) §6).
 
 **Frozen as of Request 4.6B:**
 

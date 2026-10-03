@@ -15,7 +15,9 @@ class JobType(StrEnum):
     # ── scene-level jobs ──
     VALIDATE_SCENE = "validate_scene"
     PROFILE_SCENE = "profile_scene"
-    REGISTER_SCENE = "register_scene"
+    # The only writer of SceneRecord membership and DatasetVersion Scene
+    # summaries (ADR-007 §17.5).
+    REGISTER_SCENES = "register_scenes"
     # No handler registered yet — reserved. Matching
     # ArtifactOwnerType.SCENE_COMPARISON_RUN / SCENE_AUTO_LABEL_RUN /
     # SCENE_EXPORT_RUN + ArtifactKind.SCENE_PACKAGE already exist for these

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sceneops_core.jobs.schemas.params.scene import (
     BuildScenesJobParams,
-    SceneSampleValidationConfig,
+    SceneKeyframeValidationConfig,
     ValidateSceneJobParams,
 )
 from sceneops_core.pipelines.schemas import (
@@ -15,78 +15,33 @@ from sceneops_core.pipelines.schemas import (
 from sceneops_worker.jobs.dataset.validate_scene import ValidateSceneJobHandler
 
 
-class TestSceneSampleValidationConfig:
+class TestSceneKeyframeValidationConfig:
     def test_defaults(self) -> None:
-        cfg = SceneSampleValidationConfig()
-        # validate_samples=True by default (validation is on); blocking=False by default
-        assert cfg.validate_samples is True
-        assert cfg.block_on_sample_missing_channels is False
-
-    def test_explicit_values(self) -> None:
-        cfg = SceneSampleValidationConfig(
-            validate_samples=True,
-            block_on_sample_missing_channels=True,
-        )
-        assert cfg.validate_samples is True
-        assert cfg.block_on_sample_missing_channels is True
+        cfg = SceneKeyframeValidationConfig()
+        assert cfg.validate_keyframes is True
+        assert cfg.block_on_keyframe_missing_channels is False
 
     def test_camel_case_aliases(self) -> None:
-        cfg = SceneSampleValidationConfig.model_validate(
-            {
-                "validateSamples": True,
-                "blockOnSampleMissingChannels": True,
-            }
+        cfg = SceneKeyframeValidationConfig.model_validate(
+            {"validateKeyframes": False, "blockOnKeyframeMissingChannels": True}
         )
-        assert cfg.validate_samples is True
-        assert cfg.block_on_sample_missing_channels is True
+        assert cfg.validate_keyframes is False
+        assert cfg.block_on_keyframe_missing_channels is True
 
 
 class TestValidateSceneJobParams:
     def test_defaults(self) -> None:
         params = ValidateSceneJobParams()
-        assert params.sample_validation.validate_samples is True
-        assert params.sample_validation.block_on_sample_missing_channels is False
+        assert params.scene_ids == []
+        assert params.keyframe_validation.validate_keyframes is True
 
-    def test_nested_sample_validation_snake_case(self) -> None:
-        params = ValidateSceneJobParams.model_validate(
-            {
-                "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"],
-                "sample_validation": {
-                    "validate_samples": True,
-                    "block_on_sample_missing_channels": False,
-                },
-            }
-        )
-        assert params.sample_validation.validate_samples is True
-        assert params.sample_validation.block_on_sample_missing_channels is False
-
-    def test_nested_sample_validation_camel_case(self) -> None:
-        params = ValidateSceneJobParams.model_validate(
-            {
-                "requireTargetChannels": ["CAM_FRONT", "LIDAR_TOP"],
-                "sampleValidation": {
-                    "validateSamples": True,
-                    "blockOnSampleMissingChannels": False,
-                },
-            }
-        )
-        assert params.sample_validation.validate_samples is True
-        assert params.sample_validation.block_on_sample_missing_channels is False
-
-    def test_no_flat_validate_samples_field(self) -> None:
-        """Flat validate_samples should not exist on ValidateSceneJobParams."""
-        assert not hasattr(ValidateSceneJobParams, "validate_samples") or (
-            "validate_samples" not in ValidateSceneJobParams.model_fields
-        )
-
-    def test_no_flat_block_on_sample_missing_channels_field(self) -> None:
-        """Flat block_on_sample_missing_channels should not exist on ValidateSceneJobParams."""
-        assert not hasattr(
-            ValidateSceneJobParams, "block_on_sample_missing_channels"
-        ) or (
-            "block_on_sample_missing_channels"
-            not in ValidateSceneJobParams.model_fields
-        )
+    def test_scenes_are_named_by_id_not_manifest_uri(self) -> None:
+        for removed in (
+            "scene_manifest_uri",
+            "scene_manifest_uris",
+            "sample_validation",
+        ):
+            assert removed not in ValidateSceneJobParams.model_fields
 
     def test_require_target_channels(self) -> None:
         params = ValidateSceneJobParams(
@@ -173,11 +128,10 @@ class TestValidateSceneJobHandlerBuildParams:
         result = self._handler().build_job_params(inputs)
         assert not result.get("require_target_channels")
 
-    def test_scene_manifest_uris_from_refs(self) -> None:
-        uris = ["s3://bucket/sc-001/manifest.json"]
+    def test_scene_ids_from_refs(self) -> None:
         inputs = _make_validate_inputs(
             required_channels=["CAM_FRONT"],
-            refs={"scene_manifest_uris": uris},
+            refs={"scene_ids": ["scene-a", "scene-b"]},
         )
         result = self._handler().build_job_params(inputs)
-        assert result["scene_manifest_uris"] == uris
+        assert result["scene_ids"] == ["scene-a", "scene-b"]

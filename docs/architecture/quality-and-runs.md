@@ -24,27 +24,32 @@ execution rather than a recurring quality check against a stable record.
 
 ## 2. Scene quality and readiness
 
-`apps/api/app/domains/scenes/quality.py` derives readiness live from
-`SceneRecord` + the latest `SceneValidationRunRecord`/`SceneProfileRunRecord`
-— it is not stored anywhere as its own column:
+Readiness is derived, never stored: `sceneops_core.scenes.readiness` takes
+the newest succeeded `SceneValidationRunRecord` **that assessed the Scene's
+current manifest revision** (`manifest_artifact_id` + `manifest_checksum`
+on the run equal the SceneRecord's). Runs of any other revision are ignored,
+so replacing a Scene's manifest resets it to `unknown` until the new
+revision is validated.
 
 ```text
-readiness = UNKNOWN   if scene.status not in {VALIDATED, PROFILED}
-          | UNKNOWN   if no validation run exists
+readiness = UNKNOWN   if no succeeded validation run of the current revision exists
           | BLOCKED   if should_block_pipeline, or validation_status in {failed, error}
           | WARNING   if validation_status == "warning"
           | READY     if validation_status == "ready"
           | UNKNOWN   otherwise
 ```
 
-`selectable_for_detection` is a separate derived boolean (not identical to
-`readiness == READY`): it independently checks scene status, validation
-block/failure, *and* GT presence (`has_ground_truth` + `annotation_count >
-0`, sourced from `SceneRecord` fields that `register_scene` sets from the
-manifest). A scene can be `readiness=READY` and still not selectable if it
-has no ground truth — `exclusion_reasons` on the response lists exactly
-which of these checks failed (`scene_not_ready`, `validation_missing`,
-`validation_blocked`, `missing_ground_truth`).
+The API (`apps/api/app/domains/scenes/quality.py`), scenario mining and the
+detection readiness gate all use this one derivation. The dataset-level API
+reads the latest current-revision runs in one query
+(`SceneRunRepository.latest_succeeded_for_current_revisions`). Detection
+checks the revisions its dataset manifest pins and refuses to run if any of
+them is `blocked`.
+
+`selectable_for_detection` is a separate derived boolean: it requires
+readiness not `unknown` / `blocked` and at least one source annotation.
+`exclusion_reasons` lists exactly which checks failed
+(`validation_missing`, `validation_blocked`, `missing_ground_truth`).
 
 Dataset-level quality (`GET /datasets/{id}/versions/{v}/quality`) is an
 aggregate over every scene's quality in that version — readiness buckets,
@@ -69,9 +74,8 @@ readiness = UNKNOWN   if no validation run exists
 Episode has no `selectable_for_*` concept yet — there is no downstream
 consumer (equivalent to Scene's detection evaluation) that selects episodes
 by quality today. `EpisodeRecord.status` never participates in this
-computation (see [Episode domain](./episode-domain.md) §4) — this is the
-one deliberate structural difference from Scene, where `scene.status` is
-part of the readiness gate.
+computation (see [Episode domain](./episode-domain.md) §4). Unlike Scene
+run records, Episode run records do not yet pin a manifest revision.
 
 ## 4. Scenario status and readiness
 

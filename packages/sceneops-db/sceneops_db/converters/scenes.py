@@ -30,76 +30,51 @@ _SCENE_RUN_TYPE_MAP: dict[str, type[SceneRunRecord]] = {
 
 
 def scene_model_to_record(model: SceneModel) -> SceneRecord:
-    # SceneRecord has no fields for world_state_manifest_uri, artifact_root_uri,
-    # parent_scene_id, lineage, or generation. Preserve them in metadata so
-    # they survive a round-trip through the core layer.
-    base_meta = metadata_from_model(model)
-    db_extras: dict[str, Any] = {}
-    if model.world_state_manifest_uri is not None:
-        db_extras["world_state_manifest_uri"] = model.world_state_manifest_uri
-    if model.artifact_root_uri is not None:
-        db_extras["artifact_root_uri"] = model.artifact_root_uri
-    if model.parent_scene_id is not None:
-        db_extras["parent_scene_id"] = model.parent_scene_id
-    if model.lineage is not None:
-        db_extras["lineage"] = model.lineage
-    if model.generation is not None:
-        db_extras["generation"] = model.generation
-
     return SceneRecord(
         scene_id=model.scene_id,
         dataset_id=model.dataset_id,
         dataset_version=model.dataset_version,
-        raw_log_id=model.raw_log_id,
-        segment_id=model.segment_id,
-        status=model.status,
-        origin_type=model.origin_type,
-        generation_method=model.generation_method,
-        scene_manifest_uri=model.scene_manifest_uri,
-        sample_count=model.sample_count,
-        frame_count=model.frame_count,
+        source_kind=model.source_kind,
+        external_format=model.external_format,
+        robot_run_id=model.robot_run_id,
+        source_unit_key=model.source_unit_key,
+        producer_fingerprint=model.producer_fingerprint,
+        manifest_artifact_id=model.manifest_artifact_id,
+        manifest_checksum=model.manifest_checksum,
+        window_clock=model.window_clock,
+        window_start_timestamp_ns=model.window_start_timestamp_ns,
+        window_end_timestamp_ns=model.window_end_timestamp_ns,
+        observed_channels=list(model.observed_channels or []),
+        observation_count=model.observation_count,
+        keyframe_count=model.keyframe_count,
         annotation_count=model.annotation_count,
-        channels=list(model.channels or []),
-        has_ground_truth=bool(model.has_ground_truth),
-        ground_truth_source=model.ground_truth_source,
-        started_at=model.started_at,
-        ended_at=model.ended_at,
-        metadata={**base_meta, **db_extras} if db_extras else base_meta,
+        registered_at=model.registered_at,
+        updated_at=model.updated_at,
     )
 
 
 def scene_record_to_values(record: SceneRecord) -> dict[str, Any]:
-    meta = record.metadata or {}
-    values: dict[str, Any] = {
+    """Every registrar-owned column. ``registered_at`` / ``updated_at`` are
+    database-managed and never written from a record."""
+    return {
         "scene_id": record.scene_id,
         "dataset_id": record.dataset_id,
         "dataset_version": record.dataset_version,
-        "raw_log_id": record.raw_log_id,
-        "segment_id": record.segment_id,
-        "status": enum_to_value(record.status),
-        "origin_type": enum_to_value(record.origin_type),
-        "generation_method": enum_to_value(record.generation_method),
-        "scene_manifest_uri": record.scene_manifest_uri,
-        "sample_count": record.sample_count,
-        "frame_count": record.frame_count,
+        "source_kind": enum_to_value(record.source_kind),
+        "external_format": record.external_format,
+        "robot_run_id": record.robot_run_id,
+        "source_unit_key": record.source_unit_key,
+        "producer_fingerprint": record.producer_fingerprint,
+        "manifest_artifact_id": record.manifest_artifact_id,
+        "manifest_checksum": record.manifest_checksum,
+        "window_clock": record.window_clock,
+        "window_start_timestamp_ns": record.window_start_timestamp_ns,
+        "window_end_timestamp_ns": record.window_end_timestamp_ns,
+        "observed_channels": list(record.observed_channels),
+        "observation_count": record.observation_count,
+        "keyframe_count": record.keyframe_count,
         "annotation_count": record.annotation_count,
-        "channels": list(record.channels or []),
-        "has_ground_truth": record.has_ground_truth,
-        "ground_truth_source": record.ground_truth_source,
-        "metadata_": meta,
     }
-    # Restore DB-only fields that were stashed in metadata by scene_model_to_record.
-    if "world_state_manifest_uri" in meta:
-        values["world_state_manifest_uri"] = meta["world_state_manifest_uri"]
-    if "artifact_root_uri" in meta:
-        values["artifact_root_uri"] = meta["artifact_root_uri"]
-    if "parent_scene_id" in meta:
-        values["parent_scene_id"] = meta["parent_scene_id"]
-    if "lineage" in meta:
-        values["lineage"] = meta["lineage"]
-    if "generation" in meta:
-        values["generation"] = meta["generation"]
-    return values
 
 
 # ── SceneRunRecord ────────────────────────────────────────────────────────────
@@ -127,90 +102,70 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
         started_at=model.started_at,
         finished_at=model.finished_at,
         metadata=metadata_from_model(model),
+        scene_id=model.scene_id,
+        manifest_artifact_id=model.manifest_artifact_id,
+        manifest_checksum=model.manifest_checksum,
+        dataset_id=model.dataset_id,
+        dataset_version=model.dataset_version,
     )
+    s = model.summary or {}
 
     if model.type == RunType.SCENE_VALIDATION.value:
-        s = model.summary or {}
         return SceneValidationRunRecord(
             **base,
-            scene_id=model.scene_id,
-            scene_manifest_uri=model.scene_manifest_uri,
-            dataset_id=model.dataset_id,
-            dataset_version=model.dataset_version,
             validation_report_uri=model.report_uri,
             validation_status=s.get("validation_status"),
             should_block_pipeline=s.get("should_block_pipeline", False),
-            checked_sample_count=s.get("checked_sample_count"),
-            checked_frame_count=s.get("checked_frame_count"),
+            checked_observation_count=s.get("checked_observation_count"),
+            checked_keyframe_count=s.get("checked_keyframe_count"),
             issue_count=s.get("issue_count"),
             error_count=s.get("error_count"),
             warning_count=s.get("warning_count"),
             missing_channel_count=s.get("missing_channel_count"),
-            missing_artifact_count=s.get("missing_artifact_count"),
             summary=s,
         )
-    else:  # SCENE_PROFILE
-        s = model.summary or {}
-        return SceneProfileRunRecord(
-            **base,
-            scene_id=model.scene_id,
-            scene_manifest_uri=model.scene_manifest_uri,
-            dataset_id=model.dataset_id,
-            dataset_version=model.dataset_version,
-            profile_report_uri=model.report_uri,
-            sample_count=s.get("sample_count"),
-            frame_count=s.get("frame_count"),
-            asset_count=s.get("asset_count"),
-            annotation_count=s.get("annotation_count"),
-            observed_channels=s.get("observed_channels", []),
-            asset_summary=s.get("asset_summary", {}),
-            world_state_summary=s.get("world_state_summary", {}),
-            annotation_summary=s.get("annotation_summary", {}),
-        )
+    return SceneProfileRunRecord(
+        **base,
+        profile_report_uri=model.report_uri,
+        observation_count=s.get("observation_count"),
+        keyframe_count=s.get("keyframe_count"),
+        annotation_count=s.get("annotation_count"),
+        observed_channels=s.get("observed_channels", []),
+        coverage=s.get("coverage", {}),
+        annotation_summary=s.get("annotation_summary", {}),
+    )
 
 
 def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
-    base = base_run_to_values(record)
+    base = {
+        **base_run_to_values(record),
+        "scene_id": record.scene_id,
+        "manifest_artifact_id": record.manifest_artifact_id,
+        "manifest_checksum": record.manifest_checksum,
+        "dataset_id": record.dataset_id,
+        "dataset_version": record.dataset_version,
+    }
 
     if isinstance(record, SceneValidationRunRecord):
         summary = {
             **(record.summary or {}),
             "validation_status": record.validation_status,
             "should_block_pipeline": record.should_block_pipeline,
-            "checked_sample_count": record.checked_sample_count,
-            "checked_frame_count": record.checked_frame_count,
+            "checked_observation_count": record.checked_observation_count,
+            "checked_keyframe_count": record.checked_keyframe_count,
             "issue_count": record.issue_count,
             "error_count": record.error_count,
             "warning_count": record.warning_count,
             "missing_channel_count": record.missing_channel_count,
-            "missing_artifact_count": record.missing_artifact_count,
         }
-        return {
-            **base,
-            "scene_id": record.scene_id,
-            "scene_manifest_uri": record.scene_manifest_uri,
-            "dataset_id": record.dataset_id,
-            "dataset_version": record.dataset_version,
-            "report_uri": record.validation_report_uri,
-            "summary": summary,
-        }
-    else:  # SceneProfileRunRecord
-        summary = {
-            "sample_count": record.sample_count,
-            "frame_count": record.frame_count,
-            "asset_count": record.asset_count,
-            "annotation_count": record.annotation_count,
-            "observed_channels": record.observed_channels,
-            "asset_summary": record.asset_summary,
-            "world_state_summary": record.world_state_summary,
-            "annotation_summary": record.annotation_summary,
-        }
-        return {
-            **base,
-            "scene_id": record.scene_id,
-            "scene_manifest_uri": record.scene_manifest_uri,
-            "dataset_id": record.dataset_id,
-            "dataset_version": record.dataset_version,
-            "report_uri": record.profile_report_uri,
-            "summary": summary,
-        }
+        return {**base, "report_uri": record.validation_report_uri, "summary": summary}
+
+    summary = {
+        "observation_count": record.observation_count,
+        "keyframe_count": record.keyframe_count,
+        "annotation_count": record.annotation_count,
+        "observed_channels": record.observed_channels,
+        "coverage": record.coverage,
+        "annotation_summary": record.annotation_summary,
+    }
+    return {**base, "report_uri": record.profile_report_uri, "summary": summary}

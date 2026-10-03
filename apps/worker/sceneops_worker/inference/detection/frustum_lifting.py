@@ -2,99 +2,83 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import numpy as np
 
-from sceneops_core.scenes.schemas.manifests import SceneSensorFrameManifest
-from sceneops_core.sensors.manifests import SensorCalibrationManifest, EgoPoseManifest
+from sceneops_worker.inference.detection.uris import local_path_from_uri
+from sceneops_worker.scenes.keyframes import KeyframeObservation
 
 MIN_FRUSTUM_POINTS = 3  # fewer → skip lifting, keep placeholder
 MIN_CLUSTER_POINTS = 5  # fewer → use all frustum points (no DBSCAN pruning)
+
+# Lidar payload formats this lifter can decode, keyed by the payload's
+# declared media type. A lidar observation in any other format is not
+# lifted (the caller records it as a failed lift) rather than guessed at.
+NUSCENES_LIDAR_PCD_BIN = "application/x.nuscenes.lidar-pcd-bin"
 
 
 def frustum_lift(
     *,
     bbox_2d: list[float],
-    camera_frame: SceneSensorFrameManifest,
-    lidar_frame: SceneSensorFrameManifest,
-    calibrated_sensor_index: dict[str, SensorCalibrationManifest],
-    ego_pose_index: dict[str, EgoPoseManifest],
-    raw_root: str,
+    camera: KeyframeObservation,
+    lidar: KeyframeObservation,
+    lidar_uri: str,
     max_image_size: int = 800,
     dbscan_eps: float = 0.5,
     dbscan_min_samples: int = 3,
 ) -> dict[str, Any] | None:
-    """Lift a 2D bbox to 3D using the LIDAR_TOP point cloud (frustum projection).
+    """Lift a 2D bbox to 3D using the keyframe's lidar point cloud (frustum
+    projection).
 
-    Calibration and ego-pose are resolved from scene-level registries via
-    calibrated_sensor_index / ego_pose_index — they are not embedded inline on
-    SceneSensorFrameManifest.
+    Uses only what the canonical Scene states for the two observations: each
+    one's calibration extrinsic (sensor frame in ego frame), the camera
+    intrinsic and image size, and the ego pose the source associates with
+    the camera observation.
 
     Pipeline:
-      1. Load LIDAR_TOP .pcd.bin
-      2. LiDAR frame → ego frame   (lidar calibrated_sensor)
-      3. Ego frame → camera frame  (camera calibrated_sensor, inverse)
+      1. Load the lidar payload from ``lidar_uri`` (dispatched on its
+         declared media type)
+      2. LiDAR frame → ego frame   (lidar extrinsic)
+      3. Ego frame → camera frame  (camera extrinsic, inverse)
       4. Project to image with K; keep points inside bbox_2d
       5. DBSCAN on ego-frame frustum points → largest cluster
       6. Fit axis-aligned bounding box; yaw from 2-D PCA
-      7. Centroid: ego frame → global frame  (camera ego_pose)
+      7. Centroid: ego frame → world frame  (camera ego pose)
 
     bbox_2d is in resized-image pixel coordinates (long edge ≤ max_image_size).
     K is for the original image, so bbox is back-scaled before projection.
 
-    Returns None when fewer than MIN_FRUSTUM_POINTS points fall inside the frustum.
+    Returns None when the observations lack the geometry lifting needs or
+    fewer than MIN_FRUSTUM_POINTS points fall inside the frustum.
     """
-    # ── 0. Resolve calibration and ego-pose from scene-level indexes ──────
-    camera_cal = (
-        calibrated_sensor_index.get(camera_frame.calibration_id)
-        if camera_frame.calibration_id
-        else None
-    )
-    lidar_cal = (
-        calibrated_sensor_index.get(lidar_frame.calibration_id)
-        if lidar_frame.calibration_id
-        else None
-    )
-    camera_ego = (
-        ego_pose_index.get(camera_frame.ego_pose_id)
-        if camera_frame.ego_pose_id
-        else None
-    )
+    camera_cal = camera.calibration
+    lidar_cal = lidar.calibration
+    camera_ego = camera.ego_pose
+    image_size = camera.observation.image_size
 
-    if camera_cal is None or lidar_cal is None:
+    if camera_cal is None or lidar_cal is None or camera_ego is None:
         return None
-    if camera_ego is None:
-        return None
-    if camera_cal.camera_intrinsic is None:
+    if camera_cal.camera_intrinsic is None or image_size is None:
         return None
 
-    if (
-        camera_frame.image is None
-        or camera_frame.image.width is None
-        or camera_frame.image.height is None
-    ):
-        return None
-
-    lidar_path = _resolve_path(raw_root, lidar_frame.uri)
-    pts_lidar = _load_lidar(lidar_path)  # (N, 3)
+    pts_lidar = _load_lidar(lidar, lidar_uri)  # (N, 3)
 
     K = np.array(camera_cal.camera_intrinsic, dtype=np.float64)
-    orig_w = camera_frame.image.width
-    orig_h = camera_frame.image.height
+    orig_w = image_size.width_px
+    orig_h = image_size.height_px
 
     # ── 1. Scale bbox: resized image coords → original image coords ───────
     scale = min(max_image_size / max(orig_w, orig_h), 1.0)
     x1, y1, x2, y2 = [c / scale for c in bbox_2d]
 
     # ── 2. LiDAR → ego frame ─────────────────────────────────────────────
-    R_l2e = _quat_to_rot(lidar_cal.rotation)
-    t_l2e = np.array(lidar_cal.translation, dtype=np.float64)
+    R_l2e = _quat_to_rot(lidar_cal.extrinsic.rotation_wxyz)
+    t_l2e = np.array(lidar_cal.extrinsic.translation_m, dtype=np.float64)
     pts_ego = (R_l2e @ pts_lidar.T).T + t_l2e  # (N, 3)
 
     # ── 3. Ego → camera frame ─────────────────────────────────────────────
-    R_c2e = _quat_to_rot(camera_cal.rotation)
-    t_c2e = np.array(camera_cal.translation, dtype=np.float64)
+    R_c2e = _quat_to_rot(camera_cal.extrinsic.rotation_wxyz)
+    t_c2e = np.array(camera_cal.extrinsic.translation_m, dtype=np.float64)
     R_e2c = R_c2e.T
     pts_cam = (R_e2c @ (pts_ego - t_c2e).T).T  # (N, 3)
 
@@ -135,9 +119,9 @@ def frustum_lift(
     yaw = _pca_yaw(cluster_pts[:, :2])
     rotation = _yaw_to_quat(yaw)
 
-    # ── 7. Ego → global frame ─────────────────────────────────────────────
-    R_e2g = _quat_to_rot(camera_ego.rotation)
-    t_e2g = np.array(camera_ego.translation, dtype=np.float64)
+    # ── 7. Ego → world frame ──────────────────────────────────────────────
+    R_e2g = _quat_to_rot(camera_ego.transform.rotation_wxyz)
+    t_e2g = np.array(camera_ego.transform.translation_m, dtype=np.float64)
     centroid_global = (R_e2g @ centroid_ego) + t_e2g
 
     return {
@@ -153,8 +137,17 @@ def frustum_lift(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _load_lidar(path: Path) -> np.ndarray:
-    """Load nuScenes .pcd.bin → (N, 3) float32 xyz."""
+def _load_lidar(lidar: KeyframeObservation, uri: str) -> np.ndarray:
+    """Decode a lidar payload into (N, 3) float64 xyz by its declared format.
+    ``uri`` is where its payload artifact lives."""
+    payload = lidar.observation.payload
+    if payload.media_type != NUSCENES_LIDAR_PCD_BIN:
+        raise ValueError(
+            f"frustum_lift cannot decode lidar payload media_type "
+            f"{payload.media_type!r}"
+        )
+    # float32 x, y, z, intensity, ring index.
+    path = Path(local_path_from_uri(uri))
     pts = np.fromfile(path, dtype=np.float32).reshape(-1, 5)
     return pts[:, :3].astype(np.float64)
 
@@ -202,14 +195,3 @@ def _yaw_to_quat(yaw: float) -> list[float]:
     """Yaw angle (radians, around z-axis) → [w, x, y, z] quaternion."""
     h = yaw / 2.0
     return [float(np.cos(h)), 0.0, 0.0, float(np.sin(h))]
-
-
-def _resolve_path(raw_root: str, filename: str) -> Path:
-    parsed = urlparse(raw_root)
-    base = Path(parsed.path) if parsed.scheme == "file" else Path(raw_root)
-    if parsed.scheme not in ("file", ""):
-        raise ValueError(
-            f"frustum_lift supports local raw_root only. Got: {raw_root!r}\n"
-            "TODO: add MinIO/S3 download for remote GPU deployments."
-        )
-    return base / filename

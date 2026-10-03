@@ -1,10 +1,47 @@
+"""Scene artifact storage.
+
+Canonical SceneManifest revisions live at write-once, checksum-qualified
+keys (ADR-007 §19)::
+
+    {dataset_root}/{dataset_id}/versions/{version}/scenes/{scene_id}/manifest-{sha256}.json
+
+so every revision of a Scene coexists and no key is ever overwritten.
+Reading a canonical manifest always goes through a pinned checksum: the
+bytes are verified before they are parsed, and parsing requires canonical
+form.
+
+Pre-canonical producers write ``LegacySceneManifest`` JSON under a separate
+``legacy_scenes/`` prefix; nothing reads those back as Scenes.
+"""
+
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
-from sceneops_core.datasets.schemas import DatasetManifest, DatasetSceneIndexEntry
-from sceneops_core.scenes.schemas.manifests import SceneManifest, SceneSampleManifest
-from sceneops_storage import ArtifactStore
+from sceneops_core.common.checksums import (
+    checksum_qualified_manifest_name,
+    sha256_checksum,
+)
+from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
+from sceneops_core.scenes.legacy import LegacySceneManifest
+from sceneops_core.scenes.schemas import SceneManifest, load_canonical_scene_manifest
+from sceneops_storage import ArtifactNotFoundError, ArtifactStore
+
+
+class SceneManifestIntegrityError(RuntimeError):
+    """Stored manifest bytes are missing or do not match their pinned
+    checksum / size."""
+
+
+class SceneManifestWriteConflictError(RuntimeError):
+    """A write-once manifest key already holds different bytes."""
+
+
+@dataclass(frozen=True)
+class PublishedSceneManifest:
+    uri: str
+    checksum: str
+    size_bytes: int
 
 
 class SceneArtifactStore:
@@ -30,30 +67,32 @@ class SceneArtifactStore:
         )
 
     def scenes_root_uri(self, *, dataset_id: str, dataset_version: str) -> str:
-        """The ``scenes/`` prefix every ``scene_manifest_uri()`` result
-        lives under -- exposed so a caller that doesn't yet know individual
-        scene_ids (SceneOps V2 Request 4.6B: the nuScenes integration
-        service discovers scene_ids itself while reading the source) can
-        still hand the isolated runtime a destination prefix that resolves
-        to the exact same URIs this store would compute per scene_id."""
         version_root = self._version_root_uri(
             dataset_id=dataset_id, dataset_version=dataset_version
         )
         return self.artifact_store.join_uri(version_root, "scenes")
 
-    def scene_manifest_uri(
+    def canonical_manifest_uri(
         self,
         *,
         dataset_id: str,
         dataset_version: str,
         scene_id: str,
+        checksum: str,
     ) -> str:
         return self.artifact_store.join_uri(
             self.scenes_root_uri(
                 dataset_id=dataset_id, dataset_version=dataset_version
             ),
-            f"{scene_id}.json",
+            scene_id,
+            checksum_qualified_manifest_name(checksum),
         )
+
+    def legacy_scenes_root_uri(self, *, dataset_id: str, dataset_version: str) -> str:
+        version_root = self._version_root_uri(
+            dataset_id=dataset_id, dataset_version=dataset_version
+        )
+        return self.artifact_store.join_uri(version_root, "legacy_scenes")
 
     def scene_index_uri(self, *, dataset_id: str, dataset_version: str) -> str:
         version_root = self._version_root_uri(
@@ -62,22 +101,89 @@ class SceneArtifactStore:
         return self.artifact_store.join_uri(version_root, "scene_index.json")
 
     # ------------------------------------------------------------------
-    # Scene manifest I/O
+    # Canonical SceneManifest I/O
     # ------------------------------------------------------------------
 
-    async def write_scene_manifest(
+    async def publish_canonical_manifest(
         self,
         *,
         dataset_id: str,
         dataset_version: str,
         scene_id: str,
         manifest: SceneManifest,
+    ) -> PublishedSceneManifest:
+        """Write-once publication at the checksum-qualified key. Re-publishing
+        identical bytes is a no-op; a key that already holds different bytes
+        is a conflict and is never overwritten."""
+        data = manifest.to_canonical_bytes()
+        checksum = sha256_checksum(data)
+        uri = self.canonical_manifest_uri(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            scene_id=scene_id,
+            checksum=checksum,
+        )
+        if await self.artifact_store.exists(uri):
+            if await self.artifact_store.read_bytes(uri) != data:
+                raise SceneManifestWriteConflictError(
+                    f"{uri} already holds different bytes; manifest keys are write-once"
+                )
+        else:
+            await self.artifact_store.write_bytes(uri, data)
+            if await self.artifact_store.read_bytes(uri) != data:
+                raise SceneManifestIntegrityError(f"read-back of {uri} differs")
+        return PublishedSceneManifest(uri=uri, checksum=checksum, size_bytes=len(data))
+
+    async def read_pinned_manifest(
+        self,
+        *,
+        uri: str,
+        checksum: str,
+        size_bytes: int | None = None,
+    ) -> SceneManifest:
+        """Read a canonical manifest revision and verify it is exactly the
+        pinned bytes before parsing it strictly."""
+        try:
+            data = await self.artifact_store.read_bytes(uri)
+        except (ArtifactNotFoundError, FileNotFoundError) as exc:
+            raise SceneManifestIntegrityError(
+                f"scene manifest not found: {uri}"
+            ) from exc
+        if size_bytes is not None and len(data) != size_bytes:
+            raise SceneManifestIntegrityError(
+                f"scene manifest {uri} has {len(data)} bytes, pinned {size_bytes}"
+            )
+        actual = sha256_checksum(data)
+        if actual != checksum:
+            raise SceneManifestIntegrityError(
+                f"scene manifest {uri} checksum {actual} != pinned {checksum}"
+            )
+        return load_canonical_scene_manifest(data)
+
+    # ------------------------------------------------------------------
+    # Legacy (pre-canonical) manifests
+    # ------------------------------------------------------------------
+
+    async def write_legacy_scene_manifest(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        scene_id: str,
+        manifest: LegacySceneManifest,
     ) -> str:
-        uri = self.scene_manifest_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version, scene_id=scene_id
+        uri = self.artifact_store.join_uri(
+            self.legacy_scenes_root_uri(
+                dataset_id=dataset_id, dataset_version=dataset_version
+            ),
+            f"{scene_id}.json",
         )
         await self.artifact_store.write_json(uri, manifest.to_artifact_dict())
         return uri
+
+    # ------------------------------------------------------------------
+    # Derived scene index
+    # ------------------------------------------------------------------
 
     async def write_scene_index(
         self,
@@ -98,42 +204,10 @@ class SceneArtifactStore:
         await self.artifact_store.write_json(uri, payload)
         return uri
 
-    async def load_scene_manifest(self, uri: str) -> SceneManifest | None:
-        if not await self.artifact_store.exists(uri):
-            return None
-        raw = await self.artifact_store.read_json(uri)
-        return SceneManifest.model_validate(raw)
 
-    async def read_scene_manifest(
-        self,
-        *,
-        dataset_id: str,
-        dataset_version: str,
-        scene_id: str,
-    ) -> SceneManifest | None:
-        uri = self.scene_manifest_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version, scene_id=scene_id
-        )
-        return await self.load_scene_manifest(uri)
-
-    async def iter_samples(
-        self,
-        dataset_manifest: DatasetManifest,
-        *,
-        max_samples: int | None = None,
-    ) -> AsyncIterator[SceneSampleManifest]:
-        yielded = 0
-
-        for scene_entry in dataset_manifest.scenes:
-            scene_manifest = await self.load_scene_manifest(
-                scene_entry.scene_manifest_uri
-            )
-            if scene_manifest is None:
-                continue
-
-            for sample in scene_manifest.samples:
-                yield sample
-                yielded += 1
-
-                if max_samples is not None and yielded >= max_samples:
-                    return
+__all__ = [
+    "PublishedSceneManifest",
+    "SceneArtifactStore",
+    "SceneManifestIntegrityError",
+    "SceneManifestWriteConflictError",
+]

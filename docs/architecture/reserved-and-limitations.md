@@ -44,23 +44,27 @@ implemented, handler-registered, but not wired into
 `RAW_LOG_EPISODE_BUILDING_PIPELINE` or any other pipeline. See
 [Robot learning data layer](./robot-learning-data.md) §8.
 
-## 2. WORLD_STATE (Scene)
+## 2. Legacy Scene producers
 
-`packages/sceneops-core/sceneops_core/scenes/schemas/world_state.py` defines
-a complete, coherent schema for richer 3D scene reconstruction (scene
-graph, physics bodies, static/dynamic assets) beyond today's flat
-`SceneManifest`. As of Stabilization Request 5's audit: no job handler
-reads or writes any of it — `build_scenes.py` never branches on the
-`build_world_state` param that threads through pipeline/job schemas
-(defaults to `False` everywhere), no persisted `SceneRecord` has
-`world_state_manifest_uri` set, and `SceneManifest.world_state` is never
-populated.
+`INGEST_SCENES` (nuScenes integration, `DATASET_SCENE_INGESTION`) and
+`BUILD_SCENES` (raw-log builder, `RAW_LOG_SCENE_BUILDING`) still emit
+pre-canonical, sample-centric manifests (`sceneops_core.scenes.legacy`):
+payload paths relative to an external source root, keyframe-only (nuScenes)
+or sampling-selected (raw log) frames, untyped provenance. They are stored
+as `LEGACY_SCENE_MANIFEST` artifacts and canonical registration rejects
+them, so **no built-in pipeline currently produces registered Scenes**, and
+the detection and scenario workflows have no Scenes to run on until a
+producer publishes canonical SceneManifests. See
+[Scene domain](./scene-domain.md) §6.
 
-It's retained rather than removed because it's a complete, working schema
-with zero compatibility cost — everything defaults off, nothing depends on
-it — not confused or abandoned code left over from a removed feature. If
-it's still unimplemented by the time a broader architecture pass happens,
-that's the point to decide whether to build it or finally drop it.
+No producer publishes `OBSERVATION_PAYLOAD` ArtifactRecords yet, so no
+canonical SceneManifest can currently pass registration's payload check.
+
+Detection locates payloads through their ArtifactRecords; frustum lifting can
+only read `file://` payload locations and decodes lidar only in the
+`application/x.nuscenes.lidar-pcd-bin` format, and the camera / lidar
+channels it uses (`CAM_FRONT`, `LIDAR_TOP`) are still one source's
+vocabulary in workflow defaults.
 
 ## 3. `DatasetVersionStatus`: intentionally minimal
 

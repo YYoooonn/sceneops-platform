@@ -29,6 +29,8 @@ from sceneops_core.models.schemas.records import ModelVersionRecord
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.scenes.payloads import ArtifactPayloadLocator
+from sceneops_worker.scenes.readiness import require_no_blocked_scenes
 from sceneops_worker.inference.detection import create_detection_inference_backend
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
@@ -225,11 +227,9 @@ class PredictDetectionJobHandler(
     ) -> DatasetVersionRecord:
         """Is this Scene dataset ready for detection prediction?
 
-        SceneOps V2 Request 05: replaces the old generic
-        ``version.status == READY`` gate (Scene-workflow state that had no
-        meaning for Episode-only versions) with explicit Scene prerequisites:
-        a Scene summary must exist, it must have a built dataset manifest,
-        and Scene validation must not have flagged it as blocking.
+        A Scene summary must exist and a derived dataset manifest must have
+        been built. Validation readiness is checked per pinned Scene
+        revision once that manifest is loaded (``require_no_blocked_scenes``).
         """
         version = await context.dataset_store.get_version(
             dataset_id=dataset_id, version=dataset_version
@@ -245,11 +245,6 @@ class PredictDetectionJobHandler(
         if not version.scene.manifest_uri:
             raise ValueError(
                 f"Dataset version has no manifest_uri: {dataset_id}:{dataset_version}"
-            )
-        if version.scene.should_block_pipeline:
-            raise ValueError(
-                f"Dataset version Scene validation blocked downstream use: "
-                f"{dataset_id}:{dataset_version}"
             )
         return version
 
@@ -308,6 +303,7 @@ class PredictDetectionJobHandler(
                 manifest_uri
             )
         )
+        await require_no_blocked_scenes(execution.context, dataset_manifest)
 
         resolved_scenario_set: ResolvedScenarioSet | None = None
         scenario_set_scene_ids: set[str] | None = None
@@ -359,7 +355,6 @@ class PredictDetectionJobHandler(
             inference_backend=params.inference_backend.value,
             model_uri=execution.model_uri,
             endpoint_url=execution.endpoint_url,
-            raw_source_root_uri=execution.dataset_version_record.scene.raw_source_root_uri,
             scene_ids=inputs.selected_scene_ids,
             max_scenes=None,
             max_samples=selection.max_samples,
@@ -385,6 +380,9 @@ class PredictDetectionJobHandler(
             ),
             scene_artifact_store=execution.context.scene_artifact_store,
             run_artifact_store=execution.context.run_artifact_store,
+            payload_locator=ArtifactPayloadLocator(
+                execution.context.artifact_record_store
+            ),
         )
 
     # ── artifact registration ──────────────────────────────────────────────────

@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sceneops_core.observations.schemas import RawLogFrameIndex, RawLogManifest
-from sceneops_core.scenes.schemas import (
+from sceneops_core.scenes.legacy import (
     SampleGroupingConfig,
     SceneSegment,
     SceneSegmentationConfig,
+    SceneSegmentIndex,
 )
-from sceneops_core.scenes.schemas.segments import SceneSegmentIndex
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 
@@ -91,7 +91,7 @@ class SceneBuilder:
 
             emitted_segments.append(segment)
 
-            uri = await self._scene_store.write_scene_manifest(
+            uri = await self._scene_store.write_legacy_scene_manifest(
                 dataset_id=dataset_id,
                 dataset_version=dataset_version,
                 scene_id=scene_manifest.scene_id,

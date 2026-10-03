@@ -3,7 +3,7 @@ from __future__ import annotations
 from bisect import bisect_left
 
 from sceneops_core.observations.schemas import RawSensorFrameManifest
-from sceneops_core.scenes.schemas import EgoPoseResolveStrategy, SampleGroupingConfig
+from sceneops_core.scenes.legacy import EgoPoseResolveStrategy, SampleGroupingConfig
 from sceneops_core.sensors import SensorModality
 from sceneops_core.sensors.manifests import (
     EgoPoseManifest,

@@ -4,7 +4,6 @@ from typing import Protocol, runtime_checkable
 
 from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
 from sceneops_core.datasets.schemas.enums import DatasetType
-from sceneops_core.datasets.schemas.validation import DatasetValidationStatus
 
 
 @runtime_checkable
@@ -45,24 +44,25 @@ class DatasetVersionRepository(Protocol):
         self, *, dataset_id: str, version: str
     ) -> DatasetVersionRecord: ...
 
-    async def update_scene_summary(
+    async def replace_scene_membership_summary(
         self,
         *,
         dataset_id: str,
         version: str,
-        scene_count: int | None = None,
-        sample_count: int | None = None,
-        frame_count: int | None = None,
-        channels: list[str] | None = None,
+        scene_count: int,
+        keyframe_count: int,
+        observation_count: int,
+        observed_channels: list[str],
+    ) -> DatasetVersionRecord: ...
+
+    async def update_scene_inputs(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
         required_channels: list[str] | None = None,
         manifest_uri: str | None = None,
         raw_source_root_uri: str | None = None,
-        latest_validation_run_id: str | None = None,
-        validation_status: DatasetValidationStatus | None = None,
-        should_block_pipeline: bool | None = None,
-        validation_report_uri: str | None = None,
-        latest_profile_run_id: str | None = None,
-        profile_report_uri: str | None = None,
     ) -> DatasetVersionRecord: ...
 
     async def update_episode_summary(

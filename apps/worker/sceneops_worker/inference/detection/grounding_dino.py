@@ -76,13 +76,6 @@ class GroundingDinoDetectionBackend:
                 "Set it via job params or model version registry."
             )
 
-        raw_source_root_uri = config.raw_source_root_uri
-        if not raw_source_root_uri:
-            raise ValueError(
-                "GroundingDINO backend requires raw_source_root_uri to resolve image URIs. "
-                "Ensure the dataset version has raw_source_root_uri set."
-            )
-
         # Config-driven inference params; fall back to constructor defaults if not set.
         box_threshold = (
             config.box_threshold
@@ -103,6 +96,8 @@ class GroundingDinoDetectionBackend:
         enable_3d_lifting = config.enable_3d_lifting
 
         # ── sample selection ───────────────────────────────────────────────────
+        if request.payload_locator is None:
+            raise ValueError("GroundingDINO backend requires a payload locator")
         selector = DetectionSampleSelector()
         sample_inputs = await selector.select(
             dataset_manifest=inference_input.dataset_manifest,
@@ -111,12 +106,12 @@ class GroundingDinoDetectionBackend:
                 dataset_id=inference_input.dataset_manifest.dataset_id,
                 dataset_version=inference_input.dataset_manifest.dataset_version,
                 camera_channel=camera_channel,
-                raw_source_root_uri=raw_source_root_uri,
                 scene_ids=config.scene_ids,
                 max_scenes=config.max_scenes,
                 max_samples=config.max_samples,
                 enable_3d_lifting=enable_3d_lifting,
             ),
+            payload_locator=request.payload_locator,
         )
 
         run_id = inference_input.run_id
@@ -146,11 +141,6 @@ class GroundingDinoDetectionBackend:
                 predictions = _build_predictions(
                     sample=sample_input,
                     detections_2d=detections_2d,
-                    camera_sensor=sample_input.camera_sensor_frame,
-                    lidar_sensor=sample_input.lidar_sensor_frame,
-                    calibrated_sensor_index=sample_input.calibrated_sensor_index,
-                    ego_pose_index=sample_input.ego_pose_index,
-                    raw_root=raw_source_root_uri,
                     max_image_size=max_image_size,
                 )
 
@@ -334,20 +324,11 @@ async def _call_inference_server(
 
 def _build_predictions(
     *,
-    sample: Any,
+    sample: DetectionSampleInput,
     detections_2d: list[dict[str, Any]],
-    camera_sensor: Any,
-    lidar_sensor: Any | None,
-    calibrated_sensor_index: dict,
-    ego_pose_index: dict,
-    raw_root: str,
     max_image_size: int,
 ) -> list[dict[str, Any]]:
-    """Build per-prediction records from 2D detections + frustum lifting.
-
-    Calibration and ego-pose are resolved from scene-level registry indexes
-    rather than being embedded inline on the sensor frame manifests.
-    """
+    """Build per-prediction records from 2D detections + frustum lifting."""
     predictions: list[dict[str, Any]] = []
     for i, det in enumerate(detections_2d):
         bbox_2d: list[float] = det["bbox_2d"]
@@ -357,15 +338,13 @@ def _build_predictions(
         lifting_status = "not_applicable"
         lifting_error: str | None = None
 
-        if lidar_sensor is not None:
+        if sample.camera is not None and sample.lidar is not None:
             try:
                 lift = frustum_lift(
                     bbox_2d=bbox_2d,
-                    camera_frame=camera_sensor,
-                    lidar_frame=lidar_sensor,
-                    calibrated_sensor_index=calibrated_sensor_index,
-                    ego_pose_index=ego_pose_index,
-                    raw_root=raw_root,
+                    camera=sample.camera,
+                    lidar=sample.lidar,
+                    lidar_uri=sample.lidar_uri,
                     max_image_size=max_image_size,
                 )
                 lifting_status = "succeeded" if lift is not None else "not_applicable"

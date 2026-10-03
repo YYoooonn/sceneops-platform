@@ -29,7 +29,7 @@ class DatasetVersionRecord(SceneOpsBaseModel):
     """Platform-generic DatasetVersion identity/state, plus per-domain summaries.
 
     SceneOps V2 Request 03 cutover: Scene-owned and Episode-owned fields
-    (counts, channels, manifest_uri, quality-cache pointers) live exclusively
+    (counts, channels, manifest_uri) live exclusively
     under ``scene``/``episode`` now — there is no flat top-level duplicate.
     Request 04 additionally moved ``raw_source_root_uri`` into
     ``scene`` (it was only ever used by the Scene raw-log build path —

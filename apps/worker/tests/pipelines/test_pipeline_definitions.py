@@ -14,21 +14,20 @@ from sceneops_core.jobs.schemas import JobType
 
 
 _SUPPORTED_TYPES = {
-    PipelineType.DATASET_SCENE_INGESTION,
-    PipelineType.RAW_LOG_SCENE_BUILDING,
     PipelineType.DETECTION_EVALUATION,
 }
 
 # Experimental pipelines: supported=True, implemented=True, experimental=True.
-# They can be created/run but are hidden from default API listing.
+# They can be created/run but are hidden from default API listing. The two
+# legacy Scene producers are here: they emit non-canonical manifests only.
 _EXPERIMENTAL_SUPPORTED_TYPES = {
     PipelineType.SCENARIO_CURATION,
     PipelineType.RAW_LOG_EPISODE_BUILDING,
+    PipelineType.DATASET_SCENE_INGESTION,
+    PipelineType.RAW_LOG_SCENE_BUILDING,
 }
 
-_UNSUPPORTED_TYPES = {
-    PipelineType.SCENE_REGISTRATION,
-}
+_UNSUPPORTED_TYPES: set[PipelineType] = set()
 
 
 class TestPipelineDefinitionMetadata:
@@ -87,15 +86,24 @@ class TestBuildScenesTaskConfig:
             "it is injected from DatasetVersionRecord by BuildScenesJobHandler"
         )
 
-    def test_validate_scene_required_channels_not_hardcoded_in_default_params(
-        self,
-    ) -> None:
-        # require_target_channels must come from DatasetVersionRecord, not be hardcoded here.
-        task = self._get_task("validate_scene")
-        assert "require_target_channels" not in task.default_params, (
-            "require_target_channels must not be hardcoded in validate_scene.default_params; "
-            "it is injected from DatasetVersionRecord by ValidateSceneJobHandler"
-        )
+
+class TestLegacyScenePipelines:
+    """Legacy Scene producers end at their producer task: nothing in them can
+    register, validate or index their non-canonical output."""
+
+    @pytest.mark.parametrize(
+        "pipeline_type",
+        [PipelineType.DATASET_SCENE_INGESTION, PipelineType.RAW_LOG_SCENE_BUILDING],
+    )
+    def test_legacy_pipeline_has_only_its_producer_task(self, pipeline_type) -> None:
+        by_type = {d.type: d for d in BUILTIN_PIPELINE_DEFINITIONS}
+        job_types = {t.job_type for t in by_type[pipeline_type].tasks}
+        assert job_types in ({JobType.INGEST_SCENES}, {JobType.BUILD_SCENES})
+        for task in by_type[pipeline_type].tasks:
+            assert all(o.kind != "ref" for o in task.outputs)
+
+    def test_scene_registration_pipeline_was_removed(self) -> None:
+        assert "scene_registration" not in {t.value for t in PipelineType}
 
 
 class TestPipelineServiceFilter:

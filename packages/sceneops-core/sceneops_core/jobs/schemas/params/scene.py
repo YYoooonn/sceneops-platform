@@ -5,25 +5,22 @@ from pydantic import Field, model_validator
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.datasets.schemas import DatasetType
 from sceneops_core.observations.schemas import RawLogSourceFormat, RawLogSourceType
-from sceneops_core.scenes.schemas import (
-    SampleGroupingConfig,
-    SceneGenerationMethod,
-    SceneOriginType,
-    SceneSegmentationConfig,
-)
+from sceneops_core.scenes.legacy import SampleGroupingConfig, SceneSegmentationConfig
 
 from .base import BaseJobParams
 
 
-class SceneSampleValidationConfig(SceneOpsBaseModel):
-    """Validation options applied per sample within a scene."""
+class SceneKeyframeValidationConfig(SceneOpsBaseModel):
+    """Validation options applied to each source-defined keyframe group."""
 
-    validate_samples: bool = True
-    block_on_sample_missing_channels: bool = False
+    validate_keyframes: bool = True
+    block_on_keyframe_missing_channels: bool = False
 
 
 class IngestScenesJobParams(BaseJobParams):
-    """Import existing scene-aware datasets into SceneOps scenes.
+    """LEGACY producer: import existing scene-aware datasets as pre-canonical
+    ``LegacySceneManifest`` artifacts, which canonical registration does not
+    accept.
 
     Examples:
     - nuScenes scenes
@@ -66,7 +63,8 @@ class IngestScenesJobParams(BaseJobParams):
 
 
 class BuildScenesJobParams(BaseJobParams):
-    """raw logs to scene"""
+    """LEGACY producer: raw logs to pre-canonical ``LegacySceneManifest``
+    artifacts, which canonical registration does not accept."""
 
     raw_log_id: str | None = None
     raw_log_manifest_uri: str | None = None
@@ -100,10 +98,6 @@ class BuildScenesJobParams(BaseJobParams):
     max_built_scenes: int | None = None
 
     build_assets: bool = True
-    build_world_state: bool = False
-
-    origin_type: SceneOriginType = SceneOriginType.REAL
-    generation_method: SceneGenerationMethod = SceneGenerationMethod.RAW_LOG
 
     output_scene_root_uri: str | None = None
 
@@ -127,59 +121,60 @@ class BuildScenesJobParams(BaseJobParams):
 
 
 class BuildDatasetManifestJobParams(BaseJobParams):
-    """Build a dataset manifest from SceneOps scene manifests."""
+    """Derive a dataset manifest from the registered SceneRecords of one
+    DatasetVersion."""
 
     dataset_id: str
     dataset_version: str
-
-    scene_manifest_uris: list[str] = Field(default_factory=list)
-
-    output_manifest_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 
 
 class ValidateSceneJobParams(BaseJobParams):
-    scene_id: str | None = None
-    scene_manifest_uri: str | None = None
+    """Validate registered Scenes. Each Scene is assessed at the manifest
+    revision its record points to when the job reads it, and the per-scene
+    run record pins that revision."""
 
-    scene_manifest_uris: list[str] = Field(default_factory=list)
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    scene_ids: list[str] = Field(default_factory=list)
 
     require_target_channels: list[str] = Field(default_factory=list)
-    require_world_state: bool = False
-    require_assets: bool = False
 
-    sample_validation: SceneSampleValidationConfig = Field(
-        default_factory=SceneSampleValidationConfig
+    keyframe_validation: SceneKeyframeValidationConfig = Field(
+        default_factory=SceneKeyframeValidationConfig
     )
 
     metadata: JsonDict = Field(default_factory=dict)
 
 
 class ProfileSceneJobParams(BaseJobParams):
-    scene_id: str | None = None
-    scene_manifest_uri: str | None = None
-
-    scene_manifest_uris: list[str] = Field(default_factory=list)
-
-    profile_samples: bool = True
-    profile_assets: bool = True
-    profile_world_state: bool = False
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class RegisterSceneJobParams(BaseJobParams):
-    scene_ids: list[str] = Field(default_factory=list)
-    scene_manifest_uris: list[str] = Field(default_factory=list)
+    """Profile registered Scenes at their current revision; see
+    ``ValidateSceneJobParams``."""
 
     dataset_id: str | None = None
     dataset_version: str | None = None
 
-    origin_type: SceneOriginType = SceneOriginType.REAL
-    generation_method: SceneGenerationMethod = SceneGenerationMethod.UNKNOWN
+    scene_ids: list[str] = Field(default_factory=list)
 
-    replace_existing: bool = False
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class RegisterScenesJobParams(BaseJobParams):
+    """Canonical Scene registration (ADR-007 §17, §18).
+
+    ``manifest_artifact_ids`` name SCENE_MANIFEST ArtifactRecords; the
+    registrar re-reads and verifies their bytes. A recording-derived input
+    must be the complete unit set of one recording scope.
+    """
+
+    dataset_id: str = Field(min_length=1)
+    dataset_version: str = Field(min_length=1)
+
+    manifest_artifact_ids: list[str] = Field(min_length=1)
+
+    replace: bool = False
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -187,10 +182,6 @@ class RegisterSceneJobParams(BaseJobParams):
 class BuildSceneIndexJobParams(BaseJobParams):
     dataset_id: str | None = None
     dataset_version: str | None = None
-
-    scene_manifest_uris: list[str] = Field(default_factory=list)
-
-    output_scene_index_uri: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

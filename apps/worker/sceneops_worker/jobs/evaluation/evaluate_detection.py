@@ -24,6 +24,7 @@ from sceneops_core.jobs.schemas import (
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.scenes.readiness import require_no_blocked_scenes
 from sceneops_worker.evaluation import create_detection_evaluator
 from sceneops_worker.evaluation.detection import DetectionEvaluationRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
@@ -236,11 +237,6 @@ class EvaluateDetectionJobHandler(
             raise ValueError(
                 f"Dataset version has no manifest_uri: {dataset_id}:{dataset_version}"
             )
-        if version.scene.should_block_pipeline:
-            raise ValueError(
-                f"Dataset version Scene validation blocked downstream use: "
-                f"{dataset_id}:{dataset_version}"
-            )
         return version
 
     @staticmethod
@@ -339,6 +335,7 @@ class EvaluateDetectionJobHandler(
                 manifest_uri
             )
         )
+        await require_no_blocked_scenes(execution.context, dataset_manifest)
         return EvaluateDetectionInputs(
             dataset_manifest=dataset_manifest,
             dataset_manifest_uri=manifest_uri,

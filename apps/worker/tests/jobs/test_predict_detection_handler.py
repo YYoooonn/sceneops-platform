@@ -46,14 +46,12 @@ HANDLER = PredictDetectionJobHandler()
 
 def _dataset_version(
     manifest_uri: str | None = "file:///manifest.json",
-    should_block_pipeline: bool = False,
 ) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_id="nuscenes",
         version="v1.0-mini",
         scene=SceneVersionSummary(
             manifest_uri=manifest_uri,
-            should_block_pipeline=should_block_pipeline,
         ),
     )
 
@@ -190,11 +188,6 @@ async def test_require_dataset_version_no_scene():
 async def test_require_dataset_version_no_manifest_uri():
     with pytest.raises(ValueError, match="manifest_uri"):
         await _require_dataset_version(_dataset_version(manifest_uri=None))
-
-
-async def test_require_dataset_version_blocked_by_validation():
-    with pytest.raises(ValueError, match="blocked"):
-        await _require_dataset_version(_dataset_version(should_block_pipeline=True))
 
 
 async def test_require_dataset_version_ready_ok():

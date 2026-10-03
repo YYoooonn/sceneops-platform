@@ -21,8 +21,8 @@ from .scene import (
     ExportScenePackageJobParams,
     IngestScenesJobParams,
     ProfileSceneJobParams,
-    RegisterSceneJobParams,
-    SceneSampleValidationConfig,
+    RegisterScenesJobParams,
+    SceneKeyframeValidationConfig,
     ValidateSceneJobParams,
 )
 from .robots import (
@@ -68,8 +68,8 @@ __all__ = [
     "BuildSceneIndexJobParams",
     "ValidateSceneJobParams",
     "ProfileSceneJobParams",
-    "RegisterSceneJobParams",
-    "SceneSampleValidationConfig",
+    "RegisterScenesJobParams",
+    "SceneKeyframeValidationConfig",
     "CompareScenesJobParams",
     "AutoLabelSceneJobParams",
     "ExportScenePackageJobParams",

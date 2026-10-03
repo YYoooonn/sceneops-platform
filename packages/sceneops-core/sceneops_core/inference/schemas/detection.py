@@ -16,7 +16,6 @@ class DetectionInferenceConfig(SceneOpsBaseModel):
 
     model_uri: str | None = None
     endpoint_url: str | None = None
-    raw_source_root_uri: str | None = None  # for image URI resolution in the worker
 
     # Sample / scene selection
     scene_ids: list[str] | None = None

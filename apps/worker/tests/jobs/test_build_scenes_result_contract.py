@@ -3,7 +3,7 @@
 Verifies that:
 - BuildScenesJobResult carries the 6 grouping-report fields
 - normalize_task_outputs places them in task.result.summary (not refs/artifacts)
-- Existing fields (scene_manifest_uris REF, diagnostic ARTIFACTs) are unchanged
+- Legacy scene manifests and diagnostic URIs are ARTIFACT outputs, never REFs
 - missing_channel_counts_by_channel (a dict) is placed in summary, not elsewhere
 - Non-zero warned/dropped counts flow through correctly when policy takes effect
 """
@@ -25,7 +25,7 @@ _BUILD_SCENES_TASK_DEF = next(
 def _raw_result(**overrides) -> dict:
     """Minimal valid BuildScenesJobResult serialization with Phase 2 fields."""
     base = BuildScenesJobResult(
-        scene_manifest_uris=["s3://bucket/scenes/sc-001/manifest.json"],
+        legacy_scene_manifest_uris=["s3://bucket/legacy_scenes/sc-001.json"],
         scene_count=1,
         sample_count=10,
         frame_count=60,
@@ -120,11 +120,13 @@ class TestBuildScenesOutputContract:
             assert field not in result.refs, f"{field!r} leaked into refs"
             assert field not in result.artifacts, f"{field!r} leaked into artifacts"
 
-    def test_existing_ref_scene_manifest_uris_unchanged(self) -> None:
+    def test_legacy_manifests_are_archival_artifacts_not_refs(self) -> None:
+        """No downstream task may consume legacy scene manifests."""
         raw = _raw_result()
         result = self._normalize(raw)
-        assert result.refs["scene_manifest_uris"] == [
-            "s3://bucket/scenes/sc-001/manifest.json"
+        assert result.refs == {}
+        assert result.artifacts["legacy_scene_manifest_uris"] == [
+            "s3://bucket/legacy_scenes/sc-001.json"
         ]
 
     def test_existing_summary_fields_unchanged(self) -> None:

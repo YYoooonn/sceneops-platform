@@ -246,7 +246,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t1",
                 0,
-                JobType.REGISTER_SCENE,
+                JobType.REGISTER_SCENES,
                 result=_task_result(
                     "t1",
                     refs={"scene_manifest_uris": ["s3://early"]},

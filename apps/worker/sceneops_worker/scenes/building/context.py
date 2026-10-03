@@ -7,7 +7,7 @@ from sceneops_core.observations.schemas import (
     RawLogManifest,
     RawSensorFrameManifest,
 )
-from sceneops_core.scenes.schemas import SampleGroupingConfig
+from sceneops_core.scenes.legacy import SampleGroupingConfig
 from sceneops_core.sensors.manifests import (
     EgoPoseManifest,
     SensorCalibrationManifest,

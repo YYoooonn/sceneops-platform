@@ -1,14 +1,6 @@
-"""Regression tests: build_dataset_manifest and build_scene_index are DB-backed.
-
-Verifies that:
-- Both jobs query ALL registered SceneRecords for the dataset version,
-  not just the current pipeline batch input.
-- Rebuilding the manifest after a second batch results in a manifest with
-  ALL scenes (not just the new batch).
-- Existing SceneRecords are never deleted or hidden.
-- Rebuilding twice is idempotent.
-- DatasetVersion.scene_count reflects the full scene set after each build.
-"""
+"""Derived dataset index / manifest jobs: built from every registered
+SceneRecord (never from pipeline batch input), each entry pinned to the
+Scene's current revision, and never writing the DatasetVersion summary."""
 
 from __future__ import annotations
 
@@ -16,321 +8,180 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sceneops_core.scenes.schemas.enums import SceneStatus
-from sceneops_core.scenes.schemas.records import SceneRecord
+from sceneops_core.jobs.schemas import (
+    BuildDatasetManifestJobParams,
+    BuildSceneIndexJobParams,
+    RegisterScenesJobParams,
+)
+from sceneops_core.scenes.testing import external_source
+from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.build_dataset_manifest import (
     BuildDatasetManifestJobHandler,
 )
 from sceneops_worker.jobs.dataset.build_scene_index import BuildSceneIndexJobHandler
+from sceneops_worker.jobs.dataset.register_scenes import RegisterScenesJobHandler
+from sceneops_worker.scenes.resolver import InconsistentSceneStateError
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-DATASET_ID = "nuscenes"
-DATASET_VERSION = "v1.0-mini"
-
-
-def _scene_record(
-    scene_id: str,
-    sample_count: int = 40,
-    frame_count: int = 80,
-) -> SceneRecord:
-    return SceneRecord(
-        scene_id=scene_id,
-        dataset_id=DATASET_ID,
-        dataset_version=DATASET_VERSION,
-        status=SceneStatus.PROFILED,
-        sample_count=sample_count,
-        frame_count=frame_count,
-        scene_manifest_uri=f"file:///scenes/{scene_id}/manifest.json",
-        channels=["CAM_FRONT", "LIDAR_TOP"],
-    )
+def _job() -> MagicMock:
+    job = MagicMock()
+    job.job_id = "job-1"
+    job.pipeline_run_id = "pipe-1"
+    return job
 
 
-def _scene_manifest_mock(scene_id: str, sample_count: int = 40, frame_count: int = 80):
-    m = MagicMock()
-    m.scene_id = scene_id
-    m.sample_count = sample_count
-    m.frame_count = frame_count
-    m.channels = ["CAM_FRONT", "LIDAR_TOP"]
-    return m
-
-
-def _job(job_id: str = "job-001", pipeline_run_id: str = "pipe-001") -> MagicMock:
-    j = MagicMock()
-    j.job_id = job_id
-    j.pipeline_run_id = pipeline_run_id
-    j.pipeline_task_run_id = "ptask-001"
-    j.params = {
-        "dataset_id": DATASET_ID,
-        "dataset_version": DATASET_VERSION,
-    }
-    return j
-
-
-def _context(scene_records: list[SceneRecord]) -> MagicMock:
-    """Build a mock WorkerContext whose scene_store.list returns the given records."""
-    ctx = MagicMock()
-
-    ctx.scene_store = MagicMock()
-    ctx.scene_store.list = AsyncMock(return_value=scene_records)
-
-    # Map URI → mock manifest
-    manifest_map = {
-        r.scene_manifest_uri: _scene_manifest_mock(
-            r.scene_id,
-            sample_count=r.sample_count or 40,
-            frame_count=r.frame_count or 80,
+async def _register(world, *keys, replace=False):
+    artifacts = [
+        await world.publish(
+            world.manifest(
+                source=external_source(source_unit_key=key),
+                keyframe_timestamps_ns=tuple(range(1_000, 1_000 * (i + 2), 1_000)),
+            )
         )
-        for r in scene_records
-        if r.scene_manifest_uri is not None
-    }
-
-    async def load_scene_manifest(uri: str):
-        return manifest_map.get(uri)
-
-    ctx.scene_artifact_store = MagicMock()
-    ctx.scene_artifact_store.load_scene_manifest = load_scene_manifest
-    ctx.scene_artifact_store.write_scene_index = AsyncMock(
-        return_value="file:///scene_index.json"
-    )
-
-    ctx.dataset_artifact_store = MagicMock()
-    ctx.dataset_artifact_store.write_dataset_manifest = AsyncMock(
-        return_value="file:///dataset.json"
-    )
-
-    mock_version = MagicMock()
-    mock_version.model_copy = lambda update: mock_version
-    ctx.dataset_store = MagicMock()
-    ctx.dataset_store.get_version = AsyncMock(return_value=mock_version)
-    ctx.dataset_store.save_version = AsyncMock(return_value=mock_version)
-    ctx.dataset_store.update_scene_summary = AsyncMock(return_value=mock_version)
-
-    ctx.artifact_record_store = MagicMock()
-    ctx.artifact_record_store.create = AsyncMock(return_value=MagicMock())
-
-    ctx.commit = AsyncMock()
-
-    return ctx
-
-
-def _manifest_params(
-    dataset_id: str = DATASET_ID, dataset_version: str = DATASET_VERSION
-):
-    p = MagicMock()
-    p.dataset_id = dataset_id
-    p.dataset_version = dataset_version
-    p.scene_manifest_uris = []
-    return p
-
-
-def _index_params(dataset_id: str = DATASET_ID, dataset_version: str = DATASET_VERSION):
-    p = MagicMock()
-    p.dataset_id = dataset_id
-    p.dataset_version = dataset_version
-    p.scene_manifest_uris = []
-    return p
-
-
-# ── build_dataset_manifest ────────────────────────────────────────────────────
-
-
-async def test_manifest_built_from_all_registered_scenes_not_just_input():
-    """build_dataset_manifest queries DB for ALL scenes, ignoring pipeline input URIs."""
-    scene_a = _scene_record("scene-a")
-    scene_b = _scene_record("scene-b")
-    ctx = _context([scene_a, scene_b])
-
-    handler = BuildDatasetManifestJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _manifest_params()
-    request.context = ctx
-
-    result = await handler.run(request)
-
-    assert result.scene_count == 2
-    # Both scenes passed to the artifact writer
-    written_manifest = ctx.dataset_artifact_store.write_dataset_manifest.call_args
-    manifest_arg = written_manifest.kwargs["manifest"]
-    written_scene_ids = {e.scene_id for e in manifest_arg.scenes}
-    assert "scene-a" in written_scene_ids
-    assert "scene-b" in written_scene_ids
-
-
-async def test_manifest_rebuild_preserves_all_scenes_across_batches():
-    """Rebuilding the manifest after adding a second scene includes both scenes.
-
-    Simulates two incremental pipeline runs on the same dataset version:
-    first batch registered scene-a, second batch registered scene-b.
-    After the second build, the manifest must contain both.
-    """
-    # At build time, DB has both scenes (both were registered by prior pipeline runs)
-    scene_a = _scene_record("scene-a")
-    scene_b = _scene_record("scene-b")
-    ctx = _context([scene_a, scene_b])
-
-    handler = BuildDatasetManifestJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _manifest_params()
-    request.context = ctx
-
-    result = await handler.run(request)
-
-    assert result.scene_count == 2
-
-
-async def test_manifest_rebuild_is_idempotent():
-    """Running build_dataset_manifest twice on the same scene set gives the same result."""
-    scenes = [_scene_record("scene-a"), _scene_record("scene-b")]
-    ctx = _context(scenes)
-
-    handler = BuildDatasetManifestJobHandler()
-
-    request = MagicMock()
-    request.job = _job(job_id="job-1")
-    request.params = _manifest_params()
-    request.context = ctx
-    result1 = await handler.run(request)
-
-    # Reset mock call counts for second run (same context with same DB state)
-    ctx.dataset_store.save_version.reset_mock()
-
-    request2 = MagicMock()
-    request2.job = _job(job_id="job-2")
-    request2.params = _manifest_params()
-    request2.context = ctx
-    result2 = await handler.run(request2)
-
-    assert result1.scene_count == result2.scene_count == 2
-
-
-async def test_manifest_adding_third_scene_shows_three_scenes():
-    """After adding a third scene, rebuild manifest shows all three."""
-    scenes = [
-        _scene_record("scene-a"),
-        _scene_record("scene-b"),
-        _scene_record("scene-c"),
+        for i, key in enumerate(keys)
     ]
-    ctx = _context(scenes)
+    await RegisterScenesJobHandler().run(
+        JobHandlerRequest(
+            job=_job(),
+            params=RegisterScenesJobParams(
+                dataset_id="ds",
+                dataset_version="v1",
+                manifest_artifact_ids=[a.artifact_id for a in artifacts],
+                replace=replace,
+            ),
+            context=world.context,
+        )
+    )
 
-    handler = BuildDatasetManifestJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _manifest_params()
-    request.context = ctx
 
-    result = await handler.run(request)
+@pytest.fixture()
+def world(scene_world):
+    scene_world.add_dataset_version()
+    written = {}
+
+    async def write_manifest(*, dataset_id, dataset_version, manifest):
+        written["manifest"] = manifest
+        return f"{scene_world.root}/datasets/{dataset_id}/{dataset_version}/dataset_manifest.json"
+
+    scene_world.context.dataset_artifact_store.write_dataset_manifest = AsyncMock(
+        side_effect=write_manifest
+    )
+    scene_world.context.dataset_store.update_scene_inputs = AsyncMock()
+    scene_world.written = written
+    return scene_world
+
+
+async def _build_manifest(world):
+    return await BuildDatasetManifestJobHandler().run(
+        JobHandlerRequest(
+            job=_job(),
+            params=BuildDatasetManifestJobParams(dataset_id="ds", dataset_version="v1"),
+            context=world.context,
+        )
+    )
+
+
+async def test_manifest_indexes_every_registered_scene_at_its_pinned_revision(world):
+    await _register(world, "a")
+    await _register(world, "b", "c")
+
+    result = await _build_manifest(world)
+    manifest = world.written["manifest"]
 
     assert result.scene_count == 3
+    assert {e.scene_id for e in manifest.scenes} == set(world.scenes.committed)
+    for entry in manifest.scenes:
+        record = world.scenes.committed[entry.scene_id]
+        artifact = world.artifacts[record.manifest_artifact_id]
+        assert (
+            entry.manifest_artifact_id,
+            entry.manifest_checksum,
+            entry.manifest_uri,
+        ) == (
+            record.manifest_artifact_id,
+            record.manifest_checksum,
+            artifact.uri,
+        )
+    assert manifest.keyframe_count == sum(e.keyframe_count for e in manifest.scenes)
+    assert manifest.observed_channels == ["CAM_FRONT", "LIDAR_TOP"]
 
 
-async def test_manifest_scene_count_reflects_full_registered_set():
-    """DatasetVersion.scene_count is updated with the full DB-queried scene count."""
-    scenes = [_scene_record(f"scene-{i}") for i in range(5)]
-    ctx = _context(scenes)
+async def test_manifest_job_never_writes_the_membership_summary(world):
+    await _register(world, "a")
+    world.context.dataset_store.replace_scene_membership_summary.reset_mock()
 
-    handler = BuildDatasetManifestJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _manifest_params()
-    request.context = ctx
+    result = await _build_manifest(world)
 
-    result = await handler.run(request)
-
-    assert result.scene_count == 5
-    # SceneOps V2 Request 05: build_dataset_manifest no longer touches
-    # DatasetVersion.status — only the Scene summary (scene_count=5) updates.
-    ctx.dataset_store.update_scene_summary.assert_called_once()
-    assert ctx.dataset_store.update_scene_summary.call_args.kwargs["scene_count"] == 5
+    world.context.dataset_store.replace_scene_membership_summary.assert_not_called()
+    world.context.dataset_store.update_scene_inputs.assert_awaited_once_with(
+        dataset_id="ds", version="v1", manifest_uri=result.dataset_manifest_uri
+    )
 
 
-async def test_manifest_raises_if_no_registered_scenes():
-    """build_dataset_manifest raises a clear error when no scenes are registered."""
-    ctx = _context([])  # no scenes in DB
+async def test_rebuild_after_replacement_pins_the_new_revision(world):
+    await _register(world, "a")
+    first = await _build_manifest(world)
+    first_entry = world.written["manifest"].scenes[0]
 
-    handler = BuildDatasetManifestJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _manifest_params()
-    request.context = ctx
+    artifact = await world.publish(
+        world.manifest(
+            source=external_source(source_unit_key="a"), annotations_per_keyframe=3
+        )
+    )
+    await RegisterScenesJobHandler().run(
+        JobHandlerRequest(
+            job=_job(),
+            params=RegisterScenesJobParams(
+                dataset_id="ds",
+                dataset_version="v1",
+                manifest_artifact_ids=[artifact.artifact_id],
+                replace=True,
+            ),
+            context=world.context,
+        )
+    )
+    second = await _build_manifest(world)
+    second_entry = world.written["manifest"].scenes[0]
 
-    with pytest.raises(ValueError, match="no registered scenes found"):
-        await handler.run(request)
-
-
-async def test_manifest_does_not_use_pipeline_input_uris():
-    """build_dataset_manifest ignores params.scene_manifest_uris (pipeline batch input)."""
-    # DB has 2 scenes; pipeline input has only 1 URI (old batch-only behavior)
-    scene_a = _scene_record("scene-a")
-    scene_b = _scene_record("scene-b")
-    ctx = _context([scene_a, scene_b])
-
-    handler = BuildDatasetManifestJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    params = _manifest_params()
-    # Simulate pipeline passing only one URI (the old wrong behavior)
-    params.scene_manifest_uris = [scene_a.scene_manifest_uri]
-    request.params = params
-    request.context = ctx
-
-    result = await handler.run(request)
-
-    # Must use DB (2 scenes), not pipeline input (1 scene)
-    assert result.scene_count == 2
+    assert first.scene_count == second.scene_count == 1
+    assert second_entry.scene_id == first_entry.scene_id
+    assert (
+        second_entry.manifest_artifact_id
+        == artifact.artifact_id
+        != first_entry.manifest_artifact_id
+    )
 
 
-# ── build_scene_index ─────────────────────────────────────────────────────────
+async def test_inconsistent_pin_fails_loudly(world):
+    await _register(world, "a")
+    record = next(iter(world.scenes.committed.values()))
+    del world.artifacts[record.manifest_artifact_id]
+    with pytest.raises(InconsistentSceneStateError):
+        await _build_manifest(world)
 
 
-async def test_scene_index_built_from_all_registered_scenes():
-    """build_scene_index queries DB for ALL scenes, not pipeline input."""
-    scene_a = _scene_record("scene-a")
-    scene_b = _scene_record("scene-b")
-    ctx = _context([scene_a, scene_b])
-
-    handler = BuildSceneIndexJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _index_params()
-    request.context = ctx
-
-    result = await handler.run(request)
-
-    assert result.scene_count == 2
-    assert len(result.scene_manifest_uris) == 2
-    assert scene_a.scene_manifest_uri in result.scene_manifest_uris
-    assert scene_b.scene_manifest_uri in result.scene_manifest_uris
+async def test_jobs_fail_without_registered_scenes(world):
+    with pytest.raises(ValueError, match="no registered scenes"):
+        await _build_manifest(world)
+    with pytest.raises(ValueError, match="no registered scenes"):
+        await BuildSceneIndexJobHandler().run(
+            JobHandlerRequest(
+                job=_job(),
+                params=BuildSceneIndexJobParams(dataset_id="ds", dataset_version="v1"),
+                context=world.context,
+            )
+        )
 
 
-async def test_scene_index_raises_if_no_registered_scenes():
-    """build_scene_index raises when no scenes are registered for the dataset version."""
-    ctx = _context([])
-
-    handler = BuildSceneIndexJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _index_params()
-    request.context = ctx
-
-    with pytest.raises(ValueError, match="no registered scenes found"):
-        await handler.run(request)
-
-
-async def test_scene_index_reflects_incremental_registration():
-    """scene_index includes all scenes registered up to the point of build."""
-    scenes = [_scene_record(f"scene-{i}") for i in range(10)]
-    ctx = _context(scenes)
-
-    handler = BuildSceneIndexJobHandler()
-    request = MagicMock()
-    request.job = _job()
-    request.params = _index_params()
-    request.context = ctx
-
-    result = await handler.run(request)
-
-    assert result.scene_count == 10
+async def test_scene_index_written_from_all_registered_scenes(world):
+    await _register(world, "a", "b")
+    result = await BuildSceneIndexJobHandler().run(
+        JobHandlerRequest(
+            job=_job(),
+            params=BuildSceneIndexJobParams(dataset_id="ds", dataset_version="v1"),
+            context=world.context,
+        )
+    )
+    payload = await world.artifact_store.read_json(result.scene_index_uri)
+    assert result.scene_count == payload["scene_count"] == 2
+    assert {s["scene_id"] for s in payload["scenes"]} == set(world.scenes.committed)

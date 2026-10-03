@@ -45,7 +45,7 @@ def _make_sample(annotations: list[MagicMock]) -> MagicMock:
 def _make_annotation(category: str, translation: list[float]) -> MagicMock:
     ann = MagicMock()
     ann.category = category
-    ann.translation = translation
+    ann.box.center_m = tuple(translation)
     ann.annotation_id = f"ann-{id(ann)}"
     return ann
 

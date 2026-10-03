@@ -8,13 +8,15 @@ from sceneops_core.common.schemas import SceneOpsBaseModel
 class SceneProfileResult(SceneOpsBaseModel):
     scene_id: str
 
-    sample_count: int = 0
-    frame_count: int = 0
+    observation_count: int = 0
+    keyframe_count: int = 0
     annotation_count: int = 0
 
-    channels: list[str] = Field(default_factory=list)
+    observed_channels: list[str] = Field(default_factory=list)
+    observations_by_channel: dict[str, int] = Field(default_factory=dict)
     category_distribution: dict[str, int] = Field(default_factory=dict)
 
+    # Fraction of a channel's observations that carry the property.
     calibration_coverage: dict[str, float] = Field(default_factory=dict)
     ego_pose_coverage: dict[str, float] = Field(default_factory=dict)
     camera_intrinsic_coverage: dict[str, float] = Field(default_factory=dict)

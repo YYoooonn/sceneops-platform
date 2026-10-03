@@ -22,8 +22,12 @@ from typing import Final
 OPEN_IDENTIFIER_PATTERN: Final = r"^[a-z0-9][a-z0-9._-]*$"
 OPEN_IDENTIFIER_MAX_LENGTH: Final = 64
 PRODUCER_ID_MAX_LENGTH: Final = 128
+VERBATIM_KEY_MAX_LENGTH: Final = 256
+LOCAL_ID_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+LOCAL_ID_MAX_LENGTH: Final = 128
 
 _OPEN_IDENTIFIER_RE = re.compile(OPEN_IDENTIFIER_PATTERN)
+_LOCAL_ID_RE = re.compile(LOCAL_ID_PATTERN)
 
 
 def validate_open_identifier(
@@ -65,12 +69,56 @@ def validate_producer_id(value: str) -> str:
     )
 
 
+def validate_local_id(
+    value: str, *, field: str, max_length: int = LOCAL_ID_MAX_LENGTH
+) -> str:
+    """A producer-assigned id that is unique only inside one manifest (an
+    observation, calibration, pose, group or annotation id). Path-safe, so
+    derived workflows can use it in object keys."""
+    if (
+        not isinstance(value, str)
+        or len(value) > max_length
+        or not _LOCAL_ID_RE.fullmatch(value)
+    ):
+        raise ValueError(
+            f"{field} must be 1-{max_length} characters of [A-Za-z0-9._-] "
+            f"starting with an alphanumeric character, got {value!r}"
+        )
+    return value
+
+
+def validate_verbatim_key(
+    value: str, *, field: str, max_length: int = VERBATIM_KEY_MAX_LENGTH
+) -> str:
+    """A key kept exactly as its source names it (a source unit key, a ROS
+    topic, a nuScenes channel, a coordinate frame, an annotation category).
+
+    Its alphabet is open because it belongs to the source, but it must be
+    unambiguous: non-empty, bounded, no surrounding whitespace and no
+    control characters. It is validated, never normalized.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string, got {type(value).__name__}")
+    if not value or len(value) > max_length:
+        raise ValueError(f"{field} must be 1-{max_length} characters")
+    if value != value.strip():
+        raise ValueError(f"{field} must not have surrounding whitespace")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError(f"{field} must not contain control characters")
+    return value
+
+
 __all__ = [
+    "LOCAL_ID_MAX_LENGTH",
+    "LOCAL_ID_PATTERN",
     "OPEN_IDENTIFIER_MAX_LENGTH",
     "OPEN_IDENTIFIER_PATTERN",
     "PRODUCER_ID_MAX_LENGTH",
+    "VERBATIM_KEY_MAX_LENGTH",
     "validate_external_format",
+    "validate_local_id",
     "validate_open_identifier",
     "validate_producer_id",
     "validate_source_clock",
+    "validate_verbatim_key",
 ]

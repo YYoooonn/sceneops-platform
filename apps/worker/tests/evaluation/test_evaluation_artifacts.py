@@ -23,9 +23,6 @@ from sceneops_worker.evaluation.detection.base import DetectionEvaluationRequest
 from sceneops_worker.evaluation.detection.center_distance import (
     evaluate_center_distance_detection,
 )
-from sceneops_worker.evaluation.detection.loading import (
-    EvaluationSceneEntry,
-)
 
 
 EVAL_MANIFEST_URI = "file:///runs/evaluations/eval-001/evaluation.json"
@@ -150,57 +147,39 @@ async def test_final_manifest_has_non_null_metrics_uri():
 # ── full skipped evaluation paths ─────────────────────────────────────────────
 
 
-def _no_gt_request() -> DetectionEvaluationRequest:
-    """Request where all scenes have zero annotation_count → triggers skipped path."""
-    dataset_manifest = MagicMock()
-    dataset_manifest.dataset_id = "nuscenes"
-    dataset_manifest.dataset_version = "v1.0-mini"
+async def _no_gt_request(world) -> DetectionEvaluationRequest:
+    """Request whose only Scene carries no annotations -> skipped path."""
+    from sceneops_core.datasets.schemas import DatasetManifest, DatasetSceneIndexEntry
 
-    no_gt_entry = EvaluationSceneEntry(
-        scene_id="scene-001",
-        scene_manifest_uri="file:///scenes/scene-001/manifest.json",
-        manifest=MagicMock(
-            scene_id="scene-001",
-            annotation_count=0,
-            sample_count=2,
-            frame_count=4,
-            has_ground_truth=False,
-            ground_truth_source=None,
-            samples=[],
-        ),
-        sample_count=2,
-        frame_count=4,
-        annotation_count=0,
-        has_ground_truth=False,
-        ground_truth_source=None,
+    artifact = await world.publish(world.manifest(annotations_per_keyframe=0))
+    dataset_manifest = DatasetManifest(
+        dataset_id="ds",
+        dataset_version="v1",
+        scenes=[
+            DatasetSceneIndexEntry(
+                scene_id="scene-001",
+                manifest_artifact_id=artifact.artifact_id,
+                manifest_checksum=artifact.checksum,
+                manifest_uri=artifact.uri,
+            )
+        ],
     )
-    dataset_manifest.scenes = [
-        MagicMock(
-            scene_id="scene-001",
-            scene_manifest_uri="file:///scenes/scene-001/manifest.json",
-        )
-    ]
 
     run_store = _run_store()
     run_store.load_inference_prediction_manifest = AsyncMock(
         return_value=DetectionPredictionManifest(
             inference_run_id="infer-001",
-            dataset_id="nuscenes",
-            dataset_version="v1.0-mini",
+            dataset_id="ds",
+            dataset_version="v1",
             model_id="dummy",
             model_version="v1",
             prediction_shards=[],
         )
     )
 
-    scene_store = MagicMock()
-    scene_store.load_scene_manifest = AsyncMock(
-        return_value=no_gt_entry.manifest,
-    )
-
     return DetectionEvaluationRequest(
         dataset_manifest=dataset_manifest,
-        scene_artifact_store=scene_store,
+        scene_artifact_store=world.scene_artifact_store,
         run_artifact_store=run_store,
         inference_run_id="infer-001",
         evaluation_run_id="eval-001",
@@ -208,9 +187,11 @@ def _no_gt_request() -> DetectionEvaluationRequest:
     )
 
 
-async def test_no_gt_dataset_skipped_manifest_has_non_null_evaluation_manifest_uri():
+async def test_no_gt_dataset_skipped_manifest_has_non_null_evaluation_manifest_uri(
+    scene_world,
+):
     """When the whole dataset has no GT, the returned manifest has evaluation_manifest_uri set."""
-    request = _no_gt_request()
+    request = await _no_gt_request(scene_world)
     manifest = await evaluate_center_distance_detection(request)
     assert manifest.status == "skipped"
     assert manifest.evaluation_manifest_uri is not None, (

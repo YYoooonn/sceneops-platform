@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sceneops_core.observations.schemas import RawSensorFrameManifest
-from sceneops_core.scenes.schemas import SampleGroupingConfig, SampleGroupingStrategy
+from sceneops_core.scenes.legacy import SampleGroupingConfig, SampleGroupingStrategy
 
 
 @dataclass(frozen=True)

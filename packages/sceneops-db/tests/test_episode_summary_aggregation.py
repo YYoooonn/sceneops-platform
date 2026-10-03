@@ -22,7 +22,8 @@ from sqlalchemy.exc import IntegrityError
 
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from sceneops_core.episodes.schemas.records import EpisodeRecord
-from sceneops_core.scenes.schemas.records import SceneRecord
+from sceneops_core.scenes.testing import external_source
+from sceneops_db.models.artifacts import ArtifactModel
 from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
 from sceneops_db.models.episodes import EpisodeModel
 from sceneops_db.models.scenes import SceneModel
@@ -123,7 +124,7 @@ async def test_retry_upsert_of_existing_episode_does_not_inflate_count(
 
 @pytest.mark.asyncio
 async def test_scene_and_episode_domains_stay_independent_while_both_grow(
-    db_session, unique_id
+    db_session, unique_id, scene_record_for
 ):
     """SceneOps: a combined DatasetVersion where both Scene and Episode
     domains grow independently over several operations must never let one
@@ -137,24 +138,34 @@ async def test_scene_and_episode_domains_stay_independent_while_both_grow(
         DatasetVersionRecord(dataset_id=dataset_id, version=version)
     )
 
+    async def _register_scene(source_unit_key: str) -> None:
+        await scene_repo.insert(
+            await scene_record_for(
+                db_session,
+                dataset_id=dataset_id,
+                dataset_version=version,
+                source=external_source(source_unit_key=source_unit_key),
+            )
+        )
+
     async def _refresh_scene_summary() -> int:
-        # Mirrors build_dataset_manifest.py's own "always query all
-        # registered scenes, never build from partial input" pattern.
-        scenes = await scene_repo.list(
-            dataset_id=dataset_id, dataset_version=version, limit=10_000
+        # Mirrors the Scene registrar: recompute from membership, replace.
+        summary = await scene_repo.summarize_membership(
+            dataset_id=dataset_id, dataset_version=version
         )
-        await version_repo.update_scene_summary(
-            dataset_id=dataset_id, version=version, scene_count=len(scenes)
+        await version_repo.replace_scene_membership_summary(
+            dataset_id=dataset_id,
+            version=version,
+            scene_count=summary.scene_count,
+            keyframe_count=summary.keyframe_count,
+            observation_count=summary.observation_count,
+            observed_channels=summary.observed_channels,
         )
-        return len(scenes)
+        return summary.scene_count
 
     # Scenes = 2, Episodes = 2.
-    await scene_repo.create(
-        SceneRecord(scene_id="scene-a", dataset_id=dataset_id, dataset_version=version)
-    )
-    await scene_repo.create(
-        SceneRecord(scene_id="scene-b", dataset_id=dataset_id, dataset_version=version)
-    )
+    await _register_scene("scene-a")
+    await _register_scene("scene-b")
     assert await _refresh_scene_summary() == 2
     await _register_one_episode_and_refresh_summary(
         db_session, dataset_id=dataset_id, version=version, episode_id="ep-a"
@@ -176,9 +187,7 @@ async def test_scene_and_episode_domains_stay_independent_while_both_grow(
     assert fetched.episode.episode_count == 3
 
     # Add one more Scene -> Episodes must stay 3, Scenes becomes 3.
-    await scene_repo.create(
-        SceneRecord(scene_id="scene-c", dataset_id=dataset_id, dataset_version=version)
-    )
+    await _register_scene("scene-c")
     assert await _refresh_scene_summary() == 3
     fetched = await version_repo.get(dataset_id=dataset_id, version=version)
     assert fetched.scene.scene_count == 3
@@ -243,6 +252,9 @@ async def _cleanup(dataset_id: str) -> None:
         )
         await session.execute(
             delete(SceneModel).where(SceneModel.dataset_id == dataset_id)
+        )
+        await session.execute(
+            delete(ArtifactModel).where(ArtifactModel.dataset_id == dataset_id)
         )
         await session.execute(
             delete(DatasetVersionModel).where(
@@ -461,14 +473,17 @@ async def test_concurrent_retry_upsert_of_same_episode_does_not_inflate_count(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_scene_and_episode_summary_writes_do_not_clobber(unique_id):
+async def test_concurrent_scene_and_episode_summary_writes_do_not_clobber(
+    unique_id, scene_record_for
+):
     """A genuinely concurrent Scene-domain write and Episode-domain write
     against the SAME DatasetVersion row (different sessions/transactions)
     must both survive -- proves the column-scoped partial-update design
     (values_without_none + per-attribute dirty tracking) is safe under real
-    concurrency, not just sequential ordering. Only Episode locks its row;
-    Scene's plain UPDATE is expected to serialize behind it (Postgres's
-    ordinary row lock) but must not lose its own write once unblocked."""
+    concurrency, not just sequential ordering. Both registrars lock the
+    row, recompute from their own membership and write only their own
+    domain's columns, so whichever runs second must not lose the first's
+    write."""
     sessionmaker = get_async_sessionmaker()
     dataset_id = unique_id("ds")
     version = "v0.0"
@@ -485,16 +500,23 @@ async def test_concurrent_scene_and_episode_summary_writes_do_not_clobber(unique
         async with sessionmaker() as session:
             scene_repo = PostgresSceneRepository(session)
             version_repo = PostgresDatasetVersionRepository(session)
-            await scene_repo.create(
-                SceneRecord(
-                    scene_id=f"{dataset_id}-scene-a",
-                    dataset_id=dataset_id,
-                    dataset_version=version,
+            await scene_repo.insert(
+                await scene_record_for(
+                    session, dataset_id=dataset_id, dataset_version=version
                 )
             )
             await barrier.wait()
-            await version_repo.update_scene_summary(
-                dataset_id=dataset_id, version=version, scene_count=1
+            await version_repo.lock_for_update(dataset_id=dataset_id, version=version)
+            summary = await scene_repo.summarize_membership(
+                dataset_id=dataset_id, dataset_version=version
+            )
+            await version_repo.replace_scene_membership_summary(
+                dataset_id=dataset_id,
+                version=version,
+                scene_count=summary.scene_count,
+                keyframe_count=summary.keyframe_count,
+                observation_count=summary.observation_count,
+                observed_channels=summary.observed_channels,
             )
             await session.commit()
 

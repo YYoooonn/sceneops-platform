@@ -11,8 +11,8 @@ Covers:
   invoked;
 - _ingest_nuscenes_scenes builds its IntegrationRequest from real params
   (never a hardcoded source), runs it via HttpIntegrationExecutor against
-  scenes_root_uri (not a raw-log URI), and reads each produced
-  scene_manifest artifact back into a typed SceneManifest, keyed by the
+  the legacy scenes root (not a raw-log URI), and reads each produced
+  artifact back into a typed LegacySceneManifest, keyed by the
   scene_id in each ArtifactRef's own metadata.
 - the worker no longer imports nuscenes-devkit for this job at all
   (Request 4.6B) -- these tests mock HttpIntegrationExecutor, never the
@@ -34,7 +34,7 @@ from sceneops_core.integration_runtime import (
     IntegrationResult,
 )
 from sceneops_core.jobs.schemas import IngestScenesJobParams
-from sceneops_core.scenes.schemas.manifests import SceneManifest
+from sceneops_core.scenes.legacy import LegacySceneManifest as SceneManifest
 
 from sceneops_worker.jobs.dataset.ingest_scenes import _ingest_nuscenes_scenes
 
@@ -65,7 +65,7 @@ def _make_context(
     *, scenes_root_uri: str = "s3://sceneops/artifacts/.../scenes"
 ) -> MagicMock:
     context = MagicMock()
-    context.scene_artifact_store.scenes_root_uri = MagicMock(
+    context.scene_artifact_store.legacy_scenes_root_uri = MagicMock(
         return_value=scenes_root_uri
     )
     context.scene_artifact_store.artifact_store.read_json = AsyncMock(
@@ -209,7 +209,7 @@ async def test_request_uses_scene_manifest_mode_and_real_source_root() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scene_manifest_root_uri_comes_from_scene_artifact_store() -> None:
+async def test_legacy_manifest_root_uri_comes_from_scene_artifact_store() -> None:
     params = _params()
     context = _make_context(
         scenes_root_uri="s3://sceneops/artifacts/x/versions/y/scenes"
@@ -226,7 +226,7 @@ async def test_scene_manifest_root_uri_comes_from_scene_artifact_store() -> None
     ):
         await _ingest_nuscenes_scenes(params=params, context=context, job=MagicMock())
 
-    context.scene_artifact_store.scenes_root_uri.assert_called_once_with(
+    context.scene_artifact_store.legacy_scenes_root_uri.assert_called_once_with(
         dataset_id="test-e2e-core", dataset_version="test-v1"
     )
 

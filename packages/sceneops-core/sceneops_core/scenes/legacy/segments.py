@@ -4,7 +4,7 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
-from .config import SceneSegmentationConfig
+from .segmentation import SceneSegmentationConfig
 
 
 class SceneSegment(SceneOpsBaseModel):

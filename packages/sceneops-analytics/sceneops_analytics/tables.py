@@ -1,77 +1,94 @@
 """Pure Postgres/ArtifactStore record -> columnar table builders.
 
-No I/O here — callers load ``SceneRecord`` rows (Postgres) and ``SceneManifest``
-documents (ArtifactStore) themselves and pass them in. Keeping these functions
-pure makes them trivially unit-testable and reusable outside the job/worker
-runtime (e.g. from a notebook, a future Spark/dbt stage, or a CLI).
+No I/O here — callers load ``SceneRecord`` rows (Postgres) and verified
+``SceneManifest`` revisions (ArtifactStore) themselves and pass them in.
+Keeping these functions pure makes them trivially unit-testable and reusable
+outside the job/worker runtime (e.g. from a notebook, a future Spark/dbt
+stage, or a CLI).
+
+Scene tables are observation-centric like the canonical Scene: every
+observation is a row with its own source timestamp and clock, and keyframes
+are a separate table over the source-defined grouping. Every timestamp
+column is paired with the clock it is counted in; clocks are never
+converted. A manifest carries no
+scene id, so manifest-based builders take ``(scene_id, manifest)`` pairs.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import polars as pl
 
 from sceneops_core.robots.schemas import MissionRecord, RobotStateRecord
 from sceneops_core.scenes.schemas import SceneManifest, SceneRecord
 
+SceneManifests = Sequence[tuple[str, SceneManifest]]
+
 SCENES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
     "dataset_version": pl.Utf8,
     "scene_id": pl.Utf8,
-    "status": pl.Utf8,
-    "origin_type": pl.Utf8,
-    "generation_method": pl.Utf8,
-    "raw_log_id": pl.Utf8,
-    "segment_id": pl.Utf8,
-    "sample_count": pl.Int64,
-    "frame_count": pl.Int64,
+    "source_kind": pl.Utf8,
+    "external_format": pl.Utf8,
+    "robot_run_id": pl.Utf8,
+    "source_unit_key": pl.Utf8,
+    "producer_fingerprint": pl.Utf8,
+    "manifest_artifact_id": pl.Utf8,
+    "manifest_checksum": pl.Utf8,
+    "window_clock": pl.Utf8,
+    "window_start_timestamp_ns": pl.Int64,
+    "window_end_timestamp_ns": pl.Int64,
+    "observation_count": pl.Int64,
+    "keyframe_count": pl.Int64,
     "annotation_count": pl.Int64,
-    "channels": pl.List(pl.Utf8),
-    "has_ground_truth": pl.Boolean,
-    "ground_truth_source": pl.Utf8,
+    "observed_channels": pl.List(pl.Utf8),
 }
 
-SAMPLES_SCHEMA: dict[str, pl.PolarsDataType] = {
+OBSERVATIONS_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
     "dataset_version": pl.Utf8,
     "scene_id": pl.Utf8,
-    "sample_id": pl.Utf8,
-    "timestamp_us": pl.Int64,
-    "frame_index": pl.Int64,
-    "sensor_frame_count": pl.Int64,
-    "annotation_count": pl.Int64,
-}
-
-SENSOR_FRAMES_SCHEMA: dict[str, pl.PolarsDataType] = {
-    "dataset_id": pl.Utf8,
-    "dataset_version": pl.Utf8,
-    "scene_id": pl.Utf8,
-    "sample_id": pl.Utf8,
-    "frame_id": pl.Utf8,
-    "timestamp_us": pl.Int64,
+    "observation_id": pl.Utf8,
     "channel": pl.Utf8,
     "modality": pl.Utf8,
-    "uri": pl.Utf8,
+    "timestamp_ns": pl.Int64,
+    "source_clock": pl.Utf8,
+    "payload_artifact_id": pl.Utf8,
+    "payload_checksum": pl.Utf8,
+    "payload_media_type": pl.Utf8,
+    "payload_size_bytes": pl.Int64,
     "calibration_id": pl.Utf8,
     "ego_pose_id": pl.Utf8,
+}
+
+KEYFRAMES_SCHEMA: dict[str, pl.PolarsDataType] = {
+    "dataset_id": pl.Utf8,
+    "dataset_version": pl.Utf8,
+    "scene_id": pl.Utf8,
+    "group_id": pl.Utf8,
+    "timestamp_ns": pl.Int64,
+    "source_clock": pl.Utf8,
+    "observation_ids": pl.List(pl.Utf8),
+    "annotation_count": pl.Int64,
 }
 
 ANNOTATIONS_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
     "dataset_version": pl.Utf8,
     "scene_id": pl.Utf8,
-    "sample_id": pl.Utf8,
     "annotation_id": pl.Utf8,
+    "group_id": pl.Utf8,
+    "timestamp_ns": pl.Int64,
+    "source_clock": pl.Utf8,
     "category": pl.Utf8,
     "instance_id": pl.Utf8,
-    "timestamp_us": pl.Int64,
-    "coordinate_frame": pl.Utf8,
-    "translation": pl.List(pl.Float64),
-    "size": pl.List(pl.Float64),
-    "rotation": pl.List(pl.Float64),
-    "rotation_format": pl.Utf8,
+    "frame_id": pl.Utf8,
+    "center_m": pl.List(pl.Float64),
+    "size_wlh_m": pl.List(pl.Float64),
+    "rotation_wxyz": pl.List(pl.Float64),
+    "velocity_mps": pl.List(pl.Float64),
     "attributes": pl.List(pl.Utf8),
-    "num_lidar_points": pl.Int64,
-    "num_radar_points": pl.Int64,
 }
 
 
@@ -81,106 +98,121 @@ def build_scenes_table(scenes: list[SceneRecord]) -> pl.DataFrame:
             "dataset_id": s.dataset_id,
             "dataset_version": s.dataset_version,
             "scene_id": s.scene_id,
-            "status": str(s.status),
-            "origin_type": str(s.origin_type),
-            "generation_method": str(s.generation_method),
-            "raw_log_id": s.raw_log_id,
-            "segment_id": s.segment_id,
-            "sample_count": s.sample_count,
-            "frame_count": s.frame_count,
+            "source_kind": s.source_kind.value,
+            "external_format": s.external_format,
+            "robot_run_id": s.robot_run_id,
+            "source_unit_key": s.source_unit_key,
+            "producer_fingerprint": s.producer_fingerprint,
+            "manifest_artifact_id": s.manifest_artifact_id,
+            "manifest_checksum": s.manifest_checksum,
+            "window_clock": s.window_clock,
+            "window_start_timestamp_ns": s.window_start_timestamp_ns,
+            "window_end_timestamp_ns": s.window_end_timestamp_ns,
+            "observation_count": s.observation_count,
+            "keyframe_count": s.keyframe_count,
             "annotation_count": s.annotation_count,
-            "channels": s.channels,
-            "has_ground_truth": s.has_ground_truth,
-            "ground_truth_source": s.ground_truth_source,
+            "observed_channels": s.observed_channels,
         }
         for s in scenes
     ]
     return pl.DataFrame(rows, schema=SCENES_SCHEMA)
 
 
-def build_samples_table(
+def build_observations_table(
     *,
     dataset_id: str,
     dataset_version: str,
-    manifests: list[SceneManifest],
+    manifests: SceneManifests,
 ) -> pl.DataFrame:
-    rows = [
-        {
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-            "scene_id": manifest.scene_id,
-            "sample_id": sample.sample_id,
-            "timestamp_us": sample.timestamp_us,
-            "frame_index": sample.frame_index,
-            "sensor_frame_count": len(sample.sensor_frames),
-            "annotation_count": len(sample.annotations),
-        }
-        for manifest in manifests
-        for sample in manifest.samples
-    ]
-    return pl.DataFrame(rows, schema=SAMPLES_SCHEMA)
+    rows = []
+    for scene_id, manifest in manifests:
+        modality = {c.channel: c.modality.value for c in manifest.channels}
+        clock = {c.channel: c.source_clock for c in manifest.channels}
+        rows.extend(
+            {
+                "dataset_id": dataset_id,
+                "dataset_version": dataset_version,
+                "scene_id": scene_id,
+                "observation_id": o.observation_id,
+                "channel": o.channel,
+                "modality": modality[o.channel],
+                "timestamp_ns": o.timestamp_ns,
+                "source_clock": clock[o.channel],
+                "payload_artifact_id": o.payload.artifact_id,
+                "payload_checksum": o.payload.checksum,
+                "payload_media_type": o.payload.media_type,
+                "payload_size_bytes": o.payload.size_bytes,
+                "calibration_id": o.calibration_id,
+                "ego_pose_id": o.ego_pose_id,
+            }
+            for o in manifest.observations
+        )
+    return pl.DataFrame(rows, schema=OBSERVATIONS_SCHEMA)
 
 
-def build_sensor_frames_table(
+def build_keyframes_table(
     *,
     dataset_id: str,
     dataset_version: str,
-    manifests: list[SceneManifest],
+    manifests: SceneManifests,
 ) -> pl.DataFrame:
-    rows = [
-        {
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-            "scene_id": manifest.scene_id,
-            "sample_id": sample.sample_id,
-            "frame_id": frame.frame_id,
-            "timestamp_us": frame.timestamp_us,
-            "channel": frame.channel,
-            "modality": str(frame.modality),
-            "uri": frame.uri,
-            "calibration_id": frame.calibration_id,
-            "ego_pose_id": frame.ego_pose_id,
-        }
-        for manifest in manifests
-        for sample in manifest.samples
-        for frame in sample.sensor_frames
-    ]
-    return pl.DataFrame(rows, schema=SENSOR_FRAMES_SCHEMA)
+    rows = []
+    for scene_id, manifest in manifests:
+        annotations_per_group: dict[str, int] = {}
+        for annotation in manifest.annotations:
+            if annotation.group_id is not None:
+                annotations_per_group[annotation.group_id] = (
+                    annotations_per_group.get(annotation.group_id, 0) + 1
+                )
+        rows.extend(
+            {
+                "dataset_id": dataset_id,
+                "dataset_version": dataset_version,
+                "scene_id": scene_id,
+                "group_id": g.group_id,
+                "timestamp_ns": g.timestamp_ns,
+                "source_clock": g.source_clock,
+                "observation_ids": list(g.observation_ids),
+                "annotation_count": annotations_per_group.get(g.group_id, 0),
+            }
+            for g in manifest.keyframes()
+        )
+    return pl.DataFrame(rows, schema=KEYFRAMES_SCHEMA)
 
 
 def build_annotations_table(
     *,
     dataset_id: str,
     dataset_version: str,
-    manifests: list[SceneManifest],
+    manifests: SceneManifests,
 ) -> pl.DataFrame:
     rows = [
         {
             "dataset_id": dataset_id,
             "dataset_version": dataset_version,
-            "scene_id": manifest.scene_id,
-            "sample_id": sample.sample_id,
-            "annotation_id": annotation.annotation_id,
-            "category": annotation.category,
-            "instance_id": annotation.instance_id,
-            "timestamp_us": annotation.timestamp_us,
-            "coordinate_frame": annotation.coordinate_frame,
-            "translation": annotation.translation,
-            "size": annotation.size,
-            "rotation": annotation.rotation,
-            "rotation_format": annotation.rotation_format,
-            "attributes": annotation.attributes,
-            "num_lidar_points": annotation.num_lidar_points,
-            "num_radar_points": annotation.num_radar_points,
+            "scene_id": scene_id,
+            "annotation_id": a.annotation_id,
+            "group_id": a.group_id,
+            "timestamp_ns": a.timestamp_ns,
+            "source_clock": a.source_clock,
+            "category": a.category,
+            "instance_id": a.instance_id,
+            "frame_id": a.box.frame_id,
+            "center_m": list(a.box.center_m),
+            "size_wlh_m": list(a.box.size_wlh_m),
+            "rotation_wxyz": list(a.box.rotation_wxyz),
+            "velocity_mps": list(a.box.velocity_mps)
+            if a.box.velocity_mps is not None
+            else None,
+            "attributes": list(a.attributes),
         }
-        for manifest in manifests
-        for sample in manifest.samples
-        for annotation in sample.annotations
+        for scene_id, manifest in manifests
+        for a in manifest.annotations
     ]
     return pl.DataFrame(rows, schema=ANNOTATIONS_SCHEMA)
 
 
-TABLE_BUILDERS = ("scenes", "samples", "sensor_frames", "annotations")
+TABLE_BUILDERS = ("scenes", "observations", "keyframes", "annotations")
 
 
 # ── Robot analytics tables (roadmap §7.4: robot_telemetry.parquet, missions.parquet) ──

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.observations.schemas import RawLogManifest, RawSensorFrameManifest
-from sceneops_core.scenes.schemas.manifests import (
-    SceneManifest,
-    SceneSampleManifest,
-    SceneSensorFrameManifest,
+from sceneops_core.scenes.legacy import (
+    LegacySceneManifest,
+    LegacySceneSampleManifest,
+    LegacySceneSensorFrameManifest,
+    SceneSegment,
 )
-from sceneops_core.scenes.schemas.segments import SceneSegment
 
 from .association import AssociatedSample, FrameAssociator
 from .context import SceneBuildContext
@@ -39,7 +39,7 @@ class SceneAssembler:
         context: SceneBuildContext,
         dataset_id: str,
         dataset_version: str,
-    ) -> tuple[SceneManifest, SampleGroupingReport]:
+    ) -> tuple[LegacySceneManifest, SampleGroupingReport]:
         raw_frames = context.frames_for_ids(segment.frame_ids)
 
         anchors = self._anchor_selector.select(
@@ -104,7 +104,7 @@ class SceneAssembler:
             {frame.channel for sample in samples for frame in sample.sensor_frames}
         )
 
-        scene_manifest = SceneManifest(
+        scene_manifest = LegacySceneManifest(
             scene_id=segment.segment_id,
             dataset_id=dataset_id,
             dataset_version=dataset_version,
@@ -155,7 +155,7 @@ class SceneAssembler:
         *,
         associated: AssociatedSample,
         context: SceneBuildContext,
-    ) -> SceneSampleManifest:
+    ) -> LegacySceneSampleManifest:
         sensor_frames = [
             self._build_scene_frame(
                 raw_frame=raw_frame,
@@ -165,7 +165,7 @@ class SceneAssembler:
             for raw_frame in associated.frames
         ]
 
-        return SceneSampleManifest(
+        return LegacySceneSampleManifest(
             sample_id=associated.sample_id,
             scene_id=associated.scene_id,
             timestamp_us=associated.timestamp_us,
@@ -185,7 +185,7 @@ class SceneAssembler:
         raw_frame: RawSensorFrameManifest,
         sample_id: str,
         context: SceneBuildContext,
-    ) -> SceneSensorFrameManifest:
+    ) -> LegacySceneSensorFrameManifest:
         calibration = self._calibration_resolver.resolve(
             frame=raw_frame,
             context=context,
@@ -204,7 +204,7 @@ class SceneAssembler:
             "raw_sensor_id": raw_frame.sensor_id,
         }
 
-        return SceneSensorFrameManifest(
+        return LegacySceneSensorFrameManifest(
             frame_id=raw_frame.frame_id,
             sample_id=sample_id,
             timestamp_us=raw_frame.timestamp_us,
@@ -221,7 +221,7 @@ class SceneAssembler:
     def _attach_resolution_stats(
         *,
         report: SampleGroupingReport,
-        samples: list[SceneSampleManifest],
+        samples: list[LegacySceneSampleManifest],
     ) -> None:
         frames_without_calibration_count = sum(
             1

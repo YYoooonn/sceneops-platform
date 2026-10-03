@@ -15,7 +15,7 @@ from .scene import (
     ExportScenePackageJobResult,
     IngestScenesJobResult,
     ProfileSceneJobResult,
-    RegisterSceneJobResult,
+    RegisterScenesJobResult,
     ValidateSceneJobResult,
 )
 from .robots import (
@@ -56,7 +56,7 @@ __all__ = [
     "BuildSceneIndexJobResult",
     "ValidateSceneJobResult",
     "ProfileSceneJobResult",
-    "RegisterSceneJobResult",
+    "RegisterScenesJobResult",
     "CompareScenesJobResult",
     "AutoLabelSceneJobResult",
     "ExportScenePackageJobResult",

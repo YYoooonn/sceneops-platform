@@ -39,12 +39,12 @@ EvaluationRun
 Artifact          (metadata index every domain's binary/JSON output goes through)
 ```
 
-`SceneManifest` and `SceneLineage`, as separate concepts, don't exist as
-their own tables — they're fields on `SceneRecord`
-(`scene_manifest_uri`, `lineage` JSONB). Episode follows the same pattern:
-`EpisodeRecord.episode_manifest_uri` + `EpisodeLineage` embedded inside the
-manifest rather than the DB row (see [Episode domain](./episode-domain.md)
-§3). Prediction runs are `InferenceRunModel` in code (table `inference_runs`).
+`SceneManifest` (with its `SceneLineage`) is an immutable Object Storage
+artifact, not a table: `SceneRecord.manifest_artifact_id` pins the one
+registered revision the row projects (see [Scene domain](./scene-domain.md)).
+Episode keeps `EpisodeRecord.episode_manifest_uri` + `EpisodeLineage`
+embedded inside the manifest rather than the DB row (see
+[Episode domain](./episode-domain.md) §3). Prediction runs are `InferenceRunModel` in code (table `inference_runs`).
 
 ## 2. Dataset / DatasetVersion
 
@@ -57,32 +57,20 @@ unique.
 Key fields:
 - `status`: `DatasetVersionStatus` — currently a single value, `registered`
   (see §2.1 below — this is intentional, not a placeholder).
-- `scene_count` / `sample_count` / `frame_count`: version-level statistics
-  (Scene-domain only).
+- `scene_count` / `keyframe_count` / `observation_count` / `observed_channels`:
+  the Scene membership summary, written only by Scene registration.
 - `episode_count`: version-level Episode statistic (`EpisodeVersionSummary`
   — its own independent rollup, not derived from or overwritten by the
   Scene fields above; see the aggregate-summary contract below).
-- `channels` / `required_channels`: sensor channel lists (JSONB).
-- `manifest_uri`, `raw_source_root_uri`: ArtifactStore references.
-- `latest_validation_run_id` / `validation_status` / `should_block_pipeline`
-  / `validation_report_uri`: cached back-reference to the latest Scene
-  VALIDATE result.
-- `latest_profile_run_id` / `profile_report_uri`: same pattern, for PROFILE.
+- `required_channels` (validation default), `manifest_uri` (derived dataset
+  manifest location), `raw_source_root_uri` (legacy raw-log builder input):
+  Scene inputs that are not membership, patched through
+  `update_scene_inputs`.
 
-`DatasetVersion` caches the latest Scene-domain quality-run result so "is
-this version usable?" doesn't require joining `scene_run_records` on every
-read. Actual validate/profile execution history lives at scene scope
-(`scene_run_records`, §3), never at dataset scope — dataset-scoped
-`dataset_validation`/`dataset_profile` run types existed in an earlier
-version of the schema and were removed after confirming zero writers.
-
-Episode has no equivalent quality-run cache: Episode readiness is always
-computed live from the latest `EpisodeValidationRunRecord`/
-`EpisodeProfileRunRecord` per episode (see
-[Episode domain](./episode-domain.md) §5) — there is currently no
-Episode-domain analogue to `DatasetVersion.validation_status`. `episode_count`
-itself, however, *is* a real cached rollup (see below), independent of that
-quality-run caching question.
+A DatasetVersion caches no quality result. Scene and Episode readiness are
+derived from run records (`scene_run_records` / `episode_run_records`),
+for Scenes only from runs of each Scene's current manifest revision (see
+[Quality and run records](./quality-and-runs.md)).
 
 #### 2.0.1 The aggregate-summary contract
 
@@ -99,9 +87,8 @@ are the correct place for that — job results, never the DatasetVersion
 summary).
 
 Concretely, every writer recomputes from a live repository query
-(`EpisodeRepository.count(...)`, or `SceneRepository.list(...)` in
-`build_dataset_manifest`'s case) rather than incrementing a delta onto the
-previous cached value — this is what keeps the count correct under retry,
+(`EpisodeRepository.count(...)`, `SceneRepository.summarize_membership(...)`)
+rather than incrementing a delta onto the previous cached value — this is what keeps the count correct under retry,
 upsert, duplicate input, and independent per-scene dispatches (as
 `scripts/canonical/canonical_bootstrap.sh` performs one `register_episode`
 dispatch per source scene): each dispatch converges on the true total, not
@@ -109,9 +96,8 @@ just what that one dispatch touched. `RegisterEpisodeJobHandler` is the sole
 production writer of `episode_count` (it runs after `BuildEpisodesJobHandler`,
 which only produces manifests — never an `EpisodeRecord` — so writing the
 summary any earlier would count something that doesn't canonically exist
-yet); `build_dataset_manifest`'s job handler is `scene_count`'s final writer
-in both Scene pipelines, always re-querying every registered scene rather
-than trusting its own pipeline batch's input.
+yet). Scene registration (`REGISTER_SCENES`) is the sole writer of the
+Scene summary, in the same transaction as the membership change.
 
 #### 2.0.2 Concurrency: serializing aggregate mutation per DatasetVersion
 
@@ -137,10 +123,10 @@ dispatch's own lock acquisition blocks until the first commits, and then
 observes that transaction's fully committed changes — turning "recompute,
 then write" into a real serialization point for the affected row.
 
-This only serializes Episode-vs-Episode aggregate mutation for the *same*
-row; it does not touch Scene's writers. That is safe, not incomplete,
-because Scene and Episode summaries occupy disjoint columns
-(`update_scene_summary`/`update_episode_summary` are both partial updates —
+Scene registration takes the same lock before re-reading its scope and
+recomputing the Scene summary. Scene and Episode summaries occupy disjoint
+columns (`replace_scene_membership_summary`/`update_episode_summary` each
+write only their own domain's columns —
 `values_without_none` + per-attribute `setattr` — so SQLAlchemy's
 unit-of-work only marks the touched attributes dirty and emits an `UPDATE`
 naming only those columns). Postgres's ordinary row-level write lock
@@ -153,15 +139,10 @@ concurrency test, not just reasoned about
 **Guarantee after this fix:** committed same-DatasetVersion Episode
 aggregate mutations are fully serialized — the summary written by the last
 transaction to commit always equals live canonical membership at that
-point. **Residual limitation:** this guarantees correctness of *committed*
-state; it says nothing about a caller observing a value mid-flight between
-two overlapping transactions (ordinary READ COMMITTED behavior, not a new
-gap this introduces). Scene's own aggregate writers remain unlocked
-(current production usage never dispatches Scene ingestion more than once
-concurrently for the same DatasetVersion — see
-[Canonical baseline doc](../development/canonical-baseline.md) — so this is
-a documented, not a hidden, gap); the same `lock_for_update` primitive is
-reusable there without new architecture if that assumption ever changes.
+point; the same holds for Scene registration. **Residual limitation:** this
+guarantees correctness of *committed* state; it says nothing about a caller
+observing a value mid-flight between two overlapping transactions
+(ordinary READ COMMITTED behavior).
 
 ### 2.1 Why `DatasetVersionStatus` has one value
 
@@ -179,22 +160,29 @@ against this version?") use explicit domain-scoped prerequisite functions
 
 ## 3. SceneRecord
 
-`scenes` — the canonical Scene-domain unit.
+`scenes` — canonical Scene membership; one row per registered Scene,
+projecting the manifest revision `manifest_artifact_id` names. Written only
+by Scene registration. There is no status column.
 
-Key fields:
-- `origin_type`, `generation_method`: where a scene came from (raw
-  ingestion vs. reconstruction vs. simulation, etc.).
-- `parent_scene_id`, `lineage` (JSONB): scene lineage — parent tracking for
-  reconstructed/derived scenes.
-- `scene_manifest_uri`, `world_state_manifest_uri`, `artifact_root_uri`:
-  ArtifactStore references.
-- `has_ground_truth` / `ground_truth_source`: GT presence and origin.
-- `sample_count` / `frame_count` / `annotation_count` / `channels`: scene
-  statistics.
-- `status`: `SceneStatus` — see [Scene domain](./scene-domain.md) §4.
+Key fields (contract: [Scene domain](./scene-domain.md) §2):
+- `scene_id`: deterministic from `(dataset_id, dataset_version, source identity)`.
+- `dataset_id`, `dataset_version`: FK to `dataset_versions` (RESTRICT).
+- `source_kind`, `external_format` / `robot_run_id` (FK to `robot_runs`,
+  RESTRICT), `source_unit_key`, `producer_fingerprint`: source and producer
+  projections; a CHECK constraint keeps the external/recording columns
+  consistent.
+- `manifest_artifact_id` (FK to `artifacts`, RESTRICT), `manifest_checksum`:
+  the current revision.
+- `window_clock`, `window_start_timestamp_ns`, `window_end_timestamp_ns`:
+  the source's declared window (a recording segment), all NULL for an
+  external Scene; a CHECK constraint keeps them all-or-none and non-empty.
+- `observed_channels`, `observation_count`, `keyframe_count`,
+  `annotation_count`: searchable projections.
 
 `scene_run_records` — unified scene-scope run table
-(`scene_validation` / `scene_profile`).
+(`scene_validation` / `scene_profile`). A per-scene row pins the revision it
+assessed (`manifest_artifact_id` FK + `manifest_checksum`); a job-level
+aggregate row has neither a scene nor a pin (CHECK constraint).
 
 ## 4. EpisodeRecord
 
@@ -291,8 +279,9 @@ DB row (see [Reserved architecture and current limitations](./reserved-and-limit
 ## 7. PipelineRun / PipelineTaskRun
 
 `pipeline_runs` — one pipeline execution. `type` is `PipelineType`:
-`dataset_scene_ingestion`, `raw_log_scene_building`, `scene_registration`,
-`scenario_curation`, `detection_evaluation`, `raw_log_episode_building`.
+`dataset_scene_ingestion`, `raw_log_scene_building` (both legacy Scene
+producers), `scenario_curation`, `detection_evaluation`,
+`raw_log_episode_building`.
 
 `pipeline_task_runs` — individual tasks inside a run. `task_order` gives
 sequence; `depends_on_task_ids` (JSONB) declares dependencies but the
@@ -310,9 +299,9 @@ stops a pipeline mid-run.
 `jobs` — the actual unit of work. `type` is `JobType`:
 
 ```text
-INGEST_SCENES, BUILD_SCENES                          # source -> scene
+INGEST_SCENES, BUILD_SCENES                          # legacy scene producers
 BUILD_DATASET_MANIFEST, BUILD_SCENE_INDEX             # dataset-level aggregation
-VALIDATE_SCENE, PROFILE_SCENE, REGISTER_SCENE          # scene-level
+REGISTER_SCENES, VALIDATE_SCENE, PROFILE_SCENE         # scene-level
 COMPARE_SCENES, AUTO_LABEL_SCENE, EXPORT_SCENE_PACKAGE # scene-level, reserved (no handler)
 MINE_SCENARIOS, SCORE_SCENARIO_READINESS               # scenario-level
 AUTO_LABEL_DATASET, EXPORT_DATASET                     # dataset-version-level, reserved (no handler)

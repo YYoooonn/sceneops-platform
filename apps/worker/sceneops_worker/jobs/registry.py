@@ -18,7 +18,7 @@ from sceneops_worker.jobs.dataset import (
     ProfileEpisodeJobHandler,
     ProfileSceneJobHandler,
     RegisterEpisodeJobHandler,
-    RegisterSceneJobHandler,
+    RegisterScenesJobHandler,
     ValidateAlignedEpisodeJobHandler,
     ValidateEpisodeJobHandler,
     ValidateSceneJobHandler,
@@ -65,7 +65,7 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
     return JobHandlerRegistry(
         handlers=[
             IngestScenesJobHandler(),
-            RegisterSceneJobHandler(),
+            RegisterScenesJobHandler(),
             BuildSceneIndexJobHandler(),
             BuildScenesJobHandler(),
             ValidateSceneJobHandler(),

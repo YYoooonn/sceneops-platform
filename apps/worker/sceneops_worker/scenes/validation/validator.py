@@ -1,8 +1,21 @@
+"""Quality checks over one canonical SceneManifest revision.
+
+Structural integrity (ordering, references, source window, canonical form)
+is already guaranteed by the SceneManifest contract; this validator reports
+fitness for downstream use. Issues are aggregated per channel, because a
+Scene keeps every observation of a channel and per-observation issues would
+scale with sensor rate rather than with the problem.
+"""
+
 from __future__ import annotations
 
-from sceneops_core.scenes.schemas.manifests import SceneManifest
-from sceneops_core.sensors import SensorModality
-from sceneops_core.sensors.manifests import SensorCalibrationManifest
+from collections import Counter
+
+from sceneops_core.scenes.schemas import (
+    SceneFrameRole,
+    SceneManifest,
+    SceneModality,
+)
 
 from .reports import SceneValidationIssue, SceneValidationResult
 
@@ -11,159 +24,122 @@ class SceneManifestValidator:
     def validate(
         self,
         *,
+        scene_id: str,
         manifest: SceneManifest,
         required_channels: list[str] | None = None,
-        validate_samples: bool = False,
-        block_on_sample_missing_channels: bool = False,
+        validate_keyframes: bool = False,
+        block_on_keyframe_missing_channels: bool = False,
     ) -> SceneValidationResult:
-        required = required_channels or []
-        observed = manifest.channels
+        required = list(required_channels or [])
+        observed = manifest.observed_channel_names()
         observed_set = set(observed)
-
+        keyframes = manifest.keyframes()
         issues: list[SceneValidationIssue] = []
 
-        if manifest.sample_count == 0:
-            issues.append(
-                SceneValidationIssue(
-                    type="empty_scene",
-                    message="Scene has no samples",
-                    blocking=True,
-                )
-            )
-
-        # Scene-level channel check — always blocking
         missing_channels = [ch for ch in required if ch not in observed_set]
-        for ch in missing_channels:
+        for channel in missing_channels:
             issues.append(
                 SceneValidationIssue(
                     type="missing_channel",
-                    message=f"Required channel missing: {ch}",
-                    channel=ch,
+                    message=f"Required channel has no observations: {channel}",
+                    channel=channel,
                     blocking=True,
                 )
             )
 
-        # Sample-level channel check — blocking only if explicitly requested
-        if validate_samples and required:
-            for sample in manifest.samples:
-                sample_channels = {sf.channel for sf in sample.sensor_frames}
-                for ch in required:
-                    if ch not in sample_channels:
-                        issues.append(
-                            SceneValidationIssue(
-                                type="sample_missing_channel",
-                                message=f"Sample {sample.sample_id} missing channel: {ch}",
-                                channel=ch,
-                                blocking=block_on_sample_missing_channels,
-                            )
-                        )
-
-        # Build scene-level lookup indexes for reference resolution
-        calibrated_sensor_by_id: dict[str, SensorCalibrationManifest] = {
-            c.calibration_id: c for c in manifest.calibrated_sensors
-        }
-        ego_pose_ids: set[str] = {p.ego_pose_id for p in manifest.ego_poses}
-
-        # Geometry completeness checks — non-blocking warnings
-        for sample in manifest.samples:
-            for frame in sample.sensor_frames:
-                # Check calibrated_sensor reference
-                if not frame.calibration_id:
-                    issues.append(
-                        SceneValidationIssue(
-                            type="missing_calibrated_sensor_ref",
-                            message=(
-                                f"Frame {frame.frame_id} (channel {frame.channel}) "
-                                "has no calibration_id"
-                            ),
-                            channel=frame.channel,
-                            blocking=False,
-                        )
+        for channel in manifest.channels:
+            if channel.channel not in observed_set and channel.channel not in required:
+                issues.append(
+                    SceneValidationIssue(
+                        type="empty_channel",
+                        message=(
+                            f"Channel {channel.channel} is part of the Scene but has "
+                            "no observations inside its boundary"
+                        ),
+                        channel=channel.channel,
                     )
-                    resolved_cal = None
-                else:
-                    resolved_cal = calibrated_sensor_by_id.get(frame.calibration_id)
-                    if resolved_cal is None:
-                        issues.append(
-                            SceneValidationIssue(
-                                type="missing_calibrated_sensor_record",
-                                message=(
-                                    f"Frame {frame.frame_id} calibration_id "
-                                    f"{frame.calibration_id!r} not found in "
-                                    "scene registry"
-                                ),
-                                channel=frame.channel,
-                                blocking=False,
-                            )
-                        )
+                )
 
-                # Check ego_pose reference
-                if not frame.ego_pose_id:
-                    issues.append(
-                        SceneValidationIssue(
-                            type="missing_ego_pose_ref",
-                            message=(
-                                f"Frame {frame.frame_id} (channel {frame.channel}) "
-                                "has no ego_pose_id"
-                            ),
-                            channel=frame.channel,
-                            blocking=False,
-                        )
+        if validate_keyframes and required and keyframes:
+            observation_channel = {
+                o.observation_id: o.channel for o in manifest.observations
+            }
+            lacking: Counter[str] = Counter()
+            for group in keyframes:
+                present = {observation_channel[i] for i in group.observation_ids}
+                lacking.update(ch for ch in required if ch not in present)
+            for channel, count in sorted(lacking.items()):
+                issues.append(
+                    SceneValidationIssue(
+                        type="keyframe_missing_channel",
+                        message=(
+                            f"{count} of {len(keyframes)} keyframes have no "
+                            f"observation of {channel}"
+                        ),
+                        channel=channel,
+                        count=count,
+                        blocking=block_on_keyframe_missing_channels,
                     )
-                elif frame.ego_pose_id not in ego_pose_ids:
-                    issues.append(
-                        SceneValidationIssue(
-                            type="missing_ego_pose_record",
-                            message=(
-                                f"Frame {frame.frame_id} ego_pose_id "
-                                f"{frame.ego_pose_id!r} not found in scene registry"
-                            ),
-                            channel=frame.channel,
-                            blocking=False,
-                        )
-                    )
+                )
 
-                if frame.modality == SensorModality.CAMERA:
-                    # Camera intrinsic check (requires resolved calibration record)
-                    if resolved_cal is None or resolved_cal.camera_intrinsic is None:
-                        issues.append(
-                            SceneValidationIssue(
-                                type="missing_camera_intrinsic",
-                                message=(
-                                    f"Camera frame {frame.frame_id} "
-                                    f"(channel {frame.channel}) missing camera_intrinsic"
-                                ),
-                                channel=frame.channel,
-                                blocking=False,
-                            )
-                        )
+        issues.extend(_geometry_issues(manifest))
 
-                    # Image size check
-                    if frame.image is None or (
-                        frame.image.width is None or frame.image.height is None
-                    ):
-                        issues.append(
-                            SceneValidationIssue(
-                                type="missing_image_size",
-                                message=(
-                                    f"Camera frame {frame.frame_id} "
-                                    f"(channel {frame.channel}) missing image width/height"
-                                ),
-                                channel=frame.channel,
-                                blocking=False,
-                            )
-                        )
-
-        should_block = any(i.blocking for i in issues)
-
+        should_block = any(issue.blocking for issue in issues)
         return SceneValidationResult(
-            scene_id=manifest.scene_id,
-            status="failed" if should_block else "ready",
+            scene_id=scene_id,
+            status="failed" if should_block else ("warning" if issues else "ready"),
             should_block=should_block,
             required_channels=required,
-            observed_channels=list(observed),
+            observed_channels=observed,
             missing_channels=missing_channels,
-            sample_count=manifest.sample_count,
-            frame_count=manifest.frame_count,
+            observation_count=len(manifest.observations),
+            keyframe_count=len(keyframes),
             issues=issues,
         )
+
+
+def _geometry_issues(manifest: SceneManifest) -> list[SceneValidationIssue]:
+    modality = {c.channel: c.modality for c in manifest.channels}
+    calibrations = {c.calibration_id: c for c in manifest.calibrations}
+
+    without_calibration: Counter[str] = Counter()
+    without_intrinsic: Counter[str] = Counter()
+    without_image_size: Counter[str] = Counter()
+    for observation in manifest.observations:
+        channel = observation.channel
+        calibration = calibrations.get(observation.calibration_id or "")
+        if calibration is None:
+            without_calibration[channel] += 1
+        if modality[channel] == SceneModality.CAMERA:
+            if calibration is not None and calibration.camera_intrinsic is None:
+                without_intrinsic[channel] += 1
+            if observation.image_size is None:
+                without_image_size[channel] += 1
+
+    issues: list[SceneValidationIssue] = []
+    for issue_type, counts, what in (
+        ("missing_calibration", without_calibration, "have no calibration"),
+        ("missing_camera_intrinsic", without_intrinsic, "have no camera intrinsic"),
+        ("missing_image_size", without_image_size, "have no image size"),
+    ):
+        for channel, count in sorted(counts.items()):
+            issues.append(
+                SceneValidationIssue(
+                    type=issue_type,
+                    message=f"{count} observation(s) of {channel} {what}",
+                    channel=channel,
+                    count=count,
+                )
+            )
+
+    ego_frames = {
+        f.frame_id for f in manifest.coordinate_frames if f.role == SceneFrameRole.EGO
+    }
+    if not any(p.transform.child_frame_id in ego_frames for p in manifest.poses):
+        issues.append(
+            SceneValidationIssue(
+                type="missing_ego_poses",
+                message="Scene carries no source ego poses",
+            )
+        )
+    return issues

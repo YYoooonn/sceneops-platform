@@ -1,3 +1,13 @@
+"""LEGACY raw-log Scene producer.
+
+Builds pre-canonical, sample-centric ``LegacySceneManifest`` artifacts from
+a raw log. Frames survive only when sampling associates them with a sample
+and payload URIs stay relative to the raw source root, so the output cannot
+satisfy the canonical SceneManifest contract: it is stored as
+``LEGACY_SCENE_MANIFEST`` and is never registered as a Scene, and this job
+writes no Scene membership or DatasetVersion summary.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -105,12 +115,6 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             scene_build_result=scene_build_result,
         )
 
-        await self._update_scene_summary_after_build(
-            execution=execution,
-            raw_inputs=raw_inputs,
-            scene_build_result=scene_build_result,
-        )
-
         return self._build_result(
             execution=execution,
             raw_inputs=raw_inputs,
@@ -189,30 +193,6 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             dataset_id=dataset_id, dataset_version=dataset_version
         )
 
-    # ── dataset version scene summary ───────────────────────────────────────────
-    # SceneOps V2 Request 05: build_scenes no longer mutates
-    # DatasetVersion.status (INGESTING/INGESTED tracked Scene workflow
-    # progress, which now belongs to Pipeline/Job/Run execution records, not
-    # generic DatasetVersion state).
-
-    async def _update_scene_summary_after_build(
-        self,
-        *,
-        execution: BuildScenesExecution,
-        raw_inputs: BuildScenesRawInputs,
-        scene_build_result: SceneBuildResult,
-    ) -> None:
-        channels = sorted(raw_inputs.raw_manifest.channels)
-        version = execution.dataset_version_record
-        await execution.context.dataset_store.update_scene_summary(
-            dataset_id=version.dataset_id,
-            version=version.version,
-            scene_count=len(scene_build_result.scene_ids),
-            sample_count=scene_build_result.total_samples,
-            frame_count=scene_build_result.total_frames,
-            channels=channels,
-        )
-
     # ── raw log resolution ─────────────────────────────────────────────────────
 
     async def _resolve_raw_log_inputs(
@@ -281,9 +261,8 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
         since before Request 4.4).
 
         The worker remains solely responsible for everything downstream of
-        this: DB session, ArtifactRecord registration, lineage, Scene/
-        DatasetVersion state (_register_scene_artifacts/
-        _update_scene_summary_after_build, both unchanged). The integration
+        this: DB session and ArtifactRecord registration
+        (_register_scene_artifacts). The integration
         service itself stays DB-free -- it only produces raw_log_manifest/
         raw_log_frame_index artifacts and reports their URIs/checksums.
         """
@@ -449,7 +428,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
             await context.artifact_record_store.create(
                 artifact_id=generate_artifact_id(),
                 ref=ArtifactRef(
-                    kind=ArtifactKind.SCENE_MANIFEST,
+                    kind=ArtifactKind.LEGACY_SCENE_MANIFEST,
                     uri=uri,
                     media_type="application/json",
                 ),
@@ -477,7 +456,7 @@ class BuildScenesJobHandler(JobHandler[BuildScenesJobParams, BuildScenesJobResul
         return BuildScenesJobResult(
             raw_log_id=execution.raw_log_id,
             scene_ids=scene_build_result.scene_ids,
-            scene_manifest_uris=scene_build_result.scene_manifest_uris,
+            legacy_scene_manifest_uris=scene_build_result.scene_manifest_uris,
             scene_count=len(scene_build_result.scene_ids),
             sample_count=scene_build_result.total_samples,
             frame_count=scene_build_result.total_frames,

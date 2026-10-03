@@ -73,17 +73,15 @@ manifest rather than as a DB column.
 CREATED -> REGISTERED
 ```
 
-That's the entire lifecycle. Unlike `SceneStatus`, `EpisodeStatus`
-deliberately never encodes validate/profile outcomes — `BUILT`/`VALIDATED`/
+That's the entire lifecycle. `EpisodeStatus` deliberately never encodes
+validate/profile outcomes — `BUILT`/`VALIDATED`/
 `FAILED` were removed from the enum entirely (zero write sites, zero
 persisted rows). Episode readiness is derived **purely** from
 `EpisodeRecord` plus the latest `EpisodeValidationRunRecord`/
 `EpisodeProfileRunRecord` — never from `EpisodeRecord.status` — see
 [Quality and run records](./quality-and-runs.md) §3
-(`apps/api/app/domains/episodes/quality.py`). This is a deliberate
-divergence from Scene's model (where `SceneStatus` *does* fold in
-validate/profile outcomes — see [Scene domain](./scene-domain.md) §4), not
-an oversight to reconcile later.
+(`apps/api/app/domains/episodes/quality.py`). SceneRecord has no status at
+all (see [Scene domain](./scene-domain.md) §2).
 
 ## 5. Artifact ownership and API reachability
 

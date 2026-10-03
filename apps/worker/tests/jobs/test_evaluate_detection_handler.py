@@ -45,14 +45,12 @@ EVALUATION_RUN_ID = "eval-001"
 
 def _dataset_version(
     manifest_uri: str | None = "file:///manifest.json",
-    should_block_pipeline: bool = False,
 ) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_id=DATASET_ID,
         version=DATASET_VERSION,
         scene=SceneVersionSummary(
             manifest_uri=manifest_uri,
-            should_block_pipeline=should_block_pipeline,
         ),
     )
 
@@ -179,17 +177,6 @@ async def test_require_dataset_version_no_manifest_uri():
         return_value=_dataset_version(manifest_uri=None)
     )
     with pytest.raises(ValueError, match="manifest_uri"):
-        await EvaluateDetectionJobHandler._require_scene_dataset_ready(
-            context, DATASET_ID, DATASET_VERSION
-        )
-
-
-async def test_require_dataset_version_blocked_by_validation():
-    context = MagicMock()
-    context.dataset_store.get_version = AsyncMock(
-        return_value=_dataset_version(should_block_pipeline=True)
-    )
-    with pytest.raises(ValueError, match="blocked"):
         await EvaluateDetectionJobHandler._require_scene_dataset_ready(
             context, DATASET_ID, DATASET_VERSION
         )

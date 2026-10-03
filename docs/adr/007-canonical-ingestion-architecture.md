@@ -65,6 +65,25 @@ HEAD       ce56f8e fix(robots): preserve RobotRun provenance on Robot deletion
 date       2026-10-02
 ```
 
+**Amendment A3 — locator-free canonical source provenance (implementation
+step 5).** Accepted. A2 placed the whole `ExternalDatasetRef`, including its
+`uri`, inside `ExternalUnitSource`, so one dataset revision mounted at two
+paths produced two different canonical manifests. A3 separates the
+integration-side **locator** and display name from canonical
+**provenance**: canonical external provenance carries only the
+`ExternalSourceRevision` and the `source_unit_key`, never a location or a
+display name (§28). It
+refines the TARGET text of §13.9, §14.1, §14.3, §20.2, §20.4 and §27.2 in
+place, adds invariant I-30 (§21) and adds §28. It changes no
+decision about identity, the producer fingerprint, recording provenance,
+registration, replacement or DatasetVersion. Audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       d378bda feat(core): freeze canonical source and provenance contracts
+date       2026-10-03
+```
+
 Relationship to earlier ADRs:
 
 - [ADR-001](./001-postgresql-operational-metadata.md),
@@ -1420,7 +1439,8 @@ After canonicalization there is no dependency of the form
 SceneRecord / SceneManifest → external dataset root path
 ```
 
-`ExternalDatasetRef.uri` stays provenance only (§14.3).
+`ExternalDatasetRef.uri` is a locator for the integration only; it is not
+part of canonical provenance (§14.3, §28).
 
 For recording sources, the recording is already a SceneOps-owned,
 checksum-verified artifact (§7, §12.4). Canonical payload references for
@@ -1557,11 +1577,14 @@ observed rate, and alignment is already the derived `ALIGN_EPISODE`.
 Frozen by A2 (§27.2, §27.7) and implemented in `sceneops_core.provenance`:
 
 ```text
-ExternalUnitSource
+ExternalUnitSource                                         (refined by A3, §28)
   source_kind        = "external"
-  external_ref       ExternalDatasetRef (format, format_version, uri,
-                                         external_name?, external_revision?, checksum?)
+  revision           ExternalSourceRevision (format, format_version,
+                                             external_revision?, checksum?)
   source_unit_key    str  (e.g. nuScenes scene token, LeRobot episode_index)
+                     no location or display name: ExternalDatasetRef.uri and
+                     external_name are dropped when the integration
+                     canonicalizes the unit
 
 RecordingSegmentSource
   source_kind        = "recording"
@@ -1602,9 +1625,10 @@ EpisodeLineage
 - **Records** keep only the searchable projections listed in §13.3
   (`source_kind`, `robot_run_id`, `external_format`, `source_unit_key`,
   `producer_fingerprint`, `manifest_artifact_id`).
-- `ExternalDatasetRef.uri` is **provenance only**. It is never part of
-  canonical identity, and downstream workflows never use it to resolve
-  payload bytes (§20).
+- `ExternalDatasetRef.uri` is a **locator**, not provenance (A3, §28). It
+  lets an integration find the source before canonicalization; it is never
+  part of canonical identity, never written into a canonical manifest, and
+  downstream workflows never use it (§20).
 
 ### 14.4 Current revision
 
@@ -1975,7 +1999,7 @@ Canonical manifests and SceneOps-owned artifacts are sufficient (§13.9).
 | Robot-specific Episode channels | `steering` / `throttle` / `brake` as fixed actions in `episode_builder.py` | `RECORDING_EPISODE_BUILDING` build config (part of the fingerprint) |
 | Source clock defaults | `MCAP_LOG_TIME_CLOCK` as the assumed clock | `RobotRunManifest.capture.source_clock` → `RecordingSegmentSource.source_clock` → consumers read it from provenance |
 | Source-specific lineage | `raw_log_id`, `source_dataset_*`, `SceneGenerationMethod.RAW_LOG/DATASET`, `RawLogSourceType` | `ExternalUnitSource` / `RecordingSegmentSource` |
-| Source format on dataset identity | `Dataset.type = nuscenes/waymo/kitti` | Per-unit `ExternalUnitSource.external_ref.format` |
+| Source format on dataset identity | `Dataset.type = nuscenes/waymo/kitti` | Per-unit `ExternalUnitSource.revision.format` |
 | Source paths on DatasetVersion | `raw_source_root_uri`, `required_channels` | Builder input / pipeline config |
 
 Each concern moves to exactly one of: **adapter** (integration runtime),
@@ -2029,7 +2053,8 @@ such as `NUSCENES | WAYMO | KITTI | LEROBOT`:
 ExternalDatasetRef
   format              open identifier of the integration implementation (e.g. "nuscenes", "lerobot")
   format_version      that format's own version
-  uri / repository    location (provenance only; never identity, §14.3, §15.2)
+  uri / repository    location: an integration-side locator; never identity and
+                      never canonical provenance (§14.3, §15.2, §28)
   external_revision   source revision
 ```
 
@@ -2177,6 +2202,10 @@ I-28  External format, source clock and producer identifiers are canonical open
 I-29  Canonical observation payloads resolve to SceneOps-owned payload artifacts for
       both source kinds; no canonical consumer parses a source recording or an
       external dataset to read a canonical observation.
+I-30  Source locations and display names never appear in canonical provenance: the
+      same source revision, unit, producer and build configuration produce
+      byte-identical canonical manifests wherever, and under whatever name, the source
+      was read (A3, §28).
 ```
 
 Each invariant should be backed by at least one test at the layer that can
@@ -2187,7 +2216,8 @@ contract tests per integration (source fixture → expected canonical
 manifest). I-20 and I-25 are backed by import-boundary tests, which check
 that SceneOps core does not depend on any integration SDK. I-26–I-28 are
 backed by contract tests on the step-4 primitives; I-29 by the step-5 and
-step-8 producer tests.
+step-8 producer tests; I-30 by provenance and manifest contract tests that
+canonicalize one source revision from different locations and display names.
 
 ---
 
@@ -2594,15 +2624,20 @@ A2 adds only validation:
 ```text
 format              canonical open identifier (§27.6); validated, never normalized
 format_version      that format's own version; non-empty
-uri                 location; non-empty; provenance only, never identity
-external_name       display only; never identity
+uri                 location; non-empty; an integration-side locator only (A3):
+                    never identity, never canonical provenance
+external_name       display only; never identity, never canonical provenance (A3)
 external_revision   source revision, where the source has one
 checksum            source content checksum, where available
 unknown fields      rejected
 ```
 
-**`ExternalUnitSource`**: `source_kind = "external"`, `external_ref`,
-`source_unit_key`. `source_unit_key` is the source's own stable unit
+**`ExternalUnitSource`** (refined by A3, §28): `source_kind = "external"`,
+`revision` (the `ExternalSourceRevision` below), `source_unit_key`. It
+carries no location and no display name; an integration builds it from its
+`ExternalDatasetRef` with `ExternalUnitSource.from_ref`, which drops `uri`
+and `external_name`.
+`source_unit_key` is the source's own stable unit
 identity, kept verbatim (open alphabet; non-empty, at most 256 characters,
 no surrounding whitespace, no control characters). Source-specific needs
 never add fields here; genuinely new domain semantics amend the domain
@@ -2880,3 +2915,49 @@ migrate `SceneRecord` / `EpisodeRecord`; steps 5 and 8 do.
 | LeRobot runtime: EXPORT-only, `SUPPORTED_FORMAT = "lerobot"` | no INGEST registration | step 9 |
 | `RobotRunManifest` v1 µs UTC `started_at` / `ended_at` | not source-time identity (§27.3) | no change; v2 only if a non-epoch clock is needed |
 | `ArtifactRef` (`metadata` free-form, extra fields ignored) | not a strict payload reference | step 5, if Scene payload references need a strict primitive |
+
+---
+
+## 28. Amendment A3: locator-free canonical source provenance (step 5)
+
+**Problem.** `ExternalDatasetRef.uri` and `external_name` were excluded from
+unit identity (§18.1) and from the producer fingerprint (§15.2), but A2's
+`ExternalUnitSource` embedded the whole `ExternalDatasetRef`. Every canonical
+manifest therefore serialized the dataset location and display name, so the
+same dataset revision mounted at `/data/raw/nuscenes` and at
+`s3://mirror/nuscenes`, or labelled differently, produced different manifest
+bytes and checksums from semantically identical builds.
+
+**Decision.** Location and display names may help an integration or a
+person find a source; they never affect canonical manifest identity.
+
+```text
+integration side (before canonicalization)
+  ExternalDatasetRef   format, format_version, uri, external_name?,
+                       external_revision?, checksum?
+        │  ExternalUnitSource.from_ref(ref, source_unit_key=…)
+        │  (uri and external_name dropped)
+        ▼
+canonical provenance (in every external canonical manifest)
+  ExternalUnitSource   source_kind = "external"
+                       revision         ExternalSourceRevision
+                                        (format, format_version,
+                                         external_revision?, checksum?)
+                       source_unit_key
+```
+
+- `ExternalSourceRevision` is the A2 type, reused unchanged. It remains the
+  fingerprint's source input, so `producer_fingerprint` values are unchanged.
+- Unit identity is unchanged: `revision.format` + `source_unit_key` (§18.1).
+- `RecordingSegmentSource` is unchanged; it never carried a location or a
+  display name.
+- `ExternalDatasetRef` is unchanged and keeps `uri` and `external_name` for
+  integration requests, results and display (§20).
+
+**Consequences.** Canonical consumers have no path to an external dataset
+location, and moving, re-mounting or renaming a source does not create a
+new manifest revision. Canonical provenance does not record where or under
+what name an integration read the source; that is execution history, which
+belongs to the integration run and its job lineage, not to the canonical
+unit. No canonical external manifest had been registered before A3, so no
+stored manifest or record needs migration.

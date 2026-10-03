@@ -3,11 +3,7 @@ contracts.
 
 Exercises the pipeline-definitions registry and the pipeline-run-creation
 request-validation boundary -- pure API/DB concerns that need no nuScenes
-data and no worker execution. Whether dataset_scene_ingestion actually runs
-end-to-end and populates validation/profile run ids + the quality cache is
-owned by e2e_scene.sh instead, since that requires the real nuScenes data
-source e2e_scene.sh already needs anyway -- duplicating it here would just
-be a second, slower copy of the same real-data pipeline dispatch.
+data and no worker execution.
 
 Requires a real, running `api` service (`make local-up`) -- skips (not
 fails) if API_BASE_URL is unreachable, matching every other
@@ -25,12 +21,10 @@ import pytest
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 API_PREFIX = os.environ.get("API_PREFIX", "/api/v1")
 
-SUPPORTED_PIPELINE_TYPES = (
-    "dataset_scene_ingestion",
-    "raw_log_scene_building",
-    "detection_evaluation",
-)
-UNSUPPORTED_PIPELINE_TYPES = ("scene_registration",)
+SUPPORTED_PIPELINE_TYPES = ("detection_evaluation",)
+# Experimental (hidden from the default listing): the legacy Scene producers.
+HIDDEN_PIPELINE_TYPES = ("dataset_scene_ingestion", "raw_log_scene_building")
+REMOVED_PIPELINE_TYPES = ("scene_registration",)
 
 
 @pytest.fixture(scope="module")
@@ -65,14 +59,14 @@ def test_pipeline_definitions_list_only_supported_and_implemented(api_client):
             f"expected supported pipeline '{pipeline_type}' in definitions listing"
         )
 
-    for pipeline_type in UNSUPPORTED_PIPELINE_TYPES:
+    for pipeline_type in HIDDEN_PIPELINE_TYPES + REMOVED_PIPELINE_TYPES:
         assert pipeline_type not in definitions_by_type, (
-            f"unsupported pipeline '{pipeline_type}' must NOT appear in the "
-            "default definitions listing"
+            f"pipeline '{pipeline_type}' must NOT appear in the default "
+            "definitions listing"
         )
 
 
-def test_unsupported_pipeline_creation_rejected_with_400(api_client):
+def test_removed_pipeline_creation_rejected(api_client):
     dataset_id = "test-e2e-pipeline-contracts-unsupported"
     dataset_version = "test-v1"
 
@@ -85,7 +79,7 @@ def test_unsupported_pipeline_creation_rejected_with_400(api_client):
         json={"dataset_id": dataset_id, "name": "pipeline-contracts test", "metadata": {}},
     )
 
-    for pipeline_type in UNSUPPORTED_PIPELINE_TYPES:
+    for pipeline_type in REMOVED_PIPELINE_TYPES:
         response = api_client.post(
             "/pipelines/runs",
             json={
@@ -94,7 +88,7 @@ def test_unsupported_pipeline_creation_rejected_with_400(api_client):
                 "dataset_version": dataset_version,
             },
         )
-        assert response.status_code == 400, (
-            f"expected HTTP 400 for unsupported pipeline '{pipeline_type}', "
+        assert response.status_code in (400, 422), (
+            f"expected HTTP 400/422 for removed pipeline '{pipeline_type}', "
             f"got {response.status_code}: {response.text}"
         )

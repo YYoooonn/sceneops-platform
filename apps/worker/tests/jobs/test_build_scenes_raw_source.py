@@ -399,33 +399,6 @@ class TestNuscenesIngestDispatch:
         )
 
 
-# ── build_scenes never auto-creates or mutates DatasetVersion.status ─────────
-# SceneOps V2 Request 05: build_scenes no longer has a
-# _mark_dataset_version_ingesting step at all — DatasetVersion.status is
-# generic now, and _require_version_with_source already requires the version
-# to pre-exist (raises otherwise), so there was never a create_version path
-# to test here either.
-
-
-class TestNoDatasetVersionAutoCreate:
-    @pytest.mark.asyncio
-    async def test_does_not_call_create_version(self) -> None:
-        handler = _make_handler()
-        ctx = MagicMock()
-        ctx.dataset_store = AsyncMock()
-        ctx.dataset_store.create_version = AsyncMock()
-        execution = _make_execution(context=ctx)
-
-        await handler._update_scene_summary_after_build(
-            execution=execution,
-            raw_inputs=MagicMock(raw_manifest=MagicMock(channels=[])),
-            scene_build_result=MagicMock(scene_ids=[], total_samples=0, total_frames=0),
-        )
-
-        ctx.dataset_store.create_version.assert_not_called()
-        ctx.dataset_store.update_scene_summary.assert_called_once()
-
-
 # ── no hardcoded path in handler module ──────────────────────────────────────
 
 

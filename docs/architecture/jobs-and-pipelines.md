@@ -20,16 +20,11 @@ or as part of a Pipeline.
 ## 2. Built-in pipeline definitions
 
 ```text
-DATASET_SCENE_INGESTION
-  ingest_scenes -> register_scene -> validate_scene -> profile_scene
-  -> build_scene_index -> build_dataset_manifest
+DATASET_SCENE_INGESTION      (experimental; legacy Scene producer)
+  ingest_scenes
 
-RAW_LOG_SCENE_BUILDING
-  build_scenes -> register_scene -> validate_scene -> profile_scene
-  -> build_scene_index -> build_dataset_manifest
-
-SCENE_REGISTRATION
-  register_scene -> validate_scene -> profile_scene
+RAW_LOG_SCENE_BUILDING       (experimental; legacy Scene producer)
+  build_scenes
 
 SCENARIO_CURATION
   mine_scenarios -> score_scenario_readiness
@@ -41,12 +36,14 @@ RAW_LOG_EPISODE_BUILDING
   build_episodes -> register_episode -> validate_episode -> profile_episode
 ```
 
-`validate_scene -> profile_scene` repeats identically across three
-pipelines (ingestion, raw-log-building, registration) — it's designed as a
-data-source-agnostic quality stage, reused regardless of where the scene
-came from. `validate_episode`/`profile_episode` play the same role for
-Episode. See [Scene domain](./scene-domain.md) and
-[Episode domain](./episode-domain.md) for the domain-specific detail.
+No built-in pipeline produces canonical Scenes yet: `register_scenes`,
+`validate_scene` and `profile_scene` are dispatched as standalone jobs
+(`register_scenes` outputs `scene_ids` / `manifest_artifact_ids` as REFs for
+the quality stages). `validate_scene`/`profile_scene` are a
+source-agnostic quality stage over registered Scenes;
+`validate_episode`/`profile_episode` play the same role for Episode. See
+[Scene domain](./scene-domain.md) and [Episode domain](./episode-domain.md)
+for the domain-specific detail.
 
 Three Job types are deliberately **not** wrapped in any pipeline —
 `register_robot_run`, `ingest_robot_states` and
@@ -62,7 +59,7 @@ Each task's outputs are classified by `PipelineTaskOutputKind`
 (`builtin.py`):
 
 - `REF` — a reference the next task consumes as input (e.g.
-  `scene_manifest_uris`, `episode_ids`, `validation_run_id`) — the real
+  `episode_ids`, `validation_run_id`) — the real
   connective tissue between tasks.
 - `SUMMARY` — aggregate statistics, written straight into a DB column
   (e.g. `scene_count`, `issue_count`).
@@ -88,15 +85,15 @@ Example:
 PipelineTaskQualityRule(
     rule_type=PipelineTaskQualityRuleType.BLOCK_IF_TRUE,
     source="summary.should_block_pipeline",
-    message="Scene validation blocked pipeline",
-    code="validate_scene_blocked",
+    message="Episode validation blocked pipeline",
+    code="validate_episode_blocked",
 )
 ```
 
-If `validate_scene` returns `should_block_pipeline=true`, the task itself
-is still `SUCCEEDED`, but the pipeline ends `PipelineRunStatus.BLOCKED`.
-`validate_episode` has the identical mechanism
-(`validate_episode_blocked`). There is no separate quarantine state —
+If a validation task returns `should_block_pipeline=true`, the task itself
+is still `SUCCEEDED`, but the pipeline ends `PipelineRunStatus.BLOCKED`
+(`validate_episode_blocked` for `validate_episode`; Scene validation uses
+the same rule shape once a Scene pipeline includes it). There is no separate quarantine state —
 blocking is expressed purely as "the pipeline stops here," at the pipeline
 level.
 
@@ -139,11 +136,9 @@ declarative list of named steps in
 
 ```python
 JobType.VALIDATE_SCENE: [
-    step("load_scene_manifest", "Load scene manifest"),
-    step("validate_scene_structure", "Validate scene structure"),
+    step("resolve_scene_revisions", "Resolve scene revisions"),
+    step("validate_scene_observations", "Validate scene observations"),
     step("validate_required_channels", "Validate required channels", optional=True),
-    step("validate_assets", "Validate assets", optional=True),
-    step("validate_world_state", "Validate world state", optional=True),
     step("save_validation_report", "Save validation report"),
 ],
 ```
@@ -176,11 +171,12 @@ creates its own `ArtifactRecord` for that same object.
 
 This is enforced consistently across the platform:
 
-- Scene: `ingest_scenes`/`build_scenes` write and own `SCENE_MANIFEST`;
-  `register_scene` reads it to upsert `SceneRecord`, and does not
-  duplicate the `ArtifactRecord` (see [Scene domain](./scene-domain.md)
-  §3 — this used to be violated, producing two `ArtifactRecord` rows for
-  one URI).
+- Scene: the producer that publishes a canonical SceneManifest owns its
+  `SCENE_MANIFEST` `ArtifactRecord`; `register_scenes` re-reads and verifies
+  the bytes by that artifact id and never creates an `ArtifactRecord` (see
+  [Scene domain](./scene-domain.md) §3). The legacy producers
+  (`ingest_scenes`/`build_scenes`) own the `LEGACY_SCENE_MANIFEST`
+  artifacts they write.
 - Episode: `build_episodes` writes and owns `EPISODE_MANIFEST`;
   `register_episode` reads it, same pattern.
 
@@ -236,8 +232,7 @@ private state-transition methods the Celery path uses inline.
 
 ```text
 start
-  -> ingest_scenes -> register_scene -> validate_scene
-  -> profile_scene -> build_scene_index -> build_dataset_manifest
+  -> ingest_scenes
   -> finalize  (trigger_rule=all_done)
 ```
 

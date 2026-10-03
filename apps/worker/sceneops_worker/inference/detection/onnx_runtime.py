@@ -14,7 +14,6 @@ from sceneops_core.inference.schemas.manifests import (
     DetectionPredictionManifest,
     DetectionPredictionShardRef,
 )
-from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
@@ -23,6 +22,7 @@ from sceneops_worker.inference.detection.base import (
 )
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.scenes import SceneArtifactStore
+from sceneops_worker.scenes.keyframes import KeyframeSample, iter_keyframe_samples
 
 
 class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
@@ -96,9 +96,10 @@ class OnnxRuntimeDetectionInferenceBackend(DetectionInferenceBackend):
         )
         model_load_ms = (time.perf_counter() - load_started) * 1000.0
 
-        sample_manifests: list[SceneSampleManifest] = []
-        async for sample_manifest in scene_artifact_store.iter_samples(
+        sample_manifests: list[KeyframeSample] = []
+        async for sample_manifest in iter_keyframe_samples(
             dataset_manifest,
+            scene_artifact_store,
             max_samples=max_samples,
         ):
             sample_manifests.append(sample_manifest)
@@ -273,12 +274,12 @@ def _try_warmup_session(session: ort.InferenceSession) -> None:
 
 
 def _build_contract_predictions_from_sample(
-    sample: SceneSampleManifest,
+    sample: KeyframeSample,
 ) -> list[dict[str, Any]]:
     predictions: list[dict[str, Any]] = []
 
     for index, annotation in enumerate(sample.annotations):
-        category_name = annotation.category_name
+        category_name = annotation.category
         if category_name not in SUPPORTED_CATEGORIES:
             continue
 
@@ -286,11 +287,11 @@ def _build_contract_predictions_from_sample(
             {
                 "prediction_id": f"{sample.sample_id}-onnx-pred-{index:04d}",
                 "category_name": category_name,
-                "translation": annotation.translation,
-                "size": annotation.size,
-                "rotation": annotation.rotation,
+                "translation": list(annotation.box.center_m),
+                "size": list(annotation.box.size_wlh_m),
+                "rotation": list(annotation.box.rotation_wxyz),
                 "score": 0.9,
-                "source_annotation_token": annotation.annotation_token,
+                "source_annotation_token": annotation.annotation_id,
             }
         )
 

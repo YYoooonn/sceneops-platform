@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
 from sceneops_core.jobs.schemas import (
     BuildSceneIndexJobParams,
     BuildSceneIndexJobResult,
@@ -9,11 +8,15 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.scenes.indexing import index_entry_for, list_dataset_version_scenes
 
 
 class BuildSceneIndexJobHandler(
     JobHandler[BuildSceneIndexJobParams, BuildSceneIndexJobResult]
 ):
+    """Derived snapshot of all registered Scenes of a DatasetVersion, each
+    pinned to its current revision. Never part of membership."""
+
     @property
     def job_type(self) -> JobType:
         return JobType.BUILD_SCENE_INDEX
@@ -37,55 +40,22 @@ class BuildSceneIndexJobHandler(
     ) -> BuildSceneIndexJobResult:
         params = request.params
         context = request.context
+        dataset_id = params.dataset_id or ""
+        dataset_version = params.dataset_version or ""
 
-        dataset_id = params.dataset_id
-        dataset_version = params.dataset_version
-
-        # DatasetManifest is a derived snapshot of SceneRecord rows.
-        # Always query all registered scenes — never build from pipeline batch input only.
-        all_scene_records = await context.scene_store.list(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            limit=10_000,
+        scenes = await list_dataset_version_scenes(
+            context, dataset_id=dataset_id, dataset_version=dataset_version
         )
-
-        uris = [
-            s.scene_manifest_uri
-            for s in all_scene_records
-            if s.scene_manifest_uri is not None
-        ]
-
-        if not uris:
+        if not scenes:
             raise ValueError(
                 f"build_scene_index: no registered scenes found for "
-                f"dataset_id={dataset_id!r}, dataset_version={dataset_version!r}. "
-                "Ensure register_scene has completed before building the index."
+                f"dataset_id={dataset_id!r}, dataset_version={dataset_version!r}."
             )
 
-        entries: list[DatasetSceneIndexEntry] = []
-        total_samples = 0
-        total_frames = 0
-
-        for uri in uris:
-            manifest = await context.scene_artifact_store.load_scene_manifest(uri)
-            if manifest is None:
-                continue
-
-            entries.append(
-                DatasetSceneIndexEntry(
-                    scene_id=manifest.scene_id,
-                    scene_manifest_uri=uri,
-                    sample_count=manifest.sample_count,
-                    frame_count=manifest.frame_count,
-                    channels=manifest.channels,
-                )
-            )
-            total_samples += manifest.sample_count
-            total_frames += manifest.frame_count
-
+        entries = [await index_entry_for(context, scene) for scene in scenes]
         scene_index_uri = await context.scene_artifact_store.write_scene_index(
-            dataset_id=dataset_id or "",
-            dataset_version=dataset_version or "",
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
             entries=entries,
         )
 
@@ -93,8 +63,7 @@ class BuildSceneIndexJobHandler(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             scene_index_uri=scene_index_uri,
-            scene_manifest_uris=uris,
             scene_count=len(entries),
-            sample_count=total_samples,
-            frame_count=total_frames,
+            keyframe_count=sum(e.keyframe_count for e in entries),
+            observation_count=sum(e.observation_count for e in entries),
         )

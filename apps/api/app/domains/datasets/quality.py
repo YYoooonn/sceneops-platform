@@ -64,8 +64,8 @@ def build_dataset_version_quality_from_aggregate(
         readiness=readiness,
         counts=DatasetVersionQualityCounts(
             scene_count=scene_count,
-            sample_count=summary.total_sample_count,
-            frame_count=summary.total_frame_count,
+            keyframe_count=summary.total_keyframe_count,
+            observation_count=summary.total_observation_count,
             annotation_count=summary.total_annotation_count,
             ground_truth_scene_count=summary.ground_truth_scene_count,
             selectable_scene_count=summary.selectable_for_detection_count,
@@ -106,7 +106,7 @@ def build_dataset_scene_quality_aggregate(
     ready = warning = blocked = unknown = 0
     selectable = non_selectable = 0
     gt_scenes = annotated_scenes = 0
-    total_samples = total_frames = total_annotations = 0
+    total_keyframes = total_observations = total_annotations = 0
     exclusion_counts: dict[str, int] = {}
     channels: set[str] = set()
 
@@ -130,9 +130,9 @@ def build_dataset_scene_quality_aggregate(
         if (q.ground_truth.annotation_count or 0) > 0:
             annotated_scenes += 1
 
-        total_samples += q.counts.sample_count
-        total_frames += q.counts.frame_count
-        total_annotations += q.counts.annotation_count or 0
+        total_keyframes += q.counts.keyframe_count
+        total_observations += q.counts.observation_count
+        total_annotations += q.counts.annotation_count
 
         for reason in q.exclusion_reasons:
             exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
@@ -150,8 +150,8 @@ def build_dataset_scene_quality_aggregate(
         non_selectable_for_detection_count=non_selectable,
         ground_truth_scene_count=gt_scenes,
         annotated_scene_count=annotated_scenes,
-        total_sample_count=total_samples,
-        total_frame_count=total_frames,
+        total_keyframe_count=total_keyframes,
+        total_observation_count=total_observations,
         total_annotation_count=total_annotations,
         exclusion_reason_counts=exclusion_counts,
         observed_channels=sorted(channels),

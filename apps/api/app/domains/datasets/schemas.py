@@ -23,10 +23,6 @@ class UpdateDatasetVersionRequest(SceneOpsBaseModel):
     status: DatasetVersionStatus | None = None
     manifest_uri: str | None = None
     raw_source_root_uri: str | None = None
-    scene_count: int | None = None
-    sample_count: int | None = None
-    frame_count: int | None = None
-    channels: list[str] | None = None
     required_channels: list[str] | None = None
     metadata: JsonDict | None = None
 
@@ -77,8 +73,8 @@ class DatasetQualityReadiness(StrEnum):
 
 class DatasetVersionQualityCounts(SceneOpsBaseModel):
     scene_count: int = 0
-    sample_count: int = 0
-    frame_count: int = 0
+    keyframe_count: int = 0
+    observation_count: int = 0
     annotation_count: int = 0
     ground_truth_scene_count: int = 0
     selectable_scene_count: int = 0
@@ -159,8 +155,8 @@ class DatasetSceneQualityAggregateSummary(SceneOpsBaseModel):
 
     ground_truth_scene_count: int = 0
     annotated_scene_count: int = 0
-    total_sample_count: int = 0
-    total_frame_count: int = 0
+    total_keyframe_count: int = 0
+    total_observation_count: int = 0
     total_annotation_count: int = 0
 
     exclusion_reason_counts: dict[str, int] = Field(default_factory=dict)

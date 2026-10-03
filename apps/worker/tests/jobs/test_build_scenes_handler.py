@@ -4,12 +4,11 @@ Covers:
 - _build_result: grouping-report fields flow into BuildScenesJobResult
 - build_job_params: dataset.required_channels injected into sampling
 - _resolve_raw_log_inputs: branch selection (load path vs adapter path)
-- _update_scene_summary_after_build: correct counts forwarded to dataset store
+- the legacy producer has no DatasetVersion summary writer
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -358,69 +357,12 @@ class TestResolveRawLogInputsBranching:
         mock_adapter.assert_called_once()
 
 
-# ── _mark_dataset_version_ingested: count forwarding ─────────────────────────
+# ── legacy producer writes no Scene membership or summary ────────────────────
 
 
-class TestUpdateSceneSummaryAfterBuild:
-    """SceneOps V2 Request 05 renamed _mark_dataset_version_ingested to
-    _update_scene_summary_after_build: it no longer saves a full
-    DatasetVersionRecord (status transitions were removed), it forwards a
-    targeted partial update to dataset_store.update_scene_summary()."""
-
-    @pytest.mark.asyncio
-    async def test_forwards_scene_and_sample_counts_to_store(self) -> None:
-        handler = _make_handler()
-        mock_store = AsyncMock()
-
-        context = MagicMock()
-        context.dataset_store = mock_store
-
-        execution = replace(_make_execution(params=_make_params()), context=context)
-
-        raw_inputs = _make_raw_inputs(channels=["CAM_FRONT", "LIDAR_TOP"])
-        scene_result = _make_scene_build_result(
-            scene_ids=["sc-001", "sc-002"],
-            total_samples=15,
-            total_frames=90,
-        )
-
-        await handler._update_scene_summary_after_build(
-            execution=execution,
-            raw_inputs=raw_inputs,
-            scene_build_result=scene_result,
-        )
-
-        mock_store.update_scene_summary.assert_called_once_with(
-            dataset_id=execution.dataset_version_record.dataset_id,
-            version=execution.dataset_version_record.version,
-            scene_count=2,
-            sample_count=15,
-            frame_count=90,
-            channels=["CAM_FRONT", "LIDAR_TOP"],
-        )
-
-    @pytest.mark.asyncio
-    async def test_channels_are_sorted(self) -> None:
-        handler = _make_handler()
-        mock_store = AsyncMock()
-
-        context = MagicMock()
-        context.dataset_store = mock_store
-
-        execution = replace(_make_execution(params=_make_params()), context=context)
-
-        # deliberately out of order
-        raw_inputs = _make_raw_inputs(channels=["LIDAR_TOP", "CAM_BACK", "CAM_FRONT"])
-        scene_result = _make_scene_build_result()
-
-        await handler._update_scene_summary_after_build(
-            execution=execution,
-            raw_inputs=raw_inputs,
-            scene_build_result=scene_result,
-        )
-
-        call_kwargs = mock_store.update_scene_summary.call_args.kwargs
-        assert call_kwargs["channels"] == ["CAM_BACK", "CAM_FRONT", "LIDAR_TOP"]
+class TestLegacyProducerWritesNoSceneSummary:
+    def test_handler_has_no_summary_writer(self) -> None:
+        assert not hasattr(BuildScenesJobHandler, "_update_scene_summary_after_build")
 
 
 # ── build_job_params: dataset.required_channels injection ─────────────────────

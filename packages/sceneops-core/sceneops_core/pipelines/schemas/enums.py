@@ -4,14 +4,10 @@ from enum import StrEnum
 
 
 class PipelineType(StrEnum):
-    # Existing scene-aware dataset source -> SceneOps scenes -> DatasetManifest
+    # Legacy Scene producers: emit pre-canonical scene manifests that are
+    # never registered as canonical Scenes.
     DATASET_SCENE_INGESTION = "dataset_scene_ingestion"
-
-    # Raw log / raw sensor stream -> SceneOps scenes -> DatasetManifest
     RAW_LOG_SCENE_BUILDING = "raw_log_scene_building"
-
-    # Generated/reconstructed/simulated scene registration flow
-    SCENE_REGISTRATION = "scene_registration"
 
     # Dataset scenes -> scenario set / readiness report
     SCENARIO_CURATION = "scenario_curation"

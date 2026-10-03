@@ -60,6 +60,20 @@ class PostgresArtifactRefRepository:
         model = result.scalar_one_or_none()
         return artifact_ref_model_to_record(model) if model is not None else None
 
+    async def get_many(self, artifact_ids: list[str]) -> dict[str, ArtifactRecord]:
+        """Records for the given ids that exist, keyed by id. Missing ids are
+        absent from the result."""
+        if not artifact_ids:
+            return {}
+        stmt = select(ArtifactModel).where(
+            ArtifactModel.artifact_id.in_(sorted(set(artifact_ids)))
+        )
+        result = await self._session.execute(stmt)
+        return {
+            model.artifact_id: artifact_ref_model_to_record(model)
+            for model in result.scalars().all()
+        }
+
     async def list(
         self,
         *,

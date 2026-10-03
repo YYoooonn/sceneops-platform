@@ -11,11 +11,7 @@ from app.domains.scenes.schemas import (
     SceneQualityResponse,
 )
 from app.platform.artifacts.schemas import ArtifactListResponse
-from sceneops_core.scenes.schemas import (
-    SceneGenerationMethod,
-    SceneOriginType,
-    SceneStatus,
-)
+from sceneops_core.provenance import UnitSourceKind
 
 router = APIRouter()
 
@@ -27,16 +23,16 @@ async def list_scenes(
     pagination: PaginationDep,
     dataset_id: str | None = None,
     dataset_version: str | None = None,
-    status: SceneStatus | None = None,
-    origin_type: SceneOriginType | None = None,
-    generation_method: SceneGenerationMethod | None = None,
+    source_kind: UnitSourceKind | None = None,
+    external_format: str | None = None,
+    robot_run_id: str | None = None,
 ) -> SceneListResponse:
     return await service.list_scenes(
         dataset_id=dataset_id,
         dataset_version=dataset_version,
-        status=status,
-        origin_type=origin_type,
-        generation_method=generation_method,
+        source_kind=source_kind,
+        external_format=external_format,
+        robot_run_id=robot_run_id,
         limit=pagination.limit,
         offset=pagination.offset,
     )

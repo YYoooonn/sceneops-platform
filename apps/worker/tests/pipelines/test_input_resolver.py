@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from sceneops_core.datasets.schemas import (
-    DatasetValidationStatus,
     DatasetVersionRecord,
     EpisodeVersionSummary,
     SceneVersionSummary,
@@ -52,17 +51,11 @@ class TestBuildDatasetRefWithSceneSummary:
             version="v1",
             scene=SceneVersionSummary(
                 scene_count=5,
-                sample_count=10,
-                frame_count=20,
-                channels=["CAM_FRONT"],
+                keyframe_count=10,
+                observation_count=20,
+                observed_channels=["CAM_FRONT"],
                 required_channels=["CAM_FRONT"],
                 manifest_uri="s3://bucket/manifest.json",
-                latest_validation_run_id="run-val-1",
-                validation_status=DatasetValidationStatus.READY,
-                should_block_pipeline=False,
-                validation_report_uri="s3://bucket/val.json",
-                latest_profile_run_id="run-prof-1",
-                profile_report_uri="s3://bucket/prof.json",
             ),
         )
         resolver = _resolver_with_version(version)
@@ -71,19 +64,13 @@ class TestBuildDatasetRefWithSceneSummary:
 
         assert ref.manifest_uri == "s3://bucket/manifest.json"
         assert ref.required_channels == ["CAM_FRONT"]
-        assert ref.refs == {
-            "validation_report_uri": "s3://bucket/val.json",
-            "profile_report_uri": "s3://bucket/prof.json",
-        }
+        # No readiness / quality cache: it is derived per Scene revision.
+        assert ref.refs == {}
         assert ref.summary == {
             "scene_count": 5,
-            "sample_count": 10,
-            "frame_count": 20,
-            "channels": ["CAM_FRONT"],
-            "validation_run_id": "run-val-1",
-            "validation_status": str(DatasetValidationStatus.READY),
-            "should_block_pipeline": False,
-            "profile_run_id": "run-prof-1",
+            "keyframe_count": 10,
+            "observation_count": 20,
+            "observed_channels": ["CAM_FRONT"],
         }
 
 
@@ -113,14 +100,14 @@ class TestBuildDatasetRefEpisodeOnly:
         version = DatasetVersionRecord(
             dataset_id="d3",
             version="v1",
-            scene=SceneVersionSummary(scene_count=2, channels=["CAM_FRONT"]),
+            scene=SceneVersionSummary(scene_count=2, observed_channels=["CAM_FRONT"]),
             episode=EpisodeVersionSummary(episode_count=1),
         )
 
         resolver = _resolver_with_version(version)
         ref = await resolver._build_dataset_ref(_pipeline_run("d3", "v1"))
 
-        assert ref.summary == {"scene_count": 2, "channels": ["CAM_FRONT"]}
+        assert ref.summary == {"scene_count": 2, "observed_channels": ["CAM_FRONT"]}
 
 
 class TestBuildDatasetRefMissingVersion:

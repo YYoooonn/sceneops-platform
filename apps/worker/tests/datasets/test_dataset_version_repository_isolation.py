@@ -1,5 +1,6 @@
-"""Isolation tests for PostgresDatasetVersionRepository.update_scene_summary /
-update_episode_summary (SceneOps V2 Request 03).
+"""Isolation tests for PostgresDatasetVersionRepository's Scene writers
+(replace_scene_membership_summary / update_scene_inputs) and
+update_episode_summary.
 
 Uses a real DatasetVersionModel instance (constructible without a DB
 connection) with a mocked AsyncSession whose execute()/scalar_one_or_none()
@@ -29,20 +30,14 @@ def _model(**overrides) -> DatasetVersionModel:
         status="registered",
         manifest_uri="s3://bucket/manifest.json",
         scene_count=5,
-        sample_count=10,
-        frame_count=20,
+        keyframe_count=10,
+        observation_count=20,
         episode_count=3,
-        channels=["CAM_FRONT"],
+        observed_channels=["CAM_FRONT"],
         required_channels=["CAM_FRONT"],
         source_dataset_id=None,
         source_dataset_version=None,
         raw_source_root_uri=None,
-        latest_validation_run_id=None,
-        validation_status=None,
-        should_block_pipeline=None,
-        validation_report_uri=None,
-        latest_profile_run_id=None,
-        profile_report_uri=None,
         created_at=_NOW,
         updated_at=_NOW,
         metadata_={},
@@ -63,41 +58,47 @@ def _repo_with_model(model: DatasetVersionModel) -> PostgresDatasetVersionReposi
 
 class TestSceneWriterIsolation:
     @pytest.mark.asyncio
-    async def test_updating_scene_summary_preserves_episode_count(self) -> None:
-        model = _model(scene_count=5, episode_count=3)
+    async def test_membership_summary_replacement_preserves_other_columns(self) -> None:
+        model = _model(scene_count=5, episode_count=3, raw_source_root_uri="/raw")
         repo = _repo_with_model(model)
 
-        await repo.update_scene_summary(
+        await repo.replace_scene_membership_summary(
             dataset_id="d",
             version="v1",
             scene_count=99,
-            channels=["LIDAR_TOP"],
+            keyframe_count=7,
+            observation_count=70,
+            observed_channels=["LIDAR_TOP"],
         )
 
-        assert model.scene_count == 99
-        assert model.channels == ["LIDAR_TOP"]
-        assert model.episode_count == 3  # untouched by a Scene-only update
+        assert (model.scene_count, model.keyframe_count, model.observation_count) == (
+            99,
+            7,
+            70,
+        )
+        assert model.observed_channels == ["LIDAR_TOP"]
+        assert model.episode_count == 3
+        assert model.raw_source_root_uri == "/raw"
+        assert model.required_channels == ["CAM_FRONT"]
 
     @pytest.mark.asyncio
-    async def test_omitted_scene_fields_are_left_untouched(self) -> None:
-        """None (i.e. not passed) must not reset should_block_pipeline/etc —
-        only fields actually provided change."""
-        model = _model(should_block_pipeline=True, profile_report_uri="s3://x/p.json")
+    async def test_scene_inputs_update_never_touches_membership(self) -> None:
+        model = _model(manifest_uri="s3://x/m.json")
         repo = _repo_with_model(model)
 
-        await repo.update_scene_summary(
-            dataset_id="d", version="v1", latest_validation_run_id="run-2"
+        await repo.update_scene_inputs(
+            dataset_id="d", version="v1", raw_source_root_uri="/raw"
         )
 
-        assert model.latest_validation_run_id == "run-2"
-        assert model.should_block_pipeline is True  # untouched
-        assert model.profile_report_uri == "s3://x/p.json"  # untouched
+        assert model.raw_source_root_uri == "/raw"
+        assert model.manifest_uri == "s3://x/m.json"  # omitted -> untouched
+        assert (model.scene_count, model.observed_channels) == (5, ["CAM_FRONT"])
 
 
 class TestEpisodeWriterIsolation:
     @pytest.mark.asyncio
     async def test_updating_episode_summary_preserves_scene_fields(self) -> None:
-        model = _model(scene_count=5, channels=["CAM_FRONT"], episode_count=3)
+        model = _model(scene_count=5, observed_channels=["CAM_FRONT"], episode_count=3)
         repo = _repo_with_model(model)
 
         await repo.update_episode_summary(
@@ -106,4 +107,4 @@ class TestEpisodeWriterIsolation:
 
         assert model.episode_count == 99
         assert model.scene_count == 5  # untouched by an Episode-only update
-        assert model.channels == ["CAM_FRONT"]  # untouched
+        assert model.observed_channels == ["CAM_FRONT"]  # untouched

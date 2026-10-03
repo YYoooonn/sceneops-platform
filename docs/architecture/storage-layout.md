@@ -77,6 +77,31 @@ and different bytes are a hard conflict, never an overwrite. The manifest's
 URIs; `REGISTER_ROBOT_RUN` never moves or rewrites them. See
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2.
 
+### Scene manifests: write-once, checksum-qualified
+
+A canonical SceneManifest revision lives at
+
+```text
+{dataset_root}/{dataset_id}/versions/{version}/scenes/{scene_id}/manifest-{sha256}.json
+```
+
+(`SceneArtifactStore.publish_canonical_manifest`). The key embeds the
+checksum of the canonical bytes, so every revision of a Scene coexists and
+no key is ever overwritten: re-publishing identical bytes is a no-op and a
+key that already holds different bytes is a conflict. Superseded revisions
+stay for lineage; there is no garbage collection. Readers never list this
+prefix to find "the latest" manifest — they follow a pinned
+`manifest_artifact_id` / checksum (see [Scene domain](./scene-domain.md)).
+
+Observation payloads are not addressed by a key convention: a manifest
+references each payload by its `OBSERVATION_PAYLOAD` ArtifactRecord id, and
+the record's `uri` is the only place its location is stored. No producer
+publishes canonical observation payloads yet.
+
+Pre-canonical manifests from the legacy Scene producers are written under
+`.../versions/{version}/legacy_scenes/{scene_id}.json` and are never read
+back as Scenes.
+
 ### Raw-log artifacts: scoped by `raw_log_id`
 
 Within a dataset version's `datasets/` tree, raw-log-derived artifacts
@@ -88,12 +113,12 @@ see [External integration runtime](./external-integration-runtime.md)) and
 `build_scenes` run
 against the same `DatasetVersion` (a different raw log, or a rebuild)
 doesn't silently overwrite the first run's raw-log artifacts at a shared
-URI — see [Scene domain](./scene-domain.md) §2.
+URI.
 
 ### Analytics (Parquet)
 
 `analytical/{dataset_id}/{dataset_version}/{table_name}.parquet` —
-`scenes`/`samples`/`sensor_frames`/`annotations`, written by the
+`scenes`/`observations`/`keyframes`/`annotations`, written by the
 `export_analytics_snapshot` job via `sceneops-analytics`'
 `AnalyticsTableWriter`. Re-running overwrites the same URI (the same
 idempotent-rebuild pattern `build_dataset_manifest` uses).
@@ -160,8 +185,8 @@ locally (see [Robot data ingestion](../workflows/robot-run-and-mcap.md)).
 Storage paths are organized by **resource kind** (`datasets/`, `runs/`,
 `models/`, `analytical/`), not by processing stage (there's no `raw/` vs.
 `curated/` split at the top level). Whether a `DatasetVersion` is "curated"
-is expressed through DB columns (`status`, `validation_status`), not
-through where its artifacts physically live.
+is expressed through DB records (membership, run records), not through
+where its artifacts physically live.
 
 ## 5. Object storage account/infra
 

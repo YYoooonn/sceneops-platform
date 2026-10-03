@@ -7,26 +7,32 @@ Covers:
 - all mode selects everything
 - explicit_scenes mode filters by scene_id list
 - max_scenes cap applies
+- an unreadable pinned manifest fails the selection instead of being skipped
 """
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from sceneops_core.jobs.schemas.params.detection import (
     DetectionSceneSelectionConfig,
     DetectionSceneSelectionMode,
 )
+from sceneops_core.scenes.testing import external_source
+from sceneops_worker.scenes.artifacts import SceneManifestIntegrityError
 from sceneops_worker.scenes.selection import select_detection_scenes
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
-def _scene_entry(scene_id: str, manifest_uri: str | None = None) -> MagicMock:
+def _scene_entry(scene_id: str) -> MagicMock:
     entry = MagicMock()
     entry.scene_id = scene_id
-    entry.scene_manifest_uri = manifest_uri or f"file:///{scene_id}/manifest.json"
+    entry.manifest_uri = f"file:///{scene_id}/manifest.json"
+    entry.manifest_checksum = "sha256:" + "0" * 64
     return entry
 
 
@@ -34,18 +40,20 @@ def _scene_manifest(
     scene_id: str,
     annotation_count: int = 0,
     sample_count: int = 10,
-    has_ground_truth: bool | None = None,
     ground_truth_source: str | None = None,
 ) -> MagicMock:
+    """Stand-in exposing what selection reads from a canonical manifest:
+    annotations, source keyframes and the source block."""
     manifest = MagicMock()
-    manifest.scene_id = scene_id
-    manifest.annotation_count = annotation_count
-    manifest.sample_count = sample_count
-    manifest.has_ground_truth = (
-        has_ground_truth if has_ground_truth is not None else (annotation_count > 0)
+    manifest.annotations = [MagicMock() for _ in range(annotation_count)]
+    manifest.keyframes = MagicMock(
+        return_value=[MagicMock() for _ in range(sample_count)]
     )
-    manifest.ground_truth_source = ground_truth_source
-    manifest.samples = []
+    manifest.lineage.source = (
+        external_source(external_format=ground_truth_source)
+        if ground_truth_source
+        else MagicMock()
+    )
     return manifest
 
 
@@ -55,20 +63,15 @@ def _dataset_manifest(scene_ids: list[str]) -> MagicMock:
     return ds
 
 
-def _store_from_manifests(manifests: dict[str, MagicMock | None]) -> MagicMock:
-    """Build a mock SceneArtifactStore that returns manifests keyed by URI.
-
-    URI format is ``file:///{scene_id}/manifest.json``.
-    Split on "/" gives ``['file:', '', '', '{scene_id}', 'manifest.json']``,
-    so index 3 is the scene_id.
-    """
+def _store_from_manifests(manifests: dict[str, MagicMock]) -> MagicMock:
+    """A SceneArtifactStore stand-in serving pinned reads keyed by the
+    ``file:///{scene_id}/manifest.json`` URI."""
     store = MagicMock()
 
-    async def load(uri: str) -> MagicMock | None:
-        scene_id = uri.split("/")[3]
-        return manifests.get(scene_id)
+    async def read_pinned_manifest(*, uri: str, checksum: str, size_bytes=None):
+        return manifests[uri.split("/")[3]]
 
-    store.load_scene_manifest = load
+    store.read_pinned_manifest = read_pinned_manifest
     return store
 
 
@@ -295,18 +298,18 @@ async def test_max_scenes_caps_selected_count():
 # ── missing manifest ──────────────────────────────────────────────────────────
 
 
-async def test_missing_manifest_scene_is_skipped_with_reason():
+async def test_unreadable_pinned_manifest_fails_loudly():
     store = MagicMock()
-    store.load_scene_manifest = AsyncMock(return_value=None)
-
-    result = await select_detection_scenes(
-        dataset_manifest=_dataset_manifest(["scene-missing"]),
-        scene_artifact_store=store,
-        selection=_selection(mode=DetectionSceneSelectionMode.ALL),
+    store.read_pinned_manifest = AsyncMock(
+        side_effect=SceneManifestIntegrityError("scene manifest not found")
     )
 
-    assert result["selected_scene_count"] == 0
-    assert result["skipped_scenes"][0]["reason"] == "scene_manifest_not_found"
+    with pytest.raises(SceneManifestIntegrityError):
+        await select_detection_scenes(
+            dataset_manifest=_dataset_manifest(["scene-missing"]),
+            scene_artifact_store=store,
+            selection=_selection(mode=DetectionSceneSelectionMode.ALL),
+        )
 
 
 # ── summary field presence ────────────────────────────────────────────────────

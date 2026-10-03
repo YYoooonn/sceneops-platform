@@ -19,6 +19,7 @@ fingerprint can be re-derived from the manifest itself.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Final, Literal
 
 from pydantic import (
@@ -30,9 +31,12 @@ from pydantic import (
     model_validator,
 )
 
+from sceneops_core.common.checksums import SHA256_CHECKSUM_PATTERN
 from sceneops_core.common.identifiers import (
+    VERBATIM_KEY_MAX_LENGTH,
     validate_external_format,
     validate_source_clock,
+    validate_verbatim_key,
 )
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.datasets.schemas.external import ExternalDatasetRef
@@ -40,8 +44,15 @@ from sceneops_core.robots.manifest import RUN_ID_MAX_LENGTH, validate_identifier
 
 from .source_time import SourceTimestampNs
 
-SHA256_CHECKSUM_PATTERN: Final = r"^sha256:[0-9a-f]{64}$"
-UNIT_KEY_MAX_LENGTH: Final = 256
+UNIT_KEY_MAX_LENGTH: Final = VERBATIM_KEY_MAX_LENGTH
+
+
+class UnitSourceKind(StrEnum):
+    """The two canonical source kinds (ADR-007 §2). Record projections use
+    this; the provenance blocks discriminate on the same values."""
+
+    EXTERNAL = "external"
+    RECORDING = "recording"
 
 
 class _ProvenanceModel(BaseModel):
@@ -49,16 +60,8 @@ class _ProvenanceModel(BaseModel):
 
 
 def _validate_unit_key(value: str, *, field: str) -> str:
-    """Unit keys are verbatim source / builder keys, so their alphabet is
-    open, but they must be unambiguous: non-empty, bounded, no surrounding
-    whitespace and no control characters."""
-    if not value or len(value) > UNIT_KEY_MAX_LENGTH:
-        raise ValueError(f"{field} must be 1-{UNIT_KEY_MAX_LENGTH} characters")
-    if value != value.strip():
-        raise ValueError(f"{field} must not have surrounding whitespace")
-    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
-        raise ValueError(f"{field} must not contain control characters")
-    return value
+    """Unit keys are verbatim source / builder keys."""
+    return validate_verbatim_key(value, field=field, max_length=UNIT_KEY_MAX_LENGTH)
 
 
 def _validate_robot_run_id(value: str) -> str:
@@ -122,15 +125,22 @@ SourceRevision = Annotated[
 class ExternalUnitSource(_ProvenanceModel):
     """The canonical unit is one source-domain unit of an external dataset.
 
-    ``source_unit_key`` is that unit's stable identity inside the external
-    dataset as the source defines it (e.g. a nuScenes scene token, a LeRobot
-    episode index), kept verbatim. Together with ``external_ref.format`` it
-    is the unit's external identity (§18.1); ``external_ref.uri`` is
-    provenance only.
+    ``revision`` is the external dataset revision that was read;
+    ``source_unit_key`` is that unit's stable identity inside the dataset as
+    the source defines it (e.g. a nuScenes scene token, a LeRobot episode
+    index), kept verbatim. ``revision.format`` + ``source_unit_key`` is the
+    unit's external identity (§18.1).
+
+    There is no dataset location or display name here.
+    ``ExternalDatasetRef.uri`` locates the source for the integration that
+    reads it and ``external_name`` labels it for people; both are dropped
+    when the unit is canonicalized (``from_ref``), so the same dataset
+    revision read from any mount, under any name, yields identical canonical
+    provenance and manifest bytes.
     """
 
     source_kind: Literal["external"] = "external"
-    external_ref: ExternalDatasetRef
+    revision: ExternalSourceRevision
     source_unit_key: StrictStr
 
     @field_validator("source_unit_key")
@@ -138,8 +148,23 @@ class ExternalUnitSource(_ProvenanceModel):
     def _check_source_unit_key(cls, value: str) -> str:
         return _validate_unit_key(value, field="source_unit_key")
 
+    @classmethod
+    def from_ref(
+        cls, ref: ExternalDatasetRef, *, source_unit_key: str
+    ) -> ExternalUnitSource:
+        """Canonical provenance for one unit read through ``ref``; the
+        locator (``ref.uri``) and display name (``ref.external_name``) are
+        not carried over."""
+        return cls(
+            revision=ExternalSourceRevision.of(ref), source_unit_key=source_unit_key
+        )
+
+    @property
+    def format(self) -> str:
+        return self.revision.format
+
     def source_revision(self) -> ExternalSourceRevision:
-        return ExternalSourceRevision.of(self.external_ref)
+        return self.revision
 
 
 class RecordingSegmentSource(_ProvenanceModel):
@@ -225,4 +250,5 @@ __all__ = [
     "RecordingSourceRevision",
     "SourceRevision",
     "UnitSource",
+    "UnitSourceKind",
 ]

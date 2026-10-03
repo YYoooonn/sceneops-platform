@@ -6,10 +6,7 @@ from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
-from sceneops_core.datasets.schemas.manifests import (
-    DatasetManifest,
-    DatasetSceneIndexEntry,
-)
+from sceneops_core.datasets.schemas.manifests import DatasetManifest
 from sceneops_core.jobs.schemas import (
     BuildDatasetManifestJobParams,
     BuildDatasetManifestJobResult,
@@ -17,11 +14,19 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.scenes.indexing import index_entry_for, list_dataset_version_scenes
 
 
 class BuildDatasetManifestJobHandler(
     JobHandler[BuildDatasetManifestJobParams, BuildDatasetManifestJobResult]
 ):
+    """Derived dataset manifest over every registered Scene, each pinned to
+    its current revision.
+
+    It records where the derived manifest lives (``manifest_uri``) but never
+    writes DatasetVersion summary counts: those belong to the Scene
+    registrar."""
+
     @property
     def job_type(self) -> JobType:
         return JobType.BUILD_DATASET_MANIFEST
@@ -46,67 +51,27 @@ class BuildDatasetManifestJobHandler(
         job = request.job
         params = request.params
         context = request.context
-
         dataset_id = params.dataset_id
         dataset_version = params.dataset_version
 
-        # DatasetManifest is a derived snapshot of SceneRecord rows.
-        # Always query all registered scenes — never build from pipeline batch input only.
-        # Building from a partial input would overwrite the manifest and scene_count with
-        # only the current batch, causing previously registered scenes to vanish from the
-        # manifest and the DatasetVersion summary counts.
-        all_scene_records = await context.scene_store.list(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            limit=10_000,
+        scenes = await list_dataset_version_scenes(
+            context, dataset_id=dataset_id, dataset_version=dataset_version
         )
-
-        uris = [
-            s.scene_manifest_uri
-            for s in all_scene_records
-            if s.scene_manifest_uri is not None
-        ]
-
-        if not uris:
+        if not scenes:
             raise ValueError(
                 f"build_dataset_manifest: no registered scenes found for "
-                f"dataset_id={dataset_id!r}, dataset_version={dataset_version!r}. "
-                "Ensure register_scene has completed before building the manifest."
+                f"dataset_id={dataset_id!r}, dataset_version={dataset_version!r}."
             )
 
-        scenes: list[DatasetSceneIndexEntry] = []
-        total_samples = 0
-        total_frames = 0
-        all_channels: set[str] = set()
-
-        for uri in uris:
-            scene_manifest = await context.scene_artifact_store.load_scene_manifest(uri)
-            if scene_manifest is None:
-                continue
-
-            scenes.append(
-                DatasetSceneIndexEntry(
-                    scene_id=scene_manifest.scene_id,
-                    scene_manifest_uri=uri,
-                    sample_count=scene_manifest.sample_count,
-                    frame_count=scene_manifest.frame_count,
-                    channels=scene_manifest.channels,
-                )
-            )
-            total_samples += scene_manifest.sample_count
-            total_frames += scene_manifest.frame_count
-            all_channels.update(scene_manifest.channels)
-
-        channels = sorted(all_channels)
-
+        entries = [await index_entry_for(context, scene) for scene in scenes]
         manifest = DatasetManifest(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            scene_count=len(scenes),
-            sample_count=total_samples,
-            frame_count=total_frames,
-            channels=channels,
-            scenes=scenes,
+            scene_count=len(entries),
+            keyframe_count=sum(e.keyframe_count for e in entries),
+            observation_count=sum(e.observation_count for e in entries),
+            observed_channels=sorted({c for e in entries for c in e.observed_channels}),
+            scenes=entries,
             created_at=utc_now(),
         )
 
@@ -117,25 +82,11 @@ class BuildDatasetManifestJobHandler(
                 manifest=manifest,
             )
         )
-
-        # SceneOps V2 Request 05: no longer flips DatasetVersion.status to
-        # READY — Scene readiness for downstream operations (prediction/
-        # evaluation) is now determined by explicit Scene prerequisites
-        # (manifest_uri set, validation not blocking), not a generic status.
-        version = await context.dataset_store.get_version(
-            dataset_id=dataset_id, version=dataset_version
+        await context.dataset_store.update_scene_inputs(
+            dataset_id=dataset_id,
+            version=dataset_version,
+            manifest_uri=dataset_manifest_uri,
         )
-        if version is not None:
-            await context.dataset_store.update_scene_summary(
-                dataset_id=dataset_id,
-                version=dataset_version,
-                manifest_uri=dataset_manifest_uri,
-                scene_count=len(scenes),
-                sample_count=total_samples,
-                frame_count=total_frames,
-                channels=channels,
-            )
-
         await context.artifact_record_store.create(
             artifact_id=generate_artifact_id(),
             ref=ArtifactRef(
@@ -155,7 +106,7 @@ class BuildDatasetManifestJobHandler(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             dataset_manifest_uri=dataset_manifest_uri,
-            scene_count=len(scenes),
-            sample_count=total_samples,
-            frame_count=total_frames,
+            scene_count=manifest.scene_count,
+            keyframe_count=manifest.keyframe_count,
+            observation_count=manifest.observation_count,
         )

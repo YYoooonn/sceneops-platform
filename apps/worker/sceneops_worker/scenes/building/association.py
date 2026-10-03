@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from sceneops_core.observations.schemas import RawSensorFrameManifest
-from sceneops_core.scenes.schemas import (
+from sceneops_core.scenes.legacy import (
     FrameAssociationStrategy,
     SampleGroupingConfig,
 )

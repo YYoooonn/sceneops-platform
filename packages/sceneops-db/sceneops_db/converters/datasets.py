@@ -56,18 +56,12 @@ def _scene_version_summary_from_model(
 ) -> SceneVersionSummary | None:
     summary = SceneVersionSummary(
         scene_count=model.scene_count,
-        sample_count=model.sample_count,
-        frame_count=model.frame_count,
-        channels=model.channels or [],
+        keyframe_count=model.keyframe_count,
+        observation_count=model.observation_count,
+        observed_channels=model.observed_channels or [],
         required_channels=model.required_channels or [],
         manifest_uri=model.manifest_uri,
         raw_source_root_uri=model.raw_source_root_uri,
-        latest_validation_run_id=model.latest_validation_run_id,
-        validation_status=model.validation_status,
-        should_block_pipeline=model.should_block_pipeline,
-        validation_report_uri=model.validation_report_uri,
-        latest_profile_run_id=model.latest_profile_run_id,
-        profile_report_uri=model.profile_report_uri,
     )
     return None if summary.is_unset() else summary
 
@@ -82,18 +76,12 @@ def _episode_version_summary_from_model(
 def _scene_summary_to_values(summary: SceneVersionSummary) -> dict[str, Any]:
     return {
         "scene_count": summary.scene_count,
-        "sample_count": summary.sample_count,
-        "frame_count": summary.frame_count,
-        "channels": summary.channels,
+        "keyframe_count": summary.keyframe_count,
+        "observation_count": summary.observation_count,
+        "observed_channels": summary.observed_channels,
         "required_channels": summary.required_channels,
         "manifest_uri": summary.manifest_uri,
         "raw_source_root_uri": summary.raw_source_root_uri,
-        "latest_validation_run_id": summary.latest_validation_run_id,
-        "validation_status": enum_to_value(summary.validation_status),
-        "should_block_pipeline": summary.should_block_pipeline,
-        "validation_report_uri": summary.validation_report_uri,
-        "latest_profile_run_id": summary.latest_profile_run_id,
-        "profile_report_uri": summary.profile_report_uri,
     }
 
 
@@ -127,12 +115,11 @@ def dataset_version_record_to_values(
     summary is present on the record. This matters for create() (an absent
     summary lets the SQL column server_default apply) and, more importantly,
     for update() (an absent summary leaves the existing column value alone
-    instead of resetting it to a summary's zero-value defaults) — see
-    SceneOps V2 Request 03. Production writers never rely on this path for
-    domain-summary changes though; they go through
-    update_scene_summary()/update_episode_summary() exclusively, which do a
-    true per-field partial update. This function's scene/episode handling is
-    a correctness backstop, not the primary write path.
+    instead of resetting it to a summary's zero-value defaults). Production
+    writers never change domain summaries through this path: the Scene
+    registrar uses replace_scene_membership_summary(), Episode registration
+    uses update_episode_summary(), and the remaining Scene inputs go through
+    update_scene_inputs().
     """
     values: dict[str, Any] = {
         "id": make_dataset_version_id(record.dataset_id, record.version),

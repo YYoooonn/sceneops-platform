@@ -127,18 +127,11 @@ class DatasetService:
         # updated_at explicitly rather than relying on server_default/onupdate
         # (those only fire when a column is left unset, not set to None).
         #
-        # manifest_uri/required_channels/raw_source_root_uri are Scene-owned
-        # (SceneOps V2 Request 03/04 — raw_source_root_uri only feeds the
-        # Scene raw-log build path; Episode sources come from a registered
-        # RobotRun recording instead) — they must NOT be embedded in this
-        # generic record construction: on an existing version this record has
-        # scene=None, and routing scene=None through the generic upsert()
-        # would leave real scene columns untouched (see
-        # dataset_version_record_to_values), but setting
-        # scene=SceneVersionSummary(manifest_uri=...) here with scene_count/
-        # etc. left at their defaults *would* wipe out a real scene_count on
-        # update. Route them through update_scene_summary() instead, which
-        # patches only the fields actually provided.
+        # manifest_uri/required_channels/raw_source_root_uri are Scene inputs,
+        # not generic version state: they are patched through
+        # update_scene_inputs(), which never touches the registrar-owned
+        # Scene membership summary. The generic upsert below passes
+        # scene=None so it leaves every Scene column alone.
         existing = await self._version_repository.get(
             dataset_id=dataset_id, version=body.version
         )
@@ -160,7 +153,7 @@ class DatasetService:
             or body.required_channels
             or body.raw_source_root_uri is not None
         ):
-            version = await self._version_repository.update_scene_summary(
+            version = await self._version_repository.update_scene_inputs(
                 dataset_id=dataset_id,
                 version=body.version,
                 manifest_uri=body.manifest_uri,
@@ -181,16 +174,12 @@ class DatasetService:
 
     # PATCH fields that map directly onto generic DatasetVersionRecord state.
     _GENERIC_VERSION_PATCH_FIELDS = ("status", "metadata")
-    # PATCH fields that are Scene-owned (SceneOps V2 Request 03/04) and must
-    # go through update_scene_summary() rather than a generic model_copy+
-    # update, so an omitted field never resets an unrelated Scene column.
+    # Scene inputs patchable through the API. The Scene membership summary
+    # (counts, observed channels) is written only by Scene registration and
+    # is never patchable here.
     _SCENE_VERSION_PATCH_FIELDS = (
         "manifest_uri",
         "raw_source_root_uri",
-        "scene_count",
-        "sample_count",
-        "frame_count",
-        "channels",
         "required_channels",
     )
 
@@ -221,7 +210,7 @@ class DatasetService:
                 result.model_copy(update=generic_updates)
             )
         if scene_updates:
-            result = await self._version_repository.update_scene_summary(
+            result = await self._version_repository.update_scene_inputs(
                 dataset_id=dataset_id, version=version, **scene_updates
             )
         return DatasetVersionDetailResponse(version=result)
@@ -306,7 +295,8 @@ class DatasetService:
         dataset_id: str,
         version: str,
     ) -> list[SceneQualityResponse]:
-        """Fetch all scene quality rows for a dataset version (3 DB queries).
+        """Fetch all scene quality rows for a dataset version (3 DB queries),
+        using only runs that assessed each Scene's current revision.
 
         Shared by get_dataset_version_quality and list_scene_quality so both
         endpoints produce consistent counts from the same data.
@@ -315,14 +305,14 @@ class DatasetService:
             dataset_id=dataset_id, dataset_version=version, limit=10000, offset=0
         )
         latest_validation = (
-            await self._scene_run_repository.list_latest_by_dataset_version(
+            await self._scene_run_repository.latest_succeeded_for_current_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_VALIDATION,
             )
         )
         latest_profile = (
-            await self._scene_run_repository.list_latest_by_dataset_version(
+            await self._scene_run_repository.latest_succeeded_for_current_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_PROFILE,

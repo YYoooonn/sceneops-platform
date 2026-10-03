@@ -6,8 +6,8 @@ no async, no FastAPI.
 Covers:
 - aggregate counts readiness buckets correctly
 - selectable/non-selectable counts are correct
-- ground_truth_scene_count and annotated_scene_count use SceneRecord fields
-- total annotation/sample/frame counts are summed
+- ground_truth_scene_count and annotated_scene_count derive from annotation_count
+- total annotation/keyframe/observation counts are summed
 - exclusion reason counts are aggregated
 - observed channels union is deterministic (sorted)
 - summary is global, scenes list is paginated
@@ -16,8 +16,8 @@ Covers:
 
 from __future__ import annotations
 
+from sceneops_core.provenance import UnitSourceKind
 from sceneops_core.runs.schemas import RunStatus
-from sceneops_core.scenes.schemas.enums import SceneStatus
 from sceneops_core.scenes.schemas.records import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
@@ -27,29 +27,31 @@ from sceneops_core.scenes.schemas.runs import (
 from app.domains.datasets.quality import build_dataset_scene_quality_aggregate
 from app.domains.scenes.quality import build_scene_quality
 
+_CHECKSUM = "sha256:" + "1" * 64
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
 def _scene(
     scene_id: str = "scene-001",
-    status: SceneStatus = SceneStatus.PROFILED,
-    sample_count: int = 40,
-    frame_count: int = 80,
+    keyframe_count: int = 40,
+    observation_count: int = 80,
     annotation_count: int = 582,
-    has_ground_truth: bool = True,
-    ground_truth_source: str | None = "nuscenes",
 ) -> SceneRecord:
     return SceneRecord(
         scene_id=scene_id,
         dataset_id="nuscenes",
         dataset_version="v1.0-mini",
-        status=status,
-        sample_count=sample_count,
-        frame_count=frame_count,
+        source_kind=UnitSourceKind.EXTERNAL,
+        external_format="nuscenes",
+        source_unit_key=scene_id,
+        producer_fingerprint="sha256:" + "a" * 64,
+        manifest_artifact_id=f"art-{scene_id}",
+        manifest_checksum=_CHECKSUM,
+        observation_count=observation_count,
+        keyframe_count=keyframe_count,
         annotation_count=annotation_count,
-        has_ground_truth=has_ground_truth,
-        ground_truth_source=ground_truth_source,
     )
 
 
@@ -62,13 +64,13 @@ def _validation_run(
         run_id=f"val-{scene_id}",
         status=RunStatus.SUCCEEDED,
         scene_id=scene_id,
+        manifest_artifact_id=f"art-{scene_id}",
+        manifest_checksum=_CHECKSUM,
         validation_status=validation_status,
         should_block_pipeline=should_block_pipeline,
         error_count=0,
         warning_count=0,
         issue_count=0,
-        checked_sample_count=40,
-        checked_frame_count=80,
     )
 
 
@@ -81,8 +83,10 @@ def _profile_run(
         run_id=f"prof-{scene_id}",
         status=RunStatus.SUCCEEDED,
         scene_id=scene_id,
-        sample_count=40,
-        frame_count=80,
+        manifest_artifact_id=f"art-{scene_id}",
+        manifest_checksum=_CHECKSUM,
+        keyframe_count=40,
+        observation_count=80,
         annotation_count=annotation_count,
         observed_channels=observed_channels or ["CAM_FRONT", "LIDAR_TOP"],
     )
@@ -112,8 +116,8 @@ def test_empty_dataset_returns_zero_summary():
     assert summary.non_selectable_for_detection_count == 0
     assert summary.ground_truth_scene_count == 0
     assert summary.annotated_scene_count == 0
-    assert summary.total_sample_count == 0
-    assert summary.total_frame_count == 0
+    assert summary.total_keyframe_count == 0
+    assert summary.total_observation_count == 0
     assert summary.total_annotation_count == 0
     assert summary.exclusion_reason_counts == {}
     assert summary.observed_channels == []
@@ -155,11 +159,11 @@ def test_all_ready_scenes():
 
 def test_selectable_and_non_selectable_counts():
     selectable = _quality(
-        _scene("s1", has_ground_truth=True, annotation_count=100),
+        _scene("s1", annotation_count=100),
         _validation_run("s1", "ready"),
     )
     not_selectable = _quality(
-        _scene("s2", has_ground_truth=False, annotation_count=0),
+        _scene("s2", annotation_count=0),
         _validation_run("s2", "ready"),
     )
     summary = build_dataset_scene_quality_aggregate([selectable, not_selectable])
@@ -170,13 +174,13 @@ def test_selectable_and_non_selectable_counts():
 # ── GT counts ─────────────────────────────────────────────────────────────────
 
 
-def test_ground_truth_scene_count_uses_has_ground_truth_flag():
+def test_ground_truth_scene_count_follows_annotations():
     gt_scene = _quality(
-        _scene("s1", has_ground_truth=True, annotation_count=100),
+        _scene("s1", annotation_count=100),
         _validation_run("s1"),
     )
     no_gt_scene = _quality(
-        _scene("s2", has_ground_truth=False, annotation_count=0),
+        _scene("s2", annotation_count=0),
         _validation_run("s2"),
     )
     summary = build_dataset_scene_quality_aggregate([gt_scene, no_gt_scene])
@@ -185,10 +189,10 @@ def test_ground_truth_scene_count_uses_has_ground_truth_flag():
 
 def test_annotated_scene_count_uses_annotation_count_field():
     annotated = _quality(
-        _scene("s1", annotation_count=50, has_ground_truth=True),
+        _scene("s1", annotation_count=50),
     )
     not_annotated = _quality(
-        _scene("s2", annotation_count=0, has_ground_truth=False),
+        _scene("s2", annotation_count=0),
     )
     summary = build_dataset_scene_quality_aggregate([annotated, not_annotated])
     assert summary.annotated_scene_count == 1
@@ -197,12 +201,16 @@ def test_annotated_scene_count_uses_annotation_count_field():
 # ── totals ────────────────────────────────────────────────────────────────────
 
 
-def test_total_sample_frame_annotation_counts_are_summed():
-    q1 = _quality(_scene("s1", sample_count=40, frame_count=80, annotation_count=582))
-    q2 = _quality(_scene("s2", sample_count=30, frame_count=60, annotation_count=400))
+def test_total_keyframe_observation_annotation_counts_are_summed():
+    q1 = _quality(
+        _scene("s1", keyframe_count=40, observation_count=80, annotation_count=582)
+    )
+    q2 = _quality(
+        _scene("s2", keyframe_count=30, observation_count=60, annotation_count=400)
+    )
     summary = build_dataset_scene_quality_aggregate([q1, q2])
-    assert summary.total_sample_count == 70
-    assert summary.total_frame_count == 140
+    assert summary.total_keyframe_count == 70
+    assert summary.total_observation_count == 140
     assert summary.total_annotation_count == 982
 
 
@@ -212,12 +220,12 @@ def test_total_sample_frame_annotation_counts_are_summed():
 def test_exclusion_reason_counts_are_aggregated():
     # Both scenes missing GT
     q1 = _quality(
-        _scene("s1", has_ground_truth=False, annotation_count=0),
+        _scene("s1", annotation_count=0),
         _validation_run("s1", "ready"),
     )
     # One scene also has validation blocked
     q2 = _quality(
-        _scene("s2", has_ground_truth=False, annotation_count=0),
+        _scene("s2", annotation_count=0),
         _validation_run("s2", should_block_pipeline=True),
     )
     summary = build_dataset_scene_quality_aggregate([q1, q2])
@@ -227,7 +235,7 @@ def test_exclusion_reason_counts_are_aggregated():
 
 def test_no_exclusion_reasons_when_all_selectable():
     q = _quality(
-        _scene("s1", has_ground_truth=True, annotation_count=100),
+        _scene("s1", annotation_count=100),
         _validation_run("s1", "ready"),
     )
     summary = build_dataset_scene_quality_aggregate([q])
@@ -280,7 +288,7 @@ def test_observed_channels_deterministic_across_calls():
 def test_summary_counts_all_scenes_not_just_page():
     all_quality = [
         _quality(
-            _scene(f"s{i}", has_ground_truth=True, annotation_count=10),
+            _scene(f"s{i}", annotation_count=10),
             _validation_run(f"s{i}", "ready"),
         )
         for i in range(10)

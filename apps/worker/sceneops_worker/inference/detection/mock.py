@@ -10,7 +10,6 @@ from sceneops_core.inference.schemas.manifests import (
     DetectionPredictionManifest,
     DetectionPredictionShardRef,
 )
-from sceneops_core.scenes.schemas.manifests import SceneSampleManifest
 from sceneops_worker.inference.constants import SUPPORTED_CATEGORIES
 from sceneops_worker.inference.detection.base import (
     DetectionInferenceBackend,
@@ -19,6 +18,7 @@ from sceneops_worker.inference.detection.base import (
 )
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.scenes import SceneArtifactStore
+from sceneops_worker.scenes.keyframes import KeyframeSample, iter_keyframe_samples
 
 
 class MockDetectionInferenceBackend(DetectionInferenceBackend):
@@ -79,9 +79,10 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
     ) -> DetectionPredictionManifest:
         random.seed(seed)
 
-        sample_manifests: list[SceneSampleManifest] = []
-        async for sample_manifest in scene_artifact_store.iter_samples(
+        sample_manifests: list[KeyframeSample] = []
+        async for sample_manifest in iter_keyframe_samples(
             dataset_manifest,
+            scene_artifact_store,
             max_samples=max_samples,
         ):
             sample_manifests.append(sample_manifest)
@@ -214,7 +215,7 @@ class MockDetectionInferenceBackend(DetectionInferenceBackend):
 
 
 def _build_predictions_from_sample(
-    sample: SceneSampleManifest,
+    sample: KeyframeSample,
 ) -> list[dict[str, Any]]:
     predictions: list[dict[str, Any]] = []
 
@@ -227,8 +228,8 @@ def _build_predictions_from_sample(
         if random.random() < 0.15:
             continue
 
-        translation = _perturb_translation(annotation.translation)
-        size = _perturb_size(annotation.size)
+        translation = _perturb_translation(list(annotation.box.center_m))
+        size = _perturb_size(list(annotation.box.size_wlh_m))
 
         predictions.append(
             {
@@ -236,7 +237,7 @@ def _build_predictions_from_sample(
                 "category_name": category_name,
                 "translation": translation,
                 "size": size,
-                "rotation": annotation.rotation,
+                "rotation": list(annotation.box.rotation_wxyz),
                 "score": round(random.uniform(0.55, 0.98), 4),
                 "source_annotation_token": annotation.annotation_id,
             }

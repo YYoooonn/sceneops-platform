@@ -5,7 +5,7 @@ Scoring components (total = 1.0):
   validation   0.25  — ready:+0.25  warning:+0.15  blocked/unknown:+0
   channels     0.20  — all required_channels present:+0.20  partial:+0.10
   density      0.15  — normalised annotation_count (max across candidates)
-  completeness 0.10  — sample_count > 0 AND frame_count > 0
+  completeness 0.10  — keyframe_count > 0 AND observation_count > 0
 
 Readiness buckets:
   ready    score >= 0.75
@@ -100,7 +100,10 @@ def _score_candidate(
 
     # Completeness component
     completeness_score = 0.0
-    if candidate.get("sample_count", 0) > 0 and candidate.get("frame_count", 0) > 0:
+    if (
+        candidate.get("keyframe_count", 0) > 0
+        and candidate.get("observation_count", 0) > 0
+    ):
         completeness_score = 0.10
         reasons.append("complete_sequence")
     components["completeness"] = completeness_score

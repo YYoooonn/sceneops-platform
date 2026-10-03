@@ -33,7 +33,8 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenarios.schemas.records import ScenarioSetRecord
 from sceneops_core.scenarios.schemas.runs import ScenarioMiningRunRecord
-from sceneops_core.scenes.schemas.enums import SceneStatus
+from sceneops_core.runs.schemas import RunType
+from sceneops_core.scenes import SceneReadiness, derive_scene_readiness
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
@@ -57,13 +58,14 @@ _PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     "all": {},
 }
 
-_VALIDATED_STATUSES = {SceneStatus.VALIDATED, SceneStatus.PROFILED}
+# Readiness of the Scene's current revision that counts as "validated".
+_VALIDATED_READINESS = {SceneReadiness.READY, SceneReadiness.WARNING}
 
 # Sort key extractors
 _SORT_KEYS = {
     "annotation_count": lambda c: c["annotation_count"],
-    "sample_count": lambda c: c["sample_count"],
-    "frame_count": lambda c: c["frame_count"],
+    "keyframe_count": lambda c: c["keyframe_count"],
+    "observation_count": lambda c: c["observation_count"],
     "scene_id": lambda c: c["scene_id"],
 }
 
@@ -74,10 +76,8 @@ def _get_profile_defaults(profile: str) -> dict[str, Any]:
 
 def _passes_filters(
     scene_id: str,
-    status: str,
+    readiness: SceneReadiness,
     annotation_count: int,
-    sample_count: int,
-    frame_count: int,
     has_ground_truth: bool,
     channels: list[str],
     params: MineScenariosJobParams,
@@ -113,7 +113,7 @@ def _passes_filters(
 
     # validation status gate (profile default for detection_ready)
     require_validated = profile.get("require_validated_status", False)
-    if require_validated and status not in _VALIDATED_STATUSES:
+    if require_validated and readiness not in _VALIDATED_READINESS:
         exclusion_reasons.append("not_validated")
 
     # required channels (user param only)
@@ -204,20 +204,28 @@ class MineScenariosJobHandler(
             offset += page_size
 
         input_scene_count = len(all_scenes)
+        # Readiness comes only from validation runs of each Scene's current
+        # manifest revision; a run for a replaced revision does not count.
+        current_validations = (
+            await context.runs.scene_runs.latest_succeeded_for_current_revisions(
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                run_type=RunType.SCENE_VALIDATION,
+            )
+        )
 
         # ── filter ────────────────────────────────────────────────────────────
         selected: list[dict[str, Any]] = []
         rejected_count = 0
 
         for scene in all_scenes:
+            readiness = derive_scene_readiness(current_validations.get(scene.scene_id))
             passes, exclusion_reasons = _passes_filters(
                 scene_id=scene.scene_id,
-                status=str(scene.status),
+                readiness=readiness,
                 annotation_count=scene.annotation_count,
-                sample_count=scene.sample_count,
-                frame_count=scene.frame_count,
                 has_ground_truth=scene.has_ground_truth,
-                channels=scene.channels,
+                channels=scene.observed_channels,
                 params=params,
                 profile=profile,
             )
@@ -227,22 +235,13 @@ class MineScenariosJobHandler(
                 "scene_id": scene.scene_id,
                 "dataset_id": dataset_id,
                 "dataset_version": dataset_version,
-                "status": str(scene.status),
-                "sample_count": scene.sample_count,
-                "frame_count": scene.frame_count,
+                "keyframe_count": scene.keyframe_count,
+                "observation_count": scene.observation_count,
                 "annotation_count": scene.annotation_count,
                 "has_ground_truth": scene.has_ground_truth,
-                "ground_truth_source": scene.ground_truth_source,
-                "channels": scene.channels,
-                "selectable_for_detection": scene.has_ground_truth
-                and scene.annotation_count > 0,
-                "validation_status": (
-                    "ready"
-                    if str(scene.status) in ("validated", "profiled")
-                    else "blocked"
-                    if str(scene.status) == "failed"
-                    else "unknown"
-                ),
+                "channels": scene.observed_channels,
+                "selectable_for_detection": scene.has_ground_truth,
+                "validation_status": readiness.value,
                 "exclusion_reasons": exclusion_reasons,
             }
 

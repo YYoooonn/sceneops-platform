@@ -16,7 +16,7 @@ from sceneops_core.observations.schemas.raw_logs import (
     RawLogManifest,
 )
 from sceneops_core.observations.schemas.enums import RawLogSourceFormat
-from sceneops_core.scenes.schemas.segments import SceneSegmentIndex
+from sceneops_core.scenes.legacy import SceneSegmentIndex
 from sceneops_storage.backends.local import LocalArtifactStore
 from sceneops_worker.observations.artifacts import ObservationArtifactStore
 

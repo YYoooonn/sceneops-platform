@@ -11,7 +11,6 @@ import pytest
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.episodes.schemas.enums import EpisodeStatus
-from sceneops_core.scenes.schemas.enums import SceneStatus
 
 
 def test_episode_status_is_registration_lifecycle_only():
@@ -21,21 +20,15 @@ def test_episode_status_is_registration_lifecycle_only():
     assert {member.value for member in EpisodeStatus} == {"created", "registered"}
 
 
-def test_scene_status_keeps_build_validate_profile_lifecycle():
-    """Unlike Episode, Scene's architecture does fold validation/profile
-    outcomes into status (validate_scene.py/profile_scene.py write these).
-    VALIDATING/PROFILING (superseded by RunStatus.RUNNING on the
-    corresponding run record) and DEPRECATED (no write path) were removed.
-    BUILT is intentionally NOT renamed to REGISTERED — see the Stabilization
-    Request 5 decision register; this is a documented naming asymmetry with
-    Episode, not a bug."""
-    assert {member.value for member in SceneStatus} == {
-        "created",
-        "built",
-        "validated",
-        "profiled",
-        "failed",
-    }
+def test_scene_record_has_no_status():
+    """Record existence is registration; quality lives in run records that
+    pin the revision they assessed (ADR-007 §13.4, I-16). Neither a status
+    enum nor a status field may come back."""
+    import sceneops_core.scenes.schemas.enums as scene_enums
+    from sceneops_core.scenes.schemas import SceneRecord
+
+    assert not hasattr(scene_enums, "SceneStatus")
+    assert "status" not in SceneRecord.model_fields
 
 
 def test_paths_module_was_removed():

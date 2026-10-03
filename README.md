@@ -190,11 +190,8 @@ Pipeline
 
 #### Implemented pipelines
 
-`dataset_scene_ingestion`
-  ingest_scenes → register_scene → validate_scene → profile_scene → build_scene_index → build_dataset_manifest
-
-`raw_log_scene_building`
-  build_scenes → register_scene → validate_scene → profile_scene → build_scene_index → build_dataset_manifest
+`dataset_scene_ingestion` / `raw_log_scene_building` (experimental, legacy Scene producers)
+  ingest_scenes / build_scenes — emit pre-canonical scene manifests that are never registered as Scenes (see [Scene domain](docs/architecture/scene-domain.md))
 
 `detection_evaluation`
   predict_detection → evaluate_detection
@@ -205,9 +202,7 @@ Pipeline
 `raw_log_episode_building` (v2)
   build_episodes → register_episode → validate_episode → profile_episode
 
-`scene_registration`
-  register_scene → validate_scene → profile_scene
-  (same tail as the two pipelines above, without a build/ingest head — for scenes a generated/reconstructed/simulated process already produced a manifest for)
+Canonical Scenes are registered by the standalone `register_scenes` job (the only writer of Scene membership) from published canonical SceneManifest artifacts, then assessed by `validate_scene` / `profile_scene`; see [Scene domain](docs/architecture/scene-domain.md).
 
 #### Standalone robot jobs (v2)
 
@@ -270,6 +265,11 @@ ScenarioSet lineage is recorded in both inference and evaluation run metadata.
 > A ScenarioSet is not a new raw data unit. It is a curated selection artifact over existing SceneRecords.
 
 ### Quickstart
+
+> The Scene E2E flows below assume registered Scenes. The current Scene
+> producers emit only legacy (non-registrable) manifests, so these flows do
+> not complete until a producer publishes canonical SceneManifests — see
+> [Reserved architecture and current limitations](docs/architecture/reserved-and-limitations.md) §2.
 
 ```bash
 make e2e-scene                    # dataset_scene_ingestion pipeline (10 nuScenes GT scenes)
@@ -803,7 +803,7 @@ sceneops-platform/
 
 ## Limitations and roadmap
 
-See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved-and-limitations.md) for the full, code-verified list, including intentionally reserved architecture (unimplemented-but-retained JobTypes, `WORLD_STATE`, `JOB_STEP_DEFINITIONS_BY_TYPE`) that looks unwired but isn't dead code.
+See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved-and-limitations.md) for the full, code-verified list, including intentionally reserved architecture (unimplemented-but-retained JobTypes, `JOB_STEP_DEFINITIONS_BY_TYPE`) that looks unwired but isn't dead code.
 
 ### Current limitations
 

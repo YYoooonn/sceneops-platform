@@ -33,20 +33,14 @@ def _model(**overrides) -> DatasetVersionModel:
         status="registered",
         manifest_uri=None,
         scene_count=0,
-        sample_count=0,
-        frame_count=0,
+        keyframe_count=0,
+        observation_count=0,
         episode_count=0,
-        channels=[],
+        observed_channels=[],
         required_channels=[],
         source_dataset_id=None,
         source_dataset_version=None,
         raw_source_root_uri=None,
-        latest_validation_run_id=None,
-        validation_status=None,
-        should_block_pipeline=None,
-        validation_report_uri=None,
-        latest_profile_run_id=None,
-        profile_report_uri=None,
         created_at=_NOW,
         updated_at=_NOW,
         metadata_={},
@@ -59,22 +53,15 @@ class TestSceneOnly:
     def test_scene_populated_episode_none(self) -> None:
         record = dataset_version_model_to_record(
             _model(
-                scene_count=5, sample_count=10, frame_count=20, channels=["CAM_FRONT"]
+                scene_count=5,
+                keyframe_count=10,
+                observation_count=20,
+                observed_channels=["CAM_FRONT"],
             )
         )
         assert record.scene is not None
         assert record.scene.scene_count == 5
-        assert record.scene.channels == ["CAM_FRONT"]
-        assert record.episode is None
-
-    def test_scene_populated_via_quality_cache_alone(self) -> None:
-        """Counts can be zero (e.g. validate_scene ran before any scenes were
-        counted) — a quality-cache field alone must still count as scene
-        activity, not just the count fields."""
-        record = dataset_version_model_to_record(
-            _model(latest_validation_run_id="run-1")
-        )
-        assert record.scene is not None
+        assert record.scene.observed_channels == ["CAM_FRONT"]
         assert record.episode is None
 
 
@@ -125,20 +112,14 @@ class TestRoundTrip:
             status="registered",
             manifest_uri="s3://bucket/manifest.json",
             scene_count=5,
-            sample_count=10,
-            frame_count=20,
-            channels=["CAM_FRONT"],
+            keyframe_count=10,
+            observation_count=20,
+            observed_channels=["CAM_FRONT"],
             required_channels=["CAM_FRONT"],
             episode_count=3,
             source_dataset_id="src-d",
             source_dataset_version="src-v1",
             raw_source_root_uri="/data/raw/x",
-            latest_validation_run_id="run-val-1",
-            validation_status="ready",
-            should_block_pipeline=False,
-            validation_report_uri="s3://bucket/val.json",
-            latest_profile_run_id="run-prof-1",
-            profile_report_uri="s3://bucket/prof.json",
         )
         record = dataset_version_model_to_record(model)
         values = dataset_version_record_to_values(record)
@@ -149,19 +130,13 @@ class TestRoundTrip:
             "status",
             "manifest_uri",
             "scene_count",
-            "sample_count",
-            "frame_count",
-            "channels",
+            "keyframe_count",
+            "observation_count",
+            "observed_channels",
             "required_channels",
             "episode_count",
             "source_dataset_id",
             "source_dataset_version",
             "raw_source_root_uri",
-            "latest_validation_run_id",
-            "should_block_pipeline",
-            "validation_report_uri",
-            "latest_profile_run_id",
-            "profile_report_uri",
         ):
             assert values[field] == getattr(model, field), field
-        assert values["validation_status"] == model.validation_status

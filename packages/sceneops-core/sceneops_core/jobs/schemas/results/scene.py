@@ -8,8 +8,10 @@ from .base import BaseJobResult
 
 
 class IngestScenesJobResult(BaseJobResult):
+    """LEGACY producer output: pre-canonical scene manifests."""
+
     scene_ids: list[str] = Field(default_factory=list)
-    scene_manifest_uris: list[str] = Field(default_factory=list)
+    legacy_scene_manifest_uris: list[str] = Field(default_factory=list)
 
     scene_count: int = 0
     sample_count: int = 0
@@ -21,17 +23,18 @@ class IngestScenesJobResult(BaseJobResult):
 
 
 class BuildScenesJobResult(BaseJobResult):
+    """LEGACY producer output: pre-canonical scene manifests."""
+
     raw_log_id: str | None = None
 
     scene_ids: list[str] = Field(default_factory=list)
-    scene_manifest_uris: list[str] = Field(default_factory=list)
+    legacy_scene_manifest_uris: list[str] = Field(default_factory=list)
 
     scene_count: int = 0
     sample_count: int = 0
     frame_count: int = 0
 
     scene_segment_index_uri: str | None = None
-    world_state_uris: list[str] = Field(default_factory=list)
 
     # Raw-log provenance
     raw_log_manifest_uri: str | None = None
@@ -63,8 +66,8 @@ class BuildDatasetManifestJobResult(BaseJobResult):
     dataset_manifest_uri: str
 
     scene_count: int = 0
-    sample_count: int = 0
-    frame_count: int = 0
+    keyframe_count: int = 0
+    observation_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -84,13 +87,11 @@ class ValidateSceneJobResult(BaseJobResult):
 
 class ProfileSceneJobResult(BaseJobResult):
     scene_count: int = 0
-    sample_count: int = 0
-    frame_count: int = 0
+    keyframe_count: int = 0
+    observation_count: int = 0
     annotation_count: int = 0
 
     observed_channels: list[str] = Field(default_factory=list)
-    asset_summary: JsonDict = Field(default_factory=dict)
-    world_state_summary: JsonDict = Field(default_factory=dict)
 
     profile_run_id: str | None = None
     report_uri: str | None = None
@@ -98,17 +99,26 @@ class ProfileSceneJobResult(BaseJobResult):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class RegisterSceneJobResult(BaseJobResult):
-    # Singular (backward-compatible)
-    scene_id: str | None = None
-    scene_manifest_uri: str | None = None
+class RegisterScenesJobResult(BaseJobResult):
+    """``scene_ids`` / ``manifest_artifact_ids`` are the canonical members
+    of the registered scope after commit, each at its current revision: the
+    input units for an external registration, the whole recording scope for
+    a recording one (which, when its fingerprint is unchanged, is the
+    already-registered set). ``removed_scene_ids`` are records of a replaced
+    recording scope that the new set no longer contains."""
 
-    # Bulk
+    dataset_id: str
+    dataset_version: str
+
     scene_ids: list[str] = Field(default_factory=list)
-    scene_manifest_uris: list[str] = Field(default_factory=list)
-    registered_scene_count: int = 0
+    manifest_artifact_ids: list[str] = Field(default_factory=list)
 
-    registered: bool = True
+    created_scene_ids: list[str] = Field(default_factory=list)
+    replaced_scene_ids: list[str] = Field(default_factory=list)
+    unchanged_scene_ids: list[str] = Field(default_factory=list)
+    removed_scene_ids: list[str] = Field(default_factory=list)
+
+    registered_scene_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -119,10 +129,9 @@ class BuildSceneIndexJobResult(BaseJobResult):
 
     scene_index_uri: str
 
-    scene_manifest_uris: list[str] = Field(default_factory=list)
     scene_count: int = 0
-    sample_count: int = 0
-    frame_count: int = 0
+    keyframe_count: int = 0
+    observation_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 

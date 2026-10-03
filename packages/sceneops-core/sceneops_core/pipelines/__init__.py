@@ -4,7 +4,6 @@ from sceneops_core.pipelines.builtin import (
     DETECTION_EVALUATION_PIPELINE,
     RAW_LOG_SCENE_BUILDING_PIPELINE,
     SCENARIO_CURATION_PIPELINE,
-    SCENE_REGISTRATION_PIPELINE,
     get_pipeline_definition,
 )
 from sceneops_core.pipelines.contracts import PipelineDispatcher, PipelineExecutor
@@ -17,7 +16,6 @@ __all__ = [
     "BUILTIN_PIPELINE_DEFINITIONS",
     "DATASET_SCENE_INGESTION_PIPELINE",
     "RAW_LOG_SCENE_BUILDING_PIPELINE",
-    "SCENE_REGISTRATION_PIPELINE",
     "SCENARIO_CURATION_PIPELINE",
     "DETECTION_EVALUATION_PIPELINE",
     "get_pipeline_definition",

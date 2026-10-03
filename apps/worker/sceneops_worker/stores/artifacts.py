@@ -49,6 +49,9 @@ class ArtifactRecordStore:
     async def get(self, artifact_id: str) -> ArtifactRecord | None:
         return await self._repo.get(artifact_id)
 
+    async def get_many(self, artifact_ids: list[str]) -> dict[str, ArtifactRecord]:
+        return await self._repo.get_many(artifact_ids)
+
     async def list(
         self,
         *,

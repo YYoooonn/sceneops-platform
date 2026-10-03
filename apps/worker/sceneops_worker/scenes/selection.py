@@ -7,6 +7,7 @@ from sceneops_core.jobs.schemas.params import (
     DetectionSceneSelectionMode,
 )
 from sceneops_worker.scenes import SceneArtifactStore
+from sceneops_worker.scenes.keyframes import annotation_source, load_pinned_scene
 
 
 async def select_detection_scenes(
@@ -52,23 +53,12 @@ async def select_detection_scenes(
             )
             continue
 
-        scene_manifest = await scene_artifact_store.load_scene_manifest(
-            scene_entry.scene_manifest_uri
-        )
-        if scene_manifest is None:
-            skipped_scenes.append(
-                {
-                    "scene_id": scene_id,
-                    "reason": "scene_manifest_not_found",
-                }
-            )
-            continue
-
+        scene_manifest = await load_pinned_scene(scene_artifact_store, scene_entry)
         inspected_scene_count += 1
 
-        annotation_count = int(scene_manifest.annotation_count or 0)
-        sample_count = int(scene_manifest.sample_count or len(scene_manifest.samples))
-        has_ground_truth = bool(scene_manifest.has_ground_truth) or annotation_count > 0
+        annotation_count = len(scene_manifest.annotations)
+        sample_count = len(scene_manifest.keyframes())
+        has_ground_truth = annotation_count > 0
 
         if selection.mode == DetectionSceneSelectionMode.GROUND_TRUTH_ONLY:
             min_annotation_count = int(selection.min_annotation_count or 1)
@@ -86,7 +76,7 @@ async def select_detection_scenes(
                 continue
 
             if selection.ground_truth_sources:
-                ground_truth_source = scene_manifest.ground_truth_source
+                ground_truth_source = annotation_source(scene_manifest)
                 if ground_truth_source not in selection.ground_truth_sources:
                     skipped_scenes.append(
                         {
@@ -101,7 +91,7 @@ async def select_detection_scenes(
                     )
                     continue
 
-        selected_scene_ids.append(scene_manifest.scene_id)
+        selected_scene_ids.append(scene_id)
         selected_annotation_count += annotation_count
         selected_sample_count += sample_count
 

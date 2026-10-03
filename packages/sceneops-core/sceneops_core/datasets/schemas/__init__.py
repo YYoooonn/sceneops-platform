@@ -16,7 +16,6 @@ from .requests import (
     GetDatasetVersionRequest,
     RegisterDatasetManifestRequest,
 )
-from .validation import DatasetValidationStatus
 
 __all__ = [
     "DatasetType",
@@ -30,7 +29,6 @@ __all__ = [
     "EpisodeVersionSummary",
     "DatasetSceneIndexEntry",
     "DatasetManifest",
-    "DatasetValidationStatus",
     "ExternalDatasetRef",
     "CreateDatasetRequest",
     "CreateDatasetVersionRequest",
