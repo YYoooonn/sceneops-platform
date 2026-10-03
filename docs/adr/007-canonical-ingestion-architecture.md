@@ -84,6 +84,29 @@ HEAD       d378bda feat(core): freeze canonical source and provenance contracts
 date       2026-10-03
 ```
 
+**Amendment A4 — acquisition-first architecture.** Accepted. A4 changes the
+platform ingress. Raw acquisition becomes the only ingress for acquired
+sensor and robot-state data: an immutable recording, registered as a RobotRun. Streaming and batch
+acquisition both converge on it. Scenes and Episodes are produced only by
+batch canonicalization of registered recordings. External datasets are no
+longer canonical sources. They become acquisition test data, produced by a
+standalone tool outside the platform. A4 supersedes the *external* half of
+the `{external, recording} × {Scene, Episode}` taxonomy (§2, §5, §6.1, §6.6,
+§6.7, §13.9 external part, §17.1, §17.2, §18.2, §20.3–§20.7, §27.4, §27.6,
+§28) and replaces implementation steps 6–11 (§24). It freezes the L1
+raw-recording contract, and adds §29 and invariants I-31–I-37. It changes no
+decision about any of these: recording publication, RobotRun registration,
+the verified resolver, the identity of recording-derived units, the producer
+fingerprint, Scene/Episode separation, registrar ownership, replacement, or
+the canonical/derived boundary. Superseded text is kept and marked in place,
+and §29.17 lists every affected section. Audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       1406cb2 fix(db): add missing robot_states.robot_run_id index
+date       2026-10-04
+```
+
 Relationship to earlier ADRs:
 
 - [ADR-001](./001-postgresql-operational-metadata.md),
@@ -92,6 +115,9 @@ Relationship to earlier ADRs:
   their PostgreSQL / Object Storage / Parquet responsibility split to ingestion.
 - [ADR-005](./005-ros2-vs-kafka-boundary.md): unchanged. This ADR defines what
   happens *after* the ROS2 → Kafka → capture boundary that ADR-005 owns.
+- [ADR-003](./003-batch-first-architecture.md): unchanged and applied by A4.
+  Streaming is an acquisition mode only. Canonicalization is always a
+  batch job over a registered recording (§29.4).
 
 When this ADR is implemented, the active documents in `docs/architecture/`
 (`data-model.md`, `scene-domain.md`, `episode-domain.md`,
@@ -242,6 +268,11 @@ schemas.
 ---
 
 ## 2. Decision
+
+> **Amended by A4 (§29.2).** The `external` source kind, the two
+> `EXTERNAL_*` pipelines and decision 14 are superseded. Every Scene and
+> Episode is produced from a registered RobotRun recording, and external
+> datasets enter only as acquisition test data. Decisions 1–13 stand.
 
 SceneOps has exactly two canonical dataset units:
 
@@ -439,6 +470,10 @@ outputs are reproducible from canonical manifests and their artifacts
 
 ## 5. Manifest vs Record vs Artifact ownership
 
+> **Amended by A4.** The rows marked "(external)" and "imported from external
+> datasets" are superseded (§29.2). Recording-derived payloads are written by
+> the recording builder job, which also registers their ArtifactRecords.
+
 | Concept | Bytes written by | ArtifactRecord registered by | Record written by |
 |---|---|---|---|
 | Recording (MCAP) | Recording Publisher | `REGISTER_ROBOT_RUN` registrar | — |
@@ -469,6 +504,10 @@ them (§17).
 ## 6. Diagrams
 
 ### 6.1 External dataset → canonical record
+
+> **Superseded by A4 (§29.4, §29.13).** External datasets no longer map to
+> canonical manifests. They become recordings outside the platform and enter
+> through §6.2.
 
 ```text
 ExternalDatasetRef (format, format_version, uri, external_revision, checksum?)
@@ -607,6 +646,10 @@ NOT members / NOT owned:
 
 ### 6.6 Four ingestion pipelines
 
+> **Superseded by A4 (§29.2).** Only the two `RECORDING_*` pipelines and the
+> standalone `REGISTER_ROBOT_RUN` remain. The `EXTERNAL_*` pipelines are not
+> introduced.
+
 ```text
 EXTERNAL_SCENE_INGESTION      ExternalDatasetRef ─▶ INGEST_EXTERNAL_SCENES ─▶ REGISTER_SCENES
 EXTERNAL_EPISODE_INGESTION    ExternalDatasetRef ─▶ INGEST_EXTERNAL_EPISODES ─▶ REGISTER_EPISODES
@@ -621,6 +664,13 @@ Prerequisite (standalone job, not a pipeline task of the above):
 ```
 
 ### 6.7 Canonical convergence
+
+> **Superseded by A4 (§29.4).** Convergence now happens one layer earlier,
+> at the RobotRun: streaming and batch acquisition both produce a registered
+> recording, and one builder per domain turns it into canonical manifests.
+> The principle below still holds, with only the right-hand column: one
+> manifest contract per domain, and downstream code never sees source-format
+> identity.
 
 Each domain has exactly one canonical manifest contract, and both source
 kinds converge on it before registration:
@@ -1418,6 +1468,11 @@ channel, never by a hard-coded vocabulary of one format.
 
 ### 13.9 Source payload ownership (v1)
 
+> **Amended by A4.** The external-ingestion half of this section is
+> superseded: no canonical external ingestion exists (§29.2). The
+> recording-source rule and §27.5 stand: canonical payloads are
+> SceneOps-owned artifacts extracted from the registered recording.
+
 For canonical external ingestion, SceneOps v1 materializes the source
 payloads a canonical unit requires into SceneOps-controlled artifact storage.
 Canonical data must not depend on the continued presence of an external
@@ -1573,6 +1628,10 @@ observed rate, and alignment is already the derived `ALIGN_EPISODE`.
 ## 14. Provenance model
 
 ### 14.1 Building blocks (`sceneops-core`, TARGET)
+
+> **Amended by A4 (§29.9).** `ExternalUnitSource` and its external source
+> revision are removed from canonical provenance. `RecordingSegmentSource`
+> and `ProducerInfo` stand unchanged.
 
 Frozen by A2 (§27.2, §27.7) and implemented in `sceneops_core.provenance`:
 
@@ -1752,6 +1811,10 @@ both source kinds.
 
 ### 17.1 `EXTERNAL_SCENE_INGESTION`
 
+> **Superseded by A4 (§29.2).** Not introduced. A nuScenes scene reaches
+> SceneOps as a recording (§29.13) and is built by
+> `RECORDING_SCENE_BUILDING`.
+
 ```text
 input     dataset_id, dataset_version, ExternalDatasetRef, ingest config, replace?
 tasks     INGEST_EXTERNAL_SCENES → REGISTER_SCENES [→ VALIDATE_SCENE, PROFILE_SCENE]
@@ -1767,6 +1830,11 @@ ArtifactRecords, computes the fingerprint, and hands manifest artifact ids
 to the registrar.
 
 ### 17.2 `EXTERNAL_EPISODE_INGESTION`
+
+> **Superseded by A4 (§29.2).** Not introduced. An external Episode dataset
+> used as test data becomes one recording per source episode (§29.13) and is
+> built by `RECORDING_EPISODE_BUILDING`. The LeRobot EXPORT is an L3
+> interoperability workflow and is unaffected.
 
 ```text
 input     dataset_id, dataset_version, ExternalDatasetRef, ingest config, replace?
@@ -1873,6 +1941,10 @@ across replacements when the unit key is unchanged. (CURRENT: Scene ids are
 already DatasetVersion-scoped, per commit 0e797a7.)
 
 ### 18.2 External units
+
+> **Superseded by A4 (§29.9).** External units do not exist. Recording-derived
+> identity (§18.1, second line) and recording-scope replacement (§18.3) are
+> the only identity rules.
 
 Scope: `(DatasetVersion, domain, external_format, source_unit_key)`, i.e. a
 single unit.
@@ -2008,6 +2080,14 @@ configuration**. None moves to DatasetVersion or canonical identity.
 
 ### 20.3 External formats are integrations, not domain types
 
+> **Superseded by A4 (§29.13) for ingestion, §20.3–§20.7.** A new external
+> dataset format adds an *adapter in the external acquisition tool*, which
+> emits a recording. It no longer adds a SceneOps integration that maps onto
+> canonical manifests, and it adds nothing to SceneOps core. §20.4's open
+> format identifiers and §20.5's integration boundary remain only for
+> interoperability runtimes (the LeRobot EXPORT). §20.1, §20.6 and the
+> "no universal adapter" rule stand.
+
 > **External formats are integration implementations, not SceneOps core
 > domain types.**
 
@@ -2137,6 +2217,9 @@ never on source-format identity.
 ---
 
 ## 21. Explicit invariants
+
+> **Amended by A4 (§29.18).** I-25 is superseded. I-28 and I-30 are narrowed.
+> I-31–I-37 are added.
 
 ```text
 I-1   Every SceneRecord / EpisodeRecord references exactly one manifest ArtifactRecord
@@ -2356,6 +2439,10 @@ reported. It is not preserved.
 ---
 
 ## 24. Implementation sequence
+
+> **Amended by A4 (§29.19).** Steps 0–5 are complete. Steps 6–11 below are
+> superseded by the acquisition-first sequence in §29.19, and are kept as
+> the historical plan.
 
 Each step ends with focused unit tests, the relevant real-infrastructure
 tests (PostgreSQL, MinIO, and Kafka/ROS2 where touched), and replacement of
@@ -2737,6 +2824,12 @@ epoch-based would require `RobotRunManifest` v2.
 
 ### 27.4 Channel boundary and the nuScenes v1 Scene boundary
 
+> **Amended by A4.** The channel-boundary rule stands. The "nuScenes (v1
+> interpretation)" paragraph is superseded. nuScenes is no longer a
+> canonical source, so its keyframe/sweep boundary is the external tool's
+> concern: the tool records every sweep it converts (§29.13). Annotations
+> and keyframe groupings are open question Q1 (§29.15).
+
 A2 confirms §13.5–§13.6 as a frozen rule:
 
 ```text
@@ -2793,6 +2886,12 @@ extraction; steps 5 and 7 define and implement the Scene payload
 representation, and step 8 the Episode one.
 
 ### 27.6 External format identifiers and integration resolution
+
+> **Amended by A4 (§29.9).** The identifier rule stands for `source_clock`,
+> `producer_id`, and integration-runtime format names. External format
+> identifiers no longer enter canonical identity, records or fingerprints.
+> `(domain, format) → INGEST runtime` resolution is superseded. Resolution
+> remains only for interoperability (EXPORT) runtimes.
 
 **Identifier rule.** External format identifiers are open, stable strings:
 
@@ -2920,6 +3019,11 @@ migrate `SceneRecord` / `EpisodeRecord`; steps 5 and 8 do.
 
 ## 28. Amendment A3: locator-free canonical source provenance (step 5)
 
+> **Made moot by A4 (§29.9).** `ExternalUnitSource` is removed, so no
+> canonical provenance block can carry a locator or display name. I-30's
+> rule still holds and now holds structurally: `RecordingSegmentSource`
+> carries none. `ExternalDatasetRef` remains an integration-side locator only.
+
 **Problem.** `ExternalDatasetRef.uri` and `external_name` were excluded from
 unit identity (§18.1) and from the producer fingerprint (§15.2), but A2's
 `ExternalUnitSource` embedded the whole `ExternalDatasetRef`. Every canonical
@@ -2961,3 +3065,988 @@ what name an integration read the source; that is execution history, which
 belongs to the integration run and its job lineage, not to the canonical
 unit. No canonical external manifest had been registered before A3, so no
 stored manifest or record needs migration.
+
+---
+
+## 29. Amendment A4: acquisition-first architecture
+
+### 29.1 Context
+
+SceneOps is a **robot data platform**. In production, source data comes
+from real-world acquisition. Converting existing external datasets is not
+the primary flow:
+
+```text
+real-world acquisition → raw durable recording → RobotRun
+    → batch canonicalization → Scene / Episode
+    → validation · profiling · curation · inference · evaluation
+```
+
+ADR-007 as amended through A3 also froze a second canonical ingress:
+`external dataset → integration → SceneManifest / EpisodeManifest`. A4
+removes it.
+
+**Audit (CURRENT IMPLEMENTATION, HEAD 1406cb2).**
+
+```text
+Acquisition (L0 → L1)
+  ros2/nodes/can_replay_node.py     nuScenes CAN → 5 ROS2 telemetry topics; source time in
+                                    header.stamp or a JSON field; /mission/status is synthetic
+                                    and carries replay wall-clock time
+  ros2/nodes/streaming_bridge_node  ROS2 → TelemetryEnvelope → Kafka (key = robot_run_id)
+  ros2/capture/                     Kafka → per-run sequence check (exact redelivery dropped,
+                                    conflict/gap fails) → rosbag2 MCAP, .partial → fsync → rename
+                                    log_time = source_timestamp_ns · publish_time = ingest time
+                                    (log_time conflicts with §29.5 R4)
+                                    payload bytes passed through unchanged
+                                    static channel registry: 5 telemetry topics; no camera,
+                                    lidar, tf or CameraInfo
+  sceneops_integrations.recording   DB-free Recording Publisher: MCAP facts (one channel
+                                    definition per topic), write-once upload, RobotRunManifest
+                                    last; invoked by CLI, no automatic capture → publish hand-off
+  REGISTER_ROBOT_RUN                verify + project → immutable RobotRunRecord
+  batch path                        the publisher accepts any finalized local MCAP
+                                    (capture.source.kind = file | ros2_bag | kafka); nothing
+                                    produces a sensor-bearing MCAP
+
+Canonicalization (L1 → L2)
+  Scene    SceneManifest v1 + REGISTER_SCENES (step 5) accept ExternalUnitSource |
+           RecordingSegmentSource. No producer emits a canonical SceneManifest:
+           INGEST_SCENES (nuScenes integration, mode=scene_manifest) and BUILD_SCENES
+           (raw log, default NUSCENES_RAW_LOG_MOCK) emit LEGACY_SCENE_MANIFEST only.
+           No OBSERVATION_PAYLOAD producer exists. No Scene is registered.
+  Episode  BUILD_EPISODES consumes resolve_recording(robot_run_id), decodes the MCAP with
+           RosbagAdapter (topic defaults; steering/throttle/brake hard-wired), and emits
+           the legacy EpisodeManifest.
+
+Derived (L2 → L3)
+  detection       keyframe groups → samples (scenes/keyframes.py); ground truth only from
+                  nuScenes annotations
+  robot states    INGEST_ROBOT_STATES / missions: telemetry projections of the resolved recording
+  interop         LeRobot EXPORT (isolated runtime); no INGEST path
+```
+
+Findings:
+
+1. Steps 1–3 already made the recording the platform's only *verified*
+   ingress. A RobotRun exists only if its recording was published and
+   verified, and Episodes are already built only from it.
+2. The external Scene path has never registered output. Every
+   external-specific element of steps 4 and 5 is a contract with no
+   producer (§29.9).
+3. `can_replay_node.py` is already an external-dataset → streaming
+   acquisition simulator. A4 generalizes that role and does not invent it.
+4. `RosbagAdapter` maps ROS topics onto nuScenes channel names
+   (`/camera/front/image → CAM_FRONT`). That is the recording path imitating
+   one external format's vocabulary, which §13.8 forbids.
+5. `/mission/status` carries replay wall-clock time, so two acquisitions of
+   the same source produce different recordings (§29.12).
+6. Capture writes the envelope's source timestamp into MCAP `log_time`.
+   §29.5 reserves `log_time` for the recorder's receive time. The source
+   timestamp is still preserved in every v1 payload (`Header.stamp` or the
+   JSON `source_timestamp_ns` field), so the fix loses no information
+   (§29.20).
+
+**Why direct external → canonical ingestion is superseded.**
+
+- *It tests a path production never uses.* The production path, recording
+  → Scene, had no sensor-bearing input at all. Converting external datasets
+  into recordings makes them exercise exactly the production path.
+- *Two producers per domain means two mappings to keep equivalent.* Every
+  external format needed its own mapping onto SceneManifest/EpisodeManifest
+  and its own canonical rules: external unit boundaries (§27.4), per-unit
+  replacement (§18.2), external identity, locator handling (§28). The
+  recording builder must exist anyway. One builder per domain gives one
+  place where canonical semantics are decided.
+- *Format knowledge leaks into core.* External format identifiers entered
+  unit identity, record projections and fingerprints (§13.3, §18.1, §27.6).
+  With A4 the core holds no external format identifier in any canonical
+  structure.
+- *Source independence becomes structural.* §20.1 asked downstream code not
+  to branch on source format. With one source kind, there is nothing to
+  branch on.
+
+Costs are in §29.22.
+
+### 29.2 Decision
+
+```text
+1. Raw acquisition / RobotRun is the primary — and only — platform ingress for
+   acquired sensor and robot-state data. Lineage roots that are not acquired,
+   such as labels, are outside this statement (§29.3, §29.15).
+2. Streaming and batch acquisition converge on the same immutable L1 recording
+   + RobotRun contract (§29.4, §29.5).
+3. Scene and Episode are produced only from registered raw recordings, through
+   batch canonicalization (RECORDING_SCENE_BUILDING, RECORDING_EPISODE_BUILDING).
+4. External datasets primarily serve acquisition simulation and testing.
+5. External dataset adapters are not canonical Scene/Episode producers. They
+   live in a standalone tool that emits ROS2 messages or a local MCAP, and
+   nothing else (§29.13).
+6. Source format may be retained as acquisition-origin information for
+   inspection and debugging (§29.8). It is never a processing boundary.
+7. Canonicalization is source-format independent at the platform level. Its
+   behavior is a function of recording content, producer semantics and build
+   configuration only (I-32).
+8. Synchronization, sampling, association and fusion remain derived (§13.6,
+   unchanged).
+9. MCAP (ROS 2 profile) is the concrete L1 recording format for v1 (§29.6).
+10. RobotRun is L1 acquisition provenance. It is never DatasetVersion membership
+    and never a domain unit (§29.7, unchanged from §10).
+```
+
+Pipeline taxonomy after A4:
+
+```text
+REGISTER_ROBOT_RUN            (standalone)  L1 ingress, both acquisition modes
+RECORDING_SCENE_BUILDING      robot_run_id ─▶ BUILD_RECORDING_SCENES   ─▶ REGISTER_SCENES
+RECORDING_EPISODE_BUILDING    robot_run_id ─▶ BUILD_RECORDING_EPISODES ─▶ REGISTER_EPISODES
+```
+
+### 29.3 Data layers
+
+```text
+L0  Live transport            ROS2 topics · Kafka (TelemetryEnvelope) · sensor streams
+                              transient; bounded replay only (ADR-005); never canonical
+
+L1  Immutable raw acquisition recording (MCAP, write-once artifact) + RobotRunManifest
+                              + RobotRunRecord
+                              source-faithful and lossless; holds no domain decision;
+                              the earliest durable layer and the root of acquired
+                              sensor / robot-state lineage
+
+L2  Canonical domain data     SceneManifest / SceneRecord · EpisodeManifest / EpisodeRecord
+                              · OBSERVATION_PAYLOAD artifacts · DatasetVersion membership
+
+L3  Derived workflow data     keyframe / sample views · AlignedEpisode · ScenarioSet
+                              · inference · evaluation · learning exports · LeRobot export
+                              · dataset index · telemetry projections (robot_states, missions)
+```
+
+Transitions:
+
+```text
+L0 → L1   streaming acquisition: capture → finalize → publish → REGISTER_ROBOT_RUN
+(none → L1) batch acquisition: complete recording → publish → REGISTER_ROBOT_RUN
+L1 → L2   batch canonicalization: resolve_recording → recording builder → registrar
+L2 → L3   derived workflows, pinned to manifest revisions (§18.5)
+L1 → L3   telemetry projections read the resolved recording directly; they are
+          derived and never canonical
+```
+
+No layer writes into an earlier one. Acquired content in L2 and L3 can be
+regenerated from L1. L1 cannot be regenerated from L0, so it is the
+durability-critical layer for acquired data.
+
+L1 is the root of *acquired* sensor and robot-state lineage, not the only
+possible lineage root. Canonical units may later gain further roots that are
+not acquisition: human labels, pseudo labels, external ground-truth imports
+and other derived annotations. Their architecture is open (Q1, §29.15). This
+amendment only makes sure L1 does not rule them out.
+
+Relation to §4: layers A–E are *dependency* layers and are unchanged.
+L0–L3 are *data-maturity* layers:
+
+```text
+L0 = layer A runtime (bridge, Kafka, capture)
+L1 = RobotRunManifest (B) + recording (C) + RobotRunRecord (D)
+L2 = Scene/Episode manifests (B) + payloads (C) + records and membership (D)
+L3 = layer E
+```
+
+The external acquisition tool sits outside all layers (§29.13).
+
+### 29.4 Acquisition modes
+
+**Streaming acquisition.** It reliably captures continuously produced data
+and is not required to build Scenes or Episodes.
+
+```text
+robot / sensors (or tool replay, §29.13)
+  → ROS2 topics → streaming_bridge_node → Kafka (key = robot_run_id)
+  → capture (CaptureSession, sequence integrity, .partial → finalize)
+  → finalized local MCAP → Recording Publisher → MCAP + RobotRunManifest
+  → REGISTER_ROBOT_RUN → RobotRunRecord
+```
+
+**Batch acquisition.** A complete recording exists before SceneOps sees it.
+It skips live transport and capture, and joins the same boundary:
+
+```text
+complete L1-conformant recording (§29.5)
+  → Recording Publisher (capture.source.kind = file) → MCAP + RobotRunManifest
+  → REGISTER_ROBOT_RUN → RobotRunRecord
+```
+
+The input to batch acquisition is a *recording*, not a dataset. In v1 a
+batch input is any MCAP that meets §29.5. Possible producers are the
+external acquisition tool, a robot's onboard recorder that writes the
+contract, or capture run offline. A standard rosbag2 MCAP recording already
+writes the recorder's receive time into `log_time`, as R4 requires. It
+conforms when it meets the rest of §29.5. A recording that lacks required
+channels (for example R9 calibration) is a writer or tool concern.
+
+**Convergence.** Both modes end at the same publisher, the same
+`RobotRunManifest` v1, the same `REGISTER_ROBOT_RUN` and the same
+`resolve_recording`. From RobotRun downward, recordings from a real robot, a
+replayed dataset and a batch-converted dataset take one code path.
+`capture.source.kind` records the mode for inspection only (I-32).
+
+### 29.5 L1 raw-recording contract
+
+> **An L1 recording v1 is one MCAP file (write-once artifact) plus one
+> `RobotRunManifest` v1, registered as one RobotRun.** It preserves
+> acquired messages losslessly. It holds no downstream decision.
+
+| # | Requirement | Carried by | HEAD 1406cb2 |
+|---|---|---|---|
+| R1 | Channel identity | MCAP `Channel.topic`, one channel definition per topic; `RobotRunManifest.channels[].topic` | holds (publisher rejects a topic with two definitions) |
+| R2 | Payload bytes exactly as produced; no transcoding at acquisition | MCAP `Message.data` | holds (capture passes bytes through, verified) |
+| R3 | Schema and encoding, self-describing | MCAP `Schema` (name, encoding, data) + `Channel.message_encoding`; names repeated in the manifest | holds |
+| R4 | Timing facts preserved, each with its own meaning | `Message.log_time` = recorder / capture receive time, integer ns. `Message.publish_time` = upstream publication time when the transport provides one, otherwise equal to `log_time`. **Source observation time** = the timestamp the source message or schema carries, where one exists (e.g. ROS `Header.stamp`, a declared payload field). It stays in the payload (R2), unrewritten, in whatever clock the source defines, with no epoch requirement. Acquisition never substitutes one of these times for another. A timing fact that is available only at transport level must be preserved in the recording too | publish_time holds (capture writes bridge ingest time). **Conflict:** capture writes the envelope source timestamp into `log_time` (§29.20). Source timestamps are preserved in every v1 payload |
+| R5 | Clock semantics | `capture.source_clock = "mcap_log_time"` names the **recording clock**: the clock `log_time` is written in. A live recorder writes wall-clock receive time, which is Unix-epoch based, as `started_at` / `ended_at` require (§27.3). The name `source_clock` is historical, and v1's schema is unchanged. It makes no claim about any source message's observation time | holds (publisher supports only `mcap_log_time`); meaning clarified here |
+| R6 | Ordering evidence | Capture and file order are acquisition evidence. They are preserved where the format provides them: MCAP write order, which for capture is the order consumed from the run's Kafka partition. Source or transport sequence information is preserved when available (e.g. MCAP `Message.sequence`, the envelope `sequence_number`). Canonical temporal ordering is never inferred solely from physical file order (I-34). A transport redelivery (same transport sequence and payload) is not an acquired message and is not recorded. Source-level duplicates are recorded as separate occurrences | capture preserves consumed order, drops exact redeliveries, and fails on gaps or conflicts. Envelope `sequence_number` is validated but not written to the recording (§29.20) |
+| R7 | Robot identity | `run_id`, `robot_id`, optional `robot_platform` (§8, §9) | holds |
+| R8 | Recording extent | `started_at` / `ended_at` (µs projections, §27.3); exact ns bounds derived from the bytes | holds |
+| R9 | Calibration and transforms | Ordinary channels with standard messages (e.g. `tf2_msgs/msg/TFMessage` on `/tf_static` and `/tf`, `sensor_msgs/msg/CameraInfo`). Static or latched data must be recorded at least once, at or before the first observation that depends on it | **gap**: no writer records them |
+| R10 | Robot state and telemetry | Ordinary channels | holds |
+| R11 | Events recorded at acquisition time (mission/task markers, interventions) | Ordinary channels whose source-semantic timestamps are on the source timeline. A synthetic event must not carry replay wall-clock or replay-pacing time as its source timestamp | **violated** by `/mission/status` (§29.20) |
+| R12 | Acquisition provenance | Optional, non-semantic MCAP metadata record (§29.8) | not written |
+
+**Excluded from L1.** Scene/Episode boundaries and unit keys. Channel →
+modality / sensor / frame-role mapping. Sampling, synchronization and
+association decisions. DatasetVersion references. Labels produced after
+acquisition (§29.15). Kafka partitions and offsets (§8.2, unchanged).
+
+**Encoding profile.** SceneOps-produced recordings use the MCAP ROS 2
+profile (`message_encoding = cdr`, `schema_encoding = ros2msg`), which is
+what capture already writes. L1 does not reject other encodings, because a
+recording is a lossless archive. Canonicalization supports only the
+decoders it declares. Selecting a channel whose encoding is unsupported
+fails the build loudly. It is never skipped.
+
+**Canonical observation time is a canonicalization decision.** For each
+channel, the producer's `build_config` designates which preserved timestamp
+is the canonical observation time, and declares that time's clock
+identifier (§27.3, `SceneChannel.source_clock`). The choices are a
+source-message field such as `Header.stamp`, `publish_time`, or `log_time`.
+Acquisition makes no such choice. Under A2, unchanged here, a
+`RecordingSegmentSource` window is in the RobotRun's clock, which is now
+the recording clock. Whether segmentation should instead use a
+source-semantic clock is open question Q4 (§29.21).
+
+**Batch writers.** A batch writer has no live reception, so it acts as the
+recorder. It sets `log_time` to a deterministic simulated receive time
+derived from the source (normally the source timestamp, where that is
+epoch-based), and sets `publish_time = log_time`. It never uses
+conversion-time wall clock, so its output is reproducible.
+
+**Verification.** R1–R3, R7 and R8 are checked from the bytes by the
+publisher and by registration (§7.2, §12.1). R4, R6, R9 and R11 are *writer
+obligations* that the bytes cannot fully prove. Writer tests check them against
+source data, as `ros2_streaming_verify.py` already does for capture. Every
+L1 writer (capture and the external tool) must pass one shared conformance
+suite (§29.19, step 6).
+
+**No `RobotRunManifest` change.** v1 already carries every fact the
+contract needs at the manifest level. Everything else lives in the
+recording bytes, which the manifest pins by checksum.
+
+### 29.6 MCAP's role
+
+**Decision: option A.** MCAP (ROS 2 profile) is the concrete L1 recording
+format for SceneOps v1. There is no format-independent `RawRecording`
+abstraction.
+
+- MCAP already provides what the contract needs: topic identity, embedded
+  schemas, explicit encodings, ns timestamps, metadata records and
+  attachments.
+- Capture already writes MCAP through rosbag2's MCAP storage plugin, so
+  "rosbag2" in v1 *is* MCAP. rosbag2's sqlite3 storage is not needed.
+- No second format exists or is planned. An abstraction now would be
+  designed without a second use case (architecture rule 5).
+- The extension point already exists. `RobotRunManifest.recording.format`
+  is a closed set (`{"mcap"}`) versioned by `schema_version` (§8.4, §20.4).
+  A future format adds a value and a reader. It adds no layer.
+
+Implementation hygiene, not a platform abstraction: recording builders and
+telemetry projections read through one internal reader that turns an MCAP
+into a stream of messages, each with its topic, schema, payload, and
+preserved timing and ordering facts (`log_time`, `publish_time`, `sequence`
+where present, acquisition order). Canonical manifests never depend on
+MCAP physical structure (channel ids, chunk offsets, file position). The
+timestamps they carry come from preserved timing facts, as `build_config`
+selects (§29.5). Nothing nuScenes-specific can reach canonicalization,
+because builders see only ROS messages.
+
+### 29.7 RobotRun's final role
+
+```text
+RobotRun is              the L1 acquisition and provenance unit: one acquisition,
+                         one recording, one RobotRunManifest, one immutable
+                         RobotRunRecord (§10, unchanged)
+                         the source-identity authority for every canonical unit
+                         (RecordingSegmentSource.robot_run_id)
+                         the scope of recording-derived replacement (§18.3)
+                         the input of every recording builder and telemetry projection
+
+RobotRun is not          a DatasetVersion member · a Scene · an Episode
+                         · a synchronized sample set · a model-ready representation
+                         · a lifecycle object (CaptureSession owns runtime state, §11)
+
+One RobotRun may yield   many Scenes and many Episodes, in many DatasetVersions,
+                         under different producer configurations; each
+                         (DatasetVersion, domain, robot_run_id) scope has one
+                         current producer fingerprint (§18.3)
+```
+
+### 29.8 Acquisition-origin provenance
+
+Facts like "this recording was produced from nuScenes v1.0-mini /
+scene-0061" are useful for debugging and lineage. They are never dispatch
+inputs.
+
+**Decision.** Origin information lives *inside the recording*, as an
+optional MCAP metadata record named `sceneops.acquisition_origin`. Its keys
+and values are defined by the writer, for example `tool`, `tool_version`,
+`source_format`, `source_version` and `source_unit`.
+
+- It is covered by the recording checksum, immutable, readable with
+  standard MCAP tools, and needs no schema change.
+- It is **not** a `RobotRunManifest` v1 field. §8.2 excludes free-form
+  metadata, and a typed origin field would invite dispatch. If search by
+  origin becomes a real need, a v2 may add an optional display-only origin
+  descriptor (DEFERRED).
+- It is **not** `ArtifactRecord` metadata. That record describes integrity
+  and execution, not source facts.
+- It is **not** on `SceneRecord`, `SceneManifest` or
+  `RecordingSegmentSource`. Canonical provenance is `robot_run_id` plus
+  the recording checksum, and origin is reachable through that recording.
+
+Rules: canonicalization never reads origin metadata, `capture.source.kind`
+or `robot_platform` to choose behavior (I-32). Origin metadata is not part
+of identity or the fingerprint. It is pinned only indirectly, through the
+recording checksum: different origin bytes are a different recording
+revision, as expected. It is excluded from batch/streaming equivalence
+(§29.12). A source location is never canonical identity. Run-id naming for
+test data (e.g. `nuscenes-v1-0-mini-scene-0061`) is a tool convention, and
+the platform never parses it.
+
+### 29.9 Canonical source provenance after A4
+
+**`ExternalUnitSource`: option A, removed from canonical provenance.**
+The removal is implemented in step 7 (§29.19), not here.
+
+- No canonical external manifest was ever registered, and no producer emits
+  one (§29.1). Removing it migrates no stored data.
+- Keeping it dormant (option B) would leave a canonical branch with no
+  producer and no test that exercises real data. Every consumer would carry
+  it: the registrar's per-unit rules, record CHECK constraints, identity,
+  the API filter, analytics columns and keyframe helpers. It would also be
+  a second path for one capability (§23, rule 5).
+- Option C (moving it to an interop package) is option A under another
+  name. Provenance outside the canonical manifest schema is not canonical
+  provenance.
+- If external canonical ingest is ever needed again, a new amendment
+  readmits it, with a concrete use case that acquisition cannot serve.
+
+The serialized discriminators stay: `RecordingSegmentSource.source_kind =
+"recording"`, `RecordingSourceRevision.source_kind = "recording"`, and the
+`source_kind` member of the unit-id identity document. So the bytes of
+recording-derived manifests, the `fingerprint_schema` and `unit_id_schema`
+definitions, and recording unit ids are all unchanged.
+
+**`ExternalDatasetRef`: integration-runtime locator only.** It stays in
+`sceneops-core` because `IntegrationRequest` and `IntegrationResult` use it
+for interoperability runtimes (the LeRobot EXPORT). It moves from
+`sceneops_core.datasets` to `sceneops_core.integration_runtime`, and nothing
+in provenance, identity, records or fingerprints references it.
+`ExternalSourceRevision` is deleted. The external acquisition tool does
+**not** use `ExternalDatasetRef`. It has its own input descriptor (dataset
+root, version, unit selection) and no dependency on SceneOps packages
+(§29.13). The difference:
+
+```text
+integration locator     where an integration or tool reads or writes an external
+                        dataset; execution input; never persisted as provenance
+canonical provenance    RecordingSegmentSource (robot_run_id, recording checksum,
+                        window, unit_key) + ProducerInfo
+```
+
+**Step 4/5 contracts over-generalized for the superseded external path.**
+They are identified here and removed in step 7:
+
+```text
+sceneops_core.provenance.sources    ExternalUnitSource, ExternalSourceRevision, and the
+                                    UnitSource / SourceRevision unions
+sceneops_core.provenance.identity   external branch; UnitSourceProjection.external_format
+SceneLineage.source                 union → RecordingSegmentSource
+SceneManifest.declared_window()     None branch (every Scene has a declared window)
+SceneRecord / scenes table          source_kind, external_format, nullable robot_run_id and
+                                    window columns; ck_scenes_source_projection and the
+                                    all-or-none ck_scenes_declared_window (migration
+                                    7a3d5e9c1b42)
+REGISTER_SCENES                     §18.2 per-unit external branch; mixed-source-kind check
+scenes API / analytics              external_format filter and column
+scenes/keyframes.annotation_source  external branch
+sceneops_core.scenes.testing        external_source fixture defaulting to "nuscenes"
+ExternalDatasetRef placement        sceneops_core.datasets → integration_runtime
+IntegrationOperation.INGEST         no remaining operation
+```
+
+Retained as generic schema capabilities, because recordings can populate
+them: `SceneManifest.groups`, since a hardware-triggered synchronized
+capture set is a source-defined grouping. Also `annotations`, pending Q1
+(§29.15).
+
+### 29.10 Recording canonicalization
+
+Both builders run in the worker as the producer task of their pipeline
+(§17.3, §17.4, which stand). Both satisfy §13.5–§13.10, §15, §17.5, §18.3
+and §27.5.
+
+**`RecordingSceneBuilder`** (`BUILD_RECORDING_SCENES`)
+
+```text
+inputs     robot_run_id → resolve_recording() → VerifiedRecording (path, checksum,
+           format, source_clock); RobotRunRecord facts
+           build_config (part of the fingerprint):
+             included topics                       boundary decision (§13.5)
+             topic → modality · sensor_id · frame  canonical semantics (§13.8)
+             calibration sources                   e.g. /tf_static, CameraInfo topics
+             pose sources                          e.g. /tf (map → base_link) or odometry
+             canonical time per channel            which preserved timestamp
+                                                   (e.g. Header.stamp, publish_time,
+                                                   log_time) + its clock identifier
+             segmentation policy                   whole recording | fixed windows | …
+                                                   (window clock: Q4)
+             payload extraction per schema         → declared media_type
+steps      read messages with their preserved timing and ordering facts
+           → take each observation's canonical timestamp per build_config; order per I-34
+           → segment into half-open windows
+           → interpret calibration and frame semantics (state "in effect" for a window
+             may come from a message before it, e.g. latched /tf_static)
+           → extract each in-boundary observation payload into a write-once
+             OBSERVATION_PAYLOAD artifact
+           → SceneManifest per window (RecordingSegmentSource + ProducerInfo)
+outputs    complete SceneManifest set for (DV, scene, robot_run_id) + fingerprint
+           + payload/manifest ArtifactRecords → REGISTER_SCENES
+must not   branch on origin metadata, capture.source.kind or robot_platform; rename topics;
+           sample, associate, interpolate poses or synchronize; set ego_pose_id unless the
+           source itself associates a pose; skip a selected channel it cannot decode
+```
+
+**`RecordingEpisodeBuilder`** (`BUILD_RECORDING_EPISODES`)
+
+```text
+inputs     robot_run_id → resolve_recording(); RobotRunRecord facts
+           build_config (part of the fingerprint):
+             observation channels                  topics + field selection
+             action channels                       topics + field mapping (e.g. which
+                                                   /vehicle/control fields are actions)
+             state channels
+             task / outcome sources                an event channel or explicit config
+             canonical time per channel            as for Scenes
+             segmentation policy                   whole recording | event / mission
+                                                   boundaries | …
+outputs    complete EpisodeManifest set (step-8 schema) for (DV, episode, robot_run_id)
+           + fingerprint + payload/manifest ArtifactRecords → REGISTER_EPISODES
+must not   resample to a control or training rate (ALIGN_EPISODE is derived); hard-code
+           robot-specific fields; default the source clock
+```
+
+A named per-robot channel profile may later supply `build_config`. It is
+configuration only, normalized into the fingerprint, and never a DB entity
+or a source-format switch.
+
+### 29.11 Acquisition vs canonicalization vs derived
+
+```text
+ACQUISITION (L0 → L1)         decides how to preserve and capture
+  which messages are preserved (losslessly), with which bytes
+  which timing facts are preserved: receive time → log_time, upstream publication
+    time → publish_time, source timestamps unchanged in the payload; the recording clock
+  acquisition order and source/transport sequence evidence
+  how schemas and encodings are persisted
+  transport duplicate and gap integrity; backpressure; finalization; publication
+  never: domain units, channel semantics, canonical observation time, sampling,
+         DatasetVersion
+
+CANONICALIZATION (L1 → L2)    decides what the recording means as domain data
+  which recording channels become which domain channels (modality, sensor, frame role)
+  which preserved timestamp is each channel's canonical observation time, in which clock
+  canonical temporal order (I-34)
+  Scene / Episode boundaries and unit keys
+  calibration and coordinate-frame interpretation
+  payload extraction into SceneOps-owned artifacts
+  canonical identity and provenance (RecordingSegmentSource, ProducerInfo)
+  never: lossy sampling, alignment, association, fusion, workflow preprocessing
+
+DERIVED (L2 → L3)             decides what a workflow needs
+  temporal alignment, resampling, nearest-frame association, interpolation
+  synchronized sample views, sensor fusion, model-specific preprocessing
+  label-set mapping, exports, indexes
+  never: canonical membership, identity, or writing back into L1/L2
+```
+
+### 29.12 Batch / streaming equivalence
+
+One logical source can enter in two ways:
+
+```text
+external dataset ─┬─ batch ─────────────────────────────────▶ recording A
+                  └─ replay → ROS2 → Kafka → capture ───────▶ recording B
+recording A / B → publish → REGISTER_ROBOT_RUN → same RecordingSceneBuilder, same build_config
+```
+
+The raw bytes of A and B may differ, and so may their recorder receive
+times: replay pacing and transport latency change `log_time` legitimately.
+**Semantic acquisition equivalence** therefore compares source-semantic
+content, not acquisition timing. It is defined over the channels both
+recordings include:
+
+```text
+equal       channel set, and per channel (topic, schema_name, schema_encoding,
+            message_encoding)
+            robot_id
+            per channel, the source-semantic messages, compared as a multiset with
+            occurrence identity (duplicates are counted, never collapsed). Each message
+            is identified by:
+              its source-semantic timestamp, where available (a timestamp the source
+                message carries, e.g. Header.stamp, or an upstream publication time the
+                source itself defines; when it lies inside the payload, the payload
+                checksum already covers it)
+              sha256(payload)
+              its source/transport sequence position, where both recordings carry
+                sequence information for the channel; the per-channel sequence order
+                must then match as well
+
+may differ  run_id; file bytes, chunking, compression, indexes; recorder log_time and
+            the started_at / ended_at derived from it; publish_time where it is a
+            transport or replay time; cross-channel write order; MCAP sequence fields
+            that only one recording carries; schema definition text that differs only
+            in formatting; metadata records and attachments (acquisition origin);
+            capture.source.kind; recording URI, checksum and size; RobotRunManifest bytes
+```
+
+**Invariant (I-35).** Take two semantically equivalent recordings and build
+them with the same producer and a `build_config` that takes canonical
+observation times and unit boundaries from source-semantic timestamps. The
+resulting canonical manifests are identical *except* for fields that depend
+on the source revision: `RecordingSegmentSource` (`robot_run_id`,
+`recording_artifact_id`, `recording_checksum`), the producer fingerprint,
+and payload artifact ids if they derive from the run. Observations, their
+canonical timestamps, channels, payload checksums, sizes and media types,
+calibrations, poses and groups are equal. Anything a producer derives from
+recorder receive time (`log_time`) depends on the acquisition and is outside
+I-35. That includes RobotRun-clock segment windows under A2 (Q4).
+Prerequisites:
+
+- Canonical temporal order never depends on physical file layout (I-34).
+- No writer synthesizes a source-semantic timestamp from wall-clock or
+  replay-pacing time (R11).
+
+The equivalence test is implemented in step 9 (§29.19).
+
+### 29.13 External dataset acquisition tool
+
+**Responsibility.** The tool converts an external dataset into *acquisition
+input*. It does not produce canonical data. It knows nothing about
+SceneManifest, SceneRecord, EpisodeManifest, DatasetVersion,
+REGISTER_SCENES, validation, profiling, curation or inference.
+
+```text
+dataset adapter (nuScenes, LeRobot, …)
+      ↓  acquisition events: topic · schema (name, encoding, definition)
+      ↓  · message encoding · payload bytes (serialized once; source timestamps inside)
+      ↓  · source time for pacing / simulated receive time · optional origin facts
+      ├── MCAP sink         → local L1-conformant MCAP          (batch mode)
+      └── ROS2 replay sink  → timed publication of the same bytes (streaming mode)
+```
+
+An acquisition event is a tool-internal type, not a SceneOps domain
+abstraction. The adapter serializes each message once, as standard ROS 2
+messages (camera: `sensor_msgs/msg/CompressedImage` with the source JPEG
+bytes passed through; lidar: `sensor_msgs/msg/PointCloud2`; `/tf_static`,
+`/tf`, `CameraInfo`; CAN telemetry on today's `/vehicle/*` topics). Both
+sinks emit identical payload bytes, which makes §29.12 checkable. The MCAP
+sink writes a deterministic simulated receive time into `log_time` (§29.5).
+In replay mode, capture assigns the real receive time. A source
+with several units maps one unit to one recording (for example one nuScenes
+scene, or one LeRobot episode, per RobotRun). Every sweep or frame the
+adapter converts is recorded. The adapter does not keep keyframes only.
+
+**Boundary into SceneOps.** The tool never publishes, registers or calls
+SceneOps APIs:
+
+```text
+batch      tool → local MCAP → python -m sceneops_integrations.recording publish
+           → REGISTER_ROBOT_RUN
+streaming  tool replay → ROS2 → streaming_bridge_node → Kafka → capture → publisher
+           → REGISTER_ROBOT_RUN
+```
+
+**Placement: in this monorepo, dependency-isolated.** The tool lives at
+`tools/dataset-acquisition/`: its own uv project and lockfile, not a
+workspace member, with its own image (the existing precedent is
+`tools/nuscenes-integration`, `tools/lerobot-integration`).
+
+- E2E and clean-room runs need it pinned with the platform revision they
+  validate.
+- The L1 conformance suite (§29.5) must run against tool output and,
+  once capture is corrected (step 9), capture output, in one CI.
+- A separate repository would add version coordination with no consumer
+  outside SceneOps.
+
+Its dependency closure is the dataset SDKs plus MCAP and ROS 2 message
+serialization. It has **no** dependency on `sceneops-core`, `-db`,
+`-storage`, `-streaming` or `-integrations`, and an import-boundary test
+enforces that (I-36). The replay sink needs a ROS 2 runtime and runs in the
+ROS 2 image. Kafka-direct replay that bypasses the bridge is DEFERRED,
+because the bridge is part of the acquisition system under test. The tool
+replaces `tools/nuscenes-integration`, and its replay sink replaces
+`ros2/nodes/can_replay_node.py` (§29.20).
+
+### 29.14 Streaming responsibilities
+
+SceneOps streaming (ADR-005 bridge, Kafka, capture, publisher hand-off)
+owns:
+
+```text
+live intake            ROS2 subscription per a static channel registry; envelope build
+timestamp preservation capture receive time → log_time; upstream publication (bridge
+                       ingest) time → publish_time; source timestamps unchanged in the
+                       payload; transport-only timing facts preserved in the recording
+ordering               Kafka key = robot_run_id → one partition per run; per-run sequence
+                       completeness (exact redelivery dropped, conflict or gap fails);
+                       consumed order and transport sequence preserved as evidence
+backpressure           bounded bridge and producer queues; fail loudly, never drop silently
+                       (streaming-transport §14)
+capture lifecycle      RUN_START / RUN_END control envelopes; in-memory CaptureSession (§11)
+failure / restart      offsets committed only after durable finalization; in-flight sessions
+                       lost on restart (known limitation; durable recovery DEFERRED, §26)
+finalization           .partial → fsync → atomic rename
+publication            finalized MCAP → Recording Publisher (manifest last) → optional
+                       REGISTER_ROBOT_RUN submission
+```
+
+Streaming does **not** own segmentation, domain units, alignment, canonical
+identity, or any DB write except through `REGISTER_ROBOT_RUN`.
+
+Gaps for future work (step 9):
+
+- Sensor, tf and CameraInfo channels are absent from the static bridge and
+  capture registries.
+- `/tf_static` needs latched (transient-local) QoS so static data is
+  captured.
+- Large payloads (camera, lidar) against Kafka message-size and throughput
+  limits must be measured before any broker change (architecture rule 9).
+- Capture → publish hand-off is manual (CLI). Automating it must keep the
+  manifest-last protocol.
+- Capture's `log_time` mapping must change to receive time, and the
+  envelope `sequence_number` must be preserved (R4, R6, §29.20).
+
+### 29.15 Annotations and source-defined groupings (open, Q1)
+
+Ground-truth annotations and the nuScenes keyframe `sample` grouping are
+products of *labeling*, not acquisition facts: real robots never record
+ground truth. At HEAD they reach detection and scenario workflows only
+through the legacy nuScenes Scene integration, which A4 removes. Until Q1 is
+decided:
+
+- L1 recordings do not carry post-acquisition labels as sensor channels.
+  Events recorded at acquisition time (R11) are different and remain L1
+  data.
+- `RecordingSceneBuilder` v1 emits no annotations and no keyframe groups
+  unless the recording itself defines them (e.g. hardware sync groups).
+- Detection over recording-derived Scenes needs a *derived* synchronized
+  sample view. The keyframe-only view returns nothing for them.
+
+Recommended direction, to be decided before step 10: **label import is a
+separate ingress, anchored to L1 message identity**. A label set references
+`(robot_run_id, topic, message occurrence identity, §29.12)`, survives re-canonicalization and
+DatasetVersion changes, and serves human, automatic and external labels
+alike. The external tool would then emit the dataset's labels as a
+label file next to the recording, not inside it.
+
+### 29.16 DatasetVersion implications
+
+DatasetVersion is scope and membership over canonical Scenes and Episodes,
+plus recomputed summaries (§16, unchanged). After A4 it never relates to a
+RobotRun or an external source directly. Those relations exist only through
+unit provenance.
+
+| Field | Current use | Classification | Removed in |
+|---|---|---|---|
+| `raw_source_root_uri` | legacy `BUILD_SCENES` raw-log; API create/patch | remove during the acquisition-first refactor | step 7 |
+| `source_dataset_id`, `source_dataset_version` | API create; converters (the Episode builder copies DV ids into EpisodeLineage, a separate field) | remove during the refactor | step 7 |
+| `Dataset.type` / `DatasetType` | API; `INGEST_SCENES` dispatch | remove during the refactor | step 7 |
+| `required_channels` | validation default; `DatasetInputRef` | later legacy debt (workflow configuration) | step 10 |
+| `manifest_uri` | `DatasetInputRef`, quality API; points to the derived index | later legacy debt | step 10 (index-job merge) |
+| `DatasetVersionRecord.metadata` / `Dataset.metadata` | free-form | later legacy debt (not in the §16 target) | step 10 |
+| `keyframe_count` | registrar summary | canonical summary; revisit with Q1 | — |
+| identity, `status`, `scene_count`, `observation_count`, `episode_count`, `observed_channels`, timestamps | — | genuinely canonical DatasetVersion state | — |
+
+### 29.17 Superseded and amended sections
+
+| Section | Effect of A4 |
+|---|---|
+| §2 | `external` source kind, `EXTERNAL_*` pipelines and decision 14 superseded; decisions 1–13 stand |
+| §3.2 | `ExternalUnitSource`, Integration (ingest) rows superseded; `ExternalDatasetRef` is an integration-runtime locator (§29.9) |
+| §4 | layer A no longer contains an ingest integration; canonicalization stages start at the RobotRun |
+| §5 | external rows superseded |
+| §6.1, §6.6, §6.7 | superseded (§29.2, §29.4) |
+| §13.9 | external half superseded; recording half and §27.5 stand |
+| §13.12 | debt items are resolved by *removing* the legacy producers (step 7), not by normalizing them |
+| §14.1, §14.2, §15.2 | external source block and external source revision removed |
+| §16 | "source format → ExternalUnitSource" row superseded; no source format exists on DatasetVersion or units |
+| §17.1, §17.2 | superseded; §17.6 reduced to the recording pipelines and `REGISTER_ROBOT_RUN` |
+| §18.1 (external line), §18.2 | superseded |
+| §20.2 | "integration imports payloads" target homes superseded; categories still apply to recording builders and derived workflows |
+| §20.3–§20.7 | superseded for ingestion; open identifiers and the integration boundary remain for EXPORT only |
+| §21 | I-25 superseded; I-28, I-30 narrowed; I-31–I-37 added (§29.18) |
+| §22.4–§22.6 | `INGEST_SCENES` → REMOVE (not RENAME); `EXTERNAL_*` NEW rows dropped; external-episode E2E dropped; `e2e_scene.sh` replaced by recording-scene E2E |
+| §24 | steps 6–11 replaced by §29.19 |
+| §25 | consequences extended by §29.22 |
+| §26 | additions in §29.21 |
+| §27.3 | `mcap_log_time` is the recording (receive-time) clock, not a source observation clock (§29.5 R4–R5). Segment windows on that clock are open question Q4 |
+| §27.4 | nuScenes boundary paragraph superseded |
+| §27.6 | external format identifiers leave canonical structures; INGEST resolution superseded |
+| §28 | moot; its rule now holds structurally |
+
+### 29.18 Invariants
+
+Superseded and narrowed:
+
+```text
+I-25  SUPERSEDED. A new external dataset format adds an adapter to the external acquisition
+      tool only; it adds nothing to SceneOps core, schemas, pipelines or workflows.
+I-28  NARROWED. Source clock and producer identifiers remain canonical open identifiers.
+      External format identifiers are integration-runtime identifiers only.
+I-30  NARROWED. Holds structurally: canonical provenance has no external block, and
+      RecordingSegmentSource carries no location or display name.
+```
+
+Added:
+
+```text
+I-31  The only ingress for acquired sensor and robot-state data is a registered RobotRun.
+      Every canonical Scene and Episode has a RecordingSegmentSource. This does not exclude
+      lineage roots that are not acquisition, such as labels (Q1).
+I-32  Canonicalization never branches on acquisition origin, acquisition mode
+      (capture.source.kind), robot_platform or recording metadata. Its output is a function
+      of recording content (topics, schemas, payload bytes, preserved timing and ordering
+      facts), producer semantics and normalized build_config.
+I-33  An L1 recording preserves every available timing fact, each with its own meaning:
+      MCAP log_time = recorder / capture receive time (the recording clock,
+      "mcap_log_time"); publish_time = upstream publication time where the transport
+      provides one, otherwise log_time; source observation timestamps stay in the source
+      message, unrewritten, in their own clock (no epoch requirement). No writer
+      synthesizes a source-semantic timestamp from wall-clock or replay-pacing time.
+      Choosing a channel's canonical observation time is a canonicalization decision,
+      declared in build_config with its clock identifier.
+I-34  Capture / file order is acquisition evidence and is preserved where the format
+      provides it, together with any source or transport sequence information. Canonical
+      temporal order is defined by each observation's canonical timestamp, with ties broken
+      by preserved sequence information and otherwise by per-channel acquisition order. It
+      is never inferred solely from physical file order and never depends on chunking,
+      compression or indexes.
+I-35  Two semantically equivalent recordings (§29.12) built with the same producer and
+      build_config yield canonical manifests that differ only in source-revision-dependent
+      fields.
+I-36  External dataset tooling depends on no SceneOps package and produces only L0 input
+      (ROS2 messages) or L1 input (a local MCAP). It never writes canonical manifests,
+      records or ArtifactRecords.
+I-37  An L1 recording encodes no canonicalization decision: no unit boundary, unit key,
+      channel → semantics mapping, sampling decision or DatasetVersion reference.
+```
+
+Backing tests: I-31 and I-32 by registrar and builder tests plus import and
+grep guards. I-33 by the L1 conformance suite applied to tool output (step 6)
+and capture output (step 9). I-34 by builder tests that vary cross-channel
+write order and chunking, and that cover equal-timestamp ties with and
+without sequence information. I-35 by
+the step-9 batch/streaming equivalence test. I-36 by an import-boundary test
+on the tool project. I-37 by `RobotRunManifest` strictness (§8.2) and tool
+golden tests.
+
+### 29.19 Revised implementation sequence (replaces §24 steps 6–11)
+
+Steps 0–5 are complete. Each step keeps §24's validation rule: focused unit
+tests, real infrastructure where touched, and replacement of every E2E it
+breaks (§23, rule 4).
+
+```text
+6. L1 contract + batch acquisition tool
+   core      L1 conformance suite (§29.5), applied to tool output first and to capture
+   (small)   output once capture is corrected (step 9); MCAP_LOG_TIME_CLOCK moved to a
+             shared recording/clock module; publisher and RobotRunManifest unchanged
+   tooling   tools/dataset-acquisition (isolated): nuScenes adapter → acquisition events
+             → MCAP sink: cameras, lidar, /tf_static, CameraInfo, ego pose, CAN telemetry
+             (today's /vehicle/* topics), acquisition-origin metadata; mission/task events
+             with source-timeline timestamps (R11); import-boundary test (I-36)
+   E2E       tool → local MCAP → publisher → REGISTER_ROBOT_RUN → resolve_recording on
+             real MinIO/PostgreSQL (the first sensor-bearing RobotRun)
+
+7. Recording → canonical Scene, and removal of external/legacy Scene ingestion
+   core      BUILD_RECORDING_SCENES + RECORDING_SCENE_BUILDING (§29.10); OBSERVATION_PAYLOAD
+             extraction; lidar payload representation decided (Q2); I-34 ordering
+   removal   INGEST_SCENES, BUILD_SCENES, raw-log mode, RawLog*, RawLogAdapter, legacy
+             Scene manifests, DATASET_SCENE_INGESTION, RAW_LOG_SCENE_BUILDING, nuScenes INGEST
+             integration + tools/nuscenes-integration, DatasetType dispatch;
+             ExternalUnitSource and every external branch (§29.9); DV raw_source_root_uri,
+             source_dataset_*, Dataset.type
+   E2E       recording-scene E2E (tool batch → RobotRun → Scenes → validate/profile)
+             replaces e2e_scene.sh and e2e_scene_rawlog.sh
+
+8. Canonical Episode + recording → Episode
+   core      source-faithful EpisodeManifest (§13.10) on step-4 primitives;
+             RecordingEpisodeBuilder (§29.10); REGISTER_EPISODES registrar ownership
+             + §18.3 + fail-loud; drop EpisodeRecord.status / EpisodeStatus; action/observation
+             mapping and canonical time source per channel as build_config (the
+             builder no longer treats log_time as source time); RosbagAdapter topic
+             defaults removed
+   E2E       recording-episode E2E replaces the episode-building / robot-learning E2Es
+
+9. Streaming acquisition for sensor-bearing recordings + replay + equivalence
+   tooling   ROS2 replay sink (replaces can_replay_node.py)
+   core      capture log_time → receive time and envelope sequence_number preserved
+             (R4, R6); bridge + capture registries extended (sensor, /tf_static latched,
+             CameraInfo);
+             Kafka large-message behavior measured before any configuration change;
+             optional automatic capture → publish hand-off (manifest-last preserved)
+   E2E       batch vs streaming equivalence (I-35) through the step-7 builder
+
+10. Derived workflow cleanup
+    detection on recording Scenes via a derived synchronized-sample view; media_type dispatch
+    for lidar; label ingress (after the Q1 decision); scenario / readiness on recording Scenes;
+    DV required_channels, manifest_uri, metadata; dataset-index job merge; reserved JobTypes
+    and dead Protocols
+
+11. E2E / clean-room consolidation + canonical baseline
+    raw nuScenes mini → tool (batch and replay) → RobotRuns → Scenes / Episodes → quality →
+    curation / detection / evaluation → LeRobot export; regenerated canonical baseline;
+    docs/architecture/* confirmed current
+```
+
+Dependencies:
+
+| Dependency | Consequence |
+|---|---|
+| Step 7 needs a sensor-bearing recording, which only step 6 produces | 6 → 7 |
+| Removing legacy Scene producers breaks e2e_scene*, and only the recording-scene E2E replaces them | removal is bundled into 7, not done earlier |
+| Step 8 needs step-4 primitives (done). Mission segmentation needs source-timeline events (step 6). CAN-only recordings already suffice | 6 → 8; 7 and 8 are independent and may run in either order |
+| The equivalence test needs both acquisition modes and a canonical builder | 6, 7 → 9 |
+| Today's Episode building reads `log_time` as source time. Correcting capture's `log_time` first would shift Episode timestamps | the capture correction (9) lands after the Episode builder reads source-semantic times (8): 8 → 9 |
+| Detection restoration needs recording Scenes (7), a derived sample view, and ground truth (Q1) | 7 + Q1 → 10 |
+| Reserved-JobType / Protocol removal has no dependency | any time, as an independent change |
+| The canonical baseline is invalidated by 7 and 8 | regenerated in 11; intermediate steps run on reset dev state |
+
+Work tracks:
+
+```text
+core platform        6 (conformance, clock module) · 7 · 8 · 9 (bridge, capture, hand-off) · 10
+external tooling     6 (batch adapter + MCAP sink) · 9 (replay sink)
+interop / export     LeRobot EXPORT unchanged (re-pointed to the step-8 EpisodeManifest when
+                     its input changes); external-ingest interop DEFERRED
+```
+
+### 29.20 Code migrations implied by A4 (not implemented by this amendment)
+
+```text
+provenance     delete ExternalUnitSource, ExternalSourceRevision and the unions; identity
+               recording-only; SceneLineage.source = RecordingSegmentSource          (step 7)
+scenes         SceneRecord: drop source_kind, external_format, ck_scenes_source_projection;
+               robot_run_id and window columns NOT NULL (destructive migration; no registered rows exist);
+               registrar external branch; API external_format filter; analytics column;
+               keyframes.annotation_source; testing fixtures                           (step 7)
+integration    ExternalDatasetRef → sceneops_core.integration_runtime; remove
+               IntegrationOperation.INGEST, the nuScenes INGEST runtime (raw_log.py,
+               scene_ingest.py, service modes), tools/nuscenes-integration, worker
+               nuscenes_ingestion, scripts/e2e/*nuscenes_container*                    (step 7)
+legacy scene   INGEST_SCENES, BUILD_SCENES, RawLog*, RawLogAdapter(+Factory),
+               sceneops_core.scenes.legacy, LEGACY_SCENE_MANIFEST, DATASET_SCENE_INGESTION,
+               RAW_LOG_SCENE_BUILDING, DatasetType, RosbagAdapter Scene topic map       (step 7)
+datasets       DV raw_source_root_uri, source_dataset_*, Dataset.type                  (step 7);
+               required_channels, manifest_uri, metadata                               (step 10)
+episodes       RosbagAdapter defaults and steering/throttle/brake → build_config;
+               EpisodeLineage → RecordingSegmentSource + ProducerInfo                  (step 8)
+clock          MCAP_LOG_TIME_CLOCK out of episodes.alignment.config                    (step 6)
+acquisition    can_replay_node.py → tool replay sink; /mission/status wall-clock time →
+               source-timeline events (R11); bridge/capture registries for sensor channels
+                                                                                   (steps 6, 9)
+capture        log_time = capture receive time (today: envelope source_timestamp_ns);
+               publish_time = bridge ingest time (unchanged); envelope sequence_number
+               preserved in the recording; streaming-transport §20 updated            (step 9)
+docs           scene-domain, data-model, external-integration-runtime,
+               dataset-interoperability, streaming-transport, storage-layout,
+               jobs-and-pipelines updated in the step that changes each contract
+```
+
+### 29.21 Open questions and deferred work
+
+Open questions that block a later step:
+
+```text
+Q1  Ground truth and keyframe groupings after the nuScenes Scene integration is removed
+    (§29.15). Blocks restoring detection evaluation (step 10/11); does not block 6–9.
+    Recommendation: a label ingress anchored to L1 message identity (§29.15).
+Q2  Canonical lidar payload representation (PointCloud2 bytes vs a declared SceneOps
+    point layout, and its media_type). Blocks step 7's payload extraction; decided in step 7.
+    The step-6 tool records standard PointCloud2, which keeps both options open.
+Q3  Kafka transport of large sensor messages (size limits, throughput). Blocks step 9 only;
+    measure first.
+Q4  Segment-window clock. A2 (§27.2) copies RecordingSegmentSource.source_clock from the
+    RobotRun, which under §29.5 R5 is the recording (receive-time) clock. Windows
+    on that clock depend on acquisition timing (outside I-35). Source-semantic
+    segmentation would require the window clock to be a canonical channel clock.
+    Blocks step 7's segmentation; decided in step 7, as an A2 amendment if changed.
+```
+
+Not blocking (defaults chosen): `build_config` comes from explicit pipeline
+parameters, and named robot profiles come later. Payload artifact-id
+derivation is decided in step 7, and either run-scoped or content-derived
+ids satisfy I-35.
+
+Added to §26:
+
+```text
+external canonical ingest (readmission requires a new amendment, §29.9)
+Kafka-direct dataset replay bypassing the ROS2 bridge
+RobotRunManifest v2 display-only acquisition-origin descriptor
+non-MCAP L1 recording formats
+calibration that changes within one Scene window (v1: constant per Scene)
+```
+
+### 29.22 Consequences
+
+Positive:
+
+- One ingress for acquired data, one builder per domain, one canonical path
+  from RobotRun down. External data exercises the production path instead of a parallel
+  one.
+- Format knowledge is confined to a tool outside the platform. Core
+  identity, records and fingerprints hold no external format.
+- Streaming and batch acquisition share every guarantee after publication.
+  Equivalence is a testable invariant.
+- The L1 contract is explicit. The code meets most of it; capture's
+  `log_time` mapping is the main deviation (§29.20). No `RobotRunManifest`
+  change is needed.
+- The external canonical surface removed in step 7 never had registered
+  data, so dropping it migrates nothing.
+
+Negative / costs:
+
+- External datasets lose structure that timed messages cannot represent,
+  unless it is recorded explicitly. Labels and keyframe groupings need their
+  own path (Q1). Detection evaluation stays unavailable until step 10.
+- Test-data ingest costs more: convert to a recording, publish, then
+  canonicalize. Payload bytes exist twice, in the recording and in the
+  extracted canonical payloads (§27.5, unchanged).
+- Detection needs a derived synchronized-sample view for recording Scenes.
+  It can no longer lean on source keyframes.
+- Writer obligations (R4, R6, R9, R11) are verified by tests, not by
+  publication checks.
+- The tool is a new, separately locked project with ROS 2 serialization
+  dependencies, and its replay sink needs the ROS 2 image.
+- Streaming sensor-bearing data puts new load on Kafka, which is unmeasured
+  (Q3).
