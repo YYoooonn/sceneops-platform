@@ -40,12 +40,9 @@ class SceneVersionSummary(SceneOpsBaseModel):
 
 
 class EpisodeVersionSummary(SceneOpsBaseModel):
-    """Episode-domain state for one DatasetVersion — the authoritative home
-    for these fields as of SceneOps V2 Request 03.
-
-    Deliberately minimal for now — only episode_count exists today (written
-    by BuildEpisodesJobHandler). Do not add speculative fields here ahead of
-    the workflows that would populate them.
+    """Episode-domain state for one DatasetVersion. ``episode_count`` is
+    recomputed from canonical membership by the Episode registrar
+    (REGISTER_EPISODES) only.
 
     Same caveat as SceneVersionSummary: non-None does not by itself prove
     Episode data exists — check ``episode_count > 0`` or query EpisodeRecord

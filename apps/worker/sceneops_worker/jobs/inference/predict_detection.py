@@ -29,7 +29,7 @@ from sceneops_core.models.schemas.records import ModelVersionRecord
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.scenes.payloads import ArtifactPayloadLocator
+from sceneops_worker.recordings.payload_refs import ArtifactPayloadLocator
 from sceneops_worker.scenes.readiness import require_no_blocked_scenes
 from sceneops_worker.inference.detection import create_detection_inference_backend
 from sceneops_worker.inference.detection.base import DetectionInferenceRequest

@@ -41,7 +41,7 @@ The five Phase 2 robot-learning-data JobTypes (`ALIGN_EPISODE`,
 `VALIDATE_ALIGNED_EPISODE`, `PROFILE_ALIGNED_EPISODE`,
 `EXPORT_LEARNING_DATA`, `CURATE_EPISODES`) follow the same pattern — fully
 implemented, handler-registered, but not wired into
-`RAW_LOG_EPISODE_BUILDING_PIPELINE` or any other pipeline. See
+`RECORDING_EPISODE_BUILDING_PIPELINE` or any other pipeline. See
 [Robot learning data layer](./robot-learning-data.md) §8.
 
 ## 2. Scenes from recordings only
@@ -69,6 +69,30 @@ only read `file://` payload locations and decodes lidar only in the
 `application/x.nuscenes.lidar-pcd-bin` format, and the camera / lidar
 channels it uses (`CAM_FRONT`, `LIDAR_TOP`) are still one source's
 vocabulary in workflow defaults.
+
+## 2a. Episodes from recordings only
+
+Canonical Episodes are produced only by `RECORDING_EPISODE_BUILDING` from a
+registered RobotRun recording ([Episode domain](./episode-domain.md)). In
+the v1 builder:
+
+- only ROS 2 (`cdr` / `ros2msg`) messages are decoded; `json_string`
+  decoding reads a JSON object from a `std_msgs/msg/String`;
+- a selected field must resolve to a bool, integer, finite float, string or
+  numeric list in every message; NaN / Infinity fail the build;
+- segmentation is `whole_recording`, `fixed_duration` or `event_markers`; an
+  unterminated task (start marker without end marker) fails the build;
+- canonical Episodes carry no outcome, success label, reward or language
+  instruction; `AlignedEpisode.task` / `outcome` stay empty until a label
+  import exists (ADR-007 Q1);
+- the robot telemetry projection (`ingest_robot_states`, `RosbagAdapter`)
+  still reads its own fixed topic set and `RobotStateRecord` columns
+  (`steering` / `throttle` / `brake`, ...) — a derived table, not canonical
+  Episode data;
+- the learning chain on canonical Episodes (`e2e-robot-learning`,
+  `e2e-episode-building`, `e2e-episode-curation`, `e2e-robot-run-learning`)
+  is unavailable until the step-11 consolidation; those commands exit 3.
+  `make e2e-recording-episode` is the Episode vertical.
 
 ## 3. `DatasetVersionStatus`: intentionally minimal
 
@@ -111,7 +135,7 @@ presence doesn't imply an export or deprecation workflow exists.
 - Operations and leaderboard APIs exist; there's no dedicated web UI.
 - The Airflow pipeline backend is a per-task DAG proof of concept
   hardcoded to `recording_scene_building` — every other pipeline type,
-  including `raw_log_episode_building`, only runs through Celery.
+  including `recording_episode_building`, only runs through Celery.
 - Episode still has no `DatasetManifest`-equivalent aggregate index, and
   `export_analytics_snapshot` still covers Scene only — but as of Phase 2,
   aligned Episode revisions do get their own Parquet export

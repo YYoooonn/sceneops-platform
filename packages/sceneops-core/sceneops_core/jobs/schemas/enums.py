@@ -49,9 +49,9 @@ class JobType(StrEnum):
     INGEST_ROBOT_STATES = "ingest_robot_states"
     EXPORT_ROBOT_ANALYTICS_SNAPSHOT = "export_robot_analytics_snapshot"
 
-    # ── robot rosbag / MCAP → SceneOps episodes ──
-    BUILD_EPISODES = "build_episodes"
-    REGISTER_EPISODE = "register_episode"
+    # ── registered RobotRun recording → canonical Episodes (ADR-007 §17.4) ──
+    BUILD_RECORDING_EPISODES = "build_recording_episodes"
+    REGISTER_EPISODES = "register_episodes"
 
     # ── episode-level jobs ──
     VALIDATE_EPISODE = "validate_episode"

@@ -80,6 +80,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+unavailable_until e2e-robot-learning 11 \
+  "Episodes are built only by recording_episode_building from a registered RobotRun (make e2e-recording-episode); this workflow used the removed build_episodes / raw_log_episode_building path and is rebuilt on canonical Episodes in the step-11 consolidation"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 

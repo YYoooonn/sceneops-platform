@@ -20,8 +20,9 @@ class EpisodeValidationResult(SceneOpsBaseModel):
 
     checked_fields: list[str] = Field(default_factory=list)
 
-    frame_count: int = 0
-    observation_channels: list[str] = Field(default_factory=list)
-    action_channels: list[str] = Field(default_factory=list)
+    observation_count: int = 0
+    state_count: int = 0
+    action_count: int = 0
+    event_count: int = 0
 
     issues: list[EpisodeValidationIssue] = Field(default_factory=list)

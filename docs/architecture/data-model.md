@@ -42,9 +42,9 @@ Artifact          (metadata index every domain's binary/JSON output goes through
 `SceneManifest` (with its `SceneLineage`) is an immutable Object Storage
 artifact, not a table: `SceneRecord.manifest_artifact_id` pins the one
 registered revision the row projects (see [Scene domain](./scene-domain.md)).
-Episode keeps `EpisodeRecord.episode_manifest_uri` + `EpisodeLineage`
-embedded inside the manifest rather than the DB row (see
-[Episode domain](./episode-domain.md) §3). Prediction runs are `InferenceRunModel` in code (table `inference_runs`).
+`EpisodeManifest` (with its `EpisodeLineage`) is likewise an immutable
+artifact pinned by `EpisodeRecord.manifest_artifact_id` (see
+[Episode domain](./episode-domain.md)). Prediction runs are `InferenceRunModel` in code (table `inference_runs`).
 
 ## 2. Dataset / DatasetVersion
 
@@ -91,14 +91,11 @@ summary).
 Concretely, every writer recomputes from a live repository query
 (`EpisodeRepository.count(...)`, `SceneRepository.summarize_membership(...)`)
 rather than incrementing a delta onto the previous cached value — this is what keeps the count correct under retry,
-upsert, duplicate input, and independent per-scene dispatches (as
-`scripts/canonical/canonical_bootstrap.sh` performs one `register_episode`
-dispatch per source scene): each dispatch converges on the true total, not
-just what that one dispatch touched. `RegisterEpisodeJobHandler` is the sole
-production writer of `episode_count` (it runs after `BuildEpisodesJobHandler`,
-which only produces manifests — never an `EpisodeRecord` — so writing the
-summary any earlier would count something that doesn't canonically exist
-yet). Scene registration (`REGISTER_SCENES`) is the sole writer of the
+replacement, duplicate input, and one registration per RobotRun: each
+registration converges on the true total, not just what it touched. Episode
+registration (`REGISTER_EPISODES`) is the sole writer of `episode_count`, in
+the same transaction as the membership change; `build_recording_episodes`
+only produces manifests, never an `EpisodeRecord`. Scene registration (`REGISTER_SCENES`) is the sole writer of the
 Scene summary, in the same transaction as the membership change.
 
 #### 2.0.2 Concurrency: serializing aggregate mutation per DatasetVersion
@@ -107,26 +104,21 @@ Recompute-from-live-count (§2.0.1) is correct for any single transaction,
 but two independent transactions recomputing and writing the *same*
 DatasetVersion's aggregate at overlapping times can still both compute a
 now-stale count and both persist it — a classic lost update (e.g. two
-concurrent `register_episode` dispatches for the same
+concurrent Episode registrations for the same
 `(dataset_id, dataset_version)`, each seeing only its own not-yet-committed
 insert, both writing the same too-low count).
 
 The fix is a real PostgreSQL row-level lock, not a distributed lock or
 reconciliation process:
 `PostgresDatasetVersionRepository.lock_for_update` issues
-`SELECT ... FOR UPDATE` on the target DatasetVersion row, and
-`RegisterEpisodeJobHandler` acquires it (via
-`DatasetStore.lock_version_for_update`) immediately before its
-count-then-write pair, for every `(dataset_id, dataset_version)` it
-touched, in sorted order (a consistent lock-acquisition order across
-concurrent dispatches, so two dispatches that each touch more than one
-DatasetVersion can never deadlock against each other). A concurrent
-dispatch's own lock acquisition blocks until the first commits, and then
-observes that transaction's fully committed changes — turning "recompute,
-then write" into a real serialization point for the affected row.
-
-Scene registration takes the same lock before re-reading its scope and
-recomputing the Scene summary. Scene and Episode summaries occupy disjoint
+`SELECT ... FOR UPDATE` on the target DatasetVersion row. Both registrars
+(`REGISTER_SCENES`, `REGISTER_EPISODES`) take it (via
+`DatasetStore.lock_version_for_update`) before re-reading their recording
+scope and before inserting any record. The order matters: inserting a
+record takes a `FOR KEY SHARE` lock on the DatasetVersion row through its
+foreign key, which a concurrent registration's `FOR UPDATE` would deadlock
+against if the lock came second. A concurrent registration blocks at the
+lock until the first commits, then observes its committed changes. Scene and Episode summaries occupy disjoint
 columns (`replace_scene_membership_summary`/`update_episode_summary` each
 write only their own domain's columns —
 `values_without_none` + per-attribute `setattr` — so SQLAlchemy's
@@ -186,27 +178,27 @@ aggregate row has neither a scene nor a pin (CHECK constraint).
 
 ## 4. EpisodeRecord
 
-`episodes` — the canonical Episode-domain unit: one task-oriented
-observation+action window, segmented from a robot recording.
+`episodes` — canonical Episode membership: one row per registered Episode,
+projecting the EpisodeManifest revision named by `manifest_artifact_id`.
+Written only by the Episode registrar; no status, task or outcome column
+(see [Episode domain](./episode-domain.md) §5).
 
 Key fields:
-- `raw_log_id`, `robot_id`, `robot_run_id`, `mission_id`: plain indexed
-  lineage columns back into the raw-log/robot domains — not foreign keys
-  (the referenced row may live in a table this domain doesn't own, same
-  convention as `RobotStateModel.scene_id`).
-- `status`: `EpisodeStatus` — `created`/`registered` only. See
-  [Episode domain](./episode-domain.md) §4 for why this stays a
-  registration-lifecycle field and never encodes quality.
-- `task`, `outcome` (`EpisodeOutcome`: success/failure/unknown).
-- `episode_manifest_uri`: ArtifactStore reference.
-- `observation_channels` / `action_channels` / `control_frequency_hz`:
-  what the episode actually contains.
-- `frame_count`, `started_at`, `ended_at`.
+- `(dataset_id, dataset_version)`: FK `dataset_versions`.
+- `robot_run_id` (FK `robot_runs`), `unit_key`: the source projection.
+- `producer_fingerprint`; `manifest_artifact_id` (FK `artifacts`) +
+  `manifest_checksum`: the exact current revision.
+- `window_clock`, `window_start_timestamp_ns`, `window_end_timestamp_ns`:
+  the half-open window in the segmentation clock (CHECK non-empty).
+- `observation_topics` / `state_topics` / `action_topics` / `event_topics`
+  and the matching counts.
 
 `episode_run_records` — unified episode-scope run table
 (`episode_validation` / `episode_profile`), the same job-level/per-item
 split as Scene's run records (`episode_id=None` -> aggregate across the
-whole job; `episode_id` set -> a single episode).
+whole job; `episode_id` set -> a single episode, pinning the
+`manifest_artifact_id` + `manifest_checksum` it assessed; CHECK
+`ck_episode_run_records_revision_pin`).
 
 ## 5. Robot / RobotRun / Mission / RobotState
 
@@ -255,11 +247,10 @@ reads a RobotRun's registered recording, resolved by `robot_run_id`, through
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) for the full
 pipeline and current limitations.
 
-Episode build (`build_episodes`) reads the *same* `RosbagAdapter` output
-(robot states + missions + sensor frames) as `ingest_robot_states` does, but
-through a separate `EpisodeSource` read (see
-[Episode domain](./episode-domain.md) §2) — the two Job types don't share a
-DB table and can run independently of each other.
+These telemetry tables are a derived projection of the recording. Canonical
+Episodes do not read them: `build_recording_episodes` reads the recording
+itself through the shared recording reader, as configured by its build
+configuration (see [Episode domain](./episode-domain.md)).
 
 ## 6. ScenarioSet
 
@@ -279,8 +270,8 @@ DB row (see [Reserved architecture and current limitations](./reserved-and-limit
 ## 7. PipelineRun / PipelineTaskRun
 
 `pipeline_runs` — one pipeline execution. `type` is `PipelineType`:
-`recording_scene_building`, `scenario_curation`, `detection_evaluation`,
-`raw_log_episode_building`.
+`recording_scene_building`, `recording_episode_building`,
+`scenario_curation`, `detection_evaluation`.
 
 `pipeline_task_runs` — individual tasks inside a run. `task_order` gives
 sequence; `depends_on_task_ids` (JSONB) declares dependencies but the
@@ -308,7 +299,7 @@ EXPORT_ANALYTICS_SNAPSHOT                              # dataset-version-level
 PREDICT_DETECTION, EVALUATE_DETECTION                  # detection
 REGISTER_ROBOT_RUN                                     # published recording -> RobotRun, pipeline-less
 INGEST_ROBOT_STATES, EXPORT_ROBOT_ANALYTICS_SNAPSHOT   # robot runtime, pipeline-less
-BUILD_EPISODES, REGISTER_EPISODE                        # robot rosbag/MCAP -> episode
+BUILD_RECORDING_EPISODES, REGISTER_EPISODES            # RobotRun recording -> canonical episodes
 VALIDATE_EPISODE, PROFILE_EPISODE                       # episode-level
 ```
 

@@ -94,11 +94,20 @@ stay for lineage; there is no garbage collection. Readers never list this
 prefix to find "the latest" manifest — they follow a pinned
 `manifest_artifact_id` / checksum (see [Scene domain](./scene-domain.md)).
 
+Canonical EpisodeManifest revisions follow the same rule at
+
+```text
+{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/manifest-{sha256}.json
+```
+
+(`EpisodeArtifactStore.publish_canonical_manifest`); derived aligned-episode
+artifacts sit beside them under `episodes/{episode_id}/aligned/`.
+
 Observation payloads are not addressed by readers through a key
 convention: a manifest references each payload by its
 `OBSERVATION_PAYLOAD` ArtifactRecord id, and the record's `uri` is the only
-place its location is stored. The recording Scene builder writes them
-write-once at
+place its location is stored. Both recording builders (Scene and Episode)
+write them write-once, through one shared store, at
 
 ```text
 {ARTIFACT_ROOT_URI}/observation_payloads/{robot_run_id}/{artifact_id}
@@ -106,7 +115,8 @@ write-once at
 
 (`ArtifactSettings.observation_payload_prefix`). The artifact id is
 deterministic per recording message and extraction, so identical bytes at
-an existing key are reused and different bytes are a conflict.
+an existing key are reused and different bytes are a conflict; a Scene and
+an Episode build of the same RobotRun share every payload they both extract.
 
 ### Analytics (Parquet)
 

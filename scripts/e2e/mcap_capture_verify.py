@@ -6,7 +6,7 @@ Runs on the HOST via `uv run` (RosbagAdapter needs no rclpy/ROS2 install
 itself, via mcap-ros2-support). Reads the Kafka-captured MCAP through the
 same RosbagAdapter apps/worker uses for real ingestion (mandatory
 compatibility check -- no DB writes, no Episode/RobotRun creation, just
-`extract_episode_source()`), and compares it against a directly
+`extract_robot_states()` / `extract_missions()`), and compares it against a directly
 `ros2 bag record`-produced MCAP of the same scene for SEMANTIC
 equivalence (topic/schema set, robot_state/mission counts) -- not
 byte-for-byte identity, which isn't expected (different writer
@@ -22,6 +22,8 @@ Usage (normally invoked by scripts/e2e/e2e_streaming_capture.sh):
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import argparse
 import sys
@@ -102,11 +104,21 @@ def main() -> int:
     )
     direct_adapter = RosbagAdapter(source_store=MagicMock(), source_root_uri=args.direct_mcap)
 
-    captured_source = captured_adapter.extract_episode_source(
-        robot_id=args.robot_id, robot_run_id=args.robot_run_id
+    captured_source = SimpleNamespace(
+        robot_states=captured_adapter.extract_robot_states(
+            robot_id=args.robot_id, robot_run_id=args.robot_run_id
+        ),
+        missions=captured_adapter.extract_missions(
+            robot_id=args.robot_id, robot_run_id=args.robot_run_id
+        ),
     )
-    direct_source = direct_adapter.extract_episode_source(
-        robot_id=args.robot_id, robot_run_id=args.robot_run_id
+    direct_source = SimpleNamespace(
+        robot_states=direct_adapter.extract_robot_states(
+            robot_id=args.robot_id, robot_run_id=args.robot_run_id
+        ),
+        missions=direct_adapter.extract_missions(
+            robot_id=args.robot_id, robot_run_id=args.robot_run_id
+        ),
     )
 
     _check(

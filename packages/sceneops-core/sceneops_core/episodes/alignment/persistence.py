@@ -18,21 +18,14 @@ ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION = "v1"
 
 
 class EpisodeSourceRevision(SceneOpsBaseModel):
-    """Identifies the exact EpisodeManifest revision an AlignedEpisode was
-    computed from (SceneOps V2 Request 2.1B §15/§16, Request 2.3 §5-7).
+    """The exact canonical EpisodeManifest revision an AlignedEpisode was
+    computed from (ADR-007 §18.5).
 
-    Three coordinates with three different roles -- do not collapse them:
-
-    - episode_manifest_uri: physical source location. Deterministic per
-      (dataset_id, dataset_version, episode_id); a later build_episodes
-      run silently overwrites the bytes at this same URI.
-    - source_artifact_id: producer lineage record (the ArtifactRecord this
-      revision was read through). A new artifact_id is minted on every
-      build_episodes execution even when the URI doesn't change -- useful
-      for lineage/debugging, but NOT content identity by itself.
-    - source_manifest_sha256: the actual content-revision identity. The
-      strongest of the three, and the only one guaranteed to differ when,
-      and only when, the underlying bytes actually differ.
+    - source_artifact_id: the EPISODE_MANIFEST ArtifactRecord, the revision
+      the EpisodeRecord pointed to (or the caller pinned) when aligning.
+    - source_manifest_sha256: the content identity of its bytes.
+    - episode_manifest_uri: where those bytes were read; informational only,
+      never identity.
     """
 
     episode_id: str

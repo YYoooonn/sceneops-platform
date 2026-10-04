@@ -126,6 +126,27 @@ HEAD       6fe13bf feat(acquisition): implement containerized L1 batch acquisiti
 date       2026-10-04
 ```
 
+**Amendment A6 — recording Episode canonicalization (implementation step 8).**
+Accepted. A6 freezes the canonical Episode: a source-faithful,
+task/behavior-oriented projection of one RobotRun that keeps observation,
+state, action and event streams asynchronous, each on its own declared
+clock (§31.2–§31.6). It freezes the `RecordingEpisodeBuilder` boundary and
+build configuration (§31.1, §31.3), Episode segmentation and window
+semantics (§31.4), the no-alignment invariant and the Episode ↔
+`AlignedEpisode` boundary (§31.8), recording-only provenance, identity and
+unit keys (§31.9–§31.10), and registration (§31.11). It applies §30.2 (window
+clock) to Episodes, amends §13.1 and §17.4 in place (no canonical control
+frequency or outcome), records the payload sharing between Scene and Episode
+builds (§31.6) and adds invariants I-40–I-43. It changes no decision about
+the fingerprint definition, unit-id schema, registrar ownership, replacement
+or DatasetVersion. Audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       562f890 feat(scenes): build canonical Scenes from registered recordings
+date       2026-10-04
+```
+
 Relationship to earlier ADRs:
 
 - [ADR-001](./001-postgresql-operational-metadata.md),
@@ -1202,6 +1223,11 @@ Episode   task / interaction / action-state trajectory unit
           segmentation = task / mission / interaction boundaries
 ```
 
+> **Amended by A6 (§31.2).** Canonical Episode content is asynchronous
+> observation, state, action and event streams, each in its own clock.
+> "Frames", control frequency and outcome are derived (`AlignedEpisode`)
+> or later-imported labels, not canonical Episode facts.
+
 The same RobotRun may yield `SceneRecord[]` and `EpisodeRecord[]` through
 different builders with different segmentation semantics. `SceneBuilder` and
 `EpisodeBuilder` are not merged, and neither is a parameterization of a
@@ -1902,6 +1928,11 @@ frequency. The source clock comes from the RobotRun, not from a default.
 CURRENT IMPLEMENTATION: `RAW_LOG_EPISODE_BUILDING` with `BUILD_EPISODES`.
 It accepts `robot_run_id` **or** `mcap_uri`, and hard-codes
 steering/throttle/brake as actions.
+
+> **Amended by A6 (§31).** Implemented as stated, except that a canonical
+> Episode has no control frequency (a target frequency is an `ALIGN_EPISODE`
+> choice) and the window clock is the segmentation clock the build
+> configuration declares (§30.2 applied to Episodes), not the RobotRun's.
 
 ### 17.5 Rules common to all four
 
@@ -4331,3 +4362,261 @@ tests.
 
 Same-acquisition determinism is stronger and unchanged (I-39). A rebuild of
 the same RobotRun keeps byte-identical manifests and every id.
+
+---
+
+## 31. Amendment A6: recording Episode canonicalization (step 8)
+
+### 31.1 Builder boundary
+
+```text
+BUILD_RECORDING_EPISODES(dataset_id, dataset_version, robot_run_id, build_config)
+  resolve_recording(robot_run_id)          the only way the builder gets bytes (§12.4)
+  check_l1_recording(local copy)           the step-6 conformance suite; violations fail
+  plan_recording_episodes(copy, revision, build_config)
+                                           pure, DB-free: every EpisodeManifest of the
+                                           recording scope + the payload plan
+  payload bytes -> OBSERVATION_PAYLOAD ArtifactRecords -> manifests -> EPISODE_MANIFEST
+                                           ArtifactRecords                    (producer-owned)
+  result.manifest_artifact_ids             the complete scope -> REGISTER_EPISODES
+
+RECORDING_EPISODE_BUILDING
+  build_recording_episodes -> register_episodes -> validate_episode, profile_episode (optional)
+```
+
+The job accepts no recording URI, path or robot id (`RecordingConsumerJobParams`
+rejects them) and dispatches on nothing but `build_config`. One pipeline run
+builds one RobotRun; several RobotRuns contribute to one DatasetVersion through
+several runs (§17.5 rule 1). Messages are read through the shared reader
+`sceneops_integrations.recording.reader`, the same one the Scene builder and the
+conformance suite use. The builder never reads a Scene, and the Scene builder
+never reads an Episode: the two are siblings over the same RobotRun (§13.1).
+
+Producer: `sceneops.recording_episode_builder`, `semantics_version = 1`.
+
+### 31.2 Canonical Episode
+
+> **A canonical Episode is a source-faithful, task/behavior-oriented
+> projection of one RobotRun window.** It preserves the recorded observation,
+> state, action and task/event streams, each on its own declared clock.
+> **Canonical Episode preserves asynchronous source streams. Temporal
+> alignment is a derived L3 operation.**
+
+`EpisodeManifest` (`sceneops.episode_manifest/v1`):
+
+```text
+lineage        EpisodeLineage { source: RecordingSegmentSource, producer: ProducerInfo }
+streams[]      { topic (verbatim), role: observation | state | action | event,
+                 schema_name (recorded), source_clock, fields[] {name, path},
+                 has_payload }
+observations[] states[] actions[] events[]
+               EpisodeOccurrence { occurrence_id, topic, timestamp_ns,
+                                   values {field name -> value}, payload? }
+```
+
+A value is kept as decoded from the recorded message: bool, integer, finite
+float, string, or a list of numbers. A field that resolves to a nested message
+or raw bytes is a configuration error; NaN / Infinity are not representable in
+v1 and fail the build. The manifest holds no DatasetVersion, episode id,
+status, task, outcome, control frequency, frame count or execution context.
+
+### 31.3 Build configuration
+
+```text
+RecordingEpisodeBuildConfig
+  streams[]   topic · role (observation | state | action) · time policy
+              · decoding (ros2 | json_string) · fields[] {name, path}
+              · payload (observation only: compressed_image | ros2_message)
+  events[]    topic · time policy · decoding · fields[] (≥ 1)
+  segmentation whole_recording {clock} | fixed_duration {clock, duration_ns}
+              | event_markers {event_topic, key_field, state_field,
+                               start_values[], end_values[]}
+
+time policy   header_stamp | log_time | publish_time | payload_field {field}
+              + the clock identifier it is in (log_time = mcap_log_time,
+              publish_time = mcap_publish_time; a source clock otherwise)
+```
+
+`json_string` reads a JSON object from a `std_msgs/msg/String`, a recording
+convention for messages without a standard ROS 2 type (the step-6
+`/vehicle/control` and `/mission/status`). Steering/throttle/brake, odometry
+fields or a mission topic are one configuration, never Episode-model fields.
+`normalized()` (defaults explicit, streams/events by topic, fields by name,
+marker values sorted) is `ProducerInfo.build_config`, so every output-affecting
+choice is in the fingerprint; execution context is rejected (§27.7).
+
+### 31.4 Segmentation and window clock
+
+§30.2 applies unchanged: an Episode window is a half-open interval in exactly
+one segmentation clock, `RecordingSegmentSource.source_clock`. Every stream
+and event source must be placeable on it (its time is in that clock, or the
+clock is `mcap_log_time` / `mcap_publish_time`). Windows are derived from
+message timestamps, never from `RobotRun.started_at` / `ended_at`.
+
+```text
+whole_recording  one window [earliest, latest + 1) of every included message
+                 unit_key  recording
+fixed_duration   [origin + k·d, origin + (k+1)·d) from the earliest included
+                 message; windows without a message are not Episodes
+                 unit_key  segment-<k, 6 digits>
+event_markers    one window per start / end marker pair of one task key, read
+                 from a configured event source in canonical marker order:
+                 [start marker, end marker + 1), so the end marker belongs to
+                 its Episode; the clock is the event source's clock; an end
+                 without a start, a second start, or a start never ended fails
+                 unit_key  task-<key>-<occurrence, 3 digits>
+```
+
+A message belongs to a window by its segmentation-clock timestamp; windows of
+different task keys may overlap. A build that yields no Episode fails (§18.3).
+
+### 31.5 Streams
+
+```text
+observation  sensor or perception streams; with a payload extraction each
+             occurrence references a SceneOps-owned OBSERVATION_PAYLOAD
+state        recorded robot / environment state (odometry, joints, battery, ...)
+action       recorded control / action events (commands, actuator feedback)
+event        recorded task / event markers (mission running / completed, ...)
+```
+
+Every occurrence keeps its own canonical timestamp in its stream's clock.
+Ordering and identity follow I-34: `occurrence_id = <topic slug>-<rank>`, the
+rank in the stream's canonical order over the whole recording (timestamp, then
+MCAP sequence when every message carries one, then per-topic file order).
+Duplicate source events stay separate occurrences. No universal action vector,
+no fixed rate and no `[action_dim]` shape is imposed. Only facts the recording
+carries are kept: no success label, reward, outcome, subtask or language
+instruction is manufactured; adding one is a separate, lineage-bearing import
+(Q1, §29.15).
+
+### 31.6 Payloads shared with Scenes
+
+Episode observation payloads use the §30.4 extractions and the §30.5 identity
+unchanged. The id depends only on `(robot_run_id, topic, channel_index,
+extraction)` and the ArtifactRecord is owned by the RobotRun, so a Scene and an
+Episode that extract the same recorded message the same way reference **one**
+artifact; whichever build runs first creates it and the other reuses it
+(write-once, verify-or-conflict). This is correct because ownership is the
+RobotRun, not a domain unit. Payload extraction, identity and publication live
+in `sceneops_worker.recordings`, shared by both builders.
+
+### 31.7 Interpretation rules (v1)
+
+- Every configured topic must be in the recording, and every selected field
+  must resolve in every message; otherwise the build fails.
+- `log_time` (as a time policy or segmentation clock) requires the recording
+  clock `mcap_log_time`.
+- A source-clock timestamp is never converted to another clock.
+- Marker key and state values must be strings.
+
+### 31.8 No alignment; Episode ↔ AlignedEpisode
+
+Canonicalization never resamples, interpolates, forward-fills, pads,
+associates nearest frames, stacks windows or puts streams on a common
+timeline. `ALIGN_EPISODE` owns all of it:
+
+```text
+Episode (canonical revision, pinned by manifest_artifact_id + checksum)
+  -> align_episode(manifest, TemporalAlignmentConfig, TemporalSourceContext, episode_id)
+  -> AlignedEpisode (derived, L3)
+```
+
+`align_episode` (alignment semantics `v2`) aligns observation and state streams
+as observation channels and action streams as action channels, named
+`<topic>#<field>` (a payload stream as `<topic>`, a reference value carrying
+the payload artifact id); boolean and string fields and event streams are not
+aligned. It aligns on one clock (default: the Episode window clock) and rejects
+any stream on another clock. Default association comes from the value kind and
+role, never from a channel-name convention (action → previous, else nearest).
+The timeline spans the Episode window when aligning on the window clock,
+otherwise the aligned samples' extent. Unpinned `ALIGN_EPISODE` resolves the
+revision the EpisodeRecord points to (§14.4), never "the latest artifact".
+`task` / `outcome` on `AlignedEpisode` remain L3 fields; a canonical Episode
+never fills them.
+
+### 31.9 Provenance
+
+`EpisodeLineage = { source: RecordingSegmentSource, producer: ProducerInfo }`,
+the same composition as Scenes (§14.2). The fingerprint re-derives from the
+manifest's own source revision. No rosbag path, raw-log id, dataset locator,
+acquisition origin, robot id or mission id is canonical Episode provenance.
+
+### 31.10 Identity
+
+```text
+episode_id                 canonical_unit_id(domain="episode", dataset_id,
+                           dataset_version, robot_run_id, unit_key)        (§18.1)
+EPISODE_MANIFEST artifact  episode-manifest-<sha256(episode_id, manifest checksum)[:32]>
+manifest key               {dataset_root}/{dataset_id}/versions/{v}/episodes/{episode_id}/
+                           manifest-<sha256>.json                          (write-once)
+```
+
+The same RobotRun revision and build configuration rebuild byte-identical
+manifests, the same Episode ids and unit keys, and the same payload and
+manifest artifact ids; another build configuration reuses every payload id.
+
+### 31.11 Registration and record
+
+`REGISTER_EPISODES` mirrors `REGISTER_SCENES` (§17.5, §18.3, §30): verify each
+EPISODE_MANIFEST (pinned checksum and size, strict canonical parse, fingerprint,
+every payload reference); one RobotRun and one fingerprint per input; the
+manifests' recording checksum equals the RobotRun's; then, under the
+DatasetVersion row lock, apply §18.3 to `(DatasetVersion, robot_run_id)` and
+recompute `episode_count` from membership. The registrar takes the row lock
+before inserting.
+
+`EpisodeRecord` projects one revision: `episode_id`, `dataset_id`,
+`dataset_version`, `robot_run_id`, `unit_key`, `producer_fingerprint`,
+`manifest_artifact_id`, `manifest_checksum`, `window_clock`,
+`window_start/end_timestamp_ns`, per-role observed topics and counts,
+`registered_at` / `updated_at`. Removed: `status` / `EpisodeStatus` (§13.4),
+`task`, `outcome`, `raw_log_id`, `robot_id`, `mission_id`,
+`episode_manifest_uri`, channels, `control_frequency_hz`, `frame_count`,
+`started_at` / `ended_at`, `metadata`. Episode run records pin
+`manifest_artifact_id` + `manifest_checksum`; readiness counts only runs of the
+current revision (§13.4).
+
+Migration `b8e4d2a6c917` rebuilds `episodes` with foreign keys to
+`dataset_versions`, `robot_runs` and `artifacts`, adds the run-record pin and
+its check constraint, and refuses to run while any legacy Episode or Episode run
+record exists (reset development state instead).
+
+### 31.12 Removed
+
+```text
+BUILD_EPISODES, REGISTER_EPISODE, RAW_LOG_EPISODE_BUILDING  -> BUILD_RECORDING_EPISODES,
+                                                               REGISTER_EPISODES,
+                                                               RECORDING_EPISODE_BUILDING
+EpisodeBuilder, EpisodeSegmenter, EpisodeSource, EpisodeSegmentationConfig,
+EpisodeObservationFrame, EpisodeActionFrame, EpisodeStatus, legacy EpisodeLineage
+RosbagAdapter.extract_episode_source and its sensor-topic defaults (RosbagAdapter
+  remains only the derived robot-telemetry projection of INGEST_ROBOT_STATES)
+sceneops_core.observations.schemas (RawSensorFrameManifest)
+"latest EPISODE_MANIFEST by created_at" source resolution
+```
+
+`EpisodeOutcome` remains the vocabulary of derived learning workflows.
+
+### 31.13 Invariants
+
+```text
+I-40  A canonical Episode keeps every recorded occurrence of its configured streams inside
+      its window at the occurrence's own canonical timestamp, in the stream's declared clock.
+      No canonical Episode is resampled, interpolated, forward-filled, padded, associated
+      or synchronized; duplicates stay separate occurrences.
+I-41  Episode semantics (stream roles, fields, time policies, segmentation) come only from
+      build_config; no topic, field name or action schema is built into the Episode model.
+I-42  Scene and Episode canonicalization of one RobotRun are independent: neither reads the
+      other's manifests or records, and either may run first with identical results.
+      Payloads they both extract are the same RobotRun-owned artifacts.
+I-43  A canonical Episode carries only recorded facts: no label, outcome, reward or
+      instruction is manufactured during canonicalization.
+```
+
+Backing tests: `apps/worker/tests/episodes/test_recording_episode_builder.py`
+(I-34, I-39, I-40–I-43, §31.4 segmentation and clocks, failures),
+`apps/worker/tests/episodes/test_recording_episode_vertical_integration.py`
+(real PostgreSQL + MinIO: pipeline contract, retry, conflict / replacement,
+partial-write retry, concurrent registration, Scene / Episode independence),
+core manifest / config / alignment tests, and `make e2e-recording-episode`.

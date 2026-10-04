@@ -16,4 +16,13 @@ from typing import Final
 
 MCAP_LOG_TIME_CLOCK: Final = "mcap_log_time"
 
-__all__ = ["MCAP_LOG_TIME_CLOCK"]
+# MCAP ``Message.publish_time``: upstream publication time where the
+# transport provides one, otherwise equal to ``log_time`` (§29.5 R4).
+MCAP_PUBLISH_TIME_CLOCK: Final = "mcap_publish_time"
+
+# Clocks every message of a recording carries, whatever its payload. A
+# recording builder may cut units on one of these without every channel
+# taking its canonical time from it.
+RECORDING_CLOCKS: Final = frozenset({MCAP_LOG_TIME_CLOCK, MCAP_PUBLISH_TIME_CLOCK})
+
+__all__ = ["MCAP_LOG_TIME_CLOCK", "MCAP_PUBLISH_TIME_CLOCK", "RECORDING_CLOCKS"]

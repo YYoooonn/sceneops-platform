@@ -1013,7 +1013,7 @@ Five stages:
 5. `scripts/e2e/mcap_capture_verify.py` (host, `uv run` -- `RosbagAdapter`
    needs no ROS2/rclpy install) opens the captured MCAP through the same
    `RosbagAdapter` apps/worker uses for real ingestion (mandatory
-   compatibility check, `extract_episode_source()` only -- no DB writes,
+   compatibility check, `extract_robot_states()` / `extract_missions()` only -- no DB writes,
    no `RobotRun`/`Episode` creation) and compares it against the
    direct-recorded bag for **semantic** equivalence, not byte-identity:
 

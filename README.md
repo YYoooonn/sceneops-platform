@@ -135,9 +135,7 @@ RobotState   a robot-runtime-state time series (position, orientation, velocity,
 
 ### Episode (v2)
 
-An `Episode` is a task-oriented observation+action window segmented out of a robot recording — a separate domain from Scene (snapshot-style sensor observation) and from RobotState (raw runtime time series). `EpisodeRecord` is the canonical unit, built by the `raw_log_episode_building` pipeline (`build_episodes → register_episode → validate_episode → profile_episode`) from the same rosbag/MCAP recording `RosbagAdapter` decodes for robot ingestion.
-
-`EpisodeStatus` deliberately stays a registration-only lifecycle (`created`/`registered`) — quality/readiness is always derived live from the latest validation/profile run record, never cached on the record's own status. See [`docs/architecture/episode-domain.md`](docs/architecture/episode-domain.md).
+An `Episode` is a canonical, task/behavior-oriented projection of one registered RobotRun recording: its observation, state, action and task/event streams, kept asynchronous, each on its own declared clock. It is a sibling of Scene over the same RobotRun, built by the `recording_episode_building` pipeline (`build_recording_episodes → register_episodes → validate_episode → profile_episode`) from a build configuration that names topics, fields, clocks and segmentation. Temporal alignment is a derived step (`align_episode` → `AlignedEpisode`). `EpisodeRecord` has no status; readiness is derived from the validation run of its current manifest revision. See [`docs/architecture/episode-domain.md`](docs/architecture/episode-domain.md).
 
 ---
 
@@ -199,10 +197,10 @@ Pipeline
 `scenario_curation`
   mine_scenarios → score_scenario_readiness
 
-`raw_log_episode_building` (v2)
-  build_episodes → register_episode → validate_episode → profile_episode
+`recording_episode_building`
+  build_recording_episodes → register_episodes → validate_episode → profile_episode
 
-Canonical Scenes are built only from registered RobotRun recordings; `register_scenes` is the only writer of Scene membership. See [Scene domain](docs/architecture/scene-domain.md).
+Canonical Scenes and Episodes are built only from registered RobotRun recordings; `register_scenes` / `register_episodes` are the only writers of their membership. See [Scene domain](docs/architecture/scene-domain.md).
 
 #### Standalone robot jobs (v2)
 
@@ -515,51 +513,16 @@ See [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.m
 
 ---
 
-## Demo 5: episode building from a robot recording
+## Demo 5: canonical Episodes from a robot recording
 
-The same decoded rosbag/MCAP recording that feeds `ingest_robot_states` also feeds a separate pipeline, `raw_log_episode_building`, which segments it into task-oriented `Episode` records instead of a raw telemetry time series. Segmentation defaults to one Episode per dated Mission (`EpisodeSegmentationStrategy.MISSION_BOUNDARY`); `WHOLE_RUN` and `FIXED_WINDOW` are also supported.
-
-The primary documented path is the composed `make e2e-robot-learning`, which
-records a real CAN replay and builds + curates the resulting Episode(s) in
-one command (see Demo 4 above for the topic mapping it records through):
+`recording_episode_building` turns one registered RobotRun into canonical Episodes. The build configuration decides which topics are observation / state / action streams, which fields they keep, which preserved timestamp is canonical, and how Episodes are cut (here: one Episode per recorded `/mission/status` running → completed pair):
 
 ```bash
 make local-up
-make e2e-robot-learning   # records CAN replay -> MCAP -> Episode -> alignment -> learning export -> curation
+make e2e-recording-episode   # nuScenes -> acquisition -> RobotRun -> Episodes -> validation/profile, retry, replacement
 ```
 
-Or step by step, reusing an MCAP a prior `e2e-robot-can-replay`/
-`e2e-robot-learning` run already recorded at `data/raw/rosbag/<scene>/<scene>_0.mcap`
-(**a fresh environment must run one of those at least once first** — this is
-the runtime-generated recording, not the similarly-named committed
-unit-test fixture at `apps/worker/tests/fixtures/rosbag/`, which only unit
-tests use):
-
-```bash
-make ros2-up
-make e2e-episode-building   # debug/stage target: one Episode build from an already-recorded MCAP
-```
-
-**Pipeline:** `build_episodes → register_episode → validate_episode → profile_episode`
-
-**Example output:**
-
-```
-=== build_episodes job result ===
-episode_count : 1
-
-=== register_episode job result ===
-registered_episode_count : 1
-
-=== GET /episodes/{episode_id}/quality ===
-status     : registered
-readiness  : ready
-frame_count: 2913
-observation_channels : [position, orientation, velocity, battery]
-action_channels       : [steering, throttle, brake]
-```
-
-`status=registered` never encodes quality — `readiness` is always derived live from the latest validation run, not cached on the Episode record itself. See [`docs/architecture/episode-domain.md`](docs/architecture/episode-domain.md).
+Example (scene-0061): one Episode `task-mission-scene-0061-000` with 224 front-camera observations, 976 state occurrences (odometry + battery), 38 control actions and 2 mission events, each at its recorded timestamp — nothing resampled or aligned. Inspect it with `GET /api/v1/episodes/{episode_id}/manifest`. See [`docs/architecture/episode-domain.md`](docs/architecture/episode-domain.md).
 
 ---
 
@@ -639,8 +602,10 @@ make e2e-cleanroom                  # the full-platform acceptance workflow (des
 **Robot learning (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)). Everything else is self-contained in the `ros2/` Docker image.
 
 ```bash
-make e2e-robot-learning             # real CAN bus -> ROS2 -> rosbag2/MCAP -> Episode -> learning export/curation
+make e2e-recording-episode          # canonical Episodes from a batch-acquired recording
 ```
+
+The learning chain on canonical Episodes (`make e2e-robot-learning`) is unavailable until ADR-007 implementation step 11.
 
 **Artifact storage backend** (`.env.local`):
 
@@ -699,10 +664,11 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 |  Command | Description |
 | --- | --- |
 | `make e2e-recording-scene [SCENE=scene-0061]` | nuScenes → acquisition container → MCAP → RobotRun → `recording_scene_building` → canonical Scenes → validation/profile, through FastAPI |
-| `make e2e-robot-learning [SCENE=scene-0061 \| MAX_SCENES=N]` | *(ROS2, built on demand)* Real CAN bus → ROS2 → MCAP → Episode → learning export/curation |
+| `make e2e-recording-episode [SCENE=scene-0061]` | nuScenes → acquisition container → MCAP → RobotRun → `recording_episode_building` → canonical Episodes → validation/profile, through FastAPI |
+| `make e2e-robot-learning` | **Unavailable until ADR-007 implementation step 11** (learning chain on canonical Episodes) |
 | `make e2e-perception [BACKEND=mock\|grounding_dino]` | **Unavailable until ADR-007 implementation step 10** (needs ground truth and keyframes on recording-derived Scenes) |
 | `make e2e-interop` | Real Postgres/MinIO → SceneOpsDataset → LeRobot → golden comparison; requires `make lerobot-sync` |
-| `make e2e-cleanroom` | **The full-platform acceptance workflow**: `local-reset` → `e2e-recording-scene` → `e2e-robot-learning` → persisted-state validation. **Destructive** (preserves `data/raw`) |
+| `make e2e-cleanroom` | **The full-platform acceptance workflow**: `local-reset` → `e2e-recording-scene` → `e2e-recording-episode` → persisted-state validation. **Destructive** (preserves `data/raw`) |
 
 **Secondary E2E:**
 
@@ -713,14 +679,14 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | `make e2e-ros2-streaming [SCENE=scene-0061 \| RATE=10.0]` | Real nuScenes CAN → ROS2 → streaming bridge → real Kafka → consumer; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
 | `make e2e-streaming-capture [SCENE=scene-0061 \| RATE=10.0]` | Real Kafka → durable MCAP capture (run-scoped consumer) → RosbagAdapter compatibility check; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) Part 3 |
 | `make e2e-robot-run-registration [SCENE=scene-0061 \| RATE=10.0]` | Captured MCAP → ArtifactStore → ArtifactRecord → canonical `RobotRun` (real Postgres/MinIO), plus idempotent-retry/conflict verification; requires `make local-up` and `make streaming-up` |
-| `make e2e-robot-run-learning [SCENE=scene-0061 \| RATE=10.0]` | Streamed capture → canonical `RobotRun` → materialization → existing Episode/learning-data pipeline (distinct from `e2e-robot-learning`'s batch CAN→ROS2→MCAP path above); requires `make local-up` and `make streaming-up` |
+| `make e2e-robot-run-learning` | **Unavailable until ADR-007 implementation step 11** |
 | `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Report on an existing detection-evaluation run (no new one can be produced until ADR-007 step 10) |
 
 **Smoke** (transport/liveness only — never creates persistent domain data): `make smoke-api`, `make smoke-lerobot-container`, `make smoke-streaming` *(requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md))*.
 
 **Verification** (execution-model/backend-substitution properties, not domain workflows): `make verify-reliability`, `make verify-airflow-backend` *(requires `make airflow-up`; an alternate-orchestrator compatibility check, not general backend substitution)*. Both run `recording_scene_building` on a camera RobotRun they acquire once and then reuse.
 
-**Debug / Stage commands** (individual pipeline stages, for manual debugging — not primary E2E workflows): `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0`, `make e2e-episode-building`, `make e2e-episode-curation` (the curation-policy selection/rejection mechanism test).
+**Debug / Stage commands** (individual pipeline stages, for manual debugging — not primary E2E workflows): `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0`; `make e2e-episode-building` and `make e2e-episode-curation` are unavailable until ADR-007 step 11.
 
 
 ### ROS2 / Robot (v2)
@@ -756,7 +722,9 @@ sceneops-platform/
 │           ├── jobs/dataset/       # handlers: scene + episode (v2) build/register/validate/profile, dataset aggregation
 │           ├── jobs/               # evaluation/, inference/, scenarios/, robots/ (v2)
 │           ├── scenes/             # recording scene builder, registrar, validator, profiler, selection filter
-│           ├── datasets/ingestion/ # RosbagAdapter (Episode / robot-state read of a recording)
+│           ├── episodes/           # recording episode builder, registrar, resolver, validator, profiler
+│           ├── recordings/         # payload extraction / identity / publication shared by both builders
+│           ├── datasets/ingestion/ # RosbagAdapter (robot-telemetry projection of a recording)
 │           ├── evaluation/detection/  # CenterDistanceDetectionEvaluator, accumulator
 │           ├── inference/          # mock / ONNX / GroundingDINO + frustum-lift backends
 │           ├── stores/robots.py    # RobotStore (v2)

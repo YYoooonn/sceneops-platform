@@ -38,8 +38,8 @@ class ChannelPolicyConfig(SceneOpsBaseModel):
 
 class TemporalAlignmentConfig(SceneOpsBaseModel):
     """How alignment is performed — v1 semantics only (SceneOps V2 Request
-    2.1B, Request 2.2). ``target_frequency_hz`` is always explicit; it is
-    never derived from EpisodeManifest.control_frequency_hz."""
+    2.1B, Request 2.2). ``target_frequency_hz`` is always explicit; a
+    canonical Episode has no control frequency to derive it from."""
 
     timeline_mode: TimelineMode = TimelineMode.FIXED_FREQUENCY
     target_frequency_hz: float = Field(gt=0)

@@ -31,13 +31,13 @@ from .robots import (
 )
 from .episodes import (
     AlignEpisodeJobParams,
-    BuildEpisodesJobParams,
+    BuildRecordingEpisodesJobParams,
     CurateEpisodesJobParams,
     ExportLearningDataJobParams,
     LearningDataExportInputParams,
     ProfileAlignedEpisodeJobParams,
     ProfileEpisodeJobParams,
-    RegisterEpisodeJobParams,
+    RegisterEpisodesJobParams,
     ValidateAlignedEpisodeJobParams,
     ValidateEpisodeJobParams,
 )
@@ -48,8 +48,8 @@ __all__ = [
     "RegisterRobotRunJobParams",
     "IngestRobotStatesJobParams",
     "ExportRobotAnalyticsSnapshotJobParams",
-    "BuildEpisodesJobParams",
-    "RegisterEpisodeJobParams",
+    "BuildRecordingEpisodesJobParams",
+    "RegisterEpisodesJobParams",
     "ValidateEpisodeJobParams",
     "ProfileEpisodeJobParams",
     "AlignEpisodeJobParams",

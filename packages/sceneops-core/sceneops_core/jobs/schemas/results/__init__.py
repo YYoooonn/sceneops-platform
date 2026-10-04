@@ -24,12 +24,12 @@ from .robots import (
 )
 from .episodes import (
     AlignEpisodeJobResult,
-    BuildEpisodesJobResult,
+    BuildRecordingEpisodesJobResult,
     CurateEpisodesJobResult,
     ExportLearningDataJobResult,
     ProfileAlignedEpisodeJobResult,
     ProfileEpisodeJobResult,
-    RegisterEpisodeJobResult,
+    RegisterEpisodesJobResult,
     ValidateAlignedEpisodeJobResult,
     ValidateEpisodeJobResult,
 )
@@ -40,8 +40,8 @@ __all__ = [
     "RegisterRobotRunJobResult",
     "IngestRobotStatesJobResult",
     "ExportRobotAnalyticsSnapshotJobResult",
-    "BuildEpisodesJobResult",
-    "RegisterEpisodeJobResult",
+    "BuildRecordingEpisodesJobResult",
+    "RegisterEpisodesJobResult",
     "ValidateEpisodeJobResult",
     "ProfileEpisodeJobResult",
     "AlignEpisodeJobResult",

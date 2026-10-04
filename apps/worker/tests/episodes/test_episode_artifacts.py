@@ -15,7 +15,6 @@ import pytest
 from sceneops_storage import LocalArtifactStore
 
 from sceneops_core.episodes.alignment import (
-    MCAP_LOG_TIME_CLOCK,
     AlignedEpisodeArtifact,
     EpisodeSourceRevision,
     TemporalAlignmentConfig,
@@ -24,100 +23,75 @@ from sceneops_core.episodes.alignment import (
     alignment_key,
 )
 from sceneops_core.episodes.schemas import EpisodeManifest
-from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
+from sceneops_core.episodes.testing import DEFAULT_CLOCK, episode_manifest, state
+from sceneops_worker.episodes.artifacts import (
+    EpisodeArtifactStore,
+    EpisodeManifestIntegrityError,
+    EpisodeManifestWriteConflictError,
+)
 
 
 def _store(tmp_path) -> EpisodeArtifactStore:
     return EpisodeArtifactStore(
         artifact_store=LocalArtifactStore(root_uri=str(tmp_path)),
         dataset_root_uri=str(tmp_path / "datasets"),
+        payload_root_uri=str(tmp_path / "payloads"),
     )
 
 
-def _manifest(episode_id: str = "ep-1") -> EpisodeManifest:
-    return EpisodeManifest(
-        episode_id=episode_id,
-        dataset_id="d1",
-        dataset_version="v1",
-        start_timestamp_us=0,
-        end_timestamp_us=0,
-        frame_count=0,
-        task="park",
-    )
+def _manifest(x: float = 0.0) -> EpisodeManifest:
+    return episode_manifest([state("/odom", 0, x=x)], window=(0, 1))
 
 
-class TestEpisodeManifestChecksum:
+class TestCanonicalEpisodeManifestStorage:
     @pytest.mark.asyncio
-    async def test_checksum_equals_sha256_of_actual_written_bytes(
+    async def test_published_bytes_are_canonical_and_checksum_qualified(
         self, tmp_path
     ) -> None:
         store = _store(tmp_path)
         manifest = _manifest()
-
-        result = await store.write_episode_manifest(
+        published = await store.publish_canonical_manifest(
             dataset_id="d1", dataset_version="v1", episode_id="ep-1", manifest=manifest
         )
-
-        on_disk_bytes = await store.artifact_store.read_bytes(result.uri)
-        expected = f"sha256:{hashlib.sha256(on_disk_bytes).hexdigest()}"
-        assert result.checksum == expected
-        assert result.size_bytes == len(on_disk_bytes)
+        data = manifest.to_canonical_bytes()
+        assert published.checksum == "sha256:" + hashlib.sha256(data).hexdigest()
+        assert published.uri.endswith(
+            f"episodes/ep-1/manifest-{hashlib.sha256(data).hexdigest()}.json"
+        )
+        assert (
+            await store.read_pinned_manifest(
+                uri=published.uri, checksum=published.checksum, size_bytes=len(data)
+            )
+            == manifest
+        )
 
     @pytest.mark.asyncio
-    async def test_written_bytes_are_valid_json_readable_via_read_json(
-        self, tmp_path
-    ) -> None:
+    async def test_republishing_identical_bytes_converges(self, tmp_path) -> None:
         store = _store(tmp_path)
-        manifest = _manifest()
-        result = await store.write_episode_manifest(
-            dataset_id="d1", dataset_version="v1", episode_id="ep-1", manifest=manifest
-        )
-        loaded = await store.load_episode_manifest(result.uri)
-        assert loaded is not None
-        assert loaded.episode_id == "ep-1"
+        args = dict(dataset_id="d1", dataset_version="v1", episode_id="ep-1")
+        a = await store.publish_canonical_manifest(manifest=_manifest(), **args)
+        b = await store.publish_canonical_manifest(manifest=_manifest(), **args)
+        assert a == b
 
     @pytest.mark.asyncio
-    async def test_different_content_produces_different_checksum(
-        self, tmp_path
-    ) -> None:
+    async def test_revisions_coexist_and_keys_are_write_once(self, tmp_path) -> None:
         store = _store(tmp_path)
-        result_a = await store.write_episode_manifest(
-            dataset_id="d1",
-            dataset_version="v1",
-            episode_id="ep-1",
-            manifest=_manifest("ep-1"),
-        )
-        result_b = await store.write_episode_manifest(
-            dataset_id="d1",
-            dataset_version="v1",
-            episode_id="ep-2",
-            manifest=_manifest("ep-2"),
-        )
-        assert result_a.checksum != result_b.checksum
+        args = dict(dataset_id="d1", dataset_version="v1", episode_id="ep-1")
+        a = await store.publish_canonical_manifest(manifest=_manifest(0.0), **args)
+        b = await store.publish_canonical_manifest(manifest=_manifest(1.0), **args)
+        assert a.uri != b.uri
+        await store.artifact_store.write_bytes(a.uri, b"tampered")
+        with pytest.raises(EpisodeManifestWriteConflictError):
+            await store.publish_canonical_manifest(manifest=_manifest(0.0), **args)
+        with pytest.raises(EpisodeManifestIntegrityError):
+            await store.read_pinned_manifest(uri=a.uri, checksum=a.checksum)
 
     @pytest.mark.asyncio
-    async def test_read_episode_manifest_bytes_matches_what_was_written(
-        self, tmp_path
-    ) -> None:
-        store = _store(tmp_path)
-        result = await store.write_episode_manifest(
-            dataset_id="d1",
-            dataset_version="v1",
-            episode_id="ep-1",
-            manifest=_manifest(),
-        )
-        raw = await store.read_episode_manifest_bytes(result.uri)
-        assert raw is not None
-        assert f"sha256:{hashlib.sha256(raw).hexdigest()}" == result.checksum
-        # And it's real JSON, not an opaque blob.
-        assert json.loads(raw)["episodeId"] == "ep-1"
-
-    @pytest.mark.asyncio
-    async def test_read_episode_manifest_bytes_missing_returns_none(
-        self, tmp_path
-    ) -> None:
-        store = _store(tmp_path)
-        assert await store.read_episode_manifest_bytes("file:///nope.json") is None
+    async def test_missing_bytes_are_an_integrity_error(self, tmp_path) -> None:
+        with pytest.raises(EpisodeManifestIntegrityError):
+            await _store(tmp_path).read_pinned_manifest(
+                uri=str(tmp_path / "nope.json"), checksum="sha256:" + "0" * 64
+            )
 
 
 class TestAlignedEpisodeUri:
@@ -178,9 +152,9 @@ class TestWriteAlignedEpisode:
     ) -> None:
         store = _store(tmp_path)
         manifest = _manifest()
-        config = TemporalAlignmentConfig(target_frequency_hz=1.0)
-        ctx = TemporalSourceContext(source_clock=MCAP_LOG_TIME_CLOCK)
-        aligned = align_episode(manifest, config, ctx)
+        config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=1)
+        ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
+        aligned = align_episode(manifest, config, ctx, episode_id="ep-1")
 
         artifact = AlignedEpisodeArtifact(
             source_revision=EpisodeSourceRevision(

@@ -163,17 +163,18 @@ hide which of those a failure actually needed. The primary surface is:
 
 ```
 make e2e-recording-scene [SCENE=...]         nuScenes -> acquisition -> RobotRun -> canonical Scenes -> quality
-make e2e-robot-learning [SCENE=... | MAX_SCENES=N]   real CAN bus -> ROS2 -> MCAP -> Episode -> learning export/curation
+make e2e-recording-episode [SCENE=...]       nuScenes -> acquisition -> RobotRun -> canonical Episodes -> quality
 make e2e-interop                             real Postgres/MinIO -> SceneOpsDataset -> LeRobot -> golden comparison
 make e2e-cleanroom                           THE full-platform acceptance workflow (see below)
 ```
 
-`e2e-robot-learning` records its own CAN replay (needs the ROS2 sandbox,
-`--profile ros2`, built on demand) and builds/curates the resulting
-Episode(s) in one command — it is the primary path, not
-`e2e-robot-can-replay`/`e2e-episode-building`/`e2e-episode-curation` run by
-hand (those remain available as debug/stage targets, see `make help`'s
-"Debug / Stage" section). See
+`e2e-recording-episode` is the Episode-domain vertical: the same
+acquisition and publication containers as `e2e-recording-scene`, then
+`recording_episode_building`, retry / replacement checks and a sibling Scene
+build on the same RobotRun. The learning chain on canonical Episodes
+(`e2e-robot-learning`, `e2e-episode-building`, `e2e-episode-curation`,
+`e2e-robot-run-learning`) is unavailable until the ADR-007 step-11
+consolidation; those commands exit 3. See
 [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md).
 
 `e2e-interop` needs the isolated LeRobot environment (`make lerobot-sync`,
@@ -185,7 +186,7 @@ comparison), see
 **`make e2e-cleanroom`** is the only full-platform acceptance entry point:
 `make local-reset` (destructive — wipes Postgres/Redis/MinIO, preserves
 `data/raw/nuscenes` and the CAN bus expansion) -> `e2e-recording-scene` ->
-`e2e-robot-learning` -> a final query of real persisted API state. It
+`e2e-recording-episode` -> a final query of real persisted API state. It
 deliberately does not require GPU, Airflow, or the isolated LeRobot venv —
 those remain optional verification, run separately afterward
 (`make verify-airflow-backend`, `make e2e-interop`).

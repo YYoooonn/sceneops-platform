@@ -18,6 +18,8 @@ Usage (normally invoked by scripts/e2e/e2e_robot_run_registration.sh):
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import argparse
 import asyncio
 import hashlib
@@ -214,8 +216,13 @@ async def main() -> int:
             adapter = RosbagAdapter(
                 source_store=MagicMock(), source_root_uri=str(resolved.local_path)
             )
-            source = adapter.extract_episode_source(
-                robot_id=resolved.robot_id, robot_run_id=args.robot_run_id
+            source = SimpleNamespace(
+                robot_states=adapter.extract_robot_states(
+                    robot_id=resolved.robot_id, robot_run_id=args.robot_run_id
+                ),
+                missions=adapter.extract_missions(
+                    robot_id=resolved.robot_id, robot_run_id=args.robot_run_id
+                ),
             )
         _check(
             "resolved local copy removed after use",

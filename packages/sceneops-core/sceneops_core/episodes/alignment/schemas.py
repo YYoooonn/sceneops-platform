@@ -12,9 +12,7 @@ from .enums import AlignedSignalStatus, AlignedValueKind, AssociationPolicy
 
 class AlignedValue(SceneOpsBaseModel):
     """A resolved/interpolated signal payload, tagged by structural kind
-    (SceneOps V2 Request 2.2 §27). Flat-with-nullable-fields, matching the
-    existing EpisodeObservationFrame convention rather than introducing a
-    discriminated-union type not otherwise used in this codebase. Only the
+    (SceneOps V2 Request 2.2 §27). Flat-with-nullable-fields rather than a discriminated union. Only the
     fields matching ``kind`` are populated; the rest stay None."""
 
     kind: AlignedValueKind

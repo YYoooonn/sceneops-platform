@@ -17,17 +17,6 @@ from .errors import (
 )
 from .schemas import AlignedSignal, AlignedValue
 
-# Known observation channels emitted by EpisodeBuilder (see
-# _OBSERVATION_STATE_FIELDS, episode_builder.py:21-26). Any observation
-# channel outside this set is a reference/binary channel iff its samples
-# carry a SensorModality — never assumed from the channel name alone
-# (SceneOps V2 Request 2.1B §9, Request 2.2 §20).
-_ORIENTATION_CHANNEL = "state.orientation"
-_NUMERIC_VECTOR_STATE_CHANNELS = frozenset(
-    {"state.position", "state.velocity", "state.acceleration"}
-)
-_NUMERIC_SCALAR_STATE_CHANNELS = frozenset({"state.battery"})
-
 _INTERPOLATION_ELIGIBLE_KINDS = frozenset(
     {AlignedValueKind.NUMERIC_SCALAR, AlignedValueKind.NUMERIC_VECTOR}
 )
@@ -37,9 +26,8 @@ _INTERPOLATION_ELIGIBLE_KINDS = frozenset(
 class ChannelSample:
     """One channel's value at one source timestamp, already converted to
     the typed AlignedValue shape — internal plumbing only, never
-    serialized. Association policies operate uniformly on this regardless
-    of whether the source was an EpisodeObservationFrame or
-    EpisodeActionFrame."""
+    serialized. Association policies operate uniformly on this whatever
+    canonical stream the sample came from."""
 
     timestamp_us: int
     payload: AlignedValue
@@ -76,7 +64,7 @@ _FrameT = TypeVar("_FrameT", bound=_ChannelBearingFrame)
 
 
 def group_frames_by_channel(frames: Sequence[_FrameT]) -> dict[str, list[_FrameT]]:
-    """Groups raw EpisodeObservationFrame/EpisodeActionFrame entries by
+    """Groups channel-bearing entries by
     ``channel`` — input ordering is preserved per group; canonicalization
     (stable-sort + dedup) happens separately, per group, once each frame is
     converted to a ChannelSample (SceneOps V2 Request 2.2 §10/§22)."""
@@ -101,19 +89,17 @@ def _default_policy(
     value_kind: AlignedValueKind | None,
 ) -> AssociationPolicy:
     if namespace == ChannelNamespace.ACTION:
-        # All current action channels (steering/throttle/brake) are control
-        # commands in effect until superseded (SceneOps V2 Request 2.1B §9).
+        # A recorded action is in effect until the next one supersedes it.
         return AssociationPolicy.PREVIOUS
-
-    if channel in _NUMERIC_SCALAR_STATE_CHANNELS:
-        return AssociationPolicy.PREVIOUS
-    if channel in _NUMERIC_VECTOR_STATE_CHANNELS or channel == _ORIENTATION_CHANNEL:
-        return AssociationPolicy.NEAREST
-    if value_kind == AlignedValueKind.REFERENCE:
-        # Camera/LiDAR channel names are data-dependent (topic-derived), so
-        # this is identified structurally via value_kind, not a name
-        # allowlist — the only other category besides the known state.*
-        # channels that current producers emit.
+    # Observation and state channels are identified structurally by their
+    # value kind, never by a channel-name convention: topics and field names
+    # belong to the recording and its build configuration.
+    if value_kind in (
+        AlignedValueKind.NUMERIC_SCALAR,
+        AlignedValueKind.NUMERIC_VECTOR,
+        AlignedValueKind.ORIENTATION,
+        AlignedValueKind.REFERENCE,
+    ):
         return AssociationPolicy.NEAREST
 
     raise UnknownChannelError(

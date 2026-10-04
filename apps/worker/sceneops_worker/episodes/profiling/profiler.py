@@ -1,39 +1,49 @@
 from __future__ import annotations
 
+from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import EpisodeManifest
 
-from .reports import EpisodeProfileResult
+from .reports import EpisodeProfileResult, EpisodeStreamProfile
 
 
 class EpisodeManifestProfiler:
-    """Pure descriptive stats for one Episode manifest (SceneOps V2 Request 17).
+    """Pure descriptive statistics of one Episode revision: per role and per
+    stream counts and extents, each stream in its own clock. No quality
+    judgment (validation's job) and no cross-stream timing (alignment's)."""
 
-    Answers "what kind of trajectory/data does this Episode contain?" — no
-    quality judgment here, that's EpisodeManifestValidator's job. All values
-    come directly from fields EpisodeBuilder already computed; nothing here
-    re-derives or re-aligns timestamps.
-    """
-
-    def profile(self, *, manifest: EpisodeManifest) -> EpisodeProfileResult:
-        duration_us = None
-        if (
-            manifest.start_timestamp_us is not None
-            and manifest.end_timestamp_us is not None
-        ):
-            duration_us = manifest.end_timestamp_us - manifest.start_timestamp_us
-
+    def profile(
+        self, *, episode_id: str, manifest: EpisodeManifest
+    ) -> EpisodeProfileResult:
+        streams: list[EpisodeStreamProfile] = []
+        for stream in manifest.streams:
+            stamps = [
+                o.timestamp_ns
+                for o in manifest.occurrences()
+                if o.topic == stream.topic
+            ]
+            streams.append(
+                EpisodeStreamProfile(
+                    topic=stream.topic,
+                    role=stream.role.value,
+                    source_clock=stream.source_clock,
+                    count=len(stamps),
+                    first_timestamp_ns=min(stamps) if stamps else None,
+                    last_timestamp_ns=max(stamps) if stamps else None,
+                    duplicate_timestamp_count=len(stamps) - len(set(stamps)),
+                )
+            )
+        window = manifest.declared_window()
         return EpisodeProfileResult(
-            episode_id=manifest.episode_id,
-            frame_count=manifest.frame_count,
-            observation_count=len(manifest.observation_frames),
-            action_count=len(manifest.action_frames),
-            observation_channels=list(manifest.observation_channels),
-            action_channels=list(manifest.action_channels),
-            control_frequency_hz=manifest.control_frequency_hz,
-            start_timestamp_us=manifest.start_timestamp_us,
-            end_timestamp_us=manifest.end_timestamp_us,
-            duration_us=duration_us,
-            task=manifest.task,
-            outcome=str(manifest.outcome),
-            mission_id=manifest.lineage.mission_id,
+            episode_id=episode_id,
+            observation_count=len(manifest.observations),
+            state_count=len(manifest.states),
+            action_count=len(manifest.actions),
+            event_count=len(manifest.events),
+            observation_topics=manifest.observed_topics(EpisodeStreamRole.OBSERVATION),
+            state_topics=manifest.observed_topics(EpisodeStreamRole.STATE),
+            action_topics=manifest.observed_topics(EpisodeStreamRole.ACTION),
+            event_topics=manifest.observed_topics(EpisodeStreamRole.EVENT),
+            window_clock=window.source_clock,
+            window_duration_ns=window.end_timestamp_ns - window.start_timestamp_ns,
+            streams=streams,
         )

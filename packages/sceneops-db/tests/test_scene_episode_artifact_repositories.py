@@ -1,5 +1,5 @@
-"""Integration coverage for EpisodeRecord and ArtifactRecord persistence
-against real Postgres. SceneRecord persistence is covered by
+"""Integration coverage for EpisodeRecord (canonical membership, registrar
+writes only) and ArtifactRecord persistence against real Postgres. SceneRecord persistence is covered by
 test_scene_repository.py."""
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import generate_artifact_id
-from sceneops_core.episodes.schemas.records import EpisodeRecord
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.episodes import PostgresEpisodeRepository
 
@@ -19,55 +18,96 @@ from sceneops_db.postgres.episodes import PostgresEpisodeRepository
 
 
 @pytest.mark.asyncio
-async def test_episode_record_create_get_round_trip(db_session, unique_id):
+async def test_episode_record_insert_get_round_trip(
+    db_session, unique_id, seed_dataset_version, episode_record_for
+):
+    dataset_id = unique_id("ds")
+    await seed_dataset_version(db_session, dataset_id=dataset_id)
+    record = await episode_record_for(db_session, dataset_id=dataset_id)
     repo = PostgresEpisodeRepository(db_session)
-    episode_id = unique_id("episode")
-    robot_run_id = unique_id("run")
 
-    await repo.create(
-        EpisodeRecord(
-            episode_id=episode_id,
-            dataset_id=unique_id("ds"),
-            dataset_version="v1",
-            robot_run_id=robot_run_id,
-            frame_count=500,
-        )
-    )
-
-    fetched = await repo.get(episode_id)
-    assert fetched is not None
-    assert fetched.robot_run_id == robot_run_id
-    assert fetched.frame_count == 500
+    await repo.insert(record)
+    fetched = await repo.get(record.episode_id)
+    assert fetched is not None and fetched.registered_at is not None
+    assert fetched.model_dump(
+        exclude={"registered_at", "updated_at"}
+    ) == record.model_dump(exclude={"registered_at", "updated_at"})
+    assert await repo.count(dataset_id=dataset_id, dataset_version="v1") == 1
 
 
 @pytest.mark.asyncio
-async def test_episode_record_list_filters_by_robot_run_id(db_session, unique_id):
-    repo = PostgresEpisodeRepository(db_session)
+async def test_episode_record_list_and_recording_scope(
+    db_session, unique_id, seed_dataset_version, episode_record_for
+):
     dataset_id = unique_id("ds")
-    run_a = unique_id("run-a")
-    run_b = unique_id("run-b")
-    episode_a = unique_id("episode-a")
-    episode_b = unique_id("episode-b")
+    await seed_dataset_version(db_session, dataset_id=dataset_id)
+    repo = PostgresEpisodeRepository(db_session)
+    a = await episode_record_for(db_session, dataset_id=dataset_id)
+    b = await episode_record_for(db_session, dataset_id=dataset_id)
+    for record in (a, b):
+        await repo.insert(record)
 
-    await repo.create(
-        EpisodeRecord(
-            episode_id=episode_a,
-            dataset_id=dataset_id,
-            dataset_version="v1",
-            robot_run_id=run_a,
-        )
+    assert [e.episode_id for e in await repo.list(robot_run_id=a.robot_run_id)] == [
+        a.episode_id
+    ]
+    scope = await repo.list_recording_scope(
+        dataset_id=dataset_id, dataset_version="v1", robot_run_id=b.robot_run_id
     )
-    await repo.create(
-        EpisodeRecord(
-            episode_id=episode_b,
-            dataset_id=dataset_id,
-            dataset_version="v1",
-            robot_run_id=run_b,
-        )
-    )
+    assert [e.episode_id for e in scope] == [b.episode_id]
 
-    result = await repo.list(robot_run_id=run_a)
-    assert [e.episode_id for e in result] == [episode_a]
+
+@pytest.mark.asyncio
+async def test_episode_replace_revision_repoints_and_delete_removes(
+    db_session, unique_id, seed_dataset_version, episode_record_for
+):
+    dataset_id = unique_id("ds")
+    await seed_dataset_version(db_session, dataset_id=dataset_id)
+    repo = PostgresEpisodeRepository(db_session)
+    first = await episode_record_for(db_session, dataset_id=dataset_id)
+    await repo.insert(first)
+    second = await episode_record_for(
+        db_session, dataset_id=dataset_id, robot_run_id=first.robot_run_id, x=2.0
+    )
+    assert second.episode_id == first.episode_id
+
+    updated = await repo.replace_revision(second)
+    assert updated.manifest_artifact_id == second.manifest_artifact_id
+    assert await repo.delete([first.episode_id]) == 1
+    assert await repo.get(first.episode_id) is None
+
+
+@pytest.mark.asyncio
+async def test_episode_requires_registered_run_artifact_and_dataset_version(
+    db_session, unique_id, seed_dataset_version, episode_record_for
+):
+    from sqlalchemy.exc import IntegrityError
+
+    dataset_id = unique_id("ds")
+    await seed_dataset_version(db_session, dataset_id=dataset_id)
+    record = await episode_record_for(db_session, dataset_id=dataset_id, seed_run=False)
+    with pytest.raises(IntegrityError):
+        await PostgresEpisodeRepository(db_session).insert(record)
+
+
+@pytest.mark.asyncio
+async def test_episode_window_must_be_non_empty_in_the_database(
+    db_session, unique_id, seed_dataset_version, episode_record_for
+):
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    dataset_id = unique_id("ds")
+    await seed_dataset_version(db_session, dataset_id=dataset_id)
+    record = await episode_record_for(db_session, dataset_id=dataset_id)
+    await PostgresEpisodeRepository(db_session).insert(record)
+    with pytest.raises(IntegrityError, match="ck_episodes_segment_window"):
+        await db_session.execute(
+            text(
+                "UPDATE episodes SET window_end_timestamp_ns = window_start_timestamp_ns "
+                "WHERE episode_id = :id"
+            ),
+            {"id": record.episode_id},
+        )
 
 
 # ── ArtifactRecord ────────────────────────────────────────────────────────────

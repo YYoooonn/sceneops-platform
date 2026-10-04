@@ -89,11 +89,11 @@ async def test_resolves_registered_minio_recording_to_verified_local_copy(
         assert recording.source_clock == "mcap_log_time"
         assert recording.local_path.read_bytes() == _VALID_MCAP.read_bytes()
         # The copy is a real, readable MCAP for the existing reader.
-        source = RosbagAdapter(
+        robot_states = RosbagAdapter(
             source_store=worker_context.artifact_store,
             source_root_uri=str(recording.local_path),
-        ).extract_episode_source(robot_id="robot", robot_run_id=run_id)
-        assert source.robot_states
+        ).extract_robot_states(robot_id="robot", robot_run_id=run_id)
+        assert robot_states
         local_path = recording.local_path
 
     assert not local_path.exists()

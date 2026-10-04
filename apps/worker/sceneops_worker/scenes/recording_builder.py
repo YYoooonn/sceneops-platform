@@ -50,14 +50,11 @@ Identity rules (frozen by ``semantics_version`` 1):
 from __future__ import annotations
 
 import hashlib
-import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from sceneops_core.artifacts.schemas.payload import PayloadRef, validate_media_type
-from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.provenance import (
     INT64_MAX,
@@ -95,57 +92,34 @@ from sceneops_integrations.recording import (
     stamp_ns,
 )
 
+from sceneops_worker.recordings import payloads as _shared
+from sceneops_worker.recordings.payloads import (
+    OBSERVATION_PAYLOAD_ID_SCHEMA_V1,
+    PlannedPayload,
+    RecordingBuildError,
+    RecordingRevision,
+    canonical_order as _canonical_order,
+    observation_payload_artifact_id,
+    ros2_cdr_media_type,
+)
+
 RECORDING_SCENE_PRODUCER_ID: Final = "sceneops.recording_scene_builder"
 RECORDING_SCENE_SEMANTICS_VERSION: Final = 1
-OBSERVATION_PAYLOAD_ID_SCHEMA_V1: Final = "sceneops.observation_payload_id/v1"
-
-COMPRESSED_IMAGE_SCHEMA: Final = "sensor_msgs/msg/CompressedImage"
 CAMERA_INFO_SCHEMA: Final = "sensor_msgs/msg/CameraInfo"
 TF_MESSAGE_SCHEMA: Final = "tf2_msgs/msg/TFMessage"
-ROS2_CDR_MEDIA_TYPE_PREFIX: Final = "application/x.ros2-cdr."
 
 # Modalities whose observations cannot be interpreted without knowing where
 # their sensor sits in the ego frame.
 _EXTRINSIC_REQUIRED: Final = frozenset(
     {SceneModality.CAMERA, SceneModality.LIDAR, SceneModality.RADAR}
 )
-_IMAGE_MAGIC: Final = {"image/jpeg": b"\xff\xd8\xff", "image/png": b"\x89PNG\r\n\x1a\n"}
 # CameraInfo values SceneManifest v1 can represent: no distortion, identity
 # rectification and P = [K | 0]. Anything else fails rather than being lost.
 _PROJECTION_TOLERANCE: Final = 1e-9
 
 
-class RecordingSceneBuildError(RuntimeError):
+class RecordingSceneBuildError(RecordingBuildError):
     """The recording cannot be canonicalized faithfully under this config."""
-
-
-@dataclass(frozen=True)
-class RecordingRevision:
-    """The registered recording being built from (from its RobotRunRecord
-    and recording ArtifactRecord)."""
-
-    robot_run_id: str
-    recording_checksum: str
-    recording_clock: str
-
-
-@dataclass(frozen=True)
-class PlannedPayload:
-    artifact_id: str
-    topic: str
-    channel_index: int
-    extraction: PayloadExtraction
-    checksum: str
-    size_bytes: int
-    media_type: str
-
-    def ref(self) -> PayloadRef:
-        return PayloadRef(
-            artifact_id=self.artifact_id,
-            checksum=self.checksum,
-            size_bytes=self.size_bytes,
-            media_type=self.media_type,
-        )
 
 
 @dataclass(frozen=True)
@@ -167,75 +141,23 @@ class SceneBuildPlan:
         return sum(len(s.manifest.observations) for s in self.scenes)
 
 
-# --- identifiers --------------------------------------------------------------
+# --- identifiers and payloads (shared with the Episode builder) ---------------
 
 
 def topic_slug(topic: str) -> str:
-    """A topic as a path-safe local-id fragment: ``/camera/front/image`` ->
-    ``camera.front.image``."""
-    slug = re.sub(r"[^A-Za-z0-9._-]", "_", topic.strip("/").replace("/", "."))
-    slug = slug.lstrip("._-")
-    if not slug:
-        raise RecordingSceneBuildError(f"topic {topic!r} has no usable id slug")
-    return slug
-
-
-def observation_payload_artifact_id(
-    *, robot_run_id: str, topic: str, channel_index: int, extraction: PayloadExtraction
-) -> str:
-    """Provenance-owned identity of one extracted payload; see the module
-    docstring. ``channel_index`` is per topic, never a global file position."""
-    document = {
-        "payload_id_schema": OBSERVATION_PAYLOAD_ID_SCHEMA_V1,
-        "robot_run_id": robot_run_id,
-        "topic": topic,
-        "channel_index": channel_index,
-        "extraction": extraction.value,
-    }
-    return "payload-" + hashlib.sha256(canonical_json_bytes(document)).hexdigest()[:32]
-
-
-def ros2_cdr_media_type(schema_name: str) -> str:
-    return validate_media_type(
-        ROS2_CDR_MEDIA_TYPE_PREFIX + schema_name.replace("/", ".").lower()
-    )
-
-
-# --- payload extraction ---------------------------------------------------------
-
-
-def _compressed_image_media_type(image_format: str, topic: str) -> str:
-    fmt = image_format.strip().lower()
-    if fmt in {"jpeg", "jpg"} or fmt.endswith("jpeg compressed") or "; jpeg" in fmt:
-        return "image/jpeg"
-    if fmt == "png" or fmt.endswith("png compressed") or "; png" in fmt:
-        return "image/png"
-    raise RecordingSceneBuildError(
-        f"{topic!r}: CompressedImage format {image_format!r} has no supported "
-        "media type (jpeg, png)"
-    )
+    try:
+        return _shared.topic_slug(topic)
+    except RecordingBuildError as exc:
+        raise RecordingSceneBuildError(str(exc)) from exc
 
 
 def extract_payload(
     channel: SceneChannelConfig, message: RecordingMessage, decoded: Any
 ) -> tuple[bytes, str]:
-    """The canonical payload bytes of one message and their media type.
-    Never decodes or re-encodes image or point data (Q2)."""
-    if channel.payload == PayloadExtraction.COMPRESSED_IMAGE:
-        if message.schema_name != COMPRESSED_IMAGE_SCHEMA:
-            raise RecordingSceneBuildError(
-                f"{message.topic!r} is {message.schema_name!r}; compressed_image "
-                f"extraction needs {COMPRESSED_IMAGE_SCHEMA!r}"
-            )
-        data = bytes(decoded.data)
-        media_type = _compressed_image_media_type(decoded.format, message.topic)
-        if not data.startswith(_IMAGE_MAGIC[media_type]):
-            raise RecordingSceneBuildError(
-                f"message {message.channel_index} on {message.topic!r} declares "
-                f"{decoded.format!r} but its bytes are not {media_type}"
-            )
-        return data, media_type
-    return message.data, ros2_cdr_media_type(message.schema_name)
+    try:
+        return _shared.extract_payload(channel.payload, message, decoded)
+    except RecordingBuildError as exc:
+        raise RecordingSceneBuildError(str(exc)) from exc
 
 
 # --- planning -----------------------------------------------------------------
@@ -565,23 +487,6 @@ class _Planner:
                 camera_intrinsic=intrinsic,
             )
         return result
-
-
-def _canonical_order(items: list[Any], *, extra: str | None = None) -> list[Any]:
-    """I-34: canonical timestamp, then MCAP sequence when every item carries
-    one, then per-channel file order (and transform position)."""
-    sequenced = all(i.sequence is not None for i in items)
-
-    def key(item: Any) -> tuple:
-        k: tuple = (item.timestamp_ns,)
-        if sequenced:
-            k += (item.sequence,)
-        k += (item.channel_index,)
-        if extra is not None:
-            k += (getattr(item, extra),)
-        return k
-
-    return sorted(items, key=key)
 
 
 def plan_recording_scenes(

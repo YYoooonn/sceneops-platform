@@ -102,12 +102,13 @@ class FakeArtifactRepository:
         return list(self.records.values())
 
 
-def _service() -> tuple[JobService, FakeArtifactRepository]:
+def _service(episode_repository=None) -> tuple[JobService, FakeArtifactRepository]:
     artifact_repo = FakeArtifactRepository()
     service = JobService(
         repository=FakeJobRepository(),
         event_repository=FakeJobEventRepository(),
         artifact_repository=artifact_repo,
+        episode_repository=episode_repository,
         default_dataset_id=DATASET_ID,
         default_dataset_version=DATASET_VERSION,
     )
@@ -222,7 +223,17 @@ class TestUnrelatedJobTypeRegression:
         # create_job() must not disturb ALIGN_EPISODE's own branch.
         from sceneops_core.episodes.alignment import TemporalAlignmentConfig
 
-        service, artifacts = _service()
+        from types import SimpleNamespace
+
+        current = SimpleNamespace(
+            manifest_artifact_id="art-src-1", manifest_checksum="sha256:" + "a" * 64
+        )
+
+        class _Episodes:
+            async def get(self, episode_id):
+                return current if episode_id == EPISODE_ID else None
+
+        service, artifacts = _service(episode_repository=_Episodes())
         artifacts.records["art-src-1"] = ArtifactRecord(
             artifact_id="art-src-1",
             kind=ArtifactKind.EPISODE_MANIFEST.value,

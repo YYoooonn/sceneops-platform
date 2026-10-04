@@ -31,6 +31,11 @@ from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
 from sceneops_core.scenes.schemas import SceneManifest, load_canonical_scene_manifest
 from sceneops_storage import ArtifactNotFoundError, ArtifactStore
 
+from sceneops_worker.recordings.payload_store import (
+    ObservationPayloadConflictError,
+    ObservationPayloadStore,
+)
+
 
 class SceneManifestIntegrityError(RuntimeError):
     """Stored manifest bytes are missing or do not match their pinned
@@ -39,10 +44,6 @@ class SceneManifestIntegrityError(RuntimeError):
 
 class SceneManifestWriteConflictError(RuntimeError):
     """A write-once manifest key already holds different bytes."""
-
-
-class ObservationPayloadConflictError(RuntimeError):
-    """A write-once payload key already holds different bytes."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,9 @@ class SceneArtifactStore:
         self.artifact_store = artifact_store
         self.dataset_root_uri = dataset_root_uri
         self.payload_root_uri = payload_root_uri
+        self.payload_store = ObservationPayloadStore(
+            artifact_store=artifact_store, payload_root_uri=payload_root_uri
+        )
 
     # ------------------------------------------------------------------
     # URI helpers
@@ -99,8 +103,8 @@ class SceneArtifactStore:
         )
 
     def observation_payload_uri(self, *, robot_run_id: str, artifact_id: str) -> str:
-        return self.artifact_store.join_uri(
-            self.payload_root_uri, robot_run_id, artifact_id
+        return self.payload_store.payload_uri(
+            robot_run_id=robot_run_id, artifact_id=artifact_id
         )
 
     def scene_index_uri(self, *, dataset_id: str, dataset_version: str) -> str:
@@ -176,28 +180,13 @@ class SceneArtifactStore:
     async def publish_observation_payload(
         self, *, robot_run_id: str, artifact_id: str, data: bytes, checksum: str
     ) -> tuple[str, bool]:
-        """Write-once publication of one payload. Returns ``(uri, written)``.
-        A key that already holds the same bytes is reused; different bytes
-        are a conflict and are never overwritten. ``checksum`` is the
-        planned sha256 the bytes must have."""
-        if sha256_checksum(data) != checksum:
-            raise ObservationPayloadConflictError(
-                f"payload {artifact_id} bytes do not match planned {checksum}"
-            )
-        uri = self.observation_payload_uri(
-            robot_run_id=robot_run_id, artifact_id=artifact_id
+        """Write-once; see :class:`ObservationPayloadStore`."""
+        return await self.payload_store.publish(
+            robot_run_id=robot_run_id,
+            artifact_id=artifact_id,
+            data=data,
+            checksum=checksum,
         )
-        if await self.artifact_store.exists(uri):
-            existing = await self.artifact_store.read_bytes(uri)
-            if sha256_checksum(existing) != checksum:
-                raise ObservationPayloadConflictError(
-                    f"{uri} already holds different bytes; payload keys are write-once"
-                )
-            return uri, False
-        await self.artifact_store.write_bytes(uri, data)
-        if sha256_checksum(await self.artifact_store.read_bytes(uri)) != checksum:
-            raise SceneManifestIntegrityError(f"read-back of {uri} differs")
-        return uri, True
 
     # ------------------------------------------------------------------
     # Derived scene index

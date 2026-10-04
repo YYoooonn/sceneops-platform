@@ -29,9 +29,16 @@ SCENARIO_CURATION
 DETECTION_EVALUATION
   predict_detection -> evaluate_detection
 
-RAW_LOG_EPISODE_BUILDING
-  build_episodes -> register_episode -> validate_episode -> profile_episode
+RECORDING_EPISODE_BUILDING
+  build_recording_episodes -> register_episodes -> validate_episode -> profile_episode (optional)
 ```
+
+`RECORDING_EPISODE_BUILDING` is the Episode sibling of
+`RECORDING_SCENE_BUILDING`: `build_recording_episodes` (params:
+`robot_run_id`, `build_config`) builds the complete Episode set of one
+RobotRun and hands it to `register_episodes` through the
+`manifest_artifact_ids` REF; `register_episodes` hands `episode_ids` to the
+quality stages (see [Episode domain](./episode-domain.md)).
 
 `RECORDING_SCENE_BUILDING` builds the canonical Scenes of one registered
 RobotRun (`build_recording_scenes` params: `robot_run_id`, `build_config`)
@@ -177,8 +184,10 @@ This is enforced consistently across the platform:
   the `OBSERVATION_PAYLOAD` ArtifactRecords of the payloads it extracts;
   its payload and manifest artifact ids are deterministic, so a retry
   reuses an existing identical record instead of inserting a second one.
-- Episode: `build_episodes` writes and owns `EPISODE_MANIFEST`;
-  `register_episode` reads it, same pattern.
+- Episode: `build_recording_episodes` owns its `EPISODE_MANIFEST` and
+  `OBSERVATION_PAYLOAD` ArtifactRecords with deterministic ids (payload ids
+  are shared with Scene builds of the same RobotRun, so whichever runs first
+  creates them); `register_episodes` re-reads and verifies, never creates.
 
 `ArtifactRecord` creation is otherwise insert-only with no deduplication —
 this invariant is what keeps the `artifacts` table from accumulating
@@ -238,5 +247,5 @@ start
 
 Scope is `recording_scene_building` only — the DAG's task chain is
 hardcoded and serial. Sending other pipeline types (including
-`raw_log_episode_building`) through Airflow needs a generalized DAG or one
+`recording_episode_building`) through Airflow needs a generalized DAG or one
 per type; not built.

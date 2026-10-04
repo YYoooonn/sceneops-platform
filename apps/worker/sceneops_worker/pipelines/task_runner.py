@@ -263,8 +263,7 @@ class PipelineTaskRunner:
 
             if dependency is None:
                 raise RuntimeError(
-                    f"Pipeline task dependency has not completed: "
-                    f"{dependency_task_id}"
+                    f"Pipeline task dependency has not completed: {dependency_task_id}"
                 )
 
             if dependency.status not in acceptable_statuses:

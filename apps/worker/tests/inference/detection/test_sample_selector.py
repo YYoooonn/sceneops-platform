@@ -12,7 +12,7 @@ from sceneops_worker.inference.detection.sample_selector import (
     SampleSelectionConfig,
 )
 from sceneops_worker.scenes.artifacts import SceneManifestIntegrityError
-from sceneops_worker.scenes.payloads import PayloadIntegrityError
+from sceneops_worker.recordings.payload_refs import PayloadIntegrityError
 
 
 async def _dataset(world, specs: dict[str, dict]) -> DatasetManifest:

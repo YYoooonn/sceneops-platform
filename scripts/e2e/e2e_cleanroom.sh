@@ -12,14 +12,14 @@
 #     -> make local-up (run by local-reset itself)
 #     -> e2e-recording-scene         (real nuScenes -> acquisition -> RobotRun
 #                                      -> canonical Scenes -> validation/profile)
-#     -> e2e-robot-learning           (real nuScenes CAN bus -> ROS2 ->
-#                                      MCAP -> RosbagAdapter -> Episode ->
-#                                      alignment -> EXPORT_LEARNING_DATA ->
-#                                      curation)
+#     -> e2e-recording-episode       (real nuScenes -> acquisition -> RobotRun
+#                                      -> canonical Episodes -> validation/profile)
 #     -> final persisted-state validation (queries the real API for what
 #        actually got written -- not just "each script exited 0")
 #
-# Not in the chain yet: e2e-perception (scenario curation -> detection ->
+# Not in the chain yet: the Episode learning chain (alignment -> learning
+# export -> curation) on canonical Episodes, consolidated in step 11, and
+# e2e-perception (scenario curation -> detection ->
 # evaluation) needs ground truth and a synchronized-sample view, which
 # recording-derived Scenes do not have until ADR-007 implementation step 10;
 # the chain is consolidated in step 11.
@@ -49,7 +49,7 @@ echo "This will:"
 echo "  1. make local-reset   [DESTRUCTIVE] wipe Postgres/Redis/MinIO,"
 echo "                        preserve data/raw/nuscenes + CAN bus expansion"
 echo "  2. e2e-recording-scene  nuScenes -> RobotRun -> canonical Scenes -> quality"
-echo "  3. e2e-robot-learning real CAN bus -> ROS2 -> MCAP -> Episode -> learning export"
+echo "  3. e2e-recording-episode nuScenes -> RobotRun -> canonical Episodes -> quality"
 echo "  4. final persisted-state validation"
 echo ""
 
@@ -65,8 +65,8 @@ echo "--- 3. e2e-recording-scene ---"
 make -C "$REPO_ROOT" e2e-recording-scene
 echo ""
 
-echo "--- 4. e2e-robot-learning ---"
-bash "$SCRIPT_DIR/e2e_robot_learning.sh"
+echo "--- 4. e2e-recording-episode ---"
+make -C "$REPO_ROOT" e2e-recording-episode
 echo ""
 
 # ── 5. Final persisted-state validation ──────────────────────────────────────
@@ -84,7 +84,11 @@ SCENE_DATASET_ID="test-e2e-recording-scene"
 SCENE_VERSION="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$SCENE_DATASET_ID/versions?limit=500")" \
   | jq -r '.versions | sort_by(.createdAt) | last | .version // empty')"
 QUALITY_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$SCENE_DATASET_ID/versions/$SCENE_VERSION/quality")")"
-EPISODES_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=200")")"
+# e2e-recording-episode likewise registers into its own dataset.
+EPISODE_DATASET_ID="test-e2e-recording-episode"
+EPISODE_VERSION="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$EPISODE_DATASET_ID/versions?limit=500")" \
+  | jq -r '.versions | sort_by(.createdAt) | last | .version // empty')"
+EPISODES_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes?dataset_id=$EPISODE_DATASET_ID&dataset_version=$EPISODE_VERSION&limit=200")")"
 
 SCENE_READINESS="$(echo "$QUALITY_JSON" | jq -r '.readiness')"
 SCENE_COUNT="$(echo "$QUALITY_JSON" | jq -r '.counts.sceneCount // 0')"
@@ -99,7 +103,7 @@ echo "  episode_count                     = $EPISODE_COUNT"
 [ "${EPISODE_COUNT:-0}" -ge 1 ] || { echo "❌ Expected episode_count >= 1" >&2; exit 1; }
 
 echo "  OK — SceneOps reconstructed its canonical Scene and Episode state from"
-echo "       empty application state + real external nuScenes/CAN-bus data."
+echo "       empty application state + real external nuScenes data."
 echo ""
 
 echo "=================================================================="

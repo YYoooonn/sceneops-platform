@@ -14,10 +14,10 @@ class PipelineType(StrEnum):
     # Dataset/model -> prediction -> evaluation
     DETECTION_EVALUATION = "detection_evaluation"
 
-    # Robot rosbag/MCAP -> SceneOps episodes (task-oriented observation+action
-    # units, segmented by Mission boundaries) -> registered EpisodeRecords.
-    # Deliberately separate from RECORDING_SCENE_BUILDING.
-    RAW_LOG_EPISODE_BUILDING = "raw_log_episode_building"
+    # One registered RobotRun recording -> canonical Episodes -> registration
+    # -> validation / profiling (ADR-007 §17.4). A sibling of
+    # RECORDING_SCENE_BUILDING; neither depends on the other.
+    RECORDING_EPISODE_BUILDING = "recording_episode_building"
 
 
 class PipelineRunStatus(StrEnum):

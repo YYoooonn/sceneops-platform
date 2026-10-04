@@ -11,7 +11,7 @@ from sceneops_core.inference.schemas import (
 from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.scenes import SceneArtifactStore
 from sceneops_worker.scenes.keyframes import KeyframeObservation
-from sceneops_worker.scenes.payloads import ArtifactPayloadLocator
+from sceneops_worker.recordings.payload_refs import ArtifactPayloadLocator
 
 
 @dataclass(frozen=True)

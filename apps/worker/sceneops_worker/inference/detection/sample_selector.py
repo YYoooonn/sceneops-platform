@@ -17,7 +17,7 @@ from sceneops_worker.inference.detection.base import DetectionSampleInput
 from sceneops_worker.inference.detection.uris import normalize_image_uri
 from sceneops_worker.scenes import SceneArtifactStore
 from sceneops_worker.scenes.keyframes import keyframe_samples, load_pinned_scene
-from sceneops_worker.scenes.payloads import ArtifactPayloadLocator
+from sceneops_worker.recordings.payload_refs import ArtifactPayloadLocator
 
 logger = logging.getLogger(__name__)
 

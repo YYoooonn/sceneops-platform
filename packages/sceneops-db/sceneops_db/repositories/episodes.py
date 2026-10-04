@@ -5,7 +5,6 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from sceneops_core.episodes.schemas import (
     EpisodeProfileRunRecord,
     EpisodeRecord,
-    EpisodeStatus,
     EpisodeValidationRunRecord,
 )
 from sceneops_core.runs.schemas import RunStatus, RunType
@@ -15,34 +14,34 @@ EpisodeRunRecord: TypeAlias = EpisodeValidationRunRecord | EpisodeProfileRunReco
 
 @runtime_checkable
 class EpisodeRepository(Protocol):
-    async def create(self, episode: EpisodeRecord) -> EpisodeRecord: ...
-
-    async def upsert(self, episode: EpisodeRecord) -> EpisodeRecord: ...
+    """Read access for everyone; ``insert`` / ``replace_revision`` /
+    ``delete`` are for the Episode registrar only (ADR-007 §17.5)."""
 
     async def get(self, episode_id: str) -> EpisodeRecord | None: ...
-
-    async def update(self, episode: EpisodeRecord) -> EpisodeRecord: ...
 
     async def list(
         self,
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        status: EpisodeStatus | None = None,
-        robot_id: str | None = None,
         robot_run_id: str | None = None,
-        mission_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRecord]: ...
 
+    async def list_recording_scope(
+        self, *, dataset_id: str, dataset_version: str, robot_run_id: str
+    ) -> list[EpisodeRecord]: ...
+
     async def count(
-        self,
-        *,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
-        status: EpisodeStatus | None = None,
+        self, *, dataset_id: str | None = None, dataset_version: str | None = None
     ) -> int: ...
+
+    async def insert(self, episode: EpisodeRecord) -> EpisodeRecord: ...
+
+    async def replace_revision(self, episode: EpisodeRecord) -> EpisodeRecord: ...
+
+    async def delete(self, episode_ids: list[str]) -> int: ...
 
 
 @runtime_checkable
@@ -59,6 +58,7 @@ class EpisodeRunRepository(Protocol):
         type: RunType | None = None,
         status: RunStatus | None = None,
         episode_id: str | None = None,
+        manifest_artifact_id: str | None = None,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         job_id: str | None = None,

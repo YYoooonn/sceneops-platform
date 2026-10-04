@@ -83,7 +83,25 @@ e2e-recording-scene: acquisition-image
 	SOURCE_UNIT=$(or $(SCENE),scene-0061) API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
 	scripts/e2e/e2e_recording_scene.sh
 
+.PHONY: e2e-recording-episode
+# The Episode-domain vertical (ADR-007 §29.19 step 8): nuScenes ->
+# dataset-acquisition container -> MCAP -> recording-publisher container ->
+# POST /robot-runs:register -> RobotRun -> recording_episode_building
+# pipeline (build_recording_episodes -> register_episodes ->
+# validate_episode / profile_episode) -> retry / replacement checks -> a
+# sibling recording_scene_building on the same RobotRun. Data-plane steps
+# run as one-shot containers; every platform operation goes through
+# FastAPI. Prerequisite: `make local-up` with images built from the
+# current tree.
+e2e-recording-episode: acquisition-image
+	chmod +x scripts/e2e/e2e_recording_episode.sh
+	SOURCE_UNIT=$(or $(SCENE),scene-0061) API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
+	scripts/e2e/e2e_recording_episode.sh
+
 .PHONY: e2e-robot-learning
+# UNAVAILABLE until ADR-007 implementation step 11 (the script exits 3): it
+# built Episodes through the removed build_episodes path; the learning chain
+# is rebuilt on canonical Episodes in the step-11 consolidation.
 # The canonical robot-learning-domain E2E: real nuScenes CAN bus -> ROS2
 # replay -> rosbag2/MCAP -> RosbagAdapter -> RobotRun -> Episode -> temporal
 # alignment -> profile/validation -> EXPORT_LEARNING_DATA (v2-sharded write
@@ -130,9 +148,9 @@ e2e-perception:
 # THE full-platform acceptance workflow -- the only place a fresh clone/
 # environment should start from. DESTRUCTIVE: runs `make local-reset` first
 # (wipes Postgres/Redis/MinIO, PRESERVES data/raw/nuscenes and the CAN bus
-# expansion), then e2e-scene -> e2e-robot-learning ->
-# e2e-perception(BACKEND=mock) -> a final query of real persisted API
-# state. Does not require GPU, a real inference server, Airflow, or the
+# expansion), then e2e-recording-scene -> e2e-recording-episode -> a final
+# query of real persisted API state (see scripts/e2e/e2e_cleanroom.sh for
+# what is not in the chain until step 11). Does not require GPU, a real inference server, Airflow, or the
 # isolated LeRobot venv -- see scripts/e2e/e2e_cleanroom.sh's own header for
 # the optional follow-up verification commands. Requires interactive
 # confirmation (same as local-reset) unless FORCE=1.
@@ -225,6 +243,8 @@ e2e-robot-can-replay:
 	scripts/e2e/e2e_robot_can_replay.sh
 
 .PHONY: e2e-episode-building
+# UNAVAILABLE until ADR-007 implementation step 11 (the script exits 3);
+# use e2e-recording-episode.
 # One real Episode build from an already-recorded MCAP -- standalone stage
 # of e2e-robot-learning, kept for debugging build_episodes/register_episode/
 # validate_episode/profile_episode in isolation. Reuses the MCAP fixture
@@ -239,6 +259,7 @@ e2e-episode-building:
 	scripts/e2e/e2e_episode_building.sh
 
 .PHONY: e2e-episode-curation
+# UNAVAILABLE until ADR-007 implementation step 11 (the script exits 3).
 # The curation-POLICY-MECHANISM test (deliberately curates two revisions of
 # ONE episode via two different alignment configs, to force one selected/
 # one rejected and verify CurationEvaluator's selection semantics) -- NOT

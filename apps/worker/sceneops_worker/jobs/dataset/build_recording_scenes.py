@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
+from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.canonical_json import canonical_json_bytes
@@ -43,6 +43,10 @@ from sceneops_integrations.recording import check_l1_recording
 
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+from sceneops_worker.recordings.artifact_records import (
+    ArtifactRecordConflictError,
+    require_same_artifact as _require_same,
+)
 from sceneops_worker.robots.resolver import resolve_recording
 from sceneops_worker.scenes.recording_builder import (
     PlannedPayload,
@@ -56,10 +60,6 @@ from sceneops_worker.scenes.recording_builder import (
 SCENE_MANIFEST_ARTIFACT_ID_SCHEMA_V1 = "sceneops.scene_manifest_artifact_id/v1"
 
 
-class ArtifactRecordConflictError(RuntimeError):
-    """A deterministic artifact id is registered with different content."""
-
-
 def scene_manifest_artifact_id(*, scene_id: str, checksum: str) -> str:
     document = {
         "artifact_id_schema": SCENE_MANIFEST_ARTIFACT_ID_SCHEMA_V1,
@@ -68,19 +68,6 @@ def scene_manifest_artifact_id(*, scene_id: str, checksum: str) -> str:
     }
     digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
     return f"scene-manifest-{digest[:32]}"
-
-
-def _require_same(existing: ArtifactRecord, ref: ArtifactRef) -> None:
-    mismatched = [
-        name
-        for name in ("kind", "uri", "checksum", "size_bytes", "media_type")
-        if getattr(existing, name) != getattr(ref, name)
-    ]
-    if mismatched:
-        raise ArtifactRecordConflictError(
-            f"ArtifactRecord {existing.artifact_id} already exists with different "
-            f"{mismatched}; deterministic artifact ids are write-once"
-        )
 
 
 class BuildRecordingScenesJobHandler(

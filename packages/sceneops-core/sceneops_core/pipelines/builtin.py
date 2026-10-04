@@ -120,31 +120,53 @@ _PROFILE_SCENE_OUTPUTS = [
     ),
 ]
 
-_BUILD_EPISODES_OUTPUTS = [
-    # episode_manifest_uris consumed by register_episode → REF.
+_BUILD_RECORDING_EPISODES_OUTPUTS = [
+    # The complete Episode set of the recording scope, consumed by
+    # register_episodes → REF.
     PipelineTaskOutputSpec(
-        name="episode_manifest_uris", kind=_REF, source="episode_manifest_uris"
+        name="manifest_artifact_ids", kind=_REF, source="manifest_artifact_ids"
+    ),
+    PipelineTaskOutputSpec(name="robot_run_id", kind=_REF, source="robot_run_id"),
+    PipelineTaskOutputSpec(
+        name="producer_fingerprint", kind=_SUMMARY, source="producer_fingerprint"
     ),
     PipelineTaskOutputSpec(name="episode_count", kind=_SUMMARY, source="episode_count"),
     PipelineTaskOutputSpec(
-        name="observation_frame_count", kind=_SUMMARY, source="observation_frame_count"
+        name="observation_count", kind=_SUMMARY, source="observation_count"
+    ),
+    PipelineTaskOutputSpec(name="state_count", kind=_SUMMARY, source="state_count"),
+    PipelineTaskOutputSpec(name="action_count", kind=_SUMMARY, source="action_count"),
+    PipelineTaskOutputSpec(name="event_count", kind=_SUMMARY, source="event_count"),
+    PipelineTaskOutputSpec(
+        name="payload_artifact_count", kind=_SUMMARY, source="payload_artifact_count"
     ),
     PipelineTaskOutputSpec(
-        name="action_frame_count", kind=_SUMMARY, source="action_frame_count"
+        name="created_payload_count", kind=_SUMMARY, source="created_payload_count"
     ),
-    PipelineTaskOutputSpec(
-        name="segmentation_strategy", kind=_SUMMARY, source="segmentation_strategy"
-    ),
+    PipelineTaskOutputSpec(name="unit_keys", kind=_SUMMARY, source="unit_keys"),
+    PipelineTaskOutputSpec(name="topics", kind=_SUMMARY, source="topics"),
 ]
 
-_REGISTER_EPISODE_OUTPUTS = [
-    PipelineTaskOutputSpec(
-        name="episode_manifest_uris", kind=_REF, source="episode_manifest_uris"
-    ),
-    # episode_ids consumed by validate_episode/profile_episode → REF. Already
-    # produced by RegisterEpisodeJobResult.episode_ids, just not previously
-    # declared as a pipeline output (SceneOps V2 Request 17).
+_REGISTER_EPISODES_OUTPUTS = [
+    # episode_ids consumed by validate_episode / profile_episode → REF.
     PipelineTaskOutputSpec(name="episode_ids", kind=_REF, source="episode_ids"),
+    PipelineTaskOutputSpec(
+        name="registered_manifest_artifact_ids",
+        kind=_SUMMARY,
+        source="manifest_artifact_ids",
+    ),
+    PipelineTaskOutputSpec(
+        name="created_episode_ids", kind=_SUMMARY, source="created_episode_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="replaced_episode_ids", kind=_SUMMARY, source="replaced_episode_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="unchanged_episode_ids", kind=_SUMMARY, source="unchanged_episode_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="removed_episode_ids", kind=_SUMMARY, source="removed_episode_ids"
+    ),
     PipelineTaskOutputSpec(
         name="registered_episode_count",
         kind=_SUMMARY,
@@ -197,11 +219,12 @@ _PROFILE_EPISODE_OUTPUTS = [
     PipelineTaskOutputSpec(
         name="checked_episode_count", kind=_SUMMARY, source="checked_episode_count"
     ),
-    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
     PipelineTaskOutputSpec(
         name="observation_count", kind=_SUMMARY, source="observation_count"
     ),
+    PipelineTaskOutputSpec(name="state_count", kind=_SUMMARY, source="state_count"),
     PipelineTaskOutputSpec(name="action_count", kind=_SUMMARY, source="action_count"),
+    PipelineTaskOutputSpec(name="event_count", kind=_SUMMARY, source="event_count"),
 ]
 
 _PREDICT_DETECTION_OUTPUTS = [
@@ -316,51 +339,50 @@ RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
 )
 
 
-RAW_LOG_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
-    type=PipelineType.RAW_LOG_EPISODE_BUILDING,
-    name="Raw Log Episode Building",
+RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.RECORDING_EPISODE_BUILDING,
+    name="Recording Episode Building",
     description=(
-        "Build SceneOps episode manifests from a robot rosbag/MCAP recording, "
-        "segmented by Mission boundaries, then register them. Deliberately "
-        "separate from RECORDING_SCENE_BUILDING: Scene captures a "
-        "spatiotemporal observation unit, Episode captures a task-oriented "
-        "observation+action unit."
+        "Build the canonical Episodes of one registered RobotRun recording "
+        "(robot_run_id + build_config), register them as the complete set "
+        "of that recording scope in the DatasetVersion, then validate and "
+        "profile the registered revisions. A sibling of "
+        "recording_scene_building: Episodes are built from the recording, "
+        "never from Scenes. Builds from one RobotRun per run."
     ),
-    experimental=True,
+    supported=True,
+    implemented=True,
     tasks=[
         PipelineTaskDefinition(
-            pipeline_task_id="build_episodes",
-            name="Build episodes",
+            pipeline_task_id="build_recording_episodes",
+            name="Build recording episodes",
             order=0,
-            job_type=JobType.BUILD_EPISODES,
-            outputs=_BUILD_EPISODES_OUTPUTS,
+            job_type=JobType.BUILD_RECORDING_EPISODES,
+            outputs=_BUILD_RECORDING_EPISODES_OUTPUTS,
         ),
         PipelineTaskDefinition(
-            pipeline_task_id="register_episode",
+            pipeline_task_id="register_episodes",
             name="Register episodes",
             order=1,
-            job_type=JobType.REGISTER_EPISODE,
-            depends_on_pipeline_task_ids=["build_episodes"],
-            default_params={
-                "replace_existing": True,
-            },
-            outputs=_REGISTER_EPISODE_OUTPUTS,
+            job_type=JobType.REGISTER_EPISODES,
+            depends_on_pipeline_task_ids=["build_recording_episodes"],
+            outputs=_REGISTER_EPISODES_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="validate_episode",
-            name="Validate episode",
+            name="Validate episodes",
             order=2,
             job_type=JobType.VALIDATE_EPISODE,
-            depends_on_pipeline_task_ids=["register_episode"],
+            depends_on_pipeline_task_ids=["register_episodes"],
             outputs=_VALIDATE_EPISODE_OUTPUTS,
             quality_rules=_VALIDATE_EPISODE_QUALITY_RULES,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="profile_episode",
-            name="Profile episode",
+            name="Profile episodes",
             order=3,
             job_type=JobType.PROFILE_EPISODE,
-            depends_on_pipeline_task_ids=["register_episode"],
+            depends_on_pipeline_task_ids=["register_episodes"],
             optional=True,
             outputs=_PROFILE_EPISODE_OUTPUTS,
         ),
@@ -567,7 +589,7 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
 
 BUILTIN_PIPELINE_DEFINITIONS = [
     RECORDING_SCENE_BUILDING_PIPELINE,
-    RAW_LOG_EPISODE_BUILDING_PIPELINE,
+    RECORDING_EPISODE_BUILDING_PIPELINE,
     SCENARIO_CURATION_PIPELINE,
     DETECTION_EVALUATION_PIPELINE,
 ]

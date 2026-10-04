@@ -19,6 +19,7 @@ from sceneops_core.jobs.schemas import (
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.episodes.resolver import resolve_registered_episode
 from sceneops_worker.episodes.validation import EpisodeManifestValidator
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
@@ -31,14 +32,12 @@ class ValidateEpisodeJobHandler(
     ],
     JobHandler[ValidateEpisodeJobParams, ValidateEpisodeJobResult],
 ):
-    """EpisodeRecord + EpisodeManifest -> structural usability check.
-
-    Mirrors ValidateSceneJobHandler's job-level + per-item run-record split,
-    but keyed by episode_id (register_episode's REF output), not manifest
-    URI — EpisodeRecord already carries its own episode_manifest_uri once
-    registered. Does not update DatasetVersion summary — no concrete reader
-    needs an Episode-domain quality cache yet (SceneOps V2 Request 17 §8).
-    """
+    """Validates registered Episodes at the revision each EpisodeRecord
+    points to when the job reads it; each per-episode run record pins that
+    revision. Validation never changes membership or a record and caches
+    nothing on the DatasetVersion: readiness is derived from these run
+    records for the current revision (ADR-007 §13.4, §17.5). An episode id
+    that is not registered fails the job."""
 
     @property
     def job_type(self) -> JobType:
@@ -68,8 +67,8 @@ class ValidateEpisodeJobHandler(
     ) -> EpisodeValidationRunRecord:
         return EpisodeValidationRunRecord(
             run_id=default_validation_run_id(job.job_id),
-            dataset_id=job.params.get("dataset_id"),
-            dataset_version=job.params.get("dataset_version"),
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
             pipeline_task_run_id=job.pipeline_task_run_id,
@@ -88,8 +87,8 @@ class ValidateEpisodeJobHandler(
     ) -> tuple[EpisodeValidationRunRecord, ValidateEpisodeJobResult]:
         run_id = initial_record.run_id
         episode_ids = _resolve_episode_ids(params)
-        dataset_id = job.params.get("dataset_id")
-        dataset_version = job.params.get("dataset_version")
+        dataset_id = params.dataset_id
+        dataset_version = params.dataset_version
 
         if not episode_ids:
             failed_record = initial_record.model_copy(
@@ -128,23 +127,9 @@ class ValidateEpisodeJobHandler(
         report_episodes: list[dict] = []
 
         for episode_id in episode_ids:
-            record = await context.episode_store.get(episode_id)
-            if record is None:
-                total_issues += 1
-                total_blocking += 1
-                blocking = True
-                report_episodes.append(
-                    {"episode_id": episode_id, "error": "episode_not_found"}
-                )
-                continue
-
-            manifest = None
-            if record.episode_manifest_uri:
-                manifest = await context.episode_artifact_store.load_episode_manifest(
-                    record.episode_manifest_uri
-                )
-
-            result = _validator.validate(record=record, manifest=manifest)
+            resolved = await resolve_registered_episode(context, episode_id)
+            record = resolved.record
+            result = _validator.validate(record=record, manifest=resolved.manifest)
 
             episode_issue_count = len(result.issues)
             episode_blocking_count = sum(1 for i in result.issues if i.blocking)
@@ -159,10 +144,13 @@ class ValidateEpisodeJobHandler(
             report_episodes.append(
                 {
                     "episode_id": episode_id,
+                    "manifest_artifact_id": record.manifest_artifact_id,
+                    "manifest_checksum": record.manifest_checksum,
                     "status": result.status,
-                    "frame_count": result.frame_count,
-                    "observation_channels": result.observation_channels,
-                    "action_channels": result.action_channels,
+                    "observation_count": result.observation_count,
+                    "state_count": result.state_count,
+                    "action_count": result.action_count,
+                    "event_count": result.event_count,
                     "issues": [i.model_dump() for i in result.issues],
                 }
             )
@@ -174,21 +162,20 @@ class ValidateEpisodeJobHandler(
                 per_episode_run_id,
                 "report.json",
             )
-            per_episode_report = {
-                "run_id": per_episode_run_id,
-                "job_id": job.job_id,
-                "episode_id": episode_id,
-                "checked_episode_count": 1,
-                "total_issues": episode_issue_count,
-                "should_block_pipeline": result.should_block,
-                "status": result.status,
-                "episodes": [report_episodes[-1]],
-                "created_at": utc_now().isoformat(),
-            }
             await context.artifact_store.write_json(
-                per_episode_report_uri, per_episode_report
+                per_episode_report_uri,
+                {
+                    "run_id": per_episode_run_id,
+                    "job_id": job.job_id,
+                    "episode_id": episode_id,
+                    "checked_episode_count": 1,
+                    "total_issues": episode_issue_count,
+                    "should_block_pipeline": result.should_block,
+                    "status": result.status,
+                    "episodes": [report_episodes[-1]],
+                    "created_at": utc_now().isoformat(),
+                },
             )
-
             await context.artifact_record_store.create(
                 artifact_id=generate_artifact_id(),
                 ref=ArtifactRef(
@@ -204,27 +191,29 @@ class ValidateEpisodeJobHandler(
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
             )
-
-            per_episode_record = EpisodeValidationRunRecord(
-                run_id=per_episode_run_id,
-                episode_id=episode_id,
-                episode_manifest_uri=record.episode_manifest_uri,
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
-                status=RunStatus.SUCCEEDED,
-                validation_status=result.status,
-                should_block_pipeline=result.should_block,
-                validation_report_uri=per_episode_report_uri,
-                issue_count=episode_issue_count,
-                error_count=episode_blocking_count,
-                warning_count=episode_warning_count,
-                pipeline_run_id=job.pipeline_run_id,
-                pipeline_task_run_id=job.pipeline_task_run_id,
-                job_id=job.job_id,
-                started_at=started_at,
-                finished_at=utc_now(),
+            await context.runs.episode_runs.upsert(
+                EpisodeValidationRunRecord(
+                    run_id=per_episode_run_id,
+                    episode_id=episode_id,
+                    manifest_artifact_id=record.manifest_artifact_id,
+                    manifest_checksum=record.manifest_checksum,
+                    dataset_id=dataset_id,
+                    dataset_version=dataset_version,
+                    status=RunStatus.SUCCEEDED,
+                    validation_status=result.status,
+                    should_block_pipeline=result.should_block,
+                    validation_report_uri=per_episode_report_uri,
+                    checked_episode_count=1,
+                    issue_count=episode_issue_count,
+                    error_count=episode_blocking_count,
+                    warning_count=episode_warning_count,
+                    pipeline_run_id=job.pipeline_run_id,
+                    pipeline_task_run_id=job.pipeline_task_run_id,
+                    job_id=job.job_id,
+                    started_at=started_at,
+                    finished_at=utc_now(),
+                )
             )
-            await context.runs.episode_runs.upsert(per_episode_record)
 
         if blocking:
             overall_status = "failed"

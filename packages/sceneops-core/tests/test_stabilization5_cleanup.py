@@ -10,14 +10,19 @@ import pytest
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.episodes.schemas.enums import EpisodeStatus
 
 
-def test_episode_status_is_registration_lifecycle_only():
-    """EpisodeStatus deliberately stays CREATED/REGISTERED — see
-    apps/api/app/domains/episodes/quality.py's module docstring. BUILT/
-    VALIDATED/FAILED were removed: zero write sites, zero persisted rows."""
-    assert {member.value for member in EpisodeStatus} == {"created", "registered"}
+def test_episode_record_has_no_status_task_or_outcome():
+    """Record existence is registration and readiness lives in revision-
+    pinned run records (ADR-007 §13.4); a canonical Episode carries no
+    manufactured task or outcome label (§31)."""
+    import sceneops_core.episodes.schemas.enums as episode_enums
+    from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeRecord
+
+    assert not hasattr(episode_enums, "EpisodeStatus")
+    for field in ("status", "task", "outcome"):
+        assert field not in EpisodeRecord.model_fields
+        assert field not in EpisodeManifest.model_fields
 
 
 def test_scene_record_has_no_status():

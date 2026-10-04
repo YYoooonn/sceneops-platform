@@ -97,6 +97,8 @@ e2e-robot-run-registration:
 # the other. Prerequisites: `make local-up` and `make streaming-up`.
 # Uses a fresh, isolated test-e2e-* dataset_id per invocation -- never
 # mutates the frozen sceneops-canonical/v0.0 baseline.
+# UNAVAILABLE until ADR-007 implementation step 11: the
+# raw_log_episode_building pipeline it used is removed; the script exits 3.
 # --------------------
 
 .PHONY: e2e-robot-run-learning

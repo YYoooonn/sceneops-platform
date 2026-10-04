@@ -1,43 +1,43 @@
 from __future__ import annotations
 
-from sceneops_core.artifacts.schemas import (
-    ArtifactKind,
-    ArtifactOwnerType,
-    ArtifactRecord,
-)
+from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
 
 from sceneops_db.repositories.artifacts import ArtifactRepository
+from sceneops_db.repositories.episodes import EpisodeRepository
+
+
+class InconsistentEpisodeRevisionError(RuntimeError):
+    """An EpisodeRecord's pinned manifest artifact is missing or disagrees
+    with the record. Reported, never repaired."""
 
 
 async def resolve_current_episode_manifest_source(
-    repository: ArtifactRepository,
     *,
+    episode_repository: EpisodeRepository,
+    artifact_repository: ArtifactRepository,
     episode_id: str,
-    dataset_id: str | None = None,
-    dataset_version: str | None = None,
 ) -> ArtifactRecord | None:
-    """The single "which EPISODE_MANIFEST ArtifactRecord is current for this
-    episode" rule (SceneOps V2 Request 2.3A §5/§13).
+    """The EPISODE_MANIFEST ArtifactRecord that is the current revision of a
+    registered Episode: exactly the one its record names by
+    ``manifest_artifact_id`` (ADR-007 §14.4), never "the latest artifact".
 
-    Shared by API job-creation (SceneOps V2 Request 2.3A, before the
-    execution key is computed) and the ALIGN_EPISODE worker handler's
-    unpinned path (Request 2.3), so the two layers can never drift onto
-    different selection rules. "Current" = latest by created_at -- the same
-    "latest wins" convention already used everywhere else in this platform
-    (run records, validation/profile results), operating against the same
-    ArtifactRepository Protocol both apps' artifact stores already wrap.
-
-    Returns the full ArtifactRecord (artifact_id, uri, checksum, ...) --
-    callers extract what they need. Does not read or verify manifest bytes;
-    that integrity check stays the worker's exclusive responsibility
-    (Request 2.3A §14).
+    Shared by API job creation (before an ALIGN_EPISODE execution key is
+    computed) and the ALIGN_EPISODE worker handler, so both resolve the same
+    revision. Returns None if the Episode is not registered. Does not read
+    manifest bytes; verifying them stays the worker's job.
     """
-    records = await repository.list(
-        kind=ArtifactKind.EPISODE_MANIFEST,
-        owner_type=ArtifactOwnerType.EPISODE,
-        owner_id=episode_id,
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        limit=1,
-    )
-    return records[0] if records else None
+    record = await episode_repository.get(episode_id)
+    if record is None:
+        return None
+    artifact = await artifact_repository.get(record.manifest_artifact_id)
+    if (
+        artifact is None
+        or artifact.kind != ArtifactKind.EPISODE_MANIFEST
+        or artifact.checksum != record.manifest_checksum
+    ):
+        raise InconsistentEpisodeRevisionError(
+            f"Episode {episode_id} points to manifest artifact "
+            f"{record.manifest_artifact_id} ({record.manifest_checksum}), which is "
+            "missing or does not match"
+        )
+    return artifact

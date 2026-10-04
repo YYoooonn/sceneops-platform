@@ -238,10 +238,14 @@ the doc over the code.
 - Doc: [scene-domain.md](./scene-domain.md)
 
 **EPISODE** — Episode build/register/validate/profile/quality
-- Pipeline definition: `RAW_LOG_EPISODE_BUILDING_PIPELINE` in
+- Pipeline definition: `RECORDING_EPISODE_BUILDING_PIPELINE` in
   `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
-- Job handlers: `apps/worker/sceneops_worker/jobs/episodes/` (episode build,
-  segmentation, register, validate, profile)
+- Builder / registrar: `apps/worker/sceneops_worker/episodes/`
+  (`recording_builder.py`, `registration.py`, `resolver.py`); shared
+  recording-builder code in `apps/worker/sceneops_worker/recordings/`
+- Job handlers: `apps/worker/sceneops_worker/jobs/dataset/`
+  (`build_recording_episodes`, `register_episodes`, `validate_episode`,
+  `profile_episode`)
 - Quality: `apps/api/app/domains/episodes/quality.py`
 - Doc: [episode-domain.md](./episode-domain.md)
 

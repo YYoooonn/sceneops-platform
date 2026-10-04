@@ -8,22 +8,12 @@ from app.domains.episodes.dependencies import EpisodeServiceDep
 from app.domains.episodes.schemas import (
     EpisodeDetailResponse,
     EpisodeListResponse,
+    EpisodeManifestResponse,
     EpisodeQualityResponse,
 )
 
-# No /{episode_id}/artifacts or /{episode_id}/manifest endpoint here — see
-# SceneOps V2 Request 16. Unlike ArtifactModel.scene_id (a dedicated indexed
-# column backing Scene's convenience endpoint), episodes are only reachable
-# through the generic owner_type/owner_id columns, so
-# GET /artifacts?owner_type=episode&owner_id={episode_id} already answers
-# "what artifacts does this episode own" with no new code, and
-# EpisodeRecord.episode_manifest_uri already answers "where is the
-# manifest" directly on the detail response.
-#
-# /{episode_id}/quality (SceneOps V2 Request 17) is read-only, same as every
-# other endpoint here — validate_episode/profile_episode are triggered
-# through Jobs/Pipelines (e.g. the raw_log_episode_building pipeline), never
-# through this API.
+# Read-only: Episode membership is written by the recording_episode_building
+# pipeline's registrar, validation / profiling run through pipelines.
 
 router = APIRouter()
 
@@ -36,13 +26,11 @@ async def list_episodes(
     dataset_id: str | None = None,
     dataset_version: str | None = None,
     robot_run_id: str | None = None,
-    mission_id: str | None = None,
 ) -> EpisodeListResponse:
     return await service.list_episodes(
         dataset_id=dataset_id,
         dataset_version=dataset_version,
         robot_run_id=robot_run_id,
-        mission_id=mission_id,
         limit=pagination.limit,
         offset=pagination.offset,
     )
@@ -53,6 +41,18 @@ async def get_episode(
     episode_id: str, service: EpisodeServiceDep
 ) -> EpisodeDetailResponse:
     result = await service.get_episode(episode_id)
+    if result is None:
+        raise_not_found("Episode", episode_id)
+    return result
+
+
+@router.get("/{episode_id}/manifest", response_model=EpisodeManifestResponse)
+async def get_episode_manifest(
+    episode_id: str, service: EpisodeServiceDep
+) -> EpisodeManifestResponse:
+    """The Episode's current canonical manifest revision: asynchronous
+    observation / state / action / event streams, each in its own clock."""
+    result = await service.get_episode_manifest(episode_id)
     if result is None:
         raise_not_found("Episode", episode_id)
     return result

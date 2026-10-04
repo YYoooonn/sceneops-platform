@@ -243,3 +243,74 @@ def scene_record_for(unique_id, seed_robot_run):
         )
 
     return _make
+
+
+@pytest.fixture()
+def episode_record_for(unique_id, seed_robot_run):
+    """Build a canonical EpisodeManifest, register its EPISODE_MANIFEST
+    ArtifactRecord (and, unless ``seed_run=False``, the RobotRun it names),
+    and return the EpisodeRecord projection (not inserted)."""
+    from sceneops_core.artifacts.schemas import (
+        ArtifactKind,
+        ArtifactOwnerType,
+        ArtifactRef,
+    )
+    from sceneops_core.episodes.schemas import episode_id_for, project_episode_record
+    from sceneops_core.episodes.testing import action, episode_manifest, state
+    from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
+    from sceneops_db.postgres.robots import PostgresRobotRunRepository
+
+    async def _make(
+        session,
+        *,
+        dataset_id: str,
+        dataset_version: str = "v1",
+        robot_run_id: str | None = None,
+        unit_key: str = "recording",
+        seed_run: bool = True,
+        x: float = 1.0,
+    ):
+        robot_run_id = robot_run_id or unique_id("run")
+        manifest = episode_manifest(
+            [state("/odom", 0, x=x), action("/control", 5, u=0.1)],
+            robot_run_id=robot_run_id,
+            unit_key=unit_key,
+        )
+        source = manifest.lineage.source
+        if (
+            seed_run
+            and await PostgresRobotRunRepository(session).get(robot_run_id) is None
+        ):
+            await seed_robot_run(
+                session,
+                run_id=robot_run_id,
+                recording_checksum=source.recording_checksum,
+            )
+        data = manifest.to_canonical_bytes()
+        episode_id = episode_id_for(
+            dataset_id=dataset_id, dataset_version=dataset_version, source=source
+        )
+        artifact_id = unique_id("art-episode-manifest")
+        await PostgresArtifactRefRepository(session).create(
+            artifact_id=artifact_id,
+            ref=ArtifactRef(
+                kind=ArtifactKind.EPISODE_MANIFEST,
+                uri=f"s3://sceneops-test/episodes/{episode_id}/{artifact_id}.json",
+                media_type="application/json",
+                size_bytes=len(data),
+                checksum=manifest.checksum(),
+            ),
+            owner_type=ArtifactOwnerType.EPISODE,
+            owner_id=episode_id,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+        )
+        return project_episode_record(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            manifest=manifest,
+            manifest_artifact_id=artifact_id,
+            manifest_checksum=manifest.checksum(),
+        )
+
+    return _make

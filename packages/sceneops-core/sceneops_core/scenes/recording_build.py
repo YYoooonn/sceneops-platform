@@ -54,12 +54,14 @@ from sceneops_core.common.identifiers import (
     validate_source_clock,
     validate_verbatim_key,
 )
-from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
+from sceneops_core.robots.clock import (
+    MCAP_LOG_TIME_CLOCK,
+    MCAP_PUBLISH_TIME_CLOCK,
+    RECORDING_CLOCKS,
+)
+from sceneops_core.robots.recording_payload import PayloadExtraction
 
 from .schemas.enums import SceneModality
-
-MCAP_PUBLISH_TIME_CLOCK: Final = "mcap_publish_time"
-RECORDING_CLOCKS: Final = frozenset({MCAP_LOG_TIME_CLOCK, MCAP_PUBLISH_TIME_CLOCK})
 
 DEFAULT_STATIC_TRANSFORM_TOPIC: Final = "/tf_static"
 
@@ -75,21 +77,6 @@ class TimeSource(StrEnum):
     HEADER_STAMP = "header_stamp"
     LOG_TIME = "log_time"
     PUBLISH_TIME = "publish_time"
-
-
-class PayloadExtraction(StrEnum):
-    """How a message becomes a canonical payload (Q2, §30.4).
-
-    ``compressed_image``  the ``data`` bytes of a ``sensor_msgs/msg/CompressedImage``,
-                          unchanged; ``image/jpeg`` or ``image/png`` from its
-                          ``format``
-    ``ros2_message``      the recorded message bytes exactly as serialized
-                          (CDR, encapsulation header included); the media type
-                          names the ROS 2 message type
-    """
-
-    COMPRESSED_IMAGE = "compressed_image"
-    ROS2_MESSAGE = "ros2_message"
 
 
 class _ConfigModel(BaseModel):

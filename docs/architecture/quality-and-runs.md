@@ -60,8 +60,9 @@ exclusion-reason histogram. Per-scene quality is separately paginable via
 ## 3. Episode quality and readiness
 
 `apps/api/app/domains/episodes/quality.py` follows the same shape, derived
-purely from the latest `EpisodeValidationRunRecord` (profile data enriches
-the response but doesn't drive readiness):
+purely from the latest succeeded `EpisodeValidationRunRecord` of the
+Episode's **current** manifest revision (profile data enriches the response
+but doesn't drive readiness):
 
 ```text
 readiness = UNKNOWN   if no validation run exists
@@ -73,9 +74,11 @@ readiness = UNKNOWN   if no validation run exists
 
 Episode has no `selectable_for_*` concept yet — there is no downstream
 consumer (equivalent to Scene's detection evaluation) that selects episodes
-by quality today. `EpisodeRecord.status` never participates in this
-computation (see [Episode domain](./episode-domain.md) §4). Unlike Scene
-run records, Episode run records do not yet pin a manifest revision.
+by quality today. `EpisodeRecord` has no status (see
+[Episode domain](./episode-domain.md) §5). Like Scene run records, a
+per-episode run record pins the `manifest_artifact_id` + `manifest_checksum`
+it assessed (CHECK `ck_episode_run_records_revision_pin`); a replaced
+Episode reports `unknown` until its new revision is validated.
 
 ## 4. Scenario status and readiness
 

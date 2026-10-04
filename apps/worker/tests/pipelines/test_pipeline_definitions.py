@@ -16,13 +16,13 @@ from sceneops_core.jobs.schemas import JobType
 _SUPPORTED_TYPES = {
     PipelineType.DETECTION_EVALUATION,
     PipelineType.RECORDING_SCENE_BUILDING,
+    PipelineType.RECORDING_EPISODE_BUILDING,
 }
 
 # Experimental pipelines: supported=True, implemented=True, experimental=True.
 # They can be created/run but are hidden from default API listing.
 _EXPERIMENTAL_SUPPORTED_TYPES = {
     PipelineType.SCENARIO_CURATION,
-    PipelineType.RAW_LOG_EPISODE_BUILDING,
 }
 
 _UNSUPPORTED_TYPES: set[PipelineType] = set()

@@ -7,29 +7,55 @@ from sceneops_core.common.schemas import JsonDict
 from .base import BaseJobResult
 
 
-class BuildEpisodesJobResult(BaseJobResult):
-    raw_log_id: str | None = None
+class BuildRecordingEpisodesJobResult(BaseJobResult):
+    """The complete Episode set built from one RobotRun recording.
 
-    episode_ids: list[str] = Field(default_factory=list)
-    episode_manifest_uris: list[str] = Field(default_factory=list)
+    ``manifest_artifact_ids`` are the EPISODE_MANIFEST ArtifactRecords of
+    every Episode of the recording scope, in unit-key order, for
+    REGISTER_EPISODES. ``payload_artifact_count`` counts the distinct
+    OBSERVATION_PAYLOAD artifacts they reference; ``created_payload_count``
+    those this execution registered (the rest already existed with
+    identical bytes, e.g. extracted by a Scene build of the same RobotRun)."""
+
+    dataset_id: str
+    dataset_version: str
+    robot_run_id: str
+    recording_checksum: str
+    producer_fingerprint: str
+
+    unit_keys: list[str] = Field(default_factory=list)
+    manifest_artifact_ids: list[str] = Field(default_factory=list)
 
     episode_count: int = 0
-    observation_frame_count: int = 0
-    action_frame_count: int = 0
-
-    segmentation_strategy: str | None = None
-
-    channels: list[str] = Field(default_factory=list)
+    observation_count: int = 0
+    state_count: int = 0
+    action_count: int = 0
+    event_count: int = 0
+    payload_artifact_count: int = 0
+    created_payload_count: int = 0
+    topics: list[str] = Field(default_factory=list)
 
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class RegisterEpisodeJobResult(BaseJobResult):
-    episode_ids: list[str] = Field(default_factory=list)
-    episode_manifest_uris: list[str] = Field(default_factory=list)
-    registered_episode_count: int = 0
+class RegisterEpisodesJobResult(BaseJobResult):
+    """``episode_ids`` / ``manifest_artifact_ids`` are the canonical members
+    of the registered recording scope after commit, each at its current
+    revision. ``removed_episode_ids`` are records of a replaced scope that
+    the new set no longer contains."""
 
-    registered: bool = True
+    dataset_id: str
+    dataset_version: str
+
+    episode_ids: list[str] = Field(default_factory=list)
+    manifest_artifact_ids: list[str] = Field(default_factory=list)
+
+    created_episode_ids: list[str] = Field(default_factory=list)
+    replaced_episode_ids: list[str] = Field(default_factory=list)
+    unchanged_episode_ids: list[str] = Field(default_factory=list)
+    removed_episode_ids: list[str] = Field(default_factory=list)
+
+    registered_episode_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -49,12 +75,15 @@ class ValidateEpisodeJobResult(BaseJobResult):
 
 class ProfileEpisodeJobResult(BaseJobResult):
     checked_episode_count: int = 0
-    frame_count: int = 0
     observation_count: int = 0
+    state_count: int = 0
     action_count: int = 0
+    event_count: int = 0
 
-    observed_observation_channels: list[str] = Field(default_factory=list)
-    observed_action_channels: list[str] = Field(default_factory=list)
+    observation_topics: list[str] = Field(default_factory=list)
+    state_topics: list[str] = Field(default_factory=list)
+    action_topics: list[str] = Field(default_factory=list)
+    event_topics: list[str] = Field(default_factory=list)
 
     profile_run_id: str | None = None
     report_uri: str | None = None
@@ -79,9 +108,6 @@ class AlignEpisodeJobResult(BaseJobResult):
 
     source_artifact_id: str | None = None
     source_manifest_sha256: str | None = None
-    # False for a legacy EPISODE_MANIFEST ArtifactRecord with no populated
-    # checksum -- content-verified-at-read-time but producer-revision-
-    # unverified (SceneOps V2 Request 2.3 §9).
     source_checksum_verified: bool = False
 
     alignment_semantics_version: str | None = None

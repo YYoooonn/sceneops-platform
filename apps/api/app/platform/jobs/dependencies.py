@@ -7,6 +7,7 @@ from fastapi import Depends
 from app.core.dependencies import ApiSettingsDep
 from app.core.repositories import (
     ArtifactRepositoryDep,
+    EpisodeRepositoryDep,
     JobEventRepositoryDep,
     JobRepositoryDep,
 )
@@ -20,12 +21,14 @@ def get_job_service(
     repository: JobRepositoryDep,
     event_repository: JobEventRepositoryDep,
     artifact_repository: ArtifactRepositoryDep,
+    episode_repository: EpisodeRepositoryDep,
     settings: ApiSettingsDep,
 ) -> JobService:
     return JobService(
         repository=repository,
         event_repository=event_repository,
         artifact_repository=artifact_repository,
+        episode_repository=episode_repository,
         default_dataset_id=settings.default_dataset_id,
         default_dataset_version=settings.default_dataset_version,
     )

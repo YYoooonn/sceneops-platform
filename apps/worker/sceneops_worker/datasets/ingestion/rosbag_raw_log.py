@@ -12,18 +12,7 @@ from mcap.well_known import MessageEncoding
 from mcap_ros2.decoder import DecoderFactory as Ros2DecoderFactory
 
 from sceneops_core.artifacts.contracts import ArtifactStore
-from sceneops_core.episodes.schemas import EpisodeSource
-from sceneops_core.observations.schemas import RawSensorFrameManifest
 from sceneops_core.robots.schemas import MissionRecord, MissionStatus, RobotStateRecord
-from sceneops_core.sensors import SensorModality
-
-# Topic -> modality for topics read as Episode sensor frames. A frame's
-# channel is its topic, verbatim: topics are never renamed into another
-# format's vocabulary (ADR-007 §13.8).
-_DEFAULT_SENSOR_TOPICS: dict[str, SensorModality] = {
-    "/camera/front/image": SensorModality.CAMERA,
-    "/lidar/top/points": SensorModality.LIDAR,
-}
 
 # Robot runtime state topics (docs/workflows/robot-run-and-mcap.md §2).
 _DEFAULT_ROBOT_STATE_TOPICS = {
@@ -135,9 +124,6 @@ _ROS2_ROBOT_STATE_FLATTENERS: dict[str, Callable[[dict[str, Any]], dict[str, Any
 
 @dataclass(frozen=True)
 class _BagContents:
-    frames: list[RawSensorFrameManifest]
-    channels: set[str]
-    modalities: set[SensorModality]
     min_timestamp_us: int | None
     max_timestamp_us: int | None
     robot_state_payloads: dict[int, dict[str, Any]] = field(default_factory=dict)
@@ -148,10 +134,12 @@ class _BagContents:
 
 
 class RosbagAdapter:
-    """Reads an MCAP-recorded rosbag2 file for the Episode and robot-state
-    paths (``extract_episode_source``, ``extract_robot_states``,
-    ``extract_missions``). Canonical Scenes are built by
-    ``sceneops_worker.scenes.recording_builder``, not here.
+    """Reads an MCAP-recorded rosbag2 file into the derived robot telemetry
+    projection (``extract_robot_states``, ``extract_missions``) that
+    ``INGEST_ROBOT_STATES`` persists (L1 -> L3, ADR-007 §29.3). It is not a
+    canonical ingress: canonical Scenes and Episodes are built by
+    ``sceneops_worker.scenes.recording_builder`` and
+    ``sceneops_worker.episodes.recording_builder`` from build configuration.
 
     Decodes two message encodings:
 
@@ -163,9 +151,6 @@ class RosbagAdapter:
       a flat JSON object in a ``std_msgs/String`` and are unwrapped here.
     - ``json``: the same flat format message-encoded as ``json`` directly,
       used by synthetic test fixtures.
-
-    Sensor topics yield frames with an empty ``uri``; payload bytes are not
-    extracted on this path.
     """
 
     def __init__(
@@ -173,13 +158,11 @@ class RosbagAdapter:
         *,
         source_store: ArtifactStore,
         source_root_uri: str,
-        sensor_topics: dict[str, SensorModality] | None = None,
         robot_state_topics: set[str] | None = None,
         mission_topics: set[str] | None = None,
     ) -> None:
         self._source_store = source_store
         self._source_root_uri = source_root_uri
-        self._sensor_topics = sensor_topics or _DEFAULT_SENSOR_TOPICS
         self._robot_state_topics = robot_state_topics or _DEFAULT_ROBOT_STATE_TOPICS
         self._mission_topics = mission_topics or _DEFAULT_MISSION_TOPICS
         self._ros2_decoder_factory = Ros2DecoderFactory()
@@ -219,30 +202,6 @@ class RosbagAdapter:
         bag = self._read_bag()
         return self._missions_from_bag(
             bag, robot_id=robot_id, robot_run_id=robot_run_id
-        )
-
-    def extract_episode_source(
-        self,
-        *,
-        robot_id: str,
-        robot_run_id: str | None = None,
-    ) -> EpisodeSource:
-        """Episode-domain read of the bag: sensor frames + robot states +
-        missions from a single pass over the file.
-
-        Reads the same topics as ``extract_robot_states()`` /
-        ``extract_missions()`` in one ``_read_bag()`` call, plus sensor
-        frames, and persists nothing.
-        """
-        bag = self._read_bag()
-        return EpisodeSource(
-            frames=bag.frames,
-            robot_states=self._robot_states_from_bag(
-                bag, robot_id=robot_id, robot_run_id=robot_run_id
-            ),
-            missions=self._missions_from_bag(
-                bag, robot_id=robot_id, robot_run_id=robot_run_id
-            ),
         )
 
     @staticmethod
@@ -344,9 +303,6 @@ class RosbagAdapter:
         return None  # unrecognized encoding (protobuf, flatbuffer, ...)
 
     def _read_bag(self) -> _BagContents:
-        frames: list[RawSensorFrameManifest] = []
-        channels: set[str] = set()
-        modalities: set[SensorModality] = set()
         min_ts: int | None = None
         max_ts: int | None = None
         robot_state_payloads: dict[int, dict[str, Any]] = {}
@@ -365,22 +321,6 @@ class RosbagAdapter:
                 if max_ts is None or timestamp_us > max_ts:
                     max_ts = timestamp_us
 
-                modality = self._sensor_topics.get(channel.topic)
-                if modality is not None:
-                    frames.append(
-                        RawSensorFrameManifest(
-                            frame_id=f"{channel.topic}-{message.sequence}",
-                            timestamp_us=timestamp_us,
-                            channel=channel.topic,
-                            modality=modality,
-                            uri=payload.get("uri", ""),
-                            metadata={"topic": channel.topic, **payload},
-                        )
-                    )
-                    channels.add(channel.topic)
-                    modalities.add(modality)
-                    continue
-
                 if channel.topic in self._robot_state_topics:
                     schema_name = schema.name if schema is not None else None
                     flattener = _ROS2_ROBOT_STATE_FLATTENERS.get(schema_name or "")
@@ -394,9 +334,6 @@ class RosbagAdapter:
                     mission_updates.append((timestamp_us, payload))
 
         return _BagContents(
-            frames=frames,
-            channels=channels,
-            modalities=modalities,
             min_timestamp_us=min_ts,
             max_timestamp_us=max_ts,
             robot_state_payloads=robot_state_payloads,

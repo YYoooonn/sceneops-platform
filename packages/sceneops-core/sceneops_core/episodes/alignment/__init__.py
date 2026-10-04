@@ -6,7 +6,7 @@ from .config import (
     alignment_config_hash,
     canonical_config_dict,
 )
-from .engine import align_episode
+from .engine import align_episode, alignment_samples, field_channel
 from .enums import (
     AlignedSignalStatus,
     AlignedValueKind,
@@ -16,6 +16,7 @@ from .enums import (
 )
 from .errors import (
     AlignmentError,
+    ClockMismatchError,
     InterpolationShapeError,
     InvalidAlignmentConfigError,
     InvalidEpisodeBoundsError,
@@ -68,6 +69,7 @@ __all__ = [
     "AlignedValue",
     "AlignedValueKind",
     "AlignmentError",
+    "ClockMismatchError",
     "AssociationPolicy",
     "ChannelCoverageProfile",
     "ChannelNamespace",
@@ -85,6 +87,8 @@ __all__ = [
     "TimelineMode",
     "UnknownChannelError",
     "align_episode",
+    "alignment_samples",
+    "field_channel",
     "alignment_config_hash",
     "alignment_key",
     "canonical_config_dict",
