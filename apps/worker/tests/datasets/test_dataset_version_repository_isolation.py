@@ -35,9 +35,6 @@ def _model(**overrides) -> DatasetVersionModel:
         episode_count=3,
         observed_channels=["CAM_FRONT"],
         required_channels=["CAM_FRONT"],
-        source_dataset_id=None,
-        source_dataset_version=None,
-        raw_source_root_uri=None,
         created_at=_NOW,
         updated_at=_NOW,
         metadata_={},
@@ -59,7 +56,7 @@ def _repo_with_model(model: DatasetVersionModel) -> PostgresDatasetVersionReposi
 class TestSceneWriterIsolation:
     @pytest.mark.asyncio
     async def test_membership_summary_replacement_preserves_other_columns(self) -> None:
-        model = _model(scene_count=5, episode_count=3, raw_source_root_uri="/raw")
+        model = _model(scene_count=5, episode_count=3)
         repo = _repo_with_model(model)
 
         await repo.replace_scene_membership_summary(
@@ -78,7 +75,6 @@ class TestSceneWriterIsolation:
         )
         assert model.observed_channels == ["LIDAR_TOP"]
         assert model.episode_count == 3
-        assert model.raw_source_root_uri == "/raw"
         assert model.required_channels == ["CAM_FRONT"]
 
     @pytest.mark.asyncio
@@ -87,10 +83,10 @@ class TestSceneWriterIsolation:
         repo = _repo_with_model(model)
 
         await repo.update_scene_inputs(
-            dataset_id="d", version="v1", raw_source_root_uri="/raw"
+            dataset_id="d", version="v1", required_channels=["LIDAR_TOP"]
         )
 
-        assert model.raw_source_root_uri == "/raw"
+        assert model.required_channels == ["LIDAR_TOP"]
         assert model.manifest_uri == "s3://x/m.json"  # omitted -> untouched
         assert (model.scene_count, model.observed_channels) == (5, ["CAM_FRONT"])
 

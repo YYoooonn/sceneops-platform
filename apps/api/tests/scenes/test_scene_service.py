@@ -20,7 +20,6 @@ import pytest
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
 from sceneops_core.runs.schemas import RunStatus, RunType
-from sceneops_core.provenance import UnitSourceKind
 from sceneops_core.scenes.schemas import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
@@ -42,8 +41,6 @@ class FakeSceneRepository:
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        source_kind: UnitSourceKind | None = None,
-        external_format: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -53,10 +50,6 @@ class FakeSceneRepository:
             results = [s for s in results if s.dataset_id == dataset_id]
         if dataset_version is not None:
             results = [s for s in results if s.dataset_version == dataset_version]
-        if source_kind is not None:
-            results = [s for s in results if s.source_kind == source_kind]
-        if external_format is not None:
-            results = [s for s in results if s.external_format == external_format]
         if robot_run_id is not None:
             results = [s for s in results if s.robot_run_id == robot_run_id]
         return results[offset : offset + limit]
@@ -146,9 +139,11 @@ def _scene(scene_id: str, **overrides) -> SceneRecord:
         scene_id=scene_id,
         dataset_id="nuscenes",
         dataset_version="v1.0-mini",
-        source_kind=UnitSourceKind.EXTERNAL,
-        external_format="nuscenes",
-        source_unit_key=scene_id,
+        robot_run_id="run-0",
+        unit_key=scene_id,
+        window_clock="mcap_log_time",
+        window_start_timestamp_ns=0,
+        window_end_timestamp_ns=20_000_000_000,
         producer_fingerprint="sha256:" + "a" * 64,
         manifest_artifact_id=f"art-{scene_id}-rev-2",
         manifest_checksum="sha256:" + "2" * 64,
@@ -200,20 +195,8 @@ async def test_list_scenes_filters_by_dataset_version():
 
 
 @pytest.mark.asyncio
-async def test_list_scenes_filters_by_source():
-    service, _, _ = _service(
-        scenes=[
-            _scene("s1"),
-            _scene(
-                "s2",
-                source_kind=UnitSourceKind.RECORDING,
-                external_format=None,
-                robot_run_id="run-1",
-            ),
-        ]
-    )
-    recorded = await service.list_scenes(source_kind=UnitSourceKind.RECORDING)
-    assert [s.scene_id for s in recorded.scenes] == ["s2"]
+async def test_list_scenes_filters_by_robot_run():
+    service, _, _ = _service(scenes=[_scene("s1"), _scene("s2", robot_run_id="run-1")])
     by_run = await service.list_scenes(robot_run_id="run-1")
     assert [s.scene_id for s in by_run.scenes] == ["s2"]
 

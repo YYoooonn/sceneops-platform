@@ -107,6 +107,25 @@ HEAD       1406cb2 fix(db): add missing robot_states.robot_run_id index
 date       2026-10-04
 ```
 
+**Amendment A5 — recording Scene canonicalization (implementation step 7).**
+Accepted. A5 records the step-7 decisions A4 left open: Q4, the segment
+window clock (§30.2), and Q2, the canonical lidar payload (§30.4). It
+freezes the v1 recording Scene builder contract (§30.1–§30.8). Q4 amends
+§27.2: a `RecordingSegmentSource` window is in the segmentation clock the
+producer's build configuration declares, no longer a clock copied from the
+RobotRun. It makes I-35 precise: semantic equivalence compares canonical
+content, not provenance-owned identity such as payload artifact ids (§30.9).
+A5 adds §30 and invariants I-38 and I-39. It changes no decision about
+identity, the fingerprint definition, registrar ownership, replacement or
+the canonical/derived boundary. The serialized bytes of recording
+provenance, the fingerprint and unit ids are unchanged (§30.6). Audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       6fe13bf feat(acquisition): implement containerized L1 batch acquisition
+date       2026-10-04
+```
+
 Relationship to earlier ADRs:
 
 - [ADR-001](./001-postgresql-operational-metadata.md),
@@ -2739,6 +2758,8 @@ robot_run_id            source identity authority (RobotRunRecord)
 recording_artifact_id   must equal robot_run_recording_artifact_id(robot_run_id)
 recording_checksum      "sha256:<64 lowercase hex>"; pins the exact bytes
 source_clock            copied from the RobotRun; never defaulted
+                        (amended by A5, §30.2: the segmentation clock the
+                        producer declares)
 window                  [start_timestamp_ns, end_timestamp_ns), half-open, non-empty,
                         integer ns in source_clock
 unit_key                producer-defined stable key of the unit within the recording;
@@ -3852,7 +3873,8 @@ I-34  Capture / file order is acquisition evidence and is preserved where the fo
       compression or indexes.
 I-35  Two semantically equivalent recordings (§29.12) built with the same producer and
       build_config yield canonical manifests that differ only in source-revision-dependent
-      fields.
+      fields. (A5, §30.9: the comparison is of canonical semantic content; provenance and
+      provenance-owned artifact ids, including payload artifact ids, may differ.)
 I-36  External dataset tooling depends on no SceneOps package and produces only L0 input
       (ROS2 messages) or L1 input (a local MCAP). It never writes canonical manifests,
       records or ArtifactRecords.
@@ -3990,12 +4012,14 @@ Open questions that block a later step:
 Q1  Ground truth and keyframe groupings after the nuScenes Scene integration is removed
     (§29.15). Blocks restoring detection evaluation (step 10/11); does not block 6–9.
     Recommendation: a label ingress anchored to L1 message identity (§29.15).
-Q2  Canonical lidar payload representation (PointCloud2 bytes vs a declared SceneOps
+Q2  DECIDED by A5 (§30.4).
+    Canonical lidar payload representation (PointCloud2 bytes vs a declared SceneOps
     point layout, and its media_type). Blocks step 7's payload extraction; decided in step 7.
     The step-6 tool records standard PointCloud2, which keeps both options open.
 Q3  Kafka transport of large sensor messages (size limits, throughput). Blocks step 9 only;
     measure first.
-Q4  Segment-window clock. A2 (§27.2) copies RecordingSegmentSource.source_clock from the
+Q4  DECIDED by A5 (§30.2).
+    Segment-window clock. A2 (§27.2) copies RecordingSegmentSource.source_clock from the
     RobotRun, which under §29.5 R5 is the recording (receive-time) clock. Windows
     on that clock depend on acquisition timing (outside I-35). Source-semantic
     segmentation would require the window clock to be a canonical channel clock.
@@ -4050,3 +4074,260 @@ Negative / costs:
   dependencies, and its replay sink needs the ROS 2 image.
 - Streaming sensor-bearing data puts new load on Kafka, which is unmeasured
   (Q3).
+
+---
+
+## 30. Amendment A5: recording Scene canonicalization (step 7)
+
+### 30.1 Builder boundary
+
+```text
+BUILD_RECORDING_SCENES(dataset_id, dataset_version, robot_run_id, build_config)
+  resolve_recording(robot_run_id)          the only way the builder gets bytes (§12.4)
+  check_l1_recording(local copy)           the step-6 conformance suite; violations fail
+  plan_recording_scenes(copy, revision, build_config)
+                                           pure, DB-free: every SceneManifest of the
+                                           recording scope + the payload plan
+  payload bytes -> OBSERVATION_PAYLOAD ArtifactRecords -> manifests -> SCENE_MANIFEST
+                                           ArtifactRecords                    (producer-owned)
+  result.manifest_artifact_ids             the complete scope -> REGISTER_SCENES
+```
+
+The job accepts no recording URI or local path (`RecordingConsumerJobParams`
+rejects them). The DatasetVersion only scopes where manifests are
+published; it is not a build input and never enters manifest bytes. One
+pipeline run builds one RobotRun (§17.5 rule 1):
+
+```text
+RECORDING_SCENE_BUILDING
+  build_recording_scenes -> register_scenes -> validate_scene, profile_scene (optional)
+```
+
+Messages are read through one reader, `sceneops_integrations.recording.reader`,
+which the conformance suite shares: topic, schema, encodings, payload,
+`log_time`, `publish_time`, MCAP `sequence`, file position overall and per
+channel. Decoding uses the schema embedded in the recording. Only ROS 2
+(`cdr` / `ros2msg`) is decoded; a selected channel in any other encoding
+fails the build.
+
+Producer: `sceneops.recording_scene_builder`, `semantics_version = 1`.
+
+### 30.2 Q4 decision: the segment window clock
+
+**Decision.** A Scene window is a half-open interval in exactly one clock,
+the **segmentation clock**, declared by the segmentation policy in
+`build_config`. `RecordingSegmentSource.source_clock` is that clock. It may
+be:
+
+```text
+mcap_log_time       recorder receive time (the recording clock)
+mcap_publish_time   MCAP publish_time
+a source clock      the clock the build configuration declares for a header-stamp
+                    time policy (e.g. "sensor.header_stamp")
+```
+
+Placement rule. Every included channel and pose source must have a
+timestamp on the segmentation clock. Either its canonical observation time
+is in that clock, or the segmentation clock is a recording clock that every
+message carries (`mcap_log_time`, `mcap_publish_time`). Any other
+combination is a configuration error. An observation is assigned to a window
+by its segmentation-clock timestamp. It keeps its own canonical timestamp
+and channel clock, and timestamps in other clocks are never compared with
+the window (the manifest validator checks only timestamps in the window
+clock).
+
+Consequences:
+
+- §27.2's "copied from the RobotRun" is superseded. The registrar no longer
+  compares a manifest's window clock with `RobotRunRecord.source_clock`. It
+  still pins the recording bytes (`recording_checksum`).
+- Windows are derived from message timestamps, never from
+  `RobotRun.started_at` / `ended_at` (§27.3 unchanged).
+- A build that uses `log_time` (as segmentation clock or as a channel time)
+  requires the RobotRun's recording clock to be `mcap_log_time`.
+- With a source-semantic segmentation clock, unit boundaries and keys come
+  from source timestamps, so I-35 covers them. A `log_time` segmentation
+  stays outside I-35, as §29.12 states.
+
+### 30.3 Segmentation policy v1
+
+```text
+fixed_duration { clock, duration_ns > 0 }
+  origin     the earliest segmentation-clock timestamp of any included observation
+  window k   [origin + k·duration_ns, origin + (k+1)·duration_ns)
+  Scenes     one per window that holds at least one observation; empty windows
+             are not Scenes
+  unit_key   segment-<k, 6 digits>
+  poses      assigned to windows by their segmentation-clock timestamp; a pose in no
+             Scene window belongs to no Scene
+```
+
+The policy depends only on recording content and `build_config`, never on
+the DatasetVersion or execution state. A recording that yields no Scene
+fails (§18.3).
+
+### 30.4 Q2 decision: canonical payloads
+
+**Lidar (and any other channel built with `ros2_message`).** The canonical
+payload is the recorded message bytes exactly as serialized: CDR with its
+encapsulation header, as MCAP `Message.data` holds them. Its media type
+names the ROS 2 message type:
+
+```text
+application/x.ros2-cdr.<package>.msg.<type, lowercased>
+e.g. application/x.ros2-cdr.sensor_msgs.msg.pointcloud2
+```
+
+Rationale: it is lossless and source-faithful. It keeps the
+`PointCloud2` field layout (`fields`, `point_step`, endianness, `is_dense`)
+self-describing for any layout, so no SceneOps point layout is designed
+before a second consumer needs one (architecture rule 5). Canonicalization
+does no conversion, and the payload checksum equals the sha256 of the L1
+message bytes, which is the occurrence identity of §29.12. Cost: a downstream
+reader needs a ROS 2 CDR decoder and the standard message definition, which
+the media type names. A normalized point layout, if one becomes necessary,
+is a derived representation (step 10 media-type dispatch).
+
+**Camera (`compressed_image`).** The canonical payload is the `data` bytes of
+a `sensor_msgs/msg/CompressedImage`, unchanged. Nothing is decoded or
+re-encoded. The media type comes from `format`: `image/jpeg` for `jpeg` / `jpg`
+or a `... jpeg compressed ...` format, and `image/png` for `png`. The payload
+must start with that format's signature, and any other format fails.
+`sensor_msgs/msg/Image` (raw) has no v1 extraction.
+
+### 30.5 Payload identity and publication
+
+```text
+artifact_id   payload-<sha256(canonical_json{payload_id_schema
+                 "sceneops.observation_payload_id/v1", robot_run_id, topic,
+                 channel_index, extraction})[:32]>
+channel_index the message's occurrence index among the messages of its own topic, in
+              that topic's acquisition order (I-34 evidence of this recording)
+key           {artifact_root}/observation_payloads/{robot_run_id}/{artifact_id}
+record        OBSERVATION_PAYLOAD, owner robot_run/<robot_run_id>, sha256, size, media type
+```
+
+The id is a property of one recording message and one extraction. It
+depends on no build configuration, so a rebuild with another window length
+or another time policy reuses every payload, and no id can name different
+bytes under two configurations. `channel_index` counts only the topic's own
+messages, so how topics are interleaved in the file (cross-channel write
+order) never affects it. It is deliberately not a rank in canonical time
+order: that order depends on the configured time policy. The id is scoped to
+the RobotRun: an equivalent recording of another acquisition owns other
+payload artifacts (§30.9). Publication is write-once. The same id with the
+same bytes is reused, and the same id with different bytes, or an existing
+ArtifactRecord whose location, checksum, size or media type differs, fails
+the job. Manifest ArtifactRecords are deterministic too:
+`scene-manifest-<sha256(scene_id, manifest checksum)[:32]>`. A retry after
+a crash between writing bytes and committing records therefore converges.
+No content-addressed deduplication across messages or runs exists (§27.5).
+
+### 30.6 Interpretation rules (v1)
+
+```text
+channels       build_config.channels: topic (verbatim), modality, optional sensor_id,
+               time policy, extraction, camera_info_topic (cameras)
+frames         the channel frame is the message header frame_id, constant per channel;
+               build_config names the ego frame (required) and world frame (optional);
+               channel frames take the sensor role
+calibration    static transforms on build_config.calibration.static_transform_topics
+               (default /tf_static); constant for the whole recording (§29.21 deferred
+               item); the extrinsic of a camera / lidar / radar frame is required and
+               must be relative to the ego frame (chains are not interpreted in v1)
+intrinsics     CameraInfo k -> camera_intrinsic, width / height -> image_size; constant;
+               non-zero distortion, non-identity rectification or P != [K|0] fail
+               (SceneManifest v1 cannot express them)
+poses          every parent -> child transform of a configured TFMessage pose source is a
+               ScenePose at its own stamp; no interpolation; observations get no
+               ego_pose_id (the recording does not associate one)
+observation id <topic slug>-<rank>, rank in the channel's canonical order: timestamp,
+               then MCAP sequence when every message of the channel carries one, then
+               per-channel file order (I-34)
+groups / annotations   none (§29.15, Q1)
+```
+
+**Compatibility.** Removing the external source kind changes no serialized
+byte of recording provenance. `RecordingSegmentSource` /
+`RecordingSourceRevision` keep `source_kind = "recording"`, the unit-id
+document keeps its `source_kind` member, and `fingerprint_schema`,
+`unit_id_schema` and recording fingerprints and ids are unchanged. No
+schema version is bumped.
+
+### 30.7 Removal and schema changes (implements §29.9, §29.16, §29.20 step-7 rows)
+
+```text
+removed   ExternalUnitSource, ExternalSourceRevision, UnitSource / SourceRevision unions,
+          UnitSourceKind, project_unit_source; INGEST_SCENES, BUILD_SCENES,
+          DATASET_SCENE_INGESTION, RAW_LOG_SCENE_BUILDING; sceneops_core.scenes.legacy;
+          RawLogManifest / RawLogFrameIndex / RawLog source enums; the worker raw-log
+          Scene builder, observation adapters, ObservationArtifactStore; the nuScenes
+          INGEST runtime, its HTTP service and tools/nuscenes-integration; the worker
+          integration executors and their settings (no remaining caller);
+          IntegrationOperation.INGEST; DatasetType; ArtifactKinds legacy_scene_manifest,
+          raw_log_manifest, raw_log_frame_index, raw_sensor_frame, scene_sample_manifest,
+          scene_segment_index; RosbagAdapter.build_raw_log and its topic renaming
+moved     ExternalDatasetRef -> sceneops_core.integration_runtime
+scenes    source_kind, external_format, ck_scenes_source_projection and
+          ck_scenes_declared_window dropped; source_unit_key -> unit_key; robot_run_id
+          and window columns NOT NULL; ck_scenes_segment_window
+datasets  dataset_versions.raw_source_root_uri, source_dataset_id, source_dataset_version
+          and datasets.type dropped
+migration c3f1a7d5e902 refuses to run while an external Scene or an artifact of a
+          removed kind exists (reset development state instead); converts recording
+          rows in place
+```
+
+### 30.8 Invariants
+
+```text
+I-38  A recording-derived unit's window is a half-open interval in the one segmentation
+      clock its producer's build configuration declares. Every timestamp the unit holds in
+      that clock lies inside it, and no timestamp in another clock is compared with it,
+      converted to it, or used to derive it. Windows are never derived from RobotRun
+      started_at / ended_at.
+I-39  A rebuild of the same RobotRun (same recording revision) with the same producer and
+      build_config yields byte-identical manifests and the same Scene ids, unit keys and
+      payload artifact ids; with another build_config it reuses every payload artifact id.
+      No canonical identity depends on cross-channel write order, chunking or indexes.
+```
+
+Backing tests: `apps/worker/tests/scenes/test_recording_scene_identity.py`
+(I-35 / I-39), core manifest window tests, builder segmentation tests
+(half-open boundaries, multi-clock Scenes, `log_time` segmentation keeping
+source stamps), and the recording-scene E2E.
+
+### 30.9 Semantic equivalence versus provenance identity
+
+I-35 compares *canonical semantic content*, not manifest bytes or artifact
+ids. For two semantically equivalent recordings (§29.12) of different
+acquisitions (for example batch acquisition and stream replay → capture),
+built by the same producer with the same `build_config`:
+
+```text
+equal (when canonical time and segmentation come from source-semantic timestamps)
+  build_config · segment windows [start, end) and their clock · unit keys
+  channels · coordinate frames · calibrations · poses · groups · annotations
+  observations: observation ids, channels, canonical timestamps, calibration ids,
+                image sizes, payload checksum / size / media type
+  the logical payload bytes behind each observation
+
+differ (provenance and provenance-owned identity)
+  RecordingSegmentSource robot_run_id, recording_artifact_id, recording_checksum
+  producer_fingerprint (it covers the source revision)
+  payload artifact ids (§30.5: scoped to the RobotRun)
+  manifest bytes and checksums, manifest ArtifactRecord ids
+  Scene ids where both builds register into one DatasetVersion (robot_run_id is
+  part of unit identity, §18.1)
+```
+
+So semantic equivalence is not identical manifest bytes, not identical
+ArtifactRecord ids and not identical acquisition provenance. Each acquisition
+owns its own physical artifacts. Anything derived from recorder receive time
+(`mcap_log_time` segmentation or time policies) stays outside I-35 (§29.12).
+`sceneops_core.scenes.testing.semantic_scene_content` is the executable
+form of this projection, for the step-9 equivalence test and the builder
+tests.
+
+Same-acquisition determinism is stronger and unchanged (I-39). A rebuild of
+the same RobotRun keeps byte-identical manifests and every id.

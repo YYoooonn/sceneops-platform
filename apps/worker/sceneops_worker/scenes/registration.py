@@ -12,16 +12,11 @@ writes manifest or payload bytes.
         ArtifactRecord with exactly the referenced checksum, size and media
         type
     S2  derive each Scene's DatasetVersion-scoped id; reject duplicate units,
-        mixed source kinds, and -- for recordings -- more than one RobotRun
-        or producer fingerprint, an unregistered RobotRun, or a manifest
-        built from different recording bytes than the RobotRun's
+        more than one RobotRun or producer fingerprint, an unregistered
+        RobotRun, or a manifest built from different recording bytes than
+        the RobotRun's
     S3  one transaction: lock the DatasetVersion row, then re-read the
-        affected scope and apply the identity rules
-          external units (per unit, §18.2)
-            absent                                 -> insert
-            same fingerprint and manifest checksum -> unchanged
-            different, replace=False               -> conflict
-            different, replace=True                -> repoint in place
+        recording scope and apply the identity rules
           recording scope (DatasetVersion, robot_run_id), §18.3
             empty                                  -> insert the complete set
             same fingerprint                       -> unchanged (whole scope)
@@ -44,7 +39,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
-from sceneops_core.provenance import RecordingSegmentSource, UnitSourceKind
 from sceneops_core.scenes.schemas import (
     SceneManifest,
     SceneManifestError,
@@ -123,9 +117,8 @@ async def register_scenes(
         )
         for artifact_id in manifest_artifact_ids
     ]
-    source_kind = _check_input_scope(verified)
-    if source_kind == UnitSourceKind.RECORDING:
-        await _verify_recording_source(context, verified)
+    _check_input_scope(verified)
+    await _verify_recording_source(context, verified)
 
     # S3-S4, one transaction under the DatasetVersion row lock.
     try:
@@ -136,14 +129,9 @@ async def register_scenes(
         except ValueError as exc:
             raise SceneRegistrationScopeError(str(exc)) from exc
 
-        if source_kind == UnitSourceKind.EXTERNAL:
-            registration = await _apply_external(
-                context, verified, dataset_id, dataset_version, replace
-            )
-        else:
-            registration = await _apply_recording(
-                context, verified, dataset_id, dataset_version, replace
-            )
+        registration = await _apply_recording(
+            context, verified, dataset_id, dataset_version, replace
+        )
 
         summary = await context.scene_store.summarize_membership(
             dataset_id=dataset_id, dataset_version=dataset_version
@@ -208,7 +196,7 @@ async def _verify_manifest(
     return VerifiedSceneManifest(artifact=artifact, manifest=manifest, record=record)
 
 
-def _check_input_scope(verified: list[VerifiedSceneManifest]) -> UnitSourceKind:
+def _check_input_scope(verified: list[VerifiedSceneManifest]) -> None:
     scene_ids = [v.record.scene_id for v in verified]
     duplicates = sorted({s for s in scene_ids if scene_ids.count(s) > 1})
     if duplicates:
@@ -216,36 +204,27 @@ def _check_input_scope(verified: list[VerifiedSceneManifest]) -> UnitSourceKind:
             f"input contains more than one manifest for scene(s) {duplicates}"
         )
 
-    kinds = {v.record.source_kind for v in verified}
-    if len(kinds) != 1:
+    run_ids = {v.record.robot_run_id for v in verified}
+    if len(run_ids) != 1:
         raise SceneRegistrationScopeError(
-            "one registration takes units of a single source kind, got "
-            f"{sorted(k.value for k in kinds)}"
+            f"a registration covers exactly one RobotRun, got {sorted(run_ids)}"
         )
-    kind = kinds.pop()
-    if kind == UnitSourceKind.RECORDING:
-        run_ids = {v.record.robot_run_id for v in verified}
-        if len(run_ids) != 1:
-            raise SceneRegistrationScopeError(
-                f"a recording registration covers exactly one RobotRun, got {sorted(run_ids)}"
-            )
-        fingerprints = {v.record.producer_fingerprint for v in verified}
-        if len(fingerprints) != 1:
-            raise SceneRegistrationScopeError(
-                "a recording scope has exactly one producer fingerprint, got "
-                f"{len(fingerprints)}"
-            )
-    return kind
+    fingerprints = {v.record.producer_fingerprint for v in verified}
+    if len(fingerprints) != 1:
+        raise SceneRegistrationScopeError(
+            "a recording scope has exactly one producer fingerprint, got "
+            f"{len(fingerprints)}"
+        )
 
 
 async def _verify_recording_source(
     context: WorkerContext, verified: list[VerifiedSceneManifest]
 ) -> None:
-    sources = [
-        v.manifest.lineage.source
-        for v in verified
-        if isinstance(v.manifest.lineage.source, RecordingSegmentSource)
-    ]
+    """The manifests must have been built from the RobotRun's registered
+    recording bytes. Their segment clock is the producer's declared
+    segmentation clock (Q4), not necessarily the recording clock, so it is
+    not compared with the RobotRun."""
+    sources = [v.manifest.lineage.source for v in verified]
     robot_run_id = verified[0].record.robot_run_id
     run = await context.robot_store.get_run(robot_run_id)
     if run is None:
@@ -262,53 +241,9 @@ async def _verify_recording_source(
                 f"manifest was built from recording bytes {source.recording_checksum}, "
                 f"but RobotRun {robot_run_id} is {recording.checksum}"
             )
-        if source.source_clock != run.source_clock:
-            raise SceneRegistrationScopeError(
-                f"manifest source_clock {source.source_clock!r} differs from "
-                f"RobotRun {robot_run_id} source_clock {run.source_clock!r}"
-            )
 
 
 # --- S3 ----------------------------------------------------------------------------
-
-
-def _same_revision(existing: SceneRecord, new: SceneRecord) -> bool:
-    return (
-        existing.producer_fingerprint == new.producer_fingerprint
-        and existing.manifest_checksum == new.manifest_checksum
-    )
-
-
-async def _apply_external(
-    context: WorkerContext,
-    verified: list[VerifiedSceneManifest],
-    dataset_id: str,
-    dataset_version: str,
-    replace: bool,
-) -> SceneRegistration:
-    registration = SceneRegistration(
-        dataset_id=dataset_id, dataset_version=dataset_version, scenes=[]
-    )
-    for item in verified:
-        new = item.record
-        existing = await context.scene_store.get(new.scene_id)
-        if existing is None:
-            registration.scenes.append(await context.scene_store.insert(new))
-            registration.created_scene_ids.append(new.scene_id)
-        elif _same_revision(existing, new):
-            registration.scenes.append(existing)
-            registration.unchanged_scene_ids.append(new.scene_id)
-        elif not replace:
-            raise SceneRegistrationConflictError(
-                f"scene {new.scene_id} is registered at revision "
-                f"{existing.manifest_checksum} (fingerprint "
-                f"{existing.producer_fingerprint}); the new revision "
-                f"{new.manifest_checksum} differs and replace=False"
-            )
-        else:
-            registration.scenes.append(await context.scene_store.replace_revision(new))
-            registration.replaced_scene_ids.append(new.scene_id)
-    return registration
 
 
 async def _apply_recording(

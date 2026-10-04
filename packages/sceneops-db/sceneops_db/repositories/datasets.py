@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
-from sceneops_core.datasets.schemas.enums import DatasetType
 
 
 @runtime_checkable
@@ -19,7 +18,6 @@ class DatasetRepository(Protocol):
     async def list(
         self,
         *,
-        type: DatasetType | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DatasetRecord]: ...
@@ -62,7 +60,6 @@ class DatasetVersionRepository(Protocol):
         version: str,
         required_channels: list[str] | None = None,
         manifest_uri: str | None = None,
-        raw_source_root_uri: str | None = None,
     ) -> DatasetVersionRecord: ...
 
     async def update_episode_summary(

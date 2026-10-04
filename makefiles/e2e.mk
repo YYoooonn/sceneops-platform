@@ -2,15 +2,10 @@
 # Fixtures
 # --------------------
 
-.PHONY: register-nuscenes-dataset
-register-nuscenes-dataset:
-	chmod +x scripts/fixtures/register_nuscenes_dataset.sh
-	API_PREFIX=$(API_PREFIX) scripts/fixtures/register_nuscenes_dataset.sh
-
 # --------------------
 # Persistent E2E fixture bootstrap
 #
-# Materializes the shared E2E fixture catalog (core/interop/raw-log --
+# Materializes the shared E2E fixture catalog (core/interop --
 # scripts/e2e/lib.sh's resolve_e2e_fixture, mirrored in Python by
 # scripts/e2e/e2e_fixture_bootstrap.py) into the real Postgres + MinIO
 # `make local-up` already started, so future E2Es can start from known
@@ -27,7 +22,7 @@ register-nuscenes-dataset:
 # Common infra config (all fixtures) vs. source-specific config (only
 # fixtures whose verification actually reads an external source fixture
 # from disk) are kept in separate variables: interop's bootstrap/
-# verification never touches the nuScenes source path, only core/raw-log's
+# verification never touches the nuScenes source path, only core's
 # does. E2E_BOOTSTRAP_SOURCE_ROOT_URI overrides that nuScenes source check
 # to the host filesystem path -- the pipelines' own in-container default
 # ("/data/raw/nuscenes") only resolves inside api/worker, where
@@ -56,9 +51,6 @@ e2e-bootstrap-core:
 e2e-bootstrap-interop:
 	$(E2E_BOOTSTRAP_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture interop --verify
 
-.PHONY: e2e-bootstrap-raw-log
-e2e-bootstrap-raw-log:
-	$(E2E_BOOTSTRAP_ENV) $(E2E_BOOTSTRAP_NUSCENES_ENV) uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture raw-log --verify
 
 # ============================================================================
 # E2E Workflows -- primary surface
@@ -78,17 +70,18 @@ e2e-bootstrap-raw-log:
 # order.
 # ============================================================================
 
-.PHONY: e2e-scene
-# The canonical Scene-domain E2E: real nuScenes -> Integration Runtime ->
-# Scene ingestion -> SceneRecord -> validation -> profile -> scene index ->
-# DatasetManifest (see scripts/e2e/e2e_scene.sh's own header for the full
-# assertion set). MAX_SCENES bounds how many nuScenes scenes get ingested
-# (default: 10, see the script).
-e2e-scene:
-	chmod +x scripts/e2e/e2e_scene.sh
-	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	scripts/e2e/e2e_scene.sh
+.PHONY: e2e-recording-scene
+# The canonical Scene-domain E2E (ADR-007 §29.19 step 7): nuScenes ->
+# dataset-acquisition container -> MCAP -> recording-publisher container ->
+# POST /robot-runs:register -> RobotRun -> recording_scene_building
+# pipeline (build_recording_scenes -> register_scenes -> validate_scene /
+# profile_scene) -> retry / replacement checks. Data-plane steps run as
+# one-shot containers; every platform operation goes through FastAPI.
+# Prerequisite: `make local-up` with images built from the current tree.
+e2e-recording-scene: acquisition-image
+	chmod +x scripts/e2e/e2e_recording_scene.sh
+	SOURCE_UNIT=$(or $(SCENE),scene-0061) API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
+	scripts/e2e/e2e_recording_scene.sh
 
 .PHONY: e2e-robot-learning
 # The canonical robot-learning-domain E2E: real nuScenes CAN bus -> ROS2
@@ -121,8 +114,9 @@ e2e-robot-learning:
 # PIPELINE_RUN_ID hand-off needed -- see scripts/e2e/e2e_perception.sh's own
 # header). BACKEND=mock (default) needs nothing beyond local-up;
 # BACKEND=grounding_dino requires a real inference server already running
-# (make inference-local-up/-gpu-up). Requires e2e-scene to have already run
-# for DATASET_ID/DATASET_VERSION.
+# (make inference-local-up/-gpu-up).
+# UNAVAILABLE until ADR-007 implementation step 10: recording-derived Scenes
+# carry no ground truth or keyframe groups; the script exits 3 with a message.
 e2e-perception:
 	chmod +x scripts/e2e/e2e_perception.sh
 	API_BASE_URL=$(API_BASE_URL) \
@@ -153,19 +147,6 @@ e2e-cleanroom:
 # Not part of e2e-cleanroom's core path.
 # --------------------
 
-.PHONY: e2e-scene-rawlog
-# Real nuScenes data via the RAW-LOG representation -- not synthetic data.
-# Uniquely exercises BuildScenesJobHandler's generic RawLogAdapter
-# segmentation/sampling machinery, the SAME machinery RosbagAdapter
-# (e2e-robot-learning) depends on -- not redundant with it, two different
-# RawLogAdapter implementations of the same Protocol. Deliberately isolated
-# from "core"'s own DatasetVersion (see the script).
-e2e-scene-rawlog:
-	chmod +x scripts/e2e/e2e_scene_rawlog.sh
-	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-	MAX_SCENES=$(MAX_SCENES) \
-	scripts/e2e/e2e_scene_rawlog.sh
-
 .PHONY: e2e-scene-analytics-export
 # Scene-domain analytical Parquet export (scenes/samples/sensor_frames/
 # annotations) -- a deliberately different concept from EXPORT_LEARNING_DATA
@@ -174,7 +155,6 @@ e2e-scene-analytics-export:
 	chmod +x scripts/e2e/e2e_scene_analytics_export.sh
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	MAX_SCENES=$(MAX_SCENES) \
 	scripts/e2e/e2e_scene_analytics_export.sh
 
 # ============================================================================
@@ -190,12 +170,9 @@ smoke-api:
 	chmod +x scripts/e2e/smoke_api.sh
 	API_BASE_URL=$(API_BASE_URL) scripts/e2e/smoke_api.sh
 
-# smoke-nuscenes-container lives in makefiles/nuscenes.mk -- isolates "does
-# the nuscenes-integration container itself execute its IntegrationRequest
-# -> IntegrationResult contract" from "does the whole pipeline work", which
-# e2e-scene already covers through the running service.
-# smoke-lerobot-container lives in makefiles/lerobot.mk (same reasoning as
-# smoke-nuscenes-container).
+# smoke-lerobot-container lives in makefiles/lerobot.mk -- it isolates "does
+# the lerobot-integration container execute its IntegrationRequest ->
+# IntegrationResult contract" from the domain workflows.
 
 # ============================================================================
 # Verification -- execution-model properties / alternate-orchestrator
@@ -205,8 +182,9 @@ smoke-api:
 
 .PHONY: verify-reliability
 # Verifies reliability primitives (execution-key dedup/force, pipeline
-# partial-retry-after-BLOCKED) -- an execution-model property, not a domain
-# workflow.
+# partial-retry-after-BLOCKED on recording_scene_building) -- an
+# execution-model property, not a domain workflow. Acquires a camera
+# RobotRun through the acquisition containers once, then reuses it.
 verify-reliability:
 	chmod +x scripts/e2e/verify_reliability.sh
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
@@ -215,10 +193,9 @@ verify-reliability:
 
 .PHONY: verify-airflow-backend
 # An ALTERNATE-ORCHESTRATOR COMPATIBILITY CHECK, not a general
-# pipeline-backend substitution: the Airflow backend is currently a PoC
-# hardcoded to dataset_scene_ingestion only (see
-# docs/development/test-matrix.md), so this name is deliberately narrower
-# than "e2e-scene BACKEND=airflow" would imply.
+# pipeline-backend substitution: the Airflow backend is a PoC whose DAG
+# (airflow/dags/sceneops_pipeline_run.py) is hardcoded to
+# recording_scene_building.
 # Requires: make airflow-up, AND the api service restarted with
 # SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow (see the script's own
 # header comment -- this is a process-startup setting, not automatable here).
@@ -281,6 +258,8 @@ e2e-episode-curation:
 # One scenario_curation pipeline dispatch in isolation -- e2e-perception
 # composes this same step automatically; kept standalone for debugging
 # mine_scenarios/score_scenario_readiness without also running detection.
+# UNAVAILABLE until ADR-007 implementation step 10 (its detection_ready
+# profile needs ground truth); the script exits 3 with a message.
 e2e-scenario-curation:
 	chmod +x scripts/e2e/e2e_scenario_curation.sh
 	API_PREFIX=$(API_PREFIX) \

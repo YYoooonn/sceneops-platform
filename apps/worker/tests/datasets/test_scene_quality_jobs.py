@@ -16,7 +16,7 @@ from sceneops_core.jobs.schemas import (
     ValidateSceneJobParams,
 )
 from sceneops_core.runs.schemas import RunStatus
-from sceneops_core.scenes.testing import external_source
+from sceneops_core.scenes.testing import recording_source
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.profile_scene import ProfileSceneJobHandler
 from sceneops_worker.jobs.dataset.register_scenes import RegisterScenesJobHandler
@@ -41,7 +41,7 @@ def _job() -> MagicMock:
 async def _registered(world, *source_keys):
     world.add_dataset_version()
     artifacts = [
-        await world.publish(world.manifest(source=external_source(source_unit_key=key)))
+        await world.publish(world.manifest(source=recording_source(unit_key=key)))
         for key in source_keys
     ]
     result = await RegisterScenesJobHandler().run(

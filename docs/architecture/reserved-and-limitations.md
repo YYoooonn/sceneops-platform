@@ -44,21 +44,25 @@ implemented, handler-registered, but not wired into
 `RAW_LOG_EPISODE_BUILDING_PIPELINE` or any other pipeline. See
 [Robot learning data layer](./robot-learning-data.md) §8.
 
-## 2. Legacy Scene producers
+## 2. Scenes from recordings only
 
-`INGEST_SCENES` (nuScenes integration, `DATASET_SCENE_INGESTION`) and
-`BUILD_SCENES` (raw-log builder, `RAW_LOG_SCENE_BUILDING`) still emit
-pre-canonical, sample-centric manifests (`sceneops_core.scenes.legacy`):
-payload paths relative to an external source root, keyframe-only (nuScenes)
-or sampling-selected (raw log) frames, untyped provenance. They are stored
-as `LEGACY_SCENE_MANIFEST` artifacts and canonical registration rejects
-them, so **no built-in pipeline currently produces registered Scenes**, and
-the detection and scenario workflows have no Scenes to run on until a
-producer publishes canonical SceneManifests. See
-[Scene domain](./scene-domain.md) §6.
+Canonical Scenes are produced only by `RECORDING_SCENE_BUILDING` from a
+registered RobotRun recording ([Scene domain](./scene-domain.md) §6). In
+the v1 builder:
 
-No producer publishes `OBSERVATION_PAYLOAD` ArtifactRecords yet, so no
-canonical SceneManifest can currently pass registration's payload check.
+- only ROS 2 (`cdr` / `ros2msg`) recordings are decoded; camera payloads
+  must be `CompressedImage` (jpeg / png), other channels are stored as
+  their serialized ROS 2 message;
+- calibration must be constant for the whole recording, relative to the
+  ego frame, and representable (no distortion, identity rectification);
+- segmentation is `fixed_duration` only;
+- recording-derived Scenes carry no annotations or keyframe groups. Ground
+  truth needs a label ingress that does not exist yet (ADR-007 Q1), so the
+  keyframe-based detection, evaluation and ground-truth scenario workflows
+  have no input on recording Scenes;
+- the recording is materialized in memory by `resolve_recording` (whole
+  bytes, no streaming read); measured with one nuScenes mini scene
+  (~356 MB MCAP) only.
 
 Detection locates payloads through their ArtifactRecords; frustum lifting can
 only read `file://` payload locations and decodes lidar only in the
@@ -106,7 +110,7 @@ presence doesn't imply an export or deprecation workflow exists.
   not implemented.
 - Operations and leaderboard APIs exist; there's no dedicated web UI.
 - The Airflow pipeline backend is a per-task DAG proof of concept
-  hardcoded to `dataset_scene_ingestion` — every other pipeline type,
+  hardcoded to `recording_scene_building` — every other pipeline type,
   including `raw_log_episode_building`, only runs through Celery.
 - Episode still has no `DatasetManifest`-equivalent aggregate index, and
   `export_analytics_snapshot` still covers Scene only — but as of Phase 2,

@@ -55,6 +55,7 @@ From `.env.example` / `ArtifactSettings` (`sceneops_core/config.py`):
   models/       ArtifactSettings.model_prefix
   analytical/   ArtifactSettings.analytics_prefix   (Parquet analytics layer)
   robot_runs/   ArtifactSettings.robot_run_prefix   (published robot recordings)
+  observation_payloads/   ArtifactSettings.observation_payload_prefix   (canonical payloads)
 ```
 
 Local: `/data/artifacts/{datasets,runs,models,analytical,robot_runs}/...`
@@ -93,27 +94,19 @@ stay for lineage; there is no garbage collection. Readers never list this
 prefix to find "the latest" manifest — they follow a pinned
 `manifest_artifact_id` / checksum (see [Scene domain](./scene-domain.md)).
 
-Observation payloads are not addressed by a key convention: a manifest
-references each payload by its `OBSERVATION_PAYLOAD` ArtifactRecord id, and
-the record's `uri` is the only place its location is stored. No producer
-publishes canonical observation payloads yet.
+Observation payloads are not addressed by readers through a key
+convention: a manifest references each payload by its
+`OBSERVATION_PAYLOAD` ArtifactRecord id, and the record's `uri` is the only
+place its location is stored. The recording Scene builder writes them
+write-once at
 
-Pre-canonical manifests from the legacy Scene producers are written under
-`.../versions/{version}/legacy_scenes/{scene_id}.json` and are never read
-back as Scenes.
+```text
+{ARTIFACT_ROOT_URI}/observation_payloads/{robot_run_id}/{artifact_id}
+```
 
-### Raw-log artifacts: scoped by `raw_log_id`
-
-Within a dataset version's `datasets/` tree, raw-log-derived artifacts
-(`raw_log_manifest_uri`, `raw_frame_index_uri`, `scene_segments_uri`) live
-under `.../raw/{raw_log_id}/{filename}.json` — every raw-log source
-(`RosbagAdapter` in-process; nuScenes via the isolated integration service,
-see [External integration runtime](./external-integration-runtime.md)) and
-`SceneBuilder` thread `raw_log_id` through. This scoping exists so a second
-`build_scenes` run
-against the same `DatasetVersion` (a different raw log, or a rebuild)
-doesn't silently overwrite the first run's raw-log artifacts at a shared
-URI.
+(`ArtifactSettings.observation_payload_prefix`). The artifact id is
+deterministic per recording message and extraction, so identical bytes at
+an existing key are reused and different bytes are a conflict.
 
 ### Analytics (Parquet)
 

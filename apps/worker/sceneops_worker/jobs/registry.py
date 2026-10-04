@@ -9,11 +9,10 @@ from sceneops_worker.jobs.dataset import (
     BuildDatasetManifestJobHandler,
     BuildEpisodesJobHandler,
     BuildSceneIndexJobHandler,
-    BuildScenesJobHandler,
+    BuildRecordingScenesJobHandler,
     CurateEpisodesJobHandler,
     ExportAnalyticsSnapshotJobHandler,
     ExportLearningDataJobHandler,
-    IngestScenesJobHandler,
     ProfileAlignedEpisodeJobHandler,
     ProfileEpisodeJobHandler,
     ProfileSceneJobHandler,
@@ -64,10 +63,9 @@ class JobHandlerRegistry:
 def create_default_job_handler_registry() -> JobHandlerRegistry:
     return JobHandlerRegistry(
         handlers=[
-            IngestScenesJobHandler(),
+            BuildRecordingScenesJobHandler(),
             RegisterScenesJobHandler(),
             BuildSceneIndexJobHandler(),
-            BuildScenesJobHandler(),
             ValidateSceneJobHandler(),
             ProfileSceneJobHandler(),
             BuildDatasetManifestJobHandler(),

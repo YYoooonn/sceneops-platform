@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
-from sceneops_core.provenance import UnitSourceKind
 from sceneops_core.runs.schemas import RunStatus, RunType
 from sceneops_core.scenes.schemas import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
@@ -36,8 +35,6 @@ class SceneService:
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        source_kind: UnitSourceKind | None = None,
-        external_format: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -45,8 +42,6 @@ class SceneService:
         scenes = await self._repository.list(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            source_kind=source_kind,
-            external_format=external_format,
             robot_run_id=robot_run_id,
             limit=limit,
             offset=offset,

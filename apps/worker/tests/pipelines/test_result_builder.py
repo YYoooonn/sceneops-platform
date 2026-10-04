@@ -22,7 +22,7 @@ from sceneops_worker.pipelines.result_builder import (
 
 
 def _pipeline_run(
-    pipeline_type: PipelineType = PipelineType.DATASET_SCENE_INGESTION,
+    pipeline_type: PipelineType = PipelineType.RECORDING_SCENE_BUILDING,
 ) -> PipelineRunManifest:
     now = utc_now()
     return PipelineRunManifest(
@@ -97,7 +97,7 @@ class TestPipelineSummary:
             _task_run(
                 "t1",
                 0,
-                JobType.INGEST_SCENES,
+                JobType.BUILD_RECORDING_SCENES,
                 PipelineTaskRunStatus.SUCCEEDED,
                 _task_result("t1"),
             ),
@@ -270,7 +270,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t1",
                 0,
-                JobType.INGEST_SCENES,
+                JobType.BUILD_RECORDING_SCENES,
                 result=_task_result(
                     "t1",
                     refs={"scene_manifest_uris": ["s3://scene.json"]},

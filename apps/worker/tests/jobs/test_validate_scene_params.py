@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from sceneops_core.jobs.schemas.params.scene import (
-    BuildScenesJobParams,
     SceneKeyframeValidationConfig,
     ValidateSceneJobParams,
 )
@@ -50,33 +49,6 @@ class TestValidateSceneJobParams:
         assert params.require_target_channels == ["CAM_FRONT", "LIDAR_TOP"]
 
 
-class TestBuildScenesJobParams:
-    def test_max_source_sequences(self) -> None:
-        params = BuildScenesJobParams(max_source_sequences=5)
-        assert params.max_source_sequences == 5
-
-    def test_max_built_scenes(self) -> None:
-        params = BuildScenesJobParams(max_built_scenes=10)
-        assert params.max_built_scenes == 10
-
-    def test_no_max_scenes_field(self) -> None:
-        """max_scenes must not exist on BuildScenesJobParams."""
-        assert "max_scenes" not in BuildScenesJobParams.model_fields
-
-    def test_camel_case_max_source_sequences(self) -> None:
-        params = BuildScenesJobParams.model_validate({"maxSourceSequences": 3})
-        assert params.max_source_sequences == 3
-
-    def test_camel_case_max_built_scenes(self) -> None:
-        params = BuildScenesJobParams.model_validate({"maxBuiltScenes": 7})
-        assert params.max_built_scenes == 7
-
-    def test_defaults_are_none(self) -> None:
-        params = BuildScenesJobParams()
-        assert params.max_source_sequences is None
-        assert params.max_built_scenes is None
-
-
 # ── ValidateSceneJobHandler.build_job_params: dataset channel injection ────────
 
 
@@ -89,7 +61,7 @@ def _make_validate_inputs(
     return PipelineTaskInputs(
         pipeline=PipelineInputRef(
             pipeline_run_id="pr-001",
-            pipeline_type="raw_log_scene_building",
+            pipeline_type="recording_scene_building",
             task_id="validate_scene",
             pipeline_task_id="validate_scene",
             pipeline_task_run_id="ptr-002",

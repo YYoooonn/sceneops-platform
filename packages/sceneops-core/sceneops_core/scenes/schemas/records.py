@@ -18,17 +18,14 @@ from datetime import datetime
 from pydantic import ConfigDict, Field, model_validator
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, to_camel
-from sceneops_core.provenance import (
-    UnitSource,
-    UnitSourceKind,
-    canonical_unit_id,
-    project_unit_source,
-)
+from sceneops_core.provenance import RecordingSegmentSource, canonical_unit_id
 
 from .manifests import SceneManifest
 
 
-def scene_id_for(*, dataset_id: str, dataset_version: str, source: UnitSource) -> str:
+def scene_id_for(
+    *, dataset_id: str, dataset_version: str, source: RecordingSegmentSource
+) -> str:
     """Deterministic, DatasetVersion-scoped Scene identity (ADR-007 §18.1)."""
     return canonical_unit_id(
         domain="scene",
@@ -47,23 +44,21 @@ class SceneRecord(SceneOpsBaseModel):
     dataset_id: str
     dataset_version: str
 
-    source_kind: UnitSourceKind
-    external_format: str | None = None
-    robot_run_id: str | None = None
-    source_unit_key: str
+    # The source projection: the RobotRun whose recording the Scene was
+    # built from, and the producer's unit key within it.
+    robot_run_id: str
+    unit_key: str
 
     producer_fingerprint: str
 
     manifest_artifact_id: str
     manifest_checksum: str
 
-    # The source's declared temporal boundary, [start, end) in window_clock,
-    # where the source declares one (a recording segment window); all None
-    # for an external Scene, whose boundary is its source unit. See
-    # SceneManifest.declared_window().
-    window_clock: str | None = None
-    window_start_timestamp_ns: int | None = None
-    window_end_timestamp_ns: int | None = None
+    # The segment window, [start, end) in window_clock (the producer's
+    # declared segmentation clock). See SceneManifest.declared_window().
+    window_clock: str
+    window_start_timestamp_ns: int
+    window_end_timestamp_ns: int
 
     # Source channels with at least one observation; a declared channel
     # with none stays visible only in the manifest.
@@ -77,16 +72,7 @@ class SceneRecord(SceneOpsBaseModel):
 
     @model_validator(mode="after")
     def _check_window(self) -> SceneRecord:
-        window = (
-            self.window_clock,
-            self.window_start_timestamp_ns,
-            self.window_end_timestamp_ns,
-        )
-        if any(v is None for v in window) and any(v is not None for v in window):
-            raise ValueError("window fields are all set or all unset")
-        if self.window_clock is not None and (
-            self.window_end_timestamp_ns <= self.window_start_timestamp_ns
-        ):
+        if self.window_end_timestamp_ns <= self.window_start_timestamp_ns:
             raise ValueError("window must be non-empty")
         return self
 
@@ -111,7 +97,6 @@ def project_scene_record(
     manifest_checksum: str,
 ) -> SceneRecord:
     source = manifest.lineage.source
-    projection = project_unit_source(source)
     window = manifest.declared_window()
     return SceneRecord(
         scene_id=scene_id_for(
@@ -119,16 +104,14 @@ def project_scene_record(
         ),
         dataset_id=dataset_id,
         dataset_version=dataset_version,
-        source_kind=projection.source_kind,
-        external_format=projection.external_format,
-        robot_run_id=projection.robot_run_id,
-        source_unit_key=projection.source_unit_key,
+        robot_run_id=source.robot_run_id,
+        unit_key=source.unit_key,
         producer_fingerprint=manifest.lineage.producer.producer_fingerprint,
         manifest_artifact_id=manifest_artifact_id,
         manifest_checksum=manifest_checksum,
-        window_clock=window.source_clock if window else None,
-        window_start_timestamp_ns=window.start_timestamp_ns if window else None,
-        window_end_timestamp_ns=window.end_timestamp_ns if window else None,
+        window_clock=window.source_clock,
+        window_start_timestamp_ns=window.start_timestamp_ns,
+        window_end_timestamp_ns=window.end_timestamp_ns,
         observed_channels=manifest.observed_channel_names(),
         observation_count=len(manifest.observations),
         keyframe_count=len(manifest.keyframes()),

@@ -1,54 +1,27 @@
-"""IntegrationRequest / IntegrationResult: the frozen execution contract for
-running one external dataset integration outside the main SceneOps runtime
-(SceneOps V2 Request 4.1, reference semantics cleaned up in Request 4.1A).
+"""IntegrationRequest / IntegrationResult: the execution contract for one
+interoperability runtime that runs outside the main SceneOps runtime (e.g.
+the isolated LeRobot EXPORT, ``tools/lerobot-integration``).
 
 ::
 
-    External Dataset
+    SceneOps canonical artifact(s)
            |
            v
     Integration Runtime      <-- IntegrationRequest in, IntegrationResult out
            |
            v
-    SceneOps Canonical Platform
+    External dataset representation
 
-This module defines the smallest useful conceptual contract for that
-boundary, not a new execution system. It intentionally:
+The contract adds no DB model, job type or queue and depends on nothing
+SDK-specific, so it imports unchanged from the workspace venv and from any
+isolated integration environment. It carries no credentials: runtime
+configuration crosses the process boundary through environment variables
+or mounted config.
 
-* adds no DB model, job type, queue, or RPC service -- a future container/
-  CLI receives an ``IntegrationRequest`` (e.g. as a JSON file or stdin
-  payload) and, on success, prints/writes an ``IntegrationResult`` the same
-  way. How that payload physically crosses the boundary (argv, stdin, a
-  mounted file, an env var) is a later request's concern.
-* depends on nothing SDK-specific -- ``sceneops-core`` has no dependency on
-  ``lerobot`` or ``nuscenes-devkit`` and never will (see
-  ``tools/lerobot-integration/pyproject.toml`` for why that separation is
-  load-bearing), so this contract is importable, unchanged, from both the
-  main workspace venv and any isolated integration venv/container.
-* carries no credentials. Runtime credentials/config (MinIO/S3 keys, DB
-  DSNs, ...) cross the process boundary via environment variables /
-  mounted config, exactly as ``scripts/e2e/e2e_lerobot_resolve.py`` and
-  ``scripts/e2e/e2e_lerobot_export.py`` already do (``MINIO_ROOT_USER``,
-  ``SCENEOPS_DATABASE_URL``, ...) -- never as a field on a serializable
-  request/result object that might be logged, persisted, or round-tripped
-  through a job record.
-* keeps three reference kinds strictly separate rather than conflating them
-  (Request 4.1A): ``CanonicalDatasetRef`` answers *which SceneOps
-  DatasetVersion*, ``ArtifactRef`` (Request 2.1) answers *which concrete
-  SceneOps ArtifactStore artifact*, and ``ExternalDatasetRef``
-  (Request 3.2B) answers *which external dataset representation*. Request
-  4.1 originally embedded a single ``ArtifactRef`` directly on
-  ``CanonicalDatasetRef`` -- that conflated canonical identity with one
-  particular artifact and could not express "zero or several canonical
-  artifact inputs/outputs", which nuScenes ingestion already needs (it
-  produces two: a raw-log manifest and a raw-log frame index). Canonical
-  artifact references now live in their own explicit, direction-scoped
-  dict fields (``canonical_inputs`` on the request, ``produced_artifacts``
-  on the result) instead.
-
-Direction is owned by ``IntegrationRequest.operation``
-(``IntegrationOperation``), never by a separate source/export ref type --
-see ``enums.py``.
+Three reference kinds stay separate: ``CanonicalDatasetRef`` names a
+SceneOps DatasetVersion, ``ArtifactRef`` a concrete SceneOps artifact, and
+``ExternalDatasetRef`` an external dataset location. Direction is owned by
+``IntegrationRequest.operation``.
 """
 
 from __future__ import annotations
@@ -57,52 +30,29 @@ from pydantic import Field, model_validator
 
 from sceneops_core.artifacts.schemas import ArtifactRef
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef
+from .external import ExternalDatasetRef
 
 from .enums import IntegrationOperation
 
 
 class CanonicalDatasetRef(SceneOpsBaseModel):
-    """The SceneOps-side *identity* for one integration-runtime execution --
-    which DatasetVersion, nothing else (Request 4.1A). Never carries an
-    artifact pointer: which concrete canonical artifact(s) are read or
-    produced is a separate, direction-scoped concern (see
-    ``IntegrationRequest.canonical_inputs`` /
-    ``IntegrationResult.produced_artifacts``), because an execution may
-    need zero, one, or several of them -- nuScenes ingestion alone already
-    produces two (a raw-log manifest and a raw-log frame index).
-    """
+    """The SceneOps-side identity for one integration-runtime execution:
+    which DatasetVersion, nothing else. Which concrete canonical artifacts
+    are read or produced is a separate concern
+    (``IntegrationRequest.canonical_inputs`` /
+    ``IntegrationResult.produced_artifacts``)."""
 
     dataset_id: str
     dataset_version: str
 
 
 class IntegrationRequest(SceneOpsBaseModel):
-    """Everything one integration-runtime execution needs as input,
-    explicit and serializable -- no hidden process state (SceneOps V2
-    Request 4.1 §6/§7).
+    """Everything one integration-runtime execution needs as input.
 
-    ``external_ref`` is the external system's side of the operation: the
-    import source for INGEST, the export target for EXPORT (same
-    ``ExternalDatasetRef`` shape either way, per Request 3.2B).
-    ``canonical_ref`` is the SceneOps DatasetVersion identity.
-    ``canonical_inputs`` is every canonical artifact this execution reads
-    from, keyed by a runtime-local name the caller and runtime agree on
-    (e.g. ``"learning_manifest"`` for a LeRobot export) -- this contract
-    intentionally does not fix or register that vocabulary of names (no
-    generic artifact-key registry); it is integration-specific, exactly
-    like ``config``. Required non-empty for EXPORT (an export runtime
-    always reads an already-existing canonical artifact); optional for
-    INGEST -- nuScenes ingestion happens to need none today, but a generic
-    ingest runtime may legitimately consume existing canonical context
-    (calibration, schema, ...) while still producing new canonical
-    artifacts, so this contract does not forbid it (Request 4.1A
-    follow-up). ``config`` is opaque, integration-specific configuration
-    (e.g. a serialized ``FeatureProjection`` for a LeRobot export, or
-    ``max_source_sequences``/``required_channels`` for a nuScenes ingest)
-    -- this contract does not know or constrain its shape, matching
-    ``BuildScenesJobHandler``'s existing ``params: dict`` convention for
-    format-specific adapter config.
+    ``external_ref`` is the export target. ``canonical_inputs`` names every
+    canonical artifact the execution reads, keyed by a runtime-local name
+    (e.g. ``"learning_manifest"``); an export always reads at least one.
+    ``config`` is opaque, integration-specific configuration.
     """
 
     operation: IntegrationOperation
@@ -125,25 +75,13 @@ class IntegrationRequest(SceneOpsBaseModel):
 
 
 class IntegrationResult(SceneOpsBaseModel):
-    """Everything one integration-runtime execution reports back on success
-    (SceneOps V2 Request 4.1 §6). Failure is reported by the runtime's own
-    process exit code plus stderr, not by a field here -- the same
-    convention every ``scripts/e2e/e2e_lerobot_*.py`` script already uses
-    (a non-zero exit and a clear stderr message, never a caught error
-    serialized as "success").
+    """What one integration-runtime execution reports on success. Failure
+    is a non-zero exit code plus stderr, never a field here.
 
-    ``produced_artifacts`` is every canonical artifact this execution
-    wrote, keyed the same runtime-local way as
-    ``IntegrationRequest.canonical_inputs`` (e.g.
-    ``"raw_log_manifest"``/``"raw_log_frame_index"`` for a nuScenes
-    ingest). The main platform remains solely responsible for turning
-    these into ArtifactRecord/lineage entries -- the integration runtime
-    itself never writes that DB record. For an EXPORT this is normally
-    empty: the external output (e.g. a LeRobot dataset root) is already
-    fully identified by ``external_ref`` and is not, by itself, something
-    genuinely stored in the SceneOps ArtifactStore (Request 4.1A §5) --
-    duplicating it here as an ``ArtifactRef`` would just be the same
-    location under a second name.
+    ``produced_artifacts`` lists canonical artifacts the execution wrote;
+    the main platform alone turns them into ArtifactRecords. For an export
+    it is normally empty: the external output is identified by
+    ``external_ref``.
     """
 
     operation: IntegrationOperation
@@ -152,19 +90,6 @@ class IntegrationResult(SceneOpsBaseModel):
 
     produced_artifacts: dict[str, ArtifactRef] = Field(default_factory=dict)
     result_metadata: JsonDict = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _check_produced_artifacts_match_direction(self) -> IntegrationResult:
-        if (
-            self.operation is IntegrationOperation.INGEST
-            and not self.produced_artifacts
-        ):
-            raise ValueError(
-                "INGEST result requires at least one produced_artifacts "
-                "entry: an ingest that produced nothing leaves the main "
-                "platform nothing to register"
-            )
-        return self
 
 
 __all__ = ["CanonicalDatasetRef", "IntegrationRequest", "IntegrationResult"]

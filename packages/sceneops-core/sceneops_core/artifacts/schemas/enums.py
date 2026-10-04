@@ -25,12 +25,10 @@ class ArtifactKind(StrEnum):
 
     # Observation-level
     # Immutable bytes of one canonical observation (an image, a point
-    # cloud, ...), referenced from canonical manifests by artifact id
+    # cloud, ...), extracted from a registered recording and referenced
+    # from canonical manifests by artifact id
     # (sceneops_core.artifacts.schemas.payload.PayloadRef).
     OBSERVATION_PAYLOAD = "observation_payload"
-    RAW_LOG_MANIFEST = "raw_log_manifest"
-    RAW_LOG_FRAME_INDEX = "raw_log_frame_index"
-    RAW_SENSOR_FRAME = "raw_sensor_frame"
 
     # Scene-level
     SCENE_INDEX = "scene_index"
@@ -38,11 +36,6 @@ class ArtifactKind(StrEnum):
     # stored under a checksum-qualified key. The only kind REGISTER_SCENES
     # accepts.
     SCENE_MANIFEST = "scene_manifest"
-    # Output of the pre-canonical Scene producers (sceneops_core.scenes.legacy).
-    # Not a canonical unit: canonical registration rejects it.
-    LEGACY_SCENE_MANIFEST = "legacy_scene_manifest"
-    SCENE_SAMPLE_MANIFEST = "scene_sample_manifest"
-    SCENE_SEGMENT_INDEX = "scene_segment_index"
     WORLD_STATE_MANIFEST = "world_state_manifest"
     SCENE_PACKAGE = "scene_package"
 

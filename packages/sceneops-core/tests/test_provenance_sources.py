@@ -1,47 +1,22 @@
-"""Contract tests for the source provenance blocks and source-time
-primitives (ADR-007 §27.2, §27.3)."""
+"""Contract tests for the source provenance block and source-time
+primitives (ADR-007 §27.2, §27.3, §29.9)."""
 
 from __future__ import annotations
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
+import sceneops_core.provenance as provenance
 from sceneops_core.common.ids import robot_run_recording_artifact_id
-from sceneops_core.datasets import ExternalDatasetRef
 from sceneops_core.provenance import (
     INT64_MAX,
-    ExternalSourceRevision,
-    ExternalUnitSource,
     RecordingSegmentSource,
     RecordingSourceRevision,
     SourceTimeUnit,
-    UnitSource,
-    compute_producer_fingerprint,
     promote_to_ns,
 )
 
 CHECKSUM = "sha256:" + "a" * 64
-UNIT_SOURCE = TypeAdapter(UnitSource)
-
-
-def _ref(**overrides) -> ExternalDatasetRef:
-    fields = {
-        "format": "nuscenes",
-        "format_version": "v1.0-mini",
-        "uri": "/data/raw/nuscenes",
-        "external_revision": "r1",
-    }
-    fields.update(overrides)
-    return ExternalDatasetRef(**fields)
-
-
-def _external(
-    ref: ExternalDatasetRef | None = None,
-    source_unit_key: str = "cc8c0bf57f984915a77078b10eb33198",
-) -> ExternalUnitSource:
-    return ExternalUnitSource.from_ref(
-        ref if ref is not None else _ref(), source_unit_key=source_unit_key
-    )
 
 
 def _recording(**overrides) -> RecordingSegmentSource:
@@ -58,98 +33,6 @@ def _recording(**overrides) -> RecordingSegmentSource:
     return RecordingSegmentSource(**fields)
 
 
-# --- ExternalUnitSource ------------------------------------------------------
-
-
-def test_external_unit_source_round_trips_through_json():
-    source = _external()
-    payload = source.model_dump(mode="json")
-    assert payload == {
-        "source_kind": "external",
-        "revision": {
-            "source_kind": "external",
-            "format": "nuscenes",
-            "format_version": "v1.0-mini",
-            "external_revision": "r1",
-            "checksum": None,
-        },
-        "source_unit_key": "cc8c0bf57f984915a77078b10eb33198",
-    }
-    assert UNIT_SOURCE.validate_python(payload) == source
-
-
-def test_external_unit_source_rejects_unknown_fields():
-    payload = _external().model_dump(mode="json")
-    with pytest.raises(ValidationError):
-        ExternalUnitSource.model_validate({**payload, "scene_token": "x"})
-    for locator in ("uri", "external_name", "root_path"):
-        with pytest.raises(ValidationError):
-            ExternalUnitSource.model_validate({**payload, locator: "/data"})
-        nested = {**payload, "revision": {**payload["revision"], locator: "/data"}}
-        with pytest.raises(ValidationError):
-            ExternalUnitSource.model_validate(nested)
-
-
-def _fingerprint(source: ExternalUnitSource) -> str:
-    return compute_producer_fingerprint(
-        producer_id="p",
-        semantics_version=1,
-        build_config={"channels": ["CAM_FRONT"]},
-        source=source.source_revision(),
-    )
-
-
-@pytest.mark.parametrize(
-    "other",
-    [
-        {"uri": "s3://mirror/datasets/nuscenes"},
-        {"external_name": "nuScenes mini (team copy)"},
-        {"uri": "s3://mirror/datasets/nuscenes", "external_name": "renamed"},
-    ],
-)
-def test_location_and_display_name_never_reach_canonical_provenance(other):
-    """Two refs to the same revision differing only in ``uri`` and/or
-    ``external_name`` canonicalize to one ExternalUnitSource with one
-    producer fingerprint."""
-    base_ref = _ref(external_name="nuScenes mini")
-    other_ref = base_ref.model_copy(update=other)
-    assert other_ref != base_ref  # integrations still see both fields
-
-    a, b = _external(base_ref), _external(other_ref)
-    assert a == b
-    assert a.model_dump_json() == b.model_dump_json()
-    assert set(a.model_dump()) == {"source_kind", "revision", "source_unit_key"}
-    assert a.source_revision() == ExternalSourceRevision.of(other_ref)
-    assert _fingerprint(a) == _fingerprint(b)
-
-
-@pytest.mark.parametrize("key", ["", " tok", "tok ", "a\nb", "x" * 257])
-def test_external_unit_source_rejects_ambiguous_unit_keys(key):
-    with pytest.raises(ValidationError):
-        _external(source_unit_key=key)
-
-
-def test_external_unit_source_is_immutable():
-    source = _external()
-    with pytest.raises(ValidationError):
-        source.source_unit_key = "other"
-
-
-def test_external_source_revision_excludes_location_and_unit_key():
-    revision = _external().source_revision()
-    assert revision == ExternalSourceRevision(
-        format="nuscenes",
-        format_version="v1.0-mini",
-        external_revision="r1",
-        checksum=None,
-    )
-    moved = _external(
-        _ref(uri="s3://elsewhere/nuscenes", external_name="renamed"),
-        source_unit_key="another-scene",
-    )
-    assert moved.source_revision() == revision
-
-
 # --- RecordingSegmentSource --------------------------------------------------
 
 
@@ -160,7 +43,7 @@ def test_recording_segment_source_round_trips_nanoseconds_exactly():
     assert payload["end_timestamp_ns"] == 1_700_000_010_123_456_790
     assert payload["source_kind"] == "recording"
     assert "uri" not in payload and "recording_uri" not in payload
-    parsed = UNIT_SOURCE.validate_json(source.model_dump_json())
+    parsed = RecordingSegmentSource.model_validate_json(source.model_dump_json())
     assert parsed == source
     assert parsed.start_timestamp_ns == 1_700_000_000_123_456_789
 
@@ -231,19 +114,20 @@ def test_recording_source_revision_excludes_window_and_unit_key():
     assert other_segment.source_revision() == revision
 
 
-def test_unit_source_union_dispatches_on_source_kind():
-    assert isinstance(
-        UNIT_SOURCE.validate_python(_external().model_dump(mode="json")),
-        ExternalUnitSource,
-    )
-    assert isinstance(
-        UNIT_SOURCE.validate_python(_recording().model_dump(mode="json")),
-        RecordingSegmentSource,
-    )
+def test_recording_is_the_only_canonical_source_kind():
+    """I-31: there is no external canonical source block (§29.9)."""
+    for removed in (
+        "ExternalUnitSource",
+        "ExternalSourceRevision",
+        "UnitSource",
+        "SourceRevision",
+        "UnitSourceKind",
+    ):
+        assert not hasattr(provenance, removed)
     payload = _recording().model_dump(mode="json")
-    payload["source_kind"] = "simulation"
-    with pytest.raises(ValidationError):
-        UNIT_SOURCE.validate_python(payload)
+    for kind in ("external", "simulation"):
+        with pytest.raises(ValidationError):
+            RecordingSegmentSource.model_validate({**payload, "source_kind": kind})
 
 
 # --- source-time promotion ---------------------------------------------------
@@ -280,21 +164,3 @@ def test_promote_to_ns_rejects_non_integers(value):
 def test_promote_to_ns_rejects_out_of_range(value, unit):
     with pytest.raises(ValueError):
         promote_to_ns(value, unit)
-
-
-def test_external_producer_fingerprint_is_unchanged_by_locator_free_provenance():
-    """Pinned value: the same inputs fingerprinted when ExternalUnitSource
-    still embedded the full ExternalDatasetRef. The fingerprint is computed
-    over ExternalSourceRevision, which never contained the location."""
-    source = _external(
-        _ref(checksum="sha256:" + "b" * 64), source_unit_key="scene-0001"
-    )
-    assert (
-        compute_producer_fingerprint(
-            producer_id="sceneops.test_producer",
-            semantics_version=3,
-            build_config={"channels": ["CAM_FRONT", "LIDAR_TOP"]},
-            source=source.source_revision(),
-        )
-        == "sha256:8bde0501be7b5f9557039f51a3dbf47ab5b3fe72b243906e805acb407e97ae40"
-    )

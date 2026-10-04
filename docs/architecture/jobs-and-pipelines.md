@@ -20,11 +20,8 @@ or as part of a Pipeline.
 ## 2. Built-in pipeline definitions
 
 ```text
-DATASET_SCENE_INGESTION      (experimental; legacy Scene producer)
-  ingest_scenes
-
-RAW_LOG_SCENE_BUILDING       (experimental; legacy Scene producer)
-  build_scenes
+RECORDING_SCENE_BUILDING
+  build_recording_scenes -> register_scenes -> validate_scene -> profile_scene (optional)
 
 SCENARIO_CURATION
   mine_scenarios -> score_scenario_readiness
@@ -36,10 +33,12 @@ RAW_LOG_EPISODE_BUILDING
   build_episodes -> register_episode -> validate_episode -> profile_episode
 ```
 
-No built-in pipeline produces canonical Scenes yet: `register_scenes`,
-`validate_scene` and `profile_scene` are dispatched as standalone jobs
-(`register_scenes` outputs `scene_ids` / `manifest_artifact_ids` as REFs for
-the quality stages). `validate_scene`/`profile_scene` are a
+`RECORDING_SCENE_BUILDING` builds the canonical Scenes of one registered
+RobotRun (`build_recording_scenes` params: `robot_run_id`, `build_config`)
+and hands the complete set to `register_scenes` through the
+`manifest_artifact_ids` REF; `register_scenes` hands `scene_ids` to the
+quality stages. One run covers one RobotRun; a DatasetVersion spanning
+several RobotRuns takes several runs. `validate_scene`/`profile_scene` are a
 source-agnostic quality stage over registered Scenes;
 `validate_episode`/`profile_episode` play the same role for Episode. See
 [Scene domain](./scene-domain.md) and [Episode domain](./episode-domain.md)
@@ -174,9 +173,10 @@ This is enforced consistently across the platform:
 - Scene: the producer that publishes a canonical SceneManifest owns its
   `SCENE_MANIFEST` `ArtifactRecord`; `register_scenes` re-reads and verifies
   the bytes by that artifact id and never creates an `ArtifactRecord` (see
-  [Scene domain](./scene-domain.md) §3). The legacy producers
-  (`ingest_scenes`/`build_scenes`) own the `LEGACY_SCENE_MANIFEST`
-  artifacts they write.
+  [Scene domain](./scene-domain.md) §3). `build_recording_scenes` also owns
+  the `OBSERVATION_PAYLOAD` ArtifactRecords of the payloads it extracts;
+  its payload and manifest artifact ids are deterministic, so a retry
+  reuses an existing identical record instead of inserting a second one.
 - Episode: `build_episodes` writes and owns `EPISODE_MANIFEST`;
   `register_episode` reads it, same pattern.
 
@@ -223,7 +223,7 @@ Airflow-for-Jobs path.
 
 ## 10. Airflow path: per-task DAG (proof of concept)
 
-When `pipeline_backend=airflow`, `dataset_scene_ingestion` runs as a DAG
+When `pipeline_backend=airflow`, `recording_scene_building` runs as a DAG
 (`airflow/dags/sceneops_pipeline_run.py`) where each task is its own
 `DockerOperator` process, rather than one `PipelineRunner.run()` loop. See
 [Architecture overview](./overview.md) §3 for the full breakdown of what
@@ -232,11 +232,11 @@ private state-transition methods the Celery path uses inline.
 
 ```text
 start
-  -> ingest_scenes
+  -> build_recording_scenes -> register_scenes -> validate_scene -> profile_scene
   -> finalize  (trigger_rule=all_done)
 ```
 
-Scope is `dataset_scene_ingestion` only — the DAG's task chain is
-hardcoded. Sending other pipeline types (including
+Scope is `recording_scene_building` only — the DAG's task chain is
+hardcoded and serial. Sending other pipeline types (including
 `raw_log_episode_building`) through Airflow needs a generalized DAG or one
 per type; not built.

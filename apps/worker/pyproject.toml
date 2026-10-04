@@ -9,12 +9,8 @@ dependencies = [
     "sceneops-storage",
     "sceneops-analytics",
     "sceneops-integrations",
-    # SceneOps V2 Request 4.6B: nuscenes-devkit is no longer a worker
-    # dependency at all. Both nuScenes INGEST paths (BuildScenesJobHandler's
-    # raw-log ingest, Request 4.5/4.6, and IngestScenesJobHandler's direct
-    # SceneManifest ingest, Request 4.6B) now run through the isolated
-    # nuscenes-integration HTTP service (sceneops_integrations.nuscenes) --
-    # apps/worker never imports `nuscenes` directly anymore.
+    # No external dataset SDK: datasets reach SceneOps only as recordings
+    # converted by tools/dataset-acquisition (ADR-007 §29.13).
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "typer>=0.12",

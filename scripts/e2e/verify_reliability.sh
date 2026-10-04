@@ -7,9 +7,14 @@
 # Verifies these reliability primitives:
 #   1. Job execution_key idempotency (identical create -> same job; force ->
 #      new job; different params -> new job).
-#   2. Pipeline partial retry: a pipeline BLOCKED by a quality gate
-#      (validate_scene) can be redispatched, and the already-succeeded task
-#      (register_scene) is NOT re-executed.
+#   2. Pipeline partial retry: a recording_scene_building run BLOCKED by a
+#      quality gate (validate_scene) can be redispatched, and the
+#      already-succeeded tasks (build_recording_scenes, register_scenes) are
+#      NOT re-executed.
+#
+# Part B needs a registered, sensor-bearing RobotRun: ensure_camera_robot_run
+# (scripts/e2e/lib.sh) acquires one through the acquisition containers the
+# first time and reuses it afterwards (ROBOT_RUN_ID).
 #
 # Usage:
 #   bash scripts/e2e/verify_reliability.sh
@@ -19,32 +24,29 @@
 #   API_BASE_URL    (default: http://localhost:8000)
 #   DATASET_ID      (default: test-e2e-core)
 #   DATASET_VERSION (default: test-v1)
-#   SOURCE_FORMAT_VERSION (default: v1.0-mini)
-#   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
-#   MAX_SCENES (default: 2)
+#   ROBOT_RUN_ID    (default: run-verify-camera-scene-0061)
 #   POLL_TIMEOUT    max poll attempts, 5s each (default: 60 = 5 min)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/../.."
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-MAX_SCENES="${MAX_SCENES:-2}"
+ROBOT_RUN_ID="${ROBOT_RUN_ID:-run-verify-camera-scene-0061}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
-
-SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
-SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
-SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 echo "=== reliability (idempotency + partial retry) E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
 echo "  DATASET_ID=$DATASET_ID  DATASET_VERSION=$DATASET_VERSION"
 echo ""
 
-echo "--- 0. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
+echo "--- 0. Upsert dataset version + registered RobotRun fixture ---"
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "E2E core" | jq -c '.dataset | {datasetId}'
+upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" | jq -c '.version | {datasetId, version}'
+ensure_camera_robot_run "$ROBOT_RUN_ID"
 echo ""
 
 # ── Part A: Job execution_key idempotency ────────────────────────────────────
@@ -96,34 +98,17 @@ echo ""
 
 # ── Part B: Pipeline partial retry (BLOCKED redispatch) ──────────────────────
 
-echo "--- B1. Create dataset_scene_ingestion pipeline with an impossible ---"
+echo "--- B1. Create recording_scene_building with an impossible ---"
 echo "         channel requirement (forces validate_scene to BLOCK) ---"
-PIPELINE_PAYLOAD="$(cat <<JSON
-{
-  "type": "dataset_scene_ingestion",
-  "dataset_id": "$DATASET_ID",
-  "dataset_version": "$DATASET_VERSION",
-  "params": {
-    "ingest_scenes": {
-      "source_format": "$SOURCE_FORMAT",
-      "source_root_uri": "$SOURCE_ROOT_URI",
-      "source_format_version": "$SOURCE_FORMAT_VERSION",
-      "max_source_scenes": $MAX_SCENES,
-      "mode": "upsert"
-    },
-    "register_scene": {
-      "replace_existing": true
-    },
-    "validate_scene": {
-      "require_target_channels": ["NONEXISTENT_CHANNEL"]
-    },
-    "profile_scene": {},
-    "build_scene_index": {},
-    "build_dataset_manifest": {}
-  }
-}
-JSON
-)"
+PIPELINE_PAYLOAD="$(jq -cn \
+  --arg ds "$DATASET_ID" --arg v "$DATASET_VERSION" --arg run "$ROBOT_RUN_ID" \
+  --argjson config "$(camera_scene_build_config)" '{
+    type: "recording_scene_building", dataset_id: $ds, dataset_version: $v,
+    params: {
+      build_recording_scenes: {robot_run_id: $run, build_config: $config},
+      register_scenes: {replace: true},
+      validate_scene: {require_target_channels: ["NONEXISTENT_CHANNEL"]}
+    }}')"
 
 PIPELINE_RUN_ID="$(extract_pipeline_run_id "$(create_pipeline_run "$API_BASE_URL" "$PIPELINE_PAYLOAD")")"
 echo "  pipeline_run_id=$PIPELINE_RUN_ID"
@@ -142,14 +127,17 @@ fi
 echo "  OK (blocked, as expected)"
 echo ""
 
-echo "--- B3. Capture register_scene task identity before retry ---"
-TASKS_BEFORE="$(fetch_pipeline_tasks "$API_BASE_URL" "$PIPELINE_RUN_ID")"
-REGISTER_TASK_RUN_ID_BEFORE="$(echo "$TASKS_BEFORE" | jq -r '.tasks[] | select(.pipelineTaskId == "register_scene") | .pipelineTaskRunId')"
-REGISTER_STATUS_BEFORE="$(echo "$TASKS_BEFORE" | jq -r '.tasks[] | select(.pipelineTaskId == "register_scene") | .status')"
-echo "  register_scene: pipelineTaskRunId=$REGISTER_TASK_RUN_ID_BEFORE status=$REGISTER_STATUS_BEFORE"
+echo "--- B3. Capture the succeeded tasks' identities before retry ---"
+completed_tasks() {
+  fetch_pipeline_tasks "$API_BASE_URL" "$PIPELINE_RUN_ID" | jq -c '[.tasks[]
+    | select(.pipelineTaskId == "build_recording_scenes" or .pipelineTaskId == "register_scenes")
+    | {pipelineTaskId, pipelineTaskRunId, jobId, status}] | sort_by(.pipelineTaskId)'
+}
+TASKS_BEFORE="$(completed_tasks)"
+echo "  $TASKS_BEFORE"
 
-if [ "$REGISTER_STATUS_BEFORE" != "succeeded" ]; then
-  echo "❌ Expected register_scene to have succeeded before the blocking task" >&2
+if [ "$(echo "$TASKS_BEFORE" | jq -r '[.[].status] | unique | join(",")')" != "succeeded" ]; then
+  echo "❌ Expected build_recording_scenes and register_scenes to have succeeded before the blocking task" >&2
   exit 1
 fi
 echo ""
@@ -167,13 +155,12 @@ fi
 echo "  OK (BLOCKED pipeline was redispatchable — no RuntimeError)"
 echo ""
 
-echo "--- B5. Assert register_scene was NOT re-executed ---"
-TASKS_AFTER="$(fetch_pipeline_tasks "$API_BASE_URL" "$PIPELINE_RUN_ID")"
-REGISTER_TASK_RUN_ID_AFTER="$(echo "$TASKS_AFTER" | jq -r '.tasks[] | select(.pipelineTaskId == "register_scene") | .pipelineTaskRunId')"
-echo "  register_scene: pipelineTaskRunId=$REGISTER_TASK_RUN_ID_AFTER"
+echo "--- B5. Assert build_recording_scenes / register_scenes were NOT re-executed ---"
+TASKS_AFTER="$(completed_tasks)"
+echo "  $TASKS_AFTER"
 
-if [ "$REGISTER_TASK_RUN_ID_AFTER" != "$REGISTER_TASK_RUN_ID_BEFORE" ]; then
-  echo "❌ register_scene task run identity changed across retry — it was re-executed" >&2
+if [ "$TASKS_AFTER" != "$TASKS_BEFORE" ]; then
+  echo "❌ build/register task runs or jobs changed across retry — they were re-executed" >&2
   exit 1
 fi
 echo "  OK (same task run — resumed from the blocked task, not re-run from scratch)"
@@ -183,4 +170,4 @@ echo ""
 
 echo "=== PASSED ==="
 echo "  idempotent job_id=$JOB_A  forced job_id=$JOB_C"
-echo "  pipeline_run_id=$PIPELINE_RUN_ID  register_scene task unchanged across retry"
+echo "  pipeline_run_id=$PIPELINE_RUN_ID  build/register tasks unchanged across retry"

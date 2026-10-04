@@ -1,6 +1,6 @@
 """Tests for scripts/e2e/e2e_fixture_bootstrap.py: idempotent
 create/reuse/verify decision logic for the shared E2E fixture catalog
-(core/interop/raw-log).
+(core/interop).
 
 Postgres repositories are faked here with small in-memory stand-ins (unit
 -level, no real DB needed) -- the interop fixture's actual Parquet/manifest
@@ -41,7 +41,6 @@ from e2e_fixture_bootstrap import (  # noqa: E402
     FIXTURE_CATALOG_VERSION,
     INTEROP_DATASET_ID,
     INTEROP_DATASET_VERSION,
-    RAW_LOG_DATASET_ID,
     FixtureConflictError,
     FixtureVerificationError,
     _interop_export_id,
@@ -176,7 +175,7 @@ def _make_source_dir(tmp_path: Path, format_version: str = "v1.0-mini") -> Path:
 
 
 def test_resolve_fixture_names_all_returns_full_catalog():
-    assert _resolve_fixture_names("all") == ("core", "interop", "raw-log")
+    assert _resolve_fixture_names("all") == ("core", "interop")
 
 
 def test_resolve_fixture_names_single_fixture():
@@ -188,7 +187,7 @@ def test_resolve_fixture_names_rejects_unknown():
         _resolve_fixture_names("bogus")
 
 
-# ── core / raw-log: bootstrap now also verifies before returning ────────
+# ── core: bootstrap also verifies before returning ────────────────────
 
 
 async def test_bootstrap_core_creates_and_verifies_when_missing(tmp_path):
@@ -247,28 +246,6 @@ async def test_bootstrap_core_fails_clearly_when_source_fixture_missing(tmp_path
             )
 
 
-async def test_bootstrap_raw_log_uses_its_own_isolated_identity(tmp_path):
-    source_root = _make_source_dir(tmp_path)
-    p1, p2, p3, _stores = _fake_repos()
-    with (
-        p1,
-        p2,
-        p3,
-        patch(f"{_MODULE}.CORE_SOURCE_ROOT_URI", str(source_root)),
-        patch(f"{_MODULE}.RAW_LOG_SOURCE_ROOT_URI", str(source_root)),
-    ):
-        [result] = await bootstrap_e2e_fixtures(
-            "raw-log",
-            session=_mock_session(),
-            artifact_store=MagicMock(),
-            analytics_root_uri="analytics",
-        )
-
-    assert result.fixture_name == "raw-log"
-    assert result.dataset_id == RAW_LOG_DATASET_ID
-    assert result.dataset_id != CORE_DATASET_ID
-
-
 # ── interop: fresh create -> verify ──────────────────────────────────────
 
 
@@ -321,7 +298,7 @@ async def test_bootstrap_interop_creates_and_verifies_when_missing(tmp_path):
 
 async def test_bootstrap_interop_does_not_require_nuscenes_source_path(tmp_path):
     """Interop's create+verify path must never touch CORE_SOURCE_ROOT_URI --
-    only core/raw-log's DatasetVersion verification does."""
+    only core's DatasetVersion verification does."""
     artifact_store = LocalArtifactStore(root_uri=str(tmp_path / "storage"))
     p1, p2, p3, _stores = _fake_repos()
 
@@ -480,7 +457,6 @@ async def test_bootstrap_all_dispatches_every_fixture(tmp_path):
         p2,
         p3,
         patch(f"{_MODULE}.CORE_SOURCE_ROOT_URI", str(source_root)),
-        patch(f"{_MODULE}.RAW_LOG_SOURCE_ROOT_URI", str(source_root)),
     ):
         results = await bootstrap_e2e_fixtures(
             "all",
@@ -489,7 +465,7 @@ async def test_bootstrap_all_dispatches_every_fixture(tmp_path):
             analytics_root_uri=str(tmp_path / "analytics"),
         )
 
-    assert {r.fixture_name for r in results} == {"core", "interop", "raw-log"}
+    assert {r.fixture_name for r in results} == {"core", "interop"}
 
 
 # ── verify: missing state fails clearly ─────────────────────────────────

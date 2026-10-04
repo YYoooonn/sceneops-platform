@@ -19,7 +19,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from sceneops_core.datasets.schemas import DatasetManifest, DatasetSceneIndexEntry
-from sceneops_core.provenance import ExternalUnitSource
 from sceneops_core.scenes.schemas import (
     SceneAnnotation,
     SceneCalibration,
@@ -94,16 +93,6 @@ def keyframe_samples(*, scene_id: str, manifest: SceneManifest) -> list[Keyframe
     return samples
 
 
-def annotation_source(manifest: SceneManifest) -> str | None:
-    """Where a Scene's annotations come from, for display, audit and
-    explicit user-configured selection: the external format for an external
-    Scene, None otherwise. Processing never branches on it."""
-    if not manifest.annotations:
-        return None
-    source = manifest.lineage.source
-    return source.format if isinstance(source, ExternalUnitSource) else None
-
-
 async def load_pinned_scene(
     scene_artifact_store: SceneArtifactStore, entry: DatasetSceneIndexEntry
 ) -> SceneManifest:
@@ -131,7 +120,6 @@ async def iter_keyframe_samples(
 __all__ = [
     "KeyframeObservation",
     "KeyframeSample",
-    "annotation_source",
     "iter_keyframe_samples",
     "keyframe_sample_id",
     "keyframe_samples",

@@ -4,9 +4,8 @@ from enum import StrEnum
 
 
 class JobType(StrEnum):
-    # ── source dataset / raw log → SceneOps scenes ──
-    INGEST_SCENES = "ingest_scenes"
-    BUILD_SCENES = "build_scenes"
+    # ── registered RobotRun recording → canonical Scenes ──
+    BUILD_RECORDING_SCENES = "build_recording_scenes"
 
     # ── dataset-level aggregation ──
     BUILD_DATASET_MANIFEST = "build_dataset_manifest"

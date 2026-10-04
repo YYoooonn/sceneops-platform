@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from sceneops_core.provenance import UnitSourceKind
 from sceneops_core.runs.schemas import RunStatus, RunType
 from sceneops_core.scenes.schemas import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
@@ -36,8 +35,6 @@ class SceneRepository(Protocol):
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        source_kind: UnitSourceKind | None = None,
-        external_format: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,

@@ -9,7 +9,7 @@ import pytest
 
 from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.scenes.schemas import scene_id_for
-from sceneops_core.scenes.testing import external_source, recording_source
+from sceneops_core.scenes.testing import recording_source
 from sceneops_worker.scenes.registration import (
     SceneManifestRejectedError,
     SceneRegistrationConflictError,
@@ -34,17 +34,17 @@ def _summary(world, dataset_id="ds", version="v1"):
     return world.summaries[(dataset_id, version)]
 
 
-# --- external units (§18.2) -----------------------------------------------------
+# --- one recording scope (§18.3) -------------------------------------------------
 
 
-async def test_registers_external_units_and_recomputes_summary(scene_world):
+async def test_registers_the_complete_scope_and_recomputes_summary(scene_world):
     scene_world.add_dataset_version()
     a = await scene_world.publish(
-        scene_world.manifest(source=external_source(source_unit_key="a"))
+        scene_world.manifest(source=recording_source(unit_key="a"))
     )
     b = await scene_world.publish(
         scene_world.manifest(
-            source=external_source(source_unit_key="b"), keyframe_timestamps_ns=(1_000,)
+            source=recording_source(unit_key="b"), keyframe_timestamps_ns=(1_000,)
         )
     )
 
@@ -121,25 +121,45 @@ async def test_replace_repoints_the_same_identity(scene_world):
 
 async def test_registration_is_all_or_nothing(scene_world):
     scene_world.add_dataset_version()
-    existing = await scene_world.publish(
-        scene_world.manifest(source=external_source(source_unit_key="b"))
-    )
-    await _register(scene_world, [existing])
+    current = [
+        await scene_world.publish(
+            scene_world.manifest(source=recording_source(unit_key=key))
+        )
+        for key in ("a", "b")
+    ]
+    await _register(scene_world, current)
     before = dict(scene_world.scenes.committed)
 
-    new_unit = await scene_world.publish(
-        scene_world.manifest(source=external_source(source_unit_key="a"))
-    )
-    conflicting = await scene_world.publish(
-        scene_world.manifest(
-            source=external_source(source_unit_key="b"), build_config={"channels": []}
+    rebuilt = [
+        await scene_world.publish(
+            scene_world.manifest(
+                source=recording_source(unit_key=key), build_config={"channels": []}
+            )
         )
-    )
+        for key in ("a", "c")
+    ]
     with pytest.raises(SceneRegistrationConflictError):
-        await _register(scene_world, [new_unit, conflicting])
+        await _register(scene_world, rebuilt)
 
-    # The new unit processed before the conflict is not committed.
+    # Nothing of the rejected set is committed and nothing current is removed.
     assert scene_world.scenes.committed == before
+
+
+async def test_a_partial_input_never_extends_a_registered_scope(scene_world):
+    """The registrar treats its input as the complete set of the scope: a
+    second registration with the same fingerprint but fewer or other units
+    does not add or remove members (§17.5 rule 4)."""
+    scene_world.add_dataset_version()
+    a = await scene_world.publish(
+        scene_world.manifest(source=recording_source(unit_key="a"))
+    )
+    b = await scene_world.publish(
+        scene_world.manifest(source=recording_source(unit_key="b"))
+    )
+    await _register(scene_world, [a])
+    result = await _register(scene_world, [b])
+    assert result.created_scene_ids == []
+    assert [s.unit_key for s in scene_world.scenes.committed.values()] == ["a"]
 
 
 async def test_same_source_in_two_dataset_versions_is_two_scenes(scene_world):
@@ -241,9 +261,6 @@ async def test_recording_scope_rejects_mixed_runs_and_fingerprints(scene_world):
     with pytest.raises(SceneRegistrationScopeError, match="one producer fingerprint"):
         await _register(scene_world, one + other_config)
 
-    external = await scene_world.publish(scene_world.manifest())
-    with pytest.raises(SceneRegistrationScopeError, match="single source kind"):
-        await _register(scene_world, one + [external])
     assert scene_world.scenes.committed == {}
 
 
@@ -266,14 +283,14 @@ async def test_rejects_unverifiable_inputs(scene_world):
     with pytest.raises(SceneManifestRejectedError, match="not found"):
         await _register(scene_world, [type("A", (), {"artifact_id": "art-missing"})()])
 
-    legacy = await scene_world.publish(
-        scene_world.manifest(), kind=ArtifactKind.LEGACY_SCENE_MANIFEST
+    not_a_scene = await scene_world.publish(
+        scene_world.manifest(), kind=ArtifactKind.EPISODE_MANIFEST
     )
     with pytest.raises(SceneManifestRejectedError, match="not a canonical"):
-        await _register(scene_world, [legacy])
+        await _register(scene_world, [not_a_scene])
 
     tampered = await scene_world.publish(
-        scene_world.manifest(source=external_source(source_unit_key="t"))
+        scene_world.manifest(source=recording_source(unit_key="t"))
     )
     data = await scene_world.artifact_store.read_bytes(tampered.uri)
     await scene_world.artifact_store.write_bytes(

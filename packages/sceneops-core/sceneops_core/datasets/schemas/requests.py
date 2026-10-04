@@ -4,15 +4,13 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
-from .enums import DatasetType, DatasetVersionStatus
+from .enums import DatasetVersionStatus
 
 
 class CreateDatasetRequest(SceneOpsBaseModel):
     dataset_id: str
     name: str | None = None
     description: str | None = None
-
-    type: DatasetType = DatasetType.CUSTOM
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -24,9 +22,6 @@ class CreateDatasetVersionRequest(SceneOpsBaseModel):
     status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
 
     manifest_uri: str | None = None
-
-    source_dataset_id: str | None = None
-    source_dataset_version: str | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
 

@@ -1,5 +1,12 @@
 # Canonical development baseline (v0.0)
 
+> **Unavailable until ADR-007 implementation step 11.** v0.0 was built by
+> the removed `dataset_scene_ingestion` pipeline, and its Scene contract
+> (counts, ground truth) cannot be produced from recordings yet.
+> `make canonical-bootstrap` / `make canonical-verify` exit with an explicit
+> message until the baseline is regenerated from recordings. This page
+> describes the v0.0 contract as frozen.
+
 The authoritative doc for SceneOps' permanent development baseline dataset
 family. `make help` is the quick reference; this explains the *why* and the
 exact contract `make canonical-verify` checks. See

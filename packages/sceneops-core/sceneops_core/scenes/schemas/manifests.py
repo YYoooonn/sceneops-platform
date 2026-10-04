@@ -11,15 +11,15 @@ unit's source and producer provenance.
 Observations are primary. Synchronized samples, nearest-frame association,
 per-frame pose interpolation, downsampling and other workflow choices are
 derived transformations and have no place here. A grouping the source
-itself defines (a nuScenes keyframe ``sample``) is carried as a non-lossy
-index over observations (``groups``), never instead of them.
+itself defines (e.g. a hardware-triggered capture set) is carried as a
+non-lossy index over observations (``groups``), never instead of them.
 
 The manifest describes the unit, not its membership: it holds no
 DatasetVersion, scene id, record state or execution context. Identical
 source, producer and build configuration therefore produce byte-identical
 manifests, whatever DatasetVersion registers them. The registrar derives
 the DatasetVersion-scoped ``scene_id`` from (dataset_id, dataset_version,
-source identity).
+robot_run_id, unit_key).
 
 Source time is never synchronized or converted: every timestamp is an
 integer nanosecond count in exactly one declared clock. An observation's
@@ -79,7 +79,6 @@ from sceneops_core.provenance import (
     ProducerInfo,
     RecordingSegmentSource,
     SourceTimestampNs,
-    UnitSource,
 )
 
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
@@ -162,8 +161,8 @@ class SceneCoordinateFrame(_ManifestModel):
 class SceneChannel(_ManifestModel):
     """One source channel included in the Scene boundary.
 
-    ``channel`` is the source's own identity (``CAM_FRONT``,
-    ``/camera/front/image_raw``), kept verbatim. ``source_clock`` is the
+    ``channel`` is the source's own identity (a recording topic such as
+    ``/camera/front/image/compressed``), kept verbatim. ``source_clock`` is the
     clock in which every observation of this channel is timestamped. ``modality`` and the
     optional ``sensor_id`` are canonical semantics the producer adds through
     its integration or build configuration. A channel with no observations
@@ -211,8 +210,8 @@ class SceneObservation(_ManifestModel):
     ``source_clock``.
 
     ``ego_pose_id`` is set only where the source itself associates a pose
-    with this observation (e.g. a nuScenes ``sample_data.ego_pose_token``);
-    choosing the nearest pose is a derived transformation.
+    with this observation; choosing the nearest pose is a derived
+    transformation.
     """
 
     observation_id: LocalId
@@ -283,11 +282,11 @@ class SceneAnnotation(_ManifestModel):
 
 
 class SceneLineage(_ManifestModel):
-    """Full provenance of the unit: exactly one source block and the
-    producer that built it. The producer fingerprint must re-derive from
-    the manifest's own source revision."""
+    """Full provenance of the unit: the recording segment it was built from
+    and the producer that built it. The producer fingerprint must re-derive
+    from the manifest's own source revision."""
 
-    source: UnitSource
+    source: RecordingSegmentSource
     producer: ProducerInfo
 
     @model_validator(mode="after")
@@ -476,8 +475,6 @@ class SceneManifest(_ManifestModel):
         timestamps in other clocks are not comparable to it and are never
         converted to make them so."""
         source = self.lineage.source
-        if not isinstance(source, RecordingSegmentSource):
-            return
         for clock, timestamp in self.clocked_timestamps():
             if clock == source.source_clock and not source.contains(timestamp):
                 raise ValueError(
@@ -506,22 +503,16 @@ class SceneManifest(_ManifestModel):
 
     # --- read helpers ----------------------------------------------------------
 
-    def declared_window(self) -> SceneTimeWindow | None:
-        """The source's own temporal boundary, where the source declares one.
-
-        A recording-derived Scene's boundary is its segment window, a
-        half-open interval in the segment's clock. An external Scene's
-        boundary is its source unit (``source_unit_key``), not an interval,
-        so it has no declared window; its observations' extent is never
-        promoted to one."""
+    def declared_window(self) -> SceneTimeWindow:
+        """The Scene's temporal boundary: its segment window, a half-open
+        interval in the segment's clock. Observation extent is never
+        promoted to a window."""
         source = self.lineage.source
-        if isinstance(source, RecordingSegmentSource):
-            return SceneTimeWindow(
-                source_clock=source.source_clock,
-                start_timestamp_ns=source.start_timestamp_ns,
-                end_timestamp_ns=source.end_timestamp_ns,
-            )
-        return None
+        return SceneTimeWindow(
+            source_clock=source.source_clock,
+            start_timestamp_ns=source.start_timestamp_ns,
+            end_timestamp_ns=source.end_timestamp_ns,
+        )
 
     def keyframes(self) -> list[SceneObservationGroup]:
         return [g for g in self.groups if g.kind == SceneGroupKind.KEYFRAME]

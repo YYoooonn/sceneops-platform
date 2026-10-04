@@ -134,9 +134,9 @@ make e2e-cleanroom     the full-platform acceptance workflow, requires `make loc
   persistent E2E fixture bootstrap, see below), and
   `scripts/e2e/tests/test_pipeline_contracts_integration.py` (pipeline-
   definitions registry + unsupported-pipeline-type rejection -- lives here
-  since it needs no nuScenes data at all; the domain-relevant assertions
-  for the same pipeline live in `e2e-scene` instead, see "E2E scope"
-  below). No pytest marker is
+  since it needs no nuScenes data at all), plus the worker's real
+  PostgreSQL + MinIO registration and recording-Scene vertical tests
+  (`apps/worker/tests/scenes/test_*_integration.py`). No pytest marker is
   used to select these — they live in dedicated test files/directories
   that `make test`'s testpaths never touch, which is sufficient selection
   on its own. Each `sceneops-db`/`sceneops-storage` test gets a fresh
@@ -156,16 +156,14 @@ make e2e-cleanroom     the full-platform acceptance workflow, requires `make loc
 
 ## E2E scope
 
-There is no bare `make e2e` aggregate. Scene ingestion, robot learning
-(ROS2 sandbox), perception (optionally a real inference service), and
-interoperability (isolated LeRobot venv) have materially different
+There is no bare `make e2e` aggregate. Scene building, robot learning
+(ROS2 sandbox) and interoperability (isolated LeRobot venv) have materially different
 infrastructure requirements, so bundling them under one aggregate would
 hide which of those a failure actually needed. The primary surface is:
 
 ```
-make e2e-scene                              real nuScenes -> SceneRecord -> validation/profile/manifest
+make e2e-recording-scene [SCENE=...]         nuScenes -> acquisition -> RobotRun -> canonical Scenes -> quality
 make e2e-robot-learning [SCENE=... | MAX_SCENES=N]   real CAN bus -> ROS2 -> MCAP -> Episode -> learning export/curation
-make e2e-perception [BACKEND=mock|grounding_dino]    scenario curation -> prediction -> evaluation
 make e2e-interop                             real Postgres/MinIO -> SceneOpsDataset -> LeRobot -> golden comparison
 make e2e-cleanroom                           THE full-platform acceptance workflow (see below)
 ```
@@ -178,8 +176,6 @@ hand (those remain available as debug/stage targets, see `make help`'s
 "Debug / Stage" section). See
 [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md).
 
-`e2e-perception BACKEND=grounding_dino` needs a real inference server
-(`make inference-local-up` for CPU or `make inference-gpu-up` for GPU).
 `e2e-interop` needs the isolated LeRobot environment (`make lerobot-sync`,
 one-time) — real Postgres/MinIO round-trip (`interop` fixture ->
 `SceneOpsDataset` -> LeRobot export -> official reader -> golden
@@ -188,30 +184,41 @@ comparison), see
 
 **`make e2e-cleanroom`** is the only full-platform acceptance entry point:
 `make local-reset` (destructive — wipes Postgres/Redis/MinIO, preserves
-`data/raw/nuscenes` and the CAN bus expansion) -> `e2e-scene` ->
-`e2e-robot-learning` -> `e2e-perception BACKEND=mock` -> a final query of
-real persisted API state. It deliberately does not require GPU, a real
-inference server, Airflow, or the isolated LeRobot venv — those remain
-optional verification, run separately afterward (`BACKEND=grounding_dino
-make e2e-perception`, `make verify-airflow-backend`, `make e2e-interop`).
+`data/raw/nuscenes` and the CAN bus expansion) -> `e2e-recording-scene` ->
+`e2e-robot-learning` -> a final query of real persisted API state. It
+deliberately does not require GPU, Airflow, or the isolated LeRobot venv —
+those remain optional verification, run separately afterward
+(`make verify-airflow-backend`, `make e2e-interop`).
+
+**Unavailable until ADR-007 implementation step 10** (label ingress and a
+derived synchronized-sample view): `make e2e-perception` and
+`make e2e-scenario-curation` need ground truth and keyframes, which
+recording-derived Scenes do not carry. **Until step 11**:
+`make canonical-bootstrap` / `make canonical-verify` (the v0.0 baseline was
+built by a removed pipeline). Each exits with an explicit message (script
+exit code 3) instead of failing on removed infrastructure.
 
 **Engineering-level checks live outside the `e2e-*` namespace** since they
 aren't domain workflows from a real source to a persisted result:
 - `make smoke-api` — transport/liveness only; creates no persistent
   Dataset/DatasetVersion/Model/PipelineRun (a smoke-* target must never
   leave behind domain data).
-- `make smoke-nuscenes-container` / `make smoke-lerobot-container` —
-  container/transport-boundary checks, isolated from the full pipeline.
-- `make verify-reliability` — execution-key dedup/force + partial-retry
-  semantics, an execution-model property.
+- `make smoke-lerobot-container` — container/transport-boundary check,
+  isolated from the full pipeline.
+- `make verify-reliability` — execution-key dedup/force + partial retry of
+  a `recording_scene_building` run blocked at `validate_scene`, an
+  execution-model property.
 - `make verify-airflow-backend` — an alternate-orchestrator COMPATIBILITY
-  CHECK for `dataset_scene_ingestion` only (the Airflow backend remains a
-  PoC, not general backend
-  substitution), needs `make airflow-up` + the `api` service restarted with
-  `SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow`.
+  CHECK: `recording_scene_building` through the Airflow per-task DAG PoC
+  (not general backend substitution); needs `make airflow-up` + the `api`
+  service restarted with `SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow`.
 
-`e2e-scene-rawlog` and `e2e-scene-analytics-export` are secondary E2E —
-real nuScenes data, specialized/non-primary coverage — not part of
+Both verification commands, and `e2e-scene-analytics-export`, take their
+input from a registered camera RobotRun (`ensure_camera_robot_run` in
+`scripts/e2e/lib.sh`): acquired once through the acquisition and publisher
+containers under a deterministic run id, then reused.
+
+`e2e-scene-analytics-export` is a secondary E2E, not part of
 `e2e-cleanroom`'s core path.
 
 All pipeline-run-creating scripts pass `force: true`, so re-running any of
@@ -229,27 +236,12 @@ for the clearest examples.
 ### Canonical identity vs. external source/export identity
 
 `DATASET_ID`/`DATASET_VERSION` mean **SceneOps' own canonical identity
-only** — never constrained by what an external format's SDK happens to
-require. `IngestScenesJobParams`/`BuildScenesJobParams` carry a separate,
-explicit `source_format_version` field, and only that value ever reaches
-the nuScenes SDK, never `dataset_version` — so `DATASET_VERSION` is free to
-be `test-v1` everywhere, including for nuScenes-backed workflows. The SDK
-call itself does not happen inside `apps/worker` at all — both job handlers
-build an `IntegrationRequest` and run it against the isolated
-`nuscenes-integration` HTTP service, which is the only thing that imports
-`nuscenes-devkit`.
-
-`source_format_version` is **required** whenever the source format needs
-one (nuScenes) — enforced by a pydantic validator on both job params
-classes at job-creation time — so a caller that omits it gets a clear
-validation error instead of silently reusing `dataset_version`. The shared
-conceptual shape for "a dataset outside SceneOps' canonical model" —
-covering both this nuScenes import source and the LeRobot export target
-(see [Dataset interoperability](../architecture/dataset-interoperability.md))
-— is `ExternalDatasetRef` (`sceneops_core.datasets.ExternalDatasetRef`):
-`format`/`format_version`/`uri` plus optional `external_name`/
-`external_revision`/`checksum`. Import vs. export is a property of the
-operation, not the ref's shape.
+only** — never constrained by an external dataset's own version naming, so
+`DATASET_VERSION` is free to be `test-v1` everywhere. The nuScenes version
+(`SOURCE_FORMAT_VERSION`) only selects what the acquisition tool reads; it
+never reaches canonical identity. The LeRobot export target is described by
+`ExternalDatasetRef` (`sceneops_core.integration_runtime`; see
+[Dataset interoperability](../architecture/dataset-interoperability.md)).
 
 ### The E2E fixture catalog: `sceneops-e2e-v1`
 
@@ -259,8 +251,7 @@ derived dataset identity per workflow, resolved via `scripts/e2e/lib.sh`'s
 
 - **`core`** — `DATASET_ID=test-e2e-core`, `DATASET_VERSION=test-v1`,
   external source `SOURCE_FORMAT=nuscenes`/`SOURCE_FORMAT_VERSION=v1.0-mini`/
-  `SOURCE_ROOT_URI=/data/raw/nuscenes`. Used by `e2e-scene`, `e2e-perception`
-  (scenario curation + detection evaluation), `e2e-scene-analytics-export`,
+  `SOURCE_ROOT_URI=/data/raw/nuscenes`. Used by `e2e-scene-analytics-export`,
   `verify-reliability`, `verify-airflow-backend`, `e2e-robot-learning`,
   `e2e-episode-building`, and `e2e-episode-curation`. Scene and Episode families coexist on one
   DatasetVersion by design — each owns an independent summary sub-object
@@ -278,14 +269,6 @@ derived dataset identity per workflow, resolved via `scripts/e2e/lib.sh`'s
   [Dataset interoperability](../architecture/dataset-interoperability.md)
   §6/§7).
 
-`e2e-scene-rawlog` deliberately stays its own identity
-(`DATASET_ID=test-e2e-raw-log`), **outside** the catalog: it produces
-non-ground-truth scenes that measurably drag down `core`'s aggregate
-`/quality` readiness if they share one DatasetVersion (see
-`makefiles/e2e.mk`'s comment on that target) — a real, previously-discovered
-data-requirement conflict, not an oversight. It still resolves through the
-same `resolve_e2e_fixture raw-log` call for consistency, and shares `core`'s
-`SOURCE_FORMAT_VERSION` (both read the same physical nuScenes mini fixture).
 
 `smoke-api` sits outside the catalog entirely, and outside every other
 fixture identity too — it creates zero persistent domain data: list
@@ -330,21 +313,20 @@ another E2E having run first, with a hardened create/reuse/verify contract
 **Seed boundary** — bootstrap only ever creates *prerequisite* state, never
 the output whose production is the behavior some E2E actually tests:
 
-- **`core`**/**`raw-log`** — ensures the canonical DatasetVersion row
-  exists. Nothing else: producing Scenes/Episodes is
-  pipeline-contracts/dataset-ingestion/episode-building/raw-log-scene-
-  building's own job, not bootstrap's. Verification additionally checks
+- **`core`** — ensures the canonical DatasetVersion row exists. Nothing
+  else: producing Scenes/Episodes is the building workflows' own job, not
+  bootstrap's. Verification additionally checks
   the external nuScenes source directory is present on disk.
 - **`interop`** — the *full* golden `LearningDataExportManifest` + its
   three Parquet tables + their `ArtifactRecord`s, persisted into real
-  Postgres/MinIO. Unlike core/raw-log, nothing currently or plannedly
+  Postgres/MinIO. Unlike core, nothing currently or plannedly
   under test *produces* this snapshot — future external-adapter/round-trip
   tests only ever read from it — so materializing it completely is itself
   prerequisite state. The golden data is never redefined here; it comes
   from `sceneops_analytics.testing.interop_dataset`'s
   `build_interop_entries()`/`compute_expected_interop_episodes()`.
   Interop's bootstrap/verification never touches the nuScenes source path
-  — that's a core/raw-log-only check.
+  — that's a core-only check.
 
 **Package boundary** — `sceneops-analytics`
 is a production package (the columnar analytics export layer); it must not
@@ -362,7 +344,7 @@ that `sceneops-analytics` never re-acquires a `sceneops-db` import.
 
 ```python
 results = await bootstrap_e2e_fixtures(
-    "interop",  # or "core" / "raw-log" / "all"
+    "interop",  # or "core" / "all"
     session=session, artifact_store=artifact_store, analytics_root_uri=analytics_root_uri,
 )
 verification = await verify_e2e_fixture("interop", session=session, artifact_store=artifact_store)
@@ -391,7 +373,7 @@ existing, incompatible semantic identity -> FixtureConflictError
 ```
 
 Semantic identity is still `export_id` (interop) / DatasetVersion identity
-(core, raw-log) — computed purely from the golden data + export config, so
+(core) — computed purely from the golden data + export config, so
 it never varies run to run even though real DB IDs and timestamps do. A
 matching identity is *necessary* for reuse but no longer *sufficient*:
 bootstrap re-reads the persisted Postgres rows and MinIO objects, rechecks
@@ -419,10 +401,9 @@ API this bootstrap will ever grow.
 **CLI / Make surface**:
 
 ```bash
-make e2e-bootstrap             # core + interop + raw-log, then verify
+make e2e-bootstrap             # core + interop, then verify
 make e2e-bootstrap-core
 make e2e-bootstrap-interop
-make e2e-bootstrap-raw-log
 
 uv run python scripts/e2e/bootstrap_e2e_fixtures.py --fixture interop --verify --json
 ```
@@ -435,7 +416,7 @@ hostnames). Common infra config (`SCENEOPS_DATABASE_URL`,
 `MINIO_BUCKET`) is split from source-specific config
 (`E2E_BOOTSTRAP_SOURCE_ROOT_URI`, pointing the nuScenes source check at
 `$(CURDIR)/data/raw/nuscenes` on the host) in `makefiles/e2e.mk` — only
-`core`/`raw-log`/`all` need the latter; `interop` never does. `MINIO_ROOT_USER ?= minioadmin` /
+`core`/`all` need the latter; `interop` never does. `MINIO_ROOT_USER ?= minioadmin` /
 `MINIO_ROOT_PASSWORD ?= minioadmin` / `MINIO_BUCKET ?= sceneops` are
 overridable Make variables shared with `make test-integration`, defined
 once at the top of the root `Makefile` next to the equivalent

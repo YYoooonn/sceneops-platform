@@ -1,6 +1,6 @@
 """Persistent E2E fixture bootstrap: materializes the shared E2E fixture
-catalog (scripts/e2e/lib.sh's ``resolve_e2e_fixture`` -- core/interop/
-raw-log) into real PostgreSQL + MinIO/ArtifactStore, using
+catalog (scripts/e2e/lib.sh's ``resolve_e2e_fixture`` -- core/interop)
+into real PostgreSQL + MinIO/ArtifactStore, using
 only real SceneOps abstractions (sceneops-db repositories, ArtifactStore,
 AnalyticsTableWriter) -- never raw SQL or direct boto3/MinIO calls.
 
@@ -29,14 +29,11 @@ whose production is the behavior under test):
 
   core     -- ensure the canonical DatasetVersion row exists. Never creates
               Scenes/Episodes -- producing those IS the behavior under test
-              for pipeline-contracts/dataset-ingestion/episode-building.
+              for the Scene/Episode building workflows.
               Verification additionally checks that the external nuScenes
               source fixture is present on disk.
-  raw-log  -- same seed boundary as core (its own isolated DatasetVersion
-              row only) -- raw_log_scene_building's own build_scenes step
-              is the behavior under test, not this bootstrap.
   interop  -- the full golden LearningDataExportManifest + three Parquet
-              tables + their ArtifactRecords. Unlike core/raw-log, nothing
+              tables + their ArtifactRecords. Unlike core, nothing
               about *producing* this snapshot is itself under test by any
               current or planned E2E -- future external-adapter/round-trip
               tests read FROM it, so materializing it fully is prerequisite
@@ -118,7 +115,7 @@ from sceneops_storage import ArtifactStore
 from sqlalchemy.ext.asyncio import AsyncSession
 
 FIXTURE_CATALOG_VERSION = "sceneops-e2e-v1"
-FIXTURE_NAMES: tuple[str, ...] = ("core", "interop", "raw-log")
+FIXTURE_NAMES: tuple[str, ...] = ("core", "interop")
 
 # Mirrors scripts/e2e/lib.sh's resolve_e2e_fixture. Kept as a separate,
 # documented Python source of truth rather than parsed out of the shell
@@ -140,12 +137,6 @@ CORE_SOURCE_ROOT_URI = os.environ.get(
     "E2E_BOOTSTRAP_SOURCE_ROOT_URI", "/data/raw/nuscenes"
 )
 CORE_SOURCE_FORMAT_VERSION = "v1.0-mini"
-
-RAW_LOG_DATASET_ID = "test-e2e-raw-log"
-RAW_LOG_DATASET_VERSION = "test-v1"
-RAW_LOG_SOURCE_ROOT_URI = CORE_SOURCE_ROOT_URI
-RAW_LOG_SOURCE_FORMAT_VERSION = "v1.0-mini"
-
 
 class FixtureConflictError(Exception):
     """An existing persisted fixture's content disagrees with what the
@@ -249,7 +240,7 @@ def _interop_export_id() -> tuple[
     return entries, export_config, export_id
 
 
-# ── ensure DatasetVersion (shared by core/raw-log/interop) ─────────────────
+# ── ensure DatasetVersion (shared by core/interop) ──────────────────────────
 
 
 async def _ensure_dataset_version(
@@ -276,7 +267,7 @@ async def _ensure_dataset_version(
     return created, True
 
 
-# ── core / raw-log: bootstrap + verify ──────────────────────────────────────
+# ── core: bootstrap + verify ────────────────────────────────────────────────
 
 
 async def _verify_dataset_version_and_source(
@@ -696,7 +687,7 @@ async def bootstrap_e2e_fixtures(
     contract documented at module level -- a successful return always
     means the fixture is verified-ready.
 
-    ``fixture`` is one of ``"all"``/``"core"``/``"interop"``/``"raw-log"``,
+    ``fixture`` is one of ``"all"``/``"core"``/``"interop"``,
     matching ``scripts/e2e/lib.sh``'s ``resolve_e2e_fixture`` catalog
     exactly -- this function never redefines fixture identity, it only
     persists what that catalog already declares.
@@ -712,17 +703,6 @@ async def bootstrap_e2e_fixtures(
                     dataset_version=CORE_DATASET_VERSION,
                     source_root_uri=CORE_SOURCE_ROOT_URI,
                     source_format_version=CORE_SOURCE_FORMAT_VERSION,
-                )
-            )
-        elif name == "raw-log":
-            results.append(
-                await _bootstrap_dataset_version_only(
-                    session,
-                    fixture_name="raw-log",
-                    dataset_id=RAW_LOG_DATASET_ID,
-                    dataset_version=RAW_LOG_DATASET_VERSION,
-                    source_root_uri=RAW_LOG_SOURCE_ROOT_URI,
-                    source_format_version=RAW_LOG_SOURCE_FORMAT_VERSION,
                 )
             )
         elif name == "interop":
@@ -756,17 +736,6 @@ async def verify_e2e_fixture(
                     dataset_version=CORE_DATASET_VERSION,
                     source_root_uri=CORE_SOURCE_ROOT_URI,
                     source_format_version=CORE_SOURCE_FORMAT_VERSION,
-                )
-            )
-        elif name == "raw-log":
-            results.append(
-                await _verify_dataset_version_and_source(
-                    session,
-                    fixture_name="raw-log",
-                    dataset_id=RAW_LOG_DATASET_ID,
-                    dataset_version=RAW_LOG_DATASET_VERSION,
-                    source_root_uri=RAW_LOG_SOURCE_ROOT_URI,
-                    source_format_version=RAW_LOG_SOURCE_FORMAT_VERSION,
                 )
             )
         elif name == "interop":
@@ -808,10 +777,6 @@ __all__ = [
     "FIXTURE_NAMES",
     "INTEROP_DATASET_ID",
     "INTEROP_DATASET_VERSION",
-    "RAW_LOG_DATASET_ID",
-    "RAW_LOG_DATASET_VERSION",
-    "RAW_LOG_SOURCE_FORMAT_VERSION",
-    "RAW_LOG_SOURCE_ROOT_URI",
     "FixtureBootstrapResult",
     "FixtureConflictError",
     "FixtureVerificationError",

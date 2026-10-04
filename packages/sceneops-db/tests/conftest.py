@@ -177,17 +177,19 @@ def seed_robot_run(unique_id):
 
 
 @pytest.fixture()
-def scene_record_for(unique_id):
+def scene_record_for(unique_id, seed_robot_run):
     """Build a canonical SceneManifest, register its SCENE_MANIFEST
-    ArtifactRecord, and return the SceneRecord projection (not inserted)."""
+    ArtifactRecord (and, unless ``seed_run=False``, the RobotRun its source
+    names), and return the SceneRecord projection (not inserted)."""
     from sceneops_core.artifacts.schemas import (
         ArtifactKind,
         ArtifactOwnerType,
         ArtifactRef,
     )
     from sceneops_core.scenes.schemas import project_scene_record, scene_id_for
-    from sceneops_core.scenes.testing import build_scene_manifest, external_source
+    from sceneops_core.scenes.testing import build_scene_manifest, recording_source
     from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
+    from sceneops_db.postgres.robots import PostgresRobotRunRepository
 
     async def _make(
         session,
@@ -195,9 +197,21 @@ def scene_record_for(unique_id):
         dataset_id: str,
         dataset_version: str = "v1",
         source=None,
+        seed_run: bool = True,
         **manifest_kwargs,
     ):
-        source = source if source is not None else external_source()
+        if source is None:
+            source = recording_source(robot_run_id=unique_id("run"))
+        if (
+            seed_run
+            and await PostgresRobotRunRepository(session).get(source.robot_run_id)
+            is None
+        ):
+            await seed_robot_run(
+                session,
+                run_id=source.robot_run_id,
+                recording_checksum=source.recording_checksum,
+            )
         manifest = build_scene_manifest(source=source, **manifest_kwargs)
         data = manifest.to_canonical_bytes()
         checksum = manifest.checksum()

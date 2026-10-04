@@ -19,7 +19,6 @@ from app.domains.datasets.schemas import (
 from app.domains.scenes.schemas import SceneListResponse
 from app.platform.artifacts.schemas import ArtifactListResponse
 from sceneops_core.datasets.schemas import CreateDatasetRequest
-from sceneops_core.datasets.schemas.enums import DatasetType
 
 router = APIRouter()
 
@@ -29,11 +28,8 @@ async def list_datasets(
     *,
     service: DatasetServiceDep,
     pagination: PaginationDep,
-    type: DatasetType | None = None,
 ) -> DatasetListResponse:
-    return await service.list_datasets(
-        type=type, limit=pagination.limit, offset=pagination.offset
-    )
+    return await service.list_datasets(limit=pagination.limit, offset=pagination.offset)
 
 
 @router.post("", response_model=DatasetDetailResponse, status_code=201)

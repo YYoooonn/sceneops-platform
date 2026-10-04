@@ -52,6 +52,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
+unavailable_until e2e-perception 10 \
+  "recording-derived Scenes carry no ground truth or keyframe groups, so detection has no samples or labels until the label ingress (Q1) and the derived synchronized-sample view exist"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 BACKEND="${BACKEND:-mock}"

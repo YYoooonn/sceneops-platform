@@ -10,8 +10,7 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
-from sceneops_core.provenance import UnitSourceKind
-from sceneops_core.scenes.testing import external_source, recording_source
+from sceneops_core.scenes.testing import recording_source
 from sceneops_db.models.artifacts import ArtifactModel
 from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
 from sceneops_db.models.scenes import SceneModel
@@ -42,18 +41,15 @@ async def test_insert_get_round_trip(
 
 @pytest.mark.asyncio
 async def test_list_filters(
-    db_session, unique_id, seed_dataset_version, seed_robot_run, scene_record_for
+    db_session, unique_id, seed_dataset_version, scene_record_for
 ):
     dataset_id = unique_id("ds")
     run_id = unique_id("run")
     await seed_dataset_version(db_session, dataset_id=dataset_id)
     await seed_dataset_version(db_session, dataset_id=dataset_id, version="v2")
-    await seed_robot_run(
-        db_session, run_id=run_id, recording_checksum="sha256:" + "1" * 64
-    )
     repo = PostgresSceneRepository(db_session)
 
-    external = await scene_record_for(db_session, dataset_id=dataset_id)
+    other_run = await scene_record_for(db_session, dataset_id=dataset_id)
     other_version = await scene_record_for(
         db_session, dataset_id=dataset_id, dataset_version="v2"
     )
@@ -62,36 +58,21 @@ async def test_list_filters(
         dataset_id=dataset_id,
         source=recording_source(robot_run_id=run_id),
     )
-    for record in (external, other_version, recorded):
+    for record in (other_run, other_version, recorded):
         await repo.insert(record)
 
     in_v1 = await repo.list(dataset_id=dataset_id, dataset_version="v1")
-    assert {s.scene_id for s in in_v1} == {external.scene_id, recorded.scene_id}
+    assert {s.scene_id for s in in_v1} == {other_run.scene_id, recorded.scene_id}
     assert [
-        s.scene_id
-        for s in await repo.list(
-            dataset_id=dataset_id, source_kind=UnitSourceKind.RECORDING
-        )
+        s.scene_id for s in await repo.list(dataset_id=dataset_id, robot_run_id=run_id)
     ] == [recorded.scene_id]
-    assert {
-        s.scene_id
-        for s in await repo.list(dataset_id=dataset_id, external_format="nuscenes")
-    } == {
-        external.scene_id,
-        other_version.scene_id,
-    }
     scope = await repo.list_recording_scope(
         dataset_id=dataset_id, dataset_version="v1", robot_run_id=run_id
     )
     assert [s.scene_id for s in scope] == [recorded.scene_id]
-    # Only the recording Scene has a declared window; the external one has
-    # none rather than one inferred from its observations.
-    fetched_recorded = await repo.get(recorded.scene_id)
-    assert fetched_recorded.window_clock == "mcap_log_time"
-    assert fetched_recorded.window_end_timestamp_ns > (
-        fetched_recorded.window_start_timestamp_ns
-    )
-    assert (await repo.get(external.scene_id)).window_clock is None
+    fetched = await repo.get(recorded.scene_id)
+    assert (fetched.robot_run_id, fetched.window_clock) == (run_id, "mcap_log_time")
+    assert fetched.window_end_timestamp_ns > fetched.window_start_timestamp_ns
 
 
 @pytest.mark.asyncio
@@ -102,11 +83,15 @@ async def test_replace_revision_repoints_in_place(
     await seed_dataset_version(db_session, dataset_id=dataset_id)
     await seed_dataset_version(db_session, dataset_id=dataset_id, version="v2")
     repo = PostgresSceneRepository(db_session)
-    first = await scene_record_for(db_session, dataset_id=dataset_id)
+    source = recording_source(robot_run_id=unique_id("run"))
+    first = await scene_record_for(db_session, dataset_id=dataset_id, source=source)
     await repo.insert(first)
 
     second = await scene_record_for(
-        db_session, dataset_id=dataset_id, keyframe_timestamps_ns=(1_000, 2_000, 3_000)
+        db_session,
+        dataset_id=dataset_id,
+        source=source,
+        keyframe_timestamps_ns=(1_000, 2_000, 3_000),
     )
     assert second.scene_id == first.scene_id
     replaced = await repo.replace_revision(second)
@@ -141,12 +126,12 @@ async def test_delete_and_membership_summary(
     assert empty.observed_channels == []
 
     a = await scene_record_for(
-        db_session, dataset_id=dataset_id, source=external_source(source_unit_key="a")
+        db_session, dataset_id=dataset_id, source=recording_source(unit_key="a")
     )
     b = await scene_record_for(
         db_session,
         dataset_id=dataset_id,
-        source=external_source(source_unit_key="b"),
+        source=recording_source(unit_key="b"),
         camera_channel="CAM_BACK",
         keyframe_timestamps_ns=(1_000,),
     )
@@ -202,6 +187,7 @@ async def test_recording_scene_requires_registered_robot_run(
         db_session,
         dataset_id=dataset_id,
         source=recording_source(robot_run_id=unique_id("run-unregistered")),
+        seed_run=False,
     )
     with pytest.raises(IntegrityError, match="robot_run_id"):
         await PostgresSceneRepository(db_session).insert(record)
@@ -211,15 +197,9 @@ async def test_recording_scene_requires_registered_robot_run(
 @pytest.mark.parametrize(
     "update",
     [
-        {"external_format": None},
         {"robot_run_id": "run-x"},
-        {"source_kind": UnitSourceKind.RECORDING},
-        {"window_clock": "mcap_log_time"},
-        {
-            "window_clock": "mcap_log_time",
-            "window_start_timestamp_ns": 5,
-            "window_end_timestamp_ns": 5,
-        },
+        {"window_start_timestamp_ns": 5, "window_end_timestamp_ns": 5},
+        {"window_start_timestamp_ns": 6, "window_end_timestamp_ns": 5},
     ],
 )
 async def test_projection_check_constraints(
@@ -238,12 +218,12 @@ async def test_projection_check_constraints(
 async def test_scenes_persist_across_sessions_and_block_dataset_version_deletion(
     unique_id, seed_dataset_version, scene_record_for
 ):
-    """Committed rows: the same external source unit in two DatasetVersions
-    is two independent Scenes, and a DatasetVersion with members cannot be
+    """Committed rows: the same recording unit in two DatasetVersions is two
+    independent Scenes, and a DatasetVersion with members cannot be
     deleted out from under them."""
     sessionmaker = get_async_sessionmaker()
     dataset_id = unique_id("ds")
-    source = external_source(source_unit_key="scene-0061")
+    source = recording_source(robot_run_id=unique_id("run"), unit_key="segment-000000")
     try:
         async with sessionmaker() as session:
             await seed_dataset_version(session, dataset_id=dataset_id, version="v1")
@@ -302,7 +282,7 @@ async def test_membership_summary_replacement_is_scoped_to_scene_columns(
         dataset_id=dataset_id, version="v1", episode_count=4
     )
     await versions.update_scene_inputs(
-        dataset_id=dataset_id, version="v1", raw_source_root_uri="/data/raw"
+        dataset_id=dataset_id, version="v1", required_channels=["CAM_FRONT"]
     )
 
     result = await versions.replace_scene_membership_summary(
@@ -316,5 +296,5 @@ async def test_membership_summary_replacement_is_scoped_to_scene_columns(
     assert (result.scene.scene_count, result.scene.keyframe_count) == (2, 5)
     assert result.scene.observation_count == 9
     assert result.scene.observed_channels == ["CAM_FRONT"]
-    assert result.scene.raw_source_root_uri == "/data/raw"
+    assert result.scene.required_channels == ["CAM_FRONT"]
     assert result.episode.episode_count == 4

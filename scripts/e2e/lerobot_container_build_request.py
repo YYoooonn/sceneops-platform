@@ -48,7 +48,7 @@ from sceneops_analytics.external_adapters import (
 from sceneops_analytics.testing.interop_dataset import INTEROP_FEATURE_PROJECTION
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRef
 from sceneops_core.config import ArtifactBackend, ArtifactSettings
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef
+from sceneops_core.integration_runtime import ExternalDatasetRef
 from sceneops_core.integration_runtime import (
     CanonicalDatasetRef,
     IntegrationOperation,

@@ -7,7 +7,6 @@ from sceneops_core.datasets.schemas import (
     DatasetRecord,
     DatasetVersionRecord,
 )
-from sceneops_core.datasets.schemas.enums import DatasetType
 from sceneops_core.runs.schemas import RunType
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.datasets import (
@@ -54,11 +53,10 @@ class DatasetService:
     async def list_datasets(
         self,
         *,
-        type: DatasetType | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> DatasetListResponse:
-        datasets = await self._repository.list(type=type, limit=limit, offset=offset)
+        datasets = await self._repository.list(limit=limit, offset=offset)
         return DatasetListResponse(datasets=datasets, count=len(datasets))
 
     async def create_dataset(
@@ -69,7 +67,6 @@ class DatasetService:
                 dataset_id=request.dataset_id,
                 name=request.name,
                 description=request.description,
-                type=request.type,
                 metadata=request.metadata,
             )
         )
@@ -92,7 +89,6 @@ class DatasetService:
                 dataset_id=dataset_id,
                 name=request.name,
                 description=request.description,
-                type=request.type,
                 metadata=request.metadata,
             )
         )
@@ -119,15 +115,15 @@ class DatasetService:
         dataset = await self._repository.get(dataset_id)
         if dataset is None:
             return None
-        # This endpoint is used as an upsert (e.g. e2e scripts re-POST to
-        # patch raw_source_root_uri). A freshly constructed record has
+        # This endpoint is used as an upsert (e.g. e2e scripts re-POST it).
+        # A freshly constructed record has
         # created_at/updated_at=None, which repository.update() would write
         # through verbatim onto an existing row and violate the NOT NULL
         # constraint — so preserve the original created_at and stamp a fresh
         # updated_at explicitly rather than relying on server_default/onupdate
         # (those only fire when a column is left unset, not set to None).
         #
-        # manifest_uri/required_channels/raw_source_root_uri are Scene inputs,
+        # manifest_uri/required_channels are Scene inputs,
         # not generic version state: they are patched through
         # update_scene_inputs(), which never touches the registrar-owned
         # Scene membership summary. The generic upsert below passes
@@ -141,24 +137,17 @@ class DatasetService:
                 dataset_id=dataset_id,
                 version=body.version,
                 status=body.status,
-                source_dataset_id=body.source_dataset_id,
-                source_dataset_version=body.source_dataset_version,
                 metadata=body.metadata,
                 created_at=existing.created_at if existing is not None else now,
                 updated_at=now,
             )
         )
-        if (
-            body.manifest_uri is not None
-            or body.required_channels
-            or body.raw_source_root_uri is not None
-        ):
+        if body.manifest_uri is not None or body.required_channels:
             version = await self._version_repository.update_scene_inputs(
                 dataset_id=dataset_id,
                 version=body.version,
                 manifest_uri=body.manifest_uri,
                 required_channels=body.required_channels or None,
-                raw_source_root_uri=body.raw_source_root_uri,
             )
         return DatasetVersionDetailResponse(version=version)
 
@@ -179,7 +168,6 @@ class DatasetService:
     # is never patchable here.
     _SCENE_VERSION_PATCH_FIELDS = (
         "manifest_uri",
-        "raw_source_root_uri",
         "required_channels",
     )
 

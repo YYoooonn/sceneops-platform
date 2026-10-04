@@ -2,20 +2,20 @@
 # verify_airflow_backend.sh
 #
 # This is an alternate-orchestrator COMPATIBILITY CHECK, not a new domain
-# workflow -- it dispatches the exact same dataset_scene_ingestion workflow
-# e2e-scene already covers, just through Airflow's per-task DAG PoC instead
-# of Celery, to prove that substitution still works. It stays out of the
-# e2e-* namespace (and out of the default `make e2e-scene` acceptance path)
-# for the same reason: the Airflow backend is currently a PoC hardcoded to
-# dataset_scene_ingestion only (see docs/development/test-matrix.md), not a
-# general pipeline-backend substitution -- this name is intentionally
-# narrower than "e2e-scene BACKEND=airflow" would imply.
+# workflow -- it dispatches the recording_scene_building pipeline
+# e2e-recording-scene covers, just through Airflow's per-task DAG PoC
+# instead of Celery, to prove that substitution still works. The Airflow
+# backend is a PoC hardcoded to recording_scene_building only
+# (airflow/dags/sceneops_pipeline_run.py), not a general pipeline-backend
+# substitution.
 #
 # Verifies the Airflow pipeline execution backend PoC:
-#   dispatch dataset_scene_ingestion via Airflow (per-task DAG,
+#   dispatch recording_scene_building via Airflow (per-task DAG,
 #   sceneops_pipeline_run) instead of Celery, and confirm it reaches
-#   `succeeded` with all 6 task runs succeeded — same outcome as
-#   e2e_scene.sh, different execution backend.
+#   `succeeded` with all 4 task runs succeeded, recorded under the airflow
+#   execution backend. Its input is a registered camera RobotRun
+#   (ensure_camera_robot_run in scripts/e2e/lib.sh; acquired once, then
+#   reused).
 #
 # Precondition (cannot be automated by this script — it's a process-startup
 # setting, not a per-request one):
@@ -32,25 +32,20 @@
 #   API_BASE_URL    (default: http://localhost:8000)
 #   DATASET_ID      (default: test-e2e-core)
 #   DATASET_VERSION (default: test-v1)
-#   SOURCE_FORMAT_VERSION (default: v1.0-mini)
-#   SOURCE_ROOT_URI (default: /data/raw/nuscenes)
-#   MAX_SCENES (default: 2)
+#   ROBOT_RUN_ID    (default: run-verify-camera-scene-0061)
 #   POLL_TIMEOUT    max poll attempts, 10s each (default: 60 = 10 min —
 #                    Airflow scheduling adds latency vs. direct Celery dispatch)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/../.."
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 resolve_e2e_fixture core
-MAX_SCENES="${MAX_SCENES:-2}"
+ROBOT_RUN_ID="${ROBOT_RUN_ID:-run-verify-camera-scene-0061}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
-
-SOURCE_FORMAT="${SOURCE_FORMAT:-nuscenes}"
-SOURCE_FORMAT_VERSION="${SOURCE_FORMAT_VERSION:-v1.0-mini}"
-SOURCE_ROOT_URI="${SOURCE_ROOT_URI:-/data/raw/nuscenes}"
 
 echo "=== Airflow pipeline execution backend E2E ==="
 echo "  API_BASE_URL=$API_BASE_URL"
@@ -63,43 +58,24 @@ echo ""
 
 # ── 1. Ensure dataset exists ──────────────────────────────────────────────────
 
-echo "--- 1. Upsert dataset ---"
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "nuScenes" | jq '.dataset | {datasetId}' 2>/dev/null || true
+echo "--- 1. Upsert dataset version + registered RobotRun fixture ---"
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "E2E core" | jq -c '.dataset | {datasetId}'
+upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" | jq -c '.version | {datasetId, version}'
+ensure_camera_robot_run "$ROBOT_RUN_ID"
 echo ""
 
 # ── 2. Create pipeline run ────────────────────────────────────────────────────
 
 echo "--- 2. Create pipeline run ---"
-PAYLOAD="$(cat <<JSON
-{
-  "type": "dataset_scene_ingestion",
-  "dataset_id": "$DATASET_ID",
-  "dataset_version": "$DATASET_VERSION",
-  "force": true,
-  "params": {
-    "ingest_scenes": {
-      "source_format": "$SOURCE_FORMAT",
-      "source_root_uri": "$SOURCE_ROOT_URI",
-      "source_format_version": "$SOURCE_FORMAT_VERSION",
-      "max_source_scenes": $MAX_SCENES,
-      "mode": "upsert"
-    },
-    "register_scene": {
-      "replace_existing": true
-    },
-    "validate_scene": {
-      "require_target_channels": ["CAM_FRONT", "LIDAR_TOP"]
-    },
-    "profile_scene": {
-      "profile_samples": true,
-      "profile_assets": true
-    },
-    "build_scene_index": {},
-    "build_dataset_manifest": {}
-  }
-}
-JSON
-)"
+PAYLOAD="$(jq -cn \
+  --arg ds "$DATASET_ID" --arg v "$DATASET_VERSION" --arg run "$ROBOT_RUN_ID" \
+  --argjson config "$(camera_scene_build_config)" '{
+    type: "recording_scene_building", dataset_id: $ds, dataset_version: $v, force: true,
+    params: {
+      build_recording_scenes: {robot_run_id: $run, build_config: $config},
+      register_scenes: {replace: true},
+      profile_scene: {triggered: true}
+    }}')"
 
 CREATE_RESP="$(create_pipeline_run "$API_BASE_URL" "$PAYLOAD")"
 PIPELINE_RUN_ID="$(extract_pipeline_run_id "$CREATE_RESP")"
@@ -143,11 +119,11 @@ if [ "$FINAL_STATUS" != "succeeded" ]; then
   echo "  error=$(echo "$PIPELINE_JSON" | jq -r '.pipelineRun.error.message // "unknown"')"
 fi
 
-assert_pipeline_succeeded "$PIPELINE_JSON" 'Airflow-dispatched dataset_scene_ingestion pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
+assert_pipeline_succeeded "$PIPELINE_JSON" 'Airflow-dispatched recording_scene_building pipeline should succeed' "$API_BASE_URL" "$PIPELINE_RUN_ID"
 echo "  OK"
 echo ""
 
-# ── 6. Assert all 6 task runs succeeded ──────────────────────────────────────
+# ── 6. Assert all 4 task runs succeeded ──────────────────────────────────────
 
 echo "--- 6. Assert tasks ---"
 TASKS_JSON="$(fetch_pipeline_tasks "$API_BASE_URL" "$PIPELINE_RUN_ID")"
@@ -183,4 +159,4 @@ echo "=== PASSED ==="
 echo "  pipeline_run_id=$PIPELINE_RUN_ID"
 echo "  execution_backend=$RECORDED_BACKEND"
 echo "  Check the Airflow UI (http://localhost:8080) for the sceneops_pipeline_run"
-echo "  DAG run named '$PIPELINE_RUN_ID' to see the 8-task graph."
+echo "  DAG run named '$PIPELINE_RUN_ID' to see the start -> 4 tasks -> finalize graph."

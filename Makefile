@@ -34,7 +34,7 @@ RUN_ID          ?=
 
 # E2E selection knobs -- the only user-facing selection variables the
 # primary E2E surface exposes. MAX_SCENES is the one authoritative name
-# across e2e-scene/e2e-scene-rawlog/e2e-robot-learning. BACKEND selects
+# across e2e-recording-scene/e2e-robot-learning. BACKEND selects
 # e2e-perception's inference backend (mock|grounding_dino).
 MAX_SCENES      ?=
 MAX_SAMPLES     ?=
@@ -53,16 +53,10 @@ BACKEND         ?=
 # canonical-vs-source identity separation.
 #
 # DATASET_ID/DATASET_VERSION below are the "core" fixture's default --
-# SceneOps' own canonical identity, used by e2e-scene, e2e-perception
-# (scenario curation + detection evaluation), e2e-scene-analytics-export,
-# verify-reliability, verify-airflow-backend, e2e-robot-learning,
-# e2e-episode-building, and e2e-episode-curation. Canonical identity is
-# never constrained by what an external format's SDK happens to require:
-# SOURCE_FORMAT_VERSION below is the separate, real nuScenes SDK version
-# (apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py reads this,
-# never dataset_version, and passes it through to the isolated
-# nuscenes-integration service's `nuscenes-devkit` `NuScenes(...)` call --
-# apps/worker itself does not import nuscenes-devkit at all).
+# SceneOps' own canonical identity, used by verify-reliability,
+# verify-airflow-backend, e2e-scene-analytics-export, e2e-robot-learning,
+# e2e-episode-building and e2e-episode-curation. SOURCE_FORMAT_VERSION is the nuScenes on-disk
+# version the E2E fixtures read; it never becomes canonical identity.
 #
 # See scripts/e2e/lib.sh's resolve_e2e_fixture "raw-log" case for the
 # raw-log fixture's own identity (test-e2e-raw-log), which stays isolated
@@ -99,7 +93,6 @@ help:
 	@echo "Quick start:"
 	@echo "  make setup                    Install deps, hooks"
 	@echo "  make local-up                 Start full local stack (idempotent: infra -> health -> MinIO buckets -> migrate -> API + workers)"
-	@echo "  make canonical-bootstrap      Create-or-verify the sceneops-canonical/v0.0 dev baseline (see below)"
 	@echo "  make test                     All infrastructure-independent unit tests"
 	@echo "  make test-integration         Real-Postgres/MinIO tests -- requires local-up"
 	@echo "  make e2e-cleanroom            THE full-platform acceptance workflow -- see 'E2E Workflows' below"
@@ -110,45 +103,41 @@ help:
 	@echo "Tests (see docs/development/local-development.md):"
 	@echo "=================================================================="
 	@echo "  make test                     worker+api+core+analytics+inference-server unit tests -- no infra needed"
-	@echo "  make test-integration         sceneops-db/storage (real Postgres/MinIO) + pipeline-definitions contract tests -- requires local-up"
+	@echo "  make test-integration         sceneops-db/storage + worker registration/recording-Scene (real Postgres/MinIO) + pipeline-definitions contract tests -- requires local-up"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Smoke (transport/liveness only -- never creates persistent domain data):"
 	@echo "=================================================================="
 	@echo "  make smoke-api                               API liveness/transport, read-only"
-	@echo "  make smoke-nuscenes-container                nuscenes-integration container's IntegrationRequest/Result contract"
 	@echo "  make smoke-lerobot-container                 lerobot-integration container's IntegrationRequest/Result contract"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Verification (execution-model/backend-substitution properties, not domain workflows):"
 	@echo "=================================================================="
-	@echo "  make verify-reliability                     execution-key dedup/force + partial-retry semantics"
-	@echo "  make verify-airflow-backend                 Requires: make airflow-up; alternate-orchestrator compatibility check"
-	@echo "                                               (dataset_scene_ingestion only -- not a general backend substitution)"
+	@echo "  make verify-reliability                     execution-key dedup/force + partial retry of a BLOCKED recording_scene_building"
+	@echo "  make verify-airflow-backend                 Requires: make airflow-up + api on the airflow pipeline backend;"
+	@echo "                                               recording_scene_building through the per-task DAG PoC"
+	@echo "                                               (both acquire a camera RobotRun once, then reuse it)"
 	@echo ""
 	@echo "=================================================================="
 	@echo "E2E Workflows -- primary surface (needs only local-up, unless noted):"
 	@echo "=================================================================="
-	@echo "  make e2e-scene                              real nuScenes -> SceneRecord -> validation/profile/manifest"
+	@echo "  make e2e-recording-scene [SCENE=scene-0061]  nuScenes -> acquisition container -> RobotRun -> canonical Scenes"
+	@echo "                                               -> registration -> validation/profile (FastAPI control plane)"
 	@echo "  make e2e-robot-learning [SCENE=scene-0061 | MAX_SCENES=N]"
 	@echo "                                               real CAN bus -> ROS2 -> MCAP -> Episode -> learning export/curation"
 	@echo "                                               Requires: ROS2 sandbox (--profile ros2, built on demand)"
-	@echo "  make e2e-perception [BACKEND=mock|grounding_dino]"
-	@echo "                                               scenario curation -> prediction -> evaluation (default mock)"
-	@echo "                                               BACKEND=grounding_dino requires inference-local-up/-gpu-up"
 	@echo "  make e2e-interop                            real Postgres/MinIO -> SceneOpsDataset -> LeRobot -> golden comparison"
 	@echo "                                               Requires: make lerobot-sync (once)"
-	@echo "  make e2e-cleanroom                          THE full-platform acceptance workflow: local-reset -> e2e-scene ->"
-	@echo "                                               e2e-robot-learning -> e2e-perception(mock) -> persisted-state validation"
+	@echo "  make e2e-cleanroom                          THE full-platform acceptance workflow: local-reset -> e2e-recording-scene ->"
+	@echo "                                               e2e-robot-learning -> persisted-state validation"
 	@echo "                                               [DESTRUCTIVE -- wipes Postgres/Redis/MinIO, preserves data/raw]"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Secondary E2E (real nuScenes data, specialized/non-primary coverage):"
 	@echo "=================================================================="
-	@echo "  make e2e-scene-rawlog                       real nuScenes via the raw-log representation (RawLogAdapter/"
-	@echo "                                               segmentation/sampling machinery, shared with the robot-log path)"
-	@echo "  make e2e-scene-analytics-export              Scene-domain analytical Parquet export (distinct from the"
-	@echo "                                               learning-data export, which e2e-robot-learning already exercises)"
+	@echo "  make e2e-scene-analytics-export              Scene-domain analytical Parquet export over recording-derived Scenes"
+	@echo "                                               (distinct from the learning-data export e2e-robot-learning exercises)"
 	@echo "  make e2e-lerobot-container                  containerized variant of e2e-interop's golden round trip"
 	@echo ""
 	@echo "=================================================================="
@@ -158,8 +147,7 @@ help:
 	@echo "  make e2e-episode-building [SCENE=scene-0061]             one Episode build (reuses an existing MCAP recording)"
 	@echo "  make e2e-episode-curation [EPISODE_ID=... | RUN_ID=...]  align/profile/validate/export/curate for one episode"
 	@echo "                                                            (curation-policy selection/rejection mechanism test)"
-	@echo "  make e2e-scenario-curation                                one scenario_curation pipeline dispatch"
-	@echo "  make compare-detection PIPELINE_RUN_ID=pipe-xxx"
+	@echo "  make compare-detection PIPELINE_RUN_ID=pipe-xxx           report on an EXISTING detection_evaluation run"
 	@echo "  make show-runs"
 	@echo "  make show-pipeline PIPELINE_RUN_ID=pipe-xxx"
 	@echo "  make show-job-events JOB_ID=job-xxx"
@@ -168,9 +156,14 @@ help:
 	@echo "=================================================================="
 	@echo "Canonical development baseline (docs/development/canonical-baseline.md):"
 	@echo "=================================================================="
-	@echo "  make canonical-bootstrap      Create-or-verify sceneops-scenes/episodes/canonical @ v0.0 from real"
-	@echo "                                nuScenes data (never mutates an already-matching baseline)"
-	@echo "  make canonical-verify         Read-only re-check of the same v0.0 contract"
+	@echo "  make canonical-bootstrap / canonical-verify   UNAVAILABLE until ADR-007 step 11: the v0.0 baseline"
+	@echo "                                was built by the removed dataset_scene_ingestion pipeline"
+	@echo ""
+	@echo "=================================================================="
+	@echo "Unavailable until ADR-007 step 10 (label ingress + derived sample view; exit 3 with a message):"
+	@echo "=================================================================="
+	@echo "  make e2e-perception           scenario curation -> detection -> evaluation (needs ground truth + keyframes)"
+	@echo "  make e2e-scenario-curation    detection_ready scenario curation (needs ground truth)"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Infrastructure:"
@@ -214,8 +207,7 @@ help:
 	@echo "  make e2e-batch-acquisition SCENE=scene-0061   nuScenes -> dataset-acquisition MCAP -> RobotRun"
 	@echo "  make acquisition-test                       tools/dataset-acquisition tests (isolated venv)"
 	@echo "  make e2e-robot-run-learning SCENE=scene-0061 RATE=10.0   RobotRun -> resolve_recording -> Episode -> learning data"
-	@echo "  make register-nuscenes-dataset"
-	@echo "  make e2e-bootstrap / e2e-bootstrap-core / e2e-bootstrap-interop / e2e-bootstrap-raw-log"
+	@echo "  make e2e-bootstrap / e2e-bootstrap-core / e2e-bootstrap-interop"
 	@echo "                                Persistent E2E fixture bootstrap (idempotent; requires local-up)"
 	@echo "  make prepare-data / clean-artifacts / clean-python"
 	@echo ""
@@ -247,7 +239,6 @@ include makefiles/checks.mk
 include makefiles/e2e.mk
 include makefiles/debug.mk
 include makefiles/lerobot.mk
-include makefiles/nuscenes.mk
 include makefiles/canonical.mk
 include makefiles/streaming.mk
 include makefiles/acquisition.mk

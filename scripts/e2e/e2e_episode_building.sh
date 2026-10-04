@@ -113,9 +113,8 @@ publish_and_register_robot_run "$REPO_ROOT" "$API_BASE_URL" \
   | jq '.job.result | {run_id, created, manifest_checksum}'
 upsert_dataset "$API_BASE_URL" "$DATASET_ID" "Episode building E2E" \
   | jq '.dataset | {datasetId}'
-# No raw_source_root_uri — that's Scene-owned and meaningless here; the
-# episode source is the RobotRun's recording (registered above), not a
-# dataset-version-level raw source root.
+# The episode source is the RobotRun's recording (registered above); a
+# DatasetVersion carries no source location.
 upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" \
   | jq '.version | {datasetId, version, status, scene, episode}'
 echo ""

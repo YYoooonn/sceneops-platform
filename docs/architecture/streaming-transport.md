@@ -586,8 +586,7 @@ matching the transport's own invalid-message-handling approach (§7).
 **Compose:** `compose/ros2.yaml`'s build context is the repo root (`.`)
 so `ros2/Dockerfile` can `COPY packages/sceneops-core
 packages/sceneops-streaming` in -- Docker `COPY` cannot reach outside its
-build context, the same reasoning
-`tools/nuscenes-integration/Dockerfile` documents for itself.
+build context.
 `ros2/Dockerfile` installs both via plain system `pip3 install
 --break-system-packages` (not `uv`) -- `rclpy` lives in this image's
 apt-managed system Python site-packages; a `uv`-managed venv would be
@@ -1246,9 +1245,10 @@ sceneops_integrations.recording publish` against a finalized MCAP, then
 triggers either automatically on finalize. Capture itself stays DB-free
 and never writes RobotRun state.
 
-Not implemented: `BuildScenesJobHandler` consuming a RobotRun recording;
-its `REAL_ROBOT_LOG` path still reads `DatasetVersion.raw_source_root_uri`
-as a local path.
+Canonical Scenes are built from a registered RobotRun's recording by
+`RECORDING_SCENE_BUILDING` ([Scene domain](./scene-domain.md) §6). Capture
+does not record sensor, tf or CameraInfo channels yet, so today only
+batch-acquired recordings carry the channels it needs.
 
 Reliability and scale characteristics of everything above -- crash
 boundaries, duplicate/gap/out-of-order handling, multi-RobotRun

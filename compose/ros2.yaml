@@ -4,8 +4,7 @@ services:
       # Repo root context (not ./ros2) -- the streaming bridge node needs
       # packages/sceneops-core and packages/sceneops-streaming copied into
       # this image, and Docker COPY cannot reach outside its build
-      # context, same reasoning as tools/nuscenes-integration/Dockerfile's
-      # own context: . comment.
+      # context.
       context: .
       dockerfile: ros2/Dockerfile
     image: sceneops-platform/ros2:local

@@ -3,13 +3,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class DatasetType(StrEnum):
-    NUSCENES = "nuscenes"
-    WAYMO = "waymo"
-    KITTI = "kitti"
-    CUSTOM = "custom"
-
-
 class DatasetVersionStatus(StrEnum):
     """Generic, domain-agnostic DatasetVersion lifecycle (SceneOps V2 Request 05).
 

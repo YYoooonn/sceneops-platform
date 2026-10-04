@@ -4,10 +4,9 @@ from enum import StrEnum
 
 
 class PipelineType(StrEnum):
-    # Legacy Scene producers: emit pre-canonical scene manifests that are
-    # never registered as canonical Scenes.
-    DATASET_SCENE_INGESTION = "dataset_scene_ingestion"
-    RAW_LOG_SCENE_BUILDING = "raw_log_scene_building"
+    # One registered RobotRun recording -> canonical Scenes -> registration
+    # -> validation / profiling (ADR-007 §17.3).
+    RECORDING_SCENE_BUILDING = "recording_scene_building"
 
     # Dataset scenes -> scenario set / readiness report
     SCENARIO_CURATION = "scenario_curation"
@@ -17,7 +16,7 @@ class PipelineType(StrEnum):
 
     # Robot rosbag/MCAP -> SceneOps episodes (task-oriented observation+action
     # units, segmented by Mission boundaries) -> registered EpisodeRecords.
-    # Deliberately separate from RAW_LOG_SCENE_BUILDING.
+    # Deliberately separate from RECORDING_SCENE_BUILDING.
     RAW_LOG_EPISODE_BUILDING = "raw_log_episode_building"
 
 

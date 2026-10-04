@@ -20,7 +20,6 @@ from sceneops_core.jobs.schemas.params.detection import (
     DetectionSceneSelectionConfig,
     DetectionSceneSelectionMode,
 )
-from sceneops_core.scenes.testing import external_source
 from sceneops_worker.scenes.artifacts import SceneManifestIntegrityError
 from sceneops_worker.scenes.selection import select_detection_scenes
 
@@ -40,7 +39,6 @@ def _scene_manifest(
     scene_id: str,
     annotation_count: int = 0,
     sample_count: int = 10,
-    ground_truth_source: str | None = None,
 ) -> MagicMock:
     """Stand-in exposing what selection reads from a canonical manifest:
     annotations, source keyframes and the source block."""
@@ -49,11 +47,7 @@ def _scene_manifest(
     manifest.keyframes = MagicMock(
         return_value=[MagicMock() for _ in range(sample_count)]
     )
-    manifest.lineage.source = (
-        external_source(external_format=ground_truth_source)
-        if ground_truth_source
-        else MagicMock()
-    )
+    manifest.lineage.source = MagicMock()
     return manifest
 
 
@@ -476,3 +470,18 @@ async def test_scenario_set_member_without_gt_gets_gt_skip_reason():
         scenario_set_scene_ids={"scene-no-gt"},  # in set but no GT
     )
     assert result["skipped_scenes"][0]["reason"] == "scene_has_no_ground_truth"
+
+
+async def test_explicit_ground_truth_sources_match_no_recording_scene():
+    """Canonical Scenes record no label source until a label ingress exists
+    (ADR-007 Q1), so an explicit ground-truth source filter selects none."""
+    manifests = {"scene-001": _scene_manifest("scene-001", annotation_count=3)}
+    result = await select_detection_scenes(
+        dataset_manifest=_dataset_manifest(["scene-001"]),
+        scene_artifact_store=_store_from_manifests(manifests),
+        selection=_selection(
+            mode=DetectionSceneSelectionMode.GROUND_TRUTH_ONLY,
+            ground_truth_sources=["any-labeler"],
+        ),
+    )
+    assert result["selected_scene_count"] == 0

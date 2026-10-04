@@ -16,6 +16,10 @@
 # generated SceneOps state, canonical-bootstrap's job is (re)creating the
 # canonical development baseline on top of a running stack. See
 # docs/development/canonical-baseline.md for the full contract.
+#
+# UNAVAILABLE until ADR-007 implementation step 11: the v0.0 baseline was
+# built by the removed dataset_scene_ingestion pipeline; both scripts exit 3
+# with a message until the baseline is regenerated from recordings.
 # --------------------
 
 .PHONY: canonical-bootstrap

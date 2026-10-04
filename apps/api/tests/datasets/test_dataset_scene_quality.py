@@ -16,7 +16,6 @@ Covers:
 
 from __future__ import annotations
 
-from sceneops_core.provenance import UnitSourceKind
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.records import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
@@ -43,9 +42,11 @@ def _scene(
         scene_id=scene_id,
         dataset_id="nuscenes",
         dataset_version="v1.0-mini",
-        source_kind=UnitSourceKind.EXTERNAL,
-        external_format="nuscenes",
-        source_unit_key=scene_id,
+        robot_run_id="run-0",
+        unit_key=scene_id,
+        window_clock="mcap_log_time",
+        window_start_timestamp_ns=0,
+        window_end_timestamp_ns=20_000_000_000,
         producer_fingerprint="sha256:" + "a" * 64,
         manifest_artifact_id=f"art-{scene_id}",
         manifest_checksum=_CHECKSUM,

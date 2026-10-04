@@ -1,4 +1,4 @@
-"""Per-task DAG PoC for the SceneOps `dataset_scene_ingestion` pipeline.
+"""Per-task DAG PoC for the SceneOps `recording_scene_building` pipeline.
 
 Triggered by AirflowPipelineExecutionBackend.dispatch_pipeline (SceneOps API)
 via the Airflow REST API, with `conf={"pipeline_run_id": ...}` and a custom
@@ -11,8 +11,9 @@ docs/architecture/jobs-and-pipelines.md §10 for why the pipeline-level status t
 split into explicit `start`/`finalize` tasks rather than living inside each
 per-task invocation.
 
-Limitation: the task chain below is hardcoded to `dataset_scene_ingestion`.
-This DAG does not generalize to other SceneOps pipeline types yet.
+Limitation: the task chain below is hardcoded to `recording_scene_building`
+and runs its tasks serially. This DAG does not generalize to other SceneOps
+pipeline types yet.
 """
 
 from __future__ import annotations
@@ -44,9 +45,12 @@ PIPELINE_RUN_ID = "{{ dag_run.conf['pipeline_run_id'] }}"
 HOST_DATA_DIR = os.environ["HOST_DATA_DIR"]
 DATA_MOUNT = Mount(source=HOST_DATA_DIR, target="/data", type="bind")
 
-# Mirrors DATASET_SCENE_INGESTION_PIPELINE's tasks (sceneops_core.pipelines.builtin).
+# Mirrors RECORDING_SCENE_BUILDING_PIPELINE's tasks (sceneops_core.pipelines.builtin).
 PIPELINE_TASK_IDS = [
-    "ingest_scenes",
+    "build_recording_scenes",
+    "register_scenes",
+    "validate_scene",
+    "profile_scene",
 ]
 
 
@@ -66,7 +70,7 @@ def worker_task(task_id: str, *cli_args: str) -> DockerOperator:
 
 with DAG(
     dag_id="sceneops_pipeline_run",
-    description="Per-task PoC DAG for the dataset_scene_ingestion pipeline",
+    description="Per-task PoC DAG for the recording_scene_building pipeline",
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,

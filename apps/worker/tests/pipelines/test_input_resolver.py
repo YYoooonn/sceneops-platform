@@ -28,7 +28,7 @@ from sceneops_worker.pipelines.input_resolver import PipelineInputResolver
 def _pipeline_run(dataset_id="d1", dataset_version="v1") -> PipelineRunManifest:
     return PipelineRunManifest(
         pipeline_run_id="pr-1",
-        type=PipelineType.RAW_LOG_SCENE_BUILDING,
+        type=PipelineType.RECORDING_SCENE_BUILDING,
         status=PipelineRunStatus.RUNNING,
         dataset_id=dataset_id,
         dataset_version=dataset_version,

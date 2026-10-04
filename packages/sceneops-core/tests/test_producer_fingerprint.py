@@ -12,7 +12,6 @@ from pydantic import ValidationError
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.provenance import (
     PRODUCER_FINGERPRINT_SCHEMA_V1,
-    ExternalSourceRevision,
     ProducerFingerprintMismatchError,
     ProducerInfo,
     RecordingSourceRevision,
@@ -24,8 +23,8 @@ PRODUCER_ID = "sceneops.recording_scene_builder"
 RECORDING = RecordingSourceRevision(
     robot_run_id="run-001", recording_checksum="sha256:" + "a" * 64
 )
-EXTERNAL = ExternalSourceRevision(
-    format="nuscenes", format_version="v1.0-mini", external_revision="r1", checksum=None
+OTHER_RUN = RecordingSourceRevision(
+    robot_run_id="run-002", recording_checksum="sha256:" + "a" * 64
 )
 CONFIG = {
     "selected_channels": ["/camera/front/image", "/lidar/top", "/odom"],
@@ -73,10 +72,35 @@ def test_same_source_config_and_version_give_same_fingerprint():
     )
 
 
-def test_external_source_location_does_not_affect_fingerprint():
-    # ExternalSourceRevision cannot even carry uri / external_name.
+def test_source_revision_carries_no_location():
     with pytest.raises(ValidationError):
-        ExternalSourceRevision(**EXTERNAL.model_dump(), uri="/data/raw/nuscenes")
+        RecordingSourceRevision(
+            **RECORDING.model_dump(), uri="s3://sceneops/robot_runs/run-001"
+        )
+
+
+def test_recording_fingerprint_is_pinned():
+    """The recording source revision serializes exactly as it did when an
+    external source kind also existed (§29.9), so fingerprints of
+    recording-derived manifests are unchanged."""
+    assert _fingerprint() == (
+        "sha256:"
+        + hashlib.sha256(
+            canonical_json_bytes(
+                {
+                    "fingerprint_schema": "sceneops.producer_fingerprint/v1",
+                    "producer_id": PRODUCER_ID,
+                    "semantics_version": 1,
+                    "build_config": CONFIG,
+                    "source": {
+                        "source_kind": "recording",
+                        "robot_run_id": "run-001",
+                        "recording_checksum": "sha256:" + "a" * 64,
+                    },
+                }
+            )
+        ).hexdigest()
+    )
 
 
 @pytest.mark.parametrize(
@@ -107,38 +131,10 @@ def test_external_source_location_does_not_affect_fingerprint():
                 robot_run_id="run-002", recording_checksum="sha256:" + "a" * 64
             )
         },
-        {"source": EXTERNAL},
     ],
 )
 def test_semantic_input_changes_change_the_fingerprint(overrides):
     assert _fingerprint(**overrides) != _fingerprint()
-
-
-@pytest.mark.parametrize(
-    "revision",
-    [
-        ExternalSourceRevision(
-            format="nuscenes",
-            format_version="v1.0-trainval",
-            external_revision="r1",
-            checksum=None,
-        ),
-        ExternalSourceRevision(
-            format="nuscenes",
-            format_version="v1.0-mini",
-            external_revision="r2",
-            checksum=None,
-        ),
-        ExternalSourceRevision(
-            format="nuscenes",
-            format_version="v1.0-mini",
-            external_revision="r1",
-            checksum="sha256:" + "c" * 64,
-        ),
-    ],
-)
-def test_different_external_source_revision_changes_the_fingerprint(revision):
-    assert _fingerprint(source=revision) != _fingerprint(source=EXTERNAL)
 
 
 def test_channel_order_is_semantic_unless_the_producer_sorts():
@@ -203,7 +199,7 @@ def test_producer_info_verify_detects_a_mismatched_source():
     )
     info.verify(RECORDING)
     with pytest.raises(ProducerFingerprintMismatchError):
-        info.verify(EXTERNAL)
+        info.verify(OTHER_RUN)
     tampered = ProducerInfo.model_validate(
         {**info.model_dump(mode="json"), "build_config": {"selected_channels": []}}
     )

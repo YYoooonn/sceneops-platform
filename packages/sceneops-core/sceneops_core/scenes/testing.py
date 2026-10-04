@@ -23,13 +23,7 @@ from typing import Any
 
 from sceneops_core.artifacts.schemas.payload import PayloadRef
 from sceneops_core.common.ids import robot_run_recording_artifact_id
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef
-from sceneops_core.provenance import (
-    ExternalUnitSource,
-    ProducerInfo,
-    RecordingSegmentSource,
-    UnitSource,
-)
+from sceneops_core.provenance import ProducerInfo, RecordingSegmentSource
 
 from .schemas import (
     FrameTransform,
@@ -49,29 +43,6 @@ from .schemas import (
 DEFAULT_PRODUCER_ID = "sceneops.test_scene_producer"
 IDENTITY_ROTATION = (1.0, 0.0, 0.0, 0.0)
 _CAMERA_INTRINSIC = ((1266.4, 0.0, 816.3), (0.0, 1266.4, 491.5), (0.0, 0.0, 1.0))
-
-
-def external_source(
-    *,
-    source_unit_key: str = "scene-0001",
-    external_format: str = "nuscenes",
-    format_version: str = "v1.0-mini",
-    external_revision: str | None = "rev-1",
-    uri: str = "/data/raw/external-dataset",
-    external_name: str | None = None,
-) -> ExternalUnitSource:
-    """Canonical provenance for a unit an integration read from ``uri``
-    under ``external_name``; neither is part of the result."""
-    return ExternalUnitSource.from_ref(
-        ExternalDatasetRef(
-            format=external_format,
-            format_version=format_version,
-            uri=uri,
-            external_name=external_name,
-            external_revision=external_revision,
-        ),
-        source_unit_key=source_unit_key,
-    )
 
 
 def recording_source(
@@ -117,7 +88,7 @@ def payload_ref(
 
 def build_scene_manifest(
     *,
-    source: UnitSource | None = None,
+    source: RecordingSegmentSource | None = None,
     source_clock: str | None = None,
     camera_clock: str | None = None,
     payload_namespace: str = "art-payload",
@@ -130,13 +101,9 @@ def build_scene_manifest(
     annotations_per_keyframe: int = 1,
     category: str = "vehicle.car",
 ) -> SceneManifest:
-    source = source if source is not None else external_source()
+    source = source if source is not None else recording_source()
     if source_clock is None:
-        source_clock = (
-            source.source_clock
-            if isinstance(source, RecordingSegmentSource)
-            else "nuscenes.timestamp_us"
-        )
+        source_clock = source.source_clock
     camera_clock = camera_clock or source_clock
     config = (
         dict(build_config)
@@ -291,10 +258,31 @@ def build_scene_manifest(
     )
 
 
+def semantic_scene_content(manifest: SceneManifest) -> dict[str, Any]:
+    """The canonical semantic content of a Scene (ADR-007 §30.9): the
+    manifest with every acquisition-provenance-dependent field removed.
+
+    Removed: the source block's RobotRun, recording artifact and recording
+    checksum, the producer fingerprint (it covers the source revision), and
+    each payload's artifact id. Kept: build configuration, segment window
+    and unit key, channels, frames, calibrations, observations (ids,
+    timestamps, payload checksum / size / media type), poses, groups and
+    annotations. Two semantically equivalent recordings built with the same
+    producer and a source-semantic configuration have equal content."""
+    data = manifest.model_dump(mode="json")
+    source = data["lineage"]["source"]
+    for field in ("robot_run_id", "recording_artifact_id", "recording_checksum"):
+        source.pop(field)
+    data["lineage"]["producer"].pop("producer_fingerprint")
+    for observation in data["observations"]:
+        observation["payload"].pop("artifact_id")
+    return data
+
+
 __all__ = [
     "DEFAULT_PRODUCER_ID",
     "build_scene_manifest",
-    "external_source",
+    "semantic_scene_content",
     "payload_artifact_id",
     "payload_bytes",
     "payload_ref",

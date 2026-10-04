@@ -1,11 +1,12 @@
 # Scene Domain
 
 A **Scene** is SceneOps' canonical spatiotemporal environmental observation
-unit: within a selected boundary (an external source unit, or a window of a
-robot recording, over a configured set of source channels) it keeps every source
-observation with its own source timing, verbatim source channel identity,
-payload, calibration, coordinate-frame semantics, source poses and source
-annotations, together with source and producer provenance.
+unit: within a selected boundary (a window of a registered RobotRun
+recording, over a configured set of recording channels) it keeps every
+source observation with its own source timing, verbatim source channel
+identity, payload, calibration, coordinate-frame semantics and source
+poses, together with source and producer provenance. Scenes are produced
+only from registered recordings ([ADR-007](../adr/007-canonical-ingestion-architecture.md) §29, §30).
 
 Three things make up a Scene ([ADR-007](../adr/007-canonical-ingestion-architecture.md) §3):
 
@@ -28,7 +29,9 @@ express is a contract amendment.
 ```text
 SceneManifest
   schema_version
-  lineage              source: UnitSource (ExternalUnitSource | RecordingSegmentSource)
+  lineage              source: RecordingSegmentSource (robot_run_id,
+                         recording_artifact_id, recording_checksum, source_clock,
+                         [start_timestamp_ns, end_timestamp_ns), unit_key)
                        producer: ProducerInfo (fingerprint re-derived on parse)
   coordinate_frames[]  frame_id (verbatim) + role: world | ego | sensor
   channels[]           channel (verbatim source identity), modality
@@ -63,12 +66,12 @@ Rules the schema enforces:
   pose, a keyframe group's reference time, an annotation — declares its own
   `source_clock`. A keyframe may group observations whose channels use
   different clocks; each member keeps its own.
-- **Boundaries.** An external Scene's boundary is its source unit
-  (`source_unit_key`); it has no time window, and its observations' extent
-  is never promoted to one. A recording-derived Scene's boundary is its
-  segment's half-open window `[start, end)` in the segment's clock: every
-  timestamp counted in that clock must lie inside it, and timestamps in
-  other clocks are not compared with it.
+- **Boundaries.** A Scene's boundary is its segment's half-open window
+  `[start, end)` in the segment clock, the segmentation clock the producer's
+  build configuration declares (`mcap_log_time`, `mcap_publish_time` or a
+  declared source clock). Every timestamp counted in that clock must lie
+  inside it, and timestamps in other clocks are not compared with it. The
+  window is never derived from the RobotRun's `started_at` / `ended_at`.
 - **Source identity is verbatim.** Channels, frames and categories are the
   source's own names; `modality`, frame `role` and `sensor_id` are canonical
   semantics added alongside them, never instead.
@@ -93,12 +96,9 @@ Rules the schema enforces:
 - **No membership.** A manifest has no `scene_id`, DatasetVersion, status or
   execution context, so identical source + producer + build configuration
   produce byte-identical manifests in any DatasetVersion.
-- **No location or display name.** External provenance is the source
-  revision (`ExternalSourceRevision`) and the `source_unit_key`. The
-  integration's `ExternalDatasetRef.uri` and `external_name` locate and label
-  the source while it is read and are dropped on canonicalization
-  (`ExternalUnitSource.from_ref`), so the same source revision read from any
-  path or URI, under any name, yields the same manifest bytes.
+- **No location.** Provenance names the RobotRun and pins its recording
+  bytes by checksum; it carries no recording URI. Acquisition-origin
+  metadata inside the recording never reaches a manifest.
 
 Bytes go through `SceneManifest.to_canonical_bytes()` (the shared canonical
 JSON serializer) and `load_canonical_scene_manifest()`, which rejects bytes
@@ -109,18 +109,16 @@ that parse but are not already canonical.
 Schema: `sceneops_core.scenes.schemas.records`; table `scenes`.
 
 ```text
-scene_id               deterministic: f(dataset_id, dataset_version, "scene", source identity)
+scene_id               deterministic: f(dataset_id, dataset_version, "scene", robot_run_id, unit_key)
 dataset_id, dataset_version     FK → dataset_versions (RESTRICT)
-source_kind            external | recording
-external_format        set iff external
-robot_run_id           set iff recording; FK → robot_runs (RESTRICT)
-source_unit_key        external source unit key, or recording unit key
+robot_run_id           the source RobotRun; FK → robot_runs (RESTRICT)
+unit_key               the producer's unit key within the recording (segment-<k>)
 producer_fingerprint
 manifest_artifact_id   FK → artifacts (RESTRICT): the current revision
 manifest_checksum
 window_clock, window_start_timestamp_ns, window_end_timestamp_ns
-                       the source's declared window [start, end) in window_clock:
-                       set for a recording segment, all NULL for an external Scene
+                       the segment window [start, end) in window_clock (NOT NULL,
+                       non-empty)
 observed_channels, observation_count, keyframe_count, annotation_count
 registered_at, updated_at
 ```
@@ -132,10 +130,9 @@ registered; its current revision is exactly `manifest_artifact_id`, never
 document, so it never depends on storage location, producer configuration
 or revision. The same source unit in two DatasetVersions is two Scenes.
 
-The window columns are a projection of a boundary the source itself
-declares, never of observation timestamps, and never define identity.
-SceneOps does not compute a cross-clock or observation-extent interval for
-any Scene.
+The window columns are a projection of the declared segment window, never
+of observation extent, and never define identity. SceneOps does not
+compute a cross-clock interval for any Scene.
 
 ## 3. Registration: the only writer
 
@@ -148,15 +145,12 @@ verify   each artifact is a SCENE_MANIFEST; bytes match its size + checksum;
          canonical strict parse; every PayloadRef resolves to an
          OBSERVATION_PAYLOAD ArtifactRecord with exactly its checksum,
          size_bytes and media_type
-scope    one source kind per registration; a recording registration covers one
-         RobotRun, carries one producer fingerprint, and must have been built
-         from that RobotRun's registered recording bytes and clock
-apply    one transaction under the DatasetVersion row lock:
-           external unit      absent → insert · same fingerprint and checksum → no-op
-                              · different → conflict, or repoint with replace=True
-           recording scope    empty → insert · same fingerprint → no-op (whole scope)
-                              · different → conflict, or replace=True: delete ids
-                                absent from the new set, repoint reused ids, insert new
+scope    a registration covers one RobotRun, carries one producer fingerprint, and
+         must have been built from that RobotRun's registered recording bytes
+apply    one transaction under the DatasetVersion row lock, on the recording
+         scope (DatasetVersion, robot_run_id): empty → insert · same fingerprint →
+         no-op (whole scope) · different → conflict, or replace=True: delete ids
+         absent from the new set, repoint reused ids, insert new
          recompute the DatasetVersion summary from membership; commit
 ```
 
@@ -208,21 +202,72 @@ Everything downstream of registration reads canonical Scenes through a pin:
   column is paired with its `source_clock`; observations carry
   `payload_artifact_id`, not a location.
 
-## 6. Legacy Scene producers
+## 6. Producer: RecordingSceneBuilder
 
-The nuScenes scene integration (`DATASET_SCENE_INGESTION` → `INGEST_SCENES`)
-and the raw-log builder (`RAW_LOG_SCENE_BUILDING` → `BUILD_SCENES`) still
-produce pre-canonical, sample-centric manifests
-(`sceneops_core.scenes.legacy`) with payload paths relative to an external
-source root and keyframe-only or sampling-selected frames. Their output is
-stored as `LEGACY_SCENE_MANIFEST` artifacts under `legacy_scenes/`, their
-pipelines end at the producer task, and canonical registration rejects their
-manifests. Neither writes Scene membership or DatasetVersion state.
+`RECORDING_SCENE_BUILDING` builds the Scenes of exactly one RobotRun and
+registers them as the complete set of its recording scope:
+
+```text
+build_recording_scenes   BUILD_RECORDING_SCENES (robot_run_id, build_config)
+register_scenes          REGISTER_SCENES (manifest_artifact_ids from the build; replace)
+validate_scene           VALIDATE_SCENE (scene_ids from registration)
+profile_scene            PROFILE_SCENE (optional)
+```
+
+The builder (`sceneops_worker.scenes.recording_builder`, producer
+`sceneops.recording_scene_builder`, semantics version 1) reads the recording
+only through `resolve_recording(robot_run_id)`, requires it to pass the L1
+conformance suite, and reads messages through
+`sceneops_integrations.recording.reader`. Its behavior is a function of
+recording content and `RecordingSceneBuildConfig`
+(`sceneops_core.scenes.recording_build`), whose normalized form is
+`ProducerInfo.build_config`:
+
+```text
+channels       topic (verbatim) · modality · sensor_id? · time policy · payload extraction
+               · camera_info_topic (cameras)
+time policy    header_stamp (declared clock) | log_time (mcap_log_time)
+               | publish_time (mcap_publish_time)
+frames         ego_frame_id · world_frame_id?   (channel frames are sensor frames)
+calibration    static transform topics (default /tf_static)
+poses          TFMessage topic + parent → child frames + time policy
+segmentation   fixed_duration { clock, duration_ns }
+```
+
+- **Segmentation.** Windows `[origin + k·d, origin + (k+1)·d)` on the
+  segmentation clock, with the origin at the earliest included observation.
+  A window with observations is one Scene with `unit_key = segment-<k>`.
+  Every channel and pose source must be placeable on that clock: its own
+  time is in it, or the clock is `mcap_log_time` / `mcap_publish_time`.
+- **Observations** keep their canonical timestamp in their channel's clock,
+  ordered by timestamp, then MCAP sequence, then per-channel file order;
+  `observation_id = <topic slug>-<rank>`.
+- **Payloads.** `compressed_image` stores CompressedImage `data` unchanged
+  (`image/jpeg`, `image/png`). `ros2_message` stores the recorded CDR message
+  bytes (`application/x.ros2-cdr.<package>.msg.<type>`, e.g. PointCloud2).
+  Each payload is a write-once `OBSERVATION_PAYLOAD` artifact at
+  `{artifact_root}/observation_payloads/{robot_run_id}/{artifact_id}`, owned
+  by the RobotRun. Its id derives from (robot_run_id, topic, per-topic file
+  position, extraction), so rebuilds with other segmentation reuse it.
+- **Calibration** comes from static transforms relative to the ego frame and
+  from CameraInfo intrinsics. Both must be constant for the recording.
+  Distortion or rectification SceneManifest v1 cannot express fails the
+  build.
+- **Poses** are the configured source transforms at their own stamps,
+  without interpolation or per-observation association.
+- **Fail loudly** on a non-conformant recording, a configured topic absent
+  from the recording, an unsupported encoding or image format, missing or
+  changing calibration, or a build with no Scene.
+
+Retries converge: every payload key, manifest key and artifact id is
+deterministic, existing identical bytes and records are reused, and
+anything different fails the job. A changed `build_config` gives a new
+fingerprint, which the registrar rejects unless `replace` is set.
 
 ## 7. API
 
 ```text
-GET /api/v1/scenes?dataset_id=&dataset_version=&source_kind=&external_format=&robot_run_id=
+GET /api/v1/scenes?dataset_id=&dataset_version=&robot_run_id=
 GET /api/v1/scenes/{scene_id}
 GET /api/v1/scenes/{scene_id}/quality                    # current-revision runs only
 GET /api/v1/datasets/{id}/versions/{v}/quality           # dataset-level aggregate

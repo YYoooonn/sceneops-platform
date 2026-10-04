@@ -78,14 +78,12 @@ class DatasetStore:
         version: str,
         required_channels: list[str] | None = None,
         manifest_uri: str | None = None,
-        raw_source_root_uri: str | None = None,
     ) -> DatasetVersionRecord:
         return await self._versions.update_scene_inputs(
             dataset_id=dataset_id,
             version=version,
             required_channels=required_channels,
             manifest_uri=manifest_uri,
-            raw_source_root_uri=raw_source_root_uri,
         )
 
     async def update_episode_summary(

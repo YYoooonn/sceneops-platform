@@ -13,7 +13,6 @@ from sceneops_db.models.scenes import SceneModel, SceneRunRecordModel
 
 from ._utils import (
     base_run_to_values,
-    enum_to_value,
     error_from_json,
     metadata_from_model,
 )
@@ -34,10 +33,8 @@ def scene_model_to_record(model: SceneModel) -> SceneRecord:
         scene_id=model.scene_id,
         dataset_id=model.dataset_id,
         dataset_version=model.dataset_version,
-        source_kind=model.source_kind,
-        external_format=model.external_format,
         robot_run_id=model.robot_run_id,
-        source_unit_key=model.source_unit_key,
+        unit_key=model.unit_key,
         producer_fingerprint=model.producer_fingerprint,
         manifest_artifact_id=model.manifest_artifact_id,
         manifest_checksum=model.manifest_checksum,
@@ -60,10 +57,8 @@ def scene_record_to_values(record: SceneRecord) -> dict[str, Any]:
         "scene_id": record.scene_id,
         "dataset_id": record.dataset_id,
         "dataset_version": record.dataset_version,
-        "source_kind": enum_to_value(record.source_kind),
-        "external_format": record.external_format,
         "robot_run_id": record.robot_run_id,
-        "source_unit_key": record.source_unit_key,
+        "unit_key": record.unit_key,
         "producer_fingerprint": record.producer_fingerprint,
         "manifest_artifact_id": record.manifest_artifact_id,
         "manifest_checksum": record.manifest_checksum,

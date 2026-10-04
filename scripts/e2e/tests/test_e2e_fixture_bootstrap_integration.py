@@ -7,7 +7,7 @@ matching packages/sceneops-db/tests/conftest.py and
 packages/sceneops-storage/tests/conftest.py's own convention.
 
 Deliberately does NOT roll back or clean up afterward: bootstrapping
-test-e2e-core/test-e2e-interop/test-e2e-raw-log here IS the intended
+test-e2e-core/test-e2e-interop here IS the intended
 persistent deliverable (shared fixtures other E2Es/tests can rely on
 already existing), not test pollution -- see
 docs/development/local-development.md's E2E fixture catalog section. A
@@ -43,8 +43,6 @@ from e2e_fixture_bootstrap import (  # noqa: E402
     CORE_DATASET_VERSION,
     INTEROP_DATASET_ID,
     INTEROP_DATASET_VERSION,
-    RAW_LOG_DATASET_ID,
-    RAW_LOG_DATASET_VERSION,
     bootstrap_e2e_fixtures,
     verify_e2e_fixture,
 )
@@ -156,40 +154,28 @@ async def test_interop_bootstrap_idempotent_and_verifiable_against_real_infra():
     ]
 
 
-async def test_core_and_raw_log_bootstrap_idempotent_and_verifiable():
+async def test_core_bootstrap_idempotent_and_verifiable():
     artifact_store, analytics_root_uri = _artifact_store()
 
-    async with async_session_scope() as session:
-        first = await bootstrap_e2e_fixtures(
-            "core",
-            session=session,
-            artifact_store=artifact_store,
-            analytics_root_uri=analytics_root_uri,
-        )
-        await session.commit()
-    async with async_session_scope() as session:
-        second = await bootstrap_e2e_fixtures(
-            "raw-log",
-            session=session,
-            artifact_store=artifact_store,
-            analytics_root_uri=analytics_root_uri,
-        )
-        await session.commit()
+    results = []
+    for _ in range(2):
+        async with async_session_scope() as session:
+            results.append(
+                await bootstrap_e2e_fixtures(
+                    "core",
+                    session=session,
+                    artifact_store=artifact_store,
+                    analytics_root_uri=analytics_root_uri,
+                )
+            )
+            await session.commit()
 
-    assert first[0].dataset_id == CORE_DATASET_ID
-    assert first[0].dataset_version == CORE_DATASET_VERSION
-    assert second[0].dataset_id == RAW_LOG_DATASET_ID
-    assert second[0].dataset_version == RAW_LOG_DATASET_VERSION
-    assert first[0].dataset_id != second[0].dataset_id
+    for [result] in results:
+        assert result.dataset_id == CORE_DATASET_ID
+        assert result.dataset_version == CORE_DATASET_VERSION
 
     async with async_session_scope() as session:
         core_verify = await verify_e2e_fixture(
             "core", session=session, artifact_store=artifact_store
         )
-    async with async_session_scope() as session:
-        raw_log_verify = await verify_e2e_fixture(
-            "raw-log", session=session, artifact_store=artifact_store
-        )
-
     assert core_verify[0].ok, core_verify[0].errors
-    assert raw_log_verify[0].ok, raw_log_verify[0].errors

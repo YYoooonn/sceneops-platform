@@ -41,7 +41,7 @@ SceneOps Platform currently implements a local-first, production-shaped data and
 | Scenario curation          | ✅ Experimental | Scene mining + readiness scoring               |
 | Scenario records/artifacts | ✅              | ScenarioSet + scenario run records             |
 | Reliable batch execution   | ✅              | `execution_key` idempotency, partial retry, per-task quality gate |
-| Airflow pipeline backend   | ✅ PoC          | Per-task DAG execution (`dataset_scene_ingestion` only) as an alternate dispatch backend to Celery |
+| Airflow pipeline backend   | ✅ PoC          | Per-task DAG execution (`recording_scene_building` only) as an alternate dispatch backend to Celery |
 | Analytics export (Parquet) | ✅              | Dataset + robot tables via Polars/PyArrow; DuckDB SQL query support |
 | E2E scripts                | ✅              | Dataset, detection, comparison, curation, robot CAN-replay flows |
 | Operations views           | ✅              | Summary, timeline, failures                    |
@@ -190,8 +190,8 @@ Pipeline
 
 #### Implemented pipelines
 
-`dataset_scene_ingestion` / `raw_log_scene_building` (experimental, legacy Scene producers)
-  ingest_scenes / build_scenes — emit pre-canonical scene manifests that are never registered as Scenes (see [Scene domain](docs/architecture/scene-domain.md))
+`recording_scene_building`
+  build_recording_scenes → register_scenes → validate_scene → profile_scene — one registered RobotRun recording → canonical Scenes (see [Scene domain](docs/architecture/scene-domain.md))
 
 `detection_evaluation`
   predict_detection → evaluate_detection
@@ -202,7 +202,7 @@ Pipeline
 `raw_log_episode_building` (v2)
   build_episodes → register_episode → validate_episode → profile_episode
 
-Canonical Scenes are registered by the standalone `register_scenes` job (the only writer of Scene membership) from published canonical SceneManifest artifacts, then assessed by `validate_scene` / `profile_scene`; see [Scene domain](docs/architecture/scene-domain.md).
+Canonical Scenes are built only from registered RobotRun recordings; `register_scenes` is the only writer of Scene membership. See [Scene domain](docs/architecture/scene-domain.md).
 
 #### Standalone robot jobs (v2)
 
@@ -266,26 +266,20 @@ ScenarioSet lineage is recorded in both inference and evaluation run metadata.
 
 ### Quickstart
 
-> The Scene E2E flows below assume registered Scenes. The current Scene
-> producers emit only legacy (non-registrable) manifests, so these flows do
-> not complete until a producer publishes canonical SceneManifests — see
+> `make e2e-recording-scene` builds canonical Scenes from a recording. The
+> detection / scenario flows below need ground truth and keyframes, which
+> recording-derived Scenes do not carry until a label ingress exists — see
 > [Reserved architecture and current limitations](docs/architecture/reserved-and-limitations.md) §2.
 
 ```bash
-make e2e-scene                    # dataset_scene_ingestion pipeline (10 nuScenes GT scenes)
-make e2e-scene-rawlog             # raw_log_scene_building pipeline (20 non-GT scenes)
-make inference-local-up
-make e2e-perception BACKEND=grounding_dino   # composes scenario curation -> prediction -> evaluation
-make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>
+make e2e-recording-scene          # nuScenes -> acquisition -> RobotRun -> canonical Scenes -> quality
 ```
 
-`e2e-perception` runs scenario curation internally and hands its `scenario_set_id`
-off automatically — no separate `make e2e-scenario-curation` step or
-`SCENARIO_SET_ID`/`SCENARIO_CURATION_PIPELINE_RUN_ID` variable to manage. Use
-the standalone `make e2e-scenario-curation` debug target only if you want to
-inspect scenario mining in isolation, without also running detection.
-
-> `PIPELINE_RUN_ID` in `compare-detection` is the detection-evaluation pipeline run ID.
+`make e2e-perception` and `make e2e-scenario-curation` are **unavailable
+until ADR-007 implementation step 10** and exit with a message; the
+example outputs below are point-in-time results recorded before Scenes
+became recording-derived. `make compare-detection PIPELINE_RUN_ID=...`
+still reports on an existing detection-evaluation run.
 
 ### Example output — 30-scene dataset: 10 GT (nuScenes) + 20 non-GT (raw-log-style)
 
@@ -364,9 +358,10 @@ runs internally either way — no separate command or ScenarioSet ID to thread
 through by hand.
 
 ```bash
+# Unavailable until ADR-007 implementation step 10 (see above); recorded with
+# the former nuScenes Scene ingestion:
 make local-up
 make inference-local-up   # or make inference-gpu-up for GPU
-make e2e-scene
 make e2e-perception BACKEND=grounding_dino
 ```
 
@@ -412,8 +407,7 @@ Scenario curation converts scene-level quality signals into a data-selection wor
 > No image or lidar data is loaded.
 
 ```bash
-make e2e-scene
-make e2e-scenario-curation
+make e2e-scenario-curation   # unavailable until ADR-007 implementation step 10
 ```
 
 The script prints both `pipeline_run_id` and `scenario_set_id` on completion --
@@ -637,8 +631,6 @@ curl http://localhost:8000/openapi.json | jq '.paths | keys[]'
 cp .env.example .env.local          # configure storage backend, DB, Redis
 make setup                          # install deps + pre-commit hooks
 make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
-make register-nuscenes-dataset      # register nuScenes fixture
-make canonical-bootstrap            # create-or-verify the sceneops-canonical/v0.0 dev baseline -- see [docs/development/canonical-baseline.md](docs/development/canonical-baseline.md)
 make test                           # infrastructure-independent unit tests
 make test-integration               # real Postgres + MinIO tests
 make e2e-cleanroom                  # the full-platform acceptance workflow (destructive local-reset + real E2E) -- see [docs/development/local-development.md](docs/development/local-development.md)
@@ -677,8 +669,7 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | `make local-reset` | **Destructive** — wipe all local Postgres/Redis/MinIO data, bring up a fresh stack from the same images (no rebuild — run `make compose-build` first if source changed) |
 | `make status` / `make logs` | Service status / follow logs                 |
 | `make db-migrate`  | Run Alembic upgrade head (also run by `local-up`)      |
-| `make canonical-bootstrap` | Create-or-verify the frozen `sceneops-canonical/v0.0` dev baseline (+ its Scene-only/Episode-only siblings) — see [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
-| `make canonical-verify` | Read-only re-check of the same v0.0 contract |
+| `make canonical-bootstrap` / `make canonical-verify` | **Unavailable until ADR-007 implementation step 11** (the frozen v0.0 baseline was built by a removed pipeline) — see [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make streaming-up` / `make streaming-down` | Opt-in local Kafka broker for the streaming transport — never part of `make local-up`; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
 
 
@@ -707,30 +698,29 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 
 |  Command | Description |
 | --- | --- |
-| `make e2e-scene` | Real nuScenes → SceneRecord → validation/profile/manifest |
+| `make e2e-recording-scene [SCENE=scene-0061]` | nuScenes → acquisition container → MCAP → RobotRun → `recording_scene_building` → canonical Scenes → validation/profile, through FastAPI |
 | `make e2e-robot-learning [SCENE=scene-0061 \| MAX_SCENES=N]` | *(ROS2, built on demand)* Real CAN bus → ROS2 → MCAP → Episode → learning export/curation |
-| `make e2e-perception [BACKEND=mock\|grounding_dino]` | Scenario curation → prediction → evaluation (default `mock`; `grounding_dino` requires `inference-local-up`/`-gpu-up`) |
+| `make e2e-perception [BACKEND=mock\|grounding_dino]` | **Unavailable until ADR-007 implementation step 10** (needs ground truth and keyframes on recording-derived Scenes) |
 | `make e2e-interop` | Real Postgres/MinIO → SceneOpsDataset → LeRobot → golden comparison; requires `make lerobot-sync` |
-| `make e2e-cleanroom` | **The full-platform acceptance workflow**: `local-reset` → `e2e-scene` → `e2e-robot-learning` → `e2e-perception`(mock) → persisted-state validation. **Destructive** (preserves `data/raw`) |
+| `make e2e-cleanroom` | **The full-platform acceptance workflow**: `local-reset` → `e2e-recording-scene` → `e2e-robot-learning` → persisted-state validation. **Destructive** (preserves `data/raw`) |
 
 **Secondary E2E:**
 
 |  Command | Description |
 | --- | --- |
-| `make e2e-scene-rawlog` | Real nuScenes via the raw-log representation (shares segmentation/sampling machinery with the robot-log path) |
-| `make e2e-scene-analytics-export` | Scene-domain analytical Parquet export (distinct from Phase 5's `EXPORT_LEARNING_DATA`) |
+| `make e2e-scene-analytics-export` | Scene-domain analytical Parquet export over recording-derived Scenes (distinct from `EXPORT_LEARNING_DATA`) |
 | `make e2e-lerobot-container` | Containerized variant of `e2e-interop`'s golden round trip |
 | `make e2e-ros2-streaming [SCENE=scene-0061 \| RATE=10.0]` | Real nuScenes CAN → ROS2 → streaming bridge → real Kafka → consumer; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
 | `make e2e-streaming-capture [SCENE=scene-0061 \| RATE=10.0]` | Real Kafka → durable MCAP capture (run-scoped consumer) → RosbagAdapter compatibility check; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) Part 3 |
 | `make e2e-robot-run-registration [SCENE=scene-0061 \| RATE=10.0]` | Captured MCAP → ArtifactStore → ArtifactRecord → canonical `RobotRun` (real Postgres/MinIO), plus idempotent-retry/conflict verification; requires `make local-up` and `make streaming-up` |
 | `make e2e-robot-run-learning [SCENE=scene-0061 \| RATE=10.0]` | Streamed capture → canonical `RobotRun` → materialization → existing Episode/learning-data pipeline (distinct from `e2e-robot-learning`'s batch CAN→ROS2→MCAP path above); requires `make local-up` and `make streaming-up` |
-| `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Dataset quality + detection run comparison; includes ScenarioSet lineage when available |
+| `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Report on an existing detection-evaluation run (no new one can be produced until ADR-007 step 10) |
 
-**Smoke** (transport/liveness only — never creates persistent domain data): `make smoke-api`, `make smoke-nuscenes-container`, `make smoke-lerobot-container`, `make smoke-streaming` *(requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md))*.
+**Smoke** (transport/liveness only — never creates persistent domain data): `make smoke-api`, `make smoke-lerobot-container`, `make smoke-streaming` *(requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md))*.
 
-**Verification** (execution-model/backend-substitution properties, not domain workflows): `make verify-reliability`, `make verify-airflow-backend` *(requires `make airflow-up`; an alternate-orchestrator compatibility check for `dataset_scene_ingestion` only, not general backend substitution)*.
+**Verification** (execution-model/backend-substitution properties, not domain workflows): `make verify-reliability`, `make verify-airflow-backend` *(requires `make airflow-up`; an alternate-orchestrator compatibility check, not general backend substitution)*. Both run `recording_scene_building` on a camera RobotRun they acquire once and then reuse.
 
-**Debug / Stage commands** (individual pipeline stages, for manual debugging — not primary E2E workflows): `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0`, `make e2e-episode-building`, `make e2e-episode-curation` (the curation-policy selection/rejection mechanism test), `make e2e-scenario-curation`.
+**Debug / Stage commands** (individual pipeline stages, for manual debugging — not primary E2E workflows): `make e2e-robot-can-replay SCENE=scene-0061 RATE=10.0`, `make e2e-episode-building`, `make e2e-episode-curation` (the curation-policy selection/rejection mechanism test).
 
 
 ### ROS2 / Robot (v2)
@@ -765,8 +755,8 @@ sceneops-platform/
 │           │                       #   ResultBuilder, ResultRecorder, QualityGate
 │           ├── jobs/dataset/       # handlers: scene + episode (v2) build/register/validate/profile, dataset aggregation
 │           ├── jobs/               # evaluation/, inference/, scenarios/, robots/ (v2)
-│           ├── scenes/             # validator, profiler, raw scene builder, selection filter
-│           ├── datasets/ingestion/ # nuscenes_ingestion.py (IntegrationRequest builders, HTTP), RosbagAdapter (v2, real CDR decoding)
+│           ├── scenes/             # recording scene builder, registrar, validator, profiler, selection filter
+│           ├── datasets/ingestion/ # RosbagAdapter (Episode / robot-state read of a recording)
 │           ├── evaluation/detection/  # CenterDistanceDetectionEvaluator, accumulator
 │           ├── inference/          # mock / ONNX / GroundingDINO + frustum-lift backends
 │           ├── stores/robots.py    # RobotStore (v2)
@@ -781,7 +771,7 @@ sceneops-platform/
 │   └── sceneops-analytics/         # Parquet table builders, DuckDB query helper (v2 adds robot tables)
 ├── tools/                          # isolated uv projects, outside the workspace:
 │                                   #   dataset-acquisition (external dataset → L1 MCAP; no SceneOps deps),
-│                                   #   lerobot-integration, nuscenes-integration
+│                                   #   lerobot-integration
 ├── ros2/                           # (v2) ROS2 Jazzy Docker sandbox
 │   ├── Dockerfile                  #   rclpy, rosbag2, MCAP storage plugin, nuscenes-devkit
 │   └── nodes/can_replay_node.py    #   CanReplayNode — nuScenes CAN → real ROS2 topics
@@ -819,7 +809,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * Scenario readiness scoring currently uses metadata and scene-quality signals, not image/LiDAR content.
 * Scene reconstruction, auto-labeling, and generated dataset preparation pipelines are defined but not implemented.
 * Operations and leaderboard APIs exist, but there is no dedicated web UI yet.
-* The Airflow pipeline backend is a per-task DAG PoC hardcoded to `dataset_scene_ingestion`; other pipeline types still only run through Celery.
+* The Airflow pipeline backend is a per-task DAG PoC hardcoded to `recording_scene_building`; other pipeline types still only run through Celery.
 * **(v2)** Binary sensor payloads (`sensor_msgs/Image`, `PointCloud2`) decode via CDR but aren't written to files yet — no real camera/LiDAR-publishing ROS2 node exists to test against.
 * **(v2)** `/vehicle/control` and `/mission/status` use a `std_msgs/String` + JSON bridge, not a proper custom `.msg` package (would need a `colcon` build step).
 * **(v2)** Streamed telemetry does feed MCAP and canonical `RobotRun` registration now (Kafka transport → ROS2 bridge → durable MCAP capture, single-run or continuous multi-run → Recording Publisher → `REGISTER_ROBOT_RUN` → existing Episode pipeline), but there is still no live robot control, no automatic trigger from a finalized capture into registration (publication and registration are explicit steps), and no process-restart or Kafka-rebalance recovery for continuous multi-run capture; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) and `docs/adr/005-ros2-vs-kafka-boundary.md` for the current contract.
@@ -827,7 +817,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 
 ### Roadmap
 
-* Generalize the Airflow per-task DAG PoC beyond `dataset_scene_ingestion` to other pipeline types.
+* Generalize the Airflow per-task DAG PoC beyond `recording_scene_building` to other pipeline types.
 * Evaluation-aware scenario mining using FP/FN and per-scene metric signals.
 * Pseudo-label candidate workflow for no-GT or weakly labeled scenes.
 * VLM-based semantic scene tagging.
@@ -836,7 +826,6 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * Per-scenario item table for queryable scenario candidates and review status.
 * Web UI on top of existing operations and leaderboard APIs.
 * Cloud object storage hardening, including stronger artifact lifecycle and integrity checks.
-* **(v2)** Write decoded camera/LiDAR payloads to the Artifact Store and wire `RosbagAdapter` into `build_scenes` for full `SceneRecord` registration from robot data, not just `RobotState`/`Mission`.
 * **(v2)** A real custom ROS2 `.msg` package for `/vehicle/control` and `/mission/status`, replacing the JSON-over-`std_msgs/String` bridge.
 * **(v2)** Automatic triggering of `RobotRun` registration from a finalized streamed capture (today explicit publish + `POST /robot-runs:register` steps), process-restart and Kafka-rebalance recovery for continuous multi-run capture, and eventual live robot control as its own service — not `apps/worker`. The Kafka telemetry transport, ROS2 → Kafka streaming bridge, durable MCAP capture (single-run and continuous multi-run, with capture-session lifecycle), and canonical `RobotRun` registration are all done — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md).
 * **(v2)** Scale-testing with synthetic multi-robot telemetry (N virtual robots, robot-fleet/mission-ingestion throughput — unrelated to the completed learning-data "Phase 5" scaling work below) to compare local (Polars/DuckDB) vs. distributed (Spark) processing for that ingestion path specifically. (This is a distinct, still-open roadmap item, not to be confused with the learning-data storage/access "Phase 5" work, which already measured its own single-node-vs-distributed boundary and concluded Spark is not currently justified there — see [Scalable learning data](docs/architecture/scalable-learning-data.md) §10.)

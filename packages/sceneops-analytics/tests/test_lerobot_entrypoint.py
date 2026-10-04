@@ -44,7 +44,7 @@ from sceneops_core.artifacts.schemas import (  # noqa: E402
     ArtifactKind,
     ArtifactRef,
 )
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef  # noqa: E402
+from sceneops_core.integration_runtime import ExternalDatasetRef  # noqa: E402
 from sceneops_core.integration_runtime import (  # noqa: E402
     CanonicalDatasetRef,
     IntegrationOperation,

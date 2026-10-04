@@ -12,7 +12,7 @@ Fingerprint definition (frozen)::
         "producer_id":        producer_id,
         "semantics_version":  semantics_version,
         "build_config":       normalized build_config,
-        "source":             SourceRevision (JSON),
+        "source":             RecordingSourceRevision (JSON),
     })))
 
 Equal fingerprints mean semantically equivalent construction: same source
@@ -34,14 +34,13 @@ from pydantic import (
     Field,
     StrictInt,
     StrictStr,
-    TypeAdapter,
     field_validator,
 )
 
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.identifiers import validate_producer_id
 
-from .sources import SHA256_CHECKSUM_PATTERN, SourceRevision
+from .sources import SHA256_CHECKSUM_PATTERN, RecordingSourceRevision
 
 PRODUCER_FINGERPRINT_SCHEMA_V1: Final = "sceneops.producer_fingerprint/v1"
 
@@ -61,8 +60,6 @@ EXECUTION_SCOPED_CONFIG_KEYS: Final = frozenset(
         "worker_hostname",
     }
 )
-
-_SOURCE_REVISION_ADAPTER: Final = TypeAdapter(SourceRevision)
 
 
 def _check_plain_json(value: Any, path: str) -> None:
@@ -136,9 +133,9 @@ def compute_producer_fingerprint(
     producer_id: str,
     semantics_version: int,
     build_config: Mapping[str, Any],
-    source: SourceRevision,
+    source: RecordingSourceRevision,
 ) -> str:
-    source_revision = _SOURCE_REVISION_ADAPTER.validate_python(source)
+    source_revision = RecordingSourceRevision.model_validate(source)
     payload = {
         "fingerprint_schema": PRODUCER_FINGERPRINT_SCHEMA_V1,
         "producer_id": validate_producer_id(producer_id),
@@ -193,7 +190,7 @@ class ProducerInfo(BaseModel):
         producer_id: str,
         semantics_version: int,
         build_config: Mapping[str, Any],
-        source: SourceRevision,
+        source: RecordingSourceRevision,
     ) -> ProducerInfo:
         return cls(
             producer_id=producer_id,
@@ -207,7 +204,7 @@ class ProducerInfo(BaseModel):
             ),
         )
 
-    def verify(self, source: SourceRevision) -> None:
+    def verify(self, source: RecordingSourceRevision) -> None:
         expected = compute_producer_fingerprint(
             producer_id=self.producer_id,
             semantics_version=self.semantics_version,

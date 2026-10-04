@@ -11,7 +11,6 @@ from sceneops_worker.runs import RunArtifactStore
 from sceneops_worker.scenes import SceneArtifactStore
 from sceneops_worker.scenes.keyframes import (
     KeyframeSample,
-    annotation_source,
     keyframe_samples,
     load_pinned_scene,
 )
@@ -88,7 +87,7 @@ async def build_scene_index(
             observation_count=len(manifest.observations),
             annotation_count=annotation_count,
             has_ground_truth=annotation_count > 0,
-            ground_truth_source=annotation_source(manifest),
+            ground_truth_source=None,
         )
         scenes.append(entry)
         scenes_by_id[entry.scene_id] = entry

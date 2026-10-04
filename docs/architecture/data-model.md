@@ -63,9 +63,11 @@ Key fields:
   — its own independent rollup, not derived from or overwritten by the
   Scene fields above; see the aggregate-summary contract below).
 - `required_channels` (validation default), `manifest_uri` (derived dataset
-  manifest location), `raw_source_root_uri` (legacy raw-log builder input):
-  Scene inputs that are not membership, patched through
+  manifest location): Scene inputs that are not membership, patched through
   `update_scene_inputs`.
+
+A DatasetVersion carries no source location or source format; it relates
+to RobotRuns only through its units' provenance. `datasets` has no `type`.
 
 A DatasetVersion caches no quality result. Scene and Episode readiness are
 derived from run records (`scene_run_records` / `episode_run_records`),
@@ -82,7 +84,7 @@ rows owned by `(dataset_id, dataset_version)`, and `episode_count` a live
 count of `EpisodeRecord` rows, at the moment each was last written. They are
 **not** a metric of the latest ingest/build/register operation
 (`registered_episode_count` on `RegisterEpisodeJobResult`, or the number of
-scenes a single `build_scenes`/`ingest_scenes` dispatch happened to process,
+scenes a single `build_recording_scenes` dispatch happened to build,
 are the correct place for that — job results, never the DatasetVersion
 summary).
 
@@ -165,17 +167,15 @@ projecting the manifest revision `manifest_artifact_id` names. Written only
 by Scene registration. There is no status column.
 
 Key fields (contract: [Scene domain](./scene-domain.md) §2):
-- `scene_id`: deterministic from `(dataset_id, dataset_version, source identity)`.
+- `scene_id`: deterministic from `(dataset_id, dataset_version, robot_run_id, unit_key)`.
 - `dataset_id`, `dataset_version`: FK to `dataset_versions` (RESTRICT).
-- `source_kind`, `external_format` / `robot_run_id` (FK to `robot_runs`,
-  RESTRICT), `source_unit_key`, `producer_fingerprint`: source and producer
-  projections; a CHECK constraint keeps the external/recording columns
-  consistent.
+- `robot_run_id` (NOT NULL, FK to `robot_runs`, RESTRICT), `unit_key`,
+  `producer_fingerprint`: source and producer projections.
 - `manifest_artifact_id` (FK to `artifacts`, RESTRICT), `manifest_checksum`:
   the current revision.
 - `window_clock`, `window_start_timestamp_ns`, `window_end_timestamp_ns`:
-  the source's declared window (a recording segment), all NULL for an
-  external Scene; a CHECK constraint keeps them all-or-none and non-empty.
+  the segment window in the producer's declared segmentation clock (NOT
+  NULL; `ck_scenes_segment_window` keeps it non-empty).
 - `observed_channels`, `observation_count`, `keyframe_count`,
   `annotation_count`: searchable projections.
 
@@ -279,8 +279,7 @@ DB row (see [Reserved architecture and current limitations](./reserved-and-limit
 ## 7. PipelineRun / PipelineTaskRun
 
 `pipeline_runs` — one pipeline execution. `type` is `PipelineType`:
-`dataset_scene_ingestion`, `raw_log_scene_building` (both legacy Scene
-producers), `scenario_curation`, `detection_evaluation`,
+`recording_scene_building`, `scenario_curation`, `detection_evaluation`,
 `raw_log_episode_building`.
 
 `pipeline_task_runs` — individual tasks inside a run. `task_order` gives
@@ -299,7 +298,7 @@ stops a pipeline mid-run.
 `jobs` — the actual unit of work. `type` is `JobType`:
 
 ```text
-INGEST_SCENES, BUILD_SCENES                          # legacy scene producers
+BUILD_RECORDING_SCENES                               # RobotRun recording -> canonical scenes
 BUILD_DATASET_MANIFEST, BUILD_SCENE_INDEX             # dataset-level aggregation
 REGISTER_SCENES, VALIDATE_SCENE, PROFILE_SCENE         # scene-level
 COMPARE_SCENES, AUTO_LABEL_SCENE, EXPORT_SCENE_PACKAGE # scene-level, reserved (no handler)

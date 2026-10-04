@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from sceneops_core.episodes.schemas.records import EpisodeRecord
-from sceneops_core.scenes.testing import external_source
+from sceneops_core.scenes.testing import recording_source
 from sceneops_db.models.artifacts import ArtifactModel
 from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
 from sceneops_db.models.episodes import EpisodeModel
@@ -144,7 +144,7 @@ async def test_scene_and_episode_domains_stay_independent_while_both_grow(
                 db_session,
                 dataset_id=dataset_id,
                 dataset_version=version,
-                source=external_source(source_unit_key=source_unit_key),
+                source=recording_source(unit_key=source_unit_key),
             )
         )
 

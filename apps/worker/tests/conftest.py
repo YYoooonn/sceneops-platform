@@ -165,7 +165,9 @@ class SceneWorld:
         self.root = str(root)
         self.artifact_store = LocalArtifactStore(root_uri=self.root)
         self.scene_artifact_store = SceneArtifactStore(
-            artifact_store=self.artifact_store, dataset_root_uri=f"{self.root}/datasets"
+            artifact_store=self.artifact_store,
+            dataset_root_uri=f"{self.root}/datasets",
+            payload_root_uri=f"{self.root}/observation_payloads",
         )
         self.artifacts: dict = {}
         self.scenes = _StagedSceneStore()
@@ -176,6 +178,9 @@ class SceneWorld:
         self.commits = 0
         self.rollbacks = 0
         self.context = self._build_context()
+        # The RobotRun that sceneops_core.scenes.testing.recording_source()
+        # points at by default.
+        self.add_robot_run("run-001", recording_checksum="sha256:" + "1" * 64)
 
     def _build_context(self) -> MagicMock:
         ctx = MagicMock()

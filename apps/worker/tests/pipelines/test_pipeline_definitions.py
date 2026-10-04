@@ -6,7 +6,7 @@ import pytest
 
 from sceneops_core.pipelines.builtin import (
     BUILTIN_PIPELINE_DEFINITIONS,
-    RAW_LOG_SCENE_BUILDING_PIPELINE,
+    RECORDING_SCENE_BUILDING_PIPELINE,
     SCENARIO_CURATION_PIPELINE,
 )
 from sceneops_core.pipelines.schemas import PipelineType
@@ -15,16 +15,14 @@ from sceneops_core.jobs.schemas import JobType
 
 _SUPPORTED_TYPES = {
     PipelineType.DETECTION_EVALUATION,
+    PipelineType.RECORDING_SCENE_BUILDING,
 }
 
 # Experimental pipelines: supported=True, implemented=True, experimental=True.
-# They can be created/run but are hidden from default API listing. The two
-# legacy Scene producers are here: they emit non-canonical manifests only.
+# They can be created/run but are hidden from default API listing.
 _EXPERIMENTAL_SUPPORTED_TYPES = {
     PipelineType.SCENARIO_CURATION,
     PipelineType.RAW_LOG_EPISODE_BUILDING,
-    PipelineType.DATASET_SCENE_INGESTION,
-    PipelineType.RAW_LOG_SCENE_BUILDING,
 }
 
 _UNSUPPORTED_TYPES: set[PipelineType] = set()
@@ -60,50 +58,56 @@ class TestPipelineDefinitionMetadata:
             assert d.experimental is True, f"{pipeline_type} should be experimental"
 
 
-class TestBuildScenesTaskConfig:
-    """Verify build_scenes default_params: channels come from dataset, not hardcoded."""
+class TestRecordingSceneBuildingPipeline:
+    """RobotRun -> canonical Scenes -> registration -> validation / profile
+    (ADR-007 §17.3, §29.2)."""
 
-    def _get_task(self, task_id: str):
-        return next(
-            t
-            for t in RAW_LOG_SCENE_BUILDING_PIPELINE.tasks
-            if t.pipeline_task_id == task_id
-        )
+    def _tasks(self):
+        return {t.pipeline_task_id: t for t in RECORDING_SCENE_BUILDING_PIPELINE.tasks}
 
-    def test_build_scenes_sampling_has_missing_channel_policy(self) -> None:
-        task = self._get_task("build_scenes")
-        sampling = task.default_params.get("sampling", {})
-        assert "missing_channel_policy" in sampling
+    def test_task_chain(self) -> None:
+        tasks = self._tasks()
+        assert [
+            (t.pipeline_task_id, t.job_type, t.depends_on_pipeline_task_ids)
+            for t in sorted(tasks.values(), key=lambda t: t.order)
+        ] == [
+            ("build_recording_scenes", JobType.BUILD_RECORDING_SCENES, []),
+            ("register_scenes", JobType.REGISTER_SCENES, ["build_recording_scenes"]),
+            ("validate_scene", JobType.VALIDATE_SCENE, ["register_scenes"]),
+            ("profile_scene", JobType.PROFILE_SCENE, ["register_scenes"]),
+        ]
 
-    def test_build_scenes_required_channels_not_hardcoded_in_default_params(
-        self,
-    ) -> None:
-        # required_channels must come from DatasetVersionRecord, not be hardcoded here.
-        task = self._get_task("build_scenes")
-        sampling = task.default_params.get("sampling", {})
-        assert "required_channels" not in sampling, (
-            "required_channels must not be hardcoded in build_scenes.default_params; "
-            "it is injected from DatasetVersionRecord by BuildScenesJobHandler"
-        )
+    def test_refs_hand_the_complete_set_to_the_registrar(self) -> None:
+        tasks = self._tasks()
+        build_refs = {
+            o.name for o in tasks["build_recording_scenes"].outputs if o.kind == "ref"
+        }
+        register_refs = {
+            o.name for o in tasks["register_scenes"].outputs if o.kind == "ref"
+        }
+        assert "manifest_artifact_ids" in build_refs
+        assert register_refs == {"scene_ids"}
+
+    def test_validation_can_block_but_never_owns_membership(self) -> None:
+        validate = self._tasks()["validate_scene"]
+        assert [r.code for r in validate.quality_rules] == ["validate_scene_blocked"]
+
+    def test_no_default_build_configuration(self) -> None:
+        """Canonical semantics come only from explicit pipeline params."""
+        assert self._tasks()["build_recording_scenes"].default_params == {}
 
 
-class TestLegacyScenePipelines:
-    """Legacy Scene producers end at their producer task: nothing in them can
-    register, validate or index their non-canonical output."""
-
-    @pytest.mark.parametrize(
-        "pipeline_type",
-        [PipelineType.DATASET_SCENE_INGESTION, PipelineType.RAW_LOG_SCENE_BUILDING],
-    )
-    def test_legacy_pipeline_has_only_its_producer_task(self, pipeline_type) -> None:
-        by_type = {d.type: d for d in BUILTIN_PIPELINE_DEFINITIONS}
-        job_types = {t.job_type for t in by_type[pipeline_type].tasks}
-        assert job_types in ({JobType.INGEST_SCENES}, {JobType.BUILD_SCENES})
-        for task in by_type[pipeline_type].tasks:
-            assert all(o.kind != "ref" for o in task.outputs)
-
-    def test_scene_registration_pipeline_was_removed(self) -> None:
-        assert "scene_registration" not in {t.value for t in PipelineType}
+class TestLegacySceneIngressRemoved:
+    def test_legacy_pipelines_and_jobs_do_not_exist(self) -> None:
+        pipeline_types = {t.value for t in PipelineType}
+        for removed in (
+            "dataset_scene_ingestion",
+            "raw_log_scene_building",
+            "scene_registration",
+        ):
+            assert removed not in pipeline_types
+        job_types = {t.value for t in JobType}
+        assert not {"ingest_scenes", "build_scenes"} & job_types
 
 
 class TestPipelineServiceFilter:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from sceneops_core.datasets import ExternalDatasetRef
+from sceneops_core.integration_runtime import ExternalDatasetRef
 
 
 def test_minimal_ref_only_requires_format_version_and_uri():

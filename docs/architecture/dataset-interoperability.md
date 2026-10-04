@@ -43,7 +43,7 @@ ExternalDatasetRef
   normalized: it becomes part of canonical identity, so aliases are
   resolved by the integration before a ref is built (ADR-007 §27.6).
   uri is location only, never identity.
-  sceneops_core.datasets.ExternalDatasetRef
+  sceneops_core.integration_runtime.ExternalDatasetRef
 
 Dataset / DatasetVersion
   SceneOps' OWN canonical identity only. Never constrained by what an
@@ -51,22 +51,19 @@ Dataset / DatasetVersion
   dataset_id / version
   sceneops_core.datasets.schemas (DB-backed, see data-model.md §2)
 
-source_format_version
-  The external SOURCE format's own version string (e.g. nuscenes-devkit's
-  on-disk "v1.0-mini" folder name), passed straight into that SDK. Kept
-  fully separate from DATASET_VERSION -- conflating the two was a real
-  bug found and fixed before Phase 3 (Request 3.2A/3.2B, see
-  local-development.md's "Canonical identity vs. external source/export
-  identity").
+source version (e.g. nuScenes "v1.0-mini")
+  The external SOURCE dataset's own version, read only by the
+  dataset-acquisition tool that converts it into a recording. Never a
+  SceneOps DatasetVersion and never canonical identity.
 ```
 
-Worked example (the general shape this identity model supports —
-`core`'s real nuScenes ingestion into SceneOps, followed by a
-LeRobot export of that same canonical DatasetVersion):
+Worked example (the general shape this identity model supports — real
+nuScenes data acquired as a recording and canonicalized into SceneOps,
+followed by a LeRobot export of that same canonical DatasetVersion):
 
 ```text
-nuScenes v1.0-mini                          (ExternalDatasetRef, import source)
-        | ingest (source_format_version="v1.0-mini")
+nuScenes v1.0-mini                          (external source, read by the acquisition tool)
+        | dataset-acquisition -> RobotRun -> canonical units
         v
 SceneOps test-e2e-core / test-v1            (DatasetVersion, SceneOps-canonical)
         | LeRobotDatasetAdapter.export(...)

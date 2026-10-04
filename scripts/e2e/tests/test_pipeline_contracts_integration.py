@@ -21,10 +21,14 @@ import pytest
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 API_PREFIX = os.environ.get("API_PREFIX", "/api/v1")
 
-SUPPORTED_PIPELINE_TYPES = ("detection_evaluation",)
-# Experimental (hidden from the default listing): the legacy Scene producers.
-HIDDEN_PIPELINE_TYPES = ("dataset_scene_ingestion", "raw_log_scene_building")
-REMOVED_PIPELINE_TYPES = ("scene_registration",)
+SUPPORTED_PIPELINE_TYPES = ("detection_evaluation", "recording_scene_building")
+# Experimental pipelines are hidden from the default listing.
+HIDDEN_PIPELINE_TYPES = ("scenario_curation", "raw_log_episode_building")
+REMOVED_PIPELINE_TYPES = (
+    "scene_registration",
+    "dataset_scene_ingestion",
+    "raw_log_scene_building",
+)
 
 
 @pytest.fixture(scope="module")

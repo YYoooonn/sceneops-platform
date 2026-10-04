@@ -4,7 +4,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
-from sceneops_core.datasets.schemas.enums import DatasetType
 
 from sceneops_db.converters.datasets import (
     dataset_model_to_record,
@@ -15,7 +14,7 @@ from sceneops_db.converters.datasets import (
 )
 from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
 
-from ._utils import apply_pagination, apply_values, enum_value, values_without_none
+from ._utils import apply_pagination, apply_values, values_without_none
 
 
 class PostgresDatasetRepository:
@@ -55,13 +54,10 @@ class PostgresDatasetRepository:
     async def list(
         self,
         *,
-        type: DatasetType | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DatasetRecord]:
         stmt = select(DatasetModel)
-        if type is not None:
-            stmt = stmt.where(DatasetModel.type == enum_value(type))
         stmt = apply_pagination(
             stmt.order_by(DatasetModel.created_at.desc()), limit=limit, offset=offset
         )
@@ -187,11 +183,10 @@ class PostgresDatasetVersionRepository:
         version: str,
         required_channels: list[str] | None = None,
         manifest_uri: str | None = None,
-        raw_source_root_uri: str | None = None,
     ) -> DatasetVersionRecord:
         """Partial update of the Scene columns that are not membership: a
-        legacy builder input, a validation default and the derived dataset
-        index pointer. None means "leave untouched"."""
+        validation default and the derived dataset index pointer. None means
+        "leave untouched"."""
         model = await self._get_model_or_raise(dataset_id, version)
         apply_values(
             model,
@@ -199,7 +194,6 @@ class PostgresDatasetVersionRepository:
                 {
                     "required_channels": required_channels,
                     "manifest_uri": manifest_uri,
-                    "raw_source_root_uri": raw_source_root_uri,
                 }
             ),
         )

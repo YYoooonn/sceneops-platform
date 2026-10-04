@@ -37,18 +37,8 @@ class SceneModel(Base):
             name="fk_scenes_dataset_version",
         ),
         CheckConstraint(
-            "(source_kind = 'external' AND external_format IS NOT NULL "
-            "AND robot_run_id IS NULL) OR "
-            "(source_kind = 'recording' AND robot_run_id IS NOT NULL "
-            "AND external_format IS NULL)",
-            name="ck_scenes_source_projection",
-        ),
-        CheckConstraint(
-            "(window_clock IS NULL AND window_start_timestamp_ns IS NULL "
-            "AND window_end_timestamp_ns IS NULL) OR "
-            "(window_clock IS NOT NULL AND window_start_timestamp_ns IS NOT NULL "
-            "AND window_end_timestamp_ns > window_start_timestamp_ns)",
-            name="ck_scenes_declared_window",
+            "window_end_timestamp_ns > window_start_timestamp_ns",
+            name="ck_scenes_segment_window",
         ),
     )
 
@@ -57,14 +47,14 @@ class SceneModel(Base):
     dataset_id: Mapped[str] = mapped_column(String(128), nullable=False)
     dataset_version: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    source_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    external_format: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    robot_run_id: Mapped[str | None] = mapped_column(
+    # The source projection: the RobotRun the Scene was built from and the
+    # producer's unit key within its recording.
+    robot_run_id: Mapped[str] = mapped_column(
         String(128),
         ForeignKey("robot_runs.run_id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
     )
-    source_unit_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    unit_key: Mapped[str] = mapped_column(String(256), nullable=False)
 
     producer_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
 
@@ -75,15 +65,11 @@ class SceneModel(Base):
     )
     manifest_checksum: Mapped[str] = mapped_column(String(71), nullable=False)
 
-    # The source's declared window (recording segments); NULL for external
-    # Scenes, whose boundary is their source unit.
-    window_clock: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    window_start_timestamp_ns: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True
-    )
-    window_end_timestamp_ns: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True
-    )
+    # The segment window [start, end) in window_clock, the producer's
+    # declared segmentation clock.
+    window_clock: Mapped[str] = mapped_column(String(64), nullable=False)
+    window_start_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    window_end_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     observed_channels: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")

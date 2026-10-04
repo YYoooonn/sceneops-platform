@@ -24,17 +24,12 @@ def step(
 
 
 JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
-    JobType.INGEST_SCENES: [
-        step("load_source_dataset", "Load source dataset"),
-        step("convert_scenes", "Convert scenes"),
-        step("save_legacy_scene_manifests", "Save legacy scene manifests"),
-    ],
-    JobType.BUILD_SCENES: [
-        step("load_raw_log", "Load raw log"),
-        step("segment_scenes", "Segment scenes"),
-        step("compose_scene_manifests", "Compose scene manifests"),
-        step("build_assets", "Build assets", optional=True),
-        step("save_legacy_scene_manifests", "Save legacy scene manifests"),
+    JobType.BUILD_RECORDING_SCENES: [
+        step("resolve_recording", "Resolve recording"),
+        step("check_l1_conformance", "Check L1 conformance"),
+        step("plan_scenes", "Plan scenes"),
+        step("publish_observation_payloads", "Publish observation payloads"),
+        step("publish_scene_manifests", "Publish scene manifests"),
     ],
     JobType.BUILD_DATASET_MANIFEST: [
         step("load_scene_records", "Load scene records"),

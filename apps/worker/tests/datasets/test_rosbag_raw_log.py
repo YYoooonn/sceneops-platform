@@ -1,11 +1,11 @@
 """Tests for RosbagAdapter (MCAP raw log adapter).
 
 Covers:
-- build_raw_log: sensor topics (json-encoded) become RawSensorFrameManifest
-  entries with correct channel/modality/timestamp, aggregated into a manifest
-- build_raw_log: non-sensor, non-robot-state topics are ignored
-- build_raw_log / extract_robot_states: unrecognized encodings and
-  undecodable CDR schemas are skipped without raising
+- extract_episode_source: sensor topics (json-encoded) become
+  RawSensorFrameManifest entries whose channel is the topic, verbatim
+- non-sensor, non-robot-state topics are ignored
+- unrecognized encodings and undecodable CDR schemas are skipped without
+  raising
 - extract_robot_states: robot-state topics are merged by timestamp into
   RobotStateRecord rows (json bridge format, and real CDR nav_msgs/Odometry)
 - real-fixture tests (fixtures/rosbag/*.mcap) were recorded with an actual
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from mcap.writer import Writer
@@ -57,30 +57,12 @@ def _write_mcap(path: str, messages: list[tuple[str, int, dict, str]]) -> None:
         writer.finish()
 
 
-def _make_adapter(bag_path: str) -> tuple[RosbagAdapter, AsyncMock]:
-    obs_store = AsyncMock()
-    obs_store.raw_log_manifest_uri = MagicMock(return_value="mem://manifest.json")
-    obs_store.raw_frame_index_uri = MagicMock(return_value="mem://frames.json")
-    adapter = RosbagAdapter(
-        source_store=MagicMock(),
-        source_root_uri=bag_path,
-        observation_store=obs_store,
-    )
-    return adapter, obs_store
+def _make_adapter(bag_path: str) -> tuple[RosbagAdapter, None]:
+    return RosbagAdapter(source_store=MagicMock(), source_root_uri=bag_path), None
 
 
-_BUILD_RAW_LOG_KWARGS = dict(
-    dataset_id="robot-fleet",
-    dataset_version="v1",
-    raw_log_id="rawlog-001",
-    version_root_uri="mem://root/",
-    params={},
-)
-
-
-class TestBuildRawLogSensorFrames:
-    @pytest.mark.asyncio
-    async def test_sensor_topics_become_frames(self, tmp_path) -> None:
+class TestSensorFrames:
+    def test_sensor_topics_become_frames_named_by_their_topic(self, tmp_path) -> None:
         bag_path = str(tmp_path / "run.mcap")
         _write_mcap(
             bag_path,
@@ -99,49 +81,38 @@ class TestBuildRawLogSensorFrames:
                 ),
             ],
         )
-        adapter, obs_store = _make_adapter(bag_path)
+        adapter, _ = _make_adapter(bag_path)
 
-        (
-            manifest,
-            frame_index,
-            manifest_uri,
-            frame_index_uri,
-        ) = await adapter.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
+        frames = adapter.extract_episode_source(robot_id="robot-1").frames
 
-        assert manifest.frame_count == 2
-        assert manifest.channels == ["CAM_FRONT", "LIDAR_TOP"]
-        assert set(manifest.modalities) == {"camera", "lidar"}
-        assert manifest.time_range.start_timestamp_us == 1_000_000
-        assert manifest.time_range.end_timestamp_us == 1_050_000
-
-        cam_frame = next(f for f in frame_index.frames if f.channel == "CAM_FRONT")
+        assert [f.channel for f in frames] == [
+            "/camera/front/image",
+            "/lidar/top/points",
+        ]
+        cam_frame = frames[0]
         assert cam_frame.modality == SensorModality.CAMERA
         assert cam_frame.uri == "s3://bucket/img1.jpg"
         assert cam_frame.timestamp_us == 1_000_000
 
-        obs_store.save_raw_log_manifest.assert_awaited_once()
-        obs_store.save_raw_frame_index.assert_awaited_once()
-        assert manifest_uri == "mem://manifest.json"
-        assert frame_index_uri == "mem://frames.json"
+    def test_topics_are_never_renamed_into_another_vocabulary(self) -> None:
+        assert not hasattr(RosbagAdapter, "build_raw_log")
+        source = Path(
+            __import__(
+                "sceneops_worker.datasets.ingestion.rosbag_raw_log", fromlist=["x"]
+            ).__file__
+        ).read_text()
+        assert "CAM_FRONT" not in source and "LIDAR_TOP" not in source
 
-    @pytest.mark.asyncio
-    async def test_unknown_topics_are_ignored(self, tmp_path) -> None:
+    def test_unknown_topics_are_ignored(self, tmp_path) -> None:
         bag_path = str(tmp_path / "run.mcap")
         _write_mcap(
             bag_path,
             [("/some/unrelated/topic", 1_000_000_000, {"foo": "bar"}, "json")],
         )
         adapter, _ = _make_adapter(bag_path)
+        assert adapter.extract_episode_source(robot_id="robot-1").frames == []
 
-        manifest, frame_index, _, _ = await adapter.build_raw_log(
-            **_BUILD_RAW_LOG_KWARGS
-        )
-
-        assert manifest.frame_count == 0
-        assert frame_index.frames == []
-
-    @pytest.mark.asyncio
-    async def test_unrecognized_encoding_is_skipped(self, tmp_path) -> None:
+    def test_unrecognized_encoding_is_skipped(self, tmp_path) -> None:
         bag_path = str(tmp_path / "run.mcap")
         _write_mcap(
             bag_path,
@@ -156,31 +127,16 @@ class TestBuildRawLogSensorFrames:
             ],
         )
         adapter, _ = _make_adapter(bag_path)
+        frames = adapter.extract_episode_source(robot_id="robot-1").frames
+        assert [f.channel for f in frames] == ["/lidar/top/points"]
 
-        manifest, frame_index, _, _ = await adapter.build_raw_log(
-            **_BUILD_RAW_LOG_KWARGS
-        )
-
-        assert manifest.frame_count == 1
-        assert frame_index.frames[0].channel == "LIDAR_TOP"
-
-    @pytest.mark.asyncio
-    async def test_cdr_without_schema_is_skipped(self, tmp_path) -> None:
+    def test_cdr_without_schema_is_skipped(self, tmp_path) -> None:
         """A cdr channel with no registered schema can't be decoded (no ros2msg
         text to parse) — decoder_for returns None, message is skipped, not raised."""
         bag_path = str(tmp_path / "run.mcap")
-        _write_mcap(
-            bag_path,
-            [("/camera/front/image", 1_000_000_000, {}, "cdr")],
-        )
+        _write_mcap(bag_path, [("/camera/front/image", 1_000_000_000, {}, "cdr")])
         adapter, _ = _make_adapter(bag_path)
-
-        manifest, frame_index, _, _ = await adapter.build_raw_log(
-            **_BUILD_RAW_LOG_KWARGS
-        )
-
-        assert manifest.frame_count == 0
-        assert frame_index.frames == []
+        assert adapter.extract_episode_source(robot_id="robot-1").frames == []
 
 
 class TestExtractRobotStates:
@@ -341,9 +297,7 @@ class TestExtractMissions:
 
 
 class TestExtractEpisodeSource:
-    """Episode-domain extraction (SceneOps V2 Request 12) — a single-read
-    counterpart to build_raw_log() that never touches ObservationArtifactStore
-    or produces RawLogManifest/RawLogFrameIndex."""
+    """Episode-domain extraction: one read of the bag, nothing persisted."""
 
     def test_no_observation_store_required(self, tmp_path) -> None:
         bag_path = str(tmp_path / "run.mcap")
@@ -359,17 +313,6 @@ class TestExtractEpisodeSource:
 
         assert len(source.robot_states) == 1
         assert source.robot_states[0].position == [1.0, 0.0, 0.0]
-
-    @pytest.mark.asyncio
-    async def test_build_raw_log_without_observation_store_raises(
-        self, tmp_path
-    ) -> None:
-        bag_path = str(tmp_path / "run.mcap")
-        _write_mcap(bag_path, [("/camera/front/image", 1_000_000_000, {}, "json")])
-        adapter = RosbagAdapter(source_store=MagicMock(), source_root_uri=bag_path)
-
-        with pytest.raises(ValueError, match="observation_store"):
-            await adapter.build_raw_log(**_BUILD_RAW_LOG_KWARGS)
 
     def test_combines_frames_states_and_missions_from_one_bag(self, tmp_path) -> None:
         bag_path = str(tmp_path / "run.mcap")
@@ -409,7 +352,7 @@ class TestExtractEpisodeSource:
         )
 
         assert len(source.frames) == 1
-        assert source.frames[0].channel == "CAM_FRONT"
+        assert source.frames[0].channel == "/camera/front/image"
         assert len(source.robot_states) == 1
         assert source.robot_states[0].position == [1.0, 2.0, 0.0]
         assert len(source.missions) == 1
@@ -480,12 +423,7 @@ class TestRealCdrFixtures:
         an arbitrary message type) but contribute no frames or states."""
         adapter, _ = _make_adapter(str(_FIXTURES_DIR / "std_msgs_string.mcap"))
 
-        manifest, frame_index, _, _ = await adapter.build_raw_log(
-            **_BUILD_RAW_LOG_KWARGS
-        )
-
-        assert manifest.frame_count == 0
-        assert frame_index.frames == []
+        assert adapter.extract_episode_source(robot_id="robot-1").frames == []
         assert adapter.extract_robot_states(robot_id="robot-1") == []
 
     def test_real_can_replay_bag_closes_the_full_phase4_loop(self) -> None:

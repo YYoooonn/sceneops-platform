@@ -11,13 +11,12 @@ from .params import (
     BuildDatasetManifestJobParams,
     BuildEpisodesJobParams,
     BuildSceneIndexJobParams,
-    BuildScenesJobParams,
+    BuildRecordingScenesJobParams,
     CurateEpisodesJobParams,
     EvaluateDetectionJobParams,
     ExportAnalyticsSnapshotJobParams,
     ExportLearningDataJobParams,
     ExportRobotAnalyticsSnapshotJobParams,
-    IngestScenesJobParams,
     MineScenariosJobParams,
     IngestRobotStatesJobParams,
     RegisterRobotRunJobParams,
@@ -38,7 +37,7 @@ from .results import (
     BuildDatasetManifestJobResult,
     BuildEpisodesJobResult,
     BuildSceneIndexJobResult,
-    BuildScenesJobResult,
+    BuildRecordingScenesJobResult,
     CurateEpisodesJobResult,
     EvaluateDetectionJobResult,
     ExportAnalyticsSnapshotJobResult,
@@ -46,7 +45,6 @@ from .results import (
     ExportRobotAnalyticsSnapshotJobResult,
     IngestRobotStatesJobResult,
     RegisterRobotRunJobResult,
-    IngestScenesJobResult,
     MineScenariosJobResult,
     PredictDetectionJobResult,
     ProfileAlignedEpisodeJobResult,
@@ -64,8 +62,7 @@ JobParamsModel: TypeAlias = type[BaseJobParams]
 JobResultModel: TypeAlias = type[BaseJobResult]
 
 JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
-    JobType.INGEST_SCENES: IngestScenesJobParams,
-    JobType.BUILD_SCENES: BuildScenesJobParams,
+    JobType.BUILD_RECORDING_SCENES: BuildRecordingScenesJobParams,
     JobType.BUILD_DATASET_MANIFEST: BuildDatasetManifestJobParams,
     JobType.BUILD_SCENE_INDEX: BuildSceneIndexJobParams,
     JobType.VALIDATE_SCENE: ValidateSceneJobParams,
@@ -91,8 +88,7 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
 }
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
-    JobType.INGEST_SCENES: IngestScenesJobResult,
-    JobType.BUILD_SCENES: BuildScenesJobResult,
+    JobType.BUILD_RECORDING_SCENES: BuildRecordingScenesJobResult,
     JobType.BUILD_DATASET_MANIFEST: BuildDatasetManifestJobResult,
     JobType.BUILD_SCENE_INDEX: BuildSceneIndexJobResult,
     JobType.VALIDATE_SCENE: ValidateSceneJobResult,

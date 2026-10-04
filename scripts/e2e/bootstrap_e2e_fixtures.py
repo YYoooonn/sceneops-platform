@@ -118,7 +118,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--fixture",
-        choices=["all", "core", "interop", "raw-log"],
+        choices=["all", "core", "interop"],
         default="all",
         help="Which shared E2E fixture to bootstrap/verify (default: all).",
     )

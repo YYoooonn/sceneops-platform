@@ -21,6 +21,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../e2e/lib.sh"
+unavailable_until canonical-verify 11 \
+  "the frozen v0.0 baseline was built by the removed dataset_scene_ingestion pipeline and is regenerated from recordings in step 11"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$REPO_ROOT/scripts/e2e/lib.sh"
 source "$SCRIPT_DIR/canonical_contract.sh"

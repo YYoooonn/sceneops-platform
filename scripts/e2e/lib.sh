@@ -6,12 +6,7 @@
 # Every E2E workflow that auto-creates a dataset (the caller supplied no
 # DATASET_ID/DATASET_VERSION) must default to an identity that is
 # unambiguously test-owned -- never something a real developer might
-# independently choose for genuine local-dev data. `make register-nuscenes-
-# dataset` (scripts/fixtures/register_nuscenes_dataset.sh, unrelated to this
-# convention and deliberately left as "nuscenes") registers a real,
-# intentionally-named local fixture for manual UI/API exploration under a
-# separate identity, so it never collides with the test-e2e-* identities
-# below.
+# independently choose for genuine local-dev data.
 #
 # An explicit DATASET_ID/DATASET_VERSION from the environment always wins;
 # these are only the fallback when the caller supplies neither. This is
@@ -26,13 +21,11 @@ DEFAULT_E2E_DATASET_VERSION="${DEFAULT_E2E_DATASET_VERSION:-test-v1}"
 # Two shared logical fixtures cover every E2E workflow, rather than one
 # derived identity per workflow:
 #
-#   core     Scene ingestion, analytics export, detection evaluation,
-#            scenario/episode curation, episode building. Canonical
-#            test-e2e-core/test-v1. External source: the real nuScenes mini
-#            fixture (format=nuscenes, format_version=v1.0-mini -- see
-#            ExternalDatasetRef, sceneops_core.datasets.ExternalDatasetRef)
-#            for scene-family workflows; the MCAP fixture recorded by
-#            `make e2e-robot-can-replay` for the episode family. Both
+#   core     Recording-backed Scene building, analytics export,
+#            reliability / Airflow verification, episode building and
+#            curation. Canonical test-e2e-core/test-v1. Source data: the
+#            real nuScenes mini fixture, read only by the acquisition tool
+#            (Scenes) and the CAN replay (Episodes). Both
 #            families coexist on one DatasetVersion by design -- Scene and
 #            Episode each own an independent summary sub-object on
 #            DatasetVersionRecord that never overwrites the other's (see
@@ -43,23 +36,11 @@ DEFAULT_E2E_DATASET_VERSION="${DEFAULT_E2E_DATASET_VERSION:-test-v1}"
 #            sceneops_analytics.testing.interop_dataset -- no shell
 #            ingestion path exists for it yet (Python-only today).
 #
-# raw-log-scene-building deliberately stays its OWN identity, OUTSIDE
-# `core`: it produces non-ground-truth scenes that measurably drag down
-# `core`'s aggregate /quality readiness if they share one DatasetVersion
-# (see makefiles/e2e.mk's comment on e2e-scene-rawlog) -- a real,
-# previously-discovered data-requirement conflict, not an oversight. It
-# still uses this same resolver for consistency.
-#
 # CANONICAL vs. SOURCE identity: DATASET_ID/DATASET_VERSION below are
 # SceneOps' own canonical identity ONLY -- never constrained by what an
 # external format's SDK happens to require. SOURCE_FORMAT/
-# SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI describe the external nuScenes
-# source separately. The job handlers read the `source_format_version`
-# param for this (apps/worker/sceneops_worker/jobs/dataset/ingest_scenes.py,
-# datasets/ingestion/nuscenes_raw_log.py) -- it is required whenever the
-# source format needs one (nuScenes), enforced by IngestScenesJobParams/
-# BuildScenesJobParams at job-creation time, so a caller that omits it
-# fails clearly instead of silently reusing dataset_version.
+# SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI describe the nuScenes fixture on
+# disk that acquisition reads; they never enter canonical identity.
 
 # resolve_e2e_fixture <fixture-name>
 # Sets DATASET_ID/DATASET_VERSION (and, for fixtures with an external
@@ -71,13 +52,7 @@ DEFAULT_E2E_DATASET_VERSION="${DEFAULT_E2E_DATASET_VERSION:-test-v1}"
 # line is needed afterward.
 #
 # SOURCE_ROOT_URI is the one authoritative name for "the nuScenes dataroot's
-# parent directory" across every fixture that has an external nuScenes
-# source (core and raw-log both read the same physical mini fixture) --
-# an earlier revision gave raw-log its own `RAW_SOURCE_ROOT_URI` name for no
-# functional reason (nothing outside this case block ever read it; the
-# script consuming the raw-log fixture always read `SOURCE_ROOT_URI`
-# itself), so that alias was removed rather than kept for back-compat (no
-# concrete consumer existed).
+# parent directory".
 resolve_e2e_fixture() {
   local fixture_name="$1"
   case "$fixture_name" in
@@ -92,16 +67,8 @@ resolve_e2e_fixture() {
       : "${DATASET_ID:=test-e2e-interop}"
       : "${DATASET_VERSION:=test-v1}"
       ;;
-    raw-log)
-      # Isolated on purpose -- see the catalog note above.
-      : "${DATASET_ID:=test-e2e-raw-log}"
-      : "${DATASET_VERSION:=test-v1}"
-      : "${SOURCE_FORMAT:=nuscenes}"
-      : "${SOURCE_FORMAT_VERSION:=v1.0-mini}"
-      : "${SOURCE_ROOT_URI:=/data/raw/nuscenes}"
-      ;;
     *)
-      echo "❌ unknown E2E fixture: '$fixture_name' (expected core|interop|raw-log)" >&2
+      echo "❌ unknown E2E fixture: '$fixture_name' (expected core|interop)" >&2
       return 1
       ;;
   esac
@@ -553,6 +520,69 @@ fetch_robot_states() {
   curl -sS "$(api_url "$api_base_url" "/robot-states?robot_run_id=$robot_run_id&limit=$limit")"
 }
 
+# ── Intentionally unavailable workflows ───────────────────────────────────────
+
+# unavailable_until COMMAND STEP REASON
+# Stops a workflow that cannot run on recording-derived Scenes yet, with an
+# explicit message instead of failing on removed legacy infrastructure.
+# Exit code 3 distinguishes "intentionally unavailable" from a test failure.
+unavailable_until() {
+  echo "⛔ $1 is unavailable until ADR-007 implementation step $2: $3" >&2
+  echo "   See docs/architecture/reserved-and-limitations.md §2." >&2
+  exit 3
+}
+
+# ── Recording-backed Scene fixture ────────────────────────────────────────────
+
+# ensure_camera_robot_run RUN_ID [SOURCE_UNIT=scene-0061] [SOURCE_VERSION=v1.0-mini]
+# A registered, sensor-bearing RobotRun for infrastructure checks that need
+# a recording_scene_building input: a camera-only nuScenes acquisition
+# (dataset-acquisition container) -> L1 check + publication
+# (recording-publisher container) -> POST /robot-runs:register. Acquisition
+# is deterministic, so RUN_ID names one recording: when the RobotRun is
+# already registered nothing is redone. Needs Docker Compose and the
+# acquisition image (make acquisition-image); prints nothing on stdout.
+ensure_camera_robot_run() {
+  local run_id="$1"
+  local source_unit="${2:-scene-0061}"
+  local source_version="${3:-v1.0-mini}"
+  local api_base_url="${API_BASE_URL:-http://localhost:8000}"
+  local compose=(docker compose --env-file "${ENV_FILE:-.env.local}" --profile acquisition)
+  local recording="/recordings/$run_id.mcap"
+
+  if [ "$(curl -sS -o /dev/null -w '%{http_code}' "$(api_url "$api_base_url" "/robot-runs/$run_id")")" = "200" ]; then
+    echo "  RobotRun $run_id already registered" >&2
+    return 0
+  fi
+  echo "  acquiring $source_version/$source_unit (camera) as RobotRun $run_id" >&2
+  "${compose[@]}" run --rm -T dataset-acquisition nuscenes --dataroot /input/nuscenes \
+    --version "$source_version" --source-unit "$source_unit" --channels camera \
+    --output "$recording" >/dev/null
+  local publication job_json
+  publication="$("${compose[@]}" run --rm -T recording-publisher publish \
+    --mcap-path "$recording" --run-id "$run_id" --robot-id "robot-$run_id" --source-kind file)"
+  "${compose[@]}" run --rm -T --entrypoint rm dataset-acquisition -f "$recording" >/dev/null 2>&1 || true
+  job_json="$(register_robot_run "$api_base_url" "$(echo "$publication" | jq -r '.manifest_uri')")"
+  assert_job_succeeded "$job_json" "REGISTER_ROBOT_RUN of $run_id should succeed"
+}
+
+# camera_scene_build_config [DURATION_NS=10000000000]
+# The recording_scene_building build_config for an ensure_camera_robot_run
+# recording: the front camera, its CameraInfo and /tf_static, segmented on
+# the cameras' header-stamp clock.
+camera_scene_build_config() {
+  jq -cn --argjson d "${1:-10000000000}" '{
+    channels: [
+      {topic: "/camera/front/image/compressed", modality: "camera", sensor_id: "cam-front",
+       time: {source: "header_stamp", clock: "sensor.header_stamp"},
+       payload: "compressed_image", camera_info_topic: "/camera/front/camera_info"}
+    ],
+    frames: {ego_frame_id: "base_link"},
+    calibration: {static_transform_topics: ["/tf_static"]},
+    segmentation: {policy: "fixed_duration", clock: "sensor.header_stamp", duration_ns: $d}
+  }'
+}
+
 # ── Dataset / Scene API ───────────────────────────────────────────────────────
 
 upsert_dataset() {
@@ -578,37 +608,17 @@ upsert_dataset_version() {
   local api_base_url="$1"
   local dataset_id="$2"
   local version="$3"
-  # raw_source_root_uri is Scene-owned -- Episode dataset versions have no
-  # use for it (their source is a registered RobotRun), so it's optional here.
-  # Omit it to create/patch a version with no Scene raw-source config at all.
-  local raw_source_root_uri="${4:-}"
 
   local existing
   existing="$(curl -sS "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")")"
-
-  if [ -n "$raw_source_root_uri" ]; then
-    patch_body="{\"raw_source_root_uri\": \"$raw_source_root_uri\", \"required_channels\": [\"CAM_FRONT\", \"LIDAR_TOP\"]}"
-    create_body="{\"version\": \"$version\", \"raw_source_root_uri\": \"$raw_source_root_uri\", \"metadata\": {}}"
-  else
-    patch_body=""
-    create_body="{\"version\": \"$version\", \"metadata\": {}}"
-  fi
-
   if echo "$existing" | jq -e '.version' >/dev/null 2>&1; then
-    if [ -z "$patch_body" ]; then
-      # Nothing Scene-specific to patch — the version already exists as-is.
-      echo "$existing"
-      return 0
-    fi
-    curl -sS -X PATCH "$(api_url "$api_base_url" "/datasets/$dataset_id/versions/$version")" \
-      -H "Content-Type: application/json" \
-      -d "$patch_body"
+    echo "$existing"
     return 0
   fi
 
   curl -sS -X POST "$(api_url "$api_base_url" "/datasets/$dataset_id/versions")" \
     -H "Content-Type: application/json" \
-    -d "$create_body"
+    -d "{\"version\": \"$version\", \"metadata\": {}}"
 }
 
 

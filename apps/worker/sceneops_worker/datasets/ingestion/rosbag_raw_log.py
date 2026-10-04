@@ -13,22 +13,16 @@ from mcap_ros2.decoder import DecoderFactory as Ros2DecoderFactory
 
 from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_core.episodes.schemas import EpisodeSource
-from sceneops_core.observations.schemas import (
-    RawLogFrameIndex,
-    RawLogManifest,
-    RawLogSourceFormat,
-    RawLogSourceType,
-    RawSensorFrameManifest,
-    TimeRange,
-)
+from sceneops_core.observations.schemas import RawSensorFrameManifest
 from sceneops_core.robots.schemas import MissionRecord, MissionStatus, RobotStateRecord
 from sceneops_core.sensors import SensorModality
-from sceneops_worker.observations.artifacts import ObservationArtifactStore
 
-# Topic -> (modality, scene channel name) for topics that become scene frames.
-_DEFAULT_SENSOR_TOPICS: dict[str, tuple[SensorModality, str]] = {
-    "/camera/front/image": (SensorModality.CAMERA, "CAM_FRONT"),
-    "/lidar/top/points": (SensorModality.LIDAR, "LIDAR_TOP"),
+# Topic -> modality for topics read as Episode sensor frames. A frame's
+# channel is its topic, verbatim: topics are never renamed into another
+# format's vocabulary (ADR-007 §13.8).
+_DEFAULT_SENSOR_TOPICS: dict[str, SensorModality] = {
+    "/camera/front/image": SensorModality.CAMERA,
+    "/lidar/top/points": SensorModality.LIDAR,
 }
 
 # Robot runtime state topics (docs/workflows/robot-run-and-mcap.md §2).
@@ -154,52 +148,24 @@ class _BagContents:
 
 
 class RosbagAdapter:
-    """Reads an MCAP-recorded rosbag2 file into generic raw log artifacts.
-
-    Implements the ``RawLogAdapter`` interface (see ``base.RawLogAdapter``)
-    so ``BuildScenesJobHandler`` treats a robot rosbag identically to any
-    other in-process raw log source — no changes needed to the
-    scene-building pipeline itself (docs/workflows/robot-run-and-mcap.md
-    §3). nuScenes no longer goes through this same interface -- it runs
-    through the generic IntegrationExecutor against an isolated container
-    instead (SceneOps V2 Request 4.6).
+    """Reads an MCAP-recorded rosbag2 file for the Episode and robot-state
+    paths (``extract_episode_source``, ``extract_robot_states``,
+    ``extract_missions``). Canonical Scenes are built by
+    ``sceneops_worker.scenes.recording_builder``, not here.
 
     Decodes two message encodings:
 
     - ``cdr``: real ROS2 messages, decoded via ``mcap-ros2-support`` using the
-      schema text embedded in the MCAP file itself — no ``rclpy``/ROS2
-      install needed to read a bag. Verified end-to-end against
-      ``ros2/nodes/can_replay_node.py`` output recorded with
-      ``ros2 bag record --storage mcap`` (see the ``ros2`` Docker sandbox and
-      this module's test fixtures). Standard messages with nested nav_msgs/
-      sensor_msgs shapes (Odometry, Imu, BatteryState) are flattened into this
-      module's flat field names. Topics with no matching standard ROS2
-      message (e.g. ``/vehicle/control``, ``/mission/status``) are published
-      by CanReplayNode as ``std_msgs/String`` carrying a flat JSON object in
-      ``.data`` — recognized by schema name and unwrapped/parsed here, not
-      just passed through as ``{"data": "<json>"}``.
-    - ``json``: the same flat bridge format, but message-encoded as
-      ``json`` directly instead of CDR-wrapped ``std_msgs/String`` — used by
-      this adapter's own synthetic test fixtures since it requires no ROS2
-      tooling at all to produce.
+      schema text embedded in the MCAP file itself. Standard messages with
+      nested nav_msgs/sensor_msgs shapes (Odometry, Imu, BatteryState) are
+      flattened into this module's flat field names. Topics with no matching
+      standard ROS2 message (``/vehicle/control``, ``/mission/status``) carry
+      a flat JSON object in a ``std_msgs/String`` and are unwrapped here.
+    - ``json``: the same flat format message-encoded as ``json`` directly,
+      used by synthetic test fixtures.
 
-    Not yet implemented: binary sensor payloads (``sensor_msgs/Image``,
-    ``PointCloud2``) aren't written out to files — a CDR-decoded camera/lidar
-    frame currently gets an empty ``uri`` and its raw decoded structure in
-    ``metadata`` only. Writing those to ArtifactStore is follow-up work once a
-    real sensor-publishing node exists.
-
-    Two extraction paths read the same bag for two different domains:
-
-    - ``build_raw_log()`` (Scene path): persists ``RawLogManifest``/
-      ``RawLogFrameIndex`` to ``ObservationArtifactStore`` — used by
-      ``BuildScenesJobHandler``.
-    - ``extract_episode_source()`` (Episode path): returns an in-memory
-      ``EpisodeSource`` (frames + robot states + missions), no persistence,
-      no ``ObservationArtifactStore`` dependency — used by
-      ``BuildEpisodesJobHandler``. See SceneOps V2 Request 12: Episode build
-      previously called ``build_raw_log()`` too, which wrote Scene-owned raw
-      log artifacts as a side effect of getting the sensor frame list.
+    Sensor topics yield frames with an empty ``uri``; payload bytes are not
+    extracted on this path.
     """
 
     def __init__(
@@ -207,80 +173,16 @@ class RosbagAdapter:
         *,
         source_store: ArtifactStore,
         source_root_uri: str,
-        observation_store: ObservationArtifactStore | None = None,
-        sensor_topics: dict[str, tuple[SensorModality, str]] | None = None,
+        sensor_topics: dict[str, SensorModality] | None = None,
         robot_state_topics: set[str] | None = None,
         mission_topics: set[str] | None = None,
     ) -> None:
         self._source_store = source_store
         self._source_root_uri = source_root_uri
-        self._observation_store = observation_store
         self._sensor_topics = sensor_topics or _DEFAULT_SENSOR_TOPICS
         self._robot_state_topics = robot_state_topics or _DEFAULT_ROBOT_STATE_TOPICS
         self._mission_topics = mission_topics or _DEFAULT_MISSION_TOPICS
         self._ros2_decoder_factory = Ros2DecoderFactory()
-
-    async def build_raw_log(
-        self,
-        *,
-        dataset_id: str,
-        dataset_version: str,
-        raw_log_id: str,
-        version_root_uri: str,
-        params: dict,
-    ) -> tuple[RawLogManifest, RawLogFrameIndex, str, str]:
-        if self._observation_store is None:
-            raise ValueError(
-                "build_raw_log() requires observation_store — pass one to "
-                "RosbagAdapter.__init__, or use extract_episode_source() if "
-                "you only need Episode-domain data."
-            )
-        bag = self._read_bag()
-
-        frame_index_uri = self._observation_store.raw_frame_index_uri(
-            version_root_uri, raw_log_id
-        )
-        frame_index = RawLogFrameIndex(
-            raw_log_id=raw_log_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            frames=bag.frames,
-        )
-
-        manifest = RawLogManifest(
-            raw_log_id=raw_log_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            dataset_type="rosbag",
-            source_format=RawLogSourceFormat.ROSBAG,
-            source_type=RawLogSourceType.REAL_ROBOT_LOG,
-            root_uri=self._source_root_uri,
-            channels=sorted(bag.channels),
-            modalities=sorted(m.value for m in bag.modalities),
-            frame_count=len(bag.frames),
-            sequence_count=1,
-            time_range=(
-                TimeRange(
-                    start_timestamp_us=bag.min_timestamp_us,
-                    end_timestamp_us=bag.max_timestamp_us,
-                )
-                if bag.min_timestamp_us is not None and bag.max_timestamp_us is not None
-                else None
-            ),
-            frame_index_uri=frame_index_uri,
-        )
-
-        manifest_uri = self._observation_store.raw_log_manifest_uri(
-            version_root_uri, raw_log_id
-        )
-        await self._observation_store.save_raw_log_manifest(
-            uri=manifest_uri, manifest=manifest
-        )
-        await self._observation_store.save_raw_frame_index(
-            uri=frame_index_uri, frame_index=frame_index
-        )
-
-        return manifest, frame_index, manifest_uri, frame_index_uri
 
     def extract_robot_states(
         self,
@@ -293,7 +195,7 @@ class RosbagAdapter:
         Pure read — does not persist. A future ingestion job handler is
         responsible for writing these through RobotStateRepository, matching
         this codebase's convention of keeping DB writes in job handlers rather
-        than adapters (e.g. IngestScenesJobHandler, BuildScenesJobHandler).
+        than adapters.
         """
         bag = self._read_bag()
         return self._robot_states_from_bag(
@@ -328,12 +230,9 @@ class RosbagAdapter:
         """Episode-domain read of the bag: sensor frames + robot states +
         missions from a single pass over the file.
 
-        The Episode-path counterpart to ``build_raw_log()`` — reads the same
-        underlying topics as ``extract_robot_states()``/``extract_missions()``
-        but in one ``_read_bag()`` call instead of two, and returns sensor
-        frames too (``bag.frames``, otherwise only available through
-        ``build_raw_log()``'s ``RawLogFrameIndex``) without persisting any
-        Scene-owned ``RawLogManifest``/``RawLogFrameIndex`` artifact.
+        Reads the same topics as ``extract_robot_states()`` /
+        ``extract_missions()`` in one ``_read_bag()`` call, plus sensor
+        frames, and persists nothing.
         """
         bag = self._read_bag()
         return EpisodeSource(
@@ -466,20 +365,19 @@ class RosbagAdapter:
                 if max_ts is None or timestamp_us > max_ts:
                     max_ts = timestamp_us
 
-                sensor_topic = self._sensor_topics.get(channel.topic)
-                if sensor_topic is not None:
-                    modality, channel_name = sensor_topic
+                modality = self._sensor_topics.get(channel.topic)
+                if modality is not None:
                     frames.append(
                         RawSensorFrameManifest(
                             frame_id=f"{channel.topic}-{message.sequence}",
                             timestamp_us=timestamp_us,
-                            channel=channel_name,
+                            channel=channel.topic,
                             modality=modality,
                             uri=payload.get("uri", ""),
                             metadata={"topic": channel.topic, **payload},
                         )
                     )
-                    channels.add(channel_name)
+                    channels.add(channel.topic)
                     modalities.add(modality)
                     continue
 

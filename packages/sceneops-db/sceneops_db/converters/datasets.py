@@ -29,7 +29,6 @@ def dataset_model_to_record(model: DatasetModel) -> DatasetRecord:
         dataset_id=model.dataset_id,
         name=model.name,
         description=model.description,
-        type=model.type,
         default_version=model.default_version,
         created_at=model.created_at,
         updated_at=model.updated_at,
@@ -42,7 +41,6 @@ def dataset_record_to_values(record: DatasetRecord) -> dict[str, Any]:
         "dataset_id": record.dataset_id,
         "name": record.name,
         "description": record.description,
-        "type": enum_to_value(record.type),
         "default_version": record.default_version,
         "metadata_": record.metadata or {},
     }
@@ -61,7 +59,6 @@ def _scene_version_summary_from_model(
         observed_channels=model.observed_channels or [],
         required_channels=model.required_channels or [],
         manifest_uri=model.manifest_uri,
-        raw_source_root_uri=model.raw_source_root_uri,
     )
     return None if summary.is_unset() else summary
 
@@ -81,7 +78,6 @@ def _scene_summary_to_values(summary: SceneVersionSummary) -> dict[str, Any]:
         "observed_channels": summary.observed_channels,
         "required_channels": summary.required_channels,
         "manifest_uri": summary.manifest_uri,
-        "raw_source_root_uri": summary.raw_source_root_uri,
     }
 
 
@@ -96,8 +92,6 @@ def dataset_version_model_to_record(
         dataset_id=model.dataset_id,
         version=model.version,
         status=model.status,
-        source_dataset_id=model.source_dataset_id,
-        source_dataset_version=model.source_dataset_version,
         created_at=model.created_at,
         updated_at=model.updated_at,
         metadata=metadata_from_model(model),
@@ -126,8 +120,6 @@ def dataset_version_record_to_values(
         "dataset_id": record.dataset_id,
         "version": record.version,
         "status": enum_to_value(record.status),
-        "source_dataset_id": record.source_dataset_id,
-        "source_dataset_version": record.source_dataset_version,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
         "metadata": record.metadata,

@@ -134,7 +134,7 @@ state recording are exactly the same code path as Celery; only the process
 boundary differs.
 
 ```text
-start -> ingest_scenes -> finalize
+start -> build_recording_scenes -> register_scenes -> validate_scene -> profile_scene -> finalize
 ```
 
 Pipeline-level status transitions (`RUNNING`/`SUCCEEDED`/`BLOCKED`/`FAILED`),
@@ -150,7 +150,7 @@ finalize()  : read back all task-run statuses, resolve final status as
               always runs regardless of upstream outcome)
 ```
 
-Current scope is one pipeline type only — `dataset_scene_ingestion` has a
+Current scope is one pipeline type only — `recording_scene_building` has a
 hardcoded DAG task chain. Other pipeline types still only run through
 Celery. Extending the Airflow path to other pipelines means generalizing the
 DAG (or adding one per type) — out of scope for this PoC.
@@ -202,7 +202,7 @@ domain-specific docs below for Scene/Episode flow.
 | **Scalable learning data (Phase 5, frozen/authoritative)** -- production architecture, frozen contracts, performance summary, distributed-processing boundary | [scalable-learning-data.md](./scalable-learning-data.md) |
 | Learning data scaling -- full chronological per-request record (Phase 5: audit/benchmark, sharded layout, selective reads, bounded cache/bulk access, incremental export, final scale validation + distributed-processing boundary) | [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md) |
 | Dataset interoperability (external adapter contract, LeRobot semantic mapping, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
-| External integration runtime (IntegrationRequest/Result, IntegrationExecutor, HTTP transport, nuScenes + LeRobot isolated runtimes) | [external-integration-runtime.md](./external-integration-runtime.md) |
+| External integration runtime (IntegrationRequest/Result, isolated LeRobot EXPORT runtime) | [external-integration-runtime.md](./external-integration-runtime.md) |
 | **Streaming transport (Phase 6.1 + 6.2)** -- TelemetryEnvelope contract, Kafka wire/topic/partitioning contract, local Kafka dev stack, smoke test, real ROS2 -> Kafka bridge + E2E | [streaming-transport.md](./streaming-transport.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
@@ -226,11 +226,13 @@ the doc over the code.
 - Doc: [data-model.md](./data-model.md) §2
 
 **SCENE** — canonical SceneManifest, registration, validate/profile/quality
-- Schema: `packages/sceneops-core/sceneops_core/scenes/` (legacy producer
-  shapes in `scenes/legacy/`)
-- Registration / resolution: `apps/worker/sceneops_worker/scenes/`
-- Pipeline definitions (legacy producers): `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
-  (`DATASET_SCENE_INGESTION_PIPELINE`, `RAW_LOG_SCENE_BUILDING_PIPELINE`)
+- Schema: `packages/sceneops-core/sceneops_core/scenes/` (build configuration
+  in `scenes/recording_build.py`)
+- Builder / registration / resolution: `apps/worker/sceneops_worker/scenes/`
+  (`recording_builder.py`, `registration.py`)
+- Recording reader: `packages/sceneops-integrations/sceneops_integrations/recording/reader.py`
+- Pipeline definition: `RECORDING_SCENE_BUILDING_PIPELINE` in
+  `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
 - Job handlers: `apps/worker/sceneops_worker/jobs/dataset/`
 - Quality: `apps/api/app/domains/scenes/quality.py`
 - Doc: [scene-domain.md](./scene-domain.md)
@@ -259,14 +261,10 @@ semantic mapping, real Postgres/MinIO round-trip E2E (Phase 3, complete)
 - Doc: [dataset-interoperability.md](./dataset-interoperability.md)
 
 **EXTERNAL INTEGRATION RUNTIME** — IntegrationRequest/IntegrationResult
-contract, IntegrationExecutor (HTTP/container/in-process backends),
-isolated nuScenes + LeRobot runtimes/containers (Phase 4, complete)
+contract for the isolated LeRobot EXPORT runtime
 - Reference/runtime contract: `packages/sceneops-core/sceneops_core/integration_runtime/`
-- Executor + HTTP/container backends: `apps/worker/sceneops_worker/integration_execution/`
-- nuScenes SDK-bound implementation: `packages/sceneops-integrations/sceneops_integrations/nuscenes/`
-- Isolated nuScenes environment/container: `tools/nuscenes-integration/`
 - Isolated LeRobot environment/container: `tools/lerobot-integration/`
-- E2E: `make smoke-nuscenes-container`, `make e2e-lerobot-container`
+- E2E: `make e2e-lerobot-container`
 - Doc: [external-integration-runtime.md](./external-integration-runtime.md)
 
 **PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records

@@ -27,7 +27,6 @@ from sceneops_core.scenes.schemas import (
 )
 from sceneops_core.scenes.testing import (
     build_scene_manifest,
-    external_source,
     recording_source,
 )
 
@@ -338,7 +337,7 @@ def test_clocks_are_declared_per_channel_and_per_unowned_structure():
     clocks = {c.channel: c.source_clock for c in manifest.channels}
     assert clocks == {
         "CAM_FRONT": "camera.exposure_clock",
-        "LIDAR_TOP": "nuscenes.timestamp_us",
+        "LIDAR_TOP": "mcap_log_time",
     }
     assert "source_clock" not in SceneManifest.model_fields
     # Every timestamp has exactly one reachable clock and none is converted.
@@ -391,11 +390,18 @@ def test_recording_window_constrains_only_timestamps_in_the_segment_clock():
     )
 
 
-def test_external_scene_has_no_declared_time_window():
-    """An external Scene's boundary is its source unit, never the extent of
-    its observations."""
+def test_every_scene_declares_its_segment_window():
     manifest = build_scene_manifest(keyframe_timestamps_ns=(1_000, 3_000))
-    assert manifest.declared_window() is None
+    window = manifest.declared_window()
+    assert (
+        window.source_clock,
+        window.start_timestamp_ns,
+        window.end_timestamp_ns,
+    ) == (
+        "mcap_log_time",
+        0,
+        10_000_000_000,
+    )
 
 
 def test_producer_fingerprint_must_rederive_from_the_manifest_source():
@@ -405,66 +411,29 @@ def test_producer_fingerprint_must_rederive_from_the_manifest_source():
     with pytest.raises(ValidationError, match="producer_fingerprint"):
         _rebuild(payload)
 
-    other_source = external_source(source_unit_key="scene-0002")
+    other_source = recording_source(unit_key="segment-0002")
     payload = _dump(manifest)
     payload["lineage"]["source"] = json.loads(other_source.model_dump_json())
-    # Same fingerprint, different source unit: still valid, because the
-    # fingerprint is build-scoped (no unit key in the source revision).
-    assert _rebuild(payload).lineage.source.source_unit_key == "scene-0002"
+    # Same fingerprint, different unit: still valid, because the fingerprint
+    # is build-scoped (no unit key or window in the source revision).
+    assert _rebuild(payload).lineage.source.unit_key == "segment-0002"
 
-    payload["lineage"]["source"]["revision"]["external_revision"] = "rev-2"
+    payload["lineage"]["source"]["recording_checksum"] = "sha256:" + "2" * 64
     with pytest.raises(ValidationError, match="producer_fingerprint"):
         _rebuild(payload)
 
 
-@pytest.mark.parametrize(
-    "there_kwargs",
-    [
-        {"uri": "s3://mirror/datasets/nuscenes-v1.0-mini"},
-        {"uri": "/data/raw/nuscenes", "external_name": "nuScenes mini (team)"},
-        {"uri": "s3://mirror/datasets/nuscenes-v1.0-mini", "external_name": "x"},
-    ],
-)
-def test_external_location_and_display_name_never_change_the_manifest(there_kwargs):
-    """Same source revision, unit, producer and configuration read from a
-    different location and/or under a different display name -> one
-    canonical manifest."""
-    here = external_source(uri="/data/raw/nuscenes", external_name="nuScenes mini")
-    there = external_source(**there_kwargs)
-
-    assert here == there
-    assert here.model_dump(mode="json") == there.model_dump(mode="json")
-    a = build_scene_manifest(source=here)
-    b = build_scene_manifest(source=there)
-    assert (
-        a.lineage.producer.producer_fingerprint
-        == b.lineage.producer.producer_fingerprint
-    )
-    assert a.to_canonical_bytes() == b.to_canonical_bytes()
-    assert a.checksum() == b.checksum()
-    data = a.to_canonical_bytes()
-    assert b"/data/raw" not in data and b"s3://mirror" not in data
-    assert b'"uri"' not in data and b'"external_name"' not in data
-    assert b"nuScenes mini" not in data
-
-
-def test_external_source_revision_still_changes_the_manifest():
-    a = build_scene_manifest(source=external_source(external_revision="rev-1"))
-    b = build_scene_manifest(source=external_source(external_revision="rev-2"))
-    assert (
-        a.lineage.producer.producer_fingerprint
-        != b.lineage.producer.producer_fingerprint
-    )
-    assert a.checksum() != b.checksum()
-
-
-def test_canonical_external_provenance_rejects_a_dataset_location():
+def test_canonical_provenance_rejects_a_location_or_external_block():
     payload = _dump(build_scene_manifest())
-    payload["lineage"]["source"]["uri"] = "/data/raw/nuscenes"
+    payload["lineage"]["source"]["uri"] = "s3://sceneops/robot_runs/run-001"
     with pytest.raises(ValidationError):
         _rebuild(payload)
     payload = _dump(build_scene_manifest())
-    payload["lineage"]["source"]["revision"]["uri"] = "/data/raw/nuscenes"
+    payload["lineage"]["source"] = {
+        "source_kind": "external",
+        "revision": {"source_kind": "external", "format": "nuscenes"},
+        "source_unit_key": "scene-0061",
+    }
     with pytest.raises(ValidationError):
         _rebuild(payload)
 
@@ -499,7 +468,7 @@ def test_coordinate_frames_and_channels_must_be_sorted_unique():
 
 
 def test_scene_identity_is_deterministic_and_scoped():
-    source = external_source(source_unit_key="scene-0061")
+    source = recording_source(robot_run_id="run-1", unit_key="segment-000000")
     scene_id = scene_id_for(dataset_id="d", dataset_version="v1", source=source)
     assert scene_id == scene_id_for(dataset_id="d", dataset_version="v1", source=source)
     assert scene_id.startswith("scene-") and len(scene_id) <= 128
@@ -508,13 +477,46 @@ def test_scene_identity_is_deterministic_and_scoped():
     assert scene_id != scene_id_for(
         dataset_id="d",
         dataset_version="v1",
-        source=external_source(
-            source_unit_key="scene-0061", external_format="other-format"
-        ),
+        source=recording_source(robot_run_id="run-2", unit_key="segment-000000"),
     )
-    # Location and revision are not identity.
-    moved = external_source(source_unit_key="scene-0061", external_revision="rev-9")
-    assert scene_id == scene_id_for(dataset_id="d", dataset_version="v1", source=moved)
+    # The recording revision and the window are not identity: a rebuild of
+    # the same unit key keeps the id.
+    rebuilt = recording_source(
+        robot_run_id="run-1",
+        unit_key="segment-000000",
+        recording_checksum="sha256:" + "9" * 64,
+        start_timestamp_ns=5,
+        end_timestamp_ns=6,
+        source_clock="sensor.header_stamp",
+    )
+    assert scene_id == scene_id_for(
+        dataset_id="d", dataset_version="v1", source=rebuilt
+    )
+    # Pinned: the identity document is unchanged from when external units
+    # existed (§29.9).
+    assert (
+        scene_id
+        == "scene-"
+        + __import__("hashlib")
+        .sha256(
+            __import__(
+                "sceneops_core.common.canonical_json", fromlist=["x"]
+            ).canonical_json_bytes(
+                {
+                    "unit_id_schema": "sceneops.unit_id/v1",
+                    "domain": "scene",
+                    "dataset_id": "d",
+                    "dataset_version": "v1",
+                    "source": {
+                        "source_kind": "recording",
+                        "robot_run_id": "run-1",
+                        "unit_key": "segment-000000",
+                    },
+                }
+            )
+        )
+        .hexdigest()[:32]
+    )
 
     a = recording_source(robot_run_id="run-1", unit_key="seg-0")
     b = recording_source(robot_run_id="run-1", unit_key="seg-1")
@@ -541,16 +543,15 @@ def test_record_projection_is_derived_from_the_manifest():
     assert record.scene_id == scene_id_for(
         dataset_id="d", dataset_version="v1", source=manifest.lineage.source
     )
-    assert record.source_kind == "external"
-    assert record.external_format == "nuscenes"
-    assert record.robot_run_id is None
-    assert record.source_unit_key == "scene-0001"
+    assert record.robot_run_id == "run-001"
+    assert record.unit_key == "segment-0000"
     assert record.producer_fingerprint == manifest.lineage.producer.producer_fingerprint
     assert (
         record.window_clock,
         record.window_start_timestamp_ns,
         record.window_end_timestamp_ns,
-    ) == (None, None, None)
+    ) == ("mcap_log_time", 0, 10_000_000_000)
+    assert not {"source_kind", "external_format"} & set(record.model_dump())
     assert record.observed_channels == ["CAM_FRONT", "LIDAR_TOP"]
     assert record.observation_count == 5
     assert record.keyframe_count == 2
@@ -572,9 +573,8 @@ def test_recording_record_projects_robot_run_scope():
         manifest_artifact_id="art-1",
         manifest_checksum=manifest.checksum(),
     )
-    assert record.source_kind == "recording"
-    assert (record.robot_run_id, record.external_format) == ("run-7", None)
-    assert record.source_unit_key == "segment-0003"
+    assert record.robot_run_id == "run-7"
+    assert record.unit_key == "segment-0003"
     assert (
         record.window_clock,
         record.window_start_timestamp_ns,

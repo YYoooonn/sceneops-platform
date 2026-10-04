@@ -21,7 +21,7 @@ from sceneops_core.inference.schemas.manifests import (
     DetectionPredictionShardRef,
 )
 from sceneops_core.scenes.schemas import SceneManifest, scene_id_for
-from sceneops_core.scenes.testing import external_source
+from sceneops_core.scenes.testing import recording_source
 from sceneops_worker.evaluation.detection.base import DetectionEvaluationRequest
 from sceneops_worker.evaluation.detection.center_distance import (
     evaluate_center_distance_detection,
@@ -49,7 +49,7 @@ class _Scenes:
     ) -> None:
         """``unannotated_keyframe`` adds a second keyframe (keyframe-0001)
         that carries no annotations."""
-        source = external_source(source_unit_key=name)
+        source = recording_source(unit_key=name)
         manifest = self.world.manifest(
             source=source,
             keyframe_timestamps_ns=(1_000, 2_000) if unannotated_keyframe else (1_000,),

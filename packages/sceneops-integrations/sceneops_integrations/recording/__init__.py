@@ -3,7 +3,8 @@
 Publishes a finalized local MCAP and its canonical RobotRunManifest to
 Object Storage; ``REGISTER_ROBOT_RUN`` later verifies and registers them.
 ``check_l1_recording`` is the L1 conformance suite every recording writer's
-output is tested against (ADR-007 §29.5).
+output is tested against (ADR-007 §29.5), and ``iter_recording_messages`` /
+``Ros2Decoder`` are the one reader canonicalization uses (§29.6).
 Like the rest of ``sceneops_integrations`` it never imports ``sceneops-db``,
 never opens a DB session and never writes ArtifactRecords.
 """
@@ -21,6 +22,14 @@ from .facts import (
     RecordingValidationError,
     derive_mcap_facts,
     sha256_checksum,
+)
+from .reader import (
+    RecordingMessage,
+    RecordingReadError,
+    Ros2Decoder,
+    header_stamps,
+    iter_recording_messages,
+    stamp_ns,
 )
 from .publisher import (
     MANIFEST_OBJECT_NAME,
@@ -42,6 +51,12 @@ __all__ = [
     "ConformanceReport",
     "ConformanceViolation",
     "RecordingFacts",
+    "RecordingMessage",
+    "RecordingReadError",
+    "Ros2Decoder",
+    "header_stamps",
+    "iter_recording_messages",
+    "stamp_ns",
     "RecordingPublication",
     "RecordingPublicationConflictError",
     "RecordingPublicationIntegrityError",

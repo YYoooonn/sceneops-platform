@@ -31,7 +31,7 @@ from lerobot.datasets.lerobot_dataset import (
 from sceneops_analytics.external_adapters.adapter import ExternalDatasetAdapter
 from sceneops_analytics.external_adapters.enums import MappingKind, SemanticField
 from sceneops_analytics.external_adapters.schemas import ExternalExportConfig
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef
+from sceneops_core.integration_runtime import ExternalDatasetRef
 
 from .writer import LeRobotDatasetWriter
 

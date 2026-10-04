@@ -12,24 +12,13 @@ from .producer import (
     compute_producer_fingerprint,
     normalize_build_config,
 )
-from .identity import (
-    UNIT_ID_SCHEMA_V1,
-    CanonicalDomain,
-    UnitSourceProjection,
-    canonical_unit_id,
-    project_unit_source,
-)
+from .identity import UNIT_ID_SCHEMA_V1, CanonicalDomain, canonical_unit_id
 from .source_time import INT64_MAX, SourceTimestampNs, SourceTimeUnit, promote_to_ns
 from .sources import (
     SHA256_CHECKSUM_PATTERN,
     UNIT_KEY_MAX_LENGTH,
-    ExternalSourceRevision,
-    ExternalUnitSource,
     RecordingSegmentSource,
     RecordingSourceRevision,
-    SourceRevision,
-    UnitSource,
-    UnitSourceKind,
 )
 
 __all__ = [
@@ -40,21 +29,14 @@ __all__ = [
     "UNIT_ID_SCHEMA_V1",
     "UNIT_KEY_MAX_LENGTH",
     "CanonicalDomain",
-    "ExternalSourceRevision",
-    "ExternalUnitSource",
     "ProducerFingerprintMismatchError",
     "ProducerInfo",
     "RecordingSegmentSource",
     "RecordingSourceRevision",
-    "SourceRevision",
     "SourceTimeUnit",
     "SourceTimestampNs",
-    "UnitSource",
-    "UnitSourceKind",
-    "UnitSourceProjection",
     "canonical_unit_id",
     "compute_producer_fingerprint",
     "normalize_build_config",
-    "project_unit_source",
     "promote_to_ns",
 ]

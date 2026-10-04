@@ -23,8 +23,8 @@ same registered episode set — mirroring Scene's `validate_scene`/
 `profile_scene` split.
 
 `RAW_LOG_EPISODE_BUILDING` is deliberately a separate `PipelineType` from
-`RAW_LOG_SCENE_BUILDING`, even though both start from the same raw
-rosbag/MCAP recording — they produce different record types
+`RECORDING_SCENE_BUILDING`, even though both start from the same registered
+recording — they produce different record types
 (`EpisodeRecord` vs. `SceneRecord`) with different segmentation semantics
 and can run independently of each other over the same underlying recording.
 
@@ -41,11 +41,9 @@ EpisodeSource
   missions: list[MissionRecord]          mission boundaries -> segmentation signal
 ```
 
-This is deliberately narrower than what Scene's raw-log pipeline reads:
-`EpisodeSource` excludes `RawLogManifest`/`RawLogFrameIndex` (Scene-owned
-artifacts — channel/modality summaries, calibrations, ego poses) that
-`EpisodeBuilder` never actually used, even when `build_episodes` was
-producing them as an unused side effect before this schema existed.
+A sensor frame's `channel` is its recording topic, verbatim
+(`/camera/front/image`, `/lidar/top/points`); topics are never renamed into
+another format's vocabulary.
 
 ## 3. Segmentation strategies
 

@@ -7,7 +7,7 @@ from sceneops_core.jobs.schemas.params import (
     DetectionSceneSelectionMode,
 )
 from sceneops_worker.scenes import SceneArtifactStore
-from sceneops_worker.scenes.keyframes import annotation_source, load_pinned_scene
+from sceneops_worker.scenes.keyframes import load_pinned_scene
 
 
 async def select_detection_scenes(
@@ -76,7 +76,10 @@ async def select_detection_scenes(
                 continue
 
             if selection.ground_truth_sources:
-                ground_truth_source = annotation_source(scene_manifest)
+                # Canonical Scenes record no label source until a label
+                # ingress exists (ADR-007 Q1), so no Scene matches an
+                # explicit ground-truth source filter.
+                ground_truth_source = None
                 if ground_truth_source not in selection.ground_truth_sources:
                     skipped_scenes.append(
                         {

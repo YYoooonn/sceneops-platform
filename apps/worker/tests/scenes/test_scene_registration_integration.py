@@ -27,7 +27,6 @@ from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_core.scenes.schemas import scene_id_for
 from sceneops_core.scenes.testing import (
     build_scene_manifest,
-    external_source,
     payload_bytes,
     recording_source,
 )
@@ -56,6 +55,15 @@ class _Env:
         self.dataset_id = dataset_id
         self.run_ids: list[str] = []
         self.robot_ids: list[str] = []
+        # The RobotRun every default manifest of this environment is built from.
+        self.run_id = f"run-{dataset_id}"
+
+    def source(self, unit_key: str = "segment-000000", run_id: str | None = None):
+        return recording_source(
+            robot_run_id=run_id or self.run_id,
+            unit_key=unit_key,
+            recording_checksum=RECORDING_CHECKSUM,
+        )
 
     def context(self, session):
         return create_worker_context(session, settings=self.settings, worker_id="test")
@@ -74,6 +82,7 @@ class _Env:
 
     def manifest(self, **kwargs):
         kwargs.setdefault("payload_namespace", f"art-payload-{self.dataset_id}")
+        kwargs.setdefault("source", self.source())
         return build_scene_manifest(**kwargs)
 
     async def register_payloads(self, ctx, manifest) -> None:
@@ -241,22 +250,22 @@ async def env(_fresh_database_connection, _minio_reachable, worker_settings, uni
     dependencies_module._artifact_store = None
     environment = _Env(worker_settings, unique_id("ds-scenes"))
     await environment.seed_dataset_version()
+    await environment.seed_robot_run(environment.run_id)
     yield environment
     await environment.cleanup()
     dependencies_module._artifact_store = None
 
 
-async def test_external_registration_lifecycle(env):
-    first = await env.publish(env.manifest(source=external_source(source_unit_key="a")))
+async def test_recording_scope_lifecycle_on_postgres(env):
+    first = await env.publish(env.manifest(source=env.source("a")))
     other = await env.publish(
-        env.manifest(
-            source=external_source(source_unit_key="b"), keyframe_timestamps_ns=(1_000,)
-        )
+        env.manifest(source=env.source("b"), keyframe_timestamps_ns=(1_000,))
     )
 
     created = await env.register([first, other])
     scenes, dv = await env.committed()
     assert set(scenes) == set(created.created_scene_ids)
+    assert {s.robot_run_id for s in scenes.values()} == {env.run_id}
     assert dv.scene.scene_count == 2
     assert dv.scene.keyframe_count == 3
     assert dv.scene.observation_count == 7
@@ -266,54 +275,59 @@ async def test_external_registration_lifecycle(env):
     retry = await env.register([first, other])
     assert sorted(retry.unchanged_scene_ids) == sorted(created.created_scene_ids)
 
-    # A different revision of "a" conflicts without replace, changing nothing.
+    # A different build of the recording conflicts without replace.
     rebuilt = await env.publish(
-        env.manifest(
-            source=external_source(source_unit_key="a"), build_config={"channels": []}
-        )
+        env.manifest(source=env.source("a"), build_config={"channels": []})
     )
     with pytest.raises(SceneRegistrationConflictError):
         await env.register([rebuilt])
     assert (await env.committed())[0] == scenes
 
-    # With replace the same identity is repointed; the old revision stays.
+    # With replace the scope becomes exactly the new set: "a" is repointed
+    # in place, "b" is removed, the old revision stays retrievable.
     replaced = await env.register([rebuilt], replace=True)
-    scenes_after, _ = await env.committed()
+    scenes_after, dv_after = await env.committed()
     scene_a = replaced.replaced_scene_ids[0]
+    assert (
+        replaced.removed_scene_ids and replaced.removed_scene_ids[0] not in scenes_after
+    )
     assert scenes_after[scene_a].manifest_artifact_id == rebuilt
     assert scenes_after[scene_a].updated_at >= scenes[scene_a].updated_at
+    assert dv_after.scene.scene_count == 1
     async with get_async_sessionmaker()() as session:
         ctx = env.context(session)
         assert await ctx.artifact_record_store.get(first) is not None
 
 
 async def test_registration_is_atomic_on_postgres(env):
-    existing = await env.publish(
-        env.manifest(source=external_source(source_unit_key="b"))
-    )
-    await env.register([existing])
+    current = [
+        await env.publish(env.manifest(source=env.source(key))) for key in ("a", "b")
+    ]
+    await env.register(current)
     before, dv_before = await env.committed()
 
-    new_unit = await env.publish(
-        env.manifest(source=external_source(source_unit_key="a"))
-    )
-    conflicting = await env.publish(
-        env.manifest(source=external_source(source_unit_key="b"), build_config={"x": 1})
-    )
+    rebuilt = [
+        await env.publish(env.manifest(source=env.source(key), build_config={"x": 1}))
+        for key in ("b", "c")
+    ]
     with pytest.raises(SceneRegistrationConflictError):
-        await env.register([new_unit, conflicting])
+        await env.register(rebuilt)
 
     after, dv_after = await env.committed()
     assert after == before
     assert dv_after.scene == dv_before.scene
 
 
-async def test_concurrent_registrations_serialize_on_the_dataset_version(env):
-    """Two registrations of different units commit concurrently; the
-    DatasetVersion row lock serializes their recompute-then-write, so the
-    summary counts both."""
-    a = await env.publish(env.manifest(source=external_source(source_unit_key="a")))
-    b = await env.publish(env.manifest(source=external_source(source_unit_key="b")))
+async def test_concurrent_registrations_serialize_on_the_dataset_version(
+    env, unique_id
+):
+    """Two RobotRuns' scopes registered concurrently into one DatasetVersion:
+    the row lock serializes their recompute-then-write, so the summary
+    counts both."""
+    other_run = unique_id("run")
+    await env.seed_robot_run(other_run)
+    a = await env.publish(env.manifest(source=env.source("a")))
+    b = await env.publish(env.manifest(source=env.source("b", run_id=other_run)))
 
     await asyncio.gather(env.register([a]), env.register([b]))
 
@@ -323,10 +337,8 @@ async def test_concurrent_registrations_serialize_on_the_dataset_version(env):
 
 
 async def test_concurrent_conflicting_revisions_have_one_winner(env):
-    a1 = await env.publish(env.manifest(source=external_source(source_unit_key="a")))
-    a2 = await env.publish(
-        env.manifest(source=external_source(source_unit_key="a"), build_config={"x": 2})
-    )
+    a1 = await env.publish(env.manifest(source=env.source("a")))
+    a2 = await env.publish(env.manifest(source=env.source("a"), build_config={"x": 2}))
 
     results = await asyncio.gather(
         env.register([a1]), env.register([a2]), return_exceptions=True
@@ -406,7 +418,7 @@ async def test_manifest_bytes_tampered_in_object_storage_are_rejected(env):
 
 async def test_payload_refs_are_checked_against_artifact_records_on_postgres(env):
     unregistered = await env.publish(
-        env.manifest(source=external_source(source_unit_key="a")),
+        env.manifest(source=env.source("a")),
         with_payloads=False,
     )
     with pytest.raises(SceneManifestRejectedError, match="not registered"):
@@ -414,7 +426,7 @@ async def test_payload_refs_are_checked_against_artifact_records_on_postgres(env
 
     # A payload ArtifactRecord whose integrity metadata differs from the
     # reference (here: same id, different bytes) is not the referenced payload.
-    manifest = env.manifest(source=external_source(source_unit_key="b"))
+    manifest = env.manifest(source=env.source("b"))
     payload = manifest.observations[0].payload
     async with get_async_sessionmaker()() as session:
         await env.context(session).artifact_record_store.create(
@@ -449,7 +461,7 @@ async def test_payload_artifact_record_metadata_is_verified_on_postgres(
     """Each PayloadRef must match its ArtifactRecord as stored in PostgreSQL
     (kind round-trips as a plain string); a mismatch on any one payload
     rejects the whole registration and commits nothing."""
-    manifest = env.manifest(source=external_source(source_unit_key="a"))
+    manifest = env.manifest(source=env.source("a"))
     artifact_id = await env.publish(manifest)
     payload_id = manifest.observations[0].payload.artifact_id
     async with get_async_sessionmaker()() as session:

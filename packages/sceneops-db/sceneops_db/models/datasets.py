@@ -27,8 +27,6 @@ class DatasetModel(Base):
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    type: Mapped[str] = mapped_column(String(64), nullable=False)
-
     default_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -121,13 +119,6 @@ class DatasetVersionModel(Base):
         default=list,
         server_default=text("'[]'::jsonb"),
     )
-
-    source_dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    source_dataset_version: Mapped[str | None] = mapped_column(
-        String(128), nullable=True
-    )
-
-    raw_source_root_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

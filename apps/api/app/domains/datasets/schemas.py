@@ -5,7 +5,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
-from sceneops_core.datasets.schemas.enums import DatasetType, DatasetVersionStatus
+from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from app.domains.scenes.schemas import SceneQualityResponse
 
@@ -13,7 +13,6 @@ from app.domains.scenes.schemas import SceneQualityResponse
 class UpdateDatasetRequest(SceneOpsBaseModel):
     name: str | None = None
     description: str | None = None
-    type: DatasetType = DatasetType.CUSTOM
     metadata: JsonDict = Field(default_factory=dict)
 
 
@@ -22,7 +21,6 @@ class UpdateDatasetVersionRequest(SceneOpsBaseModel):
 
     status: DatasetVersionStatus | None = None
     manifest_uri: str | None = None
-    raw_source_root_uri: str | None = None
     required_channels: list[str] | None = None
     metadata: JsonDict | None = None
 
@@ -36,10 +34,7 @@ class CreateDatasetVersionBody(SceneOpsBaseModel):
     version: str
     status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
     manifest_uri: str | None = None
-    raw_source_root_uri: str | None = None
     required_channels: list[str] = Field(default_factory=list)
-    source_dataset_id: str | None = None
-    source_dataset_version: str | None = None
     metadata: JsonDict = Field(default_factory=dict)
 
 

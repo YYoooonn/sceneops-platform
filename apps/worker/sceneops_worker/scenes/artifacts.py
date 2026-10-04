@@ -10,8 +10,13 @@ Reading a canonical manifest always goes through a pinned checksum: the
 bytes are verified before they are parsed, and parsing requires canonical
 form.
 
-Pre-canonical producers write ``LegacySceneManifest`` JSON under a separate
-``legacy_scenes/`` prefix; nothing reads those back as Scenes.
+Canonical observation payloads are write-once objects keyed by their
+deterministic artifact id under the RobotRun they were extracted from::
+
+    {payload_root}/{robot_run_id}/{artifact_id}
+
+Readers never derive this key: a manifest names a payload by artifact id
+and its OBSERVATION_PAYLOAD ArtifactRecord holds the URI.
 """
 
 from __future__ import annotations
@@ -23,7 +28,6 @@ from sceneops_core.common.checksums import (
     sha256_checksum,
 )
 from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
-from sceneops_core.scenes.legacy import LegacySceneManifest
 from sceneops_core.scenes.schemas import SceneManifest, load_canonical_scene_manifest
 from sceneops_storage import ArtifactNotFoundError, ArtifactStore
 
@@ -35,6 +39,10 @@ class SceneManifestIntegrityError(RuntimeError):
 
 class SceneManifestWriteConflictError(RuntimeError):
     """A write-once manifest key already holds different bytes."""
+
+
+class ObservationPayloadConflictError(RuntimeError):
+    """A write-once payload key already holds different bytes."""
 
 
 @dataclass(frozen=True)
@@ -50,9 +58,11 @@ class SceneArtifactStore:
         *,
         artifact_store: ArtifactStore,
         dataset_root_uri: str,
+        payload_root_uri: str,
     ) -> None:
         self.artifact_store = artifact_store
         self.dataset_root_uri = dataset_root_uri
+        self.payload_root_uri = payload_root_uri
 
     # ------------------------------------------------------------------
     # URI helpers
@@ -88,11 +98,10 @@ class SceneArtifactStore:
             checksum_qualified_manifest_name(checksum),
         )
 
-    def legacy_scenes_root_uri(self, *, dataset_id: str, dataset_version: str) -> str:
-        version_root = self._version_root_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version
+    def observation_payload_uri(self, *, robot_run_id: str, artifact_id: str) -> str:
+        return self.artifact_store.join_uri(
+            self.payload_root_uri, robot_run_id, artifact_id
         )
-        return self.artifact_store.join_uri(version_root, "legacy_scenes")
 
     def scene_index_uri(self, *, dataset_id: str, dataset_version: str) -> str:
         version_root = self._version_root_uri(
@@ -161,25 +170,34 @@ class SceneArtifactStore:
         return load_canonical_scene_manifest(data)
 
     # ------------------------------------------------------------------
-    # Legacy (pre-canonical) manifests
+    # Canonical observation payloads
     # ------------------------------------------------------------------
 
-    async def write_legacy_scene_manifest(
-        self,
-        *,
-        dataset_id: str,
-        dataset_version: str,
-        scene_id: str,
-        manifest: LegacySceneManifest,
-    ) -> str:
-        uri = self.artifact_store.join_uri(
-            self.legacy_scenes_root_uri(
-                dataset_id=dataset_id, dataset_version=dataset_version
-            ),
-            f"{scene_id}.json",
+    async def publish_observation_payload(
+        self, *, robot_run_id: str, artifact_id: str, data: bytes, checksum: str
+    ) -> tuple[str, bool]:
+        """Write-once publication of one payload. Returns ``(uri, written)``.
+        A key that already holds the same bytes is reused; different bytes
+        are a conflict and are never overwritten. ``checksum`` is the
+        planned sha256 the bytes must have."""
+        if sha256_checksum(data) != checksum:
+            raise ObservationPayloadConflictError(
+                f"payload {artifact_id} bytes do not match planned {checksum}"
+            )
+        uri = self.observation_payload_uri(
+            robot_run_id=robot_run_id, artifact_id=artifact_id
         )
-        await self.artifact_store.write_json(uri, manifest.to_artifact_dict())
-        return uri
+        if await self.artifact_store.exists(uri):
+            existing = await self.artifact_store.read_bytes(uri)
+            if sha256_checksum(existing) != checksum:
+                raise ObservationPayloadConflictError(
+                    f"{uri} already holds different bytes; payload keys are write-once"
+                )
+            return uri, False
+        await self.artifact_store.write_bytes(uri, data)
+        if sha256_checksum(await self.artifact_store.read_bytes(uri)) != checksum:
+            raise SceneManifestIntegrityError(f"read-back of {uri} differs")
+        return uri, True
 
     # ------------------------------------------------------------------
     # Derived scene index
@@ -206,6 +224,7 @@ class SceneArtifactStore:
 
 
 __all__ = [
+    "ObservationPayloadConflictError",
     "PublishedSceneManifest",
     "SceneArtifactStore",
     "SceneManifestIntegrityError",

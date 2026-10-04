@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.provenance import UnitSourceKind
 from sceneops_core.scenes.schemas import SceneRecord
 from sceneops_db.postgres import PostgresSceneRepository
 from sceneops_db.repositories import SceneMembershipSummary
@@ -24,8 +23,6 @@ class SceneStore:
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        source_kind: UnitSourceKind | None = None,
-        external_format: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -33,8 +30,6 @@ class SceneStore:
         return await self._repo.list(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            source_kind=source_kind,
-            external_format=external_format,
             robot_run_id=robot_run_id,
             limit=limit,
             offset=offset,

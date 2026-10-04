@@ -70,6 +70,7 @@ def create_worker_context(
         scene_artifact_store=SceneArtifactStore(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,
+            payload_root_uri=settings.observation_payload_root_uri,
         ),
         episode_artifact_store=EpisodeArtifactStore(
             artifact_store=artifact_store,

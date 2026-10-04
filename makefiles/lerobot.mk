@@ -84,8 +84,7 @@ lerobot-image:
 # `make lerobot-image`). e2e-lerobot-container (below) owns the full
 # containerized golden round-trip E2E (official-reader/per-frame
 # comparison) -- not duplicated here. An engineering/transport-boundary
-# check, not a domain workflow -- lives in the smoke-* namespace like
-# smoke-nuscenes-container.
+# check, not a domain workflow -- lives in the smoke-* namespace.
 .PHONY: smoke-lerobot-container
 smoke-lerobot-container:
 	chmod +x scripts/e2e/smoke_lerobot_container.sh

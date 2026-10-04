@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sceneops_core.scenes.schemas import project_scene_record
-from sceneops_core.scenes.testing import build_scene_manifest, external_source
+from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_analytics.tables import (
     TABLE_BUILDERS,
     build_annotations_table,
@@ -15,7 +15,7 @@ from sceneops_analytics.tables import (
 
 def _manifest(key: str = "scene-a"):
     return build_scene_manifest(
-        source=external_source(source_unit_key=key),
+        source=recording_source(unit_key=key),
         keyframe_timestamps_ns=(1_000, 3_000),
         annotations_per_keyframe=2,
     )
@@ -37,7 +37,8 @@ def test_build_scenes_table_row_per_scene():
     df = build_scenes_table([record])
     assert df.height == 1
     row = df.row(0, named=True)
-    assert row["source_kind"] == "external"
+    assert (row["robot_run_id"], row["unit_key"]) == ("run-001", "scene-a")
+    assert "source_kind" not in row and "external_format" not in row
     assert row["manifest_artifact_id"] == "art-1"
     assert (row["observation_count"], row["keyframe_count"]) == (5, 2)
     assert row["observed_channels"] == ["CAM_FRONT", "LIDAR_TOP"]
@@ -54,7 +55,7 @@ def test_observations_table_keeps_every_observation_with_its_own_time():
     assert df.height == 5
     assert df["timestamp_ns"].to_list() == [1_007, 2_000, 3_007, 1_000, 3_000]
     assert set(df["modality"].to_list()) == {"camera", "lidar"}
-    assert df["source_clock"].unique().to_list() == ["nuscenes.timestamp_us"]
+    assert df["source_clock"].unique().to_list() == ["mcap_log_time"]
     assert df["payload_checksum"].null_count() == 0
     assert df["payload_artifact_id"].null_count() == 0
     assert "payload_uri" not in df.columns
@@ -73,14 +74,14 @@ def test_every_timestamp_row_carries_its_own_clock():
     )
     assert clocks == {
         "CAM_FRONT": "camera.exposure_clock",
-        "LIDAR_TOP": "nuscenes.timestamp_us",
+        "LIDAR_TOP": "mcap_log_time",
     }
     for table in (build_keyframes_table, build_annotations_table):
         df = table(dataset_id="d", dataset_version="v1", manifests=manifests)
-        assert df["source_clock"].to_list() == ["nuscenes.timestamp_us"] * df.height
+        assert df["source_clock"].to_list() == ["mcap_log_time"] * df.height
 
 
-def test_scenes_table_window_is_null_for_external_scenes():
+def test_scenes_table_carries_the_segment_window():
     manifest = _manifest()
     record = project_scene_record(
         dataset_id="d",
@@ -94,7 +95,7 @@ def test_scenes_table_window_is_null_for_external_scenes():
         row["window_clock"],
         row["window_start_timestamp_ns"],
         row["window_end_timestamp_ns"],
-    ) == (None, None, None)
+    ) == ("mcap_log_time", 0, 10_000_000_000)
 
 
 def test_keyframes_and_annotations_tables():

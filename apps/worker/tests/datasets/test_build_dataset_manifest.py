@@ -13,7 +13,7 @@ from sceneops_core.jobs.schemas import (
     BuildSceneIndexJobParams,
     RegisterScenesJobParams,
 )
-from sceneops_core.scenes.testing import external_source
+from sceneops_core.scenes.testing import recording_source
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.build_dataset_manifest import (
     BuildDatasetManifestJobHandler,
@@ -30,11 +30,13 @@ def _job() -> MagicMock:
     return job
 
 
-async def _register(world, *keys, replace=False):
+async def _register(world, *keys, replace=False, run="run-001"):
+    if run not in world.robot_runs:
+        world.add_robot_run(run, recording_checksum="sha256:" + "1" * 64)
     artifacts = [
         await world.publish(
             world.manifest(
-                source=external_source(source_unit_key=key),
+                source=recording_source(robot_run_id=run, unit_key=key),
                 keyframe_timestamps_ns=tuple(range(1_000, 1_000 * (i + 2), 1_000)),
             )
         )
@@ -82,8 +84,9 @@ async def _build_manifest(world):
 
 
 async def test_manifest_indexes_every_registered_scene_at_its_pinned_revision(world):
+    # Two RobotRuns: two recording scopes in one DatasetVersion.
     await _register(world, "a")
-    await _register(world, "b", "c")
+    await _register(world, "b", "c", run="run-002")
 
     result = await _build_manifest(world)
     manifest = world.written["manifest"]
@@ -125,7 +128,9 @@ async def test_rebuild_after_replacement_pins_the_new_revision(world):
 
     artifact = await world.publish(
         world.manifest(
-            source=external_source(source_unit_key="a"), annotations_per_keyframe=3
+            source=recording_source(unit_key="a"),
+            annotations_per_keyframe=3,
+            build_config={"channels": ["CAM_FRONT", "LIDAR_TOP"], "revision": 2},
         )
     )
     await RegisterScenesJobHandler().run(

@@ -35,9 +35,10 @@ class SceneGroupKind(StrEnum):
     """A grouping of observations that the source itself defines.
 
     ``keyframe``: a source-designated reference sample over several
-    channels (e.g. a nuScenes ``sample``). It indexes observations that stay
-    independently represented with their own timestamps; it never replaces
-    them, and observations outside any keyframe remain canonical.
+    channels (e.g. a hardware-triggered capture set). It indexes
+    observations that stay independently represented with their own
+    timestamps; it never replaces them, and observations outside any
+    keyframe remain canonical.
     """
 
     KEYFRAME = "keyframe"

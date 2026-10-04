@@ -7,17 +7,14 @@ from .schemas import (
     DatasetRecord,
     DatasetSceneIndexEntry,
     DatasetSplit,
-    DatasetType,
     DatasetVersionRecord,
     DatasetVersionStatus,
-    ExternalDatasetRef,
     GetDatasetRequest,
     GetDatasetVersionRequest,
     RegisterDatasetManifestRequest,
 )
 
 __all__ = [
-    "DatasetType",
     "DatasetVersionStatus",
     "DatasetManifestStatus",
     "DatasetIngestMode",
@@ -26,7 +23,6 @@ __all__ = [
     "DatasetVersionRecord",
     "DatasetSceneIndexEntry",
     "DatasetManifest",
-    "ExternalDatasetRef",
     "CreateDatasetRequest",
     "CreateDatasetVersionRequest",
     "RegisterDatasetManifestRequest",

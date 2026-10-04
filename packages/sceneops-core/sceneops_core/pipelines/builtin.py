@@ -20,75 +20,103 @@ _SUMMARY = PipelineTaskOutputKind.SUMMARY
 _METRIC = PipelineTaskOutputKind.METRIC
 _ARTIFACT = PipelineTaskOutputKind.ARTIFACT
 
-_INGEST_SCENES_OUTPUTS = [
-    # Legacy manifests are archival output only: no canonical task consumes
-    # them, so they are ARTIFACT, never REF.
+_BUILD_RECORDING_SCENES_OUTPUTS = [
+    # The complete Scene set of the recording scope, consumed by
+    # register_scenes → REF.
     PipelineTaskOutputSpec(
-        name="legacy_scene_manifest_uris",
-        kind=_ARTIFACT,
-        source="legacy_scene_manifest_uris",
+        name="manifest_artifact_ids", kind=_REF, source="manifest_artifact_ids"
+    ),
+    PipelineTaskOutputSpec(name="robot_run_id", kind=_REF, source="robot_run_id"),
+    PipelineTaskOutputSpec(
+        name="producer_fingerprint", kind=_SUMMARY, source="producer_fingerprint"
     ),
     PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
-    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
-    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
+    PipelineTaskOutputSpec(
+        name="observation_count", kind=_SUMMARY, source="observation_count"
+    ),
+    PipelineTaskOutputSpec(name="pose_count", kind=_SUMMARY, source="pose_count"),
+    PipelineTaskOutputSpec(
+        name="payload_artifact_count", kind=_SUMMARY, source="payload_artifact_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="created_payload_count", kind=_SUMMARY, source="created_payload_count"
+    ),
+    PipelineTaskOutputSpec(name="channels", kind=_SUMMARY, source="channels"),
 ]
 
-_BUILD_SCENES_OUTPUTS = [
-    # Legacy manifests and diagnostic URIs are archival only → ARTIFACT.
+_REGISTER_SCENES_OUTPUTS = [
+    # scene_ids consumed by validate_scene / profile_scene → REF.
+    PipelineTaskOutputSpec(name="scene_ids", kind=_REF, source="scene_ids"),
     PipelineTaskOutputSpec(
-        name="legacy_scene_manifest_uris",
+        name="registered_manifest_artifact_ids",
+        kind=_SUMMARY,
+        source="manifest_artifact_ids",
+    ),
+    PipelineTaskOutputSpec(
+        name="created_scene_ids", kind=_SUMMARY, source="created_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="replaced_scene_ids", kind=_SUMMARY, source="replaced_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="unchanged_scene_ids", kind=_SUMMARY, source="unchanged_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="removed_scene_ids", kind=_SUMMARY, source="removed_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="registered_scene_count", kind=_SUMMARY, source="registered_scene_count"
+    ),
+]
+
+_VALIDATE_SCENE_OUTPUTS = [
+    PipelineTaskOutputSpec(
+        name="validation_run_id", kind=_REF, source="validation_run_id"
+    ),
+    PipelineTaskOutputSpec(
+        name="validation_report_uri",
         kind=_ARTIFACT,
-        source="legacy_scene_manifest_uris",
+        source="report_uri",
+        target="validation_report_uri",
     ),
     PipelineTaskOutputSpec(
-        name="scene_segment_index_uri", kind=_ARTIFACT, source="scene_segment_index_uri"
+        name="validation_status",
+        kind=_SUMMARY,
+        source="status",
+        target="validation_status",
     ),
     PipelineTaskOutputSpec(
-        name="raw_log_manifest_uri", kind=_ARTIFACT, source="raw_log_manifest_uri"
+        name="should_block_pipeline", kind=_SUMMARY, source="should_block_pipeline"
     ),
     PipelineTaskOutputSpec(
-        name="raw_log_frame_index_uri", kind=_ARTIFACT, source="raw_log_frame_index_uri"
+        name="checked_scene_count", kind=_SUMMARY, source="checked_scene_count"
     ),
-    PipelineTaskOutputSpec(name="records_uri", kind=_ARTIFACT, source="records_uri"),
+    PipelineTaskOutputSpec(name="issue_count", kind=_SUMMARY, source="issue_count"),
+]
+
+_VALIDATE_SCENE_QUALITY_RULES = [
+    PipelineTaskQualityRule(
+        rule_type=PipelineTaskQualityRuleType.BLOCK_IF_TRUE,
+        source="summary.should_block_pipeline",
+        message="Scene validation blocked pipeline",
+        code="validate_scene_blocked",
+    ),
+]
+
+_PROFILE_SCENE_OUTPUTS = [
+    PipelineTaskOutputSpec(name="profile_run_id", kind=_REF, source="profile_run_id"),
+    PipelineTaskOutputSpec(
+        name="profile_report_uri",
+        kind=_ARTIFACT,
+        source="report_uri",
+        target="profile_report_uri",
+    ),
     PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
-    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
-    PipelineTaskOutputSpec(name="frame_count", kind=_SUMMARY, source="frame_count"),
-    PipelineTaskOutputSpec(name="source_type", kind=_SUMMARY, source="source_type"),
-    PipelineTaskOutputSpec(name="source_format", kind=_SUMMARY, source="source_format"),
     PipelineTaskOutputSpec(
         name="observation_count", kind=_SUMMARY, source="observation_count"
     ),
     PipelineTaskOutputSpec(
-        name="segmentation_strategy", kind=_SUMMARY, source="segmentation_strategy"
-    ),
-    PipelineTaskOutputSpec(
-        name="sampling_strategy", kind=_SUMMARY, source="sampling_strategy"
-    ),
-    PipelineTaskOutputSpec(
-        name="sample_count_before_filtering",
-        kind=_SUMMARY,
-        source="sample_count_before_filtering",
-    ),
-    PipelineTaskOutputSpec(
-        name="sample_count_after_filtering",
-        kind=_SUMMARY,
-        source="sample_count_after_filtering",
-    ),
-    PipelineTaskOutputSpec(
-        name="dropped_sample_count", kind=_SUMMARY, source="dropped_sample_count"
-    ),
-    PipelineTaskOutputSpec(
-        name="warned_sample_count", kind=_SUMMARY, source="warned_sample_count"
-    ),
-    PipelineTaskOutputSpec(
-        name="samples_with_missing_channels_count",
-        kind=_SUMMARY,
-        source="samples_with_missing_channels_count",
-    ),
-    PipelineTaskOutputSpec(
-        name="missing_channel_counts_by_channel",
-        kind=_SUMMARY,
-        source="missing_channel_counts_by_channel",
+        name="observed_channels", kind=_SUMMARY, source="observed_channels"
     ),
 ]
 
@@ -238,57 +266,51 @@ _EVALUATE_DETECTION_OUTPUTS = [
 
 # ── Pipeline definitions ───────────────────────────────────────────────────────
 
-DATASET_SCENE_INGESTION_PIPELINE = PipelineDefinition(
-    type=PipelineType.DATASET_SCENE_INGESTION,
-    name="Dataset Scene Ingestion (legacy)",
+RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.RECORDING_SCENE_BUILDING,
+    name="Recording Scene Building",
     description=(
-        "LEGACY: imports nuScenes scenes as pre-canonical, sample-centric "
-        "scene manifests with source-root-relative payloads. These manifests "
-        "are not canonical Scenes and are never registered; canonical Scene "
-        "membership is written only by register_scenes from canonical "
-        "SceneManifest artifacts."
+        "Build the canonical Scenes of one registered RobotRun recording "
+        "(robot_run_id + build_config), register them as the complete set "
+        "of that recording scope in the DatasetVersion, then validate and "
+        "profile the registered revisions. Builds from one RobotRun per run; "
+        "a DatasetVersion spanning several RobotRuns takes several runs."
     ),
-    experimental=True,
+    supported=True,
+    implemented=True,
     tasks=[
         PipelineTaskDefinition(
-            pipeline_task_id="ingest_scenes",
-            name="Ingest scenes (legacy manifests)",
+            pipeline_task_id="build_recording_scenes",
+            name="Build recording scenes",
             order=0,
-            job_type=JobType.INGEST_SCENES,
-            default_params={
-                "source_format": "nuscenes",
-                "mode": "upsert",
-            },
-            outputs=_INGEST_SCENES_OUTPUTS,
+            job_type=JobType.BUILD_RECORDING_SCENES,
+            outputs=_BUILD_RECORDING_SCENES_OUTPUTS,
         ),
-    ],
-)
-
-
-RAW_LOG_SCENE_BUILDING_PIPELINE = PipelineDefinition(
-    type=PipelineType.RAW_LOG_SCENE_BUILDING,
-    name="Raw Log Scene Building (legacy)",
-    description=(
-        "LEGACY: builds pre-canonical, sample-centric scene manifests from a "
-        "raw log (locally, nuScenes through the isolated nuscenes-integration "
-        "container). Frames are kept only when sampling associates them with "
-        "a sample and payloads stay relative to the raw source root, so the "
-        "output is not a canonical Scene and is never registered."
-    ),
-    experimental=True,
-    tasks=[
         PipelineTaskDefinition(
-            pipeline_task_id="build_scenes",
-            name="Build scenes (legacy manifests)",
-            order=0,
-            job_type=JobType.BUILD_SCENES,
-            default_params={
-                "build_assets": True,
-                "sampling": {
-                    "missing_channel_policy": "keep_with_warning",
-                },
-            },
-            outputs=_BUILD_SCENES_OUTPUTS,
+            pipeline_task_id="register_scenes",
+            name="Register scenes",
+            order=1,
+            job_type=JobType.REGISTER_SCENES,
+            depends_on_pipeline_task_ids=["build_recording_scenes"],
+            outputs=_REGISTER_SCENES_OUTPUTS,
+        ),
+        PipelineTaskDefinition(
+            pipeline_task_id="validate_scene",
+            name="Validate scenes",
+            order=2,
+            job_type=JobType.VALIDATE_SCENE,
+            depends_on_pipeline_task_ids=["register_scenes"],
+            outputs=_VALIDATE_SCENE_OUTPUTS,
+            quality_rules=_VALIDATE_SCENE_QUALITY_RULES,
+        ),
+        PipelineTaskDefinition(
+            pipeline_task_id="profile_scene",
+            name="Profile scenes",
+            order=3,
+            job_type=JobType.PROFILE_SCENE,
+            depends_on_pipeline_task_ids=["register_scenes"],
+            optional=True,
+            outputs=_PROFILE_SCENE_OUTPUTS,
         ),
     ],
 )
@@ -300,10 +322,9 @@ RAW_LOG_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
     description=(
         "Build SceneOps episode manifests from a robot rosbag/MCAP recording, "
         "segmented by Mission boundaries, then register them. Deliberately "
-        "separate from RAW_LOG_SCENE_BUILDING: Scene captures a spatiotemporal "
-        "observation unit, Episode captures a task-oriented observation+action "
-        "unit. Uses RosbagAdapter registered under RawLogSourceType.REAL_ROBOT_LOG "
-        "in this job's own adapter factory."
+        "separate from RECORDING_SCENE_BUILDING: Scene captures a "
+        "spatiotemporal observation unit, Episode captures a task-oriented "
+        "observation+action unit."
     ),
     experimental=True,
     tasks=[
@@ -545,8 +566,7 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
 
 
 BUILTIN_PIPELINE_DEFINITIONS = [
-    DATASET_SCENE_INGESTION_PIPELINE,
-    RAW_LOG_SCENE_BUILDING_PIPELINE,
+    RECORDING_SCENE_BUILDING_PIPELINE,
     RAW_LOG_EPISODE_BUILDING_PIPELINE,
     SCENARIO_CURATION_PIPELINE,
     DETECTION_EVALUATION_PIPELINE,

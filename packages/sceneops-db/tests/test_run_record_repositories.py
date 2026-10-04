@@ -10,6 +10,8 @@ transaction would otherwise tie and make ordering non-deterministic.
 
 from __future__ import annotations
 
+from sceneops_core.scenes.testing import recording_source
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -163,6 +165,9 @@ async def test_latest_runs_count_only_the_current_revision(
     replacement = await scene_record_for(
         db_session,
         dataset_id=scene.dataset_id,
+        source=recording_source(
+            robot_run_id=scene.robot_run_id, unit_key=scene.unit_key
+        ),
         keyframe_timestamps_ns=(1_000, 2_000, 3_000),
     )
     await PostgresSceneRepository(db_session).replace_revision(replacement)

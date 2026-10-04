@@ -68,13 +68,7 @@ class MissionRecord(SceneOpsBaseModel):
 
 
 class RobotStateRecord(SceneOpsBaseModel):
-    """Canonical robot runtime state sample (docs/architecture/data-model.md §5).
-
-    Field names/shapes intentionally mirror ``RawEgoPoseManifest``
-    (sceneops_core.observations.schemas.frames) since ego_pose is a subset of
-    this concept — translation/rotation use the same list[float] + rotation_format
-    convention so a future merge is a narrowing, not a rewrite.
-    """
+    """Canonical robot runtime state sample (docs/architecture/data-model.md §5)."""
 
     state_id: str
     robot_id: str

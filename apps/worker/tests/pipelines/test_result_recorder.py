@@ -254,7 +254,7 @@ class TestNewTaskRequiresNoRecorderChanges:
             pipeline_task_id="make_widgets",
             name="Make Widgets",
             order=0,
-            job_type=JobType.BUILD_SCENES,  # any job type
+            job_type=JobType.BUILD_RECORDING_SCENES,  # any job type
             outputs=fake_outputs,
         )
         raw = {

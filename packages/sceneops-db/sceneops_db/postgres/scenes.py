@@ -3,7 +3,6 @@ from __future__ import annotations
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.provenance import UnitSourceKind
 from sceneops_core.runs.schemas import RunStatus, RunType
 from sceneops_core.scenes.schemas import SceneRecord
 
@@ -33,8 +32,6 @@ class PostgresSceneRepository:
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        source_kind: UnitSourceKind | None = None,
-        external_format: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -44,10 +41,6 @@ class PostgresSceneRepository:
             stmt = stmt.where(SceneModel.dataset_id == dataset_id)
         if dataset_version is not None:
             stmt = stmt.where(SceneModel.dataset_version == dataset_version)
-        if source_kind is not None:
-            stmt = stmt.where(SceneModel.source_kind == enum_value(source_kind))
-        if external_format is not None:
-            stmt = stmt.where(SceneModel.external_format == external_format)
         if robot_run_id is not None:
             stmt = stmt.where(SceneModel.robot_run_id == robot_run_id)
         stmt = apply_pagination(
@@ -63,7 +56,6 @@ class PostgresSceneRepository:
             select(SceneModel)
             .where(SceneModel.dataset_id == dataset_id)
             .where(SceneModel.dataset_version == dataset_version)
-            .where(SceneModel.source_kind == UnitSourceKind.RECORDING.value)
             .where(SceneModel.robot_run_id == robot_run_id)
             .order_by(SceneModel.scene_id)
         )

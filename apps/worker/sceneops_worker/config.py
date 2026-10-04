@@ -10,7 +10,6 @@ from sceneops_core.config import (
     ArtifactSettings,
     DefaultDatasetSettings,
     ExecutionSettings,
-    IntegrationExecutionSettings,
     RawSourceSettings,
     WorkerRuntimeSettings,
 )
@@ -39,9 +38,6 @@ class WorkerSettings(BaseSettings):
     execution: ExecutionSettings = Field(
         default_factory=ExecutionSettings,
     )
-    integration_execution: IntegrationExecutionSettings = Field(
-        default_factory=IntegrationExecutionSettings,
-    )
 
     @property
     def artifact_backend(self) -> ArtifactBackend:
@@ -58,6 +54,10 @@ class WorkerSettings(BaseSettings):
     @property
     def run_root_uri(self) -> str:
         return self.artifact.run_root_uri
+
+    @property
+    def observation_payload_root_uri(self) -> str:
+        return self.artifact.observation_payload_root_uri
 
     @property
     def model_root_uri(self) -> str:

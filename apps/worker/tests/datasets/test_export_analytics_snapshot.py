@@ -11,7 +11,7 @@ from sceneops_core.jobs.schemas import (
     ExportAnalyticsSnapshotJobParams,
     RegisterScenesJobParams,
 )
-from sceneops_core.scenes.testing import external_source
+from sceneops_core.scenes.testing import recording_source
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.export_analytics_snapshot import (
     ExportAnalyticsSnapshotJobHandler,
@@ -44,7 +44,7 @@ def world(scene_world):
 
 async def _register(world, *keys):
     artifacts = [
-        await world.publish(world.manifest(source=external_source(source_unit_key=k)))
+        await world.publish(world.manifest(source=recording_source(unit_key=k)))
         for k in keys
     ]
     await RegisterScenesJobHandler().run(

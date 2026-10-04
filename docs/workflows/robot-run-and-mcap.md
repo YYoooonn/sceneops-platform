@@ -65,45 +65,25 @@ nuScenes CAN quaternions are `(w, x, y, z)`; ROS2 `geometry_msgs/Quaternion`
 is `(x, y, z, w)` — `can_replay_node.py`'s `_quat_wxyz_to_ros()` handles the
 reorder.
 
-## 3. `RosbagAdapter`: bag -> SceneOps schemas
+## 3. Reading a recording
 
-`apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`
-implements the `RawLogAdapter` Protocol
-(`apps/worker/sceneops_worker/observations/adapters/base.py`) — registered
-under `RawLogSourceType.REAL_ROBOT_LOG` in `build_scenes.py`'s adapter
-factory. nuScenes raw-log ingestion no longer goes through this same
-in-process Protocol (it runs through the isolated nuScenes integration
-service instead — see
-[External integration runtime](../architecture/external-integration-runtime.md));
-`RosbagAdapter` is the only remaining `RawLogAdapter` implementation.
+Two readers consume a resolved recording (§3.1):
 
-```python
-class RosbagAdapter:
-    async def build_raw_log(
-        self, *, dataset_id, dataset_version, raw_log_id, version_root_uri, params
-    ) -> tuple[RawLogManifest, RawLogFrameIndex, str, str]:
-        # 1. Open the rosbag2/MCAP file (mcap.reader.make_reader)
-        # 2. Decode per message encoding:
-        #    - cdr: mcap_ros2.decoder.DecoderFactory decodes real ROS2 messages
-        #      (no rclpy needed — uses the schema embedded in the MCAP file
-        #      itself), recursively walked into plain dicts. nav_msgs/Odometry,
-        #      sensor_msgs/Imu, sensor_msgs/BatteryState remap to flat fields;
-        #      std_msgs/String re-parses .data as JSON (the §2 bridge format).
-        #    - json: test-fixture bridge format, used as-is
-        # 3. Topic discovery -> SensorModality mapping (camera/lidar/etc.)
-        # 4. Timestamp alignment -> RawSensorFrameManifest list
-        # 5. Robot-state topics (odom/imu/control/status) extracted separately
-        #    as RobotState records (extract_robot_states()), not as frames
-        # 6. Assemble RawLogManifest/RawLogFrameIndex, write to ArtifactStore
-```
-
-`BuildScenesJobHandler.run()` and everything downstream of it (`SceneBuilder`,
-artifact registration, dataset-version update) needs **no code change** to
-accept a real rosbag — it only ever depends on getting a
-`RawLogManifest`/`RawLogFrameIndex` back, regardless of whether the adapter
-behind that is nuScenes-mock or real MCAP. Same design payoff as
-`ArtifactStore` making storage-backend swaps code-change-free
-([ADR-002](../adr/002-object-storage-for-assets.md)).
+- `RosbagAdapter`
+  (`apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`) is the
+  Episode / robot-state read: `extract_episode_source()`,
+  `extract_robot_states()`, `extract_missions()`. It decodes `cdr` messages
+  with `mcap_ros2` using the schemas embedded in the file (no rclpy),
+  flattens `nav_msgs/Odometry`, `sensor_msgs/Imu` and
+  `sensor_msgs/BatteryState` into robot-state fields, and re-parses
+  `std_msgs/String` `.data` as JSON (the §2 bridge format). Sensor frames are
+  named by their topic, verbatim.
+- `sceneops_integrations.recording.reader` is the reader canonical Scene
+  building uses. It streams every message in file order with its topic,
+  schema, encodings, payload, `log_time`, `publish_time`, MCAP sequence and
+  file position, and decodes ROS 2 messages with the embedded schema. The L1
+  conformance suite shares its timestamp helpers. See
+  [Scene domain](../architecture/scene-domain.md) §6.
 
 Storage: locally recorded bags follow `RawSourceSettings`' independent-root
 convention (`/data/raw/rosbag/...`); a published recording lives under
@@ -136,7 +116,7 @@ robot_run_id
   -> RosbagAdapter(local_path)
 ```
 
-Consumers: `build_episodes` and `ingest_robot_states`. Their job params take
+Consumers: `build_recording_scenes`, `build_episodes` and `ingest_robot_states`. Their job params take
 `robot_run_id` (required); `mcap_uri`, `rosbag_uri` and `robot_id` are
 rejected at job creation, and there is no local-path parameter and no
 fallback to any other recording source. The RobotRunRecord's `robot_id` is
@@ -340,12 +320,12 @@ Everything else is self-contained in the `ros2/` Docker image.
 
 ## 6. Current limitations
 
-- **Sensor payloads are recorded but not consumed.** Batch acquisition
-  (§3.3) registers RobotRuns whose recordings carry camera, lidar,
-  CameraInfo and transform channels, but no consumer extracts them yet:
-  `RosbagAdapter` decodes `sensor_msgs/Image`/`PointCloud2` via CDR and
-  leaves `RawSensorFrameManifest.uri` empty. The streaming path (bridge,
-  capture) carries only the five telemetry channels of §2.
+- **Sensor channels come only from batch acquisition.** Batch-acquired
+  recordings (§3.3) carry camera, lidar, CameraInfo and transform channels,
+  and `RECORDING_SCENE_BUILDING` extracts them into canonical Scene payloads.
+  The Episode read (`RosbagAdapter`) leaves `RawSensorFrameManifest.uri`
+  empty. The streaming path (bridge, capture) carries only the five
+  telemetry channels of §2.
 - **Publication and registration are explicit steps.** Nothing triggers
   the Recording Publisher from a finalized capture, or registration from a
   published manifest; published-but-unregistered manifests are not
@@ -416,20 +396,3 @@ row_counts                  : {robot_telemetry: 2913, missions: 1}
 `state_count` is one row per CAN message (`pose`->odom, `ms_imu`->imu,
 `vehicle_monitor`->status+control), not one row per mission — a single
 `RobotRun` accumulates many `RobotState` rows.
-
-## 8. Design background
-
-This capability was originally scoped as the largest remaining gap against
-an internal roadmap, on the assumption it required designing a new
-ingestion abstraction from scratch. In practice, `RAW_LOG_SCENE_BUILDING`'s
-`build_scenes` job already used a `RawLogAdapter` Protocol
-(`apps/worker/sceneops_worker/observations/adapters/base.py`) structurally
-equivalent to what robot ingestion needed, and the raw-log schemas
-(`RawLogManifest`/`RawLogFrameIndex`) already had unused placeholder values
-aimed squarely at this case (`RawLogSourceFormat.ROSBAG`,
-`RawLogSourceType.REAL_ROBOT_LOG`/`SIMULATOR_LOG`). The actual remaining
-work was narrower: build `RosbagAdapter` as a second implementation of that
-existing Protocol, plus the new `RobotState`/`Mission` entities runtime
-telemetry needed that raw-log schemas don't model (§4). See
-[ADR-005](../adr/005-ros2-vs-kafka-boundary.md) for the ROS2-vs-Kafka
-layering decision this work depends on.

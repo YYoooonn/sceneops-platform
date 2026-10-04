@@ -6,10 +6,8 @@ whether the underlying flat columns for each domain are still at their
 untouched defaults — see SceneVersionSummary.is_unset()/
 EpisodeVersionSummary.is_unset(). As of Request 03, DatasetVersionRecord has
 no flat top-level duplicates of these fields at all — scene/episode are the
-only way to read them. Request 04 additionally moved raw_source_root_uri
-into scene (Scene-only; Episode sources come from registered RobotRuns) and
-dropped the dead latest_distribution_run_id/distribution_report_uri fields
-entirely (no SQL columns for them anymore).
+only way to read them. A DatasetVersion carries no source location or
+source format (ADR-007 §29.16).
 """
 
 from __future__ import annotations
@@ -38,9 +36,6 @@ def _model(**overrides) -> DatasetVersionModel:
         episode_count=0,
         observed_channels=[],
         required_channels=[],
-        source_dataset_id=None,
-        source_dataset_version=None,
-        raw_source_root_uri=None,
         created_at=_NOW,
         updated_at=_NOW,
         metadata_={},
@@ -117,9 +112,6 @@ class TestRoundTrip:
             observed_channels=["CAM_FRONT"],
             required_channels=["CAM_FRONT"],
             episode_count=3,
-            source_dataset_id="src-d",
-            source_dataset_version="src-v1",
-            raw_source_root_uri="/data/raw/x",
         )
         record = dataset_version_model_to_record(model)
         values = dataset_version_record_to_values(record)
@@ -135,8 +127,12 @@ class TestRoundTrip:
             "observed_channels",
             "required_channels",
             "episode_count",
-            "source_dataset_id",
-            "source_dataset_version",
-            "raw_source_root_uri",
         ):
             assert values[field] == getattr(model, field), field
+        for removed in (
+            "raw_source_root_uri",
+            "source_dataset_id",
+            "source_dataset_version",
+        ):
+            assert removed not in values
+            assert not hasattr(model, removed)

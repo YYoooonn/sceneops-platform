@@ -6,7 +6,7 @@ import pytest
 
 from sceneops_core.datasets.schemas import DatasetManifest, DatasetSceneIndexEntry
 from sceneops_core.scenes.schemas import scene_id_for
-from sceneops_core.scenes.testing import external_source, payload_artifact_id
+from sceneops_core.scenes.testing import payload_artifact_id, recording_source
 from sceneops_worker.inference.detection.sample_selector import (
     DetectionSampleSelector,
     SampleSelectionConfig,
@@ -18,7 +18,7 @@ from sceneops_worker.scenes.payloads import PayloadIntegrityError
 async def _dataset(world, specs: dict[str, dict]) -> DatasetManifest:
     entries = []
     for key, kwargs in specs.items():
-        source = external_source(source_unit_key=key)
+        source = recording_source(unit_key=key)
         artifact = await world.publish(world.manifest(source=source, **kwargs))
         entries.append(
             DatasetSceneIndexEntry(
@@ -86,7 +86,7 @@ async def test_lidar_observation_attached_when_lifting_enabled(scene_world):
 
 
 async def test_unregistered_payload_artifact_is_refused(scene_world):
-    source = external_source(source_unit_key="a")
+    source = recording_source(unit_key="a")
     artifact = await scene_world.publish(
         scene_world.manifest(source=source), with_payloads=False
     )

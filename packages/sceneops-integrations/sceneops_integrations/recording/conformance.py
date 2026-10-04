@@ -34,13 +34,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .reader import (
+    ROS2_MESSAGE_ENCODING,
+    ROS2_SCHEMA_ENCODING,
+    TF_SCHEMA,
+    header_stamps,
+    stamp_ns,
+)
+
 ROS2_PROFILE = "ros2"
-ROS2_MESSAGE_ENCODING = "cdr"
-ROS2_SCHEMA_ENCODING = "ros2msg"
 
 ACQUISITION_ORIGIN_METADATA = "sceneops.acquisition_origin"
 
-TF_SCHEMA = "tf2_msgs/msg/TFMessage"
 CAMERA_INFO_SCHEMA = "sensor_msgs/msg/CameraInfo"
 IMAGE_SCHEMAS = frozenset({"sensor_msgs/msg/Image", "sensor_msgs/msg/CompressedImage"})
 # Observations whose interpretation needs an extrinsic calibration (R9).
@@ -157,17 +162,6 @@ class _ChannelState:
     last_sequence: int | None = None
     sequenced: bool = False
     frame_ids: set[str] = field(default_factory=set)
-
-
-def _stamp_ns(stamp: Any) -> int:
-    return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
-
-
-def _headers(decoded: Any, schema_name: str) -> list[Any]:
-    if schema_name == TF_SCHEMA:
-        return [t.header for t in decoded.transforms]
-    header = getattr(decoded, "header", None)
-    return [header] if header is not None and hasattr(header, "stamp") else []
 
 
 class _Checker:
@@ -358,8 +352,8 @@ class _Checker:
             state.decoder = None  # one report per channel
             return
 
-        for header in _headers(decoded, state.schema_name):
-            stamp = _stamp_ns(header.stamp)
+        for header in header_stamps(decoded, state.schema_name):
+            stamp = stamp_ns(header.stamp)
             state.first_stamp = (
                 stamp if state.first_stamp is None else state.first_stamp
             )
