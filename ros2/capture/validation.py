@@ -27,6 +27,34 @@ class ValidationResult:
     last_log_time: int
 
 
+def recorded_stream(path: str) -> list[tuple]:
+    """The recording's logical message stream in write order, without the
+    recorder's own receive time: per message the topic, schema (name,
+    encoding, text), message encoding, ``publish_time``, ``sequence`` and
+    payload. Independent of chunking, compression and channel ids."""
+    with open(path, "rb") as f:
+        return [
+            (
+                channel.topic,
+                schema.name,
+                schema.encoding,
+                schema.data,
+                channel.message_encoding,
+                message.publish_time,
+                message.sequence,
+                message.data,
+            )
+            for schema, channel, message in make_reader(f).iter_messages()
+        ]
+
+
+def same_recorded_content(first_path: str, second_path: str) -> bool:
+    """Whether two recordings hold the same messages, ignoring only
+    ``log_time``. A re-capture of the same Kafka records differs from the
+    first attempt in receive time and in nothing else."""
+    return recorded_stream(first_path) == recorded_stream(second_path)
+
+
 def validate_mcap_file(path: str, *, expected_message_count: int) -> ValidationResult:
     message_count = 0
     first_log_time: int | None = None

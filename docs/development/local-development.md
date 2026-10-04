@@ -164,6 +164,7 @@ hide which of those a failure actually needed. The primary surface is:
 ```
 make e2e-recording-scene [SCENE=...]         nuScenes -> acquisition -> RobotRun -> canonical Scenes -> quality
 make e2e-recording-episode [SCENE=...]       nuScenes -> acquisition -> RobotRun -> canonical Episodes -> quality
+make e2e-streaming-equivalence [SCENE=...]   replay -> ROS2 -> bridge -> Kafka -> capture -> RobotRun; equivalent to batch (needs streaming-up)
 make e2e-interop                             real Postgres/MinIO -> SceneOpsDataset -> LeRobot -> golden comparison
 make e2e-cleanroom                           THE full-platform acceptance workflow (see below)
 ```
@@ -258,8 +259,8 @@ derived dataset identity per workflow, resolved via `scripts/e2e/lib.sh`'s
   DatasetVersion by design — each owns an independent summary sub-object
   that never overwrites the other's (see
   `packages/sceneops-core/tests/test_dataset_version_summaries.py`);
-  `episode-building` additionally needs the MCAP fixture from
-  `e2e-robot-can-replay` (see above), unrelated to this canonical identity.
+  `episode-building` additionally needs a recorded MCAP fixture (it is
+  unavailable until step 11), unrelated to this canonical identity.
 - **`interop`** — `DATASET_ID=test-e2e-interop`, `DATASET_VERSION=test-v1`.
   Source: the deterministic golden learning fixture built by
   `sceneops_analytics.testing.interop_dataset`, for external-adapter/

@@ -16,6 +16,11 @@ from .conformance import (
     ConformanceViolation,
     check_l1_recording,
 )
+from .equivalence import (
+    EquivalenceReport,
+    compare_recordings,
+    semantic_recording_content,
+)
 from .facts import (
     SUPPORTED_SOURCE_CLOCKS,
     RecordingFacts,
@@ -48,6 +53,9 @@ __all__ = [
     "RECORDING_OBJECT_NAME",
     "SUPPORTED_SOURCE_CLOCKS",
     "ChannelReport",
+    "EquivalenceReport",
+    "compare_recordings",
+    "semantic_recording_content",
     "ConformanceReport",
     "ConformanceViolation",
     "RecordingFacts",

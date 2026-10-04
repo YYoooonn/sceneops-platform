@@ -41,6 +41,9 @@ class AcquisitionEvent:
     # rewritten.
     source_time_ns: int
     # Publisher-side message counter on this topic, when the adapter has one.
+    # The batch MCAP sink writes it as the MCAP sequence. A ROS 2 topic
+    # carries no such counter, so the replay sink drops it; the platform's
+    # bridge assigns its own transport sequence on arrival.
     sequence: int | None = None
 
 
@@ -49,6 +52,12 @@ class DatasetAdapter(Protocol):
 
     def origin(self) -> Mapping[str, str]:
         """Acquisition-origin facts for inspection only (§29.8)."""
+        ...
+
+    def channels(self) -> Mapping[str, MessageType]:
+        """Every topic the unit will publish and its message type, known
+        before any event is produced (a live sink needs its publishers
+        before it publishes)."""
         ...
 
     def events(self) -> Iterator[AcquisitionEvent]:

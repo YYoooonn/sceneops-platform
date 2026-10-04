@@ -35,29 +35,3 @@ ros2-check:
 	$(COMPOSE) --profile ros2 run --rm ros2 sh -c \
 		"python3 -c 'import rclpy; print(\"rclpy ok\")' && \
 		 ros2 pkg list | grep -q rosbag2_storage_mcap && echo 'mcap storage plugin ok'"
-
-.PHONY: ros2-can-replay
-ros2-can-replay:
-	$(COMPOSE) --profile ros2 run --rm ros2 \
-		python3 /workspace/nodes/can_replay_node.py --scene $(or $(SCENE),scene-0061) --rate $(or $(RATE),1.0)
-
-.PHONY: ros2-can-replay-record
-# DURATION bounds the recorder with `timeout` instead of signalling it to stop
-# when the replay finishes — sending SIGINT to a backgrounded `ros2 bag
-# record` from this shell doesn't reliably reach the actual recorder process,
-# and letting it hang means `wait` never returns. Default covers a full
-# realtime (RATE=1.0) nuScenes scene (~20s) plus margin; raise it for slower
-# rates.
-ros2-can-replay-record:
-	@scene=$(or $(SCENE),scene-0061); \
-	rate=$(or $(RATE),5.0); \
-	duration=$(or $(DURATION),30); \
-	out=/data/raw/rosbag/$$scene; \
-	$(COMPOSE) --profile ros2 run --rm ros2 sh -c " \
-		rm -rf $$out && \
-		timeout $$duration ros2 bag record -o $$out --storage mcap \
-			/vehicle/odom /vehicle/imu /vehicle/status /vehicle/control /mission/status & \
-		sleep 2; \
-		python3 /workspace/nodes/can_replay_node.py --scene $$scene --rate $$rate; \
-		wait \
-	"

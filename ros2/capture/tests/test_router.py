@@ -7,7 +7,7 @@ fake in-process Kafka consumer (no real broker) but the REAL
 McapCaptureWriter/finalize/validate path, matching
 test_capture_consumer.py's own convention.
 
-Runs only inside the ros2 container (needs rosbag2_py + mcap).
+Runs only inside the ros2 container (needs the ROS 2 interface definitions + mcap).
 """
 
 from __future__ import annotations
@@ -717,6 +717,9 @@ def test_byte_exact_payload_and_timestamp_mapping_preserved(tmp_path, monkeypatc
     queue = [_consumed(envelope, offset=0)]
     _install_fake_consumer(monkeypatch, queue)
     r = _make_router(tmp_path)
+    import time as _time
+
+    before_ns = _time.time_ns()
 
     async def scenario():
         await r.run_for(max_messages=1, loop_idle_timeout_seconds=0.1)
@@ -727,7 +730,10 @@ def test_byte_exact_payload_and_timestamp_mapping_preserved(tmp_path, monkeypatc
 
     assert channel == "/vehicle/odom"
     assert payload == bytes(range(256))
-    assert log_time == 1_700_000_000_123_000_000
+    # log_time is the router's receive time, never the source timestamp;
+    # publish_time is the envelope's ingest time.
+    assert log_time != 1_700_000_000_123_000_000
+    assert log_time >= before_ns
     assert publish_time == 1_700_000_000_456_000_000
 
 

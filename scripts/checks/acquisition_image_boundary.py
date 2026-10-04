@@ -36,6 +36,7 @@ importable = [m for m in PLATFORM_MODULES if importlib.util.find_spec(m) is not 
 import dataset_acquisition.cli  # noqa: E402,F401
 import dataset_acquisition.mcap_sink  # noqa: E402,F401
 import dataset_acquisition.nuscenes  # noqa: E402,F401
+import dataset_acquisition.ros2_replay  # noqa: E402,F401
 
 loaded = sorted(m for m in sys.modules if m.split(".")[0] in PLATFORM_MODULES)
 

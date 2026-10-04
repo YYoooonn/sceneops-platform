@@ -12,9 +12,9 @@ TELEMETRY_HEADER_PREFIX = "sceneops.envelope."
 
 # Reserved TelemetryEnvelope.channel value for run lifecycle control
 # events (Phase 7.2 -- sceneops_core.streaming.control). Additive: not a
-# real ROS2 topic, never subscribed to by the ROS2 bridge's own
-# TOPIC_SPECS, never written to MCAP (not in
-# ros2/capture/schema_registry.py's SUPPORTED_CHANNELS) -- a consumer
+# real ROS2 topic, never subscribed to by the ROS2 bridge, never written
+# to MCAP (``ChannelSpec`` rejects it, so it can never enter the channel
+# registry in ``sceneops_core.streaming.channels``) -- a consumer
 # recognizes it by this channel name alone and intercepts it before any
 # telemetry-specific handling (sequence tracking, MCAP writing) ever
 # sees it. Carried on the SAME Kafka topic as telemetry, under the SAME

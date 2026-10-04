@@ -1,9 +1,8 @@
 """Temp/final MCAP bag directory lifecycle.
 
-``rosbag2_py.SequentialWriter`` writes into a *directory* (``metadata.yaml``
-plus one or more ``.mcap`` files), not a single file -- the unit that must
-move atomically from "being written" to "durably captured" is therefore
-that whole directory.
+The capture writer writes into a *directory* holding one ``.mcap`` file --
+the unit that moves atomically from "being written" to "durably captured"
+is that whole directory.
 
 Layout, per ``robot_run_id``, under one capture ``output_root``:
 
@@ -35,7 +34,7 @@ def final_bag_path(output_root: Path, robot_run_id: str) -> Path:
 
 def prepare_partial_bag_dir(output_root: Path, robot_run_id: str) -> Path:
     """Return a clean (non-existent) write target for a new capture
-    attempt, ready for ``rosbag2_py.SequentialWriter`` to create itself
+    attempt, ready for the capture writer to create itself
     -- the writer refuses to open into a directory that already exists,
     even an empty one, so this function does not create ``partial``
     itself, only guarantees it does not yet exist and that its parent

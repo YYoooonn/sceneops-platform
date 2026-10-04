@@ -230,26 +230,13 @@ verify-airflow-backend:
 # the composed, primary path.
 # ============================================================================
 
-.PHONY: e2e-robot-can-replay
-# One real CAN replay -> record -> register -> ingest_robot_states
-# (RobotState/Mission telemetry) for a single scene. Standalone stage of
-# the real CAN->ROS2->MCAP chain e2e-robot-learning composes -- kept for
-# debugging the replay/record/telemetry-ingest step in isolation.
-e2e-robot-can-replay:
-	chmod +x scripts/e2e/e2e_robot_can_replay.sh
-	API_BASE_URL=$(API_BASE_URL) \
-	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
-	ROBOT_ID=$(or $(ROBOT_ID),robot-nuscenes-01) \
-	scripts/e2e/e2e_robot_can_replay.sh
-
 .PHONY: e2e-episode-building
 # UNAVAILABLE until ADR-007 implementation step 11 (the script exits 3);
 # use e2e-recording-episode.
 # One real Episode build from an already-recorded MCAP -- standalone stage
 # of e2e-robot-learning, kept for debugging build_episodes/register_episode/
 # validate_episode/profile_episode in isolation. Reuses the MCAP fixture
-# recorded by a prior e2e-robot-can-replay (or e2e-robot-learning) run --
-# does not itself record one.
+# recorded by an earlier run -- does not itself record one.
 e2e-episode-building:
 	chmod +x scripts/e2e/e2e_episode_building.sh
 	API_BASE_URL=$(API_BASE_URL) \

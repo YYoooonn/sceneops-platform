@@ -329,6 +329,24 @@ def test_source_poses_are_kept_without_interpolation(recording):
     )
 
 
+def test_zero_stamped_static_transforms_build_the_same_calibration(tmp_path):
+    """A static transform's header stamp is not an observation time: a
+    recording whose /tf_static is unstamped (stamp 0) builds the same Scenes
+    as one stamped at the start, calibrations included."""
+    from sceneops_core.scenes.testing import semantic_scene_content
+
+    stamped = _plan(default_recording().write(tmp_path / "stamped.mcap"))
+    rec = default_recording()
+    for stamped_transform in rec.messages[0].message["transforms"]:
+        stamped_transform["header"]["stamp"] = {"sec": 0, "nanosec": 0}
+    zero = _plan(rec.write(tmp_path / "zero.mcap"))
+
+    assert [semantic_scene_content(s.manifest) for s in zero.scenes] == [
+        semantic_scene_content(s.manifest) for s in stamped.scenes
+    ]
+    assert all(c.extrinsic is not None for c in zero.scenes[0].manifest.calibrations)
+
+
 def test_missing_calibration_fails_loudly(tmp_path):
     rec = default_recording()
     rec.messages[0].message = tf_message(

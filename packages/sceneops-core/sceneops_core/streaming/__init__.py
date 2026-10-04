@@ -1,3 +1,12 @@
+from .channels import (
+    DEFAULT_CHANNELS,
+    DEFAULT_REGISTRY,
+    ChannelRegistry,
+    ChannelSpec,
+    TimestampRule,
+    build_channel_registry,
+    load_channel_file,
+)
 from .contracts import ConsumedTelemetryEnvelope, TelemetryConsumer, TelemetryProducer
 from .control import (
     RunEventType,
@@ -8,6 +17,13 @@ from .control import (
 from .schemas import EnvelopeEncoding, TelemetryEnvelope, TelemetryEnvelopeVersion
 
 __all__ = [
+    "DEFAULT_CHANNELS",
+    "DEFAULT_REGISTRY",
+    "ChannelRegistry",
+    "ChannelSpec",
+    "TimestampRule",
+    "build_channel_registry",
+    "load_channel_file",
     "TelemetryEnvelopeVersion",
     "EnvelopeEncoding",
     "TelemetryEnvelope",

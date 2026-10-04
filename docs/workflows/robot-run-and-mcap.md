@@ -1,33 +1,37 @@
-# Robot Data Ingestion: ROS2 -> CAN Replay -> rosbag2/MCAP -> RobotRun
+# Robot Data Acquisition: batch or streaming -> L1 MCAP -> RobotRun
 
-A real ROS2 (Jazzy) node replays nuScenes CAN bus data as ROS2 topics,
-records it with `rosbag2`/MCAP, and an adapter decodes the resulting bag
-(real CDR encoding, not a mock) into `RobotState`/`Mission` rows and, via a
-separate pipeline, `EpisodeRecord`s. This doc covers what's actually
-implemented, followed by current, verified limitations — see
-[Robot data model — design background](#8-design-background) at the bottom
-for why the implementation gap turned out smaller than originally planned.
+A robot's data enters SceneOps as an L1 raw recording (an MCAP, ADR-007
+§29.5) acquired in one of two modes -- batch (an external dataset converted
+by `tools/dataset-acquisition`) or streaming (ROS2 topics -> bridge -> Kafka
+-> capture) -- and is registered as a `RobotRun`. An adapter decodes the
+recording (real CDR encoding, not a mock) into `RobotState`/`Mission` rows,
+and the recording builders produce canonical Scenes and Episodes. This doc
+covers what's actually implemented, followed by current, verified
+limitations.
 
 ## 1. End-to-end flow
 
 ```text
-nuScenes CAN bus data
-  -> CanReplayNode (real rclpy, ros2/ Docker sandbox)
-       -> ROS2 topics -- /vehicle/odom, /vehicle/imu, /vehicle/status, /vehicle/control, /mission/status
-            -> ros2 bag record --storage mcap
-                 -> rosbag2/MCAP file
-                      -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
-                      -> POST /robot-runs:register -> REGISTER_ROBOT_RUN -> RobotRun (§3.2)
-                      -> resolve_recording(robot_run_id) -- verified local copy (§3.1)
-                      +-> RosbagAdapter (apps/worker) -- derived telemetry projection
-                      |     -> ingest_robot_states Job -> Postgres (RobotState, Mission)
-                      |          -> export_robot_analytics_snapshot Job -> Parquet (Artifact Store)
-                      |               -> DuckDB query (sceneops_analytics.query_parquet)
-                      +-> recording reader -> build_recording_episodes -> register_episodes
-                      |     -> validate_episode / profile_episode
-                      |     (RECORDING_EPISODE_BUILDING pipeline -> EpisodeRecord)
-                      +-> recording reader -> build_recording_scenes -> ... (RECORDING_SCENE_BUILDING)
+batch      external dataset -> tools/dataset-acquisition -> MCAP
+streaming  robot / dataset replay -> ROS2 topics -> streaming_bridge_node -> Kafka
+             -> ros2/capture -> MCAP                      (docs/architecture/streaming-transport.md)
+
+either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
+           -> POST /robot-runs:register -> REGISTER_ROBOT_RUN -> RobotRun (§3.2)
+           -> resolve_recording(robot_run_id) -- verified local copy (§3.1)
+           +-> RosbagAdapter (apps/worker) -- derived telemetry projection
+           |     -> ingest_robot_states Job -> Postgres (RobotState, Mission)
+           |          -> export_robot_analytics_snapshot Job -> Parquet (Artifact Store)
+           |               -> DuckDB query (sceneops_analytics.query_parquet)
+           +-> recording reader -> build_recording_episodes -> register_episodes
+           |     -> validate_episode / profile_episode
+           |     (RECORDING_EPISODE_BUILDING pipeline -> EpisodeRecord)
+           +-> recording reader -> build_recording_scenes -> ... (RECORDING_SCENE_BUILDING)
 ```
+
+The same source acquired either way yields semantically equivalent recordings
+and, with source-timestamp build configurations, equivalent canonical Scenes
+and Episodes (ADR-007 §29.12, §32; `make e2e-streaming-equivalence`).
 
 The telemetry projection and canonical Episode / Scene building read the
 same resolved recording independently. Canonical Episodes never read the
@@ -35,20 +39,22 @@ telemetry tables: their streams, fields, clocks and segmentation come from
 the Episode build configuration (see
 [Episode domain](../architecture/episode-domain.md)).
 
-## 2. ROS2 topics
+## 2. Telemetry topics
+
+The vehicle telemetry channels the batch tool and the streaming path both carry:
 
 ```text
 /vehicle/odom      (nav_msgs/Odometry)       <- CAN 'pose'             -> position, orientation, velocity
 /vehicle/imu       (sensor_msgs/Imu)          <- CAN 'ms_imu'           -> orientation, acceleration
 /vehicle/control   (std_msgs/String, JSON)    <- CAN 'vehicle_monitor'  -> steering, throttle, brake
 /vehicle/status    (sensor_msgs/BatteryState) <- CAN 'vehicle_monitor'  -> battery
-/mission/status    (std_msgs/String, JSON)    <- synthetic (replay start/end) -> Mission, not RobotState
+/mission/status    (std_msgs/String, JSON)    <- synthetic start/end events on the source timeline -> Mission, not RobotState
 ```
 
 Standard ROS2 messages (`nav_msgs`, `sensor_msgs`) are used wherever they
 fit. `/vehicle/control` has no matching standard message for a
 steering+throttle+brake tuple, and a custom `.msg` package would need a
-`colcon` build step — out of scope for the replay node — so it's carried as
+`colcon` build step — out of scope for the acquisition tool — so it's carried as
 flat JSON inside `std_msgs/String`, which `RosbagAdapter` recognizes and
 unwraps; the Episode builder reads it with `decoding: json_string`.
 
@@ -63,7 +69,7 @@ maps the string to `MissionStatus` (unrecognized values fall back to
 `PENDING`).
 
 nuScenes CAN quaternions are `(w, x, y, z)`; ROS2 `geometry_msgs/Quaternion`
-is `(x, y, z, w)` — `can_replay_node.py`'s `_quat_wxyz_to_ros()` handles the
+is `(x, y, z, w)` — the acquisition tool's nuScenes adapter handles the
 reorder.
 
 ## 3. Reading a recording
@@ -148,7 +154,7 @@ A RobotRun exists only for a recording that was published and verified
 (ADR-007 §7, §12):
 
 ```text
-finalized local MCAP (ros2 bag record, or ros2/capture's CaptureResult.path)
+finalized local MCAP (the acquisition tool's output, or ros2/capture's CaptureResult.path)
   -> python -m sceneops_integrations.recording publish     (DB-free, own process)
        P1 validate MCAP, derive facts (time range, channels, counts), sha256 + size
        P3 {robot_run_root}/{run_id}/recording.mcap            write-once, re-read + verified
@@ -285,48 +291,44 @@ make e2e-recording-episode SCENE=scene-0061
 The composed learning chain (`e2e-robot-learning`) is unavailable until
 the ADR-007 step-11 consolidation.
 
-Or stage by stage, for debugging one step in isolation (kept as debug/stage
-targets, not the primary documented flow):
+The streaming vertical (replay -> ROS2 -> bridge -> Kafka -> capture ->
+RobotRun, then Scenes and Episodes equivalent to the batch acquisition):
 
 ```bash
-make ros2-up                        # ROS2 Jazzy sandbox (rclpy, rosbag2, MCAP storage plugin)
-make e2e-robot-can-replay           # CAN replay -> record -> register -> ingest_robot_states (RobotState/Mission telemetry)
+make local-up
+make streaming-up
+make e2e-streaming-equivalence       # containers + FastAPI only; no host uv, PostgreSQL or MinIO access
 ```
 
-Or fully manually:
+Or fully manually (batch):
 
 ```bash
-make ros2-can-replay-record SCENE=scene-0061 RATE=5.0
+docker compose --profile acquisition run --rm dataset-acquisition nuscenes \
+  --dataroot /input/nuscenes --source-unit scene-0061 --output /recordings/run-1.mcap
 
-# Publish (DB-free) -- prints {"manifest_uri": ..., ...}. Inside worker-cli,
-# map the worker's artifact settings to SCENEOPS_PUBLISHER_ARTIFACT__* (see
-# scripts/e2e/lib.sh publish_robot_run_recording):
-python -m sceneops_integrations.recording publish \
-  --mcap-path /data/raw/rosbag/scene-0061/scene-0061_0.mcap \
-  --run-id run-1 --robot-id robot-1 --robot-platform nuscenes-can-replay \
-  --source-kind ros2_bag
+# Check + publish (DB-free) -- prints {"manifest_uri": ..., ...}:
+docker compose --profile acquisition run --rm recording-publisher check --mcap-path /recordings/run-1.mcap
+docker compose --profile acquisition run --rm recording-publisher publish \
+  --mcap-path /recordings/run-1.mcap --run-id run-1 --robot-id robot-1 --source-kind file
 
 # Register (REGISTER_ROBOT_RUN Job; poll GET /api/v1/jobs/{job_id}):
 curl -X POST http://localhost:8000/api/v1/robot-runs:register \
   -H 'Content-Type: application/json' -d '{"manifest_uri": "<manifest_uri>"}'
-# or: make worker-register-robot-run MANIFEST_URI=<manifest_uri>
 
 # then dispatch `ingest_robot_states` (robot_run_id only) via
 # POST /api/v1/jobs, or a recording_episode_building PipelineRun with the same
 # robot_run_id and an Episode build_config, for episodes
 ```
 
-Requires the nuScenes CAN bus expansion unzipped at
-`data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini).
-Everything else is self-contained in the `ros2/` Docker image.
+Requires nuScenes v1.0-mini with the CAN bus expansion at
+`data/raw/nuscenes/` (a separate download from nuScenes mini).
 
 ## 6. Current limitations
 
-- **Sensor channels come only from batch acquisition.** Batch-acquired
-  recordings (§3.3) carry camera, lidar, CameraInfo and transform channels,
-  and `RECORDING_SCENE_BUILDING` / `RECORDING_EPISODE_BUILDING` extract
-  them into canonical payloads. The streaming path (bridge, capture) carries only the five
-  telemetry channels of §2.
+- **Sensor channels need their channel set.** Both acquisition modes carry
+  camera, lidar, CameraInfo and transform channels; the streaming bridge and
+  capture subscribe to the channels of the registry plus any `--channels-file`
+  given to both (streaming-transport §11).
 - **Publication and registration are explicit steps.** Nothing triggers
   the Recording Publisher from a finalized capture, or registration from a
   published manifest; published-but-unregistered manifests are not
@@ -341,22 +343,19 @@ Everything else is self-contained in the `ros2/` Docker image.
   (replay -> record -> decode -> ingest), not real-time command/control —
   see [ADR-005](../adr/005-ros2-vs-kafka-boundary.md) for the intended
   boundary once/if a streaming path is built.
-- **Episode segmentation on a Kafka-captured `RobotRun` must not mix
-  clocks.** Capture writes the envelope source timestamp into `log_time`
-  and `/mission/status` carries replay wall-clock time in its JSON
-  `source_timestamp_ns` (both corrected in ADR-007 step 9), so mission
-  markers and CAN channels are not on one timeline in such a recording.
-  The Episode builder never compares clocks implicitly: `event_markers`
-  segmentation on those markers yields windows on the markers' clock, and
-  `whole_recording` / `fixed_duration` on `mcap_log_time` are the usable
-  segmentations until step 9.
+- **Configure from source timestamps for acquisition-independent results.**
+  A recording's `log_time` is the recorder's receive time: simulated source
+  time in a batch recording, wall-clock capture time in a streamed one. A
+  build configured from `mcap_log_time` depends on the acquisition; builds
+  configured from header stamps or payload fields do not (ADR-007 §29.12,
+  I-35).
 - **Committed test fixture is real data**, not hand-crafted bytes:
   `apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap` (1.4MB)
-  was produced by an actual `ros2 bag record` run. If CAN-replay logic
-  changes, this fixture may need regenerating to keep expected values
-  aligned.
+  was produced by an actual `ros2 bag record` run of the CAN replay that
+  the acquisition tool's replay sink has since replaced. The fixture is
+  kept as a real-data test input.
 
-## 7. Example output — scene-0061, 2875 CAN messages replayed at 10x
+## 7. Example output — scene-0061 CAN telemetry projection
 
 ```text
 === ingest_robot_states job result ===

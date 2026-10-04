@@ -52,7 +52,7 @@ from typing import Any
 
 from . import __version__
 from . import ros2
-from .events import AcquisitionError, AcquisitionEvent
+from .events import AcquisitionError, AcquisitionEvent, MessageType
 
 SOURCE_FORMAT = "nuscenes"
 
@@ -525,6 +525,18 @@ class NuScenesAdapter:
             )
 
         return sorted(plan, key=lambda p: (p.time_ns, p.rank, p.topic, p.order))
+
+    def channels(self) -> dict[str, MessageType]:
+        """Topic -> message type for every topic the selection publishes
+        (the first planned message of each topic is built to read its
+        type)."""
+        first: dict[str, _Planned] = {}
+        for planned in self._plan():
+            first.setdefault(planned.topic, planned)
+        return {
+            topic: ros2.message_type(planned.build().__msgtype__)
+            for topic, planned in sorted(first.items())
+        }
 
     def events(self) -> Iterator[AcquisitionEvent]:
         sequences: dict[str, int] = {}

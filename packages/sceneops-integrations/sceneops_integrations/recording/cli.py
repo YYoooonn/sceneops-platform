@@ -23,7 +23,15 @@ callers never derive storage keys themselves.
 
     python -m sceneops_integrations.recording check --mcap-path rec.mcap
 
-runs the L1 conformance suite (``conformance.py``) against a local MCAP,
+::
+
+    python -m sceneops_integrations.recording compare --first a.mcap --second b.mcap
+
+checks semantic acquisition equivalence of two recordings (§29.12,
+``equivalence.py``): same channels and same per-channel message multisets,
+ignoring receive times, write order and file bytes; exits non-zero otherwise.
+
+``check`` runs the L1 conformance suite (``conformance.py``) against a local MCAP,
 prints its JSON report and exits non-zero if the recording does not
 conform. It reads only the file: no ArtifactStore, no database.
 
@@ -58,6 +66,7 @@ from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
 from sceneops_storage import create_artifact_store
 
 from .conformance import check_l1_recording
+from .equivalence import compare_recordings
 from .publisher import publish_recording
 
 
@@ -103,6 +112,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Do not require the ros2/cdr/ros2msg encoding profile.",
     )
+    compare = sub.add_parser("compare")
+    compare.add_argument("--first", required=True, type=Path)
+    compare.add_argument("--second", required=True, type=Path)
     return parser.parse_args(argv)
 
 
@@ -148,10 +160,25 @@ def _check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compare(args: argparse.Namespace) -> int:
+    report = compare_recordings(args.first, args.second)
+    print(json.dumps(report.to_dict(), sort_keys=True))
+    if not report.equivalent:
+        print(
+            f"recordings are not semantically equivalent: "
+            f"{len(report.differences)} difference(s)",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.command == "check":
         return _check(args)
+    if args.command == "compare":
+        return _compare(args)
     try:
         result = asyncio.run(_publish(args))
     except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero

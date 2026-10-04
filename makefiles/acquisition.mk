@@ -32,7 +32,7 @@ acquisition-test:
 #     --source-unit scene-0061 --output /recordings/scene-0061.mcap
 .PHONY: acquisition-image
 acquisition-image:
-	$(COMPOSE) --profile acquisition build dataset-acquisition
+	$(COMPOSE) --profile acquisition build dataset-acquisition dataset-replay
 
 # I-36 at container level: the image contains, exposes and loads no SceneOps
 # package.
@@ -40,6 +40,8 @@ acquisition-image:
 acquisition-image-check:
 	$(COMPOSE) --profile acquisition run --rm -T --entrypoint python \
 		dataset-acquisition - < scripts/checks/acquisition_image_boundary.py
+	$(COMPOSE) --profile acquisition run --rm -T --entrypoint python \
+		dataset-replay - < scripts/checks/acquisition_image_boundary.py
 
 # Black-box batch acquisition E2E: dataset-acquisition container -> MCAP
 # (Docker volume) -> recording-publisher container (L1 conformance +

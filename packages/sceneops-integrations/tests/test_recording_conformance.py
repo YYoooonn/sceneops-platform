@@ -227,6 +227,20 @@ def test_conforming_recording_reports_channel_facts(tmp_path: Path) -> None:
     assert report.acquisition_origin == {"tool": "test", "source_format": "anything"}
 
 
+def test_zero_stamped_static_transforms_conform(tmp_path: Path) -> None:
+    """Static transforms often carry an unstamped (zero) header. R9 asks
+    only that a transform connecting each sensor frame is recorded at or
+    before the first observation, by position; a zero stamp is the
+    source's own value and is not a violation."""
+    rec = conforming()
+    rec.messages[0].payload = tf_static(0, "cam_front", "lidar_top")
+
+    report = check_l1_recording(rec.write(tmp_path / "zero-static.mcap"))
+
+    assert report.conforms, report.violations
+    assert report.channels["/tf_static"].first_stamp_ns == 0
+
+
 def test_stream_digest_ignores_chunking_and_compression(tmp_path: Path) -> None:
     from mcap.writer import CompressionType
 

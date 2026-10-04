@@ -1,14 +1,18 @@
 # dataset-acquisition
 
-Converts an external dataset into **L1 acquisition input**: one finalized,
-sensor-bearing ROS 2 MCAP per source unit, as the robot's own recorder
-would have written it (ADR-007 §29.13). It produces no canonical data.
+Converts an external dataset into **L1 acquisition input** (ADR-007
+§29.13), in two modes that share one event stream. It produces no canonical
+data.
 
 ```text
 dataset adapter (nuScenes)
   -> acquisition events   topic · message type (name, encoding, definition)
                           · CDR payload, serialized once · source time · per-topic sequence
-  -> MCAP sink            finalized local MCAP (batch mode)
+  -> MCAP sink            finalized local MCAP, as the robot's own recorder would
+                          have written it (batch mode)
+  -> ROS 2 replay sink    the same payload bytes published on ROS 2 topics at the source's
+                          pace (streaming mode); the platform's bridge, Kafka and capture
+                          record them
 ```
 
 SceneOps sees only the finished recording, through the normal RobotRun path.
@@ -26,6 +30,36 @@ $COMPOSE run --rm recording-publisher publish --mcap-path /recordings/scene-0061
 curl -X POST localhost:8000/api/v1/robot-runs:register \
     -H 'Content-Type: application/json' -d '{"manifest_uri": "..."}'
 ```
+
+## Replay (streaming mode)
+
+```bash
+COMPOSE="docker compose --env-file .env.local --profile acquisition --profile ros2 --profile streaming"
+# bridge and capture run in the platform's ros2 container (see
+# docs/architecture/streaming-transport.md); then:
+$COMPOSE run --rm dataset-replay nuscenes --dataroot /input/nuscenes \
+    --source-unit scene-0061 --replay --rate 2
+```
+
+`--replay` replaces `--output`. The replay image (`sceneops-platform/dataset-replay:local`,
+target `replay` of this Dockerfile) is ROS 2 Jazzy plus this tool, built from the
+same `uv.lock`; it contains no SceneOps package and no credentials, and meets the
+platform only over DDS on the compose network. `make acquisition-image-check`
+verifies that for both images.
+
+The sink publishes each event's CDR payload as raw bytes (`publisher.publish(bytes)`):
+nothing is deserialized or reserialized and no timestamp is touched, so the bytes on
+the wire are the bytes the MCAP sink writes. Pacing uses `source_time_ns` only as a
+schedule: an event is published `(source_time - first_source_time) / rate` after the
+start (`--rate 0` publishes without pacing). Before the first message every topic must
+have a matched subscriber (`--wait-subscribers-seconds`, default 60) or the replay fails;
+delivery is reliable with unbounded sender history, `/tf_static` is latched, and after
+the last message the sink waits for every sample to be acknowledged and fails if any is
+not. It prints one `replay_summary` JSON line (counts per topic, elapsed time, the
+largest lag behind schedule, the largest payload).
+
+A ROS 2 topic carries no per-topic publisher counter, so the replay sink drops the
+event's `sequence`; the bridge assigns a transport sequence on arrival.
 
 ## Boundary
 
@@ -47,8 +81,9 @@ dataset-acquisition nuscenes --dataroot DATAROOT --version v1.0-mini \
 ```
 
 **Container.** `make acquisition-image` builds
-`sceneops-platform/dataset-acquisition:local` from this directory alone, as
-the build context. Dependencies install from this `uv.lock` with `--frozen`.
+`sceneops-platform/dataset-acquisition:local` (target `batch`) and
+`sceneops-platform/dataset-replay:local` (target `replay`) from this directory
+alone, as the build context. Dependencies install from this `uv.lock` with `--frozen`.
 The runtime stage holds only the virtualenv: no compiler, uv, sources or
 tests. It runs as a non-root user with the CLI as its entrypoint. The
 compose service mounts the dataset read-only at `/input/nuscenes`
@@ -152,9 +187,10 @@ only. Canonicalization, RobotRun identity and registration never read it
 ## Tests
 
 ```bash
-make acquisition-test        # synthetic dataroot + import boundary + real nuScenes mini
-make acquisition-image-check # boundary check inside the built image
+make acquisition-test        # synthetic dataroot + replay scheduling + import boundary + real nuScenes mini
+make acquisition-image-check # boundary check inside both built images
 make e2e-batch-acquisition   # containers + FastAPI: acquire -> check -> publish -> register -> ingest
+make e2e-streaming-equivalence # replay -> ROS 2 -> bridge -> Kafka -> capture, equivalent to batch
 ```
 
 `tests/test_nuscenes_mini.py` converts a full real scene and compares every
@@ -163,8 +199,8 @@ message with the source tables, files and CAN extract. It is skipped when
 
 ## Limitations
 
-- Batch MCAP sink only. A ROS 2 replay sink for streaming acquisition is
-  future work, and it would replace `ros2/nodes/can_replay_node.py`.
+- The replay sink needs a ROS 2 runtime (the replay image); `--replay` in the plain
+  image fails with a clear error.
 - nuScenes only. Radar, annotations and keyframe groupings are not
   converted, because labels are not acquisition data (ADR-007 §29.15).
 - A whole unit's plan (record metadata, not payloads) is held in memory.

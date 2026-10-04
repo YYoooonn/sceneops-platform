@@ -147,6 +147,24 @@ HEAD       562f890 feat(scenes): build canonical Scenes from registered recordin
 date       2026-10-04
 ```
 
+**Amendment A7 — streaming acquisition and batch/streaming equivalence
+(implementation step 9).** Accepted. A7 freezes the production streaming path
+(replay or robot → ROS 2 → bridge → Kafka → capture → L1 MCAP → Recording
+Publisher → `REGISTER_ROBOT_RUN`) and resolves what A4 left to step 9: capture's
+timing and sequence semantics (R4, R6, R11), the sensor / `tf` / `CameraInfo`
+channel gap (R9), the ROS 2 replay sink, and open question Q3, Kafka transport of
+large sensor messages (§32). It records one transport defect the real vertical
+exposed, DDS alignment padding in received payloads (§32.4), and the rule that
+removes it. It adds §32 and invariants I-44–I-47. It changes no decision about
+Scene or Episode canonicalization, RobotRun, registration, identity, the
+fingerprint or DatasetVersion. Audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       7c15825 feat(episodes): build canonical Episodes from registered recordings
+date       2026-10-05
+```
+
 Relationship to earlier ADRs:
 
 - [ADR-001](./001-postgresql-operational-metadata.md),
@@ -4620,3 +4638,240 @@ Backing tests: `apps/worker/tests/episodes/test_recording_episode_builder.py`
 (real PostgreSQL + MinIO: pipeline contract, retry, conflict / replacement,
 partial-write retry, concurrent registration, Scene / Episode independence),
 core manifest / config / alignment tests, and `make e2e-recording-episode`.
+
+
+---
+
+## 32. Amendment A7: streaming acquisition and batch/streaming equivalence (step 9)
+
+### 32.1 Scope and result
+
+A7 implements §29.14 and the step-9 row of §29.19. It does not change the
+Scene or Episode builders or contracts. The same logical source, acquired in
+batch and by stream replay, produces semantically equivalent recordings (§29.12)
+and, under source-timestamp build configurations, equivalent canonical Scene and
+Episode content (I-35, §30.9). Builds configured from `mcap_log_time` or `mcap_publish_time`, both
+acquisition-dependent, are outside that guarantee. The measured result is in §32.9. A7 also fixes the
+meaning of `publish_time` on the streaming path (§32.2) and makes a zero-stamped `/tf_static` legal
+(§32.3); neither changes a Scene or Episode contract.
+
+```text
+batch      dataset → acquisition tool → MCAP ───────────────────────┐
+streaming  dataset → acquisition tool replay → ROS 2 → bridge → Kafka│→ L1 conformance
+             → capture → MCAP ───────────────────────────────────────┘   → publish → REGISTER_ROBOT_RUN
+```
+
+### 32.2 Timing and ordering rules (supersede the §29.5 R4 / R6 / R11 "HEAD" notes)
+
+```text
+log_time      capture RECEIVE time: the wall-clock instant capture took the record from
+              Kafka (Unix-epoch ns). Never a source timestamp. Clamped to be non-decreasing
+              in write order, so a clock step cannot break receive order (R4 conformance).
+publish_time  the TRANSPORT ingest time: the envelope's ingest_timestamp_ns, the instant the
+              bridge accepted the message. It is neither a source observation time nor a
+              robot-side publication time.
+source time   inside the payload, unrewritten (Header.stamp, a transform stamp, a JSON field),
+              including a zero stamp. TelemetryEnvelope.source_timestamp_ns is the bridge's
+              verbatim copy of it; it is not written to the recording separately and never
+              substituted by another time.
+sequence      MCAP Message.sequence = TelemetryEnvelope.sequence_number + 1. MCAP reserves 0
+              for "no sequence" and the bridge's counter starts at 0. It increases within every
+              channel; it is a transport arrival counter across all channels, with gaps in any one
+              channel.
+```
+
+- **`publish_time` (clarifies §29.5 R4 and §29.14).** R4 defines `publish_time` as the upstream
+  publication time "when the transport provides one, otherwise equal to `log_time`", and §29.14 /
+  §29.20 write "upstream publication (bridge ingest) time". A raw ROS 2 subscription exposes no
+  publisher timestamp, and a DDS source timestamp, where one exists, is the publisher's own
+  wall clock (replay wall-clock for a replay) and is not carried by the envelope. The only
+  upstream-of-capture time SceneOps's transport observes is the bridge's acceptance time, and R4
+  requires a transport-level timing fact to survive into the recording. A7 therefore reads those
+  passages as: on the streaming path `publish_time` is the **transport ingest time**, under that
+  name. It is never described as a publication or observation time. A batch writer keeps
+  `publish_time = log_time` (§29.5). The three facts stay distinct: source observation time
+  (payload), transport ingest time (`publish_time`), receive time (`log_time`). A build
+  configured from `mcap_publish_time` depends on the acquisition, like one from `mcap_log_time`,
+  and is outside I-35 (§29.12).
+- A recording's `started_at` / `ended_at` and `capture.source_clock = "mcap_log_time"`
+  keep the §29.5 R5 meaning: the recording clock. For a streamed recording it is
+  wall-clock receive time. Anything a build derives from it is outside I-35 (§29.12).
+- Cross-channel arrival order (Kafka order, write order, the global sequence) is acquisition
+  evidence. It is never canonical temporal identity (I-34).
+- Transport redelivery (same sequence number and payload as the last accepted record) is dropped.
+  Source-level duplicates are separate occurrences with separate sequence numbers: neither the
+  bridge nor capture ever deduplicates them.
+- A source's own per-topic counters cannot cross a ROS 2 topic. The replay sink drops the event's
+  `sequence`; on the streaming path only the transport sequence exists. Equivalence therefore
+  compares per-channel sequence *order*, not values (§32.9).
+- R11: `/mission/status` events carry `source_timestamp_ns` on the source timeline. The replay
+  sink replays the acquisition tool's events, which sit at the unit's first and last source
+  times. No replay path writes replay wall-clock or pacing time into any timestamp.
+  `can_replay_node.py`, the last writer that did, is removed.
+
+### 32.3 Channel registry
+
+The bridge and capture share one declarative registry, `sceneops_core.streaming.channels`
+(`ChannelSpec`: topic, ROS 2 type, source-timestamp rule, latched, optional history depth).
+It holds transport facts only, never a modality, sensor, Scene, Episode or dataset format, so
+source-format-specific logic stays outside core. Built-in defaults: the five vehicle / mission
+telemetry channels, `/tf` and `/tf_static`. Sensor channels (camera, `CameraInfo`, lidar, ...) are
+deployment configuration: channel-set JSON files passed to both processes (`--channels-file`).
+There is no dynamic topic discovery.
+
+- Timestamp rules only *locate* a timestamp the message already carries: `header`,
+  `transform_header` (first transform's stamp), `json_field`. A missing or malformed timestamp
+  fails loudly at the bridge.
+- **Zero stamps.** A zero source timestamp (an unstamped header, typical of `/tf_static`) is the
+  source's own value. `TelemetryEnvelope.source_timestamp_ns` accepts 0 (it was required positive;
+  the loosening is backward compatible), and a channel opts in with `allow_zero_stamp` (built-in:
+  `/tf_static` only). The zero stays 0 in the payload and in the envelope and is never replaced
+  by the ingest time or any other clock; no source timestamp is manufactured. On any other channel
+  a zero stamp is a missing observation time and fails loudly. Static transforms' stamps are not
+  read by canonicalization, so a recording with an unstamped `/tf_static` builds the same
+  calibrations as a stamped one. The `CALLBACK` rule (bridge node-clock time) is removed:
+  it could substitute receive time for source time.
+- `/tf_static` is latched (transient-local), so static transforms published before the bridge or
+  capture started are still received (R9).
+- Subscription history is keep-all by default. A source can emit bursts far larger than any
+  fixed depth (a sensor frame's messages share one instant), and DDS drops the oldest sample of a
+  full keep-last history without any signal. A depth is an explicit memory bound that accepts
+  silent loss.
+
+### 32.4 Payload exactness (R2) and DDS alignment padding
+
+The bridge's subscriptions are raw: it forwards serialized CDR and deserializes only to read
+the source timestamp. DDS pads a small serialized sample to a 4-byte multiple, so a raw take
+can end in 1–3 zero bytes the publisher never wrote. The first real vertical showed it: 119 B
+published, 120 B received; 73 → 76; 365 → 368 (9 channels' payload multisets differed; fragmented
+large samples are not padded). The bridge removes the padding only with proof: it trims `raw` by
+the excess over the canonical re-serialization's *length* when that excess is 1–3 zero bytes.
+Only the length is used, never the re-serialization's bytes (alignment padding inside a CDR message
+is indeterminate in a re-serialization), and the forwarded bytes are always the received ones.
+Anything else is forwarded unchanged. The recording's payload bytes are the publisher's bytes.
+
+### 32.5 Capture
+
+- **Writer.** Capture writes MCAP with the official `mcap` writer in the ROS 2 profile.
+  rosbag2's MCAP plugin always writes `sequence = 0` and takes one receive and one send
+  timestamp, so it cannot record the sequence. Schema text is generated from the `.msg` files of
+  the installed ROS 2 distribution (type text plus dependencies, separator and `MSG: pkg/Name`
+  sections: the rosbag2 format); tests decode `rclpy`-serialized payloads with it through an
+  independent MCAP ROS 2 decoder. The directory layout and the finalize protocol are unchanged:
+  consume → write `.partial` → close/fsync → validate by read-back → atomic rename → commit offsets.
+- **Lifecycle.** The bridge publishes `RUN_START` at startup and `RUN_END` after its last record
+  (default on); `--exit-after-idle-seconds` ends a finite source. Capture ends at `RUN_END`
+  (`--until-run-end`), `--max-messages`, or an idle timeout, whichever comes first. Channels are
+  registered in the MCAP when first written, so asynchronous channel arrival needs no
+  coordination. One run produces one MCAP.
+- **Restart and failure (current behavior).** Offsets are committed only after finalization.
+  A death before finalize discards `.partial` and rebuilds from Kafka. A death after finalize and
+  before commit converges on re-run if the recorded messages match (topic, schema, publish time,
+  sequence, payload; `log_time` excluded, because each attempt stamps its own receive time): the
+  existing file stays the recording of record. Different content under one run id fails with
+  `FinalBagExistsError` and commits nothing. A bridge killed without `RUN_END` leaves only an
+  idle timeout, which cannot tell a complete run from a truncated one. Every message the bridge
+  receives takes a sequence number before anything can fail, so a message it drops leaves a gap,
+  and the gap fails the capture. In-flight state of the continuous router is
+  lost on restart; durable recovery stays DEFERRED (§26).
+- **Hand-off.** Capture → publish → register remain explicit steps, with the manifest-last
+  protocol unchanged. Automating them stays optional and deferred.
+
+### 32.6 Replay sink
+
+The sink is `tools/dataset-acquisition --replay`, in a ROS 2 image built from the same project and
+lock (target `replay`). It consumes the same tool-local acquisition-event stream as the batch MCAP
+sink and publishes each payload as raw CDR bytes, so both sinks emit identical bytes. It has no
+SceneOps dependency (I-36, enforced at source, lockfile and both images), no credentials and no
+Kafka address; it meets the platform only over DDS. Pacing schedules `source_time_ns`, scaled by
+`--rate` (`0` = unpaced). It refuses to publish before every topic has a matched subscriber, uses
+reliable keep-all delivery with `/tf_static` latched, and fails unless every sample is acknowledged
+after the last message.
+
+### 32.7 Q3 decided: Kafka transport of large sensor messages
+
+Stock broker, producer and consumer limits (~1 MB message size) are sufficient for the measured
+payloads, so no limit was changed. Measured scope: nuScenes v1.0-mini on one host. Largest payloads:
+lidar `PointCloud2` 696,320 B over all 3,935 sweeps and samples; camera JPEG 298,656 B over 2,342
+front-camera frames; the largest message in the replayed scene was 695,849 B. A 1.5 MB payload fails
+loudly at publish (`Message size too large`), and the bridge counts and logs it. A source with
+messages over ~1 MB needs the producer, topic and broker limits raised together; that is not
+configured and not measured. The replay → bridge → Kafka → capture path carried all 8,897 messages
+of a scene (about 356 MB, 20 channels) with equal per-channel counts at replay rates 1×, 2×, 8× and
+unpaced; a keep-last depth of 100 lost bursty channels (§32.3). These measurements describe this
+workload and are not a throughput limit.
+
+### 32.8 Boundaries kept
+
+The streaming path writes no PostgreSQL or ArtifactStore state except through the Recording Publisher
+and `REGISTER_ROBOT_RUN`. The targeted vertical uses containers for bulk data (the shared recordings
+volume, DDS, Kafka) and FastAPI for platform operations; it needs no host `uv`, PostgreSQL access,
+MinIO credentials or worker CLI.
+
+### 32.9 Equivalence: executable forms and result
+
+```text
+recording level (§29.12)  sceneops_integrations.recording.compare_recordings / `compare`:
+                          per channel (schema name, schema encoding, message encoding), the message
+                          multiset by sha256(payload) with duplicates counted, and per-channel
+                          sequence order where both recordings are sequenced. Ignores log_time,
+                          publish_time, cross-channel order, sequence values, schema formatting.
+canonical level (I-35)    semantic_scene_content / semantic_episode_content over every Scene and
+                          Episode, matched by unit key; provenance must differ (RobotRun and
+                          producer fingerprint), so equality is not vacuous. A negative control
+                          removes a Scene and requires rejection.
+```
+
+`make e2e-streaming-equivalence` (nuScenes v1.0-mini scene-0061, replay rate 2×): 8,897 messages on
+20 channels, replay = bridge = capture = batch counts per channel; the captured recording is
+L1-conformant and every channel sequenced; both RobotRuns register; 3 Scenes (606 observations) and
+1 Episode (224 observations) are built from each with identical source-timestamp build configurations;
+recording equivalence holds; every Scene's and the Episode's semantic content is equal. RobotRun B's
+extent is wall-clock receive time, RobotRun A's the source timeline. This is one scene at one rate,
+a measurement and not a general proof.
+
+### 32.10 Invariants
+
+```text
+I-44  A recording written by capture takes log_time from the recorder's receive clock and
+      publish_time from the transport's ingest time (not a publication or observation time).
+      Source observation time stays in the payload, a zero stamp included. No component writes one
+      of these times into another's field or synthesizes a source-semantic timestamp from
+      wall-clock, ingest or replay-pacing time.
+I-45  Capture preserves payload bytes exactly as the publisher produced them. The only byte the
+      transport path removes is DDS alignment padding, and only on proof (§32.4). Source-level
+      duplicates are preserved as separate occurrences.
+I-46  No streaming stage loses a message silently. Every loss is a counted, logged failure, or a
+      sequence gap that fails the capture. The vertical checks replay = bridge = capture counts per
+      channel.
+I-47  The replay sink publishes the acquisition events' payload bytes unchanged and depends on no
+      SceneOps package. Batch and streaming acquisition of one source produce semantically equivalent
+      recordings.
+```
+
+Backing tests: `ros2/nodes/tests/test_streaming_bridge_node.py` (including zero-stamped `/tf_static`),
+`apps/worker/tests/scenes/test_recording_scene_builder.py` (unstamped static calibration),
+`ros2/capture/tests/` (writer, message
+definitions, `run_capture`, crash boundaries C and D, router, real-Kafka and sensor-payload integration),
+`packages/sceneops-core/tests/test_streaming_channels.py`,
+`packages/sceneops-integrations/tests/test_recording_equivalence.py`,
+`tools/dataset-acquisition/tests/test_ros2_replay.py` and the import-boundary test, and
+`make e2e-streaming-equivalence`.
+
+### 32.11 Sections affected
+
+§29.5's "HEAD 1406cb2" column and the §29.14 gap list describe the audited state before A7; the rules
+above supersede them. The phrase "upstream publication (time)" in §29.5 R4, §29.14 and §29.20 is read as
+the transport ingest time on the streaming path (§32.2). §29.20's `acquisition`, `capture` and `clock` rows are implemented. Q3 (§29.21) is
+decided (§32.7). `docs/architecture/streaming-transport.md` describes the resulting system.
+
+### 32.12 Remaining work (not decided here)
+
+```text
+step 10  derived workflow cleanup (labels, SampleView, detection, readiness) is untouched.
+step 11  E2E / clean-room consolidation: scripts that reference the removed CAN replay node
+         (e2e_robot_learning.sh, e2e_robot_run_learning.sh, canonical_bootstrap.sh) are already
+         marked unavailable until then.
+open     automatic capture → publish hand-off; durable CaptureSession recovery; Kafka sizes beyond
+         ~1 MB; a bridge QoS depth that bounds memory without silent loss.
+```

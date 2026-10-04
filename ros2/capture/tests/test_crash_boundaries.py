@@ -144,7 +144,9 @@ def test_boundary_d_crash_after_finalize_before_commit_converges_on_retry(
     second attempt -- Kafka having redelivered the same, uncommitted
     messages to a fresh consumer -- must not crash or destructively
     overwrite the already-finalized file; it must converge: commit the
-    offset now and report the existing final MCAP."""
+    offset now and report the existing final MCAP. The retry stamps its
+    own receive time, so convergence compares the recorded messages, not
+    the file bytes."""
     robot_run_id = "run-crash-d"
     fixtures = [_envelope(robot_run_id=robot_run_id, sequence_number=i) for i in range(3)]
 
@@ -186,3 +188,48 @@ def test_boundary_d_crash_after_finalize_before_commit_converges_on_retry(
     assert created_2[0].committed is True  # THIS attempt's commit succeeded
     # The final file was never duplicated/corrupted -- one file, same content.
     assert second_result.path.read_bytes() == first_result.path.read_bytes()
+
+
+def test_boundary_d_retry_with_different_content_fails_loudly(tmp_path, monkeypatch) -> None:
+    """Conflicting retries fail: the same run id with different recorded
+    messages must never converge onto the existing file or commit."""
+    import pytest
+
+    from finalize import FinalBagExistsError
+
+    robot_run_id = "run-crash-d-conflict"
+    original = [_envelope(robot_run_id=robot_run_id, sequence_number=i) for i in range(3)]
+    _install_fake_consumer(
+        monkeypatch, [_consumed(fx, offset=i) for i, fx in enumerate(original)]
+    )
+    first = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id=robot_run_id,
+            output_root=tmp_path,
+            stop_condition=lambda count: count >= 3,
+        )
+    )
+    before = first.path.read_bytes()
+
+    changed = [
+        _envelope(robot_run_id=robot_run_id, sequence_number=i, payload=b"\x00\x01\x00\x00" + b"y" * 16)
+        for i in range(3)
+    ]
+    created = _install_fake_consumer(
+        monkeypatch, [_consumed(fx, offset=i) for i, fx in enumerate(changed)]
+    )
+    with pytest.raises(FinalBagExistsError):
+        asyncio.run(
+            run_capture(
+                settings=object(),
+                robot_id="robot-1",
+                robot_run_id=robot_run_id,
+                output_root=tmp_path,
+                stop_condition=lambda count: count >= 3,
+            )
+        )
+
+    assert created[0].committed is False
+    assert first.path.read_bytes() == before

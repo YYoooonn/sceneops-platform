@@ -3,7 +3,7 @@ and the full run_capture orchestration (using a fake in-process Kafka
 consumer -- no real broker -- but the REAL McapCaptureWriter/finalize/
 validate path, so these tests exercise real MCAP I/O).
 
-Runs only inside the ros2 container (needs rosbag2_py + mcap, matching
+Runs only inside the ros2 container (needs the ROS 2 interface definitions + mcap, matching
 the rest of ros2/capture's flat-script import convention).
 """
 
@@ -577,3 +577,131 @@ def test_run_capture_detects_conflicting_duplicate_control_event(tmp_path, monke
 
     assert created[0].committed is False
     assert not final_bag_path(tmp_path, "run-1").exists()
+
+
+def test_run_capture_stop_on_run_end_finalizes_exactly_at_run_end(tmp_path, monkeypatch) -> None:
+    """The normal end of a streamed run: no message count, no idle
+    timeout -- RUN_END alone ends the capture, after every record that
+    preceded it, and the recording carries the per-channel counts."""
+    telemetry = [
+        _envelope(sequence_number=0),
+        _envelope(
+            sequence_number=1, channel="/vehicle/imu", message_type="sensor_msgs/msg/Imu"
+        ),
+        _envelope(sequence_number=2),
+    ]
+    queue = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0),
+        *[_consumed(fx, offset=1 + i) for i, fx in enumerate(telemetry)],
+        _control(RunEventType.RUN_END, sequence_number=1, offset=4),
+        # Anything after RUN_END is outside this capture.
+        _consumed(_envelope(sequence_number=3), offset=5),
+    ]
+    created = _install_fake_consumer(monkeypatch, queue)
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            stop_condition=_bounded_stop_condition(50),
+            stop_on_run_end=True,
+        )
+    )
+
+    assert result.message_count == 3
+    assert result.last_offset == 4
+    assert result.per_channel_counts == {"/vehicle/odom": 2, "/vehicle/imu": 1}
+    assert created[0].committed is True
+
+
+def test_run_capture_without_run_end_keeps_polling_until_stop_condition(
+    tmp_path, monkeypatch
+) -> None:
+    queue = [_consumed(_envelope(sequence_number=0), offset=0)]
+    _install_fake_consumer(monkeypatch, queue)
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            stop_condition=_bounded_stop_condition(3),
+            stop_on_run_end=True,
+        )
+    )
+
+    assert result.message_count == 1
+
+
+def test_run_capture_records_receive_time_and_transport_sequence(tmp_path, monkeypatch) -> None:
+    import time
+
+    fixtures = [
+        _envelope(sequence_number=i, source_timestamp_ns=5_000 + i, ingest_timestamp_ns=9_000 + i)
+        for i in range(3)
+    ]
+    _install_fake_consumer(
+        monkeypatch, [_consumed(fx, offset=i) for i, fx in enumerate(fixtures)]
+    )
+    before = time.time_ns()
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            stop_condition=lambda count: count >= 3,
+        )
+    )
+    after = time.time_ns()
+
+    with open(result.path, "rb") as f:
+        messages = [m for _s, _c, m in make_reader(f).iter_messages()]
+    assert [m.sequence for m in messages] == [1, 2, 3]
+    assert [m.publish_time for m in messages] == [9_000, 9_001, 9_002]
+    assert all(before <= m.log_time <= after for m in messages)
+    assert [m.log_time for m in messages] == sorted(m.log_time for m in messages)
+
+
+def test_run_capture_writes_sensor_channels_from_a_channel_file(tmp_path, monkeypatch) -> None:
+    from sceneops_core.streaming import build_channel_registry
+
+    channels = Path(__file__).resolve().parents[2] / "channels" / "surround-camera-lidar.json"
+    registry = build_channel_registry([channels])
+    lidar_payload = bytes(range(256)) * 2800  # ~700 kB, a realistic lidar sweep
+    fixtures = [
+        _envelope(
+            sequence_number=0,
+            channel="/lidar/top/points",
+            message_type="sensor_msgs/msg/PointCloud2",
+            payload=lidar_payload,
+        ),
+        _envelope(
+            sequence_number=1,
+            channel="/camera/front/camera_info",
+            message_type="sensor_msgs/msg/CameraInfo",
+        ),
+    ]
+    _install_fake_consumer(
+        monkeypatch, [_consumed(fx, offset=i) for i, fx in enumerate(fixtures)]
+    )
+
+    result = asyncio.run(
+        run_capture(
+            settings=object(),
+            robot_id="robot-1",
+            robot_run_id="run-1",
+            output_root=tmp_path,
+            stop_condition=lambda count: count >= 2,
+            registry=registry,
+        )
+    )
+
+    assert _mcap_channels(result.path) == {"/lidar/top/points", "/camera/front/camera_info"}
+    with open(result.path, "rb") as f:
+        first = next(make_reader(f).iter_messages())[2]
+    assert first.data == lidar_payload

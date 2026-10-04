@@ -16,8 +16,11 @@ from typing import Final
 
 MCAP_LOG_TIME_CLOCK: Final = "mcap_log_time"
 
-# MCAP ``Message.publish_time``: upstream publication time where the
-# transport provides one, otherwise equal to ``log_time`` (§29.5 R4).
+# MCAP ``Message.publish_time``: the time the acquisition path's transport
+# recorded for the message before the recorder received it, otherwise equal to
+# ``log_time`` (§29.5 R4, §32.2). Capture writes the bridge's ingest time; a
+# batch writer writes ``log_time``. It is neither a source observation time nor
+# a robot-side publication time.
 MCAP_PUBLISH_TIME_CLOCK: Final = "mcap_publish_time"
 
 # Clocks every message of a recording carries, whatever its payload. A

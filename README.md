@@ -8,7 +8,7 @@ It uses nuScenes mini as a realistic autonomous-driving dataset and implements p
 >
 > SceneOps explores this problem as a small but production-shaped platform.
 
-**v2** extends the platform toward a general robotics data source: a real ROS2 (Jazzy) sandbox replays nuScenes CAN bus data as ROS2 topics, records it with `rosbag2`/MCAP, and an adapter decodes the resulting bag (real CDR encoding, not a mock) into `RobotState`/`Mission` rows and, through a dedicated pipeline, task-oriented `Episode` records — with a REST API, a Parquet analytics export, and DuckDB query support on top. See [Demo 4](#demo-4-robot-data-ingestion-ros2--can-replay--rosbag2mcap) and [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md).
+**v2** extends the platform toward a general robotics data source: a robot's data enters as an L1 raw recording (an MCAP) acquired either in batch (an external dataset converted by `tools/dataset-acquisition`) or by streaming (ROS2 topics → bridge → Kafka → capture), is registered as a `RobotRun`, and is canonicalized into Scenes and Episodes — with a REST API, a Parquet analytics export, and DuckDB query support on top. See [Demo 4](#demo-4-robot-data-acquisition-batch-and-streaming) and [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md).
 
 For the full documentation set (architecture, data model, Scene/Episode domain flow, jobs/pipelines, storage, quality, reserved architecture), start at [`docs/architecture/overview.md`](docs/architecture/overview.md).
 
@@ -43,10 +43,10 @@ SceneOps Platform currently implements a local-first, production-shaped data and
 | Reliable batch execution   | ✅              | `execution_key` idempotency, partial retry, per-task quality gate |
 | Airflow pipeline backend   | ✅ PoC          | Per-task DAG execution (`recording_scene_building` only) as an alternate dispatch backend to Celery |
 | Analytics export (Parquet) | ✅              | Dataset + robot tables via Polars/PyArrow; DuckDB SQL query support |
-| E2E scripts                | ✅              | Dataset, detection, comparison, curation, robot CAN-replay flows |
+| E2E scripts                | ✅              | Dataset, detection, comparison, curation, batch and streaming acquisition flows |
 | Operations views           | ✅              | Summary, timeline, failures                    |
 | Leaderboards               | ✅              | Evaluation/model/dataset rankings              |
-| **ROS2 robot data ingestion (v2)** | ✅      | CAN replay → real ROS2 topics → rosbag2/MCAP → `RobotState`/`Mission` |
+| **Robot data acquisition (v2)** | ✅      | batch or streaming (ROS2 → Kafka → capture) → L1 MCAP → `RobotRun` → Scenes / Episodes |
 | **Robot domain API (v2)**  | ✅              | `Robot`/`RobotRun` REST registration, `Mission`/`RobotState` query    |
 
 The current platform demonstrates five end-to-end workflows:
@@ -58,7 +58,7 @@ The current platform demonstrates five end-to-end workflows:
 3. **Scenario curation**
   Scene quality signals are converted into scenario candidates and readiness scores, producing a ScenarioSet artifact.
 4. **Robot data ingestion (v2)**
-  A real ROS2 node replays nuScenes CAN bus data as ROS2 topics, records it as a rosbag2/MCAP file, and an adapter decodes it (real CDR messages, not a synthetic fixture) into `RobotState`/`Mission` rows queryable through a REST API and a Parquet+DuckDB analytics export.
+  nuScenes is acquired in batch (MCAP) or by paced ROS2 replay through the bridge, Kafka and capture; both yield equivalent canonical Scenes and Episodes, and robot telemetry is queryable through a REST API and a Parquet+DuckDB analytics export.
 5. **Episode building (v2)**
   The same decoded rosbag/MCAP recording is independently segmented into task-oriented `Episode` records (observation+action windows, split at mission boundaries by default), registered, validated, and profiled — a separate pipeline and record type from both Scene and RobotState. See [Demo 5](#demo-5-episode-building-from-a-robot-recording).
 
@@ -161,7 +161,7 @@ Client
 | Domain contracts | `packages/sceneops-core`    | Pydantic schemas, enums, job contracts, and pipeline definitions                                          |
 | Analytics export | `packages/sceneops-analytics` | Polars/PyArrow table builders, Parquet writer, DuckDB query helper                                       |
 | Inference server | `apps/inference-server`     | Optional GroundingDINO inference server                                                                   |
-| Robot sandbox (v2) | `ros2/`                   | ROS2 Jazzy Docker environment + `CanReplayNode` (not an `apps/` service — a dev-time data source)          |
+| Robot sandbox (v2) | `ros2/`                   | ROS2 Jazzy Docker environment: streaming bridge node + durable MCAP capture (not an `apps/` service)          |
 
 
 ### Execution model
@@ -218,21 +218,18 @@ Robot/RobotRun is a separate domain from Dataset/DatasetVersion (see [Core conce
 ### Robot data ingestion path (v2)
 
 ```text
-nuScenes CAN bus data
-  └─ CanReplayNode (real rclpy, ros2/ Docker sandbox)
-       └─ ROS2 topics ── /vehicle/odom, /vehicle/imu, /vehicle/status, /vehicle/control, /mission/status
-            └─ ros2 bag record --storage mcap
-                 └─ rosbag2/MCAP file
-                      └─ Recording Publisher (DB-free) ─► MCAP + RobotRunManifest (Artifact Store)
-                           └─ register_robot_run Job ─► Postgres (ArtifactRecords, RobotRun)
-                                └─ resolve_recording(robot_run_id) ─► verified local copy
-                                     └─ RosbagAdapter (apps/worker) ── decodes real CDR messages, no rclpy needed to read
-                                          └─ ingest_robot_states Job ─► Postgres (RobotState, Mission)
-                                               └─ export_robot_analytics_snapshot Job ─► Parquet (Artifact Store)
-                                                    └─ DuckDB query (sceneops_analytics.query_parquet)
+robot / dataset replay (tools/dataset-acquisition --replay)         external dataset (batch)
+  └─ ROS2 topics (telemetry, camera, lidar, CameraInfo, /tf, /tf_static)   └─ tools/dataset-acquisition → MCAP
+       └─ streaming_bridge_node ─► Kafka ─► ros2/capture ─► L1 MCAP ◄────────────┘
+            └─ Recording Publisher (DB-free) ─► MCAP + RobotRunManifest (Artifact Store)
+                 └─ register_robot_run Job ─► Postgres (ArtifactRecords, RobotRun)
+                      └─ resolve_recording(robot_run_id) ─► verified local copy
+                           ├─ recording_scene_building / recording_episode_building ─► Scenes / Episodes
+                           └─ ingest_robot_states Job ─► Postgres (RobotState, Mission)
+                                └─ export_robot_analytics_snapshot Job ─► Parquet ─► DuckDB
 ```
 
-Standard ROS2 messages (`nav_msgs/Odometry`, `sensor_msgs/Imu`, `sensor_msgs/BatteryState`) are used where they fit; `/vehicle/control` and `/mission/status` have no matching standard message, so `CanReplayNode` publishes them as `std_msgs/String` carrying flat JSON — `RosbagAdapter` recognizes the schema and unwraps it, rather than requiring a custom `.msg` colcon package.
+Standard ROS2 messages (`nav_msgs/Odometry`, `sensor_msgs/Imu`, `sensor_msgs/BatteryState`) are used where they fit; `/vehicle/control` and `/mission/status` have no matching standard message, so they are published as `std_msgs/String` carrying flat JSON — `RosbagAdapter` recognizes the schema and unwraps it, rather than requiring a custom `.msg` colcon package.
 
 ### Pipeline result buckets
 
@@ -451,63 +448,29 @@ this standalone command or its printed IDs just to run detection evaluation.
 
 ---
 
-## Demo 4: robot data ingestion (ROS2 → CAN replay → rosbag2/MCAP)
+## Demo 4: robot data acquisition (batch and streaming)
 
-Unlike Demos 1–3, this path doesn't start from a pre-recorded dataset. A real ROS2 node replays nuScenes CAN bus messages (`pose`, `ms_imu`, `vehicle_monitor`) as ROS2 topics in real time, `ros2 bag record` captures them into a genuine MCAP file, and `RosbagAdapter` decodes that file — real CDR-encoded ROS2 messages, using the schema embedded in the MCAP file itself, no `rclpy` required to read it back.
+One logical source, two acquisition modes, one recording contract. `tools/dataset-acquisition` converts a nuScenes scene into acquisition events and either writes an MCAP (batch) or replays the same payload bytes onto ROS2 topics (streaming); the platform's bridge, Kafka and capture turn the topics back into an MCAP. Either recording is published, registered as a `RobotRun`, and built into canonical Scenes and Episodes through the same pipelines.
 
-> Requires the nuScenes CAN bus expansion at `data/raw/nuscenes/can_bus/` (separate download from nuScenes mini itself — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)).
+> Requires nuScenes v1.0-mini with the CAN bus expansion at `data/raw/nuscenes/` (see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)).
 
 ### Quickstart
 
 ```bash
 make local-up
-make ros2-up                        # ROS2 Jazzy sandbox (rclpy, rosbag2, MCAP storage plugin)
-make e2e-robot-can-replay           # CAN replay → record → register → ingest, verified via API
+make streaming-up                   # Kafka
+make e2e-batch-acquisition          # batch: acquire → check → publish → register → ingest, via containers + FastAPI
+make e2e-streaming-equivalence      # streaming: replay → ROS2 → bridge → Kafka → capture → RobotRun,
+                                    # then Scenes + Episodes equivalent to the batch acquisition
 ```
 
-Or step by step:
-
-```bash
-make ros2-can-replay-record SCENE=scene-0061 RATE=5.0
-# publish the MCAP + RobotRunManifest (DB-free), then REGISTER_ROBOT_RUN:
-python -m sceneops_integrations.recording publish --mcap-path /data/raw/rosbag/scene-0061/scene-0061_0.mcap \
-  --run-id run-1 --robot-id robot-1 --source-kind ros2_bag
-make worker-register-robot-run MANIFEST_URI=<manifest_uri>   # or POST /api/v1/robot-runs:register
-# then dispatch `ingest_robot_states` via POST /api/v1/jobs, same as any other job
-```
-
-### Example output — scene-0061, 2875 CAN messages replayed at 10x
-
-```
-=== ingest_robot_states job result ===
-robot_id       : robot-nuscenes-01
-robot_run_id   : run-scene-0061
-state_count    : 2913
-mission_count  : 1
-
-=== GET /missions?robot_run_id=run-scene-0061 ===
-mission_id : mission-scene-0061
-status     : completed
-started_at : 2026-09-03T06:27:36Z
-ended_at   : 2026-09-03T06:27:42Z
-
-=== export_robot_analytics_snapshot job result ===
-table_uris.robot_telemetry : s3://sceneops/artifacts/analytical/robot_runs/run-scene-0061/robot_telemetry.parquet
-table_uris.missions         : s3://sceneops/artifacts/analytical/robot_runs/run-scene-0061/missions.parquet
-row_counts                  : {robot_telemetry: 2913, missions: 1}
-
-=== DuckDB query over the exported Parquet (robot_telemetry JOIN missions) ===
-mission_id            status      telemetry_row_count  avg_battery
-mission-scene-0061    completed   2913                 0.91
-```
-
-`state_count` (2913) is one row per CAN message (`pose`→odom, `ms_imu`→imu, `vehicle_monitor`→status+control), not one row per mission — a single `RobotRun` accumulates many `RobotState` rows. The DuckDB query reads real Parquet files downloaded from MinIO, not an in-memory fixture.
+Both targets need only Docker Compose, curl and jq on the host; platform operations go through FastAPI. Details: [`tools/dataset-acquisition/README.md`](tools/dataset-acquisition/README.md) and [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md).
 
 **Current limitations:**
 
-- Binary sensor payloads (`sensor_msgs/Image`, `PointCloud2`) decode via CDR but aren't written to files yet — no real camera/LiDAR-publishing node exists to test against
+- Capture → publish → register are explicit steps (no automatic hand-off from a finalized capture)
 - `/vehicle/control` and `/mission/status` use a `std_msgs/String` + JSON bridge instead of a proper custom `.msg` package (would need a `colcon` build step)
-- No live robot control — this is batch ingestion of a recording, not real-time command/control (see `docs/adr/005-ros2-vs-kafka-boundary.md`)
+- No live robot control — this is acquisition of recordings, not real-time command/control (see `docs/adr/005-ros2-vs-kafka-boundary.md`)
 
 See [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) for the full ingestion flow and current limitations.
 
@@ -599,7 +562,7 @@ make test-integration               # real Postgres + MinIO tests
 make e2e-cleanroom                  # the full-platform acceptance workflow (destructive local-reset + real E2E) -- see [docs/development/local-development.md](docs/development/local-development.md)
 ```
 
-**Robot learning (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)). Everything else is self-contained in the `ros2/` Docker image.
+**Robot learning (v2, optional):** requires the nuScenes CAN bus expansion unzipped at `data/raw/nuscenes/can_bus/` (a separate download from nuScenes mini — see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md)).
 
 ```bash
 make e2e-recording-episode          # canonical Episodes from a batch-acquired recording
@@ -676,7 +639,8 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | --- | --- |
 | `make e2e-scene-analytics-export` | Scene-domain analytical Parquet export over recording-derived Scenes (distinct from `EXPORT_LEARNING_DATA`) |
 | `make e2e-lerobot-container` | Containerized variant of `e2e-interop`'s golden round trip |
-| `make e2e-ros2-streaming [SCENE=scene-0061 \| RATE=10.0]` | Real nuScenes CAN → ROS2 → streaming bridge → real Kafka → consumer; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
+| `make e2e-streaming-equivalence [SCENE=scene-0061 \| RATE=2]` | nuScenes replay → ROS2 → bridge → real Kafka → capture → `RobotRun` → Scenes/Episodes, proven equivalent to batch acquisition; requires `make local-up` and Kafka — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
+| `make ros2-test` | Bridge + capture unit and real-Kafka integration tests in the ros2 image |
 | `make e2e-streaming-capture [SCENE=scene-0061 \| RATE=10.0]` | Real Kafka → durable MCAP capture (run-scoped consumer) → RosbagAdapter compatibility check; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) Part 3 |
 | `make e2e-robot-run-registration [SCENE=scene-0061 \| RATE=10.0]` | Captured MCAP → ArtifactStore → ArtifactRecord → canonical `RobotRun` (real Postgres/MinIO), plus idempotent-retry/conflict verification; requires `make local-up` and `make streaming-up` |
 | `make e2e-robot-run-learning` | **Unavailable until ADR-007 implementation step 11** |
@@ -697,8 +661,6 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | `make ros2-up` / `ros2-down` | Start/stop the ROS2 Jazzy sandbox container |
 | `make ros2-shell` | Interactive shell in the sandbox (`ros2` CLI, `rclpy` on PATH) |
 | `make ros2-check` | Smoke-test `rclpy` import + MCAP storage plugin |
-| `make ros2-can-replay SCENE=scene-0061 RATE=10.0` | Replay nuScenes CAN data as ROS2 topics (no recording) |
-| `make ros2-can-replay-record SCENE=scene-0061 RATE=5.0 DURATION=30` | Same, recorded to `data/raw/rosbag/<scene>/` as MCAP |
 | `make worker-register-robot-run MANIFEST_URI=..` | `REGISTER_ROBOT_RUN` for a RobotRunManifest published by `python -m sceneops_integrations.recording publish` (same registrar as `POST /robot-runs:register`), see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) §3.2 |
 
 
@@ -742,10 +704,11 @@ sceneops-platform/
 │                                   #   lerobot-integration
 ├── ros2/                           # (v2) ROS2 Jazzy Docker sandbox
 │   ├── Dockerfile                  #   rclpy, rosbag2, MCAP storage plugin, nuscenes-devkit
-│   └── nodes/can_replay_node.py    #   CanReplayNode — nuScenes CAN → real ROS2 topics
+│   ├── nodes/streaming_bridge_node.py  #   ROS2 topics → Kafka
+│   └── capture/                    #   Kafka → L1 MCAP
 ├── migrations/                     # Alembic versions
 ├── scripts/
-│   ├── e2e/                        # E2E scripts (incl. e2e_robot_can_replay.sh, e2e_episode_building.sh — v2)
+│   ├── e2e/                        # E2E scripts (incl. e2e_batch_acquisition.sh, e2e_streaming_equivalence.sh — v2)
 │   ├── fixtures/                   # dataset registration
 │   └── debug/                      # pipeline/job inspection
 ├── docs/
@@ -780,7 +743,7 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 * The Airflow pipeline backend is a per-task DAG PoC hardcoded to `recording_scene_building`; other pipeline types still only run through Celery.
 * **(v2)** Binary sensor payloads (`sensor_msgs/Image`, `PointCloud2`) decode via CDR but aren't written to files yet — no real camera/LiDAR-publishing ROS2 node exists to test against.
 * **(v2)** `/vehicle/control` and `/mission/status` use a `std_msgs/String` + JSON bridge, not a proper custom `.msg` package (would need a `colcon` build step).
-* **(v2)** Streamed telemetry does feed MCAP and canonical `RobotRun` registration now (Kafka transport → ROS2 bridge → durable MCAP capture, single-run or continuous multi-run → Recording Publisher → `REGISTER_ROBOT_RUN` → existing Episode pipeline), but there is still no live robot control, no automatic trigger from a finalized capture into registration (publication and registration are explicit steps), and no process-restart or Kafka-rebalance recovery for continuous multi-run capture; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) and `docs/adr/005-ros2-vs-kafka-boundary.md` for the current contract.
+* **(v2)** Streamed telemetry does feed MCAP and canonical `RobotRun` registration now (Kafka transport → ROS2 bridge → durable MCAP capture, single-run or continuous multi-run → Recording Publisher → `REGISTER_ROBOT_RUN` → recording Scene / Episode building), but there is still no live robot control, no automatic trigger from a finalized capture into registration (publication and registration are explicit steps), and no process-restart or Kafka-rebalance recovery for continuous multi-run capture; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) and `docs/adr/005-ros2-vs-kafka-boundary.md` for the current contract.
 * **(v2)** DuckDB queries only work against locally-downloaded Parquet files; querying S3/MinIO-backed artifacts directly would need DuckDB's httpfs/S3 extension, which isn't wired up.
 
 ### Roadmap

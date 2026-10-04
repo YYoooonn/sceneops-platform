@@ -5,7 +5,8 @@ turns an MCAP into a stream of messages, each with its preserved facts:
 
     topic · schema (name, encoding) · message encoding · payload bytes
     log_time      recorder receive time (clock "mcap_log_time")
-    publish_time  upstream publication time (clock "mcap_publish_time")
+    publish_time  transport time recorded before receipt, else log_time
+                  (clock "mcap_publish_time"; ADR-007 §32.2)
     sequence      MCAP Message.sequence where the writer set one, else None
     acquisition_index   position in file (write) order, whole recording
     channel_index       occurrence index among the messages of the same topic,

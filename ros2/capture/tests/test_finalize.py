@@ -26,10 +26,9 @@ from finalize import (  # noqa: E402
 def test_prepare_partial_bag_dir_returns_nonexistent_path_with_ready_parent(
     tmp_path,
 ) -> None:
-    # rosbag2_py.SequentialWriter refuses to open into a directory that
-    # already exists (even empty) -- it must create `partial` itself, so
-    # this function only guarantees the path doesn't exist yet and its
-    # parent (`.partial/`) does.
+    # The writer creates `partial` itself and refuses an existing
+    # directory, so this function only guarantees the path doesn't exist
+    # yet and its parent (`.partial/`) does.
     partial = prepare_partial_bag_dir(tmp_path, "run-1")
     assert partial == partial_bag_path(tmp_path, "run-1")
     assert not partial.exists()

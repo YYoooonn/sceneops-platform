@@ -186,10 +186,14 @@ implements or half-implements them, so there's nothing to document as
 - Temporal (or any other durable-workflow engine) as a pipeline backend.
 - A per-scenario item table / queryable review status for scenario
   candidates.
-- Live robot control or real-time telemetry streaming (robot data
-  ingestion today is strictly batch: replay -> record -> decode -> ingest;
-  see [ADR-005](../adr/005-ros2-vs-kafka-boundary.md) for the intended
-  future boundary once a streaming path is built).
+- Live robot control. Telemetry and sensor streaming exists as an
+  acquisition mode (ROS2 -> bridge -> Kafka -> capture -> L1 MCAP, see
+  [streaming-transport.md](./streaming-transport.md)), and canonicalization
+  is always a batch job over a registered recording; command/control back to
+  a robot is not built (see [ADR-005](../adr/005-ros2-vs-kafka-boundary.md)).
+- Automatic capture -> publish -> register hand-off, durable recovery of
+  in-flight capture sessions across a restart, and Kafka message sizes
+  beyond the stock ~1 MB limit (streaming-transport §14, §26, §33).
 - Evaluation-aware scenario mining (FP/FN-by-scene signals), pseudo-label
   candidate scoring, or VLM-based scene tagging.
 - An RLDS (or any other second) external training-format adapter —

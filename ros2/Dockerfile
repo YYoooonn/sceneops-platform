@@ -1,6 +1,6 @@
 FROM ros:jazzy-ros-base
 # ros-base (not ros-core) is required: it includes rclpy and the other client
-# libraries the CanReplayNode / RosbagAdapter work (roadmap Phase 4) needs.
+# libraries the streaming bridge node needs.
 
 # rosbag2's default storage plugin is sqlite3; the MCAP plugin ships as a separate package
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,9 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --break-system-packages --no-cache-dir \
     "mcap>=1.4" \
     "mcap-ros2-support>=0.5"
-
-# CanReplayNode (ros2/nodes/can_replay_node.py) reads nuScenes CAN bus data
-RUN pip3 install --break-system-packages --no-cache-dir nuscenes-devkit==1.2.0
 
 # StreamingBridgeNode (ros2/nodes/streaming_bridge_node.py) publishes
 # TelemetryEnvelopes through KafkaTelemetryProducer -- installed via plain
@@ -40,6 +37,12 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 # otherwise not have `ros2`/rclpy on PATH. `docker compose run` still goes
 # through the entrypoint and does not need this.
 RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
+
+# Captured recordings are written to the shared acquisition-recordings
+# volume mounted at /recordings. Sticky + world-writable so the volume is
+# usable by the non-root acquisition containers whichever service creates
+# it first.
+RUN mkdir -p /recordings && chmod 1777 /recordings
 
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

@@ -23,5 +23,12 @@ services:
       # writing, so it runs in this same ROS2-capable image rather than
       # duplicating ROS2 interface/schema access elsewhere.
       - ./ros2/capture:/workspace/capture:ro
+      # Channel-set files shared by the bridge and capture
+      # (sceneops_core.streaming.channels).
+      - ./ros2/channels:/workspace/channels:ro
+      # Captured recordings land here, the same volume the
+      # recording-publisher container reads: the MCAP moves between
+      # containers without passing through the host or the API.
+      - acquisition-recordings:/recordings
     profiles:
       - ros2
