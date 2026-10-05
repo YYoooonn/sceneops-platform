@@ -1,0 +1,718 @@
+# ADR-008: Acquisition Lifecycle Reliability
+
+## Status
+
+**Accepted — architecture decision only. Nothing in this ADR is implemented.**
+
+Ratified 2026-10-05 with four clarifications, incorporated in place: reconciliation
+scheduling (§3.2), capture receipt semantics (§4.2), the retry budget across
+replacement Jobs (§5.2, §5.3) and deferral of the stall threshold to Phase 12.4
+(§5.3, §8, B4).
+
+This ADR fixes the operational contract for the acquisition lifecycle
+
+```text
+capture → finalized MCAP → recording publication → RobotRunManifest
+        → REGISTER_ROBOT_RUN → RobotRun
+```
+
+so that it is recoverable after crashes, restarts and lost responses. It
+changes **no** canonical decision of [ADR-007](./007-canonical-ingestion-architecture.md):
+`RobotRunRecord` stays immutable provenance with no status column (§10, §11.1),
+the manifest stays the publication marker (§7.2), registration stays
+`REGISTER_ROBOT_RUN(manifest_uri)` (§12.1), and the Capture / Publisher /
+FastAPI-Worker boundaries stay as they are (§4, §7). It resolves the part of
+ADR-007 §11.3 / §26 that was deferred ("discovery/reconciliation of
+published-but-unregistered RobotRunManifests", "capture crash recovery",
+"artifact garbage collection" — classification only) and records why the
+rest of §11.3 (`CaptureSessionRecord`) stays deferred.
+
+As in ADR-007, three labels are used where confusion is possible:
+
+```text
+CURRENT IMPLEMENTATION    what the repository does at the audited HEAD
+TARGET CONTRACT           what this ADR freezes; implementation must converge on it
+DEFERRED                  explicitly out of scope; a direction, not a contract
+```
+
+Unlabelled normative statements describe the TARGET CONTRACT.
+
+Audit basis:
+
+```text
+branch     feat/operational-reliability
+HEAD       003a90d refactor: domain ingestion architecture (#13)
+date       2026-10-05
+tree       clean at audit start
+method     code and test reading only; no test, container or infrastructure was run
+```
+
+---
+
+## 1. Context: the lifecycle as it is (CURRENT IMPLEMENTATION)
+
+### 1.1 Stages, owners, durable facts
+
+```text
+stage                  owner          durable fact after the stage                   survives
+─────────────────────  ─────────────  ─────────────────────────────────────────────  ──────────────────────
+Kafka transport        bridge/Kafka   records in a robot_run_id partition            broker retention only
+capture in progress    Capture        <root>/.partial/<run_id>/ (+ Kafka offset      volume; offset only
+                                      uncommitted)                                   after finalize
+finalize               Capture        <root>/<run_id>/<run_id>_0.mcap (atomic        volume
+                                      os.replace + dir fsync); THEN offset commit
+publish recording (P3) Publisher      {robot_run_root}/{run_id}/recording.mcap       ArtifactStore
+publish manifest  (P5) Publisher      {robot_run_root}/{run_id}/                     ArtifactStore
+                                      robot_run_manifest.json   (marker, last)
+register (R8)          FastAPI/Worker one PG transaction: 2 ArtifactRecords +        PostgreSQL
+                                      RobotRunRecord
+```
+
+Verified in code:
+
+- **Capture** (`ros2/capture/`): `CaptureSession` is in-memory only. The
+  deployed path is `capture/cli.py` → `run_capture()` (`RunScopedCapture`): one
+  one-shot container per `robot_run_id`, with a deterministic per-run Kafka
+  consumer group. `ContinuousCaptureRouter` exists as a library and in tests
+  only: no CLI, compose service or make target runs it. Offsets are committed
+  only after validate + atomic finalize; the router never commits past the
+  first offset of a non-terminal session. The finalized bag directory holds an
+  MCAP and nothing that records `robot_id`, capture source topics, source
+  clock, finalization reason, checksum or message count. Those values exist
+  only in the `CaptureResult` printed to stdout and in the operator's head.
+- **Publisher** (`sceneops_integrations.recording`): DB-free, one-shot CLI
+  (`publish`). P1–P5 exactly as ADR-007 §7.2: write-once keys derived from
+  `run_id`, "check → write → re-read → verify", identical bytes reused,
+  different bytes `RecordingPublicationConflictError`. All publication inputs
+  (`--robot-id`, `--robot-platform`, `--source-kind`, `--source-topic`,
+  `--source-clock`, `--root-uri`) are CLI arguments supplied by the caller.
+  P6 (submit registration) is not implemented; callers `curl` the API.
+- **Registration** (`apps/worker/.../robots/registration.py`): R1–R9 as ADR-007
+  §12.1. One transaction; `robot_runs.run_id` primary key; unique
+  `recording_artifact_id` / `manifest_artifact_id`; deterministic artifact ids
+  derived from `run_id`; `manifest_checksum` equality decides no-op vs
+  conflict; `IntegrityError` → rollback → re-resolve (R9).
+- **Submission** (`POST /robot-runs:register`): creates a Job, commits it, then
+  dispatches. `JobService.create_job` deduplicates on `execution_key` over
+  statuses `{PENDING, QUEUED, RUNNING, SUCCEEDED}`; `FAILED` is not
+  deduplicated. `execution_key` is a plain index, not a unique constraint.
+  Only a job still `PENDING` is dispatched by the submit path.
+- **Worker**: Celery with `task_acks_late` and `task_reject_on_worker_lost`
+  (redelivery after a killed worker), `autoretry_for=(Exception,)`, 3 retries.
+  `JobRunner` claims with `UPDATE … WHERE status IN (PENDING, QUEUED)`.
+  `heartbeat_at` is written only at job start, step transitions and finish.
+- **ArtifactStore** has no listing primitive for "all objects under a prefix":
+  `list_json` is non-recursive and JSON-only (local `glob("*.json")`; S3
+  `Delimiter="/"`), so `{root}/{run_id}/robot_run_manifest.json` cannot be
+  enumerated from `{root}`. `LocalArtifactStore.write_bytes` is a plain
+  `Path.write_bytes` (not atomic); `S3ArtifactStore` uses single-request
+  `put_object` (atomic per object).
+- **No scheduler** (no Celery beat, cron or equivalent) exists in the
+  repository. Airflow is an opt-in proof of concept (ADR-004, §34.13 of
+  ADR-007).
+
+### 1.2 Manual hand-offs (CURRENT IMPLEMENTATION)
+
+```text
+H1  capture exits  → someone decides to publish, and re-types robot_id / topics / clock / platform
+H2  publisher exits → someone copies manifest_uri into POST /robot-runs:register
+H3  Job stuck (RUNNING / QUEUED) → someone calls POST /jobs with force, or /jobs/{id}/execute
+H4  capture killed → someone re-runs capture with the same run_id before Kafka retention expires
+```
+
+`scripts/e2e/*` and `make canonical-bootstrap` perform H1/H2 in shell; nothing
+does so unattended. This is the "no automatic capture → publish → register
+hand-off" limitation recorded in `reserved-and-limitations.md` §7 and ADR-007
+§34.13.
+
+### 1.3 Retry / idempotency guarantees already present (and test evidence)
+
+| Guarantee | Mechanism | Evidence (existing tests; not re-run here) |
+|---|---|---|
+| Crash before finalize rebuilds from Kafka | commit-after-finalize; `.partial` discarded on next attempt | `ros2/capture/tests/test_crash_boundaries.py` boundary C |
+| Crash after finalize, before offset commit converges; different content fails loudly | `FinalBagExistsError` + `same_recorded_content` (ignores `log_time`) in `run_capture` | boundary D (both tests) |
+| Publisher retry after crash before manifest reuses recording | write-once keys, identical bytes reused | `test_recording_publisher.py::test_retry_after_crash_before_manifest_reuses_recording` |
+| Conflicting recording / manifest never overwritten | `RecordingPublicationConflictError` | `test_conflicting_recording_fails_without_manifest`, `test_conflicting_manifest_fails` |
+| Identical manifest bytes on identical inputs | canonical serialization | `test_identical_inputs_produce_identical_manifest_bytes` |
+| Registration is a no-op for the same manifest; conflict for a different one | `manifest_checksum` rule, R5 | `robots/test_registration.py`, `test_registration_integration.py` (real MinIO/PG) |
+| Concurrent registration of one `run_id` converges | PK + unique + R9 | `test_concurrent_registration_of_same_manifest_converges` (real PG) |
+| Single-transaction registration: no half-registered run | R8 | ADR-007 §12.1 failure table |
+
+### 1.4 Findings that this ADR must resolve
+
+```text
+F1  A finalized bag is not self-describing: the publication inputs are not durable.
+    Retrying publish with different arguments yields a different manifest and a
+    hard conflict at the write-once manifest key.
+F2  Published-but-unregistered manifests are undiscoverable (no listing primitive,
+    no DB trace, no automation).
+F3  A killed worker leaves a RUNNING registration Job forever: redelivery fails the
+    claim ("already running") outside JobRunner's try block, so the Job is never
+    marked FAILED; the Celery retries (3) exhaust; execution-key dedup then returns
+    the stuck RUNNING Job to every later POST /robot-runs:register for that manifest.
+F4  A Job left QUEUED (dispatch failure after the QUEUED commit, or a lost Redis
+    message) is returned by dedup and not re-dispatched by the submit path.
+F5  LocalArtifactStore.write_bytes is not atomic: a crash mid-write leaves a truncated
+    object that the publisher then reads as a *conflicting* write-once object
+    (permanent failure until manually deleted). S3/MinIO is not affected.
+F6  The router does not apply run_capture's "same content → converge" rule: after a
+    crash between finalize and offset commit, replay drives its session to FAILED
+    although the finalized bag is intact. Only relevant if the router is deployed.
+F7  The idle-timeout fallback can finalize a truncated run as complete; the
+    finalization reason lives only in memory and cannot be put in manifest v1.
+F8  No lease or lock on the capture volume: a second capture process for the same
+    run_id on the same output root deletes the first one's .partial directory.
+F9  Reconciliation as a dedup'd Job would return a stale SUCCEEDED report
+    (SUCCEEDED is a dedup status). It must not be modelled as such a Job.
+```
+
+---
+
+## 2. Failure windows
+
+"Durable state after" is what a restart finds. "Today" is the CURRENT
+IMPLEMENTATION behavior. "Resolution" is the TARGET CONTRACT (§4–§6).
+
+| # | Window | Durable state after | Today | Resolution |
+|---|---|---|---|---|
+| W1 | Capture killed before finalize | `.partial/<run>` stale; offset uncommitted; Kafka records within retention | Re-run capture (H4); `.partial` discarded; nothing supervises or detects it | Classify `capture_unfinished` (scan). Recovery stays "re-run capture"; loss iff Kafka retention is exceeded (Kafka is bounded replay, not canonical storage; ADR-007 §29.14 records that offsets commit only after durable finalization). |
+| W2 | Killed after `os.replace`, before offset commit | final bag present; offset uncommitted | `run_capture` converges (tested). Router: session `FAILED`, bag intact (F6) | Unchanged for `run_capture`. First finalized bag is the *recording of record* (L-6). F6 only if the router is deployed. |
+| W3 | Finalized, nothing publishes it | final bag on capture volume only; platform has no trace | Invisible; publish inputs not durable (F1) | Capture writes a **capture receipt** atomically with finalize (§4.2). `publish-pending` finds and publishes it. |
+| W4 | Killed during recording upload (P3) | S3: key absent. Local backend: possibly truncated object (F5) | S3: retry fine. Local: permanent "conflict" | Atomic `LocalArtifactStore.write_bytes` (tmp + `os.replace`). |
+| W5 | Recording uploaded, manifest missing (P3 done, P5 not) | `recording.mcap` only | Harmless; retry reuses it; undetected | Classify `publishing_incomplete` (resumable if receipt/bag exists) or `unpublished_recording_no_source`. Never registered (marker invariant). |
+| W6 | Manifest uploaded, registration never submitted | manifest + recording in store; no DB trace | Undiscoverable without knowing the URI (F2) | Platform reconciler lists manifests, finds ones with no RobotRunRecord, submits registration. |
+| W7 | Submitted, Job never executes (dispatch failure, lost queue message, worker down) | Job `PENDING`/`QUEUED`; no RobotRunRecord | Dedup returns the Job; submit path only dispatches `PENDING` (F4) | Reconciler detects `registration_stalled` (age beyond threshold, no RobotRunRecord) and re-dispatches or submits a forced replacement Job (idempotent). |
+| W8 | Worker killed mid-registration | DB rolled back (R8 is one transaction); Job `RUNNING` | Job stuck `RUNNING` forever (F3) | Same as W7: stalled → replacement. No DB repair needed. |
+| W9 | Registration committed, completion or HTTP response lost | RobotRunRecord + ArtifactRecords committed; Job possibly `RUNNING`; client has no answer | Re-POST → dedup returns the existing Job; any rerun is `created=false` | RobotRunRecord is the only truth for "registered". A stalled Job whose RobotRunRecord exists with the same manifest checksum is `registered` (the Job row is noise). |
+| W10 | Duplicate publication | identical bytes: no-op. Different bytes: loser fails `Conflict`. Check-then-write race with different bytes: last writer wins on S3 | As ADR-007 §7.2: detected downstream (registration R6, consumers' checksums) | Unchanged. Single publisher per `run_id` remains the assumption; conditional writes stay DEFERRED. A re-capture of a published run is a loud conflict by design (L-6). |
+| W11 | Duplicate / concurrent registration | PK + unique constraints → one winner | Converges (tested). Two Jobs can exist: `execution_key` is not unique | Unchanged. Duplicate Jobs are harmless; **no unique index is added** (it would affect every job type). |
+| W12 | Capture/router restart with in-flight sessions | in-memory sessions lost; `.partial` stale; offsets never committed past a non-terminal session | Replay rebuilds from Kafka. Router replay can re-create sessions for already-finalized runs and mark them `FAILED` (F6) | Receipt records the finalization reason (F7). Router productionization is a precondition to any claim beyond `run_capture` (§9). |
+| W13 | Capture volume lost after finalize, before publish | nothing | Recording lost unless Kafka replay is still available | Receipt does not help (it lives on the volume). Recapture within retention yields different bytes but nothing is published yet, so it is legal. |
+| W14 | Final bag modified/corrupt between finalize and publish | bag differs from receipt checksum | Publisher re-validates the MCAP (P1) but has nothing to compare against | Receipt checksum/size mismatch fails publish loudly; the receipt never overrides bytes (L-7). |
+
+---
+
+## 3. Decision
+
+### 3.1 No stateful coordinator, no new state machine
+
+SceneOps does **not** add an acquisition coordinator service, workflow engine,
+`AcquisitionRecord` table, or lifecycle status column. Every stage is already
+a durable fact owned by exactly one component; the missing pieces are (a) the
+publication inputs not being durable (F1), (b) nothing enumerating the facts
+(F2), and (c) stalled Jobs (F3, F4).
+
+```text
+Operational lifecycle = at-least-once execution
+                      + idempotent durable effects (write-once keys, run_id identity,
+                        manifest_checksum rule, PK/unique constraints — all existing)
+                      + reconciliation (stateless, idempotent sweeps)
+```
+
+A **stage is defined by the existence of its fact**, never by a stored status
+(this is ADR-007 §11.1 applied to operations):
+
+```text
+stage              fact                                                    owner      how it is read
+─────────────────  ──────────────────────────────────────────────────────  ─────────  ──────────────────────
+capture_unfinished <root>/.partial/<run_id>/ exists, no final bag          Capture    capture-volume scan
+finalized          <root>/<run_id>/ with valid capture receipt             Capture    capture-volume scan
+published          manifest object at the deterministic key, valid         Publisher  ArtifactStore exists/read
+registered         RobotRunRecord(run_id), manifest_checksum == manifest   Platform   PostgreSQL read
+```
+
+### 3.2 Components stay where they are; each stage gets one resumer
+
+```text
+Capture        recording responsibility. Writes only to its own volume.
+               Gains: a capture receipt (§4.2). No DB, no API, no ArtifactStore.
+Publisher      ArtifactStore publication. Gains: --from-capture, scan, publish-pending.
+               No DB, no API.
+FastAPI        registration orchestration. Gains: a read-only reconciler that joins
+(+ Worker)     ArtifactStore listing with PostgreSQL, and may submit
+               REGISTER_ROBOT_RUN through the existing submission service.
+               The Worker handler is unchanged.
+```
+
+```text
+capture ──(receipt in final bag)──▶ [publish-pending]──▶ manifest in store
+                                                              │
+                                    [reconciler: list store ∖ RobotRunRecords]
+                                                              ▼
+                                       REGISTER_ROBOT_RUN (existing Job, existing handler)
+```
+
+- `publish-pending` (publisher CLI, DB-free): enumerates finalized bags that
+  have a receipt, and runs the existing `publish_recording` with the receipt's
+  inputs. Re-running it is the retry.
+- `scan` (publisher CLI, DB-free, read-only): classifies capture-volume and
+  ArtifactStore facts. It is the only component that sees both sides of the
+  capture→publish boundary, because the publisher container is the one that
+  already mounts the capture volume read-only.
+- The reconciler lives in the **API app** (it already has `ArtifactStoreDep`,
+  DB sessions and `RobotRunRegistrationService`). The Worker cannot import the
+  API, and submission must go through the API's Job + dispatch facade.
+  Reconciliation is **not a Job** (F9); the registrations it submits are.
+- P6 (publisher submits registration) stays an optional convenience exactly as
+  in ADR-007 §7.2. Correctness never depends on it.
+
+**Scheduling.** SceneOps does not introduce a general-purpose scheduler.
+
+- The reconciliation contract is a **stateless one-shot execution**,
+  conceptually `reconcile --once`: read the durable facts, classify, optionally
+  act, print the report, exit. It keeps no state between invocations, so every
+  invocation is a complete reconciliation. `scan` and `publish-pending` follow
+  the same one-shot model. The reconciler logic lives in the API app package
+  and is invoked by a one-shot entrypoint there; it does not require a running
+  API server.
+- Local / docker-compose operation may run a **lightweight polling service**
+  that does nothing but invoke the same one-shot contract in a loop (sleep,
+  invoke, repeat). It holds no state and adds no behavior; killing it loses
+  nothing.
+- A future Kubernetes deployment may use a CronJob, or any other
+  deployment-level scheduler, invoking the same entrypoint.
+- Reconciliation **must not depend exclusively on Celery Beat or Redis**, because
+  the broker and workers may themselves be what failed. Classification needs only
+  ArtifactStore and PostgreSQL. Submitting a registration still dispatches
+  through the existing Job path, which does use Redis/Celery; if that dispatch
+  fails, the Job is left `PENDING`/`QUEUED`, which the next invocation classifies
+  as `registration_stalled` (§5.1). A Redis outage therefore delays registration
+  and never loses it.
+- Which of these runs, and how often, is a deployment choice. This ADR requires
+  only that the one-shot contract is safe to run at any frequency, concurrently,
+  and after any crash (L-3).
+
+### 3.3 Why not the alternatives
+
+- **`CaptureSessionRecord` / durable capture state in PostgreSQL** (ADR-007 §11.3):
+  would give capture a DB dependency or a control-plane service. The failure
+  windows above are all closed without it because the recoverable truth is
+  Kafka (before finalize), the volume (after finalize), the store (after
+  publish) and PostgreSQL (after register). It stays DEFERRED; triggers in §9.
+- **Publisher calls the API and retries (P6 as the mechanism)**: leaves W6/W7
+  open when the publisher is gone, and gives the publisher orchestration
+  responsibility. Kept as an optimization only.
+- **Registration status columns or a `published` table**: duplicate facts that
+  already exist and can drift from them.
+- **Unique index on `jobs.execution_key`**: crosses every job type for a harm
+  (duplicate registration Jobs) already proven benign.
+
+---
+
+## 4. Durable state: reused vs added
+
+### 4.1 Reused (no change)
+
+```text
+run_id                             identity of the whole lifecycle; object-key segment
+{root}/{run_id}/recording.mcap     write-once key
+{root}/{run_id}/robot_run_manifest.json   write-once key; the publication marker
+sha256 / size_bytes                manifest.recording, ArtifactRecord.checksum/size_bytes
+robot_run_*_artifact_id(run_id)    deterministic ArtifactRecord ids
+robot_runs.run_id PK; artifacts.artifact_id PK; unique recording/manifest artifact ids
+RobotRunRecord.manifest_checksum   the conflict rule
+Job.execution_key / status / error.type / created_at / heartbeat_at   dedup, stall and failure-class evidence
+Kafka committed offset (commit-after-finalize)   capture resume point
+```
+
+### 4.2 Added
+
+**A1. Capture receipt (TARGET CONTRACT).** One JSON file inside the capture
+bag directory, written by Capture, **before** the atomic rename so that the
+directory rename publishes recording and receipt together:
+
+```text
+<root>/.partial/<run_id>/   <run_id>_0.mcap  +  capture_receipt.json
+        │  write receipt → fsync receipt → (existing) fsync/validate → os.replace → dir fsync
+        ▼
+<root>/<run_id>/            <run_id>_0.mcap  +  capture_receipt.json
+```
+
+```text
+schema            "sceneops.capture_receipt/v1"
+run_id, robot_id
+robot_platform    optional, as supplied to capture (null otherwise)
+recording         { file, format: "mcap", checksum: "sha256:…", size_bytes }
+capture           { source: { kind: "kafka", topics: [sorted] }, source_clock }
+message_count, per_channel_counts
+finalization      { reason: explicit_run_end | idle_timeout | max_messages | manual,
+                    finalized_at (capture-host UTC) }
+kafka             { partition, first_offset, last_offset, first_sequence, last_sequence }
+```
+
+Rules:
+
+1. The receipt is **immutable acquisition metadata**, required to recover
+   publication after finalization. It is written once, atomically with
+   finalize, and never modified afterwards. It is **not** canonical Scene or
+   Episode metadata, nor canonical provenance: it is never uploaded as
+   provenance, never read by registration, and never a source of identity.
+   It is **publication input and diagnostics only**. It must never override,
+   reinterpret, or manufacture facts from the MCAP payload: time range,
+   channels, per-channel counts, checksum and size are always derived from the
+   bytes, never taken from the receipt. `RobotRunManifest` v1 is unchanged;
+   Kafka offsets stay out of the manifest (ADR-007 §26).
+2. `publish` from a receipt re-derives every fact from the MCAP bytes (P1) and
+   **fails** if the receipt's checksum, size or message count disagree. The
+   receipt supplies only what the bytes cannot: `robot_id`, `robot_platform`,
+   capture source, source clock. This makes manifest bytes identical across
+   retries and removes argument drift (F1).
+3. Its schema is pure Pydantic in `sceneops-core` (layer B); Capture and
+   Publisher both depend on `sceneops-core` already. Capture still imports no
+   DB, API or ArtifactStore code.
+4. A finalized bag **without** a receipt (legacy bags, batch acquisition) stays
+   publishable by the explicit-argument path; it is classified
+   `finalized_no_receipt` and is not auto-published.
+
+**A2. ArtifactStore listing capability (TARGET CONTRACT).** An additive port
+method returning, for every object under a prefix (recursive, paginated),
+`(uri, size_bytes, last_modified)`. `last_modified` is the only durable clock
+for an unreferenced object and is required by the orphan model (§6). It is a
+capability, not state. Implemented for `LocalArtifactStore` (mtime) and
+`S3ArtifactStore` (`list_objects_v2`).
+
+**A3. Atomic `LocalArtifactStore.write_bytes`** (temp file in the same
+directory + `os.replace`), closing F5. Contract-neutral.
+
+**No PostgreSQL schema change, no migration, no new table.**
+
+---
+
+## 5. Retry and reconciliation invariants (TARGET CONTRACT)
+
+```text
+L-1   Stage = fact. A stage is true iff its durable fact exists. No status column, no
+      stage table; facts are only ever added, never mutated.
+L-2   Fact ownership. Capture writes the capture volume only. The Publisher writes
+      ArtifactStore objects only. The platform writes PostgreSQL only. The reconciler
+      writes no bytes and no canonical rows; it acts only by submitting
+      REGISTER_ROBOT_RUN (or re-dispatching/replacing a stalled registration Job).
+L-3   At-least-once, idempotent effects. Every resumer is safe to run any number of
+      times, concurrently, after any crash. Effect identity is run_id plus the existing
+      checksums. There is no distributed transaction and no lock across components.
+L-4   Matching retries converge; conflicting retries fail loudly and are not retried
+      automatically. (Existing ADR-007 rule, restated as the contract of every resumer.)
+L-5   Publication marker. A recording without a valid manifest is never registered and
+      never treated as published. The reconciler never infers a manifest.
+L-6   Recording of record. The first finalized bag for a run_id is the recording of
+      record. A differing re-capture can neither replace a finalized bag nor a published
+      object; after registration it conflicts at the manifest_checksum rule.
+L-7   Receipts never override bytes. Every fact in a manifest is derived from the MCAP
+      bytes or the receipt's identity fields; a disagreement fails publish.
+L-8   Bounded automatic retry. Automatic resubmission applies only to transient failures
+      and only within an attempt budget (§5.2). Permanent failures surface as `failed`
+      and require an operator.
+L-9   No silent repair. Inconsistent canonical state (ArtifactRecord without
+      RobotRunRecord, record referencing missing bytes) is reported, never repaired
+      (ADR-007 §12.1).
+L-10  Classification is pure. Computing a report changes nothing. Actions are a separate,
+      explicit step.
+L-11  Grace before action. A fact younger than the grace period is `in progress`, not
+      stalled or orphaned. Grace is an efficiency and safety margin, not a correctness
+      requirement (duplicate execution is already safe).
+L-12  Independence. Capture never blocks on the platform; the Publisher never blocks on
+      the DB or API; a reconciler outage blocks nothing but automatic registration.
+```
+
+### 5.1 Classification and action per window
+
+Per `run_id`, the first matching row wins. "Source" says who can observe it.
+
+| Classification | Condition | Observed by | Action |
+|---|---|---|---|
+| `capture_unfinished` | `.partial/<run>` exists, no final bag, older than grace | `scan` | none automatic; supervisor/operator re-runs capture (resumable from Kafka) |
+| `finalized_no_receipt` | final bag, no receipt, no manifest | `scan` | report; explicit-argument publish only |
+| `finalized_unpublished` | final bag + valid receipt, no manifest, no recording object | `scan` | `publish-pending` publishes |
+| `publishing_incomplete` | recording object present, manifest absent, receipt/bag present | `scan` | `publish-pending` resumes (reuses recording) |
+| `unpublished_recording_no_source` | recording object present, manifest absent, no receipt/bag | `scan` | report; orphan class O1 (§6); never automatic |
+| `publish_failed` | publish raises conflict / receipt mismatch / corrupt MCAP | `publish-pending` | permanent; operator |
+| `published_unregistered` | valid canonical manifest, no RobotRunRecord, no active Job | reconciler | submit registration (within budget) |
+| `registration_pending` | Job `PENDING`/`QUEUED`/`RUNNING` within stall threshold, no RobotRunRecord | reconciler | wait |
+| `registration_stalled` | such a Job beyond the stall threshold, no RobotRunRecord | reconciler | re-dispatch, or submit a forced replacement Job; safe because registration is idempotent |
+| `registration_failed_transient` | latest Job `FAILED` with a transient error type, attempts < budget | reconciler | resubmit |
+| `registration_failed_permanent` | latest Job `FAILED` with a permanent error type, or attempts ≥ budget | reconciler | none; operator |
+| `registered` | RobotRunRecord exists, `manifest_checksum` == sha256(manifest bytes) | reconciler | none (terminal) |
+| `registered_conflict` | RobotRunRecord exists, checksum differs from the manifest in the store | reconciler | none; operator (ADR-007 §18.4) |
+| `inconsistent` | ArtifactRecord(s) without RobotRunRecord, or record whose bytes are missing/mismatched | reconciler | none; incident (L-9) |
+
+`registered` takes precedence over any Job state: a stale `RUNNING` Job next to
+a matching RobotRunRecord is `registered` (W9).
+
+### 5.2 Failure classes and attempt budget
+
+Classification uses `Job.error.type` (the exception class name) — no new state:
+
+```text
+permanent   RobotRunRegistrationConflictError, RobotPlatformConflictError,
+            RecordingVerificationError, PublishedArtifactMissingError,
+            InconsistentCanonicalStateError, RobotRunManifestError (and subclasses),
+            manifest schema validation errors
+transient   everything else (store/DB connectivity, timeouts, OSError, ArtifactReadError)
+attempts    count of Jobs that ended without success for the same logical registration
+            (see below): FAILED Jobs, including abandoned/replaced ones
+budget      3 attempts without success, then `registration_failed_permanent`
+            (reason `attempt_budget_exhausted`)
+```
+
+The **logical registration attempt** is one `REGISTER_ROBOT_RUN` for one
+manifest, identified by its deterministic `execution_key` (type + params, i.e.
+the `manifest_uri`). A forced replacement Job (§5.3) computes the same
+`execution_key`, so the budget is counted across all Jobs of that key and **is
+not reset by creating a new Job row**. A stalled Job that is abandoned counts
+as one attempt like any other failure. The budget ends at success; it is never
+reset automatically. An operator's explicit forced submission is outside the
+budget and is the way to retry after exhaustion. Budget exhaustion never
+overrides convergence: if a RobotRunRecord with a matching `manifest_checksum`
+exists the run is `registered` (L-4); a differing checksum is a permanent
+conflict immediately, with no retries (L-4, `registered_conflict`).
+
+Unknown error types are transient until the budget is spent. The budget is an
+internal constant, not public configuration (testing.md §7).
+`PublishedArtifactMissingError` is permanent because a manifest implies a
+verified recording (L-5) and MinIO/S3 reads are strongly consistent.
+
+### 5.3 Stalled Job handling
+
+A replacement Job is created with `force=true` (bypassing dedup) and a normal
+dispatch. Before creating the replacement, the stalled row **must** be moved
+to `FAILED` with error type `JobAbandoned` by a conditional update
+(`WHERE status IN (PENDING, QUEUED, RUNNING) AND` stalled), restricted to
+`REGISTER_ROBOT_RUN` (idempotent by construction). This is what makes each
+replacement consume the attempt budget of §5.2. A late completion of the
+original worker may overwrite that row; this is accepted because the effect is
+idempotent.
+
+**The stall threshold is not frozen by this ADR.** It must exceed worst-case
+registration time, and it is determined in Phase 12.4 from measured
+registration latency across representative recording sizes (blocker B4). Until
+then, no numeric value is part of the contract.
+
+---
+
+## 6. Artifact lifecycle contract
+
+This section defines classification only. **Phase 12 deletes nothing.**
+
+### 6.1 Reference model
+
+```text
+referenced(object)  ⇔  ∃ ArtifactRecord a : a.uri == object.uri
+reverse check       ArtifactRecord whose object is absent        → `dangling_reference` (incident)
+                    ArtifactRecord with checksum ≠ object bytes  → `referenced_corrupt` (incident)
+```
+
+`ArtifactRecord` is the reference for every kind (recording, manifest,
+observation payload, Scene/Episode manifest revisions, reports, tables).
+Superseded revisions remain referenced by their ArtifactRecords and are never
+candidates (storage-layout: "superseded revisions stay for lineage").
+The checksum comparison applies only to records that carry a checksum (not all
+writers populate it — `reserved-and-limitations.md` §6).
+
+### 6.2 Three classes
+
+**Referenced** — satisfies `referenced(object)`. Never a candidate.
+
+**Pending (in-progress)** — unreferenced but protected; any of:
+
+```text
+PN-1  age < grace_pending                                  (object may belong to an
+                                                            in-flight write → register step)
+PN-2  recording/manifest of a run classified published_unregistered,
+      registration_pending, registration_stalled or registration_failed_transient
+      — regardless of age. This is the platform's only copy of the recording.
+PN-3  recording object whose capture bag/receipt still exists on the capture volume
+      (resumable publication)
+PN-4  object under a run/dataset scope that has a non-terminal Job referencing that
+      scope (build/register in flight)
+```
+
+**Orphan candidate** — unreferenced ∧ ¬pending ∧ age ≥ `grace_orphan`. A
+candidate carries a reason and a risk tier; it is **not garbage**:
+
+| Reason | Meaning | Tier |
+|---|---|---|
+| `O1 recording_without_manifest` | recording present, manifest absent, no receipt/bag anywhere | high — may be the only copy of a recording |
+| `O2 recording_manifest_permanently_failed` | `registration_failed_permanent` / `publish_failed` / `registered_conflict` | high — quarantine, human decision |
+| `O3 payload_unreferenced` | `observation_payloads/…` object with no ArtifactRecord | low |
+| `O4 manifest_revision_unreferenced` | `manifest-{sha}.json` with no ArtifactRecord (crash between write and register) | low |
+| `O5 unknown_prefix_object` | object under a managed prefix matching no known layout | medium |
+
+`grace_pending` and `grace_orphan` are internal constants chosen conservatively
+(initial proposal: 24 h and 7 d), revisited from measured pipeline durations.
+
+### 6.3 Constraints on any future deletion (not decided here)
+
+A later ADR must define, at minimum: re-verification of `referenced(object)`
+at deletion time (classification can go stale), a dry-run, a quarantine step,
+and the rule that `robot_runs/**` bytes are never deleted without explicit human
+confirmation. The capture volume is outside ArtifactStore classification.
+
+### 6.4 Scope in Phase 12
+
+The reference model, classes and reasons above are the contract for all
+prefixes. Phase 12 implements classification for the `robot_runs/` prefix
+(O1, O2 and the integrity incidents). Other prefixes (O3–O5) extend the same
+rules later without changing the contract.
+
+---
+
+## 7. Observability contract
+
+Minimal **facts**, derived on demand from the durable facts of §3.1. No new
+store, no metrics backend. Prometheus, Grafana and OpenTelemetry are DEFERRED;
+this contract defines what they would export.
+
+### 7.1 Per-run `AcquisitionStatus` (derived, not stored)
+
+```text
+run_id, robot_id (receipt or manifest)
+stage            capture_unfinished | finalized | published | registered
+health           ok | pending | stalled | failed | inconsistent
+classification   one value from §5.1
+failure          { stage: capture|publish|register, class: transient|permanent,
+                   error_type, attempts }                            (when health = failed)
+timestamps       finalized_at (receipt) · published_at (manifest object last_modified)
+                 · registered_at (RobotRunRecord.registered_at)
+durations        finalize→publish · publish→register · finalize→register
+size             recording_bytes, message_count, channel_count
+finalization     reason (receipt)
+```
+
+Caveat: `finalized_at` is the capture host's clock and `published_at` is the
+store's clock; cross-host durations are indicative only.
+
+### 7.2 Aggregates
+
+```text
+count by classification / health
+oldest age per non-terminal stage (capture_unfinished, finalized_unpublished,
+                                   published_unregistered, registration_stalled)
+orphan candidates: count and bytes by reason (§6.2)
+integrity incidents: dangling_reference, referenced_corrupt, inconsistent
+```
+
+### 7.3 Event facts (structured log lines, existing logger)
+
+Every resumer action logs one structured line:
+`{run_id, stage, action, outcome, duration_ms, error_type, attempt}`.
+Existing sources are reused: publisher result JSON (`recording_written`,
+`manifest_written`), Job events (registration start/finish times), Job result
+(`created`).
+
+### 7.4 Exposure
+
+The report shape is the contract. Its transport (CLI JSON now; an API endpoint
+later) is not decided here. `publish-pending`/`scan` produce the capture→publish
+half; the reconciler produces the publish→register half; `run_id` is the join
+key. A single joined view needs the capture volume to be visible to the
+platform and is DEFERRED.
+
+---
+
+## 8. Implementation order (TARGET; each step independently shippable and verifiable)
+
+```text
+12.2  Durable publication inputs
+      - CaptureReceipt schema (sceneops-core); Capture writes it inside .partial before
+        the atomic rename (fsync order in §4.2); capture CLI accepts --robot-platform.
+      - Publisher: `publish --from-capture <bag dir>` with receipt checks (L-7).
+      - LocalArtifactStore atomic write_bytes (F5).
+      Verify: unit tests for each crash boundary around rename/receipt; receipt tamper;
+      real filesystem + real MinIO publish retry; import-boundary tests unchanged.
+
+12.3  Listing + read-only classification
+      - ArtifactStore listing capability (Local, S3/MinIO; pagination on real MinIO).
+      - Publisher `scan` (capture volume + store). API reconciler classification (store ∪
+        PostgreSQL ∪ Jobs) as a stateless one-shot (`reconcile --once`), read-only, no
+        submission.
+      Verify: every §5.1 row from fixtures; real PG + MinIO; no write occurs (L-10).
+
+12.4  Resumption
+      - Measure registration latency across representative recording sizes and derive the
+        stall threshold (§5.3) before any stalled-Job action is implemented.
+      - `publish-pending`.
+      - Reconciler submission with the per-registration attempt budget (across replacement
+        Jobs) and failure classes (§5.2); stalled-Job abandon + replacement (§5.3).
+      - Compose polling service that only loops the one-shot entrypoint (§3.2).
+      Verify: real Celery/Redis/PG fault injection — kill worker mid-registration (W8),
+      lose QUEUED message (W7), kill after commit (W9), concurrent reconcilers (W11),
+      kill publisher between P3 and P5 (W5).
+
+12.5  Artifact classification for `robot_runs/`
+      - Reference query, pending rules PN-1..PN-3, O1/O2, dangling/corrupt incidents.
+      Verify: PN-2 never classified as orphan at any age; classification is read-only.
+
+12.6  Observability facts + acceptance
+      - AcquisitionStatus report + structured log lines (§7).
+      - Fault-injection E2E over the full lifecycle; record it as a category-C
+        point-in-time acceptance report; update active docs whose contract changed
+        (streaming-transport limitations, robot-run-and-mcap §3.2, storage-layout,
+        reserved-and-limitations §7); add a pointer from ADR-007 §11.3/§26.
+```
+
+Steps follow the repository rule "classify before acting": 12.3 produces only
+reports, so a classification bug cannot cause an unwanted submission.
+
+---
+
+## 9. Open items and DEFERRED work
+
+Blockers for the claims they limit (none blocks committing this ADR):
+
+```text
+B1  Invocation and capture supervision. Scheduling is decided (§3.2: stateless one-shot,
+    compose polling loop locally, deployment-level scheduler later, no dependence on
+    Celery Beat/Redis). Still open: the router has no entrypoint and nothing supervises or
+    restarts one-shot capture, so recovery of W1/W12 remains "re-run capture" until a
+    capture supervisor exists. Phase 12 cannot claim unattended capture recovery.
+B2  Kafka retention is not configured in the repository; recovery of W1/W12 assumes
+    retention exceeds recovery time. Must be set and measured, not assumed.
+B3  ArtifactStore Protocol change touches every implementer and test double
+    (e.g. CountingArtifactStore).
+B4  Stall threshold. Deliberately not frozen. `heartbeat_at` is not refreshed during a job
+    and registration reads the whole recording into memory. The value is determined in
+    Phase 12.4 from measured registration latency across representative recording sizes
+    (testing.md §5, §7).
+B5  Redis durability of the Celery queue is unverified; W7 resolution does not depend
+    on it, but its frequency does.
+B6  `JobService.mark_queued` / `validate_executable` behavior for re-dispatching a QUEUED
+    or RUNNING Job was not verified; 12.4 may prefer forced replacement over re-dispatch.
+B7  Router convergence (F6) and a capture-volume lease (F8) matter only if the router
+    or concurrent capture processes are productionized.
+B8  Batch acquisition (`dataset-acquisition`) has no receipt producer; it keeps its
+    synchronous publish-then-register script and relies on publisher/registrar
+    idempotency plus the reconciler. A receipt from that tool is optional.
+B9  Single-request S3 `put_object` limits recording size to 5 GB; larger recordings
+    need multipart upload. Not measured; out of scope.
+```
+
+DEFERRED, with triggers for revisiting:
+
+```text
+CaptureSessionRecord / AcquisitionRecord in PostgreSQL
+    revisit when: store listing is measured too slow for operator queries, failure
+    history must outlive Job rows, or multiple publishers per run_id are required.
+Unified capture→register status view (capture volume visible to the platform)
+Conditional writes (If-None-Match) for write-once keys (ADR-007 §26)
+Router productionization, capture lease, router "same content → converge"
+Artifact deletion / garbage collection / quarantine (§6.3)
+Prometheus / Grafana / OpenTelemetry
+Receipt for batch-acquired recordings
+```
+
+## 10. Consequences
+
+**Positive.** Every failure window of §2 ends in a classified, resumable or
+explicitly-failed state using facts that already exist. Capture gains no
+dependency. No migration. The manifest, `RobotRunRecord` and registration
+contract are untouched. The riskiest later operation (deletion) is separated
+from classification and gated on a protected set (PN-2).
+
+**Costs.** One new file format (receipt), one new port method, one new
+platform component (reconciler), whose invocation is a deployment concern (one-shot
+contract plus a compose polling loop locally).
+Registration visibility for a finalized-but-unpublished recording remains
+split across two read-only reports. Recovery from W1/W13 still depends on
+Kafka retention. `RobotRun` provenance is unchanged, so an interrupted
+(truncated) capture finalized by idle timeout remains indistinguishable in the
+manifest; only the receipt records why it ended.
