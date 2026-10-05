@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -15,6 +17,14 @@ from sceneops_storage.exceptions import (
     ArtifactWriteError,
 )
 from sceneops_storage.uri import join_uri
+
+
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 class LocalArtifactStore(ArtifactStore):
@@ -38,13 +48,11 @@ class LocalArtifactStore(ArtifactStore):
             raise ArtifactReadError(f"Failed to read JSON artifact: {uri}") from exc
 
     async def write_json(self, uri: ArtifactUri, payload: Any) -> None:
-        path = self._to_path(uri)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-        except OSError as exc:
-            raise ArtifactWriteError(f"Failed to write JSON artifact: {uri}") from exc
+        """Serialize fully in memory, then ``write_bytes`` (atomic): a
+        serialization error writes nothing, and a crash never leaves
+        truncated JSON at the key."""
+        data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        await self.write_bytes(uri, data)
 
     async def read_bytes(self, uri: ArtifactUri) -> bytes:
         path = self._to_path(uri)
@@ -79,10 +87,28 @@ class LocalArtifactStore(ArtifactStore):
         return data
 
     async def write_bytes(self, uri: ArtifactUri, data: bytes) -> None:
+        """Atomic: the bytes are written and fsynced under a temporary name in
+        the destination directory, then renamed over the final key, so a crash
+        leaves either the previous object (or none) or the complete new one --
+        never truncated bytes at a valid key. An interrupted write can leave a
+        ``.<name>.<random>.tmp`` file behind; it never matches a final key.
+        """
         path = self._to_path(uri)
+        tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
+            # 0o666 & ~umask: the same mode Path.write_bytes produced.
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, path)
+            except BaseException:
+                tmp_path.unlink(missing_ok=True)
+                raise
+            _fsync_directory(path.parent)
         except OSError as exc:
             raise ArtifactWriteError(f"Failed to write binary artifact: {uri}") from exc
 

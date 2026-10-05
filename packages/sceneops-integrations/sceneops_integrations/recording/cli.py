@@ -8,6 +8,16 @@
         --source-kind kafka --source-topic sceneops.robot.telemetry.v1 \\
         [--source-clock mcap_log_time] [--root-uri s3://sceneops/artifacts/robot_runs]
 
+    python -m sceneops_integrations.recording publish \\
+        --from-capture /recordings/capture/run-001 [--root-uri ...]
+
+``--from-capture`` publishes a finalized capture directory from its
+``capture_receipt.json`` (written by Capture atomically with finalize): the
+receipt supplies run id, robot id, platform, source and clock, so a restarted
+publisher needs nothing but the directory. It cannot be combined with the
+explicit publication inputs above, which remain for recordings that have no
+receipt (batch acquisition, fixtures, tools).
+
 On success prints one JSON object on stdout and exits 0; on failure prints
 the error on stderr and exits non-zero. The object is the machine-readable
 publication result::
@@ -67,6 +77,7 @@ from sceneops_storage import create_artifact_store
 
 from .conformance import check_l1_recording
 from .equivalence import compare_recordings
+from .from_capture import publish_from_capture
 from .publisher import publish_recording
 
 
@@ -87,13 +98,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     publish = sub.add_parser("publish")
-    publish.add_argument("--mcap-path", required=True, type=Path)
-    publish.add_argument("--run-id", required=True)
-    publish.add_argument("--robot-id", required=True)
+    publish.add_argument(
+        "--from-capture",
+        type=Path,
+        default=None,
+        help="Finalized capture directory holding the MCAP and its "
+        "capture_receipt.json; replaces every explicit publication input.",
+    )
+    publish.add_argument("--mcap-path", type=Path)
+    publish.add_argument("--run-id")
+    publish.add_argument("--robot-id")
     publish.add_argument("--robot-platform", default=None)
     publish.add_argument(
         "--source-kind",
-        required=True,
         choices=[kind.value for kind in CaptureSourceKind],
     )
     publish.add_argument(
@@ -103,7 +120,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Kafka topic the recording was captured from (repeatable; "
         "required iff --source-kind=kafka).",
     )
-    publish.add_argument("--source-clock", default=MCAP_LOG_TIME_CLOCK)
+    publish.add_argument(
+        "--source-clock",
+        default=None,
+        help=f"Default {MCAP_LOG_TIME_CLOCK}.",
+    )
     publish.add_argument("--root-uri", default=None)
     check = sub.add_parser("check")
     check.add_argument("--mcap-path", required=True, type=Path)
@@ -115,25 +136,77 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     compare = sub.add_parser("compare")
     compare.add_argument("--first", required=True, type=Path)
     compare.add_argument("--second", required=True, type=Path)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "publish":
+        _check_publish_inputs(parser, args)
+    return args
+
+
+# Publication inputs the capture receipt owns; --from-capture rejects them
+# rather than letting a caller override what was durably recorded.
+_EXPLICIT_PUBLISH_INPUTS = (
+    "mcap_path",
+    "run_id",
+    "robot_id",
+    "robot_platform",
+    "source_kind",
+    "source_topic",
+    "source_clock",
+)
+
+
+def _check_publish_inputs(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
+    if args.from_capture is not None:
+        supplied = [
+            "--" + name.replace("_", "-")
+            for name in _EXPLICIT_PUBLISH_INPUTS
+            if getattr(args, name) is not None
+        ]
+        if supplied:
+            parser.error(
+                f"--from-capture takes its inputs from the capture receipt and "
+                f"cannot be combined with: {', '.join(supplied)}"
+            )
+        return
+    missing = [
+        "--" + name.replace("_", "-")
+        for name in ("mcap_path", "run_id", "robot_id", "source_kind")
+        if getattr(args, name) is None
+    ]
+    if missing:
+        parser.error(
+            f"publish requires --from-capture or all of: "
+            f"--mcap-path, --run-id, --robot-id, --source-kind (missing: "
+            f"{', '.join(missing)})"
+        )
 
 
 async def _publish(args: argparse.Namespace) -> dict[str, object]:
     settings = RecordingPublisherSettings()
     store = create_artifact_store(settings.artifact)
     topics = sorted(set(args.source_topic)) if args.source_topic else None
-    publication = await publish_recording(
-        artifact_store=store,
-        root_uri=args.root_uri or settings.artifact.robot_run_root_uri,
-        recording_path=args.mcap_path,
-        run_id=args.run_id,
-        robot_id=args.robot_id,
-        robot_platform=args.robot_platform,
-        capture_source=CaptureSource(
-            kind=CaptureSourceKind(args.source_kind), topics=topics
-        ),
-        source_clock=args.source_clock,
-    )
+    root_uri = args.root_uri or settings.artifact.robot_run_root_uri
+    if args.from_capture is not None:
+        publication = await publish_from_capture(
+            artifact_store=store,
+            root_uri=root_uri,
+            capture_dir=args.from_capture,
+        )
+    else:
+        publication = await publish_recording(
+            artifact_store=store,
+            root_uri=root_uri,
+            recording_path=args.mcap_path,
+            run_id=args.run_id,
+            robot_id=args.robot_id,
+            robot_platform=args.robot_platform,
+            capture_source=CaptureSource(
+                kind=CaptureSourceKind(args.source_kind), topics=topics
+            ),
+            source_clock=args.source_clock or MCAP_LOG_TIME_CLOCK,
+        )
     return {
         "run_id": publication.manifest.run_id,
         "manifest_uri": publication.manifest_uri,

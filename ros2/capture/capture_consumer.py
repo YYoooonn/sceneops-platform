@@ -32,12 +32,29 @@ used.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
+from sceneops_core.robots.capture_receipt import (
+    CAPTURE_RECEIPT_FILENAME,
+    CaptureReceipt,
+    FinalizationReason,
+    ReceiptFinalization,
+    ReceiptKafka,
+    ReceiptRecording,
+)
+from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
+from sceneops_core.robots.manifest import (
+    CaptureInfo,
+    CaptureSource,
+    CaptureSourceKind,
+    RecordingFormat,
+)
 from sceneops_core.streaming import (
     DEFAULT_REGISTRY,
     ChannelRegistry,
@@ -57,6 +74,12 @@ from finalize import (
 )
 from group_id import derive_capture_group_id
 from mcap_writer import McapCaptureWriter
+from receipt import (
+    CaptureReceiptConflictError,
+    check_existing_receipt_converges,
+    read_capture_receipt,
+    write_capture_receipt,
+)
 from validation import same_recorded_content, validate_mcap_file
 
 
@@ -102,6 +125,8 @@ class CaptureResult:
     last_sequence: int
     sha256: str
     per_channel_counts: dict[str, int] = field(default_factory=dict)
+    # None only when converging onto a bag finalized without a receipt.
+    receipt_path: Path | None = None
 
 
 class _RunFilter:
@@ -208,10 +233,11 @@ async def run_capture(
     robot_id: str,
     robot_run_id: str,
     output_root: Path,
-    stop_condition: Callable[[int], bool],
+    stop_condition: Callable[[int], bool | FinalizationReason],
     poll_timeout_seconds: float = 1.0,
     registry: ChannelRegistry = DEFAULT_REGISTRY,
     stop_on_run_end: bool = False,
+    robot_platform: str | None = None,
 ) -> CaptureResult:
     """Consume from Kafka and durably capture one run's messages into a
     finalized MCAP bag, returning a ``CaptureResult`` once Kafka offsets
@@ -230,6 +256,15 @@ async def run_capture(
     its last telemetry record on the same partition, so everything the
     bridge forwarded precedes it. A run that never sends ``RUN_END`` ends
     only through ``stop_condition``.
+
+    A stop condition may return the ``FinalizationReason`` it stands for
+    (recorded in the capture receipt); a plain ``True`` records ``MANUAL``.
+
+    Before the atomic finalize, a capture receipt (``receipt.py``) is written
+    into the partial bag directory, so the recording and the acquisition
+    metadata needed to publish it become durable as one unit.
+    ``robot_platform`` is the source assertion carried into the receipt (and
+    from there into the RobotRunManifest); it is not interpreted here.
 
     Each written message's ``log_time`` is the wall-clock instant this
     function took the record from Kafka (see ``mcap_writer.py``).
@@ -263,16 +298,24 @@ async def run_capture(
 
     first_offset: int | None = None
     last_offset: int | None = None
+    source_topics: set[str] = set()
+    stop_reason = FinalizationReason.MANUAL
 
     try:
         try:
-            while not run_ended and not stop_condition(writer.stats.message_count):
+            while not run_ended:
+                stop = stop_condition(writer.stats.message_count)
+                if stop:
+                    if isinstance(stop, FinalizationReason):
+                        stop_reason = stop
+                    break
                 consumed = await consumer.poll(poll_timeout_seconds)
                 receive_time_ns = time.time_ns()
                 if consumed is None:
                     continue
                 if not run_filter.matches(consumed):
                     continue
+                source_topics.add(consumed.topic)
 
                 envelope = consumed.envelope
                 if is_control_envelope(envelope):
@@ -320,10 +363,46 @@ async def run_capture(
             mcap_path, expected_message_count=writer.stats.message_count
         )
 
+        # Everything the receipt claims about the bytes is read from the
+        # validated partial file, not from the writer's counters.
+        digest_hex = _sha256_file(Path(mcap_path))
+        receipt = CaptureReceipt(
+            run_id=robot_run_id,
+            robot_id=robot_id,
+            robot_platform=robot_platform,
+            recording=ReceiptRecording(
+                file=Path(mcap_path).name,
+                format=RecordingFormat.MCAP,
+                checksum=f"sha256:{digest_hex}",
+                size_bytes=os.path.getsize(mcap_path),
+            ),
+            capture=CaptureInfo(
+                source=CaptureSource(
+                    kind=CaptureSourceKind.KAFKA, topics=sorted(source_topics)
+                ),
+                source_clock=MCAP_LOG_TIME_CLOCK,
+            ),
+            message_count=writer.stats.message_count,
+            per_channel_counts=dict(writer.stats.per_channel_counts),
+            finalization=ReceiptFinalization(
+                reason=(
+                    FinalizationReason.EXPLICIT_RUN_END if run_ended else stop_reason
+                ),
+                finalized_at=datetime.now(UTC),
+            ),
+            kafka=ReceiptKafka(
+                partition=run_filter.partition,
+                first_offset=first_offset,
+                last_offset=last_offset,
+                first_sequence=tracker.first_sequence,
+                last_sequence=tracker.last_sequence,
+            ),
+        )
+        write_capture_receipt(partial_dir, receipt)
+
         try:
             final_dir = finalize_bag(output_root, robot_run_id)
             final_mcap_path = final_dir / Path(mcap_path).name
-            digest_hex = _sha256_file(final_mcap_path)
         except FinalBagExistsError:
             # A prior attempt for this robot_run_id already reached
             # finalize successfully but was killed/crashed before
@@ -352,6 +431,19 @@ async def run_capture(
             final_dir = existing_final_dir
             final_mcap_path = existing_mcap_path
             digest_hex = _sha256_file(existing_mcap_path)
+            # The existing bag keeps its own receipt (recording of record).
+            # It must still describe the bytes beside it and the run this
+            # attempt captured; a bag without a receipt predates receipts
+            # and is left as it is -- a receipt is written only atomically
+            # with finalize, never added afterwards.
+            existing_receipt = read_capture_receipt(existing_final_dir)
+            if existing_receipt is not None:
+                if existing_receipt.recording.checksum != f"sha256:{digest_hex}":
+                    raise CaptureReceiptConflictError(
+                        f"capture receipt of {existing_final_dir} does not match "
+                        f"the checksum of {existing_mcap_path}"
+                    )
+                check_existing_receipt_converges(existing_receipt, receipt)
             shutil.rmtree(Path(mcap_path).parent, ignore_errors=True)
 
         result = CaptureResult(
@@ -366,6 +458,11 @@ async def run_capture(
             last_sequence=tracker.last_sequence,
             sha256=digest_hex,
             per_channel_counts=dict(writer.stats.per_channel_counts),
+            receipt_path=(
+                final_dir / CAPTURE_RECEIPT_FILENAME
+                if (final_dir / CAPTURE_RECEIPT_FILENAME).is_file()
+                else None
+            ),
         )
 
         # Only now -- after the MCAP has been validated and durably,

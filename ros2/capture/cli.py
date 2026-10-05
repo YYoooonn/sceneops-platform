@@ -10,6 +10,11 @@ normal end of a streamed run), ``--max-messages`` and
 An idle timeout finalizes what was captured when no RUN_END ever arrives (a
 bridge that was killed); it cannot tell a complete run from a truncated one.
 
+The finalized bag directory holds the MCAP and a ``capture_receipt.json``
+(acquisition metadata, ADR-008) that ``publish --from-capture`` reads, so
+publication needs no re-typed arguments. ``--robot-platform`` is the only
+optional publication input captured here.
+
 Usage:
     python3 /workspace/capture/cli.py \\
         --robot-id ROBOT --robot-run-id RUN \\
@@ -36,6 +41,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from sceneops_core.robots.capture_receipt import FinalizationReason
 from sceneops_core.streaming import build_channel_registry
 from sceneops_streaming import StreamingSettings
 
@@ -64,6 +70,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Durable MCAP capture from Kafka")
     parser.add_argument("--robot-id", required=True)
     parser.add_argument("--robot-run-id", required=True)
+    parser.add_argument(
+        "--robot-platform",
+        default=None,
+        help="Source assertion about the robot platform, recorded in the capture "
+        "receipt and carried into the RobotRunManifest on publication.",
+    )
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument(
         "--channels-file",
@@ -97,14 +109,35 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return args
 
 
-def _stop_condition(args: argparse.Namespace) -> Callable[[int], bool]:
-    conditions: list[Callable[[int], bool]] = []
+def _stop_condition(
+    args: argparse.Namespace,
+) -> Callable[[int], FinalizationReason | None]:
+    """The first condition met ends the capture and names itself as the
+    finalization reason recorded in the capture receipt."""
+    conditions: list[tuple[FinalizationReason, Callable[[int], bool]]] = []
     if args.max_messages is not None:
-        conditions.append(_max_messages_stop_condition(args.max_messages))
+        conditions.append(
+            (
+                FinalizationReason.MAX_MESSAGES,
+                _max_messages_stop_condition(args.max_messages),
+            )
+        )
     if args.idle_timeout_seconds is not None:
-        conditions.append(_idle_timeout_stop_condition(args.idle_timeout_seconds))
-    # With only --until-run-end the stop condition never fires by itself.
-    return lambda count: any(condition(count) for condition in conditions)
+        conditions.append(
+            (
+                FinalizationReason.IDLE_TIMEOUT,
+                _idle_timeout_stop_condition(args.idle_timeout_seconds),
+            )
+        )
+
+    def stop_condition(count: int) -> FinalizationReason | None:
+        # With only --until-run-end this never fires by itself.
+        for reason, condition in conditions:
+            if condition(count):
+                return reason
+        return None
+
+    return stop_condition
 
 
 async def _main_async(args: argparse.Namespace) -> int:
@@ -118,6 +151,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         poll_timeout_seconds=args.poll_timeout_seconds,
         registry=build_channel_registry(args.channels_file),
         stop_on_run_end=args.until_run_end,
+        robot_platform=args.robot_platform,
     )
 
     print("CaptureResult:")
@@ -129,11 +163,15 @@ async def _main_async(args: argparse.Namespace) -> int:
     print(f"  first_offset={result.first_offset}  last_offset={result.last_offset}")
     print(f"  first_sequence={result.first_sequence}  last_sequence={result.last_sequence}")
     print(f"  sha256={result.sha256}")
+    print(f"  receipt_path={result.receipt_path}")
     print(
         "capture_summary "
         + json.dumps(
             {
                 "path": str(result.path),
+                "receipt_path": (
+                    str(result.receipt_path) if result.receipt_path else None
+                ),
                 "message_count": result.message_count,
                 "sha256": result.sha256,
                 "per_channel_counts": dict(sorted(result.per_channel_counts.items())),

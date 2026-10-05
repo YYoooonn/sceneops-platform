@@ -1,7 +1,9 @@
 """Database-free Recording Publisher (ADR-007 §7).
 
 Publishes a finalized local MCAP and its canonical RobotRunManifest to
-Object Storage; ``REGISTER_ROBOT_RUN`` later verifies and registers them.
+Object Storage, either from explicit inputs (``publish_recording``) or from a
+finalized capture's receipt (``publish_from_capture``); ``REGISTER_ROBOT_RUN``
+later verifies and registers them.
 ``check_l1_recording`` is the L1 conformance suite every recording writer's
 output is tested against (ADR-007 §29.5), and ``iter_recording_messages`` /
 ``Ros2Decoder`` are the one reader canonicalization uses (§29.6).
@@ -36,6 +38,12 @@ from .reader import (
     iter_recording_messages,
     stamp_ns,
 )
+from .from_capture import (
+    CaptureReceiptMismatchError,
+    CaptureReceiptMissingError,
+    publish_from_capture,
+    read_capture_receipt,
+)
 from .publisher import (
     MANIFEST_OBJECT_NAME,
     RECORDING_OBJECT_NAME,
@@ -52,6 +60,8 @@ __all__ = [
     "MANIFEST_OBJECT_NAME",
     "RECORDING_OBJECT_NAME",
     "SUPPORTED_SOURCE_CLOCKS",
+    "CaptureReceiptMismatchError",
+    "CaptureReceiptMissingError",
     "ChannelReport",
     "EquivalenceReport",
     "compare_recordings",
@@ -72,7 +82,9 @@ __all__ = [
     "check_l1_recording",
     "derive_mcap_facts",
     "manifest_uri",
+    "publish_from_capture",
     "publish_recording",
+    "read_capture_receipt",
     "recording_uri",
     "sha256_checksum",
 ]

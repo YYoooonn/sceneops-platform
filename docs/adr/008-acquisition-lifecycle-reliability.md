@@ -329,7 +329,7 @@ directory rename publishes recording and receipt together:
 ```
 
 ```text
-schema            "sceneops.capture_receipt/v1"
+schema_version    "sceneops.capture_receipt/v1"   (same field name as RobotRunManifest)
 run_id, robot_id
 robot_platform    optional, as supplied to capture (null otherwise)
 recording         { file, format: "mcap", checksum: "sha256:…", size_bytes }
