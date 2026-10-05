@@ -30,7 +30,7 @@ R_CAM_TO_EGO = np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
 
 
 def _resolved_sample():
-    manifest = build_scene_manifest(annotations_per_keyframe=0)
+    manifest = build_scene_manifest()
     ref = SceneRevisionRef(
         scene_id="scene-1",
         manifest_artifact_id="scene-manifest-1",

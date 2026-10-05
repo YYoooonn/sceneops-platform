@@ -14,9 +14,6 @@ class SceneVersionSummary(SceneOpsBaseModel):
     them from SceneRecord rows under the DatasetVersion row lock, in the
     same transaction as the membership change (ADR-007 §16).
 
-    ``required_channels`` is not membership: it is a validation default,
-    still stored here until its owner moves it off DatasetVersion.
-
     Validation / profile results are not cached here; Scene readiness is
     derived from run records for each Scene's current manifest revision.
 
@@ -28,8 +25,6 @@ class SceneVersionSummary(SceneOpsBaseModel):
     keyframe_count: int = 0
     observation_count: int = 0
     observed_channels: list[str] = Field(default_factory=list)
-
-    required_channels: list[str] = Field(default_factory=list)
 
     def is_unset(self) -> bool:
         """True if every field is still at its untouched default. Says

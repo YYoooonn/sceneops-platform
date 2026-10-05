@@ -3,10 +3,10 @@
 Follows the MagicMock WorkerContext convention used by
 test_export_analytics_snapshot.py. The recording is registered in a real
 LocalArtifactStore (``register_local_recording``) and read through the real
-verified recording resolver; RosbagAdapter itself is mocked to isolate the
+verified recording resolver; RecordingTelemetryReader itself is mocked to isolate the
 handler's own orchestration (resolver use, robot identity, persistence;
-RobotRuns are never mutated). RosbagAdapter is exercised with real MCAP
-files in test_rosbag_raw_log.py.
+RobotRuns are never mutated). RecordingTelemetryReader is exercised with real MCAP
+files in robots/test_telemetry.py.
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ from sceneops_worker.robots.resolver import (
     RobotRunNotFoundError,
 )
 
-_RECORDING_BYTES = b"mcap bytes (RosbagAdapter is mocked in this module)"
-_ADAPTER = "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
+_RECORDING_BYTES = b"mcap bytes (RecordingTelemetryReader is mocked in this module)"
+_ADAPTER = "sceneops_worker.jobs.robots.ingest_robot_states.RecordingTelemetryReader"
 
 
 def _states(count: int, *, robot_id: str, robot_run_id: str = "run-1"):
@@ -110,7 +110,7 @@ class TestIngestRobotStatesJobHandler:
             _mock_adapter(MockAdapter, states=fake_states)
 
             def _capture(**kwargs):
-                path = Path(kwargs["source_root_uri"])
+                path = Path(kwargs["recording_path"])
                 # The resolver's verified copy exists while the adapter reads it.
                 assert path.read_bytes() == _RECORDING_BYTES
                 adapter_paths.append(path)

@@ -11,23 +11,31 @@ from sceneops_core.executions.schemas import (
     ExecutionKind,
     ExecutionStatus,
 )
+from sceneops_core.pipelines.schemas import PipelineType
 
 
 @dataclass(frozen=True)
 class AirflowPipelineExecutionBackend:
     base_url: str
-    pipeline_dag_id: str
+    # Each pipeline type is its own DAG, named ``<prefix>_<pipeline type>``
+    # (airflow/dags/sceneops_pipelines.py).
+    pipeline_dag_prefix: str
     username: str | None = None
     password: str | None = None
 
-    async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
+    def dag_id(self, pipeline_type: PipelineType) -> str:
+        return f"{self.pipeline_dag_prefix}_{pipeline_type.value}"
+
+    async def dispatch_pipeline(
+        self, pipeline_run_id: str, pipeline_type: PipelineType
+    ) -> ExecutionDispatchResult:
         auth = (self.username, self.password) if self.username else None
 
         async with httpx.AsyncClient(
             base_url=self.base_url, auth=auth, timeout=10.0
         ) as client:
             response = await client.post(
-                f"/api/v1/dags/{self.pipeline_dag_id}/dagRuns",
+                f"/api/v1/dags/{self.dag_id(pipeline_type)}/dagRuns",
                 json={
                     "dag_run_id": pipeline_run_id,
                     "conf": {"pipeline_run_id": pipeline_run_id},

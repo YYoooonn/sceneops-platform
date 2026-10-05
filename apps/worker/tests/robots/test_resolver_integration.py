@@ -30,7 +30,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
+from sceneops_worker.robots.telemetry import RecordingTelemetryReader
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.robots.ingest_robot_states import (
     IngestRobotStatesJobHandler,
@@ -89,9 +89,8 @@ async def test_resolves_registered_minio_recording_to_verified_local_copy(
         assert recording.source_clock == "mcap_log_time"
         assert recording.local_path.read_bytes() == _VALID_MCAP.read_bytes()
         # The copy is a real, readable MCAP for the existing reader.
-        robot_states = RosbagAdapter(
-            source_store=worker_context.artifact_store,
-            source_root_uri=str(recording.local_path),
+        robot_states = RecordingTelemetryReader(
+            recording_path=str(recording.local_path)
         ).extract_robot_states(robot_id="robot", robot_run_id=run_id)
         assert robot_states
         local_path = recording.local_path

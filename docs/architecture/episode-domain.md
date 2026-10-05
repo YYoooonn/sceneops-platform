@@ -13,7 +13,8 @@ built first. The authoritative contract is ADR-007 §31 (Amendment A6).
 
 **Canonical Episode preserves asynchronous source streams. Temporal
 alignment is a derived (L3) operation** (`ALIGN_EPISODE` → `AlignedEpisode`,
-see [Robot learning data layer](./robot-learning-data.md)).
+the first stage of the `EPISODE_LEARNING_DATA_BUILDING` pipeline; see
+[Robot learning data layer](./robot-learning-data.md)).
 
 ## 1. Pipeline
 

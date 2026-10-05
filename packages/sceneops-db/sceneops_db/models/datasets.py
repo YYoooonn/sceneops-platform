@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
-
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -37,10 +35,6 @@ class DatasetModel(Base):
         nullable=False,
         server_default=text("now()"),
         onupdate=text("now()"),
-    )
-
-    metadata_: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
     versions: Mapped[list["DatasetVersionModel"]] = relationship(
@@ -111,13 +105,6 @@ class DatasetVersionModel(Base):
         server_default=text("'[]'::jsonb"),
     )
 
-    required_channels: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=list,
-        server_default=text("'[]'::jsonb"),
-    )
-
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -128,14 +115,6 @@ class DatasetVersionModel(Base):
         nullable=False,
         server_default=text("now()"),
         onupdate=text("now()"),
-    )
-
-    metadata_: Mapped[dict[str, Any]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        default=dict,
-        server_default=text("'{}'::jsonb"),
     )
 
     dataset: Mapped[DatasetModel] = relationship(back_populates="versions")

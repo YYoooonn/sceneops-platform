@@ -331,10 +331,9 @@ writes today.
 **Legacy: v1-single-file support exists in `SceneOpsDataset` for
 correctness/golden-fixture compatibility only** — it is not a second,
 equally-current production architecture. It is exercised by the frozen
-interop golden fixture (`interop_dataset.py`) and the tests/E2E round
-trips built on it (including the LeRobot container round-trip, `make
-e2e-lerobot-container`), which predate Request 5.2's sharded layout and
-are deliberately kept on the v1 path as regression coverage — not
+interop golden fixture (`interop_dataset.py`) and the adapter / entrypoint
+tests built on it (`make lerobot-test`), which predate Request 5.2's sharded
+layout and are deliberately kept on the v1 path as regression coverage — not
 because any current production code path still writes v1 output. No
 production job, API endpoint, or worker task other than tests/fixtures
 reaches the v1 writer (`AnalyticsTableWriter.write_learning_table`) or
@@ -346,8 +345,8 @@ architecture changes.
 
 ## 12. Verification (Request 5.6 freeze pass)
 
-- `make test`, `make lint`, `make test-integration`, `make lerobot-test`,
-  `make e2e-lerobot-container` — all passing at freeze time (see
+- `make test`, `make lint`, `make test-integration`, `make lerobot-test` and
+  the LeRobot container round trip of that time — all passing at freeze time (see
   [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md)
   §76 for the exact counts from the request that produced them; this
   freeze re-ran the same suite with zero production-code changes since).

@@ -59,18 +59,19 @@ writes an ArtifactRecord or mutates canonical state
 ## 3. LeRobot export
 
 ```text
-SceneOpsDataset.open(...)                 learning-data export on real Postgres + MinIO
+SceneOpsDataset.open(...)                 a pinned learning-data export on MinIO
   -> IntegrationRequest (EXPORT, external_ref.format = "lerobot")
-       built by scripts/e2e/lerobot_container_build_request.py
+       built by scripts/e2e/lerobot_build_request.py
   -> LeRobot integration container        tools/lerobot-integration (own uv.lock, Dockerfile);
                                           entrypoint sceneops_analytics.external_adapters
                                           .lerobot.entrypoint
   -> LeRobot v3 dataset at external_ref.uri
-  -> official LeRobotDataset reader + golden comparison   (make e2e-lerobot-container)
+  -> official LeRobotDataset reader, frame-by-frame comparison with the export   (make e2e-episode-learning)
 ```
 
-No worker job invokes the LeRobot runtime; it is run directly by the
-scripts above. LeRobot stays in its own uv project and image for
+No worker job invokes the LeRobot runtime; `make e2e-episode-learning` runs it
+(request built in the worker image, export in the isolated container, read-back
+in the same container image with the official reader). LeRobot stays in its own uv project and image for
 dependency and runtime isolation: a minimal, reproducible closure that never
 pulls in `sceneops-db`, Celery or the worker's dependencies.
 
@@ -88,4 +89,4 @@ pulls in `sceneops-db`, Celery or the worker's dependencies.
 - LeRobot entrypoint: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/entrypoint.py`
 - Isolated LeRobot environment/container: `tools/lerobot-integration/`
 - E2E: `scripts/e2e/e2e_lerobot_container_roundtrip.sh`, `scripts/e2e/smoke_lerobot_container.sh`
-- Make targets: `makefiles/lerobot.mk` (`lerobot-sync`, `lerobot-test`, `lerobot-image`, `smoke-lerobot-container`, `e2e-lerobot-container`)
+- Make targets: `makefiles/lerobot.mk` (`lerobot-sync`, `lerobot-test`, `lerobot-image`); the container is the `lerobot-integration` compose service (`compose/lerobot.yaml`), driven by `make e2e-episode-learning`

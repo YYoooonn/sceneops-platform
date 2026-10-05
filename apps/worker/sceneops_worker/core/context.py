@@ -44,7 +44,7 @@ class WorkerContext:
     session: AsyncSession
 
     artifact_store: ArtifactStore
-    raw_source_store: ArtifactStore
+    input_store: ArtifactStore
     derived_store: DerivedManifestStore
     scene_artifact_store: SceneArtifactStore
     episode_artifact_store: EpisodeArtifactStore

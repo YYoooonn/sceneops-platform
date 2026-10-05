@@ -92,7 +92,8 @@ Pipeline -> Celery or Airflow (switchable via pipeline_backend)
 ```
 
 When a pipeline is sent to Airflow, `AirflowPipelineExecutionBackend.dispatch_pipeline`
-calls the Airflow REST API (`POST /api/v1/dags/{dag_id}/dagRuns`), setting
+calls the Airflow REST API for the DAG of the run's pipeline type
+(`POST /api/v1/dags/<prefix>_<pipeline type>/dagRuns`), setting
 `dag_run_id` equal to SceneOps' own `pipeline_run_id` for 1:1 traceability.
 Both backends write the same `ExecutionRecord` shape (distinguished by
 `execution_backend`), so query paths don't care which backend ran a given
@@ -126,7 +127,7 @@ is skipped on redispatch) are both implemented — see
 
 When `pipeline_backend=airflow`, `PipelineRunner.run()` does not run the
 whole pipeline in one process. Instead, each task in the Airflow DAG
-(`airflow/dags/sceneops_pipeline_run.py`) runs in its own `DockerOperator`
+(`airflow/dags/sceneops_pipelines.py`, one DAG per pipeline type) runs in its own `DockerOperator`
 container (the existing worker image, `apps/worker/Dockerfile`), invoking
 `sceneops-worker run-pipeline-task --task-id <id>` — which calls
 `PipelineTaskRunner.run()` directly. Quality-gate evaluation and per-task
@@ -263,14 +264,14 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 semantic mapping, real Postgres/MinIO round-trip E2E (Phase 3, complete)
 - Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/`
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
-- E2E (local venv, not the container): `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh` (`make e2e-interop`)
+- Adapter tests (isolated environment): `make lerobot-test`
 - Doc: [dataset-interoperability.md](./dataset-interoperability.md)
 
 **EXTERNAL INTEGRATION RUNTIME** — IntegrationRequest/IntegrationResult
 contract for the isolated LeRobot EXPORT runtime
 - Reference/runtime contract: `packages/sceneops-core/sceneops_core/integration_runtime/`
 - Isolated LeRobot environment/container: `tools/lerobot-integration/`
-- E2E: `make e2e-lerobot-container`
+- E2E: the LeRobot round trip of `make e2e-episode-learning` (`compose/lerobot.yaml`, `scripts/e2e/lerobot_{build_request,verify_export}.py`)
 - Doc: [external-integration-runtime.md](./external-integration-runtime.md)
 
 **PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records
@@ -286,10 +287,9 @@ contract for the isolated LeRobot EXPORT runtime
 - `packages/sceneops-storage/sceneops_storage/backends/`
 - Doc: [../development/local-development.md](../development/local-development.md), [storage-layout.md](./storage-layout.md)
 
-**OPTIONAL** — Airflow backend, ROS2/robot sandbox, inference server,
-scenario curation (`experimental=True`)
-- Airflow: `airflow/dags/sceneops_pipeline_run.py`, [ADR-004](../adr/004-airflow-vs-celery.md)
-- ROS2/robots: `ros2/`, `apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`,
+**OPTIONAL** — Airflow backend, ROS2/robot sandbox, inference server
+- Airflow: `airflow/dags/sceneops_pipelines.py` (one DAG per pipeline type), [ADR-004](../adr/004-airflow-vs-celery.md)
+- ROS2/robots: `ros2/`, `apps/worker/sceneops_worker/robots/telemetry.py`,
   [ADR-005](../adr/005-ros2-vs-kafka-boundary.md), [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md)
 - Inference server: `apps/inference-server/`
 - Scenario curation: `apps/worker/sceneops_worker/jobs/scenarios/`, [quality-and-runs.md](./quality-and-runs.md) §4

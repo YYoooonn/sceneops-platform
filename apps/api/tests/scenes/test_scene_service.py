@@ -149,7 +149,6 @@ def _scene(scene_id: str, **overrides) -> SceneRecord:
         manifest_checksum="sha256:" + "2" * 64,
         observation_count=20,
         keyframe_count=10,
-        annotation_count=0,
     )
     defaults.update(overrides)
     return SceneRecord(**defaults)

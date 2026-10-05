@@ -51,7 +51,6 @@ def scene_ref(manifest: SceneManifest) -> SceneRevisionRef:
 
 
 def manifest(**kwargs) -> SceneManifest:
-    kwargs.setdefault("annotations_per_keyframe", 0)
     return build_scene_manifest(**kwargs)
 
 

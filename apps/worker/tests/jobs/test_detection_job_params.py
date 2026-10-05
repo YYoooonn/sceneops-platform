@@ -25,7 +25,7 @@ def _inputs(**kwargs) -> PipelineTaskInputs:
     return PipelineTaskInputs(
         pipeline=PipelineInputRef(
             pipeline_run_id="pipe-1",
-            pipeline_type="detection_evaluation",
+            pipeline_type="scene_ml_evaluation",
             task_id="t",
             pipeline_task_id="t",
             pipeline_task_run_id="ptask-1",

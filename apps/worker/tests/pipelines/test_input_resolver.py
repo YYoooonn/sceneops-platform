@@ -1,23 +1,11 @@
-"""Unit tests for PipelineInputResolver._build_dataset_ref (SceneOps V2 Request 02).
-
-Covers reading Scene-owned fields from DatasetVersionRecord.scene instead of
-top-level fields, and staying valid (not raising, not assuming Scene data
-exists) when a DatasetVersion has no Scene summary — e.g. an episode-only
-version.
-"""
+"""PipelineInputResolver._build_dataset_ref: the dataset input of a task is the
+DatasetVersion scope of its pipeline run, nothing derived from the version's
+state (no channel requirements, counts or quality cache)."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-
-from sceneops_core.datasets.schemas import (
-    DatasetVersionRecord,
-    EpisodeVersionSummary,
-    SceneVersionSummary,
-)
 from sceneops_core.pipelines.schemas import (
+    DatasetInputRef,
     PipelineRunManifest,
     PipelineRunStatus,
     PipelineType,
@@ -35,84 +23,21 @@ def _pipeline_run(dataset_id="d1", dataset_version="v1") -> PipelineRunManifest:
     )
 
 
-def _resolver_with_version(
-    version: DatasetVersionRecord | None,
-) -> PipelineInputResolver:
-    context = MagicMock()
-    context.dataset_store.get_version = AsyncMock(return_value=version)
-    return PipelineInputResolver(context)
+def test_the_dataset_ref_is_the_scope_of_the_run() -> None:
+    ref = PipelineInputResolver._build_dataset_ref(_pipeline_run("d1", "v1"))
+
+    assert ref == DatasetInputRef(dataset_id="d1", dataset_version="v1")
 
 
-class TestBuildDatasetRefWithSceneSummary:
-    @pytest.mark.asyncio
-    async def test_scene_fields_come_from_nested_summary(self) -> None:
-        version = DatasetVersionRecord(
-            dataset_id="d1",
-            version="v1",
-            scene=SceneVersionSummary(
-                scene_count=5,
-                keyframe_count=10,
-                observation_count=20,
-                observed_channels=["CAM_FRONT"],
-                required_channels=["CAM_FRONT"],
-            ),
-        )
-        resolver = _resolver_with_version(version)
+def test_a_run_without_a_version_has_a_dataset_only_ref() -> None:
+    ref = PipelineInputResolver._build_dataset_ref(_pipeline_run("d2", None))
 
-        ref = await resolver._build_dataset_ref(_pipeline_run())
-
-        assert ref.required_channels == ["CAM_FRONT"]
-        # No readiness / quality cache: it is derived per Scene revision.
-        assert ref.refs == {}
-        assert ref.summary == {
-            "scene_count": 5,
-            "keyframe_count": 10,
-            "observation_count": 20,
-            "observed_channels": ["CAM_FRONT"],
-        }
+    assert ref == DatasetInputRef(dataset_id="d2", dataset_version=None)
 
 
-class TestBuildDatasetRefEpisodeOnly:
-    @pytest.mark.asyncio
-    async def test_no_scene_summary_resolves_to_valid_empty_ref(self) -> None:
-        version = DatasetVersionRecord(
-            dataset_id="d2",
-            version="v1",
-            episode=EpisodeVersionSummary(episode_count=3),
-        )
-        assert version.scene is None
-
-        resolver = _resolver_with_version(version)
-
-        ref = await resolver._build_dataset_ref(_pipeline_run("d2", "v1"))
-
-        assert ref.dataset_id == "d2"
-        assert ref.dataset_version == "v1"
-        assert ref.required_channels == []
-        assert ref.refs == {}
-        assert ref.summary == {}
-
-    @pytest.mark.asyncio
-    async def test_mixed_scene_and_episode_still_resolves_scene_fields(self) -> None:
-        version = DatasetVersionRecord(
-            dataset_id="d3",
-            version="v1",
-            scene=SceneVersionSummary(scene_count=2, observed_channels=["CAM_FRONT"]),
-            episode=EpisodeVersionSummary(episode_count=1),
-        )
-
-        resolver = _resolver_with_version(version)
-        ref = await resolver._build_dataset_ref(_pipeline_run("d3", "v1"))
-
-        assert ref.summary == {"scene_count": 2, "observed_channels": ["CAM_FRONT"]}
+def test_a_run_without_a_dataset_has_no_dataset_ref() -> None:
+    assert PipelineInputResolver._build_dataset_ref(_pipeline_run(None, None)) is None
 
 
-class TestBuildDatasetRefMissingVersion:
-    @pytest.mark.asyncio
-    async def test_missing_dataset_version_record_still_valid(self) -> None:
-        resolver = _resolver_with_version(None)
-
-        ref = await resolver._build_dataset_ref(_pipeline_run("d4", "v1"))
-
-        assert ref.dataset_id == "d4"
-        assert ref.dataset_version == "v1"
+def test_the_dataset_ref_carries_no_version_state() -> None:
+    assert set(DatasetInputRef.model_fields) == {"dataset_id", "dataset_version"}

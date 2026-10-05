@@ -13,10 +13,10 @@ POSTGRES_USER ?= sceneops
 POSTGRES_DB   ?= sceneops
 POSTGRES_PASSWORD ?= sceneops
 
-# Shared local MinIO defaults -- the single source of truth `make
-# e2e-bootstrap`/`make test-integration` both pass into their bootstrap
-# commands, instead of each hardcoding its own copy of the same literals.
-# Overridable exactly like the POSTGRES_* vars above.
+# Shared local MinIO defaults -- the single source of truth the host-side
+# integration / infrastructure test targets pass to their pytest runs, instead
+# of each hardcoding its own copy of the same literals. Overridable exactly
+# like the POSTGRES_* vars above.
 MINIO_ROOT_USER     ?= minioadmin
 MINIO_ROOT_PASSWORD ?= minioadmin
 MINIO_BUCKET        ?= sceneops
@@ -26,57 +26,17 @@ PIPELINE_RUN_ID ?=
 TASK_ID         ?=
 MSG             ?=
 ROS2_CMD        ?=
+
+# Journey selection -- the only user-facing variables of the E2E / baseline
+# surface (see makefiles/e2e.mk). SCENE: the nuScenes scene (default
+# scene-0061). RATE: streaming replay rate. BASELINE_ID: run a journey on a
+# named canonical baseline (default: a unique one per run). BACKEND /
+# MAX_SAMPLES: the detection backend and sample cap of the Scene ML journey.
 SCENE           ?=
 RATE            ?=
-DURATION        ?=
-ROBOT_ID        ?=
-RUN_ID          ?=
-
-# E2E selection knobs -- the only user-facing selection variables the
-# primary E2E surface exposes. MAX_SCENES is the one authoritative name
-# across e2e-recording-scene/e2e-robot-learning. BACKEND selects
-# e2e-perception's inference backend (mock|grounding_dino).
-MAX_SCENES      ?=
-MAX_SAMPLES     ?=
+BASELINE_ID     ?=
 BACKEND         ?=
-
-# MODEL_ID/MODEL_VERSION are deliberately not declared here -- e2e-perception
-# derives the right model identity from BACKEND itself (dummy-detector/v1
-# for mock, grounding-dino/tiny for grounding_dino; see
-# scripts/e2e/e2e_perception.sh), so a top-level Makefile default would just
-# be a second, redundant place the same value lived. A manual override
-# (`MODEL_ID=my-model make e2e-perception`) still works via ordinary
-# environment inheritance, with no Makefile declaration needed for that.
-
-# Shared E2E fixture catalog ("core"/"interop"/"raw-log", see
-# scripts/e2e/lib.sh's resolve_e2e_fixture for the full catalog) and
-# canonical-vs-source identity separation.
-#
-# DATASET_ID/DATASET_VERSION below are the "core" fixture's default --
-# SceneOps' own canonical identity, used by verify-reliability,
-# verify-airflow-backend, e2e-scene-analytics-export, e2e-robot-learning,
-# e2e-episode-building and e2e-episode-curation. SOURCE_FORMAT_VERSION is the nuScenes on-disk
-# version the E2E fixtures read; it never becomes canonical identity.
-#
-# See scripts/e2e/lib.sh's resolve_e2e_fixture "raw-log" case for the
-# raw-log fixture's own identity (test-e2e-raw-log), which stays isolated
-# from "core" on purpose but shares this same SOURCE_FORMAT_VERSION (both
-# read the same physical nuScenes mini fixture). An explicit
-# `DATASET_ID=my-dataset make e2e-...` always overrides these defaults and
-# is never coerced into the test-e2e-* form.
-DEFAULT_E2E_DATASET_PREFIX  ?= test-e2e
-DEFAULT_E2E_DATASET_VERSION ?= test-v1
-DATASET_ID            ?= $(DEFAULT_E2E_DATASET_PREFIX)-core
-DATASET_VERSION       ?= $(DEFAULT_E2E_DATASET_VERSION)
-
-# SOURCE_FORMAT/SOURCE_FORMAT_VERSION/SOURCE_ROOT_URI are deliberately not
-# declared here -- every current E2E fixture is nuScenes, so exposing them
-# as normal operator-overridable Make variables would misrepresent them as
-# a real choice, and would just be a second, redundant place the same
-# value lived. scripts/e2e/lib.sh's resolve_e2e_fixture is the single real
-# source of truth for their defaults; an ambient `SOURCE_ROOT_URI=...`
-# still overrides it via ordinary environment inheritance, no Makefile
-# declaration needed for that to work.
+MAX_SAMPLES     ?=
 
 INFERENCE_ENDPOINT_URL ?= http://sceneops-inference:8001
 
@@ -92,73 +52,43 @@ help:
 	@echo ""
 	@echo "Quick start:"
 	@echo "  make setup                    Install deps, hooks"
-	@echo "  make local-up                 Start full local stack (idempotent: infra -> health -> MinIO buckets -> migrate -> API + workers)"
+	@echo "  make local-up                 Start the local stack (idempotent: infra -> health -> MinIO buckets -> migrate -> API + workers)"
 	@echo "  make test                     All infrastructure-independent unit tests"
-	@echo "  make test-integration         Real-Postgres/MinIO tests -- requires local-up"
-	@echo "  make e2e-cleanroom            THE full-platform acceptance workflow -- see 'E2E Workflows' below"
+	@echo "  make canonical-bootstrap      Build the L1/L2 baseline (RobotRun -> Scenes -> Episodes) on the running stack"
+	@echo "  make e2e-cleanroom            THE full-platform acceptance (fresh state -> baseline -> both L3 journeys)"
 	@echo "  make local-down               Stop services, KEEP all data"
 	@echo "  make status / make logs       Service status / follow logs"
 	@echo ""
 	@echo "=================================================================="
-	@echo "Tests (see docs/development/local-development.md):"
+	@echo "Tests (docs/development/test-matrix.md):"
 	@echo "=================================================================="
-	@echo "  make test                     worker+api+core+analytics+inference-server unit tests -- no infra needed"
-	@echo "  make test-integration         sceneops-db/storage + worker registration/recording-Scene (real Postgres/MinIO) + pipeline-definitions contract tests -- requires local-up"
+	@echo "  make test                          Unit suites (worker, api, inference-server, analytics, core, integrations, streaming) -- no infra"
+	@echo "  make test-integration              Real Postgres/MinIO: sceneops-db/storage + registrars + recording Scene/Episode verticals -- needs local-up"
+	@echo "  make test-infrastructure           Pipeline contracts on the live stack: the four-pipeline surface, dedup/force/convergence/"
+	@echo "                                     replacement/blocked resumption/failure recovery/concurrent registration, Celery, MinIO selective reads"
+	@echo "                                     (builds on canonical-bootstrap)"
+	@echo "  make test-infrastructure-airflow   The same pipelines through the Airflow per-task DAGs (needs airflow-up + api on the airflow backend)"
+	@echo "  make acquisition-test              tools/dataset-acquisition tests (isolated venv)"
+	@echo "  make lerobot-test                  LeRobot adapter / container-entrypoint tests (isolated venv)"
+	@echo "  make ros2-test                     Bridge + capture tests (ros2 image; needs streaming-up)"
+	@echo "  make smoke-api / smoke-streaming   Transport/liveness only -- never create domain data"
 	@echo ""
 	@echo "=================================================================="
-	@echo "Smoke (transport/liveness only -- never creates persistent domain data):"
+	@echo "E2E journeys -- exactly five (containers + FastAPI; host needs docker compose, curl, jq):"
 	@echo "=================================================================="
-	@echo "  make smoke-api                               API liveness/transport, read-only"
-	@echo "  make smoke-lerobot-container                 lerobot-integration container's IntegrationRequest/Result contract"
+	@echo "  make e2e-batch-canonical [SCENE=scene-0061]      dataset fixture -> batch MCAP -> RobotRun -> Scenes -> Episodes"
+	@echo "  make e2e-streaming-equivalence [SCENE=.. RATE=2] the same source in batch and ROS 2 -> Kafka -> capture: canonically equivalent"
+	@echo "  make e2e-scene-ml [SCENE=scene-0061]             Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)"
+	@echo "  make e2e-episode-learning [SCENE=scene-0061]     Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip"
+	@echo "  make e2e-cleanroom                               [DESTRUCTIVE] local-reset -> images -> canonical-bootstrap -> both L3 journeys -> verification"
+	@echo "  BASELINE_ID=<id> runs a journey on a named baseline; default is a unique one per run."
+	@echo "  make acceptance-grounding-dino                   Model-backend acceptance of e2e-scene-ml (needs an inference server)"
 	@echo ""
 	@echo "=================================================================="
-	@echo "Verification (execution-model/backend-substitution properties, not domain workflows):"
+	@echo "Canonical baseline (docs/development/canonical-baseline.md):"
 	@echo "=================================================================="
-	@echo "  make verify-reliability                     execution-key dedup/force + partial retry of a BLOCKED recording_scene_building"
-	@echo "  make verify-airflow-backend                 Requires: make airflow-up + api on the airflow pipeline backend;"
-	@echo "                                               recording_scene_building through the per-task DAG PoC"
-	@echo "                                               (both acquire a camera RobotRun once, then reuse it)"
-	@echo ""
-	@echo "=================================================================="
-	@echo "E2E Workflows -- primary surface (needs only local-up, unless noted):"
-	@echo "=================================================================="
-	@echo "  make e2e-recording-scene [SCENE=scene-0061]  nuScenes -> acquisition container -> RobotRun -> canonical Scenes"
-	@echo "                                               -> registration -> validation/profile (FastAPI control plane)"
-	@echo "  make e2e-recording-episode [SCENE=scene-0061]  nuScenes -> acquisition container -> RobotRun -> canonical Episodes"
-	@echo "                                               -> registration -> validation/profile (FastAPI control plane)"
-	@echo "  make e2e-perception [BACKEND=mock|grounding_dino]  nuScenes -> RobotRun -> Scenes -> labels -> sample views -> ScenarioSet"
-	@echo "                                               -> detection -> evaluation, every revision pinned (needs make local-up)"
-	@echo "  make e2e-episode-alignment [SCENE=scene-0061]  nuScenes -> RobotRun -> canonical Episode -> AlignedEpisode -> learning export"
-	@echo "  make e2e-robot-learning                     UNAVAILABLE until ADR-007 step 11 (learning chain on canonical Episodes)"
-	@echo "  make e2e-interop                            real Postgres/MinIO -> SceneOpsDataset -> LeRobot -> golden comparison"
-	@echo "                                               Requires: make lerobot-sync (once)"
-	@echo "  make e2e-cleanroom                          THE full-platform acceptance workflow: local-reset -> e2e-recording-scene ->"
-	@echo "                                               e2e-recording-episode -> persisted-state validation"
-	@echo "                                               [DESTRUCTIVE -- wipes Postgres/Redis/MinIO, preserves data/raw]"
-	@echo ""
-	@echo "=================================================================="
-	@echo "Secondary E2E (real nuScenes data, specialized/non-primary coverage):"
-	@echo "=================================================================="
-	@echo "  make e2e-scene-analytics-export              Scene-domain analytical Parquet export over recording-derived Scenes"
-	@echo "                                               (distinct from the learning-data export e2e-robot-learning exercises)"
-	@echo "  make e2e-lerobot-container                  containerized variant of e2e-interop's golden round trip"
-	@echo ""
-	@echo "=================================================================="
-	@echo "Debug / Stage commands (individual pipeline stages, for manual debugging -- not primary E2E workflows):"
-	@echo "=================================================================="
-	@echo "  make e2e-episode-building [SCENE=scene-0061]             one Episode build (reuses an existing MCAP recording)"
-	@echo "  make e2e-episode-curation [EPISODE_ID=... | RUN_ID=...]  align/profile/validate/export/curate for one episode"
-	@echo "                                                            (curation-policy selection/rejection mechanism test)"
-	@echo "  make show-runs"
-	@echo "  make show-pipeline PIPELINE_RUN_ID=pipe-xxx"
-	@echo "  make show-job-events JOB_ID=job-xxx"
-	@echo "  (worker logs: make worker-logs)"
-	@echo ""
-	@echo "=================================================================="
-	@echo "Canonical development baseline (docs/development/canonical-baseline.md):"
-	@echo "=================================================================="
-	@echo "  make canonical-bootstrap / canonical-verify   UNAVAILABLE until ADR-007 step 11: the v0.0 baseline"
-	@echo "                                was built by the removed dataset_scene_ingestion pipeline"
+	@echo "  make canonical-bootstrap [BASELINE_ID=canonical SCENE=scene-0061]   create-or-verify the L1/L2 baseline"
+	@echo "  make canonical-verify                                               read-only re-check through the API"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Infrastructure:"
@@ -168,39 +98,32 @@ help:
 	@echo "  make local-reset              [DESTRUCTIVE] wipe all local Postgres/Redis/MinIO data + generated ./data, keep images"
 	@echo "  make status                   Show service status"
 	@echo "  make logs                     Follow logs for core services"
-	@echo "  make compose-build / compose-build-no-cache  Rebuild the api/worker images (rarely needed -- see docs/development/local-development.md)"
+	@echo "  make compose-build / compose-build-no-cache  Rebuild the api/worker images (docs/development/local-development.md)"
+	@echo "  make acquisition-image / acquisition-image-check   dataset-acquisition + dataset-replay images / their I-36 boundary check"
+	@echo "  make lerobot-image            LeRobot integration image"
 	@echo "  make minio-up / minio-down / minio-logs"
-	@echo "  make minio-init                Idempotent bucket bootstrap (also run by local-up)"
-	@echo "  make minio-console             Print MinIO API/console URLs"
-	@echo "  make db-migrate                alembic upgrade head (also run by local-up)"
-	@echo "  make migrate-build             Force-rebuild the migrate image (after changing migration deps)"
+	@echo "  make minio-init               Idempotent bucket bootstrap (also run by local-up)"
+	@echo "  make minio-console            Print MinIO API/console URLs"
+	@echo "  make db-migrate               alembic upgrade head (also run by local-up)"
+	@echo "  make migrate-build            Force-rebuild the migrate image (after changing migration deps)"
 	@echo "  make db-revision MSG='create table'"
 	@echo "  make db-current / make db-history"
-	@echo "  make db-reset                  [DESTRUCTIVE] wipe Postgres only, then re-migrate"
+	@echo "  make db-reset                 [DESTRUCTIVE] wipe Postgres only, then re-migrate"
 	@echo "  make db-shell"
 	@echo "  make api-logs / api-shell / api-health / api-openapi"
 	@echo "  make worker-logs / worker-shell / worker-python / worker-imports / worker-cli"
 	@echo "  make worker-run-job JOB_ID=job-xxx"
 	@echo "  make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"
 	@echo "  make worker-run-pipeline-task PIPELINE_RUN_ID=pipe-xxx TASK_ID=task-xxx"
-	@echo "  python -m sceneops_integrations.recording publish --mcap-path .. --run-id .. --robot-id .. --source-kind ..   (DB-free: MCAP + RobotRunManifest)"
-	@echo "  make worker-register-robot-run MANIFEST_URI=..   REGISTER_ROBOT_RUN (or POST /robot-runs:register)"
+	@echo "  make worker-register-robot-run MANIFEST_URI=..   REGISTER_ROBOT_RUN for a published RobotRunManifest"
+	@echo "  make show-runs / show-pipeline PIPELINE_RUN_ID=pipe-xxx / show-job-events JOB_ID=job-xxx"
 	@echo "  make inference-local-build / inference-local-up / inference-local-down / inference-local-logs   (CPU, opt-in)"
 	@echo "  make inference-gpu-build / inference-gpu-up / inference-gpu-down / inference-gpu-logs           (GPU, opt-in)"
 	@echo "  make check-inference-server / check-inference-server-ready"
-	@echo "  make airflow-up / airflow-down / airflow-logs   (opt-in pipeline execution backend, not part of local-up)"
-	@echo "  make check-env / check-imports / check-celery / check-minio"
-	@echo "  make ros2-up / ros2-down / ros2-shell / ros2-check / ros2-logs   (Jazzy dev sandbox)"
-	@echo "  make ros2-run ROS2_CMD='ros2 topic list'"
-	@echo "  make ros2-test                                 bridge + capture unit/integration tests (ros2 image; needs streaming-up)"
-	@echo "  make streaming-up / streaming-down             Local Kafka broker (opt-in)"
-	@echo "  make smoke-streaming                            Kafka transport smoke test"
-	@echo "  make e2e-streaming-equivalence SCENE=scene-0061 RATE=2   replay -> ROS 2 -> Kafka -> capture -> RobotRun, equivalent to batch"
-	@echo "  make e2e-batch-acquisition SCENE=scene-0061   nuScenes -> dataset-acquisition MCAP -> RobotRun"
-	@echo "  make acquisition-test                       tools/dataset-acquisition tests (isolated venv)"
-	@echo "  make e2e-robot-run-learning SCENE=scene-0061 RATE=10.0   RobotRun -> resolve_recording -> Episode -> learning data"
-	@echo "  make e2e-bootstrap / e2e-bootstrap-core / e2e-bootstrap-interop"
-	@echo "                                Persistent E2E fixture bootstrap (idempotent; requires local-up)"
+	@echo "  make airflow-up / airflow-down / airflow-logs   (opt-in orchestrator, not part of local-up)"
+	@echo "  make check-env / check-imports / check-celery / check-minio / check-commands"
+	@echo "  make ros2-up / ros2-down / ros2-shell / ros2-check / ros2-logs / ros2-run ROS2_CMD='ros2 topic list'"
+	@echo "  make streaming-up / streaming-down   Local Kafka broker (opt-in)"
 	@echo "  make prepare-data / clean-artifacts / clean-python"
 	@echo ""
 	@echo "=================================================================="

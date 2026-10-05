@@ -1,7 +1,7 @@
 """Pre-finalize validation of a just-written MCAP bag.
 
 Reads the just-closed MCAP back with the same reader stack apps/worker's
-``RosbagAdapter`` uses (the ``mcap`` package) -- never trust the writer's
+the worker's recording reader uses (the ``mcap`` package) -- never trust the writer's
 own in-memory counters as proof the bytes landed correctly on disk. This
 is the "validate" step in the frozen commit-boundary ordering: consume ->
 write temp MCAP -> close -> fsync/validate -> atomically finalize -> fsync

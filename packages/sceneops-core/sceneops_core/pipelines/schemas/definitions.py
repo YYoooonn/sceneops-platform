@@ -70,11 +70,4 @@ class PipelineDefinition(SceneOpsBaseModel):
 
     tasks: list[PipelineTaskDefinition]
 
-    # Pipeline availability contract.
-    # supported=False / implemented=False pipelines are hidden from normal API
-    # listing and rejected at create/run time with a clear error message.
-    supported: bool = True
-    experimental: bool = False
-    implemented: bool = True
-
     metadata: JsonDict = Field(default_factory=dict)

@@ -17,6 +17,7 @@ from .robots import (
 )
 from .episodes import (
     AlignEpisodeJobResult,
+    AlignedEpisodeRef,
     BuildRecordingEpisodesJobResult,
     CurateEpisodesJobResult,
     ExportLearningDataJobResult,
@@ -40,6 +41,7 @@ __all__ = [
     "ValidateEpisodeJobResult",
     "ProfileEpisodeJobResult",
     "AlignEpisodeJobResult",
+    "AlignedEpisodeRef",
     "ValidateAlignedEpisodeJobResult",
     "ProfileAlignedEpisodeJobResult",
     "ExportLearningDataJobResult",

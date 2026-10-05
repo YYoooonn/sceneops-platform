@@ -132,7 +132,7 @@ async def resolve_scenario_set(
     if record is None:
         raise ValueError(
             f"ScenarioSet not found: {scenario_set_id!r}. "
-            "Ensure scenario_curation has completed successfully."
+            "Ensure mine_scenarios has completed successfully."
         )
     if not record.manifest_artifact_id or not record.manifest_checksum:
         raise LegacyDerivedRecordError(

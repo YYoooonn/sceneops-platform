@@ -1,33 +1,9 @@
 from __future__ import annotations
 
-from pydantic import Field
-
-from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
-
-from .enums import DatasetVersionStatus
+from sceneops_core.common.schemas import SceneOpsBaseModel
 
 
 class CreateDatasetRequest(SceneOpsBaseModel):
     dataset_id: str
     name: str | None = None
     description: str | None = None
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class CreateDatasetVersionRequest(SceneOpsBaseModel):
-    dataset_id: str
-    version: str
-
-    status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class GetDatasetRequest(SceneOpsBaseModel):
-    dataset_id: str
-
-
-class GetDatasetVersionRequest(SceneOpsBaseModel):
-    dataset_id: str
-    version: str

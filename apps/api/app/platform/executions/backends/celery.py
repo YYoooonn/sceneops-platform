@@ -11,6 +11,7 @@ from sceneops_core.executions.schemas import (
     ExecutionKind,
     ExecutionStatus,
 )
+from sceneops_core.pipelines.schemas import PipelineType
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,11 @@ class CeleryPipelineExecutionBackend:
     app: Celery
     pipeline_queue: str
 
-    async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
+    async def dispatch_pipeline(
+        self, pipeline_run_id: str, pipeline_type: PipelineType
+    ) -> ExecutionDispatchResult:
+        # One Celery task runs every pipeline type; the type matters only to
+        # backends that route per type.
         result = self.app.send_task(
             PIPELINE_RUN_TASK,
             args=[pipeline_run_id],

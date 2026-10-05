@@ -63,8 +63,9 @@ observation owned by the nearest sample, so a label is counted once
 
 ## 4. ScenarioSet
 
-`scenario_curation` (`mine_scenarios` → `score_scenario_readiness`) takes
-pinned sample views and explicit criteria (`label_set`, label count bounds,
+`mine_scenarios` (followed by `score_scenario_readiness`; both are stages of
+`scene_ml_evaluation`) takes pinned sample views — handed over by the pipeline's
+`build_scene_sample_views` stage, or named explicitly — and explicit criteria (`label_set`, label count bounds,
 `required_channels`, Scene readiness, sort, limit) and publishes a
 `ScenarioSetManifest` whose members pin a view and name the selected samples.
 Label criteria require a label set and every view must pin that revision.
@@ -72,9 +73,11 @@ Label criteria require a label set and every view must pin that revision.
 
 ## 5. Inference and evaluation
 
-`detection_evaluation` (`predict_detection` → `evaluate_detection`):
+`predict_detection` → `evaluate_detection` (the last two stages of
+`scene_ml_evaluation`, also dispatchable as atomic jobs):
 
-- `predict_detection` takes a ScenarioSet or explicit pinned views, with
+- `predict_detection` takes a ScenarioSet (in the pipeline, the one
+  `mine_scenarios` published) or explicit pinned views, with
   explicit `camera_channel` and optional `lidar_channel`, and publishes a
   `DetectionPredictionManifest` with checksum-pinned per-sample shards.
   `InferenceRunRecord.prediction_manifest_checksum` pins it.
@@ -90,14 +93,17 @@ Label criteria require a label set and every view must pin that revision.
 
 ## 6. AlignedEpisode and learning export
 
-`aligned_episode_building` (`align_episode` → `validate_aligned_episode` →
-`profile_aligned_episode`) derives an aligned artifact from one Episode with an
-explicit alignment config. The recipe key covers the full config, the
+`align_episode` derives one aligned artifact per pinned Episode revision with an
+explicit alignment config; it is the first stage of
+`episode_learning_data_building` (followed by `export_learning_data`).
+`validate_aligned_episode` and `profile_aligned_episode` are atomic jobs over one
+pinned aligned revision. The recipe key covers the full config, the
 semantics version and the alignment clock; the artifact is write-once at its
 key and its ArtifactRecord id derives from the Episode id and checksum. Its
 DatasetVersion scope is the Episode's. The canonical Episode is not modified.
 
-`EXPORT_LEARNING_DATA` exports pinned aligned artifacts with an explicit
+`export_learning_data` exports pinned aligned artifacts (in the pipeline, the
+ones `align_episode` produced) with an explicit
 `LearningDataExportConfig`; the export id is a content hash and its records are
 deterministic. LeRobot and other external formats are downstream outputs of a
 pinned export.
@@ -109,6 +115,6 @@ pinned export.
   frames fail.
 - Labels are 3-D boxes anchored on Scene observations; Episodes have no label
   sets.
-- The GroundingDINO backend path was not exercised by the real-data vertical
-  (mock backend only).
+- The default `make e2e-scene-ml` runs the mock backend; the GroundingDINO
+  backend is the opt-in `make acceptance-grounding-dino`.
 - Validated on one nuScenes mini scene (`scene-0061`).

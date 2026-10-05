@@ -64,8 +64,9 @@ Key fields:
 - `episode_count`: version-level Episode statistic (`EpisodeVersionSummary`
   — its own independent rollup, not derived from or overwritten by the
   Scene fields above; see the aggregate-summary contract below).
-- `required_channels` (validation default): a Scene input that is not
-  membership, patched through `update_scene_inputs`.
+
+A DatasetVersion holds no channel requirements and no free-form metadata:
+channel requirements are pipeline / job parameters (ADR-007 §16, I-59).
 
 A DatasetVersion carries no source location or source format; it relates
 to RobotRuns only through its units' provenance. `datasets` has no `type`.
@@ -169,8 +170,9 @@ Key fields (contract: [Scene domain](./scene-domain.md) §2):
 - `window_clock`, `window_start_timestamp_ns`, `window_end_timestamp_ns`:
   the segment window in the producer's declared segmentation clock (NOT
   NULL; `ck_scenes_segment_window` keeps it non-empty).
-- `observed_channels`, `observation_count`, `keyframe_count`,
-  `annotation_count`: searchable projections.
+- `observed_channels`, `observation_count`, `keyframe_count`: searchable
+  projections. A Scene embeds no annotations (labels are independent label
+  sets), so there is no annotation count.
 
 `scene_run_records` — unified scene-scope run table
 (`scene_validation` / `scene_profile`). A per-scene row pins the revision it
@@ -244,7 +246,7 @@ if it contradicts a set one.
 
 `Mission`/`RobotState` are populated by the `ingest_robot_states` Job, which
 reads a RobotRun's registered recording, resolved by `robot_run_id`, through
-`RosbagAdapter`. See
+`RecordingTelemetryReader`. See
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) for the full
 pipeline and current limitations.
 
@@ -274,7 +276,7 @@ There is no per-scenario DB row; members live in the manifest
 
 `pipeline_runs` — one pipeline execution. `type` is `PipelineType`:
 `recording_scene_building`, `recording_episode_building`,
-`aligned_episode_building`, `scenario_curation`, `detection_evaluation`.
+`scene_ml_evaluation`, `episode_learning_data_building`.
 
 `pipeline_task_runs` — individual tasks inside a run. `task_order` gives
 sequence; `depends_on_task_ids` (JSONB) declares dependencies but the

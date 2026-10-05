@@ -1,4 +1,4 @@
-"""SceneManifest v1 contract: canonical bytes, strict parsing, source
+"""SceneManifest v2 contract: canonical bytes, strict parsing, source
 fidelity invariants and record projection (ADR-007 §13.5-§13.8, §19,
 I-1/I-3/I-21-I-24/I-26)."""
 
@@ -13,7 +13,7 @@ from sceneops_core.artifacts.schemas import PayloadRef
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.provenance import ProducerInfo
 from sceneops_core.scenes.schemas import (
-    SCENE_MANIFEST_SCHEMA_V1,
+    SCENE_MANIFEST_SCHEMA_V2,
     NonCanonicalSceneManifestError,
     SceneChannel,
     SceneCoordinateFrame,
@@ -64,7 +64,7 @@ def test_manifest_holds_no_membership_or_execution_state():
         "metadata",
     ):
         assert forbidden not in payload
-    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V1
+    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V2
 
 
 def test_non_canonical_bytes_are_rejected_even_when_semantically_equal():
@@ -207,11 +207,6 @@ def test_non_finite_numbers_and_non_rotations_are_rejected():
     with pytest.raises(ValidationError, match="unit quaternion"):
         _rebuild(payload)
 
-    payload = _dump(build_scene_manifest())
-    payload["annotations"][0]["box"]["size_wlh_m"][0] = -1.0
-    with pytest.raises(ValidationError):
-        _rebuild(payload)
-
 
 # --- source fidelity -------------------------------------------------------------
 
@@ -290,8 +285,6 @@ def test_declared_channel_without_observations_stays_explicit():
             "must place frame",
         ),
         (lambda p: p["channels"][0].update(frame_id="nowhere"), "unknown ids"),
-        (lambda p: p["annotations"][0].update(group_id="keyframe-9999"), "unknown ids"),
-        (lambda p: p["annotations"][0]["box"].update(frame_id="map"), "unknown ids"),
         (
             lambda p: p["groups"][0]["observation_ids"].append("zzz-missing"),
             "unknown ids",
@@ -343,10 +336,7 @@ def test_clocks_are_declared_per_channel_and_per_unowned_structure():
     # Every timestamp has exactly one reachable clock and none is converted.
     clocked = list(manifest.clocked_timestamps())
     assert len(clocked) == (
-        len(manifest.observations)
-        + len(manifest.poses)
-        + len(manifest.groups)
-        + len(manifest.annotations)
+        len(manifest.observations) + len(manifest.poses) + len(manifest.groups)
     )
     camera = [o for o in manifest.observations if o.channel == "CAM_FRONT"]
     assert ("camera.exposure_clock", camera[0].timestamp_ns) in clocked
@@ -354,7 +344,7 @@ def test_clocks_are_declared_per_channel_and_per_unowned_structure():
     assert {clocks[o.channel] for o in manifest.observations} == set(clocks.values())
 
 
-@pytest.mark.parametrize("structure", ["channels", "poses", "groups", "annotations"])
+@pytest.mark.parametrize("structure", ["channels", "poses", "groups"])
 def test_every_timestamped_structure_must_declare_a_valid_clock(structure):
     payload = _dump(build_scene_manifest())
     del payload[structure][0]["source_clock"]
@@ -530,9 +520,7 @@ def test_scene_identity_is_deterministic_and_scoped():
 
 
 def test_record_projection_is_derived_from_the_manifest():
-    manifest = build_scene_manifest(
-        keyframe_timestamps_ns=(1_000, 3_000), annotations_per_keyframe=2
-    )
+    manifest = build_scene_manifest(keyframe_timestamps_ns=(1_000, 3_000))
     record = project_scene_record(
         dataset_id="d",
         dataset_version="v1",
@@ -555,8 +543,7 @@ def test_record_projection_is_derived_from_the_manifest():
     assert record.observed_channels == ["CAM_FRONT", "LIDAR_TOP"]
     assert record.observation_count == 5
     assert record.keyframe_count == 2
-    assert record.annotation_count == 4
-    assert record.has_ground_truth
+    assert "annotation_count" not in record.model_dump()
     assert "status" not in record.model_dump()
 
 
@@ -564,7 +551,6 @@ def test_recording_record_projects_robot_run_scope():
     manifest = build_scene_manifest(
         source=recording_source(robot_run_id="run-7", unit_key="segment-0003"),
         keyframe_timestamps_ns=(1_000,),
-        annotations_per_keyframe=0,
     )
     record = project_scene_record(
         dataset_id="d",
@@ -580,7 +566,6 @@ def test_recording_record_projects_robot_run_scope():
         record.window_start_timestamp_ns,
         record.window_end_timestamp_ns,
     ) == ("mcap_log_time", 0, 10_000_000_000)
-    assert not record.has_ground_truth
 
 
 def test_producer_info_changes_change_fingerprint_not_identity():
@@ -597,3 +582,22 @@ def test_producer_info_changes_change_fingerprint_not_identity():
     }
     assert len(ids) == 1
     assert isinstance(a.lineage.producer, ProducerInfo)
+
+
+def test_a_manifest_embeds_no_annotations_and_v1_manifests_are_refused():
+    """Labels are never part of a Scene (I-50): the v2 schema has no
+    annotation structure, and bytes of the removed v1 schema fail loudly."""
+    manifest = build_scene_manifest()
+    assert "annotations" not in SceneManifest.model_fields
+    payload = _dump(manifest)
+    assert "annotations" not in payload
+
+    payload["schema_version"] = "sceneops.scene_manifest/v1"
+    payload["annotations"] = []
+    with pytest.raises(UnsupportedSceneManifestVersionError):
+        load_canonical_scene_manifest(json.dumps(payload).encode())
+
+    payload = _dump(manifest)
+    payload["annotations"] = []
+    with pytest.raises(ValidationError):
+        _rebuild(payload)

@@ -44,7 +44,6 @@ def scene_model_to_record(model: SceneModel) -> SceneRecord:
         observed_channels=list(model.observed_channels or []),
         observation_count=model.observation_count,
         keyframe_count=model.keyframe_count,
-        annotation_count=model.annotation_count,
         registered_at=model.registered_at,
         updated_at=model.updated_at,
     )
@@ -68,7 +67,6 @@ def scene_record_to_values(record: SceneRecord) -> dict[str, Any]:
         "observed_channels": list(record.observed_channels),
         "observation_count": record.observation_count,
         "keyframe_count": record.keyframe_count,
-        "annotation_count": record.annotation_count,
     }
 
 
@@ -124,10 +122,8 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
         profile_report_uri=model.report_uri,
         observation_count=s.get("observation_count"),
         keyframe_count=s.get("keyframe_count"),
-        annotation_count=s.get("annotation_count"),
         observed_channels=s.get("observed_channels", []),
         coverage=s.get("coverage", {}),
-        annotation_summary=s.get("annotation_summary", {}),
     )
 
 
@@ -158,9 +154,7 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
     summary = {
         "observation_count": record.observation_count,
         "keyframe_count": record.keyframe_count,
-        "annotation_count": record.annotation_count,
         "observed_channels": record.observed_channels,
         "coverage": record.coverage,
-        "annotation_summary": record.annotation_summary,
     }
     return {**base, "report_uri": record.profile_report_uri, "summary": summary}

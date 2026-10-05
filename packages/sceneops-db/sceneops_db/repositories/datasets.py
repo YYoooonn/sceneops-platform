@@ -53,14 +53,6 @@ class DatasetVersionRepository(Protocol):
         observed_channels: list[str],
     ) -> DatasetVersionRecord: ...
 
-    async def update_scene_inputs(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        required_channels: list[str] | None = None,
-    ) -> DatasetVersionRecord: ...
-
     async def update_episode_summary(
         self,
         *,

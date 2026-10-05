@@ -189,14 +189,14 @@ async def derived(
     _fresh_database_connection, _minio_reachable, worker_settings, unique_id, tmp_path
 ):
     dependencies_module._artifact_store = None
-    dependencies_module._raw_source_store = None
+    dependencies_module._input_store = None
     env = _DerivedVertical(worker_settings, unique_id, tmp_path)
     await env.seed(default_recording().write(tmp_path / "r.mcap").read_bytes())
     await env.seed_model()
     yield env
     await env.cleanup()
     dependencies_module._artifact_store = None
-    dependencies_module._raw_source_store = None
+    dependencies_module._input_store = None
 
 
 async def test_scenes_to_pinned_evaluation_on_real_infrastructure(derived):

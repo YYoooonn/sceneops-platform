@@ -245,7 +245,7 @@ class TestUnrelatedJobTypeRegression:
             dataset_id=DATASET_ID,
             dataset_version=DATASET_VERSION,
             params={
-                "episode_id": EPISODE_ID,
+                "episodes": [{"episode_id": EPISODE_ID}],
                 "alignment_config": TemporalAlignmentConfig(
                     target_frequency_hz=1.0
                 ).model_dump(mode="json", exclude_none=True),
@@ -254,4 +254,4 @@ class TestUnrelatedJobTypeRegression:
         job1 = await service.create_job(request)
         job2 = await service.create_job(request)
         assert job1.job_id == job2.job_id
-        assert job1.params["source_artifact_id"] == "art-src-1"
+        assert job1.params["episodes"][0]["source_artifact_id"] == "art-src-1"

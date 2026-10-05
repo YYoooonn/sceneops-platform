@@ -56,7 +56,6 @@ from sceneops_analytics.query import query_parquet
 from sceneops_analytics.tables import (
     ROBOT_TABLE_BUILDERS,
     TABLE_BUILDERS,
-    build_annotations_table,
     build_missions_table,
     build_robot_telemetry_table,
     build_keyframes_table,
@@ -75,7 +74,6 @@ __all__ = [
     "build_scenes_table",
     "build_keyframes_table",
     "build_observations_table",
-    "build_annotations_table",
     "build_robot_telemetry_table",
     "build_missions_table",
     "build_learning_episodes_table",

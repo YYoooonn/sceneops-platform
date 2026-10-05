@@ -39,10 +39,12 @@ class PipelineDispatchFacade:
                 record_repository=PostgresExecutionRecordRepository(session),
             )
 
-            await pipeline_service.mark_queued(pipeline_run_id)
+            run = await pipeline_service.mark_queued(pipeline_run_id)
             await session.commit()
 
-            execution = await execution_service.dispatch_pipeline(pipeline_run_id)
+            execution = await execution_service.dispatch_pipeline(
+                pipeline_run_id, run.type
+            )
             await session.commit()
 
             return execution

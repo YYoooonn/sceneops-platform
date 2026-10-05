@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
 from .base import BaseJobResult
 
@@ -91,32 +91,44 @@ class ProfileEpisodeJobResult(BaseJobResult):
     metadata: JsonDict = Field(default_factory=dict)
 
 
+class AlignedEpisodeRef(SceneOpsBaseModel):
+    """One aligned revision, with the pin a downstream stage needs.
+
+    ``episode_id`` / ``aligned_artifact_id`` / ``aligned_artifact_checksum``
+    are exactly the fields of an EXPORT_LEARNING_DATA input.
+    """
+
+    episode_id: str
+    aligned_artifact_id: str
+    aligned_artifact_uri: str
+    aligned_artifact_checksum: str
+
+    source_artifact_id: str
+    source_manifest_sha256: str
+    source_checksum_verified: bool = False
+
+    step_count: int = 0
+    achieved_frequency_hz: float | None = None
+    duplicate_discarded_count: int = 0
+
+
 class AlignEpisodeJobResult(BaseJobResult):
     """Summary/reference metadata only -- the full AlignedEpisode (with its
     per-step signal list) is not returned inline, matching how other jobs
-    return references rather than full artifact bodies (SceneOps V2 Request
-    2.3 §30)."""
+    return references rather than full artifact bodies."""
 
-    episode_id: str
+    aligned: list[AlignedEpisodeRef] = Field(default_factory=list)
 
-    aligned_artifact_id: str | None = None
-    aligned_artifact_uri: str | None = None
-    # Added alongside Request 2.4 so a caller dispatching
-    # VALIDATE_ALIGNED_EPISODE/PROFILE_ALIGNED_EPISODE next can pin this
-    # aligned artifact's checksum without a separate lookup.
-    aligned_artifact_checksum: str | None = None
-
-    source_artifact_id: str | None = None
-    source_manifest_sha256: str | None = None
-    source_checksum_verified: bool = False
+    # The export inputs of ``aligned``, in the exact shape
+    # EXPORT_LEARNING_DATA consumes (the pipeline hand-off).
+    export_inputs: list[JsonDict] = Field(default_factory=list)
 
     alignment_semantics_version: str | None = None
     alignment_config_hash: str | None = None
-
-    step_count: int = 0
     target_frequency_hz: float | None = None
-    achieved_frequency_hz: float | None = None
-    duplicate_discarded_count: int = 0
+
+    episode_count: int = 0
+    step_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 

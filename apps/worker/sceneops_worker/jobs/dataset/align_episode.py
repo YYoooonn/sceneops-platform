@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
@@ -21,6 +22,8 @@ from sceneops_core.jobs.schemas import (
     AlignEpisodeJobResult,
     JobType,
 )
+from sceneops_core.jobs.schemas.params import EpisodeAlignmentInput
+from sceneops_core.jobs.schemas.results import AlignedEpisodeRef
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.episodes.schemas import EpisodeRecord
 from sceneops_worker.core.context import WorkerContext
@@ -41,15 +44,19 @@ class SourceRevisionMismatchError(Exception):
 
 
 class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobResult]):
-    """Canonical Episode + TemporalAlignmentConfig -> AlignedEpisodeArtifact
-    (derived, L3; ADR-007 §13.10, §31.8).
+    """Pinned canonical Episodes + one TemporalAlignmentConfig -> one
+    AlignedEpisodeArtifact per Episode (derived, L3; ADR-007 §13.10, §31.8).
 
-    Resolves one exact canonical EpisodeManifest revision (the one the
-    EpisodeRecord points to, or an explicitly pinned one), verifies its
-    bytes against their checksum, parses them strictly, runs the pure
+    Resolves one exact canonical EpisodeManifest revision per Episode (the
+    one its EpisodeRecord points to, or an explicitly pinned one), verifies
+    its bytes against their checksum, parses them strictly, runs the pure
     ``align_episode`` engine and persists the result with the source
     revision it consumed. All timeline / association decisions live in the
     engine; canonical Episode data is never rewritten.
+
+    Every aligned artifact is write-once at a deterministic key and its
+    ArtifactRecord id derives from (episode, checksum), so a retry of the
+    same inputs after a partial failure converges on the same artifacts.
     """
 
     @property
@@ -77,9 +84,45 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
         context = request.context
         job = request.job
 
-        episode_record = await context.episode_store.get(params.episode_id)
+        aligned_refs: list[AlignedEpisodeRef] = []
+        semantics_version: str | None = None
+        config_hash = alignment_config_hash(params.alignment_config)
+        for item in params.episodes:
+            ref, semantics_version = await self._align_one(
+                context=context, job=job, params=params, item=item
+            )
+            aligned_refs.append(ref)
+
+        await context.commit()
+
+        return AlignEpisodeJobResult(
+            aligned=aligned_refs,
+            export_inputs=[
+                {
+                    "episode_id": r.episode_id,
+                    "aligned_artifact_id": r.aligned_artifact_id,
+                    "aligned_artifact_checksum": r.aligned_artifact_checksum,
+                }
+                for r in aligned_refs
+            ],
+            alignment_semantics_version=semantics_version,
+            alignment_config_hash=config_hash,
+            target_frequency_hz=params.alignment_config.target_frequency_hz,
+            episode_count=len(aligned_refs),
+            step_count=sum(r.step_count for r in aligned_refs),
+        )
+
+    async def _align_one(
+        self,
+        *,
+        context: WorkerContext,
+        job: Any,
+        params: AlignEpisodeJobParams,
+        item: EpisodeAlignmentInput,
+    ) -> tuple[AlignedEpisodeRef, str]:
+        episode_record = await context.episode_store.get(item.episode_id)
         if episode_record is None:
-            raise ValueError(f"Episode not found: {params.episode_id}")
+            raise ValueError(f"Episode not found: {item.episode_id}")
         # An Episode belongs to exactly one DatasetVersion: that is the scope,
         # never a configured default.
         dataset_id = episode_record.dataset_id
@@ -89,22 +132,21 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
             (dataset_id, dataset_version),
         ):
             raise ValueError(
-                f"Episode {params.episode_id} belongs to {dataset_id}:"
+                f"Episode {item.episode_id} belongs to {dataset_id}:"
                 f"{dataset_version}, not {params.dataset_id}:{params.dataset_version}"
             )
 
         source_artifact_id, source_uri, source_checksum = await self._resolve_source(
-            context=context, params=params, episode_record=episode_record
+            context=context, item=item, episode_record=episode_record
         )
         raw_bytes = await context.episode_artifact_store.read_pinned_manifest_bytes(
             uri=source_uri, checksum=source_checksum
         )
         computed_sha256 = hashlib.sha256(raw_bytes).hexdigest()
         source_checksum_verified = self._verify_checksum(
-            params=params,
+            item=item,
             source_checksum=source_checksum,
             computed_sha256=computed_sha256,
-            episode_id=params.episode_id,
             source_artifact_id=source_artifact_id,
         )
 
@@ -117,12 +159,12 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
             manifest,
             params.alignment_config,
             source_context,
-            episode_id=params.episode_id,
+            episode_id=item.episode_id,
         )
 
         artifact = AlignedEpisodeArtifact(
             source_revision=EpisodeSourceRevision(
-                episode_id=params.episode_id,
+                episode_id=item.episode_id,
                 episode_manifest_uri=source_uri,
                 source_artifact_id=source_artifact_id,
                 source_manifest_sha256=computed_sha256,
@@ -140,14 +182,14 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
         write_result = await context.episode_artifact_store.write_aligned_episode(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            episode_id=params.episode_id,
+            episode_id=item.episode_id,
             source_manifest_sha256=computed_sha256,
             alignment_key=key,
             artifact=artifact,
         )
 
         aligned_artifact_id = aligned_episode_artifact_id(
-            episode_id=params.episode_id, checksum=write_result.checksum
+            episode_id=item.episode_id, checksum=write_result.checksum
         )
         await context.artifact_record_store.register(
             artifact_id=aligned_artifact_id,
@@ -158,7 +200,7 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
                 checksum=write_result.checksum,
                 size_bytes=write_result.size_bytes,
                 metadata={
-                    "episode_id": params.episode_id,
+                    "episode_id": item.episode_id,
                     "source_artifact_id": source_artifact_id,
                     "source_manifest_sha256": computed_sha256,
                     "alignment_config_hash": config_hash,
@@ -167,29 +209,27 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
                 },
             ),
             owner_type=ArtifactOwnerType.EPISODE,
-            owner_id=params.episode_id,
+            owner_id=item.episode_id,
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
         )
 
-        await context.commit()
-
-        return AlignEpisodeJobResult(
-            episode_id=params.episode_id,
-            aligned_artifact_id=aligned_artifact_id,
-            aligned_artifact_uri=write_result.uri,
-            aligned_artifact_checksum=write_result.checksum,
-            source_artifact_id=source_artifact_id,
-            source_manifest_sha256=computed_sha256,
-            source_checksum_verified=source_checksum_verified,
-            alignment_semantics_version=aligned.alignment_semantics_version,
-            alignment_config_hash=config_hash,
-            step_count=aligned.step_count,
-            target_frequency_hz=aligned.target_frequency_hz,
-            achieved_frequency_hz=aligned.achieved_frequency_hz,
-            duplicate_discarded_count=aligned.duplicate_discarded_count,
+        return (
+            AlignedEpisodeRef(
+                episode_id=item.episode_id,
+                aligned_artifact_id=aligned_artifact_id,
+                aligned_artifact_uri=write_result.uri,
+                aligned_artifact_checksum=write_result.checksum,
+                source_artifact_id=source_artifact_id,
+                source_manifest_sha256=computed_sha256,
+                source_checksum_verified=source_checksum_verified,
+                step_count=aligned.step_count,
+                achieved_frequency_hz=aligned.achieved_frequency_hz,
+                duplicate_discarded_count=aligned.duplicate_discarded_count,
+            ),
+            aligned.alignment_semantics_version,
         )
 
     # ── source resolution ───────────────────────────────────────────────
@@ -198,17 +238,17 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
     async def _resolve_source(
         *,
         context: WorkerContext,
-        params: AlignEpisodeJobParams,
+        item: EpisodeAlignmentInput,
         episode_record: EpisodeRecord,
     ) -> tuple[str, str, str]:
         """Returns (source_artifact_id, uri, checksum).
 
-        Pinned (params.source_artifact_id set): that exact EPISODE_MANIFEST
+        Pinned (item.source_artifact_id set): that exact EPISODE_MANIFEST
         ArtifactRecord of this episode, which may be an earlier revision.
         Unpinned: exactly the revision the EpisodeRecord points to
         (``manifest_artifact_id``), never "the latest artifact" (§14.4).
         """
-        artifact_id = params.source_artifact_id or episode_record.manifest_artifact_id
+        artifact_id = item.source_artifact_id or episode_record.manifest_artifact_id
         record = await context.artifact_record_store.get(artifact_id)
         if record is None or record.kind != ArtifactKind.EPISODE_MANIFEST.value:
             raise SourceManifestNotFoundError(
@@ -234,10 +274,9 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
     @staticmethod
     def _verify_checksum(
         *,
-        params: AlignEpisodeJobParams,
+        item: EpisodeAlignmentInput,
         source_checksum: str | None,
         computed_sha256: str,
-        episode_id: str,
         source_artifact_id: str,
     ) -> bool:
         """Returns whether the source revision was checksum-verified.
@@ -246,12 +285,13 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
         stronger, explicit assertion; otherwise the resolved ArtifactRecord's
         own checksum is verified.
         """
-        if params.source_manifest_sha256 is not None:
-            if params.source_manifest_sha256 != computed_sha256:
+        episode_id = item.episode_id
+        if item.source_manifest_sha256 is not None:
+            if item.source_manifest_sha256 != computed_sha256:
                 raise SourceRevisionMismatchError(
                     f"Source manifest checksum mismatch for episode "
                     f"{episode_id!r}: pinned source_manifest_sha256="
-                    f"{params.source_manifest_sha256!r}, actual bytes hash to "
+                    f"{item.source_manifest_sha256!r}, actual bytes hash to "
                     f"{computed_sha256!r}"
                 )
             return True

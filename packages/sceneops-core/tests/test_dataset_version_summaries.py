@@ -51,13 +51,13 @@ def test_is_unset_false_when_any_field_set():
     assert not EpisodeVersionSummary(episode_count=1).is_unset()
 
 
-def test_config_only_scene_summary_does_not_imply_data_exists():
-    """required_channels alone (declared before any scene job ran) makes the
-    summary non-unset, but scene_count staying 0 is the actual signal that no
-    Scene data has been built yet — see SceneOps V2 Request 03 §5."""
-    summary = SceneVersionSummary(required_channels=["CAM_FRONT"])
-    assert not summary.is_unset()
-    assert summary.scene_count == 0
+def test_a_summary_holds_membership_projections_only():
+    assert set(SceneVersionSummary.model_fields) == {
+        "scene_count",
+        "keyframe_count",
+        "observation_count",
+        "observed_channels",
+    }
 
 
 def test_dataset_version_record_json_round_trip_with_summaries():

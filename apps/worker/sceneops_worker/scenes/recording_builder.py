@@ -104,7 +104,11 @@ from sceneops_worker.recordings.payloads import (
 )
 
 RECORDING_SCENE_PRODUCER_ID: Final = "sceneops.recording_scene_builder"
-RECORDING_SCENE_SEMANTICS_VERSION: Final = 1
+# Bump whenever the canonical bytes a build produces change for the same
+# recording and configuration: it enters the producer fingerprint, so a
+# changed builder is a different producer and replacing registered Scenes
+# is explicit. 2: SceneManifest v2 (no embedded annotations).
+RECORDING_SCENE_SEMANTICS_VERSION: Final = 2
 CAMERA_INFO_SCHEMA: Final = "sensor_msgs/msg/CameraInfo"
 TF_MESSAGE_SCHEMA: Final = "tf2_msgs/msg/TFMessage"
 

@@ -1,12 +1,13 @@
-"""SceneManifest v1 -- the canonical, source-faithful description of one
+"""SceneManifest v2 -- the canonical, source-faithful description of one
 Scene (ADR-007 §13.5-§13.8, §14, §27).
 
 A Scene is a spatiotemporal environmental observation unit. Within its
 selected boundary the manifest keeps every source observation of every
 included source channel, each with its own source timestamp, verbatim
 source channel identity, SceneOps-owned payload, calibration and the
-source's own coordinate-frame, pose and annotation information, plus the
-unit's source and producer provenance.
+source's own coordinate-frame and pose information, plus the unit's source
+and producer provenance. Labels and annotations are never part of a Scene:
+they are independent, lineage-bearing label sets (ADR-007 §33.2, I-50).
 
 Observations are primary. Synchronized samples, nearest-frame association,
 per-frame pose interpolation, downsampling and other workflow choices are
@@ -24,19 +25,18 @@ robot_run_id, unit_key).
 Source time is never synchronized or converted: every timestamp is an
 integer nanosecond count in exactly one declared clock. An observation's
 clock is its channel's ``source_clock``; a timestamped structure that no
-channel owns (a pose, a keyframe group, an annotation) declares its own.
+channel owns (a pose, a keyframe group) declares its own.
 
 Payloads are referenced by SceneOps artifact identity and integrity
 (``artifact_id``, checksum, size, media type), never by storage location:
 ``artifact_id -> ArtifactRecord -> uri -> ArtifactStore``, so moving
 storage roots or backends never changes a manifest or its checksum.
 
-Representation conventions fixed by ``sceneops.scene_manifest/v1``:
+Representation conventions fixed by ``sceneops.scene_manifest/v2``:
 
     time          integer nanoseconds in a declared source clock
     translation   metres, [x, y, z]
     rotation      unit quaternion, [w, x, y, z]
-    box size      metres, [width, length, height]
     transform     maps a point in ``child_frame_id`` into ``parent_frame_id``
 
 Free-form metadata is not part of the contract: a source fact that the
@@ -83,7 +83,7 @@ from sceneops_core.provenance import (
 
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
 
-SCENE_MANIFEST_SCHEMA_V1: Final = "sceneops.scene_manifest/v1"
+SCENE_MANIFEST_SCHEMA_V2: Final = "sceneops.scene_manifest/v2"
 
 # A unit quaternion is stored as the source gives it (never renormalized);
 # this tolerance only rejects values that are not rotations at all.
@@ -119,12 +119,6 @@ def _unit_quaternion(value: tuple[float, float, float, float]) -> tuple:
     norm = math.sqrt(sum(component * component for component in value))
     if abs(norm - 1.0) > QUATERNION_NORM_TOLERANCE:
         raise ValueError(f"rotation_wxyz must be a unit quaternion, norm={norm}")
-    return value
-
-
-def _non_negative_vector(value: tuple[float, float, float]) -> tuple:
-    if any(component < 0 for component in value):
-        raise ValueError("box size components must be >= 0")
     return value
 
 
@@ -250,37 +244,6 @@ class SceneObservationGroup(_ManifestModel):
         return self
 
 
-class SceneBox3D(_ManifestModel):
-    frame_id: VerbatimKey
-    center_m: Vector3
-    size_wlh_m: Annotated[Vector3, AfterValidator(_non_negative_vector)]
-    rotation_wxyz: QuaternionWXYZ
-    velocity_mps: Vector3 | None = None
-
-
-class SceneAnnotation(_ManifestModel):
-    """A source annotation, attached where the source attaches it.
-
-    ``category`` and ``instance_id`` are the source's own vocabulary;
-    mapping categories onto a workflow's label set is derived.
-    """
-
-    annotation_id: LocalId
-    timestamp_ns: SourceTimestampNs
-    source_clock: SourceClock
-    group_id: LocalId | None = None
-    category: VerbatimKey
-    instance_id: VerbatimKey | None = None
-    box: SceneBox3D
-    attributes: list[VerbatimKey] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _check_attributes(self) -> SceneAnnotation:
-        if self.attributes != sorted(set(self.attributes)):
-            raise ValueError("attributes must be sorted and unique")
-        return self
-
-
 class SceneLineage(_ManifestModel):
     """Full provenance of the unit: the recording segment it was built from
     and the producer that built it. The producer fingerprint must re-derive
@@ -332,7 +295,7 @@ def _require_known(values: Iterable[str | None], known: set[str], what: str) -> 
 
 
 class SceneManifest(_ManifestModel):
-    schema_version: Literal["sceneops.scene_manifest/v1"] = SCENE_MANIFEST_SCHEMA_V1
+    schema_version: Literal["sceneops.scene_manifest/v2"] = SCENE_MANIFEST_SCHEMA_V2
     lineage: SceneLineage
 
     coordinate_frames: list[SceneCoordinateFrame] = Field(min_length=1)
@@ -341,7 +304,6 @@ class SceneManifest(_ManifestModel):
     observations: list[SceneObservation] = Field(min_length=1)
     poses: list[ScenePose] = Field(default_factory=list)
     groups: list[SceneObservationGroup] = Field(default_factory=list)
-    annotations: list[SceneAnnotation] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_invariants(self) -> SceneManifest:
@@ -386,12 +348,6 @@ class SceneManifest(_ManifestModel):
             order=lambda g: (g.source_clock, g.timestamp_ns, g.group_id),
             identity=lambda g: g.group_id,
             what="groups",
-        )
-        _require_sorted_unique(
-            self.annotations,
-            order=lambda a: (a.source_clock, a.timestamp_ns, a.annotation_id),
-            identity=lambda a: a.annotation_id,
-            what="annotations",
         )
 
     def _check_references(self) -> None:
@@ -464,11 +420,6 @@ class SceneManifest(_ManifestModel):
                     f"group {group.group_id} has more than one observation of a channel"
                 )
 
-        group_ids = {g.group_id for g in self.groups}
-        for annotation in self.annotations:
-            _require_known([annotation.group_id], group_ids, "annotations")
-            _require_known([annotation.box.frame_id], frames, "annotation boxes")
-
     def _check_source_window(self) -> None:
         """A recording segment's window is a half-open interval in the
         segment's clock. Every timestamp in that clock must lie inside it;
@@ -491,7 +442,6 @@ class SceneManifest(_ManifestModel):
         )
         yield from ((p.source_clock, p.timestamp_ns) for p in self.poses)
         yield from ((g.source_clock, g.timestamp_ns) for g in self.groups)
-        yield from ((a.source_clock, a.timestamp_ns) for a in self.annotations)
 
     # --- serialization ---------------------------------------------------------
 
@@ -532,7 +482,7 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
     if not isinstance(payload, dict):
         raise SceneManifestError("manifest must be a JSON object")
     schema_version = payload.get("schema_version")
-    if schema_version != SCENE_MANIFEST_SCHEMA_V1:
+    if schema_version != SCENE_MANIFEST_SCHEMA_V2:
         raise UnsupportedSceneManifestVersionError(
             f"unsupported SceneManifest schema_version: {schema_version!r}"
         )
@@ -551,12 +501,10 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
 
 __all__ = [
     "QUATERNION_NORM_TOLERANCE",
-    "SCENE_MANIFEST_SCHEMA_V1",
+    "SCENE_MANIFEST_SCHEMA_V2",
     "FrameTransform",
     "ImageSize",
     "NonCanonicalSceneManifestError",
-    "SceneAnnotation",
-    "SceneBox3D",
     "SceneCalibration",
     "SceneChannel",
     "SceneCoordinateFrame",

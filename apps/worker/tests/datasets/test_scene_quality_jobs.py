@@ -179,7 +179,6 @@ async def test_profile_pins_revision_and_counts_observations(scene_world):
     )
     assert result.scene_count == 2
     assert (result.observation_count, result.keyframe_count) == (10, 4)
-    assert result.annotation_count == 4
     assert result.observed_channels == ["CAM_FRONT", "LIDAR_TOP"]
 
     per_scene = {

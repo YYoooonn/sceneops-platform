@@ -63,9 +63,8 @@ from sceneops_core.episodes.learning_export import (
 from sceneops_core.episodes.schemas.enums import EpisodeOutcome
 from sceneops_storage import ArtifactStore, LocalArtifactStore
 
-# SceneOps V2 Request 3.2B: aligned with the shared E2E fixture catalog's
-# "interop" member (scripts/e2e/lib.sh's resolve_e2e_fixture) -- was
-# "sceneops-interop-golden"/"v1" before this request.
+# The golden fixture's own DatasetVersion identity; it never exists outside
+# test processes.
 INTEROP_DATASET_ID = "test-e2e-interop"
 INTEROP_DATASET_VERSION = "test-v1"
 

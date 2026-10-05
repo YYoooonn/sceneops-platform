@@ -127,7 +127,6 @@ async def test_scenes_without_the_anchor_channel_are_skipped_with_a_reason(
     other_camera = build_scene_manifest(
         source=recording_source(robot_run_id="run-002"),
         camera_channel="CAM_OTHER",
-        annotations_per_keyframe=0,
         payload_namespace="art-run-002",
     )
     without = await harness.register_scene(other_camera)

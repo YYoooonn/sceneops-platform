@@ -42,17 +42,3 @@ acquisition-image-check:
 		dataset-acquisition - < scripts/checks/acquisition_image_boundary.py
 	$(COMPOSE) --profile acquisition run --rm -T --entrypoint python \
 		dataset-replay - < scripts/checks/acquisition_image_boundary.py
-
-# Black-box batch acquisition E2E: dataset-acquisition container -> MCAP
-# (Docker volume) -> recording-publisher container (L1 conformance +
-# publication) -> FastAPI (POST /robot-runs:register, Job polling,
-# RobotRun / Artifact reads, ingest_robot_states) -> idempotent retry.
-# The host needs only Docker Compose, curl, jq and the API port.
-# Prerequisite: `make local-up` with images built from the current tree.
-# Creates a RobotRun with a fresh robot_run_id each run (its deliverable,
-# not a leak); no Scene or Episode is built.
-.PHONY: e2e-batch-acquisition
-e2e-batch-acquisition: acquisition-image
-	chmod +x scripts/e2e/e2e_batch_acquisition.sh
-	SOURCE_UNIT=$(or $(SCENE),scene-0061) API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
-	scripts/e2e/e2e_batch_acquisition.sh

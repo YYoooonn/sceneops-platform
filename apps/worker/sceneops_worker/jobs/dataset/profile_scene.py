@@ -87,7 +87,6 @@ class ProfileSceneJobHandler(
 
         total_observations = 0
         total_keyframes = 0
-        total_annotations = 0
         all_channels: set[str] = set()
         scene_profiles: list[dict] = []
 
@@ -99,7 +98,6 @@ class ProfileSceneJobHandler(
             all_channels.update(result.observed_channels)
             total_observations += result.observation_count
             total_keyframes += result.keyframe_count
-            total_annotations += result.annotation_count
 
             coverage: JsonDict = {
                 "observations_by_channel": result.observations_by_channel,
@@ -114,10 +112,8 @@ class ProfileSceneJobHandler(
                 "manifest_checksum": record.manifest_checksum,
                 "observation_count": result.observation_count,
                 "keyframe_count": result.keyframe_count,
-                "annotation_count": result.annotation_count,
                 "observed_channels": result.observed_channels,
                 "coverage": coverage,
-                "category_distribution": result.category_distribution,
             }
             scene_profiles.append(scene_profile)
 
@@ -164,13 +160,9 @@ class ProfileSceneJobHandler(
                     status=RunStatus.SUCCEEDED,
                     observation_count=result.observation_count,
                     keyframe_count=result.keyframe_count,
-                    annotation_count=result.annotation_count,
                     observed_channels=result.observed_channels,
                     profile_report_uri=per_scene_report_uri,
                     coverage=coverage,
-                    annotation_summary={
-                        "category_distribution": result.category_distribution
-                    },
                     pipeline_run_id=job.pipeline_run_id,
                     pipeline_task_run_id=job.pipeline_task_run_id,
                     job_id=job.job_id,
@@ -191,7 +183,6 @@ class ProfileSceneJobHandler(
                 "scene_count": len(scene_profiles),
                 "observation_count": total_observations,
                 "keyframe_count": total_keyframes,
-                "annotation_count": total_annotations,
                 "observed_channels": observed_channels,
                 "scenes": scene_profiles,
                 "created_at": utc_now().isoformat(),
@@ -218,7 +209,6 @@ class ProfileSceneJobHandler(
                 "status": RunStatus.SUCCEEDED,
                 "observation_count": total_observations,
                 "keyframe_count": total_keyframes,
-                "annotation_count": total_annotations,
                 "observed_channels": observed_channels,
                 "profile_report_uri": report_uri,
                 "finished_at": utc_now(),
@@ -228,7 +218,6 @@ class ProfileSceneJobHandler(
             scene_count=len(scene_profiles),
             observation_count=total_observations,
             keyframe_count=total_keyframes,
-            annotation_count=total_annotations,
             observed_channels=observed_channels,
             profile_run_id=run_id,
             report_uri=report_uri,

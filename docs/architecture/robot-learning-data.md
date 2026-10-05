@@ -320,13 +320,12 @@ resident for the instance's lifetime.
   `MissingFeaturePolicy.ERROR` is the only implemented member.
 - A LeRobot external dataset format adapter exists (Phase 3); RLDS does
   not -- see §9 and [dataset-interoperability.md](./dataset-interoperability.md).
-- `ALIGN_EPISODE`/`VALIDATE_ALIGNED_EPISODE`/`PROFILE_ALIGNED_EPISODE`/
-  `EXPORT_LEARNING_DATA`/`CURATE_EPISODES` are registered `JobType`s
-  dispatched as standalone Jobs -- none is wired into
-  `RECORDING_EPISODE_BUILDING_PIPELINE` or any other `PipelineDefinition`
-  (the same pipeline-less-by-design pattern already documented for
-  `INGEST_ROBOT_STATES`/`EXPORT_ROBOT_ANALYTICS_SNAPSHOT`, see
-  [reserved-and-limitations.md](./reserved-and-limitations.md) §1).
+- `ALIGN_EPISODE` (several pinned Episodes in one job) and `EXPORT_LEARNING_DATA`
+  are the two stages of the `EPISODE_LEARNING_DATA_BUILDING` pipeline;
+  `VALIDATE_ALIGNED_EPISODE`/`PROFILE_ALIGNED_EPISODE`/`CURATE_EPISODES` are
+  atomic Jobs. `EXPORT_LEARNING_DATA` validates every aligned input itself, so
+  the pipeline has no separate validation stage. See
+  [jobs-and-pipelines.md](./jobs-and-pipelines.md) §2.
 - No dedicated API domain exists for alignment/learning-data/curation --
   `apps/api/app/domains/episodes/` only covers the Phase 1 raw-Episode
   surface (build/register/validate/profile/quality). Phase 2 jobs are

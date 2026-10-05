@@ -34,10 +34,8 @@ def _model(**overrides) -> DatasetVersionModel:
         observation_count=0,
         episode_count=0,
         observed_channels=[],
-        required_channels=[],
         created_at=_NOW,
         updated_at=_NOW,
-        metadata_={},
     )
     base.update(overrides)
     return DatasetVersionModel(**base)
@@ -83,18 +81,17 @@ class TestNeither:
         assert record.episode is None
 
 
-class TestConfigOnlyScene:
-    """SceneOps V2 Request 03 §5: a non-None `scene` is not proof that Scene
-    data was built — required_channels alone (set via the dataset-version
-    API before any scene job runs) is enough to make the summary non-default."""
+class TestNoWorkflowConfiguration:
+    """A DatasetVersion is membership and scope only: channel requirements and
+    free-form metadata live in pipeline / job parameters (ADR-007 §16)."""
 
-    def test_required_channels_alone_creates_scene_summary(self) -> None:
-        record = dataset_version_model_to_record(
-            _model(required_channels=["CAM_FRONT"])
-        )
-        assert record.scene is not None
-        assert record.scene.scene_count == 0  # no scenes actually built
-        assert record.scene.required_channels == ["CAM_FRONT"]
+    def test_the_row_and_the_record_carry_neither(self) -> None:
+        model = _model()
+        assert not hasattr(model, "required_channels")
+        assert not hasattr(model, "metadata_")
+        record = dataset_version_model_to_record(model)
+        assert "metadata" not in record.model_dump()
+        assert "required_channels" not in str(record.model_dump())
 
 
 class TestRoundTrip:
@@ -108,7 +105,6 @@ class TestRoundTrip:
             keyframe_count=10,
             observation_count=20,
             observed_channels=["CAM_FRONT"],
-            required_channels=["CAM_FRONT"],
             episode_count=3,
         )
         record = dataset_version_model_to_record(model)
@@ -122,13 +118,12 @@ class TestRoundTrip:
             "keyframe_count",
             "observation_count",
             "observed_channels",
-            "required_channels",
             "episode_count",
         ):
             assert values[field] == getattr(model, field), field
         for removed in (
             "manifest_uri",
-            "raw_source_root_uri",
+            "input_source_root_uri",
             "source_dataset_id",
             "source_dataset_version",
         ):

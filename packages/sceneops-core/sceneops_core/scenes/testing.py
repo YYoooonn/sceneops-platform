@@ -7,9 +7,8 @@ from one definition instead of each hand-rolling manifest JSON.
 The default Scene has two channels (a camera and a lidar), one keyframe
 group per entry in ``keyframe_timestamps_ns`` holding one observation of
 each channel, one extra camera observation between consecutive keyframes
-(a non-keyframe "sweep" that stays canonical), one ego pose per
-observation, and ``annotations_per_keyframe`` boxes attached to every
-keyframe. Every timestamp uses ``source_clock`` unless ``camera_clock``
+(a non-keyframe "sweep" that stays canonical) and one ego pose per
+observation. Every timestamp uses ``source_clock`` unless ``camera_clock``
 gives the camera channel its own clock. Payloads reference the artifact ids
 ``payload_artifact_id(observation_id, payload_namespace)`` with the bytes
 ``payload_bytes(observation_id)``.
@@ -28,8 +27,6 @@ from sceneops_core.provenance import ProducerInfo, RecordingSegmentSource
 from .schemas import (
     FrameTransform,
     ImageSize,
-    SceneAnnotation,
-    SceneBox3D,
     SceneCalibration,
     SceneChannel,
     SceneCoordinateFrame,
@@ -98,8 +95,6 @@ def build_scene_manifest(
     camera_channel: str = "CAM_FRONT",
     lidar_channel: str = "LIDAR_TOP",
     keyframe_timestamps_ns: Sequence[int] = (1_000_000_000, 1_500_000_000),
-    annotations_per_keyframe: int = 1,
-    category: str = "vehicle.car",
 ) -> SceneManifest:
     source = source if source is not None else recording_source()
     if source_clock is None:
@@ -173,7 +168,6 @@ def build_scene_manifest(
     observations: list[SceneObservation] = []
     poses: list[ScenePose] = []
     groups: list[SceneObservationGroup] = []
-    annotations: list[SceneAnnotation] = []
 
     def observe(channel: str, timestamp_ns: int, *, camera: bool) -> SceneObservation:
         observation_id = f"{'cam' if camera else 'lidar'}-{timestamp_ns}"
@@ -221,23 +215,6 @@ def build_scene_manifest(
                 observation_ids=sorted([camera.observation_id, lidar.observation_id]),
             )
         )
-        for box_index in range(annotations_per_keyframe):
-            annotations.append(
-                SceneAnnotation(
-                    annotation_id=f"ann-{index:04d}-{box_index:02d}",
-                    timestamp_ns=timestamp_ns,
-                    source_clock=source_clock,
-                    group_id=group_id,
-                    category=category,
-                    instance_id=f"instance-{box_index:02d}",
-                    box=SceneBox3D(
-                        frame_id="world",
-                        center_m=(10.0 + box_index, 2.0, 0.5),
-                        size_wlh_m=(1.9, 4.5, 1.6),
-                        rotation_wxyz=IDENTITY_ROTATION,
-                    ),
-                )
-            )
         if index + 1 < len(ordered):
             sweep_ns = (timestamp_ns + ordered[index + 1]) // 2
             observe(camera_channel, sweep_ns, camera=True)
@@ -252,9 +229,6 @@ def build_scene_manifest(
         ),
         poses=sorted(poses, key=lambda p: (p.source_clock, p.timestamp_ns, p.pose_id)),
         groups=groups,
-        annotations=sorted(
-            annotations, key=lambda a: (a.source_clock, a.timestamp_ns, a.annotation_id)
-        ),
     )
 
 
@@ -266,9 +240,9 @@ def semantic_scene_content(manifest: SceneManifest) -> dict[str, Any]:
     checksum, the producer fingerprint (it covers the source revision), and
     each payload's artifact id. Kept: build configuration, segment window
     and unit key, channels, frames, calibrations, observations (ids,
-    timestamps, payload checksum / size / media type), poses, groups and
-    annotations. Two semantically equivalent recordings built with the same
-    producer and a source-semantic configuration have equal content."""
+    timestamps, payload checksum / size / media type), poses and groups.
+    Two semantically equivalent recordings built with the same producer and
+    a source-semantic configuration have equal content."""
     data = manifest.model_dump(mode="json")
     source = data["lineage"]["source"]
     for field in ("robot_run_id", "recording_artifact_id", "recording_checksum"):

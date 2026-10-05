@@ -109,37 +109,6 @@ async def test_episode_summary_update_does_not_overwrite_scene_summary(
 
 
 @pytest.mark.asyncio
-async def test_scene_inputs_partial_update_never_touches_membership_summary(
-    db_session, unique_id
-):
-    """None kwargs mean 'leave untouched', and the non-membership Scene
-    inputs can never overwrite registrar-owned counts."""
-    repo = PostgresDatasetVersionRepository(db_session)
-    dataset_id = unique_id("ds")
-    version = "v1"
-    await _create_dataset(db_session, dataset_id)
-    await repo.create(DatasetVersionRecord(dataset_id=dataset_id, version=version))
-    await repo.replace_scene_membership_summary(
-        dataset_id=dataset_id,
-        version=version,
-        scene_count=10,
-        keyframe_count=100,
-        observation_count=400,
-        observed_channels=["CAM_FRONT"],
-    )
-
-    await repo.update_scene_inputs(
-        dataset_id=dataset_id, version=version, required_channels=["CAM_FRONT"]
-    )
-    # An update that names nothing leaves the stored inputs untouched.
-    await repo.update_scene_inputs(dataset_id=dataset_id, version=version)
-
-    result = await repo.get(dataset_id=dataset_id, version=version)
-    assert result.scene.required_channels == ["CAM_FRONT"]
-    assert (result.scene.scene_count, result.scene.observation_count) == (10, 400)
-
-
-@pytest.mark.asyncio
 async def test_list_filters_by_dataset_id(db_session, unique_id):
     repo = PostgresDatasetVersionRepository(db_session)
     dataset_id_a = unique_id("ds-a")

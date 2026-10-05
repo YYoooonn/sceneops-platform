@@ -347,7 +347,7 @@ async def test_cleanup_after_consumer_exception(isolated_tmp) -> None:
             _FakeObjectStore({uri: _DATA}),
         ) as recording:
             paths.append(recording.local_path)
-            raise _ReaderFailure("RosbagAdapter failed mid-parse")
+            raise _ReaderFailure("the telemetry reader failed mid-parse")
 
     assert not paths[0].exists()
     assert list(isolated_tmp.iterdir()) == []

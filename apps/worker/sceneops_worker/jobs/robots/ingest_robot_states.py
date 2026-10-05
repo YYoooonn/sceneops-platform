@@ -7,7 +7,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_worker.datasets.ingestion.rosbag_raw_log import RosbagAdapter
+from sceneops_worker.robots.telemetry import RecordingTelemetryReader
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.robots.resolver import resolve_recording
 
@@ -53,10 +53,7 @@ class IngestRobotStatesJobHandler(
             artifact_record_store=context.artifact_record_store,
             artifact_store=context.artifact_store,
         ) as recording:
-            adapter = RosbagAdapter(
-                source_store=context.raw_source_store,
-                source_root_uri=str(recording.local_path),
-            )
+            adapter = RecordingTelemetryReader(recording_path=str(recording.local_path))
             # The RobotRunRecord is authoritative for which robot produced
             # the recording.
             robot_id = recording.robot_id

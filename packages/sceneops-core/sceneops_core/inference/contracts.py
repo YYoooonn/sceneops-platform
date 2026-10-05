@@ -10,11 +10,8 @@ InferenceResultT = TypeVar("InferenceResultT", covariant=True)
 class InferenceBackend(Protocol, Generic[InferenceRequestT, InferenceResultT]):
     """Port-like contract for model inference backends.
 
-    Concrete implementations may use:
-    - mock backend
-    - ONNX Runtime
-    - external HTTP inference server
-    - Triton Inference Server
+    Concrete implementations: the mock backend and the HTTP client of the
+    external inference server.
 
     The request/result types are generic because each task type can have
     task-specific input/output payloads while sharing the same backend contract.
@@ -22,7 +19,7 @@ class InferenceBackend(Protocol, Generic[InferenceRequestT, InferenceResultT]):
 
     @property
     def backend_type(self) -> str:
-        """Stable backend identifier, e.g. mock, onnx_runtime, triton."""
+        """Stable backend identifier, e.g. mock, grounding_dino."""
 
     async def run(self, request: InferenceRequestT) -> InferenceResultT:
         """Run inference and return a task-specific inference result."""

@@ -1,5 +1,5 @@
 # --------------------
-# ROS2 (Jazzy) dev sandbox — robot runtime environment (roadmap Phase 4)
+# ROS2 (Jazzy) dev sandbox — robot runtime environment
 # --------------------
 
 .PHONY: ros2-up

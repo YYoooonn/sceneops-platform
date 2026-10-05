@@ -56,6 +56,35 @@ async def test_every_model_column_exists_in_database():
     assert not mismatches, "\n".join(mismatches)
 
 
+@pytest.mark.asyncio
+async def test_database_has_no_column_the_models_dropped():
+    """The reverse of the check above: a migration that was meant to drop a
+    column really did (no leftover state the ORM can neither read nor write)."""
+    engine = get_async_engine()
+
+    def _reflect(sync_conn):
+        insp = inspect(sync_conn)
+        return {
+            table: {col["name"] for col in insp.get_columns(table)}
+            for table in insp.get_table_names()
+        }
+
+    async with engine.connect() as conn:
+        db_columns = await conn.run_sync(_reflect)
+
+    stale = []
+    for table_name, table in Base.metadata.tables.items():
+        if table_name not in db_columns:
+            continue
+        extra = db_columns[table_name] - {c.name for c in table.columns}
+        if extra:
+            stale.append(
+                f"{table_name}: database has columns no model declares: {extra}"
+            )
+
+    assert not stale, "\n".join(stale)
+
+
 def _ondelete(rule: str | None) -> str:
     # The database reports no rule for the default (NO ACTION).
     return (rule or "NO ACTION").upper()

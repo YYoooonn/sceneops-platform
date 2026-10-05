@@ -41,12 +41,8 @@ class SceneManifestProfiler:
             scene_id=scene_id,
             observation_count=len(manifest.observations),
             keyframe_count=len(manifest.keyframes()),
-            annotation_count=len(manifest.annotations),
             observed_channels=manifest.observed_channel_names(),
             observations_by_channel=dict(sorted(total.items())),
-            category_distribution=dict(
-                sorted(Counter(a.category for a in manifest.annotations).items())
-            ),
             calibration_coverage=coverage(calibrated, total),
             ego_pose_coverage=coverage(with_ego_pose, total),
             camera_intrinsic_coverage=coverage(with_intrinsic, camera_channels),

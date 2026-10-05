@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from sceneops_analytics import (
     TABLE_BUILDERS,
-    build_annotations_table,
     build_keyframes_table,
     build_observations_table,
     build_scenes_table,
@@ -26,7 +25,6 @@ from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 _MANIFEST_TABLE_BUILDERS = {
     "observations": build_observations_table,
     "keyframes": build_keyframes_table,
-    "annotations": build_annotations_table,
 }
 
 

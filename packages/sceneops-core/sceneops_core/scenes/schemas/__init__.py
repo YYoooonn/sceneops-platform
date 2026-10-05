@@ -1,11 +1,9 @@
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
 from .manifests import (
-    SCENE_MANIFEST_SCHEMA_V1,
+    SCENE_MANIFEST_SCHEMA_V2,
     FrameTransform,
     ImageSize,
     NonCanonicalSceneManifestError,
-    SceneAnnotation,
-    SceneBox3D,
     SceneCalibration,
     SceneChannel,
     SceneCoordinateFrame,
@@ -20,17 +18,13 @@ from .manifests import (
     load_canonical_scene_manifest,
 )
 from .records import SceneRecord, project_scene_record, scene_id_for
-from .requests import GetSceneRequest
 from .runs import SceneProfileRunRecord, SceneValidationRunRecord
 
 __all__ = [
-    "GetSceneRequest",
-    "SCENE_MANIFEST_SCHEMA_V1",
+    "SCENE_MANIFEST_SCHEMA_V2",
     "FrameTransform",
     "ImageSize",
     "NonCanonicalSceneManifestError",
-    "SceneAnnotation",
-    "SceneBox3D",
     "SceneCalibration",
     "SceneChannel",
     "SceneCoordinateFrame",

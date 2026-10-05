@@ -171,7 +171,7 @@ still used by the frozen golden-fixture/regression path only; see
 
 ### Raw source data
 
-Raw dataset input is fully separate, via its own `RawSourceSettings`
+Raw dataset input is fully separate, via its own `InputSourceSettings`
 (read-only, independent root):
 
 ```text

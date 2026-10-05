@@ -6,7 +6,6 @@ from sceneops_core.scenes.schemas import project_scene_record
 from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_analytics.tables import (
     TABLE_BUILDERS,
-    build_annotations_table,
     build_keyframes_table,
     build_observations_table,
     build_scenes_table,
@@ -17,12 +16,11 @@ def _manifest(key: str = "scene-a"):
     return build_scene_manifest(
         source=recording_source(unit_key=key),
         keyframe_timestamps_ns=(1_000, 3_000),
-        annotations_per_keyframe=2,
     )
 
 
 def test_table_names():
-    assert TABLE_BUILDERS == ("scenes", "observations", "keyframes", "annotations")
+    assert TABLE_BUILDERS == ("scenes", "observations", "keyframes")
 
 
 def test_build_scenes_table_row_per_scene():
@@ -76,9 +74,10 @@ def test_every_timestamp_row_carries_its_own_clock():
         "CAM_FRONT": "camera.exposure_clock",
         "LIDAR_TOP": "mcap_log_time",
     }
-    for table in (build_keyframes_table, build_annotations_table):
-        df = table(dataset_id="d", dataset_version="v1", manifests=manifests)
-        assert df["source_clock"].to_list() == ["mcap_log_time"] * df.height
+    df = build_keyframes_table(
+        dataset_id="d", dataset_version="v1", manifests=manifests
+    )
+    assert df["source_clock"].to_list() == ["mcap_log_time"] * df.height
 
 
 def test_scenes_table_carries_the_segment_window():
@@ -98,15 +97,10 @@ def test_scenes_table_carries_the_segment_window():
     ) == ("mcap_log_time", 0, 10_000_000_000)
 
 
-def test_keyframes_and_annotations_tables():
+def test_keyframes_table_has_one_row_per_group_and_no_annotation_data():
     manifests = [("scene-1", _manifest("a")), ("scene-2", _manifest("b"))]
     keyframes = build_keyframes_table(
         dataset_id="d", dataset_version="v1", manifests=manifests
     )
-    annotations = build_annotations_table(
-        dataset_id="d", dataset_version="v1", manifests=manifests
-    )
     assert keyframes.height == 4
-    assert keyframes["annotation_count"].to_list() == [2, 2, 2, 2]
-    assert annotations.height == 8
-    assert annotations.row(0, named=True)["size_wlh_m"] == [1.9, 4.5, 1.6]
+    assert not any("annotation" in column for column in keyframes.columns)

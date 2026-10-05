@@ -107,13 +107,18 @@ class ExportLearningDataJobHandler(
         return ExportLearningDataJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
+        params: JsonDict = {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
             else None,
             **inputs.params,
         }
+        # In a pipeline the inputs are the aligned revisions the upstream
+        # align_episode stage published, pinned by checksum.
+        if "inputs" not in params and inputs.refs.get("export_inputs"):
+            params["inputs"] = inputs.refs["export_inputs"]
+        return params
 
     async def run(
         self,

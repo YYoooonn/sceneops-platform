@@ -14,7 +14,6 @@ from app.domains.datasets.schemas import (
     DatasetVersionListResponse,
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
-    UpdateDatasetVersionRequest,
 )
 from app.domains.scenes.schemas import SceneListResponse
 from app.platform.artifacts.schemas import ArtifactListResponse
@@ -99,21 +98,6 @@ async def get_dataset_version(
     dataset_id: str, version: str, service: DatasetServiceDep
 ) -> DatasetVersionDetailResponse:
     result = await service.get_dataset_version(dataset_id, version)
-    if result is None:
-        raise_not_found("Dataset version", f"{dataset_id}:{version}")
-    return result
-
-
-@router.patch(
-    "/{dataset_id}/versions/{version}", response_model=DatasetVersionDetailResponse
-)
-async def update_dataset_version(
-    dataset_id: str,
-    version: str,
-    request: UpdateDatasetVersionRequest,
-    service: DatasetServiceDep,
-) -> DatasetVersionDetailResponse:
-    result = await service.update_dataset_version(dataset_id, version, request)
     if result is None:
         raise_not_found("Dataset version", f"{dataset_id}:{version}")
     return result

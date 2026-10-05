@@ -305,8 +305,6 @@ RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
         "profile the registered revisions. Builds from one RobotRun per run; "
         "a DatasetVersion spanning several RobotRuns takes several runs."
     ),
-    supported=True,
-    implemented=True,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="build_recording_scenes",
@@ -356,8 +354,6 @@ RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
         "recording_scene_building: Episodes are built from the recording, "
         "never from Scenes. Builds from one RobotRun per run."
     ),
-    supported=True,
-    implemented=True,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="build_recording_episodes",
@@ -532,50 +528,59 @@ _SCORE_SCENARIO_READINESS_OUTPUTS = [
 ]
 
 
-SCENARIO_CURATION_PIPELINE = PipelineDefinition(
-    type=PipelineType.SCENARIO_CURATION,
-    name="Scenario Curation",
-    description=(
-        "Curate a ScenarioSet revision from explicit, pinned sample views "
-        "and score its members' evaluation readiness."
+_BUILD_SCENE_SAMPLE_VIEWS_OUTPUTS = [
+    # The pinned view revisions mine_scenarios curates from → REF.
+    PipelineTaskOutputSpec(name="views", kind=_REF, source="views"),
+    PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
+    PipelineTaskOutputSpec(name="sample_count", kind=_SUMMARY, source="sample_count"),
+    PipelineTaskOutputSpec(
+        name="dropped_anchor_count", kind=_SUMMARY, source="dropped_anchor_count"
     ),
-    supported=True,
-    experimental=True,
-    implemented=True,
+    PipelineTaskOutputSpec(name="created_count", kind=_SUMMARY, source="created_count"),
+    PipelineTaskOutputSpec(name="reused_count", kind=_SUMMARY, source="reused_count"),
+    PipelineTaskOutputSpec(name="skipped", kind=_SUMMARY, source="skipped"),
+]
+
+SCENE_ML_EVALUATION_PIPELINE = PipelineDefinition(
+    type=PipelineType.SCENE_ML_EVALUATION,
+    name="Scene ML Evaluation",
+    description=(
+        "Registered Scenes + an explicit sample-view policy + pinned label "
+        "set revisions -> pinned sample views -> a curated ScenarioSet "
+        "revision -> a prediction revision -> an evaluation against the "
+        "pinned label set revision. Every stage pins the exact revisions it "
+        "consumed; the canonical Scenes are never modified."
+    ),
     tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="build_scene_sample_views",
+            name="Build scene sample views",
+            order=0,
+            job_type=JobType.BUILD_SCENE_SAMPLE_VIEWS,
+            outputs=_BUILD_SCENE_SAMPLE_VIEWS_OUTPUTS,
+        ),
         PipelineTaskDefinition(
             pipeline_task_id="mine_scenarios",
             name="Mine scenarios",
-            order=0,
+            order=1,
             job_type=JobType.MINE_SCENARIOS,
+            depends_on_pipeline_task_ids=["build_scene_sample_views"],
             outputs=_MINE_SCENARIOS_OUTPUTS,
         ),
         PipelineTaskDefinition(
             pipeline_task_id="score_scenario_readiness",
             name="Score scenario readiness",
-            order=1,
+            order=2,
             job_type=JobType.SCORE_SCENARIO_READINESS,
             depends_on_pipeline_task_ids=["mine_scenarios"],
             outputs=_SCORE_SCENARIO_READINESS_OUTPUTS,
         ),
-    ],
-)
-
-
-DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
-    type=PipelineType.DETECTION_EVALUATION,
-    name="Detection Evaluation",
-    description=(
-        "Run detection over pinned sample views or a ScenarioSet and "
-        "evaluate the prediction revision against a pinned label set "
-        "revision."
-    ),
-    tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="predict_detection",
             name="Predict detection",
-            order=0,
+            order=3,
             job_type=JobType.PREDICT_DETECTION,
+            depends_on_pipeline_task_ids=["mine_scenarios"],
             default_params={
                 "inference_backend": "mock",
             },
@@ -584,7 +589,7 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
         PipelineTaskDefinition(
             pipeline_task_id="evaluate_detection",
             name="Evaluate detection",
-            order=1,
+            order=4,
             job_type=JobType.EVALUATE_DETECTION,
             depends_on_pipeline_task_ids=["predict_detection"],
             default_params={
@@ -598,78 +603,52 @@ DETECTION_EVALUATION_PIPELINE = PipelineDefinition(
 
 
 _ALIGN_EPISODE_OUTPUTS = [
-    # The aligned revision validate / profile pin → REF.
-    PipelineTaskOutputSpec(
-        name="aligned_artifact_id", kind=_REF, source="aligned_artifact_id"
-    ),
-    PipelineTaskOutputSpec(
-        name="aligned_artifact_checksum", kind=_REF, source="aligned_artifact_checksum"
-    ),
-    PipelineTaskOutputSpec(name="episode_id", kind=_REF, source="episode_id"),
+    # The aligned revisions export_learning_data pins, in its input shape → REF.
+    PipelineTaskOutputSpec(name="export_inputs", kind=_REF, source="export_inputs"),
+    PipelineTaskOutputSpec(name="aligned", kind=_SUMMARY, source="aligned"),
+    PipelineTaskOutputSpec(name="episode_count", kind=_SUMMARY, source="episode_count"),
     PipelineTaskOutputSpec(name="step_count", kind=_SUMMARY, source="step_count"),
     PipelineTaskOutputSpec(
-        name="achieved_frequency_hz", kind=_SUMMARY, source="achieved_frequency_hz"
+        name="alignment_config_hash", kind=_SUMMARY, source="alignment_config_hash"
     ),
 ]
 
-_VALIDATE_ALIGNED_EPISODE_OUTPUTS = [
-    PipelineTaskOutputSpec(name="valid", kind=_SUMMARY, source="valid"),
-    PipelineTaskOutputSpec(name="issue_count", kind=_SUMMARY, source="issue_count"),
-    PipelineTaskOutputSpec(name="report_uri", kind=_ARTIFACT, source="report_uri"),
-]
-
-_PROFILE_ALIGNED_EPISODE_OUTPUTS = [
-    PipelineTaskOutputSpec(name="step_count", kind=_SUMMARY, source="step_count"),
+_EXPORT_LEARNING_DATA_OUTPUTS = [
+    PipelineTaskOutputSpec(name="export_id", kind=_REF, source="export_id"),
     PipelineTaskOutputSpec(
-        name="overall_missing_ratio", kind=_SUMMARY, source="overall_missing_ratio"
+        name="manifest_artifact_id", kind=_REF, source="manifest_artifact_id"
     ),
-    PipelineTaskOutputSpec(name="report_uri", kind=_ARTIFACT, source="report_uri"),
+    PipelineTaskOutputSpec(name="manifest_uri", kind=_ARTIFACT, source="manifest_uri"),
+    PipelineTaskOutputSpec(name="episode_count", kind=_SUMMARY, source="episode_count"),
+    PipelineTaskOutputSpec(name="row_counts", kind=_SUMMARY, source="row_counts"),
+    PipelineTaskOutputSpec(name="shard_counts", kind=_SUMMARY, source="shard_counts"),
 ]
 
-ALIGNED_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
-    type=PipelineType.ALIGNED_EPISODE_BUILDING,
-    name="Aligned Episode Building",
+EPISODE_LEARNING_DATA_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.EPISODE_LEARNING_DATA_BUILDING,
+    name="Episode Learning Data Building",
     description=(
-        "Align one registered Episode on an explicit timeline and "
-        "association policy into an AlignedEpisode revision, then validate "
-        "and profile that exact revision. The canonical Episode is never "
-        "rewritten."
+        "Pinned registered Episodes + an explicit alignment config -> one "
+        "AlignedEpisode revision per Episode -> a learning data export of "
+        "exactly those aligned revisions. The export validates every aligned "
+        "input and fails rather than publishing an export over an invalid "
+        "one. The canonical Episodes are never modified."
     ),
-    supported=True,
-    implemented=True,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="align_episode",
-            name="Align episode",
+            name="Align episodes",
             order=0,
             job_type=JobType.ALIGN_EPISODE,
             outputs=_ALIGN_EPISODE_OUTPUTS,
         ),
         PipelineTaskDefinition(
-            pipeline_task_id="validate_aligned_episode",
-            name="Validate aligned episode",
+            pipeline_task_id="export_learning_data",
+            name="Export learning data",
             order=1,
-            job_type=JobType.VALIDATE_ALIGNED_EPISODE,
+            job_type=JobType.EXPORT_LEARNING_DATA,
             depends_on_pipeline_task_ids=["align_episode"],
-            outputs=_VALIDATE_ALIGNED_EPISODE_OUTPUTS,
-            quality_rules=[
-                PipelineTaskQualityRule(
-                    rule_type=PipelineTaskQualityRuleType.BLOCK_IF_EQUALS,
-                    source="summary.valid",
-                    value=False,
-                    message="Aligned episode failed structural validation",
-                    code="validate_aligned_episode_blocked",
-                )
-            ],
-        ),
-        PipelineTaskDefinition(
-            pipeline_task_id="profile_aligned_episode",
-            name="Profile aligned episode",
-            order=2,
-            job_type=JobType.PROFILE_ALIGNED_EPISODE,
-            depends_on_pipeline_task_ids=["align_episode"],
-            optional=True,
-            outputs=_PROFILE_ALIGNED_EPISODE_OUTPUTS,
+            outputs=_EXPORT_LEARNING_DATA_OUTPUTS,
         ),
     ],
 )
@@ -678,9 +657,8 @@ ALIGNED_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
 BUILTIN_PIPELINE_DEFINITIONS = [
     RECORDING_SCENE_BUILDING_PIPELINE,
     RECORDING_EPISODE_BUILDING_PIPELINE,
-    SCENARIO_CURATION_PIPELINE,
-    DETECTION_EVALUATION_PIPELINE,
-    ALIGNED_EPISODE_BUILDING_PIPELINE,
+    SCENE_ML_EVALUATION_PIPELINE,
+    EPISODE_LEARNING_DATA_BUILDING_PIPELINE,
 ]
 
 

@@ -72,7 +72,7 @@ async def _export(world, tables=None):
     )
 
 
-async def test_exports_all_four_tables_by_default(world):
+async def test_exports_all_three_tables_by_default(world):
     await _register(world, "a", "b")
     result = await _export(world)
 
@@ -80,13 +80,11 @@ async def test_exports_all_four_tables_by_default(world):
         "scenes",
         "observations",
         "keyframes",
-        "annotations",
     }
     assert result.row_counts == {
         "scenes": 2,
         "observations": 10,
         "keyframes": 4,
-        "annotations": 4,
     }
     observations = world.tables["observations"]
     assert set(observations["scene_id"].to_list()) == set(world.scenes.committed)

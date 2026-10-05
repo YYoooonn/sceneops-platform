@@ -1,7 +1,7 @@
-"""AlignEpisodeJobHandler: canonical Episode revision -> AlignedEpisodeArtifact
-(derived, L3). The source is exactly the revision the EpisodeRecord points to
-(or an explicitly pinned one); its bytes are verified before parsing, and no
-aligned artifact is written when anything fails."""
+"""AlignEpisodeJobHandler: pinned canonical Episodes -> one AlignedEpisodeArtifact
+per Episode (derived, L3). The source is exactly the revision the EpisodeRecord
+points to (or an explicitly pinned one); its bytes are verified before parsing,
+and nothing is committed when anything fails."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from sceneops_core.episodes.alignment import (
     TemporalSourceContext,
 )
 from sceneops_core.jobs.schemas import AlignEpisodeJobParams, JobType
+from sceneops_core.jobs.schemas.params import EpisodeAlignmentInput
 from sceneops_worker.episodes.artifacts import (
     EpisodeArtifactWriteResult,
     EpisodeManifestIntegrityError,
@@ -55,9 +56,22 @@ def _setup(*, write_fails=False, create_fails=False):
     return record, artifact, data, context
 
 
-def _request(context, episode_id, **overrides) -> JobHandlerRequest:
+def _request(
+    context,
+    episode_id,
+    *,
+    source_artifact_id=None,
+    source_manifest_sha256=None,
+    **overrides,
+) -> JobHandlerRequest:
     params = AlignEpisodeJobParams(
-        episode_id=episode_id,
+        episodes=[
+            EpisodeAlignmentInput(
+                episode_id=episode_id,
+                source_artifact_id=source_artifact_id,
+                source_manifest_sha256=source_manifest_sha256,
+            )
+        ],
         dataset_id="d1",
         dataset_version="v1",
         alignment_config=_CONFIG,
@@ -74,10 +88,20 @@ async def test_aligns_the_current_revision_and_records_it() -> None:
     record, artifact, data, context = _setup()
     result = await AlignEpisodeJobHandler().run(_request(context, record.episode_id))
 
-    assert result.source_artifact_id == record.manifest_artifact_id
-    assert result.source_manifest_sha256 == hashlib.sha256(data).hexdigest()
-    assert result.source_checksum_verified is True
-    assert result.step_count == 3  # window [0, 3s) on its own clock, 1 Hz
+    [aligned_ref] = result.aligned
+    assert aligned_ref.source_artifact_id == record.manifest_artifact_id
+    assert aligned_ref.source_manifest_sha256 == hashlib.sha256(data).hexdigest()
+    assert aligned_ref.source_checksum_verified is True
+    assert aligned_ref.step_count == 3  # window [0, 3s) on its own clock, 1 Hz
+    assert result.step_count == 3 and result.episode_count == 1
+    # The hand-off to EXPORT_LEARNING_DATA is exactly its input shape.
+    assert result.export_inputs == [
+        {
+            "episode_id": record.episode_id,
+            "aligned_artifact_id": aligned_ref.aligned_artifact_id,
+            "aligned_artifact_checksum": "sha256:" + "c" * 64,
+        }
+    ]
     context.artifact_record_store.register.assert_awaited_once()
     kwargs = context.artifact_record_store.register.await_args.kwargs
     assert kwargs["ref"].kind == ArtifactKind.ALIGNED_EPISODE_MANIFEST
@@ -99,7 +123,7 @@ async def test_pinned_source_revision_is_used_verbatim() -> None:
             source_manifest_sha256=hashlib.sha256(data).hexdigest(),
         )
     )
-    assert result.source_artifact_id == artifact.artifact_id
+    assert result.aligned[0].source_artifact_id == artifact.artifact_id
 
 
 async def test_pinned_checksum_mismatch_blocks_write() -> None:
@@ -206,7 +230,7 @@ async def test_the_scope_is_the_episodes_dataset_version_never_a_default() -> No
     # Params that name another DatasetVersion are rejected.
     record, _, _, context = _setup()
     params = AlignEpisodeJobParams(
-        episode_id=record.episode_id,
+        episodes=[EpisodeAlignmentInput(episode_id=record.episode_id)],
         dataset_id="somewhere-else",
         dataset_version="v9",
         alignment_config=_CONFIG,
@@ -224,7 +248,8 @@ async def test_the_scope_is_the_episodes_dataset_version_never_a_default() -> No
 async def test_params_without_a_dataset_scope_are_accepted() -> None:
     record, _, _, context = _setup()
     params = AlignEpisodeJobParams(
-        episode_id=record.episode_id, alignment_config=_CONFIG
+        episodes=[EpisodeAlignmentInput(episode_id=record.episode_id)],
+        alignment_config=_CONFIG,
     )
     request = JobHandlerRequest(
         job=job(JobType.ALIGN_EPISODE, params.model_dump(mode="json")),
@@ -248,3 +273,76 @@ async def test_the_alignment_key_includes_the_effective_clock() -> None:
     assert written["alignment_key"] != alignment_key(
         _CONFIG, aligned.alignment_semantics_version, "another.clock"
     )
+
+
+# ── several Episodes in one job ───────────────────────────────────────────────
+
+
+def _setup_two():
+    first = register(sample_manifest("first"))
+    second = register(sample_manifest("second"))
+    context = make_context([first, second])
+    context.episode_artifact_store.write_aligned_episode = AsyncMock(
+        side_effect=lambda **kw: EpisodeArtifactWriteResult(
+            uri=f"mem://aligned/{kw['episode_id']}.json",
+            checksum="sha256:" + hashlib.sha256(kw["episode_id"].encode()).hexdigest(),
+            size_bytes=42,
+        )
+    )
+    return first[0], second[0], context
+
+
+def _two_request(context, *episode_ids) -> JobHandlerRequest:
+    params = AlignEpisodeJobParams(
+        episodes=[EpisodeAlignmentInput(episode_id=e) for e in episode_ids],
+        alignment_config=_CONFIG,
+    )
+    return JobHandlerRequest(
+        job=job(JobType.ALIGN_EPISODE, params.model_dump(mode="json")),
+        params=params,
+        context=context,
+    )
+
+
+async def test_every_episode_is_aligned_and_committed_once() -> None:
+    first, second, context = _setup_two()
+    result = await AlignEpisodeJobHandler().run(
+        _two_request(context, first.episode_id, second.episode_id)
+    )
+
+    assert [r.episode_id for r in result.aligned] == [
+        first.episode_id,
+        second.episode_id,
+    ]
+    assert [i["episode_id"] for i in result.export_inputs] == [
+        first.episode_id,
+        second.episode_id,
+    ]
+    assert result.episode_count == 2 and result.step_count == 6
+    assert context.artifact_record_store.register.await_count == 2
+    context.commit.assert_awaited_once()
+
+
+async def test_a_failing_episode_commits_nothing() -> None:
+    first, _, context = _setup_two()
+    with pytest.raises(ValueError, match="Episode not found"):
+        await AlignEpisodeJobHandler().run(
+            _two_request(context, first.episode_id, "episode-missing")
+        )
+    context.commit.assert_not_called()
+
+
+def test_an_episode_may_be_named_only_once() -> None:
+    with pytest.raises(ValueError, match="at most once"):
+        AlignEpisodeJobParams(
+            episodes=[
+                EpisodeAlignmentInput(episode_id="e"),
+                EpisodeAlignmentInput(episode_id="e"),
+            ],
+            alignment_config=_CONFIG,
+        )
+
+
+def test_a_pin_needs_both_the_artifact_and_the_checksum() -> None:
+    with pytest.raises(ValueError, match="both"):
+        EpisodeAlignmentInput(episode_id="e", source_artifact_id="a")

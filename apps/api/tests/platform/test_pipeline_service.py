@@ -89,7 +89,7 @@ def _service() -> tuple[PipelineService, FakePipelineRunRepository]:
 
 def _request(**overrides) -> CreatePipelineRunRequest:
     base = dict(
-        type=PipelineType.SCENARIO_CURATION,
+        type=PipelineType.SCENE_ML_EVALUATION,
         dataset_id=DATASET_ID,
         dataset_version=DATASET_VERSION,
         params={},

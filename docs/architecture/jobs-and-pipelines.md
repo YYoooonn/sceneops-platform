@@ -2,7 +2,7 @@
 
 > Based on `packages/sceneops-core/sceneops_core/pipelines/builtin.py`,
 > `apps/worker/sceneops_worker/pipelines/`, and
-> `apps/worker/sceneops_worker/jobs/`.
+> `apps/worker/sceneops_worker/jobs/`. Decision record: [ADR-007](../adr/007-canonical-ingestion-architecture.md) §34.
 
 ## 1. Two execution units: Pipeline and Job
 
@@ -17,51 +17,87 @@ A Pipeline strings several Jobs together in a fixed order; a Job is the
 smallest unit that actually does work. The API can dispatch a Job standalone
 or as part of a Pipeline.
 
-## 2. Built-in pipeline definitions
+## 2. The four Pipelines
+
+A Pipeline exists only where multi-stage orchestration, retry and lineage
+justify it. SceneOps has exactly four; every other operation is a Job (§2.1).
 
 ```text
-RECORDING_SCENE_BUILDING
+RECORDING_SCENE_BUILDING          RobotRun -> Scenes
   build_recording_scenes -> register_scenes -> validate_scene -> profile_scene (optional)
 
-SCENARIO_CURATION
-  mine_scenarios -> score_scenario_readiness
-
-DETECTION_EVALUATION
-  predict_detection -> evaluate_detection
-
-ALIGNED_EPISODE_BUILDING
-  align_episode -> validate_aligned_episode -> profile_aligned_episode (optional)
-
-RECORDING_EPISODE_BUILDING
+RECORDING_EPISODE_BUILDING        RobotRun -> Episodes
   build_recording_episodes -> register_episodes -> validate_episode -> profile_episode (optional)
+
+SCENE_ML_EVALUATION               pinned label sets + policy + configs -> views -> ScenarioSet -> prediction -> evaluation
+  build_scene_sample_views -> mine_scenarios -> score_scenario_readiness
+                           -> predict_detection -> evaluate_detection
+
+EPISODE_LEARNING_DATA_BUILDING    pinned Episodes + alignment config -> AlignedEpisodes -> LearningDataExport
+  align_episode -> export_learning_data
 ```
 
-`RECORDING_EPISODE_BUILDING` is the Episode sibling of
-`RECORDING_SCENE_BUILDING`: `build_recording_episodes` (params:
-`robot_run_id`, `build_config`) builds the complete Episode set of one
-RobotRun and hands it to `register_episodes` through the
-`manifest_artifact_ids` REF; `register_episodes` hands `episode_ids` to the
-quality stages (see [Episode domain](./episode-domain.md)).
+**Canonical building (L1 -> L2).** `RECORDING_SCENE_BUILDING` builds the
+canonical Scenes of one registered RobotRun (`build_recording_scenes` params:
+`robot_run_id`, `build_config`) and hands the complete set to
+`register_scenes` through the `manifest_artifact_ids` REF; `register_scenes`
+hands `scene_ids` to the quality stages. `RECORDING_EPISODE_BUILDING` is its
+Episode sibling: `build_recording_episodes` hands the complete Episode set to
+`register_episodes` (`manifest_artifact_ids`), which hands `episode_ids` to
+`validate_episode` / `profile_episode`. One run covers one RobotRun; a
+DatasetVersion spanning several RobotRuns takes several runs. The two never
+depend on each other and share the RobotRun's `OBSERVATION_PAYLOAD`
+artifacts. See [Scene domain](./scene-domain.md) and
+[Episode domain](./episode-domain.md).
 
-`RECORDING_SCENE_BUILDING` builds the canonical Scenes of one registered
-RobotRun (`build_recording_scenes` params: `robot_run_id`, `build_config`)
-and hands the complete set to `register_scenes` through the
-`manifest_artifact_ids` REF; `register_scenes` hands `scene_ids` to the
-quality stages. One run covers one RobotRun; a DatasetVersion spanning
-several RobotRuns takes several runs. `validate_scene`/`profile_scene` are a
-source-agnostic quality stage over registered Scenes;
-`validate_episode`/`profile_episode` play the same role for Episode. See
-[Scene domain](./scene-domain.md) and [Episode domain](./episode-domain.md)
-for the domain-specific detail.
+**Scene ML (L3).** `SCENE_ML_EVALUATION` consumes registered Scenes, an
+explicit sample-view policy and pinned label set revisions. Each stage pins the
+revisions it consumes and hands the next stage its own output through a REF:
+`build_scene_sample_views` -> `views` -> `mine_scenarios` (curates the
+ScenarioSet revision) -> `scenario_set_id` -> `score_scenario_readiness` and
+`predict_detection` -> `inference_run_id` + `prediction_manifest_checksum` ->
+`evaluate_detection` (scores that prediction revision against the pinned label
+set revision). A caller that pins sample views itself is never overridden by a
+REF. Policy, channels, label sets, categories and the model backend are
+explicit params; no stage defaults a source's vocabulary. See
+[Derived layer](./derived-layer.md).
 
-Some Job types are deliberately **not** wrapped in any pipeline —
-`register_robot_run`, `ingest_robot_states`,
-`export_robot_analytics_snapshot`, and the single-stage derived jobs
-`import_labels`, `build_scene_sample_views` and `export_learning_data`. Robot/RobotRun is a separate domain from
-Dataset/DatasetVersion, so these dispatch as plain Jobs, not through a
-named pipeline. `register_robot_run` is submitted by
-`POST /robot-runs:register` (create + dispatch); the other two via
-`POST /jobs` — see [Robot data ingestion](../workflows/robot-run-and-mcap.md).
+**Episode learning (L3).** `EPISODE_LEARNING_DATA_BUILDING` aligns pinned
+Episode revisions (`align_episode` params: `episodes` — each an `episode_id`,
+optionally pinned by `source_artifact_id` + `source_manifest_sha256` — and one
+`alignment_config`) and hands the aligned revisions to `export_learning_data`
+in the export's own input shape (`export_inputs`: episode id, aligned artifact
+id, checksum). The export validates every aligned input and fails rather than
+publishing over an invalid one. The canonical Episodes are never rewritten.
+
+### 2.1 Atomic Jobs
+
+Reusable single operations dispatch as plain Jobs (`POST /jobs`), not through a
+Pipeline:
+
+```text
+REGISTER_ROBOT_RUN        POST /robot-runs:register (create + dispatch)
+IMPORT_LABELS             a label document -> an independent, pinned LabelSet revision
+BUILD_SCENE_SAMPLE_VIEWS  Scenes + policy + label sets -> pinned views (also the first stage of SCENE_ML_EVALUATION)
+MINE_SCENARIOS /          ScenarioSet curation and readiness scoring over pinned views
+  SCORE_SCENARIO_READINESS   (stages of SCENE_ML_EVALUATION)
+PREDICT_DETECTION         pinned views or a ScenarioSet + model -> prediction revision
+EVALUATE_DETECTION        a prediction revision + a pinned label set -> evaluation
+ALIGN_EPISODE             pinned Episodes + config -> AlignedEpisodes (first stage of EPISODE_LEARNING_DATA_BUILDING)
+VALIDATE_ALIGNED_EPISODE /
+  PROFILE_ALIGNED_EPISODE structural validation / profile of one pinned aligned revision
+EXPORT_LEARNING_DATA      pinned aligned revisions -> a sharded learning export
+CURATE_EPISODES           a selection policy over one learning export (read by SceneOpsDataset)
+EXPORT_ANALYTICS_SNAPSHOT Scene analytical Parquet tables of a DatasetVersion
+INGEST_ROBOT_STATES /     robot telemetry projection of a RobotRun
+  EXPORT_ROBOT_ANALYTICS_SNAPSHOT
+VALIDATE_* / PROFILE_*    the quality jobs the building pipelines also run as stages
+BUILD_RECORDING_* / REGISTER_*   the build and registration stages of the two building pipelines
+```
+
+The pipeline-stage jobs and the atomic jobs are the same handlers: a job that is
+a stage of a Pipeline is also dispatchable alone, so old and new flows share
+one correctness path.
 
 ## 3. How data moves between tasks: output kind
 
@@ -233,22 +269,22 @@ order risks the API's delayed `QUEUED` commit overwriting a state the
 worker already advanced to `RUNNING`. The same race applies to any future
 Airflow-for-Jobs path.
 
-## 10. Airflow path: per-task DAG (proof of concept)
+## 10. Airflow path: per-task DAGs
 
-When `pipeline_backend=airflow`, `recording_scene_building` runs as a DAG
-(`airflow/dags/sceneops_pipeline_run.py`) where each task is its own
-`DockerOperator` process, rather than one `PipelineRunner.run()` loop. See
-[Architecture overview](./overview.md) §3 for the full breakdown of what
-runs where, and how `start()`/`finalize()` recompose the same
-private state-transition methods the Celery path uses inline.
+When `pipeline_backend=airflow`, each pipeline type runs as its own DAG
+(`airflow/dags/sceneops_pipelines.py`, DAG id `<pipeline_dag_prefix>_<type>`,
+default `sceneops_<type>`) where each task is its own `DockerOperator` process,
+rather than one `PipelineRunner.run()` loop. The API picks the DAG by the run's
+pipeline type. See [Architecture overview](./overview.md) §3 for what runs
+where, and how `start()`/`finalize()` recompose the same private
+state-transition methods the Celery path uses inline.
 
 ```text
-start
-  -> build_recording_scenes -> register_scenes -> validate_scene -> profile_scene
-  -> finalize  (trigger_rule=all_done)
+start -> <task 1> -> ... -> <task n> -> finalize  (trigger_rule=all_done)
 ```
 
-Scope is `recording_scene_building` only — the DAG's task chain is
-hardcoded and serial. Sending other pipeline types (including
-`recording_episode_building`) through Airflow needs a generalized DAG or one
-per type; not built.
+The DAG file cannot import SceneOps, so it mirrors the task ids of the four
+definitions statically; `apps/worker/tests/pipelines/test_airflow_dag_mirror.py`
+fails when the mirror drifts. Tasks run serially in definition order, and
+optional tasks skip themselves exactly as on the Celery path. The orchestrator
+acceptance is `make test-infrastructure-airflow`.

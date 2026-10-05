@@ -19,7 +19,7 @@ streaming  robot / dataset replay -> ROS2 topics -> streaming_bridge_node -> Kaf
 either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
            -> POST /robot-runs:register -> REGISTER_ROBOT_RUN -> RobotRun (§3.2)
            -> resolve_recording(robot_run_id) -- verified local copy (§3.1)
-           +-> RosbagAdapter (apps/worker) -- derived telemetry projection
+           +-> RecordingTelemetryReader (apps/worker) -- derived telemetry projection
            |     -> ingest_robot_states Job -> Postgres (RobotState, Mission)
            |          -> export_robot_analytics_snapshot Job -> Parquet (Artifact Store)
            |               -> DuckDB query (sceneops_analytics.query_parquet)
@@ -55,13 +55,13 @@ Standard ROS2 messages (`nav_msgs`, `sensor_msgs`) are used wherever they
 fit. `/vehicle/control` has no matching standard message for a
 steering+throttle+brake tuple, and a custom `.msg` package would need a
 `colcon` build step — out of scope for the acquisition tool — so it's carried as
-flat JSON inside `std_msgs/String`, which `RosbagAdapter` recognizes and
+flat JSON inside `std_msgs/String`, which `RecordingTelemetryReader` recognizes and
 unwraps; the Episode builder reads it with `decoding: json_string`.
 
 `/mission/status`'s `operation_state` values (`"running"`/`"completed"`)
 are `MissionStatus` values, not `RobotOperationState`
 (idle/running/error/emergency_stop) values — feeding them into
-`RobotStateRecord` directly would fail Pydantic validation. `RosbagAdapter`
+`RobotStateRecord` directly would fail Pydantic validation. `RecordingTelemetryReader`
 excludes `/mission/status` from `extract_robot_states()` for exactly this
 reason and routes it through `extract_missions()` instead, which merges
 every status update sharing a `mission_id` into one `MissionRecord` and
@@ -76,8 +76,8 @@ reorder.
 
 Two readers consume a resolved recording (§3.1):
 
-- `RosbagAdapter`
-  (`apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`) is the
+- `RecordingTelemetryReader`
+  (`apps/worker/sceneops_worker/robots/telemetry.py`) is the
   robot-telemetry projection read: `extract_robot_states()`,
   `extract_missions()`. It decodes `cdr` messages
   with `mcap_ros2` using the schemas embedded in the file (no rclpy),
@@ -91,14 +91,14 @@ Two readers consume a resolved recording (§3.1):
   conformance suite shares its timestamp helpers. See
   [Scene domain](../architecture/scene-domain.md) §6.
 
-Storage: locally recorded bags follow `RawSourceSettings`' independent-root
-convention (`/data/raw/rosbag/...`); a published recording lives under
+Storage: external inputs follow `InputSourceSettings`' independent-root
+convention (`/data/raw/...`); a published recording lives under
 `{artifact root}/robot_runs/{run_id}/` (see
 [Storage layout](../architecture/storage-layout.md) §3).
 
 ### 3.1 Recording consumption: the verified recording resolver
 
-`RosbagAdapter` stays storage-agnostic — it only ever opens a local
+`RecordingTelemetryReader` stays storage-agnostic — it only ever opens a local
 filesystem path (`mcap.reader.make_reader(open(path, "rb"))`), never
 `s3://`, MinIO, `ArtifactStore`, or HTTP directly.
 
@@ -119,7 +119,7 @@ robot_run_id
      local copy against the ArtifactRecord
   -> VerifiedRecording(robot_run_id, robot_id, local_path, recording_format,
                        source_clock, artifact_id, checksum, size_bytes)
-  -> RosbagAdapter(local_path)
+  -> RecordingTelemetryReader(recording_path=local_path)
 ```
 
 Consumers: `build_recording_scenes`, `build_recording_episodes` and `ingest_robot_states`. Their job params take
@@ -223,8 +223,9 @@ profile `acquisition`). They are data-plane steps outside the API.
 `recording-publisher` runs the publisher from the worker image with
 ArtifactStore settings only. It receives no database settings. Recording
 bytes never pass through the API. Registration and everything after it go
-through FastAPI. `make e2e-batch-acquisition` exercises this path from the
-host with only Docker Compose, curl and jq.
+through FastAPI. `make e2e-batch-canonical` exercises this path from the
+host with only Docker Compose, curl and jq, and `make canonical-bootstrap`
+runs it as developer orchestration.
 
 The tool stops at the MCAP. It never publishes, registers or calls
 SceneOps. Its channel mapping, timing policy and calibration representation
@@ -279,17 +280,15 @@ infrastructure.
 
 ## 5. Quickstart
 
-Canonical Episodes come from a batch-acquired recording through the
+Canonical Scenes and Episodes come from a batch-acquired recording through the
 FastAPI control plane:
 
 ```bash
 make local-up
-make e2e-recording-episode           # nuScenes -> acquisition -> RobotRun -> recording_episode_building
-make e2e-recording-episode SCENE=scene-0061
+make e2e-batch-canonical             # nuScenes -> acquisition -> RobotRun -> Scenes + Episodes
+make canonical-bootstrap             # the same path as a reusable L1/L2 baseline
+make e2e-episode-learning            # Episodes -> AlignedEpisodes -> learning export -> LeRobot round trip
 ```
-
-The composed learning chain (`e2e-robot-learning`) is unavailable until
-the ADR-007 step-11 consolidation.
 
 The streaming vertical (replay -> ROS2 -> bridge -> Kafka -> capture ->
 RobotRun, then Scenes and Episodes equivalent to the batch acquisition):

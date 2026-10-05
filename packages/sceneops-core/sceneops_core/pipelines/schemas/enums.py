@@ -4,26 +4,26 @@ from enum import StrEnum
 
 
 class PipelineType(StrEnum):
+    """The first-class Pipelines. A Pipeline exists only where multi-stage
+    orchestration, retry and lineage justify it; single operations are Jobs
+    (ADR-007 §34)."""
+
     # One registered RobotRun recording -> canonical Scenes -> registration
     # -> validation / profiling (ADR-007 §17.3).
     RECORDING_SCENE_BUILDING = "recording_scene_building"
-
-    # Pinned sample views -> ScenarioSet revision / readiness report
-    # (ADR-007 §33.4).
-    SCENARIO_CURATION = "scenario_curation"
-
-    # Pinned sample views or a ScenarioSet + model -> prediction revision ->
-    # evaluation against a pinned label set revision (ADR-007 §33.5).
-    DETECTION_EVALUATION = "detection_evaluation"
-
-    # One registered Episode -> AlignedEpisode -> validation / profile
-    # (ADR-007 §33.6).
-    ALIGNED_EPISODE_BUILDING = "aligned_episode_building"
 
     # One registered RobotRun recording -> canonical Episodes -> registration
     # -> validation / profiling (ADR-007 §17.4). A sibling of
     # RECORDING_SCENE_BUILDING; neither depends on the other.
     RECORDING_EPISODE_BUILDING = "recording_episode_building"
+
+    # Registered Scenes + pinned label set revisions -> sample views ->
+    # ScenarioSet -> prediction revision -> evaluation (ADR-007 §33, §34).
+    SCENE_ML_EVALUATION = "scene_ml_evaluation"
+
+    # Pinned registered Episodes -> AlignedEpisodes -> learning data export
+    # (ADR-007 §33.6, §33.7, §34).
+    EPISODE_LEARNING_DATA_BUILDING = "episode_learning_data_building"
 
 
 class PipelineRunStatus(StrEnum):

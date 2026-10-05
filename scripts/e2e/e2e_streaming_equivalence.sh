@@ -82,73 +82,17 @@ fail() {
   exit 1
 }
 
-check() {
-  local label="$1"
-  shift
-  if "$@"; then
-    echo "  ✅  $label"
-  else
-    fail "$label"
-  fi
-}
-
 summary_line() { # <log-text> <prefix> -> the JSON after "<prefix> "
   grep -E "^$2 " <<<"$1" | tail -1 | sed "s/^$2 //"
 }
 
-# Canonical semantics of the recording, stated once and used for BOTH runs.
-# Every canonical time and every segmentation clock is a source-semantic
-# timestamp (header stamps, the payload's own source_timestamp_ns): nothing
-# here depends on recorder receive time, which is what makes I-35 apply.
-scene_config() {
-  jq -cn '{
-    channels: [
-      {topic: "/camera/front/image/compressed", modality: "camera", sensor_id: "cam-front",
-       time: {source: "header_stamp", clock: "sensor.header_stamp"},
-       payload: "compressed_image", camera_info_topic: "/camera/front/camera_info"},
-      {topic: "/lidar/top/points", modality: "lidar", sensor_id: "lidar-top",
-       time: {source: "header_stamp", clock: "sensor.header_stamp"},
-       payload: "ros2_message"}
-    ],
-    frames: {ego_frame_id: "base_link", world_frame_id: "map"},
-    calibration: {static_transform_topics: ["/tf_static"]},
-    poses: [{topic: "/tf", parent_frame_id: "map", child_frame_id: "base_link",
-             time: {source: "header_stamp", clock: "sensor.header_stamp"}}],
-    segmentation: {policy: "fixed_duration", clock: "sensor.header_stamp", duration_ns: 8000000000}
-  }'
-}
+# Canonical semantics of the recording, stated once (config/baselines/) and
+# used for BOTH runs. Every canonical time and every segmentation clock is a
+# source-semantic timestamp (header stamps, the payload's own
+# source_timestamp_ns): nothing depends on recorder receive time, which is
+# what makes I-35 apply.
 
-episode_config() {
-  jq -cn '
-    def header: {source: "header_stamp", clock: "vehicle.source_time"};
-    def json_time: {source: "payload_field", clock: "vehicle.source_time", field: "source_timestamp_ns"};
-    {
-      streams: [
-        {topic: "/camera/front/image/compressed", role: "observation", time: header,
-         payload: "compressed_image"},
-        {topic: "/vehicle/odom", role: "state", time: header,
-         fields: [{name: "x", path: "pose.pose.position.x"},
-                  {name: "y", path: "pose.pose.position.y"},
-                  {name: "vx", path: "twist.twist.linear.x"}]},
-        {topic: "/vehicle/status", role: "state", time: header,
-         fields: [{name: "battery", path: "percentage"}]},
-        {topic: "/vehicle/control", role: "action", decoding: "json_string", time: json_time,
-         fields: [{name: "steering", path: "steering"},
-                  {name: "throttle", path: "throttle"},
-                  {name: "brake", path: "brake"}]}
-      ],
-      events: [
-        {topic: "/mission/status", decoding: "json_string", time: json_time,
-         fields: [{name: "mission_id", path: "mission_id"},
-                  {name: "state", path: "operation_state"}]}
-      ],
-      segmentation: {policy: "event_markers", event_topic: "/mission/status",
-                     key_field: "mission_id", state_field: "state",
-                     start_values: ["running"], end_values: ["completed"]}
-    }'
-}
-
-run_pipeline() { # <type> <version> <run> <build-task> <config> <register-task>
+run_build() { # <type> <version> <run> <build-task> <config> <register-task>
   local type="$1" version="$2" run="$3" build_task="$4" config="$5" register_task="$6"
   local payload run_id
   payload="$(jq -cn --arg type "$type" --arg ds "$DATASET_ID" --arg v "$version" --arg run "$run" \
@@ -267,8 +211,8 @@ upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$VERSION_A" >/dev/null
 upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$VERSION_B" >/dev/null
 for side in A B; do
   if [ "$side" = A ]; then run="$RUN_A"; version="$VERSION_A"; else run="$RUN_B"; version="$VERSION_B"; fi
-  run_pipeline recording_scene_building "$version" "$run" build_recording_scenes "$(scene_config)" register_scenes >/dev/null
-  run_pipeline recording_episode_building "$version" "$run" build_recording_episodes "$(episode_config)" register_episodes >/dev/null
+  run_build recording_scene_building "$version" "$run" build_recording_scenes "$(scene_build_config)" register_scenes >/dev/null
+  run_build recording_episode_building "$version" "$run" build_recording_episodes "$(episode_build_config)" register_episodes >/dev/null
   echo "  ✅  $side ($run): Scenes and Episodes built and registered"
 done
 SCENES_A="$(manifest_uris scenes "$VERSION_A")"; SCENES_B="$(manifest_uris scenes "$VERSION_B")"

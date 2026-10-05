@@ -312,7 +312,7 @@ class TestPipelineOutputs:
 class TestPipelineMetrics:
     def _build(self, task_runs):
         return build_pipeline_result_from_task_runs(
-            pipeline_run=_pipeline_run(PipelineType.DETECTION_EVALUATION),
+            pipeline_run=_pipeline_run(PipelineType.SCENE_ML_EVALUATION),
             task_runs=task_runs,
             status=PipelineRunStatus.SUCCEEDED,
         )
@@ -521,8 +521,8 @@ class TestTaskPreservation:
 # ── detection evaluation pipeline integration ─────────────────────────────────
 
 
-class TestDetectionEvaluationPipelineResult:
-    """Verify the detection_evaluation pipeline result shape end-to-end."""
+class TestSceneMlEvaluationPipelineResult:
+    """Verify the prediction + evaluation tail of the scene_ml_evaluation result shape."""
 
     def test_full_detection_pipeline_result(self) -> None:
         task_runs = [
@@ -576,7 +576,7 @@ class TestDetectionEvaluationPipelineResult:
             ),
         ]
 
-        pipeline_run = _pipeline_run(PipelineType.DETECTION_EVALUATION)
+        pipeline_run = _pipeline_run(PipelineType.SCENE_ML_EVALUATION)
         result = build_pipeline_result_from_task_runs(
             pipeline_run=pipeline_run,
             task_runs=task_runs,

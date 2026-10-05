@@ -4,7 +4,7 @@
 > Like [robot-learning-data.md](./robot-learning-data.md), this is a "what's
 > actually built" document, not aspirational — every claim below was
 > checked against the code and against a real, live run of
-> `make e2e-interop` against Postgres/MinIO, not against the original
+> `make e2e-episode-learning` against Postgres/MinIO, not against the original
 > request planning documents.
 
 ## 1. Purpose
@@ -71,13 +71,10 @@ SceneOps test-e2e-core / test-v1            (DatasetVersion, SceneOps-canonical)
 LeRobot v3                                  (ExternalDatasetRef, export target)
 ```
 
-This is architecturally valid and exercised end-to-end by
-`core`'s own E2E suite (ingestion side) plus the adapter's own tests
-(export side) — but note the *specific, verified round-trip E2E*
-(`make e2e-interop`, §6 below) runs against the separate, deterministic
-`interop` fixture, not a live nuScenes-sourced `core` Episode. See §6 for
-exactly what was proven end-to-end versus what is proven only
-compositionally (each half tested, not yet chained in one E2E).
+This chain is exercised end to end by `make e2e-episode-learning` (§6): a
+recording acquired from nuScenes, canonical Episodes, AlignedEpisodes, a pinned
+learning export, a LeRobot export of that export, and a frame-by-frame
+comparison read back through LeRobot's own reader.
 
 LeRobot's own export-side identity is exposed as an `ExternalDatasetRef`
 too, via `LeRobotDatasetAdapter.dataset_ref`:
@@ -279,110 +276,60 @@ integration — is the durable runtime contract this phase closes on, not a
 placeholder pending a future fix. Phase 4 may containerize it; Phase 4
 does not need to re-decide *whether* to isolate it.
 
-## 6. Interoperability verification (Request 3.4)
+## 6. Interoperability verification
 
-Real, live, end-to-end, run against actual Postgres + MinIO (`make
-local-up`), not mocked:
-
-```text
-persistent "interop" fixture (real Postgres + MinIO ArtifactRecords)
-        |
-        v
-SceneOpsDataset.open(...)                    (real infra, never LocalArtifactStore)
-        |
-        v
-LeRobotDatasetAdapter.export(...)            (tools/lerobot-integration, isolated venv)
-        |
-        v
-real LeRobot v3 dataset on disk
-        |
-        v
-official lerobot.datasets.lerobot_dataset.LeRobotDataset reader
-        |
-        v
-golden semantic comparison (sceneops_analytics.testing.interop_dataset)
-```
-
-Two Python processes/venvs, deliberately, matching §5's isolation
-boundary: `scripts/e2e/e2e_lerobot_resolve.py` runs in the main workspace
-venv (needs `sceneops-db` to query the real `ArtifactRecord`), prints the
-manifest's real `uri`/checksum; `scripts/e2e/e2e_lerobot_export.py` runs
-entirely inside `tools/lerobot-integration`'s isolated venv and does
-everything from opening the real `SceneOpsDataset` onward. Orchestrated by
-`scripts/e2e/e2e_lerobot_roundtrip.sh`, invoked as `make e2e-interop`.
-
-Verified fixture expectations (the deterministic `interop` golden fixture
-— `EPISODE_A_REV1`/`EPISODE_A_REV2`/`EPISODE_B`, Request 3.2):
+The round trip is the last stage of `make e2e-episode-learning`, run on a real
+learning export of canonical Episodes (never a hand-built fixture):
 
 ```text
-3 exported episodes   (both "ep-a" revisions distinct + 1 "ep-b")
-22 total steps        (8 + 8 + 6)
-observation dim = 7   (3-vector + 3-vector + 1-scalar)
-action dim = 4         (3-vector + 1-scalar)
-fps = 10               (10.0 Hz fixed-frequency fixture)
+episode_learning_data_building pipeline      Episodes -> AlignedEpisodes -> pinned export
+        |
+        v
+lerobot_build_request.py  (worker image)     IntegrationRequest: the export manifest's
+        |                                    uri + checksum, the projection, the target
+        v
+lerobot-integration container                no database; ArtifactStore settings from the
+        |                                    environment; operation=EXPORT, format=lerobot
+        v
+real LeRobot v3 dataset at external_ref.uri
+        |
+        v
+lerobot_verify_export.py  (same image)       official lerobot LeRobotDataset reader
 ```
 
-LeRobot's relative per-frame timestamp is validated against
-`step_index / fps` (the fixed-step spacing the fixture itself defines) —
-**never** against SceneOps' absolute `timestamp_us`, which would
-misrepresent a relative, episode-local value as lossless (§5's
-`TIMESTAMPS -> LOSSY_EXPLICIT` classification). The export report's
-`semantic_losses` are checked against the literal `SemanticField`/
-`MappingKind` values from §5's table, not a re-derivation of the
-classification logic.
+The projection is the set of numeric observation and action channels that are
+resolved at every step of every episode (`verify_learning_export.py` derives it
+from the export's `learning_signals` shards), because v1 export is dense numeric
+only (§10). The verification claims:
 
-The exported LeRobot dataset lands at a fixed, test-owned location —
-`data/runs/e2e-lerobot/<repo-id>/` (the script's own `LEROBOT_OUTPUT_DIR`
-default, unchanged by the `e2e-lerobot`→`e2e-interop` Make-target rename
-below — `data/` is entirely gitignored; the
-platform's existing convention for disposable run output, see
-`makefiles/cleanup.mk`'s `clean-artifacts`). Only that one directory is
-ever removed, and only at the start of a run (`LeRobotDataset.create()`
-requires its target not already exist) — never anything broader.
+- the container's `IntegrationResult` names the requested target and canonical
+  dataset, and duplicates nothing as an `ArtifactRef`;
+- its `ExternalExportReport` counts exactly the export's episodes and steps, in
+  the export's canonical `(episode_id, aligned_artifact_checksum)` order;
+- read back with `LeRobotDataset`, `total_episodes`, `len(dataset)` and the
+  `observation.state` / `action` feature shapes equal the export's, and every
+  frame equals the dense window `SceneOpsDataset` reads from the same export for
+  the same projection (float32-rounded), with episode-local `frame_index`.
 
-Failure-path behavior was verified live, not just asserted in code: a
-wrong manifest checksum, a nonexistent manifest URI, and a deliberately
-broken assertion (temporarily forcing an expected episode count to 999)
-all produced a clear, single-line `❌ ...` message and a non-zero exit
-code — never a silent pass.
+LeRobot's relative per-frame timestamp is never compared against SceneOps'
+absolute `timestamp_us`, which would misrepresent a relative, episode-local value
+as lossless (§5's `TIMESTAMPS -> LOSSY_EXPLICIT` classification). A second run
+against the populated target must fail with "already exists", write no result
+and leave the target untouched: the runtime never deletes a caller-owned target.
 
-## 7. Fixture / bootstrap boundary (`sceneops-e2e-v1` catalog)
+The LeRobot dataset lands under `data/runs/e2e-lerobot/<baseline-id>/`
+(gitignored, removed by the journey on exit); only that directory is ever
+removed.
 
-```text
-core       shared Scene/Episode workflows (pipeline-contracts, dataset-
-           ingestion, scenario/episode curation, episode building, ...).
-           Real nuScenes-mini source.
-interop    deterministic interoperability source, built once from hand-
-           written golden AlignedEpisode/AlignedEpisodeArtifact data
-           (sceneops_analytics.testing.interop_dataset, Request 3.2) —
-           not derived from nuScenes ingestion.
-raw-log    intentionally isolated (own DatasetVersion) -- a raw-log-style
-           fixture kept apart from the `core` fixture's aggregate quality
-           readiness.
-```
+## 7. Test fixtures
 
-`make e2e-bootstrap-interop` and `make e2e-interop` are two different,
-composable steps with a clean boundary between them:
-
-```text
-make e2e-bootstrap-interop
-  -> idempotently creates/reuses + independently verifies the interop
-     fixture's LearningDataExportManifest + 3 Parquet tables +
-     ArtifactRecords. A *verified canonical prerequisite* -- never
-     touches LeRobot, never writes anything export-format-specific.
-
-make e2e-interop
-  -> calls the exact same ensure_e2e_fixture("interop", ...) contract
-     internally (no bootstrap logic re-derived), then exercises the
-     *actual external export + official read-back* behavior on top of
-     whatever that call already guaranteed is ready.
-```
-
-Bootstrapping the `interop` fixture never pre-creates any LeRobot output —
-the only thing `_bootstrap_interop`/`ensure_e2e_fixture` ever write is
-SceneOps' own canonical Parquet/manifest state; the LeRobot dataset is
-produced fresh by `make e2e-interop` (or a direct adapter call) every time,
-never cached or pre-seeded by the fixture bootstrap.
+`sceneops_analytics.testing.interop_dataset` is a deterministic, in-memory
+golden learning export (`EPISODE_A_REV1` / `EPISODE_A_REV2` / `EPISODE_B`) built
+from the real Phase-2 contracts and written through the real
+`AnalyticsTableWriter` to a local ArtifactStore. It backs the adapter and
+container-entrypoint unit tests (`make lerobot-test`) with fully known values; it
+is test-support code, never imported by production code, and nothing persists it
+into PostgreSQL or MinIO.
 
 ## 8. Component ownership
 
@@ -391,9 +338,8 @@ never cached or pre-seeded by the fixture bootstrap.
 | `ExternalDatasetRef` | Shared vocabulary for a dataset outside SceneOps' model (import or export) | `sceneops_core.datasets.schemas` |
 | `ExternalDatasetAdapter` / `ExternalDatasetWriter` | Framework-neutral export contract, orchestration, semantic-loss bookkeeping | `sceneops_analytics.external_adapters` |
 | `LeRobotDatasetAdapter` / `LeRobotDatasetWriter` | Concrete LeRobot v3 mapping/writer, fps derivation, semantic classification | `sceneops_analytics.external_adapters.lerobot` (optional, needs `tools/lerobot-integration`) |
-| Interop golden fixture | Deterministic hand-built source data + expected values, shared by unit tests and the persistent E2E bootstrap | `sceneops_analytics.testing.interop_dataset` |
-| Persistent E2E fixture bootstrap | Real Postgres/MinIO create-reuse-verify contract for `core`/`interop`/`raw-log` | `scripts/e2e/e2e_fixture_bootstrap.py` |
-| LeRobot round-trip E2E | Two-process orchestration (resolve in main venv, export+verify in isolated venv) | `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `e2e_lerobot_roundtrip.sh` |
+| Interop golden fixture | Deterministic hand-built source data + expected values for the adapter / entrypoint unit tests | `sceneops_analytics.testing.interop_dataset` |
+| LeRobot round trip | Request built in the worker image, export and read-back in the isolated container image, on a real pinned export | `scripts/e2e/lerobot_{build_request,verify_export}.py`, `compose/lerobot.yaml`, `make e2e-episode-learning` |
 | Isolated LeRobot environment | Its own `pyproject.toml`/`uv.lock`, editable path sources onto the real package code | `tools/lerobot-integration/` |
 
 ## 9. Persisted vs. runtime-only representations
@@ -446,10 +392,8 @@ not correctness failures to fix before closing the phase:
   [External integration runtime](./external-integration-runtime.md) §6 for
   the current, accurate isolation rationale (general SDK/runtime
   isolation, not an active NumPy conflict).
-- `make e2e-interop` is optional and intentionally **not** part of
-  `make e2e-cleanroom`'s core path — it requires the isolated environment
-  (`make lerobot-sync`) as a one-time prerequisite, unlike `e2e-scene`/
-  `e2e-robot-learning`/`e2e-perception`.
+- The LeRobot round trip needs the LeRobot image (`make lerobot-image`); it is
+  part of `make e2e-episode-learning` and therefore of `make e2e-cleanroom`.
 - RLDS is not implemented — `ExternalDatasetAdapter`/`ExternalDatasetWriter`
   are format-neutral and already support a second concrete adapter, but
   none exists yet.
@@ -457,11 +401,6 @@ not correctness failures to fix before closing the phase:
   at the time this document closed (§11) — now done: see
   [External integration runtime](./external-integration-runtime.md) §6
   (`tools/lerobot-integration` packaged as a container, Request 4.2/4.3).
-- The worked identity-model example in §2 (nuScenes -> `core` ->
-  LeRobot) is architecturally valid and each half is independently
-  tested, but no single E2E chains live nuScenes ingestion directly into
-  a LeRobot export today — the verified round-trip (§6) uses the
-  separate, deterministic `interop` fixture instead.
 
 ## 11. Phase 3 close-out and Phase 4 boundary
 
@@ -474,6 +413,8 @@ Phase 3 -- Dataset Interoperability          COMPLETE
   3.2   Deterministic interoperability golden fixture
         (sceneops_analytics.testing.interop_dataset)
   3.2A  E2E fixture catalog v1 (per-workflow derived identities)
+        -- 3.2A-3.2C: fixture catalog and persistent fixture bootstrap, removed
+        by ADR-007 step 11 (the round trip runs on a real export)
   3.2B  E2E fixture catalog v2 (shared core/interop/raw-log identities,
         canonical vs. source identity separation)
   3.2C  Persistent E2E fixture bootstrap (real Postgres/MinIO)
@@ -484,7 +425,7 @@ Phase 3 -- Dataset Interoperability          COMPLETE
   3.3A  Dependency isolation (tools/lerobot-integration, independent
         uv.lock, [tool.uv.conflicts] evaluated and rejected)
   3.4   LeRobot round-trip E2E against real persistent infrastructure
-        (make e2e-interop)
+        (now the LeRobot round trip of make e2e-episode-learning)
   3.5   Architecture/documentation freeze (this document)
 ```
 
@@ -510,8 +451,6 @@ those remain frozen by this document, unchanged.
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
 - Interop golden fixture: `packages/sceneops-analytics/sceneops_analytics/testing/interop_dataset.py`
 - Isolated LeRobot environment: `tools/lerobot-integration/` (`pyproject.toml`, `uv.lock`, `README.md`)
-- Persistent E2E fixture bootstrap: `scripts/e2e/e2e_fixture_bootstrap.py`, `scripts/e2e/bootstrap_e2e_fixtures.py`
-- LeRobot round-trip E2E: `scripts/e2e/e2e_lerobot_resolve.py`, `scripts/e2e/e2e_lerobot_export.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh`
-- E2E fixture catalog (bash side): `scripts/e2e/lib.sh`'s `resolve_e2e_fixture`
-- Makefile targets: `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-lock`/`lerobot-test`/`e2e-interop`), `makefiles/e2e.mk` (`e2e-bootstrap-interop`)
+- LeRobot round trip: `scripts/e2e/e2e_episode_learning.sh`, `scripts/e2e/lerobot_build_request.py`, `scripts/e2e/lerobot_verify_export.py`, `compose/lerobot.yaml`
+- Makefile targets: `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-lock`/`lerobot-test`/`lerobot-image`), `makefiles/e2e.mk` (`e2e-episode-learning`)
 - `ExternalDatasetRef`: `packages/sceneops-core/sceneops_core/datasets/schemas/external.py`

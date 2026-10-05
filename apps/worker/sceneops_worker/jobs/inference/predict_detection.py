@@ -111,7 +111,7 @@ class PredictDetectionJobHandler(
         resolved_model_version = inputs.params.get("model_version") or (
             model.model_version if model else None
         )
-        return {
+        params: JsonDict = {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
@@ -121,6 +121,15 @@ class PredictDetectionJobHandler(
             "model_id": resolved_model_id,
             "model_version": resolved_model_version,
         }
+        # In a pipeline the input is the ScenarioSet revision the upstream
+        # curation stage published, unless the caller pinned views explicitly.
+        if (
+            "scenario_set_id" not in params
+            and "sample_views" not in params
+            and inputs.refs.get("scenario_set_id")
+        ):
+            params["scenario_set_id"] = inputs.refs["scenario_set_id"]
+        return params
 
     def build_initial_record(
         self,

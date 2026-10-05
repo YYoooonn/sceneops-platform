@@ -39,7 +39,6 @@ SCENES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "window_end_timestamp_ns": pl.Int64,
     "observation_count": pl.Int64,
     "keyframe_count": pl.Int64,
-    "annotation_count": pl.Int64,
     "observed_channels": pl.List(pl.Utf8),
 }
 
@@ -68,25 +67,6 @@ KEYFRAMES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "timestamp_ns": pl.Int64,
     "source_clock": pl.Utf8,
     "observation_ids": pl.List(pl.Utf8),
-    "annotation_count": pl.Int64,
-}
-
-ANNOTATIONS_SCHEMA: dict[str, pl.PolarsDataType] = {
-    "dataset_id": pl.Utf8,
-    "dataset_version": pl.Utf8,
-    "scene_id": pl.Utf8,
-    "annotation_id": pl.Utf8,
-    "group_id": pl.Utf8,
-    "timestamp_ns": pl.Int64,
-    "source_clock": pl.Utf8,
-    "category": pl.Utf8,
-    "instance_id": pl.Utf8,
-    "frame_id": pl.Utf8,
-    "center_m": pl.List(pl.Float64),
-    "size_wlh_m": pl.List(pl.Float64),
-    "rotation_wxyz": pl.List(pl.Float64),
-    "velocity_mps": pl.List(pl.Float64),
-    "attributes": pl.List(pl.Utf8),
 }
 
 
@@ -106,7 +86,6 @@ def build_scenes_table(scenes: list[SceneRecord]) -> pl.DataFrame:
             "window_end_timestamp_ns": s.window_end_timestamp_ns,
             "observation_count": s.observation_count,
             "keyframe_count": s.keyframe_count,
-            "annotation_count": s.annotation_count,
             "observed_channels": s.observed_channels,
         }
         for s in scenes
@@ -154,12 +133,6 @@ def build_keyframes_table(
 ) -> pl.DataFrame:
     rows = []
     for scene_id, manifest in manifests:
-        annotations_per_group: dict[str, int] = {}
-        for annotation in manifest.annotations:
-            if annotation.group_id is not None:
-                annotations_per_group[annotation.group_id] = (
-                    annotations_per_group.get(annotation.group_id, 0) + 1
-                )
         rows.extend(
             {
                 "dataset_id": dataset_id,
@@ -169,46 +142,13 @@ def build_keyframes_table(
                 "timestamp_ns": g.timestamp_ns,
                 "source_clock": g.source_clock,
                 "observation_ids": list(g.observation_ids),
-                "annotation_count": annotations_per_group.get(g.group_id, 0),
             }
             for g in manifest.keyframes()
         )
     return pl.DataFrame(rows, schema=KEYFRAMES_SCHEMA)
 
 
-def build_annotations_table(
-    *,
-    dataset_id: str,
-    dataset_version: str,
-    manifests: SceneManifests,
-) -> pl.DataFrame:
-    rows = [
-        {
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-            "scene_id": scene_id,
-            "annotation_id": a.annotation_id,
-            "group_id": a.group_id,
-            "timestamp_ns": a.timestamp_ns,
-            "source_clock": a.source_clock,
-            "category": a.category,
-            "instance_id": a.instance_id,
-            "frame_id": a.box.frame_id,
-            "center_m": list(a.box.center_m),
-            "size_wlh_m": list(a.box.size_wlh_m),
-            "rotation_wxyz": list(a.box.rotation_wxyz),
-            "velocity_mps": list(a.box.velocity_mps)
-            if a.box.velocity_mps is not None
-            else None,
-            "attributes": list(a.attributes),
-        }
-        for scene_id, manifest in manifests
-        for a in manifest.annotations
-    ]
-    return pl.DataFrame(rows, schema=ANNOTATIONS_SCHEMA)
-
-
-TABLE_BUILDERS = ("scenes", "observations", "keyframes", "annotations")
+TABLE_BUILDERS = ("scenes", "observations", "keyframes")
 
 
 # ── Robot analytics tables (roadmap §7.4: robot_telemetry.parquet, missions.parquet) ──

@@ -65,17 +65,19 @@ class ArtifactSettings(StorageSettings):
         return join_uri(self.root_uri, self.analytics_prefix)
 
 
-class RawSourceSettings(StorageSettings):
-    """Configuration for the read-only raw dataset source.
+class InputSourceSettings(StorageSettings):
+    """Configuration for the read-only external input area (label documents,
+    caller-supplied files).
 
-    Separate from ArtifactSettings so that raw input data and generated
-    artifacts can be configured, rooted, and backed independently.
+    Separate from ArtifactSettings so that external input data and generated
+    artifacts can be configured, rooted, and backed independently. Absolute
+    input URIs are used as given; the root only anchors relative ones.
 
-    Local:         /data/raw/nuscenes
-    Object storage: s3://sceneops/raw/nuscenes
+    Local:         /data/raw
+    Object storage: s3://sceneops/raw
     """
 
-    root_uri: str = "/data/raw/nuscenes"
+    root_uri: str = "/data/raw"
 
 
 class WorkerRuntimeSettings(BaseModel):
@@ -104,8 +106,8 @@ class AirflowSettings(BaseModel):
     username: str | None = None
     password: str | None = None
 
-    pipeline_dag_id: str = "sceneops_pipeline_run"
-    job_dag_id: str = "sceneops_job_run"
+    # Pipeline DAGs are named ``<prefix>_<pipeline type>``.
+    pipeline_dag_prefix: str = "sceneops"
 
 
 class ExecutionSettings(BaseModel):

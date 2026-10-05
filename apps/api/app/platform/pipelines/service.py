@@ -50,18 +50,8 @@ class PipelineService:
 
     # --- definitions (no DB) ---
 
-    def list_pipeline_definitions(
-        self,
-        *,
-        include_experimental: bool = False,
-    ) -> list[PipelineDefinition]:
-        return [
-            d
-            for d in BUILTIN_PIPELINE_DEFINITIONS
-            if d.supported
-            and d.implemented
-            and (include_experimental or not d.experimental)
-        ]
+    def list_pipeline_definitions(self) -> list[PipelineDefinition]:
+        return list(BUILTIN_PIPELINE_DEFINITIONS)
 
     def get_pipeline_definition(
         self, pipeline_type: PipelineType
@@ -79,12 +69,6 @@ class PipelineService:
     ) -> PipelineRunDetailResponse:
         now = utc_now()
         definition = get_pipeline_definition(request.type)
-
-        if not definition.supported or not definition.implemented:
-            raise ValueError(
-                f"Pipeline '{request.type}' is not currently supported because it "
-                "contains unimplemented tasks."
-            )
 
         dataset_id = request.dataset_id
         dataset_version = request.dataset_version

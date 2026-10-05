@@ -184,8 +184,15 @@ def _config_dict(target_frequency_hz: float = 1.0) -> dict:
     )
 
 
-def _request(**params_overrides) -> CreateJobRequest:
-    params = {"episode_id": EPISODE_ID, "alignment_config": _config_dict()}
+def _request(
+    *, source_artifact_id=None, source_manifest_sha256=None, **params_overrides
+) -> CreateJobRequest:
+    item = {"episode_id": EPISODE_ID}
+    if source_artifact_id is not None:
+        item["source_artifact_id"] = source_artifact_id
+    if source_manifest_sha256 is not None:
+        item["source_manifest_sha256"] = source_manifest_sha256
+    params = {"episodes": [item], "alignment_config": _config_dict()}
     params.update(params_overrides)
     return CreateJobRequest(
         type=JobType.ALIGN_EPISODE,
@@ -212,8 +219,8 @@ class TestChangedSourceRevision:
 
         assert job_a.job_id != job_b.job_id
         assert job_a.execution_key != job_b.execution_key
-        assert job_a.params["source_manifest_sha256"] == "a" * 64
-        assert job_b.params["source_manifest_sha256"] == "b" * 64
+        assert job_a.params["episodes"][0]["source_manifest_sha256"] == "a" * 64
+        assert job_b.params["episodes"][0]["source_manifest_sha256"] == "b" * 64
 
 
 class TestIdenticalContentRebuild:
@@ -238,7 +245,7 @@ class TestIdenticalContentRebuild:
         # only on the request that actually created a job -- job_2 here is
         # the reused job_1, so provenance naturally still points at art-A,
         # which is correct: nothing new was created.
-        assert job_1.params["source_artifact_id"] == "art-A"
+        assert job_1.params["episodes"][0]["source_artifact_id"] == "art-A"
 
 
 class TestConfigChange:
@@ -270,8 +277,9 @@ class TestSemanticsVersionChange:
 
         def key(semantics_version: str) -> str:
             params = {
-                "episode_id": EPISODE_ID,
-                "source_manifest_sha256": "a" * 64,
+                "episodes": [
+                    {"episode_id": EPISODE_ID, "source_manifest_sha256": "a" * 64}
+                ],
                 "alignment_semantics_version": semantics_version,
                 "alignment_config": _config_dict(),
             }
@@ -299,8 +307,8 @@ class TestPinnedRevision:
             _request(source_artifact_id="art-old", source_manifest_sha256="o" * 64)
         )
 
-        assert job.params["source_artifact_id"] == "art-old"
-        assert job.params["source_manifest_sha256"] == "o" * 64
+        assert job.params["episodes"][0]["source_artifact_id"] == "art-old"
+        assert job.params["episodes"][0]["source_manifest_sha256"] == "o" * 64
 
     @pytest.mark.asyncio
     async def test_pinned_old_revision_and_unpinned_current_are_different_executions(
@@ -316,7 +324,7 @@ class TestPinnedRevision:
         unpinned = await service.create_job(_request())
 
         assert pinned.job_id != unpinned.job_id
-        assert unpinned.params["source_artifact_id"] == "art-new"
+        assert unpinned.params["episodes"][0]["source_artifact_id"] == "art-new"
 
 
 class TestCurrentSourceSelection:
@@ -334,8 +342,8 @@ class TestCurrentSourceSelection:
 
         job = await service.create_job(_request())
 
-        assert job.params["source_artifact_id"] == "art-2"
-        assert job.params["source_manifest_sha256"] == "2" * 64
+        assert job.params["episodes"][0]["source_artifact_id"] == "art-2"
+        assert job.params["episodes"][0]["source_manifest_sha256"] == "2" * 64
 
 
 class TestUnresolvableSource:
@@ -360,7 +368,7 @@ class TestUnresolvableSource:
         job = await service.create_job(
             _request(source_artifact_id="art-known", source_manifest_sha256="z" * 64)
         )
-        assert job.params["source_artifact_id"] == "art-known"
+        assert job.params["episodes"][0]["source_artifact_id"] == "art-known"
 
 
 class TestUnrelatedJobTypeRegression:
@@ -434,3 +442,62 @@ class TestAcceptanceTable:
             _request(alignment_config=_config_dict(1.0))
         )
         assert reuse_k2.job_id == k2.job_id
+
+
+class TestSeveralEpisodes:
+    """One job aligns several Episodes; each unpinned Episode is pinned to its
+    own current revision, and the order the caller names them in is not part
+    of the execution identity."""
+
+    @pytest.mark.asyncio
+    async def test_each_episode_is_pinned_to_its_own_current_revision(self) -> None:
+        service, _, artifacts = _service()
+        artifacts.add(
+            artifact_id="art-1", checksum="sha256:" + "1" * 64, episode_id="ep-1"
+        )
+        artifacts.add(
+            artifact_id="art-2", checksum="sha256:" + "2" * 64, episode_id="ep-2"
+        )
+
+        job = await service.create_job(
+            _request(
+                episodes=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}],
+            )
+        )
+
+        assert [
+            (e["episode_id"], e["source_artifact_id"], e["source_manifest_sha256"])
+            for e in job.params["episodes"]
+        ] == [("ep-1", "art-1", "1" * 64), ("ep-2", "art-2", "2" * 64)]
+
+    @pytest.mark.asyncio
+    async def test_episode_order_is_not_part_of_the_execution_identity(self) -> None:
+        service, _, artifacts = _service()
+        for n in ("1", "2"):
+            artifacts.add(
+                artifact_id=f"art-{n}",
+                checksum="sha256:" + n * 64,
+                episode_id=f"ep-{n}",
+            )
+
+        forward = await service.create_job(
+            _request(episodes=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}])
+        )
+        reverse = await service.create_job(
+            _request(episodes=[{"episode_id": "ep-2"}, {"episode_id": "ep-1"}])
+        )
+
+        assert forward.job_id == reverse.job_id
+
+    @pytest.mark.asyncio
+    async def test_one_unregistered_episode_fails_the_whole_request(self) -> None:
+        service, job_repo, artifacts = _service()
+        artifacts.add(
+            artifact_id="art-1", checksum="sha256:" + "1" * 64, episode_id="ep-1"
+        )
+
+        with pytest.raises(ValueError, match="'ep-9' is not registered"):
+            await service.create_job(
+                _request(episodes=[{"episode_id": "ep-1"}, {"episode_id": "ep-9"}])
+            )
+        assert job_repo.jobs == {}

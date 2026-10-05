@@ -9,7 +9,7 @@ from sceneops_core.config import (
     ArtifactBackend,
     ArtifactSettings,
     ExecutionSettings,
-    RawSourceSettings,
+    InputSourceSettings,
     WorkerRuntimeSettings,
 )
 
@@ -27,7 +27,7 @@ class WorkerSettings(BaseSettings):
     )
 
     artifact: ArtifactSettings = Field(default_factory=ArtifactSettings)
-    raw_source: RawSourceSettings = Field(default_factory=RawSourceSettings)
+    input_source: InputSourceSettings = Field(default_factory=InputSourceSettings)
     runtime: WorkerRuntimeSettings = Field(
         default_factory=WorkerRuntimeSettings,
     )
@@ -66,10 +66,6 @@ class WorkerSettings(BaseSettings):
     @property
     def analytics_root_uri(self) -> str:
         return self.artifact.analytics_root_uri
-
-    @property
-    def raw_source_root_uri(self) -> str:
-        return self.raw_source.root_uri
 
     @property
     def worker_id(self) -> str:

@@ -177,13 +177,18 @@ class MineScenariosJobHandler(
         return MineScenariosJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> dict:
-        return {
+        params: dict = {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
             else None,
             **inputs.params,
         }
+        # In a pipeline the views are the pinned revisions the upstream
+        # build_scene_sample_views stage published.
+        if "sample_views" not in params and inputs.refs.get("views"):
+            params["sample_views"] = inputs.refs["views"]
+        return params
 
     def build_initial_record(
         self,

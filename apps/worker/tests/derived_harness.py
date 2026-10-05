@@ -180,7 +180,7 @@ class Harness:
 
     root: str
     artifact_store: LocalArtifactStore
-    raw_source_store: LocalArtifactStore
+    input_store: LocalArtifactStore
     derived_store: DerivedManifestStore
     run_artifact_store: RunArtifactStore
     scene_artifact_store: SceneArtifactStore
@@ -238,7 +238,6 @@ class Harness:
         **manifest_kwargs: Any,
     ) -> SceneRecord:
         if manifest is None:
-            manifest_kwargs.setdefault("annotations_per_keyframe", 0)
             # Payload ids are scoped to the RobotRun, as in production.
             manifest_kwargs.setdefault("payload_namespace", f"art-{robot_run_id}")
             manifest = build_scene_manifest(
@@ -345,7 +344,7 @@ def make_harness(tmp_path) -> Harness:
     return Harness(
         root=root,
         artifact_store=store,
-        raw_source_store=store,
+        input_store=store,
         derived_store=DerivedManifestStore(
             artifact_store=store,
             dataset_root_uri=f"{root}/datasets",

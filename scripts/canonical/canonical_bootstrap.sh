@@ -1,382 +1,99 @@
 #!/usr/bin/env bash
-# canonical_bootstrap.sh
+# canonical_bootstrap.sh — developer/test orchestration (not a Pipeline) that
+# builds the reproducible L1/L2 baseline on a fresh or existing stack:
 #
-# create-or-verify materialization of the frozen v0.0 canonical baseline
-# family (see docs/development/canonical-baseline.md and
-# config/baselines/canonical-v0.0.yaml, the single authoritative spec this
-# script reads):
+#   dataset fixture (nuScenes mini, read-only)
+#     -> dataset-acquisition container      finalized sensor-bearing MCAP
+#     -> recording-publisher container      L1 conformance + publication
+#     -> POST /robot-runs:register          RobotRun
+#     -> recording_scene_building           canonical Scenes, validated, profiled
+#     -> recording_episode_building         canonical Episodes, validated, profiled
+#     -> baseline_verify                    read-only check through the API
 #
-#   sceneops-scenes/v0.0      (10 Scenes,   0 Episodes)
-#   sceneops-episodes/v0.0    (0 Scenes,   10 Episodes)
-#   sceneops-canonical/v0.0   (10 Scenes,  10 Episodes)  -- default dev baseline
+# It builds nothing derived: no labels, sample views, ScenarioSets,
+# predictions, evaluations or learning exports. Those are L3 workflows
+# (make e2e-scene-ml / e2e-episode-learning) that run on top of a baseline.
 #
-# Reuses the SAME real pipelines/jobs scripts/e2e/e2e_scene.sh and
-# scripts/e2e/e2e_robot_learning.sh already exercise (dataset_scene_ingestion,
-# raw_log_episode_building, align_episode, profile/validate_aligned_episode,
-# export_learning_data v2-sharded, curate_episodes) — nothing here writes
-# Postgres/MinIO state directly. Never touches the test-e2e-* identities
-# those scripts own.
+# create-or-verify: a RobotRun that is already registered is reused (not
+# re-acquired); a Scene / Episode build over an unchanged scope converges on
+# the registered revisions; a changed producer or configuration fails loudly at
+# registration instead of replacing canonical membership. Recovery from a
+# mismatched baseline is an explicit `make local-reset` + rebuild.
 #
-# ── create-or-verify contract (never silently repairs) ──────────────────────
-#   all three baselines absent               -> CREATE all three, then verify
-#   all three baselines present and matching -> verify only, exit 0, no mutation
-#   anything else (partial / mismatched)     -> FAIL loudly; recovery requires
-#                                                an explicit reset+rebuild
-#                                                (FORCE=1 make local-reset &&
-#                                                 make canonical-bootstrap)
+# Identity (all overridable): BASELINE_ID (default `canonical`) names the
+# robot, the RobotRuns (run-<BASELINE_ID>-<unit>) and the DatasetVersion
+# (sceneops-<BASELINE_ID>/baseline). The journeys that mutate their scope use a
+# unique BASELINE_ID per run; the default baseline is the persistent one.
 #
-# ── physical artifact reuse ──────────────────────────────────────────────────
-# Each of the 10 scenes' real CAN replay -> MCAP recording happens exactly
-# ONCE per bootstrap run (fresh every CREATE, via `rm -rf` + real ROS2
-# replay — same as e2e_robot_learning.sh) and is reused by reference
-# (robot_run_id) to build Episodes into BOTH sceneops-episodes/v0.0 and
-# sceneops-canonical/v0.0 — build_episodes resolves episodes purely from the
-# RobotRun's recording and the pipeline's own dataset_id/dataset_version, so
-# reusing one RobotRun for two independent dataset-scoped Episode builds is
-# already-safe existing behavior, not new architecture (see
-# apps/worker/sceneops_worker/jobs/dataset/build_episodes.py). The RobotRun
-# is created by the Recording Publisher + REGISTER_ROBOT_RUN (lib.sh's
-# publish_and_register_robot_run), and the one RobotRun per scene is
-# exactly what both build_episodes_for() calls below resolve through. Scene
-# ingestion (Postgres SceneRecord + ArtifactStore SceneManifest) is NOT
-# deduplicated between sceneops-scenes/v0.0 and sceneops-canonical/v0.0 --
-# doing so would require new cross-dataset ArtifactRecord ownership
-# semantics, which this task does not introduce. Independent canonical
-# identity always wins over storage deduplication.
+# stdout: one JSON summary (baseline_verify). Progress goes to stderr, so
+#   BASELINE="$(scripts/canonical/canonical_bootstrap.sh)"
+# captures the summary.
 #
-# Usage:
-#   make canonical-bootstrap
-#   bash scripts/canonical/canonical_bootstrap.sh
-#
-# Env overrides:
-#   API_BASE_URL     (default: http://localhost:8000)
-#   API_PREFIX       (default: /api/v1)
-#   POLL_TIMEOUT     max poll attempts, 5s each (default: 60 = 5 min)
+# Prerequisites: `make local-up`; `make acquisition-image`; data/raw/nuscenes
+# with v1.0-mini and can_bus (ACQUISITION_NUSCENES_ROOT overrides).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../e2e/lib.sh"
-unavailable_until canonical-bootstrap 11 \
-  "the frozen v0.0 baseline was built by the removed dataset_scene_ingestion pipeline and is regenerated from recordings in step 11"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
 source "$REPO_ROOT/scripts/e2e/lib.sh"
-source "$SCRIPT_DIR/canonical_contract.sh"
+source "$SCRIPT_DIR/baseline_lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-API_PREFIX="${API_PREFIX:-/api/v1}"
-POLL_TIMEOUT="${POLL_TIMEOUT:-60}"
-COMPOSE="docker compose -f $REPO_ROOT/compose.yaml"
 
-echo "=== canonical-bootstrap: v0.0 baseline family (create-or-verify) ==="
-load_baseline_spec
-echo "  baseline_version=$BASELINE_VERSION"
-echo "  scenes ($( IFS=,; echo "${BASELINE_SCENES[*]}" ))"
-echo "  $SCENES_DATASET_ID/$SCENES_DATASET_VERSION  $EPISODES_DATASET_ID/$EPISODES_DATASET_VERSION  $CANONICAL_DATASET_ID/$CANONICAL_DATASET_VERSION"
-echo ""
+log() { echo "$@" >&2; }
 
-# ── 1. Decide: create, verify-only, or fail on partial state ────────────────
+# build_scope <pipeline-type> <build-task> <register-task> <profile-task> <config>
+# One pipeline run over one RobotRun's recording scope.
+build_scope() {
+  local type="$1" build_task="$2" register_task="$3" profile_task="$4" run_id="$5" config="$6"
+  local params pipeline
+  params="$(jq -cn --arg b "$build_task" --arg r "$register_task" --arg p "$profile_task" \
+    --arg run "$run_id" --argjson config "$config" '{
+      ($b): {robot_run_id: $run, build_config: $config},
+      ($r): {replace: false},
+      ($p): {triggered: true}}')"
+  pipeline="$(run_pipeline "$API_BASE_URL" "$type" "$DATASET_ID" "$DATASET_VERSION" "$params")"
+  assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$pipeline")" \
+    "$type for $run_id should succeed" "$API_BASE_URL" "$pipeline" >&2
+  log "  ✅  $type ($run_id): $pipeline"
+}
 
-echo "--- 1. Contract presence check ---"
-STATUS_SCENES="$(contract_status "$SCENES_DATASET_ID" "$SCENES_DATASET_VERSION" "$SCENES_EXPECTED_SCENE_COUNT" "$SCENES_EXPECTED_EPISODE_COUNT")"
-STATUS_EPISODES="$(contract_status "$EPISODES_DATASET_ID" "$EPISODES_DATASET_VERSION" "$EPISODES_EXPECTED_SCENE_COUNT" "$EPISODES_EXPECTED_EPISODE_COUNT")"
-STATUS_CANONICAL="$(contract_status "$CANONICAL_DATASET_ID" "$CANONICAL_DATASET_VERSION" "$CANONICAL_EXPECTED_SCENE_COUNT" "$CANONICAL_EXPECTED_EPISODE_COUNT")"
-echo "  $SCENES_DATASET_ID/$SCENES_DATASET_VERSION: $STATUS_SCENES"
-echo "  $EPISODES_DATASET_ID/$EPISODES_DATASET_VERSION: $STATUS_EPISODES"
-echo "  $CANONICAL_DATASET_ID/$CANONICAL_DATASET_VERSION: $STATUS_CANONICAL"
-echo ""
+log "=== canonical baseline '$BASELINE_ID': $DATASET_ID/$DATASET_VERSION from $SOURCE_UNITS ==="
+require_api "$API_BASE_URL"
 
-ALL_ABSENT=1
-ALL_MATCH=1
-for status in "$STATUS_SCENES" "$STATUS_EPISODES" "$STATUS_CANONICAL"; do
-  [ "$status" = "absent" ] || ALL_ABSENT=0
-  [ "$status" = "matches" ] || ALL_MATCH=0
+for unit in $SOURCE_UNITS; do
+  run_id="$(baseline_run_id "$unit")"
+  if api_get "$API_BASE_URL" "/robot-runs/$run_id" >/dev/null 2>&1; then
+    log "--- RobotRun $run_id is registered: reused"
+    continue
+  fi
+  log "--- $unit -> acquisition container -> MCAP -> L1 conformance -> publish -> register"
+  trap 'remove_recording "$run_id"' EXIT
+  summary="$(acquire_recording "$SOURCE_VERSION" "$unit" "$run_id")"
+  log "  $(echo "$summary" | jq -c '{sha256, size_bytes, message_count}')"
+  check_recording "$run_id" || fail "recording of $unit is not L1-conformant"
+  publication="$(publish_recording "$run_id" "$ROBOT_ID" file)"
+  registration="$(register_robot_run "$API_BASE_URL" "$(echo "$publication" | jq -r '.manifest_uri')")"
+  assert_job_succeeded "$registration" "REGISTER_ROBOT_RUN for $run_id should succeed" >&2
+  remove_recording "$run_id"
+  trap - EXIT
+  log "  ✅  RobotRun $run_id registered"
 done
 
-if [ "$ALL_MATCH" = "1" ]; then
-  echo "=== All three baselines already exist and match the v0.0 contract. ==="
-  echo "    Verifying (read-only, no mutation) ..."
-  echo ""
-  if ! verify_full_contract; then
-    echo "❌ canonical-bootstrap: existing baseline family failed deep verification (corrupted/partial state)." >&2
-    echo "   Not auto-repaired. Recover via: FORCE=1 make local-reset && make canonical-bootstrap" >&2
-    exit 1
-  fi
-  echo ""
-  echo "=== canonical-bootstrap: no-op (already verified) ==="
-  exit 0
-fi
+upsert_dataset "$API_BASE_URL" "$DATASET_ID" "Canonical baseline $BASELINE_ID" >/dev/null
+upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" >/dev/null
 
-if [ "$ALL_ABSENT" != "1" ]; then
-  echo "❌ canonical-bootstrap: baseline family is in a partial/mismatched state:" >&2
-  echo "   $SCENES_DATASET_ID/$SCENES_DATASET_VERSION: $STATUS_SCENES" >&2
-  echo "   $EPISODES_DATASET_ID/$EPISODES_DATASET_VERSION: $STATUS_EPISODES" >&2
-  echo "   $CANONICAL_DATASET_ID/$CANONICAL_DATASET_VERSION: $STATUS_CANONICAL" >&2
-  echo "   Refusing to silently repair or partially create. Recover via:" >&2
-  echo "     FORCE=1 make local-reset && make canonical-bootstrap" >&2
-  exit 1
-fi
-
-echo "=== All three baselines absent — creating v0.0 baseline family ==="
-echo ""
-
-# ── 2. Upsert the three DatasetVersions up front ─────────────────────────────
-
-echo "--- 2. Upsert Dataset/DatasetVersion (all three) ---"
-upsert_dataset "$API_BASE_URL" "$SCENES_DATASET_ID" "SceneOps canonical baseline (Scene-only)" >/dev/null
-upsert_dataset_version "$API_BASE_URL" "$SCENES_DATASET_ID" "$SCENES_DATASET_VERSION" "$SOURCE_ROOT_URI" >/dev/null
-upsert_dataset "$API_BASE_URL" "$EPISODES_DATASET_ID" "SceneOps canonical baseline (Episode-only)" >/dev/null
-upsert_dataset_version "$API_BASE_URL" "$EPISODES_DATASET_ID" "$EPISODES_DATASET_VERSION" >/dev/null
-upsert_dataset "$API_BASE_URL" "$CANONICAL_DATASET_ID" "SceneOps canonical baseline (combined)" >/dev/null
-upsert_dataset_version "$API_BASE_URL" "$CANONICAL_DATASET_ID" "$CANONICAL_DATASET_VERSION" "$SOURCE_ROOT_URI" >/dev/null
-echo "  OK"
-echo ""
-
-# ── 3. Scene domain: dataset_scene_ingestion for scenes + canonical ─────────
-
-SCENE_IDS_JSON="$(printf '%s\n' "${BASELINE_SCENES[@]}" | jq -R . | jq -s .)"
-
-run_scene_ingestion() {
-  local dataset_id="$1" version="$2"
-  echo "--- Scene ingestion: $dataset_id/$version (${#BASELINE_SCENES[@]} scenes) ---"
-
-  local payload
-  payload="$(jq -n \
-    --arg d "$dataset_id" --arg v "$version" \
-    --arg fmt "$SOURCE_FORMAT" --arg root "$SOURCE_ROOT_URI" --arg fv "$SOURCE_FORMAT_VERSION" \
-    --argjson scene_ids "$SCENE_IDS_JSON" \
-    '{
-      type: "dataset_scene_ingestion",
-      dataset_id: $d,
-      dataset_version: $v,
-      force: true,
-      params: {
-        ingest_scenes: {
-          source_format: $fmt,
-          source_root_uri: $root,
-          source_format_version: $fv,
-          source_scene_ids: $scene_ids,
-          mode: "upsert"
-        },
-        register_scene: {replace_existing: true},
-        validate_scene: {require_target_channels: ["CAM_FRONT", "LIDAR_TOP"]},
-        profile_scene: {profile_samples: true, profile_assets: true},
-        build_scene_index: {},
-        build_dataset_manifest: {}
-      }
-    }')"
-
-  local create_resp pipeline_run_id pipeline_json
-  create_resp="$(create_pipeline_run "$API_BASE_URL" "$payload")"
-  pipeline_run_id="$(extract_pipeline_run_id "$create_resp")"
-  dispatch_pipeline_run "$API_BASE_URL" "$pipeline_run_id" >/dev/null
-  pipeline_json="$(poll_pipeline_terminal "$API_BASE_URL" "$pipeline_run_id" "$POLL_TIMEOUT" 5)"
-  assert_pipeline_succeeded "$pipeline_json" "dataset_scene_ingestion should succeed for $dataset_id/$version" "$API_BASE_URL" "$pipeline_run_id"
-  echo "  OK — pipeline_run_id=$pipeline_run_id"
-  echo ""
-}
-
-run_scene_ingestion "$SCENES_DATASET_ID" "$SCENES_DATASET_VERSION"
-run_scene_ingestion "$CANONICAL_DATASET_ID" "$CANONICAL_DATASET_VERSION"
-
-# ── 4. Episode domain: CAN replay -> MCAP (once per scene) -> build_episodes ─
-#      into BOTH sceneops-episodes/v0.0 and sceneops-canonical/v0.0 ──────────
-
-echo "--- Build ROS2 sandbox image ---"
-$COMPOSE --profile ros2 build ros2 >/dev/null
-echo "  OK"
-echo ""
-
-upsert_robot "$API_BASE_URL" "$ROBOT_ID" "$ROBOT_PLATFORM" >/dev/null
-
-declare -a EPISODES_EPISODE_IDS=()
-declare -a CANONICAL_EPISODE_IDS=()
-
-build_episodes_for() {
-  local dataset_id="$1" version="$2" robot_run_id="$3"
-  local payload create_resp pipeline_run_id pipeline_json tasks_json build_task episode_ids_json episode_count
-  payload="$(cat <<JSON
-{
-  "type": "raw_log_episode_building",
-  "dataset_id": "$dataset_id",
-  "dataset_version": "$version",
-  "force": true,
-  "params": {
-    "build_episodes": {
-      "robot_run_id": "$robot_run_id",
-      "segmentation": {"strategy": "mission_boundary"}
-    },
-    "register_episode": {"replace_existing": true},
-    "profile_episode": {"triggered": true}
-  }
-}
-JSON
-)"
-  create_resp="$(create_pipeline_run "$API_BASE_URL" "$payload")"
-  pipeline_run_id="$(extract_pipeline_run_id "$create_resp")"
-  dispatch_pipeline_run "$API_BASE_URL" "$pipeline_run_id" >/dev/null
-  pipeline_json="$(poll_pipeline_terminal "$API_BASE_URL" "$pipeline_run_id" "$POLL_TIMEOUT" 5)"
-  assert_pipeline_succeeded "$pipeline_json" "raw_log_episode_building should succeed for $dataset_id/$version" "$API_BASE_URL" "$pipeline_run_id"
-
-  tasks_json="$(fetch_pipeline_tasks "$API_BASE_URL" "$pipeline_run_id")"
-  build_task="$(echo "$tasks_json" | jq '.tasks[] | select(.pipelineTaskId == "build_episodes")')"
-  episode_ids_json="$(echo "$build_task" | jq -c '.result.rawResult.episode_ids')"
-  episode_count="$(echo "$episode_ids_json" | jq 'length')"
-  if [ "${episode_count:-0}" -lt 1 ]; then
-    echo "❌ build_episodes produced 0 episodes for $dataset_id/$version (robot_run_id=$robot_run_id)" >&2
-    exit 1
-  fi
-  echo "$episode_ids_json"
-}
-
-for SCENE_NAME in "${BASELINE_SCENES[@]}"; do
-  echo "=== Scene: $SCENE_NAME ==="
-
-  RUN_ID="run-${SCENE_NAME}-canonical-${BASELINE_VERSION}"
-  BAG_DIR="/data/raw/rosbag/${SCENE_NAME}"
-  MCAP_URI="${BAG_DIR}/${SCENE_NAME}_0.mcap"
-
-  echo "--- Record CAN replay (ros2 Docker sandbox) — fresh MCAP, once per scene ---"
-  rm -rf "${REPO_ROOT}${BAG_DIR}"
-  $COMPOSE --profile ros2 run --rm ros2 sh -c " \
-    timeout $RECORD_DURATION ros2 bag record -o $BAG_DIR --storage mcap \
-      /vehicle/odom /vehicle/imu /vehicle/status /vehicle/control /mission/status & \
-    sleep 2; \
-    python3 /workspace/nodes/can_replay_node.py --scene $SCENE_NAME --rate $REPLAY_RATE; \
-    wait \
-  "
-  require_mcap_file "$REPO_ROOT" "$MCAP_URI"
-  echo "  bag=${MCAP_URI}  OK"
-
-  echo "--- Register RobotRun (artifact-backed; shared physical recording, reused by both Episode-bearing baselines) ---"
-  publish_and_register_robot_run "$REPO_ROOT" "$API_BASE_URL" \
-    "$ROBOT_ID" "$RUN_ID" "$MCAP_URI" ros2_bag "$ROBOT_PLATFORM" >/dev/null
-  echo "  run_id=$RUN_ID"
-
-  echo "--- build_episodes -> $EPISODES_DATASET_ID/$EPISODES_DATASET_VERSION ---"
-  SCENE_EPISODES_EPISODE_IDS_JSON="$(build_episodes_for "$EPISODES_DATASET_ID" "$EPISODES_DATASET_VERSION" "$RUN_ID")"
-  while read -r one_id; do EPISODES_EPISODE_IDS+=("$one_id"); done < <(echo "$SCENE_EPISODES_EPISODE_IDS_JSON" | jq -r '.[]')
-
-  echo "--- build_episodes -> $CANONICAL_DATASET_ID/$CANONICAL_DATASET_VERSION (reuses same RobotRun/MCAP) ---"
-  SCENE_CANONICAL_EPISODE_IDS_JSON="$(build_episodes_for "$CANONICAL_DATASET_ID" "$CANONICAL_DATASET_VERSION" "$RUN_ID")"
-  while read -r one_id; do CANONICAL_EPISODE_IDS+=("$one_id"); done < <(echo "$SCENE_CANONICAL_EPISODE_IDS_JSON" | jq -r '.[]')
-
-  echo "  OK"
-  echo ""
+for unit in $SOURCE_UNITS; do
+  run_id="$(baseline_run_id "$unit")"
+  log "--- canonical Scenes and Episodes of $run_id"
+  build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
+    "$run_id" "$(scene_build_config)"
+  build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
+    "$run_id" "$(episode_build_config)"
 done
 
-echo "=== All scenes built: ${#EPISODES_EPISODE_IDS[@]} episode(s) in $EPISODES_DATASET_ID, ${#CANONICAL_EPISODE_IDS[@]} in $CANONICAL_DATASET_ID ==="
-echo ""
-
-# ── 5. Align/profile/validate + export_learning_data (v2-sharded) + curate ──
-
-align_profile_validate_export_curate() {
-  local dataset_id="$1" version="$2"
-  shift 2
-  local episode_ids=("$@")
-  local episode_id align_payload align_create_resp align_job_id align_job_json aligned_artifact_id
-  local stage_payload stage_create_resp stage_job_id stage_job_json
-  local export_inputs=()
-
-  for episode_id in "${episode_ids[@]}"; do
-    echo "--- align/profile/validate $episode_id ($dataset_id/$version) ---"
-    align_payload="$(cat <<JSON
-{
-  "type": "align_episode",
-  "dataset_id": "$dataset_id",
-  "dataset_version": "$version",
-  "force": true,
-  "params": {
-    "episode_id": "$episode_id",
-    "alignment_config": {
-      "target_frequency_hz": $ALIGN_FREQUENCY_HZ,
-      "tolerance_us": 200000,
-      "max_gap_us": 2000000
-    },
-    "source_context": {"source_clock": "mcap_log_time"}
-  }
-}
-JSON
-)"
-    align_create_resp="$(create_job "$API_BASE_URL" "$align_payload")"
-    align_job_id="$(extract_job_id "$align_create_resp")"
-    execute_job "$API_BASE_URL" "$align_job_id" >/dev/null
-    align_job_json="$(poll_job_terminal "$API_BASE_URL" "$align_job_id" "$POLL_TIMEOUT" 3)"
-    assert_job_succeeded "$align_job_json" "align_episode should succeed for $episode_id"
-    aligned_artifact_id="$(echo "$align_job_json" | jq -r '.job.result.aligned_artifact_id')"
-
-    for job_type in profile_aligned_episode validate_aligned_episode; do
-      stage_payload="$(cat <<JSON
-{
-  "type": "$job_type",
-  "dataset_id": "$dataset_id",
-  "dataset_version": "$version",
-  "force": true,
-  "params": {"episode_id": "$episode_id", "aligned_artifact_id": "$aligned_artifact_id"}
-}
-JSON
-)"
-      stage_create_resp="$(create_job "$API_BASE_URL" "$stage_payload")"
-      stage_job_id="$(extract_job_id "$stage_create_resp")"
-      execute_job "$API_BASE_URL" "$stage_job_id" >/dev/null
-      stage_job_json="$(poll_job_terminal "$API_BASE_URL" "$stage_job_id" "$POLL_TIMEOUT" 3)"
-      assert_job_succeeded "$stage_job_json" "$job_type should succeed for $episode_id"
-    done
-
-    export_inputs+=("{\"episode_id\": \"$episode_id\", \"aligned_artifact_id\": \"$aligned_artifact_id\"}")
-  done
-  echo ""
-
-  echo "--- export_learning_data (v2-sharded, ${#export_inputs[@]} episode(s)) -> $dataset_id/$version ---"
-  local export_inputs_json export_payload export_create_resp export_job_id export_job_json export_manifest_artifact_id
-  export_inputs_json="[$(IFS=,; echo "${export_inputs[*]}")]"
-  export_payload="$(jq -n --argjson inputs "$export_inputs_json" --arg d "$dataset_id" --arg v "$version" \
-    '{type: "export_learning_data", dataset_id: $d, dataset_version: $v, force: true, params: {inputs: $inputs}}')"
-  export_create_resp="$(create_job "$API_BASE_URL" "$export_payload")"
-  export_job_id="$(extract_job_id "$export_create_resp")"
-  execute_job "$API_BASE_URL" "$export_job_id" >/dev/null
-  export_job_json="$(poll_job_terminal "$API_BASE_URL" "$export_job_id" "$POLL_TIMEOUT" 3)"
-  assert_job_succeeded "$export_job_json" "export_learning_data should succeed for $dataset_id/$version"
-  export_manifest_artifact_id="$(echo "$export_job_json" | jq -r '.job.result.manifest_artifact_id')"
-  echo "  export_id=$(echo "$export_job_json" | jq -r '.job.result.export_id')  manifest_artifact_id=$export_manifest_artifact_id  shard_counts=$(echo "$export_job_json" | jq -c '.job.result.shard_counts')"
-  echo ""
-
-  echo "--- curate_episodes (unrestricted policy) -> $dataset_id/$version ---"
-  local curate_payload curate_create_resp curate_job_id curate_job_json
-  curate_payload="$(cat <<JSON
-{
-  "type": "curate_episodes",
-  "dataset_id": "$dataset_id",
-  "dataset_version": "$version",
-  "force": true,
-  "params": {
-    "learning_data_export_manifest_artifact_id": "$export_manifest_artifact_id",
-    "policy": {}
-  }
-}
-JSON
-)"
-  curate_create_resp="$(create_job "$API_BASE_URL" "$curate_payload")"
-  curate_job_id="$(extract_job_id "$curate_create_resp")"
-  execute_job "$API_BASE_URL" "$curate_job_id" >/dev/null
-  curate_job_json="$(poll_job_terminal "$API_BASE_URL" "$curate_job_id" "$POLL_TIMEOUT" 3)"
-  assert_job_succeeded "$curate_job_json" "curate_episodes should succeed for $dataset_id/$version"
-  echo "  selected=$(echo "$curate_job_json" | jq -r '.job.result.selected_count')/$(echo "$curate_job_json" | jq -r '.job.result.candidate_count')"
-  echo ""
-}
-
-align_profile_validate_export_curate "$EPISODES_DATASET_ID" "$EPISODES_DATASET_VERSION" "${EPISODES_EPISODE_IDS[@]}"
-align_profile_validate_export_curate "$CANONICAL_DATASET_ID" "$CANONICAL_DATASET_VERSION" "${CANONICAL_EPISODE_IDS[@]}"
-
-# ── 6. Post-create verification (never report success without it) ─────────
-
-echo "--- Post-create verification ---"
-if ! verify_full_contract; then
-  echo "❌ canonical-bootstrap: baseline family created but failed post-create verification." >&2
-  exit 1
-fi
-
-echo ""
-echo "=== canonical-bootstrap: v0.0 baseline family created and verified ==="
+log "--- verify"
+baseline_verify "$API_BASE_URL"
+log "=== baseline '$BASELINE_ID' ready ==="

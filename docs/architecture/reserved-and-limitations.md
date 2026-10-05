@@ -16,8 +16,12 @@ standalone Jobs:
 - `INGEST_ROBOT_STATES`, `EXPORT_ROBOT_ANALYTICS_SNAPSHOT`,
   `REGISTER_ROBOT_RUN` — robot runtime, separate from Dataset/DatasetVersion
   (see [Jobs and pipelines](./jobs-and-pipelines.md) §2);
-- `IMPORT_LABELS`, `BUILD_SCENE_SAMPLE_VIEWS`, `EXPORT_LEARNING_DATA` —
-  single-stage derived workflows (see [Derived layer](./derived-layer.md));
+- `IMPORT_LABELS`, `VALIDATE_ALIGNED_EPISODE`, `PROFILE_ALIGNED_EPISODE` —
+  single-stage derived operations (see [Derived layer](./derived-layer.md)).
+  `BUILD_SCENE_SAMPLE_VIEWS`, `ALIGN_EPISODE`, `EXPORT_LEARNING_DATA` and the
+  curation / prediction / evaluation jobs are also dispatchable alone, and are
+  stages of the `scene_ml_evaluation` and `episode_learning_data_building`
+  pipelines;
 - `CURATE_EPISODES` — see [Robot learning data layer](./robot-learning-data.md) §8.
 
 Scene comparison, auto-labeling, scene package export and dataset export have
@@ -61,15 +65,13 @@ the v1 builder:
 - canonical Episodes carry no outcome, success label, reward or language
   instruction; `AlignedEpisode.task` / `outcome` stay empty because label
   sets are defined for Scene observations only;
-- the robot telemetry projection (`ingest_robot_states`, `RosbagAdapter`)
+- the robot telemetry projection (`ingest_robot_states`,
+  `RecordingTelemetryReader`)
   still reads its own fixed topic set and `RobotStateRecord` columns
   (`steering` / `throttle` / `brake`, ...) — a derived table, not canonical
   Episode data;
-- the older learning-chain scripts (`e2e-robot-learning`,
-  `e2e-episode-building`, `e2e-episode-curation`, `e2e-robot-run-learning`)
-  are unavailable until the step-11 consolidation; those commands exit 3.
-  `make e2e-recording-episode` is the Episode vertical and
-  `make e2e-episode-alignment` the aligned / export vertical.
+- `make e2e-batch-canonical` is the Episode (and Scene) canonicalization
+  journey and `make e2e-episode-learning` the aligned / export journey.
 
 ## 3. `DatasetVersionStatus`: intentionally minimal
 
@@ -101,8 +103,7 @@ presence doesn't imply an export or deprecation workflow exists.
   for large-scale production throughput.
 - GroundingDINO evaluation results are integration signals, not production
   model benchmarks.
-- Scenario curation is implemented but still `experimental=True`; scenario
-  members are manifest-backed only (no per-scenario DB row), and readiness
+- Scenario members are manifest-backed only (no per-scenario DB row), and readiness
   scoring uses label counts, channels and Scene readiness, not image/LiDAR
   content.
 - Sample views associate by nearest / previous only (no pose interpolation);
@@ -110,9 +111,9 @@ presence doesn't imply an export or deprecation workflow exists.
 - Scene comparison, auto-labeling, scene package export and dataset export
   are not implemented.
 - Operations and leaderboard APIs exist; there's no dedicated web UI.
-- The Airflow pipeline backend is a per-task DAG proof of concept
-  hardcoded to `recording_scene_building` — every other pipeline type,
-  including `recording_episode_building`, only runs through Celery.
+- The Airflow pipeline backend is a per-task DAG proof of concept: one DAG per
+  pipeline type, serial tasks, the API backend chosen at process start. Its
+  acceptance (`make test-infrastructure-airflow`) is opt-in.
 - `export_analytics_snapshot` covers Scene only; aligned Episode revisions have their own Parquet export
   (`EXPORT_LEARNING_DATA` -> `learning_episodes/steps/signals.parquet`,
   scoped by `(dataset_id, dataset_version, export_id)`, not by

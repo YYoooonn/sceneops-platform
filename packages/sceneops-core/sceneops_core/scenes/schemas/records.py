@@ -65,7 +65,6 @@ class SceneRecord(SceneOpsBaseModel):
     observed_channels: list[str] = Field(default_factory=list)
     observation_count: int
     keyframe_count: int
-    annotation_count: int
 
     registered_at: datetime | None = None
     updated_at: datetime | None = None
@@ -75,10 +74,6 @@ class SceneRecord(SceneOpsBaseModel):
         if self.window_end_timestamp_ns <= self.window_start_timestamp_ns:
             raise ValueError("window must be non-empty")
         return self
-
-    @property
-    def has_ground_truth(self) -> bool:
-        return self.annotation_count > 0
 
     def pins(self, *, manifest_artifact_id: str, manifest_checksum: str) -> bool:
         """True if this record's current revision is exactly the given one."""
@@ -115,7 +110,6 @@ def project_scene_record(
         observed_channels=manifest.observed_channel_names(),
         observation_count=len(manifest.observations),
         keyframe_count=len(manifest.keyframes()),
-        annotation_count=len(manifest.annotations),
     )
 
 

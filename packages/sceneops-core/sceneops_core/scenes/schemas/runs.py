@@ -70,9 +70,7 @@ class SceneProfileRunRecord(_SceneRunRecord):
 
     observation_count: int | None = None
     keyframe_count: int | None = None
-    annotation_count: int | None = None
 
     observed_channels: list[str] = Field(default_factory=list)
 
     coverage: JsonDict = Field(default_factory=dict)
-    annotation_summary: JsonDict = Field(default_factory=dict)

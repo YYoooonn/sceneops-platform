@@ -17,8 +17,10 @@ from sceneops_core.executions.schemas import (
     ExecutionKind,
     ExecutionStatus,
 )
+from sceneops_core.pipelines.schemas import PipelineType
 
 PIPELINE_RUN_ID = "pipe-001"
+PIPELINE_TYPE = PipelineType.RECORDING_SCENE_BUILDING
 
 _RealAsyncClient = httpx.AsyncClient
 
@@ -46,16 +48,16 @@ async def test_dispatch_pipeline_posts_dag_run_id_and_conf(monkeypatch):
 
     backend = AirflowPipelineExecutionBackend(
         base_url="http://airflow-webserver:8080",
-        pipeline_dag_id="sceneops_pipeline_run",
+        pipeline_dag_prefix="sceneops",
         username="airflow",
         password="airflow",
     )
 
-    result = await backend.dispatch_pipeline(PIPELINE_RUN_ID)
+    result = await backend.dispatch_pipeline(PIPELINE_RUN_ID, PIPELINE_TYPE)
 
     assert captured["method"] == "POST"
     assert captured["url"] == (
-        "http://airflow-webserver:8080/api/v1/dags/sceneops_pipeline_run/dagRuns"
+        "http://airflow-webserver:8080/api/v1/dags/sceneops_recording_scene_building/dagRuns"
     )
     assert captured["auth_header"] is not None  # basic auth header present
     assert result.execution_backend == ExecutionBackend.AIRFLOW
@@ -77,10 +79,10 @@ async def test_dispatch_pipeline_sends_pipeline_run_id_in_body_and_conf(monkeypa
 
     backend = AirflowPipelineExecutionBackend(
         base_url="http://airflow-webserver:8080",
-        pipeline_dag_id="sceneops_pipeline_run",
+        pipeline_dag_prefix="sceneops",
     )
 
-    await backend.dispatch_pipeline(PIPELINE_RUN_ID)
+    await backend.dispatch_pipeline(PIPELINE_RUN_ID, PIPELINE_TYPE)
 
     assert captured_body["dag_run_id"] == PIPELINE_RUN_ID
     assert captured_body["conf"]["pipeline_run_id"] == PIPELINE_RUN_ID
@@ -97,10 +99,10 @@ async def test_dispatch_pipeline_without_username_sends_no_auth_header(monkeypat
 
     backend = AirflowPipelineExecutionBackend(
         base_url="http://airflow-webserver:8080",
-        pipeline_dag_id="sceneops_pipeline_run",
+        pipeline_dag_prefix="sceneops",
     )
 
-    await backend.dispatch_pipeline(PIPELINE_RUN_ID)
+    await backend.dispatch_pipeline(PIPELINE_RUN_ID, PIPELINE_TYPE)
 
     assert captured["auth_header"] is None
 
@@ -113,8 +115,29 @@ async def test_dispatch_pipeline_raises_on_error_response(monkeypatch):
 
     backend = AirflowPipelineExecutionBackend(
         base_url="http://airflow-webserver:8080",
-        pipeline_dag_id="sceneops_pipeline_run",
+        pipeline_dag_prefix="sceneops",
     )
 
     with pytest.raises(httpx.HTTPStatusError):
-        await backend.dispatch_pipeline(PIPELINE_RUN_ID)
+        await backend.dispatch_pipeline(PIPELINE_RUN_ID, PIPELINE_TYPE)
+
+
+async def test_each_pipeline_type_dispatches_to_its_own_dag(monkeypatch):
+    urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        return httpx.Response(200, json={})
+
+    _patch_transport(monkeypatch, handler)
+
+    backend = AirflowPipelineExecutionBackend(
+        base_url="http://airflow-webserver:8080", pipeline_dag_prefix="sceneops"
+    )
+    for pipeline_type in PipelineType:
+        await backend.dispatch_pipeline(PIPELINE_RUN_ID, pipeline_type)
+
+    assert urls == [
+        f"http://airflow-webserver:8080/api/v1/dags/sceneops_{t.value}/dagRuns"
+        for t in PipelineType
+    ]

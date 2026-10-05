@@ -1,6 +1,5 @@
-from sceneops_core.jobs.contracts import JobDispatcher, JobExecutor
+from sceneops_core.jobs.contracts import JobExecutor
 
 __all__ = [
-    "JobDispatcher",
     "JobExecutor",
 ]

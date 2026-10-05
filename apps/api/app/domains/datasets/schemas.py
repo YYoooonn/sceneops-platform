@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
+from sceneops_core.common.schemas import SceneOpsBaseModel
 from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from app.domains.scenes.schemas import SceneQualityResponse
@@ -13,15 +13,6 @@ from app.domains.scenes.schemas import SceneQualityResponse
 class UpdateDatasetRequest(SceneOpsBaseModel):
     name: str | None = None
     description: str | None = None
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class UpdateDatasetVersionRequest(SceneOpsBaseModel):
-    """PATCH body — all fields optional, only provided values are applied."""
-
-    status: DatasetVersionStatus | None = None
-    required_channels: list[str] | None = None
-    metadata: JsonDict | None = None
 
 
 class CreateDatasetVersionBody(SceneOpsBaseModel):
@@ -32,8 +23,6 @@ class CreateDatasetVersionBody(SceneOpsBaseModel):
 
     version: str
     status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
-    required_channels: list[str] = Field(default_factory=list)
-    metadata: JsonDict = Field(default_factory=dict)
 
 
 class DatasetDetailResponse(SceneOpsBaseModel):

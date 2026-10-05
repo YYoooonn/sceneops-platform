@@ -33,10 +33,8 @@ def _model(**overrides) -> DatasetVersionModel:
         observation_count=20,
         episode_count=3,
         observed_channels=["CAM_FRONT"],
-        required_channels=["CAM_FRONT"],
         created_at=_NOW,
         updated_at=_NOW,
-        metadata_={},
     )
     base.update(overrides)
     return DatasetVersionModel(**base)
@@ -74,19 +72,6 @@ class TestSceneWriterIsolation:
         )
         assert model.observed_channels == ["LIDAR_TOP"]
         assert model.episode_count == 3
-        assert model.required_channels == ["CAM_FRONT"]
-
-    @pytest.mark.asyncio
-    async def test_scene_inputs_update_never_touches_membership(self) -> None:
-        model = _model()
-        repo = _repo_with_model(model)
-
-        await repo.update_scene_inputs(
-            dataset_id="d", version="v1", required_channels=["LIDAR_TOP"]
-        )
-
-        assert model.required_channels == ["LIDAR_TOP"]
-        assert (model.scene_count, model.observed_channels) == (5, ["CAM_FRONT"])
 
 
 class TestEpisodeWriterIsolation:

@@ -143,4 +143,4 @@ async def test_import_never_touches_scenes(tmp_path) -> None:
         uri=(await harness.artifact_record_store.get(scene.manifest_artifact_id)).uri,
         checksum=before,
     )
-    assert manifest.annotations == []
+    assert not hasattr(manifest, "annotations")

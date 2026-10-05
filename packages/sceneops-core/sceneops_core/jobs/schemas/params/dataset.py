@@ -11,7 +11,7 @@ class ExportAnalyticsSnapshotJobParams(BaseJobParams):
     dataset_id: str
     dataset_version: str
 
-    # None → export all known tables (scenes, observations, keyframes, annotations)
+    # None → export all known tables (scenes, observations, keyframes)
     tables: list[str] | None = None
 
     metadata: JsonDict = Field(default_factory=dict)

@@ -28,7 +28,6 @@ from app.domains.datasets.schemas import (
     DatasetVersionListResponse,
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
-    UpdateDatasetVersionRequest,
 )
 from app.domains.scenes.quality import build_scene_quality
 from app.domains.scenes.schemas import SceneListResponse, SceneQualityResponse
@@ -67,7 +66,6 @@ class DatasetService:
                 dataset_id=request.dataset_id,
                 name=request.name,
                 description=request.description,
-                metadata=request.metadata,
             )
         )
         return DatasetDetailResponse(dataset=dataset)
@@ -89,7 +87,6 @@ class DatasetService:
                 dataset_id=dataset_id,
                 name=request.name,
                 description=request.description,
-                metadata=request.metadata,
             )
         )
         return DatasetDetailResponse(dataset=updated)
@@ -123,11 +120,8 @@ class DatasetService:
         # updated_at explicitly rather than relying on server_default/onupdate
         # (those only fire when a column is left unset, not set to None).
         #
-        # required_channels is a Scene input,
-        # not generic version state: it is patched through
-        # update_scene_inputs(), which never touches the registrar-owned
-        # Scene membership summary. The generic upsert below passes
-        # scene=None so it leaves every Scene column alone.
+        # The generic upsert below passes scene=None so it leaves every
+        # registrar-owned Scene column alone.
         existing = await self._version_repository.get(
             dataset_id=dataset_id, version=body.version
         )
@@ -137,17 +131,10 @@ class DatasetService:
                 dataset_id=dataset_id,
                 version=body.version,
                 status=body.status,
-                metadata=body.metadata,
                 created_at=existing.created_at if existing is not None else now,
                 updated_at=now,
             )
         )
-        if body.required_channels:
-            version = await self._version_repository.update_scene_inputs(
-                dataset_id=dataset_id,
-                version=body.version,
-                required_channels=body.required_channels,
-            )
         return DatasetVersionDetailResponse(version=version)
 
     async def get_dataset_version(
@@ -159,45 +146,6 @@ class DatasetService:
         if record is None:
             return None
         return DatasetVersionDetailResponse(version=record)
-
-    # PATCH fields that map directly onto generic DatasetVersionRecord state.
-    _GENERIC_VERSION_PATCH_FIELDS = ("status", "metadata")
-    # Scene inputs patchable through the API. The Scene membership summary
-    # (counts, observed channels) is written only by Scene registration and
-    # is never patchable here.
-    _SCENE_VERSION_PATCH_FIELDS = ("required_channels",)
-
-    async def update_dataset_version(
-        self, dataset_id: str, version: str, request: UpdateDatasetVersionRequest
-    ) -> DatasetVersionDetailResponse | None:
-        existing = await self._version_repository.get(
-            dataset_id=dataset_id, version=version
-        )
-        if existing is None:
-            return None
-
-        dumped = request.model_dump()
-        generic_updates = {
-            k: dumped[k]
-            for k in self._GENERIC_VERSION_PATCH_FIELDS
-            if dumped[k] is not None
-        }
-        scene_updates = {
-            k: dumped[k]
-            for k in self._SCENE_VERSION_PATCH_FIELDS
-            if dumped[k] is not None
-        }
-
-        result = existing
-        if generic_updates:
-            result = await self._version_repository.update(
-                result.model_copy(update=generic_updates)
-            )
-        if scene_updates:
-            result = await self._version_repository.update_scene_inputs(
-                dataset_id=dataset_id, version=version, **scene_updates
-            )
-        return DatasetVersionDetailResponse(version=result)
 
     async def get_dataset_version_quality(
         self, dataset_id: str, version: str

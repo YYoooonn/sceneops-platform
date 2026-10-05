@@ -56,26 +56,3 @@ e2e-streaming-equivalence: acquisition-image
 	chmod +x scripts/e2e/e2e_streaming_equivalence.sh
 	SOURCE_UNIT=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),2) API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
 	scripts/e2e/e2e_streaming_equivalence.sh
-
-# --------------------
-# Episode / learning-data bridge -- real CAN replay -> ROS2 -> Kafka ->
-# MCAP capture -> ArtifactStore -> canonical RobotRun -> verified recording
-# resolver (sceneops_worker.robots.resolver) -> existing
-# raw_log_episode_building pipeline -> Episode -> existing align/profile/
-# validate/export jobs -> real SceneOpsDataset.open() + step reads
-# (scripts/canonical/verify_learning_export.py, reused unmodified).
-# Independent of e2e-robot-run-registration (that proves canonical
-# registration; this proves the registered RobotRun can actually be
-# consumed by the existing Episode/learning pipeline) -- neither replaces
-# the other. Prerequisites: `make local-up` and `make streaming-up`.
-# Uses a fresh, isolated test-e2e-* dataset_id per invocation -- never
-# mutates the frozen sceneops-canonical/v0.0 baseline.
-# UNAVAILABLE until ADR-007 implementation step 11: the
-# raw_log_episode_building pipeline it used is removed; the script exits 3.
-# --------------------
-
-.PHONY: e2e-robot-run-learning
-e2e-robot-run-learning:
-	chmod +x scripts/e2e/e2e_robot_run_learning.sh
-	SCENE=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),10.0) \
-	scripts/e2e/e2e_robot_run_learning.sh

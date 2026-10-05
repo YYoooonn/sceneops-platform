@@ -84,8 +84,8 @@ Episode reports `unknown` until its new revision is validated.
 Scenario curation (`mine_scenarios -> score_scenario_readiness`) selects
 samples from pinned sample views by explicit criteria into an immutable
 `ScenarioSet` revision, then scores each member's readiness for downstream
-use. It is implemented and E2E-tested (`make e2e-perception`), but still
-marked `experimental=True`. See [Derived layer](./derived-layer.md) §4.
+use. It is two stages of `scene_ml_evaluation` and is exercised by
+`make e2e-scene-ml`. See [Derived layer](./derived-layer.md) §4.
 
 `ScenarioStatus` exists in the enum, but no job writes it and there is no
 per-scenario DB row or repository (see [Data model](./data-model.md) §6).

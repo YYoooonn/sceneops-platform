@@ -139,36 +139,47 @@ class JobService:
     async def _resolve_align_episode_source(
         self, raw_params: dict[str, Any]
     ) -> JsonDict:
-        """Pin the Episode's current canonical revision -- exactly the
+        """Pin each Episode's current canonical revision -- exactly the
         EPISODE_MANIFEST its record points to (ADR-007 §14.4) -- before the
         execution key is computed, so an unpinned ALIGN_EPISODE request dedups
         on source content. A caller-supplied pin always wins."""
-        if raw_params.get("source_artifact_id") is not None:
+        episodes = raw_params.get("episodes")
+        if not isinstance(episodes, list):
+            # Let normal Pydantic param validation raise its own clear error.
             return raw_params
 
-        episode_id = raw_params.get("episode_id")
-        if not episode_id:
-            # Let normal Pydantic param validation raise its own clear
-            # "episode_id required" error.
-            return raw_params
-        if self._episode_repository is None:
-            raise ValueError("align_episode source resolution needs Episode access")
-
-        record = await resolve_current_episode_manifest_source(
-            episode_repository=self._episode_repository,
-            artifact_repository=self._artifact_repository,
-            episode_id=episode_id,
-        )
-        if record is None:
-            raise ValueError(
-                f"Episode {episode_id!r} is not registered — run "
-                "recording_episode_building before align_episode."
+        pinned: list[Any] = []
+        for item in episodes:
+            if (
+                not isinstance(item, dict)
+                or item.get("source_artifact_id") is not None
+                or not item.get("episode_id")
+            ):
+                pinned.append(item)
+                continue
+            if self._episode_repository is None:
+                raise ValueError("align_episode source resolution needs Episode access")
+            episode_id = item["episode_id"]
+            record = await resolve_current_episode_manifest_source(
+                episode_repository=self._episode_repository,
+                artifact_repository=self._artifact_repository,
+                episode_id=episode_id,
             )
-        return {
-            **raw_params,
-            "source_artifact_id": record.artifact_id,
-            "source_manifest_sha256": (record.checksum or "").removeprefix("sha256:"),
-        }
+            if record is None:
+                raise ValueError(
+                    f"Episode {episode_id!r} is not registered — run "
+                    "recording_episode_building before align_episode."
+                )
+            pinned.append(
+                {
+                    **item,
+                    "source_artifact_id": record.artifact_id,
+                    "source_manifest_sha256": (record.checksum or "").removeprefix(
+                        "sha256:"
+                    ),
+                }
+            )
+        return {**raw_params, "episodes": pinned}
 
     async def _resolve_aligned_artifact_checksum(
         self, raw_params: dict[str, Any]

@@ -281,9 +281,6 @@ async def test_membership_summary_replacement_is_scoped_to_scene_columns(
     await versions.update_episode_summary(
         dataset_id=dataset_id, version="v1", episode_count=4
     )
-    await versions.update_scene_inputs(
-        dataset_id=dataset_id, version="v1", required_channels=["CAM_FRONT"]
-    )
 
     result = await versions.replace_scene_membership_summary(
         dataset_id=dataset_id,
@@ -296,5 +293,4 @@ async def test_membership_summary_replacement_is_scoped_to_scene_columns(
     assert (result.scene.scene_count, result.scene.keyframe_count) == (2, 5)
     assert result.scene.observation_count == 9
     assert result.scene.observed_channels == ["CAM_FRONT"]
-    assert result.scene.required_channels == ["CAM_FRONT"]
     assert result.episode.episode_count == 4

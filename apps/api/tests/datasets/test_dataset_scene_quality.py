@@ -35,7 +35,6 @@ def _scene(
     scene_id: str = "scene-001",
     keyframe_count: int = 40,
     observation_count: int = 80,
-    annotation_count: int = 0,
 ) -> SceneRecord:
     return SceneRecord(
         scene_id=scene_id,
@@ -51,7 +50,6 @@ def _scene(
         manifest_checksum=_CHECKSUM,
         observation_count=observation_count,
         keyframe_count=keyframe_count,
-        annotation_count=annotation_count,
     )
 
 

@@ -53,7 +53,6 @@ class ProfileSceneJobResult(BaseJobResult):
     scene_count: int = 0
     keyframe_count: int = 0
     observation_count: int = 0
-    annotation_count: int = 0
 
     observed_channels: list[str] = Field(default_factory=list)
 

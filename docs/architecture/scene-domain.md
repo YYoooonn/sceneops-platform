@@ -119,7 +119,7 @@ manifest_checksum
 window_clock, window_start_timestamp_ns, window_end_timestamp_ns
                        the segment window [start, end) in window_clock (NOT NULL,
                        non-empty)
-observed_channels, observation_count, keyframe_count, annotation_count
+observed_channels, observation_count, keyframe_count
 registered_at, updated_at
 ```
 

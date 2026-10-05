@@ -466,7 +466,7 @@ async def worker_context(db_session, worker_settings, _minio_reachable):
     used rather than silently reusing whatever backend an earlier test in
     the same pytest process initialized."""
     dependencies_module._artifact_store = None
-    dependencies_module._raw_source_store = None
+    dependencies_module._input_store = None
 
     context = create_worker_context(
         db_session, settings=worker_settings, worker_id="test"
@@ -475,7 +475,7 @@ async def worker_context(db_session, worker_settings, _minio_reachable):
     yield context
 
     dependencies_module._artifact_store = None
-    dependencies_module._raw_source_store = None
+    dependencies_module._input_store = None
 
 
 @pytest_asyncio.fixture()

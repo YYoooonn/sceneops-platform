@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from sceneops_core.executions.schemas import ExecutionDispatchResult
+from sceneops_core.pipelines.schemas import PipelineType
 
 
 @runtime_checkable
@@ -13,5 +14,5 @@ class JobExecutionBackend(Protocol):
 @runtime_checkable
 class PipelineExecutionBackend(Protocol):
     async def dispatch_pipeline(
-        self, pipeline_run_id: str
+        self, pipeline_run_id: str, pipeline_type: PipelineType
     ) -> ExecutionDispatchResult: ...

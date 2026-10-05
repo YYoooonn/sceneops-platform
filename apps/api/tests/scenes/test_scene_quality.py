@@ -16,8 +16,8 @@ from sceneops_core.scenes.testing import build_scene_manifest
 from app.domains.scenes.quality import build_scene_quality, compute_scene_readiness
 
 
-def _scene(*, annotations_per_keyframe: int = 1, revision: str = "art-rev-1"):
-    manifest = build_scene_manifest(annotations_per_keyframe=annotations_per_keyframe)
+def _scene(*, revision: str = "art-rev-1"):
+    manifest = build_scene_manifest()
     return project_scene_record(
         dataset_id="ds",
         dataset_version="v1",
@@ -56,7 +56,6 @@ def _profile(scene, revision=None):
         manifest_checksum=revision[1] if revision else scene.manifest_checksum,
         observation_count=5,
         keyframe_count=2,
-        annotation_count=2,
         observed_channels=["CAM_FRONT", "LIDAR_TOP"],
     )
 
@@ -78,7 +77,7 @@ def test_ready_scene_quality():
 
 
 def test_quality_carries_no_ground_truth_or_selectability():
-    scene = _scene(annotations_per_keyframe=0)
+    scene = _scene()
     dumped = build_scene_quality(scene, _validation(scene)).model_dump()
     assert "ground_truth" not in dumped
     assert "selectable_for_detection" not in dumped

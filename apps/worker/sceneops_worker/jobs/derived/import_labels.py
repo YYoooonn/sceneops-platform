@@ -59,7 +59,7 @@ class ImportLabelsJobHandler(JobHandler[ImportLabelsJobParams, ImportLabelsJobRe
         # A label document is an external input, like a raw source: it is read
         # from the raw-source store, never from the platform's artifact roots.
         try:
-            document = await context.raw_source_store.read_bytes(params.document_uri)
+            document = await context.input_store.read_bytes(params.document_uri)
         except (ArtifactNotFoundError, FileNotFoundError) as exc:
             raise ValueError(
                 f"label document not found: {params.document_uri}"

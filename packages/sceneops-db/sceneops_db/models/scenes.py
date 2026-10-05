@@ -76,7 +76,6 @@ class SceneModel(Base):
     )
     observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
     keyframe_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    annotation_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

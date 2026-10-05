@@ -2,11 +2,13 @@
 
 ## Status
 
-**Accepted — implementation pending.**
+**Accepted — implemented. Closed by Amendment A9 (§34).**
 
-This ADR freezes the *target* ingestion architecture for SceneOps. At the time
-of acceptance almost none of the target contract is implemented. Throughout
-this document three labels are used wherever confusion is possible:
+This ADR froze the *target* ingestion architecture for SceneOps. At the time
+of acceptance almost none of the target contract was implemented; the amendments
+below record each implementation step, and A9 records the final workflow surface
+and closes the ADR. Throughout this document three labels are used wherever
+confusion is possible:
 
 ```text
 CURRENT IMPLEMENTATION    what the repository does at the audited HEAD
@@ -183,6 +185,30 @@ registration, replacement or DatasetVersion. Audited at:
 ```text
 branch     refactor/domain-ingestion-architecture
 HEAD       72c5aab feat(streaming): acquire sensor-bearing recordings by ROS2 replay and prove batch equivalence
+date       2026-10-05
+```
+
+**Amendment A9 — final workflow surface and ADR closure (implementation
+step 11).** Accepted. A9 consolidates SceneOps into the final surface and closes
+this ADR (§34). Exactly four Pipelines remain (`RECORDING_SCENE_BUILDING`,
+`RECORDING_EPISODE_BUILDING`, `SCENE_ML_EVALUATION`,
+`EPISODE_LEARNING_DATA_BUILDING`); every other operation is an atomic Job.
+Exactly five E2E journeys remain; infrastructure behavior moves below them
+into pipeline-contract and infrastructure tests. `canonical-bootstrap` is
+rebuilt as L1/L2-only developer orchestration and `e2e-cleanroom` as the
+fresh-state acceptance on top of it. A9 also lands the schema debt earlier steps
+deferred: SceneManifest v2 (no annotations), DatasetVersion without channel
+requirements or metadata, dead contracts, ONNX, and nuScenes-named telemetry and
+input naming. It changes `ALIGN_EPISODE` to take several pinned Episodes (§34.4)
+and adds an explicit `default_task` to the external export config. It adds §34,
+invariants I-56–I-60 and a DB migration. It changes no decision about RobotRun,
+registration, identity, the fingerprint, Scene or Episode canonicalization
+(except removing embedded annotations from the Scene schema), replacement or the
+derived layer's pin rules. Audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       26b9df0 feat(derived): pin labels, views, inference, evaluation and exports
 date       2026-10-05
 ```
 
@@ -5245,3 +5271,356 @@ deferred  SceneManifest v1 still *allows* an `annotations` array and SceneRecord
           Unused `onnx` / `onnxruntime` dependencies of the worker (uv.lock is not
           touched here).
 ```
+
+---
+
+## 34. Amendment A9: final workflow surface and ADR closure (step 11)
+
+### 34.0 Scope and result
+
+A9 implements step 11 of §29.19 and closes ADR-007. It consolidates SceneOps into
+the final workflow surface, deletes the pipelines, scripts and schema that existed
+only because earlier steps deferred cleanup, and records the architecture the
+repository now implements. It decides no new ingestion or canonicalization
+question: RobotRun, registration, identity, the fingerprint, Scene / Episode
+canonicalization and the derived layer are unchanged except where §34.4 and §34.8
+name the change.
+
+```text
+supported Pipelines   4   recording_scene_building, recording_episode_building,
+                          scene_ml_evaluation, episode_learning_data_building
+E2E journeys          5   e2e-batch-canonical, e2e-streaming-equivalence, e2e-scene-ml,
+                          e2e-episode-learning, e2e-cleanroom
+baseline              canonical-bootstrap / canonical-verify: L1/L2 only, not a Pipeline
+```
+
+### 34.1 Layers (final)
+
+```text
+L0  transport      ROS 2 topics -> Kafka -> capture. Non-canonical; bounded replay.
+L1  RobotRun       immutable recording (MCAP) + RobotRunManifest. Created only by
+                   REGISTER_ROBOT_RUN from a manifest the DB-free publisher wrote.
+L2  Scene/Episode  canonical, source-faithful units built from one RobotRun by
+                   RECORDING_SCENE_BUILDING / RECORDING_EPISODE_BUILDING; checksum-pinned
+                   manifests; DatasetVersion membership.
+L3  derived        LabelSet, SceneSampleView, ScenarioSet, prediction, evaluation,
+                   AlignedEpisode, LearningDataExport. Immutable revisions that pin the
+                   exact revisions they consumed (I-48). Never part of L1 or L2.
+```
+
+```text
+Acquisition -> RobotRun
+RobotRun    -> Scene | Episode
+Scene       -> Labels / SampleView / ScenarioSet -> Inference / Evaluation
+Episode     -> AlignedEpisode -> LearningDataExport
+```
+
+### 34.2 The four Pipelines
+
+A Pipeline exists only where multi-stage orchestration, retry and lineage justify
+it (I-56). Task chains and the REFs that connect them:
+
+| Pipeline | Tasks | REF hand-offs |
+| --- | --- | --- |
+| `RECORDING_SCENE_BUILDING` | `build_recording_scenes` → `register_scenes` → `validate_scene` → `profile_scene` (optional) | `manifest_artifact_ids`, `scene_ids` |
+| `RECORDING_EPISODE_BUILDING` | `build_recording_episodes` → `register_episodes` → `validate_episode` → `profile_episode` (optional) | `manifest_artifact_ids`, `episode_ids` |
+| `SCENE_ML_EVALUATION` | `build_scene_sample_views` → `mine_scenarios` → `score_scenario_readiness`; `predict_detection` → `evaluate_detection` | `views`; `scenario_set_id` (+ checksum); `inference_run_id` + `prediction_manifest_checksum` |
+| `EPISODE_LEARNING_DATA_BUILDING` | `align_episode` → `export_learning_data` | `export_inputs` (episode id, aligned artifact id, checksum) |
+
+Each L3 stage takes its pinned input from the upstream stage's REF
+(`MineScenarios` ← `views`, `PredictDetection` ← `scenario_set_id`,
+`ExportLearningData` ← `export_inputs`), and a caller-supplied pin is never
+overridden by a REF. Policy, channels, label sets, categories, the alignment
+config and the model backend are explicit task params; no stage defaults a source
+vocabulary (I-53). `EXPORT_LEARNING_DATA` validates every aligned input, so
+`EPISODE_LEARNING_DATA_BUILDING` has no separate validation stage; the
+validate / profile jobs of an aligned revision are atomic jobs.
+
+Removed: `SCENARIO_CURATION` and `DETECTION_EVALUATION` (their stages are the
+curation and prediction / evaluation stages of `SCENE_ML_EVALUATION`) and
+`ALIGNED_EPISODE_BUILDING` (alignment is the first stage of
+`EPISODE_LEARNING_DATA_BUILDING`). The pipeline availability flags
+(`supported`, `implemented`, `experimental`) and the API's `include_experimental`
+listing option are removed: every defined pipeline is supported.
+
+Airflow: one DAG per pipeline type (`airflow/dags/sceneops_pipelines.py`, DAG id
+`<pipeline_dag_prefix>_<type>`). The API picks the DAG from the run's pipeline
+type (`PipelineExecutionBackend.dispatch_pipeline(run_id, pipeline_type)`). The
+DAG file mirrors the definitions' task ids statically and a unit test fails when
+they drift. The `job_dag_id` setting, which named no DAG, is removed.
+
+### 34.3 Atomic Jobs
+
+Reusable single operations stay Jobs (`POST /jobs`) and share handlers with the
+pipeline stages that use them:
+
+```text
+REGISTER_ROBOT_RUN   IMPORT_LABELS   BUILD_SCENE_SAMPLE_VIEWS   MINE_SCENARIOS /
+SCORE_SCENARIO_READINESS   PREDICT_DETECTION   EVALUATE_DETECTION   ALIGN_EPISODE
+VALIDATE_ALIGNED_EPISODE / PROFILE_ALIGNED_EPISODE   EXPORT_LEARNING_DATA
+CURATE_EPISODES   EXPORT_ANALYTICS_SNAPSHOT   INGEST_ROBOT_STATES /
+EXPORT_ROBOT_ANALYTICS_SNAPSHOT   VALIDATE_* / PROFILE_*   BUILD_RECORDING_* / REGISTER_*
+```
+
+The conceptual names `PREDICT` and `EVALUATE` are the `JobType`s
+`PREDICT_DETECTION` and `EVALUATE_DETECTION`, and `CURATE_SCENARIOS` is the
+`MINE_SCENARIOS` + `SCORE_SCENARIO_READINESS` pair. They are not renamed: the
+handlers are detection-specific (3-D box labels, camera + lidar lifting), and a
+generic name would assert a model-task abstraction that has no second use case
+(§3.3, architecture rule 5). `CURATE_EPISODES` stays because `SceneOpsDataset`
+reads its manifests to select episodes.
+
+### 34.4 Changed job contract: `ALIGN_EPISODE`
+
+A Pipeline has no fan-out, and `EPISODE_LEARNING_DATA_BUILDING` must accept several
+pinned Episodes. `ALIGN_EPISODE` therefore takes `episodes`, a list of
+`{episode_id, source_artifact_id?, source_manifest_sha256?}` (each pin is the pair
+or nothing), one shared `alignment_config` and an optional `source_context`, and
+returns `aligned`: one `{episode_id, aligned_artifact_id, uri, checksum, source
+revision, step count}` per Episode, plus `export_inputs` in the exact shape
+`EXPORT_LEARNING_DATA` consumes. Every aligned artifact is still write-once at its
+deterministic key and its ArtifactRecord id still derives from (episode,
+checksum), so a retry converges. The records are registered and committed once at
+the end; a failing Episode commits nothing. The API pins each unpinned Episode to
+its current revision at job creation (§14.4), and the execution key sorts the
+Episodes and strips the lineage-only `source_artifact_id` of each, so naming the
+same set in another order is one execution. The single-Episode form is removed, not
+kept beside the list.
+
+### 34.5 Final E2E surface and test layers
+
+| Journey | Source → result |
+| --- | --- |
+| `e2e-batch-canonical` | dataset fixture → batch MCAP → RobotRun → Scenes → Episodes |
+| `e2e-streaming-equivalence` | one source in batch and ROS 2 → Kafka → capture → both RobotRuns → Scene + Episode equivalence (I-35) |
+| `e2e-scene-ml` | Scenes → LabelSet → SampleView → ScenarioSet → inference → evaluation (mock backend) |
+| `e2e-episode-learning` | Episodes → AlignedEpisode → LearningDataExport → export verification + LeRobot round trip |
+| `e2e-cleanroom` | fresh state → canonical-bootstrap → both L3 journeys → final verification |
+
+| Layer | Responsibility |
+| --- | --- |
+| unit (`make test`) | pure logic, schemas, state, definitions, REF chaining, execution identity |
+| integration (`make test-integration`) | repositories, migrated schema, ArtifactStore, registrars, recording verticals — real PostgreSQL / MinIO |
+| infrastructure (`make test-infrastructure`, `-airflow`) | pipeline contracts: retry / dedup / force / convergence / replacement / blocked resumption / failure recovery / concurrent registration, Celery and Airflow execution, MinIO selective reads |
+| E2E journey | user journeys through production paths |
+| clean room | reconstruct baseline and representative workflows from nothing |
+| model-backend acceptance (`make acceptance-grounding-dino`) | the Scene ML journey with the real detector |
+
+Infrastructure behavior is not a user journey (I-57): retry, dedup, force,
+replacement, failure recovery and orchestrator checks that earlier scripts ran
+inside E2E scripts (`verify-reliability`, `verify-airflow-backend`, the
+conflict / replace blocks of the recording E2Es, `e2e-lerobot-container`'s rerun
+check, `e2e-batch-acquisition`'s idempotency block) live in `tests/infrastructure`
+or inside the journey that owns the user-visible property.
+
+### 34.6 `canonical-bootstrap` and `canonical-verify`
+
+Developer / test orchestration, not a Pipeline (I-58):
+
+```text
+dataset fixture -> dataset-acquisition container -> L1 conformance -> publish
+ -> POST /robot-runs:register -> RobotRun
+ -> recording_scene_building -> recording_episode_building -> verify
+```
+
+It is create-or-verify: a registered RobotRun is reused, an unchanged scope
+converges, a changed producer or configuration fails loudly at registration, and
+recovery is an explicit reset. `canonical-verify` is the read-only check the
+bootstrap ends with: RobotRuns registered with pinned recordings; every Scene and
+Episode pinned to the checksum of its manifest ArtifactRecord and validated,
+profiled and ready at its current revision; DatasetVersion summaries equal to
+membership. Identity is `BASELINE_ID` (RobotRun `run-<id>-<scene>`, DatasetVersion
+`sceneops-<id>/baseline`). The Scene and Episode build configurations are
+`config/baselines/*.json`, used by every journey that builds from the baseline
+recording. The v0.0 baseline family and its YAML spec are removed.
+
+### 34.7 Clean room
+
+`e2e-cleanroom` builds images from the current tree, runs `make local-reset`
+(fresh containers and PostgreSQL / Redis / MinIO state; `data/raw` preserved),
+runs `canonical-bootstrap` and `canonical-verify`, runs `e2e-scene-ml` and
+`e2e-episode-learning` on that baseline, and verifies through the API that every
+pipeline of the baseline succeeded, no job failed and the derived artifacts exist.
+It uses FastAPI for control-plane operations and containers / the ArtifactStore for
+bulk data: no direct SQL, no direct MinIO inspection, no host worker CLI, no host
+Python. The old fixture bootstrap (`e2e-bootstrap*`, `scripts/e2e/e2e_fixture_bootstrap.py`),
+which wrote PostgreSQL and MinIO directly, is removed.
+
+### 34.8 Schema, contract and surface cleanup
+
+```text
+SceneManifest     v1 -> v2: no `annotations`, no SceneAnnotation / SceneBox3D (I-60). v1 bytes
+                  are refused (UnsupportedSceneManifestVersionError). RECORDING_SCENE_SEMANTICS_VERSION
+                  1 -> 2, so a rebuild is a distinct producer and replacing registered Scenes is explicit.
+SceneRecord       - annotation_count (and has_ground_truth); profile run records and results lose
+                  annotation_count / annotation_summary / category_distribution; the analytics
+                  `annotations` table and the keyframes `annotation_count` column are gone.
+DatasetVersion    - required_channels, - metadata (and Dataset - metadata): channel requirements are
+                  pipeline / job parameters (I-59). `update_scene_inputs`, the DatasetVersion PATCH
+                  endpoint (its only fields were these) and the dataset-level default of
+                  `require_target_channels` are removed. DatasetInputRef carries the scope only;
+                  PipelineTaskInputs.to_context_values (no callers) is removed.
+migration         f6c2a8d4e710 drops scenes.annotation_count, dataset_versions.required_channels,
+                  dataset_versions.metadata, datasets.metadata. Scenes registered before it pin v1
+                  manifests: they are not rewritten or fabricated into v2; reading one fails loudly
+                  and the fix is a rebuild with `replace`.
+dead contracts    JobDispatcher, PipelineExecutor, PipelineDispatcher, SceneBuilder/Validator/Profiler,
+                  ObservationIngestor/Indexer (no implementer), CreateDatasetVersionRequest,
+                  GetDataset*/GetSceneRequest (no caller), the ONNX mention of InferenceBackend.
+dependencies      onnx, onnxruntime (and their transitive closure) removed from apps/worker and uv.lock.
+naming            `datasets/ingestion/rosbag_raw_log.py` / `RosbagAdapter` -> `robots/telemetry.py` /
+                  `RecordingTelemetryReader` (a path, not a store); `RawSourceSettings` / `raw_source` /
+                  `raw_source_store` -> `InputSourceSettings` / `input_source` / `input_store`
+                  (default root `/data/raw`, SCENEOPS_WORKER_INPUT_SOURCE__*); stale `.env` defaults
+                  (default dataset, nuscenes-integration URLs, DATASET_ID) removed.
+export            ExternalExportConfig.default_task: an explicit task string for episodes whose export
+                  carries none (canonical Episodes have no task, §31.2; LeRobot requires one per
+                  frame). An episode's own task wins; nothing is inferred.
+```
+
+Examined and retained because each is a valid final concept with a consumer:
+`SceneRecord.keyframe_count` and `groups` (source-defined groupings, §13.7);
+`CURATE_EPISODES` (read by `SceneOpsDataset`); `EXPORT_ANALYTICS_SNAPSHOT`;
+`INGEST_ROBOT_STATES` / `EXPORT_ROBOT_ANALYTICS_SNAPSHOT` (derived robot
+telemetry projection, §29.7); the v1 single-file learning layout (kept
+deliberately as regression coverage, `scalable-learning-data.md`).
+
+### 34.9 Removed
+
+```text
+E2E scripts   e2e-recording-scene, e2e-recording-episode, e2e-perception, e2e-episode-alignment,
+              e2e-robot-learning, e2e-robot-run-learning, e2e-episode-building, e2e-episode-curation,
+              e2e-scene-analytics-export, e2e-batch-acquisition, e2e-interop, e2e-lerobot-container,
+              smoke-lerobot-container, verify-reliability, verify-airflow-backend,
+              e2e-bootstrap / -core / -interop, canonical_contract.sh, the v0.0 baseline spec
+tests         the E2E fixture bootstrap suites, the golden LeRobot round-trip oracle
+              (lerobot_roundtrip_golden.py) and the old test_pipeline_contracts_integration.py
+commands      every `UNAVAILABLE until step 11` stub
+pipelines     SCENARIO_CURATION, DETECTION_EVALUATION, ALIGNED_EPISODE_BUILDING; the availability flags
+```
+
+`make check-commands` fails if an advertised command does not exist, the E2E surface
+is not exactly the five journeys, or a Makefile / script references a name above.
+
+### 34.10 Invariants
+
+```text
+I-56  A Pipeline exists only where multi-stage orchestration, retry and lineage justify it.
+      Single operations are Jobs; a stage and its atomic job share one handler.
+I-57  The supported Pipeline surface is exactly four and the E2E surface exactly five.
+      Retry, dedup, force, replacement, failure recovery and orchestrator behavior are
+      infrastructure contracts proven below the journeys, not inside them.
+I-58  The canonical baseline is L1/L2 only: RobotRun, Scenes, Episodes, their validation and
+      profiles. Anything derived is an L3 workflow run on top of it, never part of it.
+I-59  A DatasetVersion is scope and membership only. It carries no channel requirement, no
+      source location and no free-form metadata (strengthens §16 and I-55).
+I-60  A SceneManifest embeds no label, annotation or box (strengthens I-50): SceneManifest v2
+      has no such structure, and bytes of the removed schema fail loudly.
+```
+
+### 34.11 Closure
+
+No ingestion or canonicalization architecture decision remains unresolved:
+recording publication, registration, identity, replacement, Scene and Episode
+canonicalization, acquisition (batch and streaming), their equivalence, and the
+derived layer are decided (§1–§33) and implemented, and the workflow, command and
+test surface that exposes them is final. **ADR-007 is complete.** What remains is
+operational and scaling debt that blocks nothing (§34.13). The final acceptance, `make e2e-cleanroom` from fresh platform state, passed
+(§34.12).
+
+### 34.12 Verification
+
+Audited at HEAD 26b9df0 plus the A9 working tree, on the local stack
+(`make local-up`; api and worker images rebuilt from the tree, migration
+`f6c2a8d4e710` applied, downgrade and re-upgrade round-tripped). nuScenes mini
+`scene-0061` (a 355,793,127-byte, 8,897-message recording) through the real stack,
+API only:
+
+```text
+make test                       worker 487 passed / 30 skipped, api 104, inference-server 37,
+                                analytics 151 / 2 skipped, core 560, integrations 47, streaming 39
+                                (each suite in its own process; run in one process the worker and
+                                inference-server conftests collide, which `make test` now avoids)
+make test-integration           sceneops-db + sceneops-storage 69 passed; registrars and recording
+                                Scene / Episode verticals 30 passed. Includes the check that the
+                                migrated schema has no column the models dropped.
+make test-infrastructure        20 passed, 3 skipped (the Airflow module): surface, dedup / force,
+                                registration idempotency, convergence and conflict-then-replacement
+                                for both domains, blocked resumption, failure recovery, 3 concurrent
+                                runs over one scope, Celery, MinIO selective reads
+make test-infrastructure-airflow  4 passed: recording_scene_building, recording_episode_building,
+                                episode_learning_data_building and scene_ml_evaluation through the
+                                four DAGs (the API restarted with the airflow backend, then restored)
+make check-commands             consistent: 98 targets, 5 E2E journeys
+ruff (apps, packages)           clean
+make e2e-batch-canonical        exit 0. 3 Scenes + 1 Episode from one RobotRun, 606 payload artifacts
+                                shared by both builds (the Episode build created none), every unit
+                                validated / profiled / ready, bootstrap re-run changed no record.
+make e2e-streaming-equivalence  exit 0. 20 channels / 8,897 messages equivalent, 3 Scenes + 1 Episode
+                                equivalent, negative control rejected.
+make e2e-scene-ml               exit 0 (mock backend). 4,699 labels over 39 samples; 3 views, 219
+                                samples, 5 dropped anchors; ScenarioSet with 2 selected Scenes; 9
+                                samples, 884 predictions, 880 tp / 4 fp / 165 fn; a retried predict
+                                and evaluate converge; a real 34,688-point lidar payload decodes to
+                                the source points. The mock backend perturbs the labels, so the
+                                metrics prove wiring and pinning, not model quality.
+make e2e-episode-learning       exit 0. 1 Episode aligned to 98 steps, export of 98 steps / 784
+                                signals, same revisions and export id on retry, validate / profile
+                                pass, LeRobot round trip: 1 episode, 98 frames, observation dim 4,
+                                action dim 3, 5 fps, every frame equal to the export's dense window;
+                                a rerun against the populated target is refused.
+make e2e-cleanroom              exit 0 (FORCE=1, run as the final acceptance). Images rebuilt from the
+                                tree; `local-reset` removed the PostgreSQL / Redis / MinIO volumes
+                                (Kafka, Airflow and data/raw untouched); the RobotRun was acquired,
+                                published and registered from scratch; canonical-bootstrap built
+                                3 Scenes + 1 Episode (L1/L2 only); canonical-verify equalled the
+                                bootstrap summary; e2e-scene-ml and e2e-episode-learning ran on that
+                                baseline (BASELINE_ID=canonical, RobotRun reused); final API
+                                verification: all four pipeline types succeeded (1 scene_ml, 2
+                                episode-learning, 3 + 3 building runs), no job failed, every derived
+                                artifact kind registered.
+```
+
+`make acceptance-grounding-dino`, `make acquisition-test`, `make lerobot-test` and
+`make ros2-test` were not run (no inference server; the isolated environments were
+not synced; the code under them is unchanged except the `default_task` field,
+covered by the analytics unit tests).
+
+Defects the real verticals exposed and A9 fixed: a LeRobot export of canonical
+Episodes failed because LeRobot requires a task and canonical Episodes have none
+(`ExternalExportConfig.default_task`); and, on this recording, no numeric channel
+is resolved at every step under the default association (the recorded control
+stream is sparse, and "previous" cannot resolve before its first sample), so the
+journey states a wide nearest-association policy explicitly (§34.13).
+
+
+### 34.13 Remaining operational debt (not decided here)
+
+```text
+Airflow         the per-task DAGs are a proof-of-concept orchestrator: serial tasks, an API
+                backend chosen at process start, DockerOperator workers. Acceptance is opt-in.
+Streaming       no automatic capture -> publish -> register hand-off; no process-restart or
+                Kafka-rebalance recovery for continuous multi-run capture.
+Scale           measured on nuScenes mini scene-0061 (one RobotRun, 3 Scenes, 1 Episode); larger
+                workloads are not measured. One baseline stores ~0.5 GB in MinIO and nothing
+                reclaims it except `make local-reset`.
+Derived layer   nearest / previous association only (no pose interpolation); no frame transforms in
+                evaluation; Episodes have no label sets; learning export is numeric only; dense
+                projection has one missing-value policy (error), so a sparse stream needs an
+                explicit wide association policy to be exportable.
+Backends        the GroundingDINO backend is accepted separately (`acceptance-grounding-dino`) and
+                was not run in the A9 verification.
+Dataset tooling `tools/dataset-acquisition` reads nuScenes only; another dataset is another tool.
+```
+
+### 34.14 Sections affected
+
+Supersedes the pipeline names of §17.5, §22.5 and §33.8 (`SCENARIO_CURATION`,
+`DETECTION_EVALUATION`, `ALIGNED_EPISODE_BUILDING` → §34.2) and implements the
+step-11 row of §29.19, §22.6 (E2E / baseline) and §33.11 (every deferred item:
+`SceneManifest.annotations` / `annotation_count`, DatasetVersion `required_channels`
+and metadata, telemetry / `raw_source` naming, ONNX dependencies, the unavailable
+scripts). §16's DatasetVersion table is now fully implemented. §13.7's allowance for
+embedded source annotations is withdrawn by I-60. Active documentation
+(`docs/architecture/*`, `docs/development/*`, `README.md`) describes the system as
+of A9.

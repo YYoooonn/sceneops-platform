@@ -217,14 +217,14 @@ async def _concurrently(worker_settings, *coroutine_factories):
             return await factory(context)
 
     dependencies_module._artifact_store = None
-    dependencies_module._raw_source_store = None
+    dependencies_module._input_store = None
     try:
         return await asyncio.gather(
             *(_attempt(f) for f in coroutine_factories), return_exceptions=True
         )
     finally:
         dependencies_module._artifact_store = None
-        dependencies_module._raw_source_store = None
+        dependencies_module._input_store = None
 
 
 @pytest.mark.usefixtures("_fresh_database_connection", "_minio_reachable")

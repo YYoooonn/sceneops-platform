@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, model_validator
 
-from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.episodes.alignment import (
     TemporalAlignmentConfig,
     TemporalSourceContext,
@@ -74,39 +74,22 @@ class ProfileEpisodeJobParams(BaseJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class AlignEpisodeJobParams(BaseJobParams):
-    """Episode + explicit TemporalAlignmentConfig -> AlignedEpisodeArtifact
-    (SceneOps V2 Request 2.3).
+class EpisodeAlignmentInput(SceneOpsBaseModel):
+    """One Episode to align, optionally pinned to the exact canonical
+    EpisodeManifest revision to consume.
 
-    The source revision is the EPISODE_MANIFEST the EpisodeRecord points to
-    (``manifest_artifact_id``, ADR-007 §14.4) unless source_artifact_id/
-    source_manifest_sha256 are both pinned explicitly. ``source_context``
-    names the clock to align on; unset, it is the Episode's window clock.
-
-    Pinning is also the only way for a specific source revision to
-    participate in this Job's execution-key dedup identity (Request 2.3
-    §17): the API computes the execution key from these params at
-    Job-creation time, before the worker has read any source bytes, so an
-    unpinned dispatch dedups at (episode_id, alignment_config,
-    alignment_semantics_version) granularity only -- the same idempotency
-    behavior every other job type already has, and force=true is available
-    for a caller that specifically needs a fresh execution.
+    Unpinned, the revision is exactly the one the EpisodeRecord points to
+    when the job runs (``manifest_artifact_id``, ADR-007 §14.4), never "the
+    latest artifact". A pin is the pair ``source_artifact_id`` +
+    ``source_manifest_sha256`` and always wins.
     """
 
-    episode_id: str
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
-    alignment_config: TemporalAlignmentConfig
-    source_context: TemporalSourceContext | None = None
-
+    episode_id: str = Field(min_length=1)
     source_artifact_id: str | None = None
     source_manifest_sha256: str | None = None
 
-    metadata: JsonDict = Field(default_factory=dict)
-
     @model_validator(mode="after")
-    def _validate_pin_pair(self) -> AlignEpisodeJobParams:
+    def _validate_pin_pair(self) -> EpisodeAlignmentInput:
         pinned = (
             self.source_artifact_id is not None,
             self.source_manifest_sha256 is not None,
@@ -116,6 +99,40 @@ class AlignEpisodeJobParams(BaseJobParams):
                 "source_artifact_id and source_manifest_sha256 must both be "
                 "provided to pin a source revision, or both left unset"
             )
+        return self
+
+
+class AlignEpisodeJobParams(BaseJobParams):
+    """Pinned Episodes + one explicit TemporalAlignmentConfig -> one
+    AlignedEpisodeArtifact per Episode (ADR-007 §33.6).
+
+    ``source_context`` names the clock to align on; unset, it is each
+    Episode's own window clock. Every aligned artifact is write-once at a
+    deterministic key, so re-running the same inputs and config converges on
+    the same artifacts.
+
+    Pinning is also the only way for a specific source revision to
+    participate in this Job's execution-key dedup identity: the API computes
+    the execution key from these params at Job-creation time, before the
+    worker has read any source bytes (the API pins unpinned inputs to the
+    Episode's current revision for that reason). ``force=true`` is available
+    for a caller that specifically needs a fresh execution.
+    """
+
+    episodes: list[EpisodeAlignmentInput] = Field(min_length=1)
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    alignment_config: TemporalAlignmentConfig
+    source_context: TemporalSourceContext | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _unique_episodes(self) -> AlignEpisodeJobParams:
+        ids = [e.episode_id for e in self.episodes]
+        if len(set(ids)) != len(ids):
+            raise ValueError("episodes must name each Episode at most once")
         return self
 
 

@@ -1,11 +1,8 @@
 from .schemas import (
     CreateDatasetRequest,
-    CreateDatasetVersionRequest,
     DatasetRecord,
     DatasetVersionRecord,
     DatasetVersionStatus,
-    GetDatasetRequest,
-    GetDatasetVersionRequest,
 )
 
 __all__ = [
@@ -13,7 +10,4 @@ __all__ = [
     "DatasetRecord",
     "DatasetVersionRecord",
     "CreateDatasetRequest",
-    "CreateDatasetVersionRequest",
-    "GetDatasetRequest",
-    "GetDatasetVersionRequest",
 ]

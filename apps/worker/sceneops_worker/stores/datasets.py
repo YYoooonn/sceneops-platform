@@ -71,21 +71,6 @@ class DatasetStore:
             observed_channels=observed_channels,
         )
 
-    async def update_scene_inputs(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        required_channels: list[str] | None = None,
-        manifest_uri: str | None = None,
-    ) -> DatasetVersionRecord:
-        return await self._versions.update_scene_inputs(
-            dataset_id=dataset_id,
-            version=version,
-            required_channels=required_channels,
-            manifest_uri=manifest_uri,
-        )
-
     async def update_episode_summary(
         self,
         *,
