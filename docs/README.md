@@ -8,6 +8,6 @@ map for where to look in the code.
 ```text
 architecture/   what the platform is and how it's built
 workflows/      specific end-to-end data flows (currently: robot ingestion)
-development/    running it locally, the E2E journeys, the canonical baseline, test-matrix.md (test layers)
+development/    running it locally, the E2E journeys, the reference corpus, the canonical baseline, test-matrix.md (test layers)
 adr/            architecture decision records
 ```

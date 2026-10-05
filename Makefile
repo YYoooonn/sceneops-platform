@@ -86,6 +86,12 @@ help:
 	@echo "  make acceptance-grounding-dino                   Model-backend acceptance of e2e-scene-ml (needs an inference server)"
 	@echo ""
 	@echo "=================================================================="
+	@echo "Reference corpus (config/reference/, docs/development/reference-corpus.md):"
+	@echo "=================================================================="
+	@echo "  make reference-data-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 UPDATE_LOCK=1]   materialize + verify the batch MCAPs (no database/MinIO/Redis/Kafka)"
+	@echo "  make reference-data-verify [REFERENCE_SCOPE=..]                                               read-only re-check against corpus.lock.json"
+	@echo ""
+	@echo "=================================================================="
 	@echo "Canonical baseline (docs/development/canonical-baseline.md):"
 	@echo "=================================================================="
 	@echo "  make canonical-bootstrap [BASELINE_ID=canonical SCENE=scene-0061]   create-or-verify the L1/L2 baseline"
@@ -159,6 +165,7 @@ include makefiles/checks.mk
 include makefiles/e2e.mk
 include makefiles/debug.mk
 include makefiles/lerobot.mk
+include makefiles/reference.mk
 include makefiles/canonical.mk
 include makefiles/streaming.mk
 include makefiles/acquisition.mk

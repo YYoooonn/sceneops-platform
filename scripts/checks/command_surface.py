@@ -36,6 +36,8 @@ MUST_BE_ADVERTISED = (
     | {
         "canonical-bootstrap",
         "canonical-verify",
+        "reference-data-bootstrap",
+        "reference-data-verify",
         "test",
         "test-integration",
         "test-infrastructure",

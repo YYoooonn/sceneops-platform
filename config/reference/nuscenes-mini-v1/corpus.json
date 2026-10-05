@@ -1,0 +1,25 @@
+{
+  "schema": "sceneops.reference_corpus/1",
+  "corpus_id": "nuscenes-mini-v1",
+  "source": {"format": "nuscenes", "version": "v1.0-mini"},
+  "defaults": {
+    "acquisition": {"channel_groups": ["camera", "lidar", "pose", "can", "mission"]},
+    "replay": {"rate": 2.0, "wait_subscribers_seconds": 60}
+  },
+  "fixtures": [
+    {"fixture_id": "scene-0061", "source_unit": "scene-0061"},
+    {"fixture_id": "scene-0103", "source_unit": "scene-0103"},
+    {"fixture_id": "scene-0553", "source_unit": "scene-0553"},
+    {"fixture_id": "scene-0655", "source_unit": "scene-0655"},
+    {"fixture_id": "scene-0757", "source_unit": "scene-0757"},
+    {"fixture_id": "scene-0796", "source_unit": "scene-0796"},
+    {"fixture_id": "scene-0916", "source_unit": "scene-0916"},
+    {"fixture_id": "scene-1077", "source_unit": "scene-1077"},
+    {"fixture_id": "scene-1094", "source_unit": "scene-1094"},
+    {"fixture_id": "scene-1100", "source_unit": "scene-1100"}
+  ],
+  "scopes": {
+    "smoke-1": ["scene-0061"],
+    "nuscenes-mini-full-10": ["*"]
+  }
+}
