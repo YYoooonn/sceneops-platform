@@ -2,12 +2,12 @@
 
 ## Status
 
-**Accepted — implemented through step 12.3 (§8); steps 12.4–12.6 are not.**
+**Accepted — implemented through step 12.4 (§8); steps 12.5–12.6 are not.**
 
 Ratified 2026-10-05 with four clarifications, incorporated in place: reconciliation
 scheduling (§3.2), capture receipt semantics (§4.2), the retry budget across
 replacement Jobs (§5.2, §5.3) and deferral of the stall threshold to Phase 12.4
-(§5.3, §8, B4).
+(§5.3, §8, B4; decided in Amendment 12.4).
 
 **Amendment 12.3 — read-only classification (implementation step 12.3).**
 Accepted. Step 12.3 adds `ArtifactStore.list_objects`, a published-object scan,
@@ -43,11 +43,12 @@ things, because §5.1 left both open:
 
 - **Stall threshold stays undecided (§5.3, B4).** Classification accepts an
   optional caller-supplied threshold and, with none, never reports
-  `registration_stalled_candidate`. The command supplies none.
+  `registration_stalled_candidate`. The command supplies none. *(Decided in
+  Amendment 12.4: the command now supplies it.)*
 - **Failure classes (§5.2)** are encoded in `sceneops-core`
   (`robots/registration_failures.py`) as exception-class names, tied to the
   worker's real exception classes by a test. Classification counts failed Jobs
-  per execution key but enforces no budget.
+  per execution key but enforces no budget. *(Enforced from Amendment 12.4.)*
 - **What is verified.** A run that is published but not registered has its
   recording bytes (size, sha256) compared to the manifest, because registration
   would reject a mismatch. A registered run is not re-hashed: its listing size
@@ -60,6 +61,161 @@ things, because §5.1 left both open:
   `PostgresJobRepository.list_for_execution_keys`); no schema change. A run
   that only PostgreSQL knows (a RobotRunRecord with no object under the scanned
   root) is not discovered here; that reverse check belongs to §6.1 (step 12.5).
+
+**Amendment 12.4 — bounded recovery (implementation step 12.4).**
+Accepted. Step 12.4 turns the read-only model of 12.3 into recovery, still
+stateless and without a lifecycle table. It changes no decision above. It decides
+the stall threshold (§5.3, B4) from measurement, fixes what each state is
+allowed to cause, and settles the places where §5 left a case open.
+
+*Measured registration latency* (`scripts/dev/benchmark_registration_latency.py`;
+through `POST /robot-runs:register` → Job → Celery → `register_robot_run`;
+fresh `run_id` per registration so the R5 "already registered" shortcut cannot
+apply):
+
+```text
+date          2026-10-05          git HEAD  6630a63 (+ uncommitted 12.4 work; the measured path is unchanged by it)
+branch        feat/operational-reliability
+environment   one macOS host, Docker VM 7.65 GiB; worker-jobs prefork, concurrency 4; PostgreSQL 16,
+              Redis 7, MinIO RELEASE.2024-11-07 on the same host (no network latency to storage)
+workload      repo fixture MCAPs; the real nuScenes scene-0061 recording of the canonical baseline
+              (355,793,127 B); synthetic 2x and 3x end-to-end repetitions of that recording
+
+recording                     size        n   execution (started→finished)   queued→started   worker peak RSS
+std_msgs_string               4 KB        5   0.04 s  (max 0.07 s)           ≤ 0.11 s          0.6 GiB
+nav_msgs_odometry             13 KB       5   0.05 s  (max 0.07 s)           ≤ 0.06 s          0.6 GiB
+can_replay_scene_0061         1.4 MB      5   0.05 s  (max 0.06 s)           ≤ 0.04 s          0.6 GiB
+nuScenes scene-0061           355.8 MB    3   1.74 s  (max 1.92 s)           ≤ 0.09 s          0.9 GiB
+nuScenes scene-0061 x2        711.6 MB    1   3.55 s                         ≤ 0.09 s          1.3 GiB
+nuScenes scene-0061 x3        1,067.4 MB  1   5.44 s                         ≤ 0.09 s          1.6 GiB
+5 x scene-0061 submitted at once (4 worker slots)
+                              355.8 MB    5   1.66–2.24 s                    0.1 s … 2.23 s    1.9 GiB
+```
+
+- **Normal completion** is linear in recording size: about 5 ms/MB (≈195 MB/s)
+  on local MinIO. Fixed overhead (claim, manifest read, one PostgreSQL
+  transaction) is ≈ 0.04 s. Recording size does matter materially, and so does
+  memory: registration holds the whole recording in the worker (≈ 1× its size
+  above the idle footprint, B9).
+- **Queue / dispatch latency** is ≤ 0.11 s on an idle worker; a fifth job behind
+  four busy slots waited 2.23 s, about one registration time. A backlog of B jobs
+  waits ≈ B / 4 × the registration time.
+- **Heartbeat.** `heartbeat_at` is written at claim and at finish only
+  (`heartbeat_at == finished_at` on every completed Job); it never advances while
+  a registration runs, so a Job's "last activity" is its claim time.
+
+*Chosen stall threshold: 900 s (15 min), configurable* (`--stall-threshold-seconds`
+or `SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS`;
+`DEFAULT_STALL_THRESHOLD_SECONDS`). The rule it must satisfy is the one in §5.3:
+exceed the worst legitimate registration time, queue wait included, because an
+abandon spends one of the logical registration's three attempts.
+
+```text
+slowest measured registration           5.4 s    (1.07 GB)               900 s ≈ 165x
+extrapolated to the 5 GB single-PUT limit (B9)   ≈ 26 s                  900 s ≈ 35x
+the same 5 GB over storage ~30x slower than local MinIO (≈ 6 MB/s)       ≈ 830 s   still below 900 s
+queue wait, 5-way burst                  2.2 s                          900 s ≈ 400x
+```
+
+The cost is asymmetric: a threshold that is too short abandons a healthy
+registration (and after three of them stops recovering it); one that is too long
+only delays recovery of a dead one. 900 s is therefore deliberately far above
+everything measured. It is measured on local storage only; deployments with
+slower storage or longer queues must measure and raise it. Recovery of W7 / W8 is
+consequently not faster than the threshold plus one polling interval.
+
+*What the reconciler may do* (`reconcile --once --apply`; without `--apply` the
+command is unchanged and read-only):
+
+| State | Automatic action |
+| --- | --- |
+| `registration_pending`, no Job at all | submit `REGISTER_ROBOT_RUN` |
+| `registration_failed_transient`, attempts remain | submit again |
+| `registration_stalled_candidate`, attempts remain | abandon each stalled Job (`FAILED` / `JobAbandoned`) by one conditional UPDATE, then submit a forced replacement |
+| `registration_stalled_candidate`, the abandon spends the last attempt | abandon only; no replacement |
+| `registered`, `permanent_conflict`, `integrity_incident`, `registration_failed_permanent` (a spent budget included), `registration_active`, every publication and capture state | none |
+| `registration_pending` whose newest Job is `SUCCEEDED` or `CANCELLED` | none; reported as skipped (`succeeded_job_without_robot_run`, `latest_job_cancelled`) |
+
+Everything goes through the API's Job path (`RobotRunRegistrationService.submit`,
+which gained `force`); the Worker handler is unchanged and the reconciler writes
+no object, RobotRunRecord or ArtifactRecord (L-2).
+
+*Clarified retry semantics:*
+
+- **Attempts.** One attempt is one `FAILED` Job of the execution key. Abandoned
+  and replacement Jobs share the count; a new row never resets it; success ends
+  recovery. Classification enforces it: a transient failure with no attempts
+  left is `registration_failed_permanent` with reason `attempt_budget_exhausted`;
+  a stalled Job with none left is reported, not abandoned. An operator's forced
+  submission after exhaustion is outside the budget and the reconciler does not
+  touch it.
+- **Replacement is single-winner.** Of any number of concurrent passes exactly
+  one changes the stalled row (the UPDATE re-checks "in flight and inactive" on
+  the locked row) and only that pass creates the replacement. Plain submission
+  (a first Job, a transient retry) is not serialized: concurrent passes may each
+  create a Job. That is W11 and remains harmless; it can overshoot the budget by
+  at most the number of concurrent passes.
+- **A success without a RobotRunRecord and a cancelled Job** are not retried: the
+  first contradicts the durable facts (L-9, and a plain submission would only
+  deduplicate onto it), the second is an operator's decision.
+- **Dispatch failure.** The Job is committed before dispatch. If the broker
+  refuses it, the Job stays `PENDING` / `QUEUED`, the action is reported
+  `dispatch_failed` (with the Job id), nothing is rolled back and nothing is
+  reported as done. Classification and the observe-only pass never touch Redis;
+  a later pass recovers the Job as a stalled Job once it has been inactive for
+  the threshold. The reconciler bounds broker connect and socket waits to 5 s so
+  an unresponsive broker cannot hang a pass.
+- **Per-pass bound.** One pass performs at most 100 mutating actions
+  (`actions_deferred` reports the rest); an action that raises is recorded and
+  the pass continues.
+- **Evidence in the report.** Each run's `registration` carries
+  `failed_job_count`, `abandoned_job_count`, `attempt_budget` and
+  `attempts_remaining`; `--apply` adds `mode`, `policy` and `actions`. States are
+  always the facts observed before any action.
+
+*`publish-pending`* (`python -m sceneops_integrations.recording publish-pending
+--capture-root <root>`, DB-free): for every finalized capture with a valid
+receipt whose publication is absent, or is a recording without a manifest, it runs
+`publish_from_capture`. It skips a complete publication, a capture without a
+receipt, an unusable receipt, an unfinished capture and a manifest that
+contradicts its recording; it never overwrites an object, and a publish that
+raises (conflicting bytes, a receipt that disagrees with the bytes) is reported
+`failed` while the other captures proceed. Exit 0 when nothing failed, 2 when any
+publish failed, 1 when the facts could not be read.
+
+*Local unattended operation.* `make recovery-up` (`compose/recovery.yaml`, profile
+`recovery`) starts two services whose whole behavior is
+`scripts/ops/poll_loop.sh`: invoke the one-shot command, sleep
+`RECOVERY_POLL_INTERVAL_SECONDS` (default 60), repeat. `publication-recovery` runs
+`publish-pending` on the capture volume (read-only, DB-free image settings);
+`registration-recovery` runs `reconcile --once --apply` (no Redis dependency to
+start). They hold no state; a Kubernetes deployment would run the same commands
+from CronJobs. There is no Celery Beat or general scheduler.
+
+*Validation* (2026-10-05, same host). Unit: 28 recovery tests over doubles, 13
+`publish-pending` tests, 10 `abandon_if_inactive` tests on PostgreSQL (including
+ten concurrent abandoners with exactly one winner). Fault injection
+(`make test-recovery`, 11 tests): real PostgreSQL and MinIO, a throwaway Redis
+container and Celery worker subprocesses killed with SIGKILL, the production
+registration handler wrapped only to hold at an exact point. Covered: finalized
+capture never published (W3), recording uploaded without manifest (W5), manifest
+published and never submitted (W6), a queue message lost (W7), a worker killed
+before the R8 commit (W8), a registration committed with its completion lost
+(W9), transient failures across replacement Jobs and budget exhaustion followed by
+an operator-forced success, a permanent failure never retried, Redis stopped and
+restored, Redis paused (unresponsive), six concurrent passes over five
+acquisitions, and conflicts / integrity incidents left byte-for-byte untouched.
+Each ends on one RobotRunRecord and two ArtifactRecords per acquisition. The
+compose loops were also run against the live stack: a finalized capture became a
+RobotRun in about 5 s with no operator step.
+
+*Known limitations (current).* The threshold is measured on one host with local
+storage. Recovery latency for W7 / W8 is at least the threshold. A dispatch outage
+longer than the budget times the threshold (≈ 45 min at defaults) exhausts a
+registration's attempts although the registration itself never failed; it then
+needs an operator's forced submission. Plain-submission races can create duplicate
+Jobs. Capture supervision, capture-volume loss and Kafka retention remain as in B1,
+B2 and W13.
 
 Audited at:
 
@@ -542,10 +698,11 @@ replacement consume the attempt budget of §5.2. A late completion of the
 original worker may overwrite that row; this is accepted because the effect is
 idempotent.
 
-**The stall threshold is not frozen by this ADR.** It must exceed worst-case
-registration time, and it is determined in Phase 12.4 from measured
-registration latency across representative recording sizes (blocker B4). Until
-then, no numeric value is part of the contract.
+**The stall threshold** must exceed worst-case registration time, queue wait
+included. It is configurable and defaults to 900 s, derived in Amendment 12.4
+from measured registration latency; the number is an implementation default
+justified by that measurement, not a frozen part of the contract (blocker B4,
+resolved).
 
 ---
 
@@ -687,7 +844,7 @@ platform and is DEFERRED.
         submission.
       Verify: every §5.1 row from fixtures; real PG + MinIO; no write occurs (L-10).
 
-12.4  Resumption
+12.4  Resumption  (implemented; see Amendment 12.4)
       - Measure registration latency across representative recording sizes and derive the
         stall threshold (§5.3) before any stalled-Job action is implemented.
       - `publish-pending`.
@@ -729,14 +886,14 @@ B2  Kafka retention is not configured in the repository; recovery of W1/W12 assu
     retention exceeds recovery time. Must be set and measured, not assumed.
 B3  ArtifactStore Protocol change touches every implementer and test double
     (e.g. CountingArtifactStore).
-B4  Stall threshold. Deliberately not frozen. `heartbeat_at` is not refreshed during a job
-    and registration reads the whole recording into memory. The value is determined in
-    Phase 12.4 from measured registration latency across representative recording sizes
-    (testing.md §5, §7).
+B4  Stall threshold. RESOLVED in Amendment 12.4: 900 s default, configurable, from measured
+    registration latency. `heartbeat_at` is still not refreshed during a job and
+    registration still reads the whole recording into memory, so the value is only as good
+    as the measurement (one host, local storage).
 B5  Redis durability of the Celery queue is unverified; W7 resolution does not depend
     on it, but its frequency does.
-B6  `JobService.mark_queued` / `validate_executable` behavior for re-dispatching a QUEUED
-    or RUNNING Job was not verified; 12.4 may prefer forced replacement over re-dispatch.
+B6  RESOLVED in Amendment 12.4: a stalled Job is abandoned and replaced by a forced Job;
+    re-dispatching the same Job is not used.
 B7  Router convergence (F6) and a capture-volume lease (F8) matter only if the router
     or concurrent capture processes are productionized.
 B8  Batch acquisition (`dataset-acquisition`) has no receipt producer; it keeps its

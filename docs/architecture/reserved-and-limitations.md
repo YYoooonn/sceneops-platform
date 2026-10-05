@@ -167,13 +167,20 @@ implements or half-implements them, so there's nothing to document as
   [streaming-transport.md](./streaming-transport.md)), and canonicalization
   is always a batch job over a registered recording; command/control back to
   a robot is not built (see [ADR-005](../adr/005-ros2-vs-kafka-boundary.md)).
-- Automatic capture -> publish -> register hand-off, durable recovery of
-  in-flight capture sessions across a restart, and Kafka message sizes
-  beyond the stock ~1 MB limit (streaming-transport §14, §26, §33). Where a
-  run stands is observable (`reconcile --once`, read-only; see
-  [Robot run and MCAP](../workflows/robot-run-and-mcap.md) §3.2), but
-  nothing acts on it: publishing, registration submission and stalled-Job
-  handling remain explicit operator steps.
+- Durable recovery of in-flight capture sessions across a restart, and Kafka
+  message sizes beyond the stock ~1 MB limit (streaming-transport §14, §26,
+  §33). Nothing supervises or restarts one-shot capture: a capture killed before
+  finalize is re-run by an operator while Kafka still retains its records.
+  Beyond that, the hand-off is recoverable but not triggered by capture: a
+  finalized capture with a receipt is published by `publish-pending`, a published
+  manifest is registered, retried within three attempts, or replaced when its Job
+  stalls, by `reconcile --once --apply` (see
+  [Robot run and MCAP](../workflows/robot-run-and-mcap.md) §3.2). They run only
+  when invoked; `make recovery-up` loops them locally and no scheduler exists in
+  the platform. Legacy finalized bags without a receipt, conflicts, integrity
+  incidents and a registration that has spent its attempts remain operator
+  decisions. A dispatch outage longer than the attempt budget times the stall
+  threshold exhausts the budget and needs an operator's forced submission.
 - Evaluation-aware scenario mining (FP/FN-by-scene signals), pseudo-label
   candidate scoring, or VLM-based scene tagging.
 - An RLDS (or any other second) external training-format adapter —

@@ -895,8 +895,13 @@ async def test_report_contains_no_wall_clock_reading(store, facts):
         policy=ClassificationPolicy(stall_candidate_after=timedelta(days=36500)),
     )
 
-    # Reading the clock for a threshold must not leak it into the report.
-    assert first == second
+    # Reading the clock for a threshold must not leak it into the report. The
+    # threshold itself is configuration and is echoed as ``policy``.
+    assert second.policy is not None
+    assert (
+        second.policy.stall_threshold_seconds == timedelta(days=36500).total_seconds()
+    )
+    assert first == second.model_copy(update={"policy": None})
 
 
 async def test_a_run_needs_some_observed_fact():

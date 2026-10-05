@@ -196,15 +196,21 @@ different bytes are detected (post-write verification, registration and
 consumer checksums) rather than prevented; capture routing by
 `robot_run_id` provides the single-publisher assumption.
 
-**Observing acquisition state.** Two read-only one-shot commands report where
-every `run_id` is in the lifecycle; neither writes an object, a row or a Job,
-and neither acts on what it finds:
+**Observing and recovering acquisition state.** Stateless one-shot commands
+report where every `run_id` is in the lifecycle and, when asked, act on the
+states that are safe to act on. Each re-derives everything from durable facts,
+keeps nothing between invocations and is safe at any frequency, concurrently and
+after any crash:
 
 ```text
 python -m sceneops_integrations.recording scan-capture --capture-root <capture output root>
-    -> JSON CaptureScanReport (DB-free; reads directory entries, sizes and receipts, never recording bytes)
+    -> JSON CaptureScanReport (DB-free, read-only; reads directory entries, sizes and receipts, never recording bytes)
+python -m sceneops_integrations.recording publish-pending --capture-root <capture output root>
+    -> JSON PublishPendingReport (DB-free; publishes finalized captures that have a receipt and are not completely published)
 python -m app.domains.robots.reconciliation --once [--capture-report <scan-capture JSON | ->]
-    -> JSON ReconciliationReport (from apps/api; needs ArtifactStore + PostgreSQL, not the HTTP server)
+    -> JSON ReconciliationReport, read-only (from apps/api; needs ArtifactStore + PostgreSQL, not the HTTP server)
+python -m app.domains.robots.reconciliation --once --apply
+    -> the same report, after bounded registration recovery
 ```
 
 The reconciler lists `robot_run_root` and reads each manifest object, reads
@@ -223,15 +229,55 @@ report. One state per `run_id`, derived only from durable facts:
 | `publication_incomplete` | recording without a valid manifest, manifest without its recording, or a malformed manifest |
 | `registration_pending` | valid manifest and recording, no RobotRunRecord, no `REGISTER_ROBOT_RUN` Job in flight |
 | `registration_active` | a Job is `pending`, `queued` or `running` |
-| `registration_stalled_candidate` | every in-flight Job is older than a caller-supplied threshold (none is configured, so this is not reported by the command) |
-| `registration_failed_transient` / `registration_failed_permanent` | the newest Job failed; classified by its recorded exception class |
+| `registration_stalled_candidate` | every in-flight Job has shown no activity for longer than the stall threshold |
+| `registration_failed_transient` / `registration_failed_permanent` | the newest Job failed; classified by its recorded exception class. A transient failure becomes permanent (reason `attempt_budget_exhausted`) once the logical registration has spent its attempts |
 | `registered` | RobotRunRecord exists with the manifest's `manifest_checksum`; any Job state is ignored |
 | `permanent_conflict` | RobotRunRecord exists with a different `manifest_checksum` |
 | `integrity_incident` | the facts contradict each other: recording size or checksum differs from its manifest, ArtifactRecords without a RobotRunRecord, a registered run whose objects or ArtifactRecords disagree, an unusable capture receipt |
 
-A Job's success never makes a run `registered`. The report holds no
-wall-clock reading, so reconciling an unchanged system twice yields identical
-output. Exit status is 0 whenever a report was produced.
+A Job's success never makes a run `registered`. Observation is read-only and
+the report holds no wall-clock reading; its states are always what was observed
+before any action. Exit status is 0 whenever a report was produced.
+
+**Recovery actions.** `publish-pending` and `reconcile --apply` are the only
+actors, and each acts on a short list of states:
+
+| State | Action |
+| --- | --- |
+| finalized capture, valid receipt, nothing in the store (`publish_pending`) | `publish-pending` publishes it through the `publish --from-capture` path |
+| recording uploaded, manifest missing, receipt present (`publication_incomplete`) | `publish-pending` reuses the recording and writes the manifest |
+| `registration_pending` with no Job | submit `REGISTER_ROBOT_RUN` |
+| `registration_failed_transient`, attempts remain | submit again |
+| `registration_stalled_candidate`, attempts remain | mark the stalled Job `FAILED` / `JobAbandoned`, then submit a forced replacement Job |
+| `registered` | nothing, whatever a Job row says |
+| `permanent_conflict`, `integrity_incident`, `registration_failed_permanent` (including a spent budget), `registration_active`, a manifest that contradicts its recording, a capture without a receipt | nothing; an operator decides |
+
+All registration goes through the same Job and dispatch path as
+`POST /robot-runs:register`; the worker handler is unchanged and the reconciler
+writes no object, RobotRunRecord or ArtifactRecord. `publish-pending` never
+overwrites an object: a conflicting existing one is reported as `failed` and
+every other capture is still processed.
+
+A logical registration is its execution key, `REGISTER_ROBOT_RUN(manifest_uri)`.
+Every `FAILED` Job of that key, abandoned ones included, is one attempt out of
+three; replacement Jobs share the count and a new Job row never resets it.
+Success ends recovery. An operator's forced submission is outside the budget.
+Each run's report entry shows `failed_job_count`, `abandoned_job_count`,
+`attempt_budget` and `attempts_remaining`, and `--apply` adds an `actions` list
+(what was submitted, abandoned, skipped or failed, with the Job ids). One pass
+performs at most 100 actions; the rest wait for the next pass.
+
+The stall threshold (`--stall-threshold-seconds`, or
+`SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS`) is 900 s by default
+([ADR-008](../adr/008-acquisition-lifecycle-reliability.md) Amendment 12.4 gives
+the measurements it comes from). If the broker refuses a dispatch the Job stays
+committed as `pending` / `queued` and is recovered as a stalled Job once it has
+been inactive for the threshold; classification never needs Redis.
+
+Locally, `make recovery-up` starts two loops (`compose/recovery.yaml`) that only
+repeat `publish-pending` and `reconcile --once --apply` every
+`RECOVERY_POLL_INTERVAL_SECONDS` (default 60); `make reconcile-once` and
+`make reconcile-apply` run one pass by hand.
 
 ### 3.3 Batch acquisition and the L1 recording contract
 

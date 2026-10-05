@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.jobs.schemas import (
     JobEvent,
     JobEventLevel,
@@ -23,6 +25,8 @@ from sceneops_db.converters.jobs import (
 from sceneops_db.models.jobs import JobEventModel, JobModel
 
 from ._utils import IN_CLAUSE_CHUNK, apply_pagination, apply_values, enum_value
+
+_ACTIVE_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
 
 
 class PostgresJobRepository:
@@ -127,6 +131,50 @@ class PostgresJobRepository:
             jobs.extend(job_model_to_manifest(m) for m in result.scalars().all())
         jobs.sort(key=lambda job: (job.created_at, job.job_id))
         return jobs
+
+    async def abandon_if_inactive(
+        self,
+        job_id: str,
+        *,
+        type: JobType,
+        inactive_since: datetime,
+        error: ErrorInfo,
+    ) -> JobManifest | None:
+        """Move one PENDING / QUEUED / RUNNING Job of ``type`` to FAILED with
+        ``error`` iff its newest activity timestamp (created, queued, started
+        or heartbeat) is older than ``inactive_since``. Returns the failed Job,
+        or None when this call did not change it: the Job is gone, already
+        terminal (a concurrent caller won) or has shown activity since the
+        caller read it.
+
+        A single conditional UPDATE, so of any number of concurrent callers
+        exactly one receives the Job; that winner alone may replace it. The
+        predicate is re-evaluated by PostgreSQL against the row as it is now,
+        not against what the caller read earlier. Does not commit."""
+        last_activity = func.greatest(
+            JobModel.created_at,
+            func.coalesce(JobModel.queued_at, JobModel.created_at),
+            func.coalesce(JobModel.started_at, JobModel.created_at),
+            func.coalesce(JobModel.heartbeat_at, JobModel.created_at),
+        )
+        now = func.now()
+        stmt = (
+            update(JobModel)
+            .where(JobModel.job_id == job_id)
+            .where(JobModel.type == enum_value(type))
+            .where(JobModel.status.in_([enum_value(s) for s in _ACTIVE_STATUSES]))
+            .where(last_activity < inactive_since)
+            .values(
+                status=enum_value(JobStatus.FAILED),
+                error=error.model_dump(mode="json"),
+                finished_at=now,
+                updated_at=now,
+            )
+            .returning(JobModel)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return job_model_to_manifest(model) if model is not None else None
 
     async def claim_for_run(
         self,

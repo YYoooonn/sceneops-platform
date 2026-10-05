@@ -9,7 +9,9 @@ be derived from are (``created_at``, ``heartbeat_at``, ``last_modified``,
 
 Observation and classification are separate layers. This module only defines
 the shapes: ``classify.py`` turns observed facts into a state, and nothing here
-or there acts on a state (ADR-008 L-10).
+or there acts on a state (ADR-008 L-10). ``recovery.py`` acts, and records what
+it did as ``RecoveryAction`` entries beside -- never inside -- the observed
+states, so a run's state is always what was observed before any action.
 """
 
 from __future__ import annotations
@@ -56,14 +58,15 @@ class AcquisitionState(StrEnum):
     REGISTRATION_PENDING = "registration_pending"
     # A REGISTER_ROBOT_RUN Job is PENDING / QUEUED / RUNNING. (registration_pending)
     REGISTRATION_ACTIVE = "registration_active"
-    # Every in-flight Job is older than the caller-supplied stall threshold.
-    # Reachable only when a threshold is supplied: the platform fixes none yet.
+    # Every in-flight Job is older than the stall threshold. Reachable only when
+    # the caller supplies a threshold (the one-shot command always does).
     # (registration_stalled)
     REGISTRATION_STALLED_CANDIDATE = "registration_stalled_candidate"
     # The newest Job failed with a transient error class.
     # (registration_failed_transient)
     REGISTRATION_FAILED_TRANSIENT = "registration_failed_transient"
-    # The newest Job failed with a permanent error class.
+    # The newest Job failed with a permanent error class, or the logical
+    # registration spent its attempt budget (reason ``attempt_budget_exhausted``).
     # (registration_failed_permanent)
     REGISTRATION_FAILED_PERMANENT = "registration_failed_permanent"
     # RobotRunRecord exists and its manifest_checksum equals the manifest in
@@ -120,7 +123,17 @@ class RegistrationEvidence(_ReportModel):
     execution_key: str | None
     # Every REGISTER_ROBOT_RUN Job of that key, oldest first.
     jobs: tuple[JobFacts, ...]
+    # Attempts without success consumed by this logical registration (ADR-008
+    # §5.2): every FAILED Job of the execution key, abandoned ones included.
+    # Replacement Jobs share it; a new Job row never resets it.
     failed_job_count: int
+    # Of those, the Jobs the reconciler abandoned (error type ``JobAbandoned``).
+    abandoned_job_count: int = 0
+    # The attempt budget in force when the report was made; None when the
+    # caller supplied none (classification then enforces no budget).
+    attempt_budget: int | None = None
+    # ``attempt_budget - failed_job_count``, floored at zero.
+    attempts_remaining: int | None = None
 
 
 class RunReport(_ReportModel):
@@ -132,6 +145,65 @@ class RunReport(_ReportModel):
     publication: PublishedRunObservation | None
     publication_assessment: PublicationAssessment | None
     registration: RegistrationEvidence
+
+
+class RecoveryActionKind(StrEnum):
+    # registration_pending without any Job: submit REGISTER_ROBOT_RUN.
+    SUBMIT_REGISTRATION = "submit_registration"
+    # Transient failed registration with budget left: submit again.
+    RETRY_REGISTRATION = "retry_registration"
+    # Stalled Job abandoned (FAILED / JobAbandoned) and replaced by a forced Job.
+    REPLACE_STALLED_JOB = "replace_stalled_job"
+    # Stalled Job abandoned; the attempt it consumed spent the budget, so no
+    # replacement follows.
+    ABANDON_STALLED_JOB = "abandon_stalled_job"
+    # An eligible state the reconciler deliberately did not act on.
+    NONE = "none"
+
+
+class RecoveryOutcome(StrEnum):
+    # A Job was created and handed to the broker.
+    SUBMITTED = "submitted"
+    # An equivalent Job already existed (a concurrent submission); none created.
+    DEDUPLICATED = "deduplicated"
+    # The Job was created and committed but the broker refused the dispatch.
+    # The Job is preserved (PENDING / QUEUED) and a later pass recovers it as
+    # a stalled Job; nothing was rolled back and nothing is reported as done.
+    DISPATCH_FAILED = "dispatch_failed"
+    # The stalled Job was abandoned, but no replacement follows (budget spent).
+    ABANDONED = "abandoned"
+    # Another reconciler (or the worker) changed the Job first; this pass did
+    # not act on it.
+    LOST_RACE = "lost_race"
+    # Deliberately not acted on; ``reason`` says why.
+    SKIPPED = "skipped"
+    # The action raised; the pass continued with the next run.
+    ERROR = "error"
+
+
+class RecoveryAction(_ReportModel):
+    run_id: str
+    kind: RecoveryActionKind
+    outcome: RecoveryOutcome
+    # Stable machine-readable code for SKIPPED / ERROR / DISPATCH_FAILED.
+    reason: str | None = None
+    # The Job this action created (or deduplicated onto).
+    job_id: str | None = None
+    # Jobs this action moved to FAILED / JobAbandoned.
+    abandoned_job_ids: tuple[str, ...] = ()
+    # failed_job_count / budget as observed before the action.
+    attempts_used: int | None = None
+    attempt_budget: int | None = None
+    error: str | None = None
+
+
+class RecoveryPolicyFacts(_ReportModel):
+    """The recovery parameters the report was made under (configuration, not
+    a clock reading)."""
+
+    stall_threshold_seconds: float | None
+    attempt_budget: int | None
+    max_actions: int | None = None
 
 
 class ReconciliationReport(_ReportModel):
@@ -149,6 +221,13 @@ class ReconciliationReport(_ReportModel):
     capture_unrecognized_entries: tuple[str, ...]
     # state value -> number of runs; keys sorted.
     counts: dict[str, int]
+    # "observe" (the default: nothing was written) or "apply" (bounded recovery
+    # ran). States above are always the facts observed before any action.
+    mode: Literal["observe", "apply"] = "observe"
+    policy: RecoveryPolicyFacts | None = None
+    actions: tuple[RecoveryAction, ...] = ()
+    # Eligible actions left for the next pass because the per-pass bound was hit.
+    actions_deferred: int = 0
 
     def to_json_dict(self) -> dict:
         return self.model_dump(mode="json")

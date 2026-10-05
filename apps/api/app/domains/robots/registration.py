@@ -4,11 +4,31 @@ from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sceneops_core.jobs.schemas import CreateJobRequest, JobStatus, JobType
+from sceneops_core.jobs.schemas import (
+    CreateJobRequest,
+    JobManifest,
+    JobStatus,
+    JobType,
+)
 
 from app.domains.robots.schemas import RegisterRobotRunResponse
 from app.platform.jobs.dispatch_facade import JobDispatchFacade
 from app.platform.jobs.service import JobService
+
+
+class RegistrationDispatchError(RuntimeError):
+    """The registration Job was created and committed but handing it to the
+    execution backend failed (broker unreachable, ...). The Job is *not* rolled
+    back: it stays PENDING or QUEUED in PostgreSQL, where reconciliation finds
+    it and recovers it as a stalled Job (ADR-008 §3.2, W7). ``job`` is that
+    Job; the original error is ``__cause__``."""
+
+    def __init__(self, job: JobManifest) -> None:
+        super().__init__(
+            f"REGISTER_ROBOT_RUN job {job.job_id} was created but could not be "
+            f"dispatched (status={job.status.value})"
+        )
+        self.job = job
 
 
 class RobotRunRegistrationService:
@@ -31,12 +51,18 @@ class RobotRunRegistrationService:
         self._job_service_factory = job_service_factory
         self._dispatch_facade = dispatch_facade
 
-    async def submit(self, manifest_uri: str) -> RegisterRobotRunResponse:
+    async def submit(
+        self, manifest_uri: str, *, force: bool = False
+    ) -> RegisterRobotRunResponse:
+        """``force`` bypasses execution-key deduplication so a Job is always
+        created. Only the reconciler's stalled-Job replacement uses it (after
+        abandoning the stalled Job); the HTTP route never does."""
         async with self._session_factory() as session:
             job = await self._job_service_factory(session).create_job(
                 CreateJobRequest(
                     type=JobType.REGISTER_ROBOT_RUN,
                     params={"manifest_uri": manifest_uri},
+                    force=force,
                 )
             )
             await session.commit()
@@ -45,5 +71,8 @@ class RobotRunRegistrationService:
         # dedup); only a job that was never dispatched is dispatched here.
         execution = None
         if job.status == JobStatus.PENDING:
-            execution = await self._dispatch_facade.dispatch(job.job_id)
+            try:
+                execution = await self._dispatch_facade.dispatch(job.job_id)
+            except Exception as exc:
+                raise RegistrationDispatchError(job) from exc
         return RegisterRobotRunResponse(job=job, execution=execution)

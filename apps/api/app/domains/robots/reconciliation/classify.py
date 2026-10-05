@@ -4,7 +4,7 @@ Input is observed facts -- the capture observation, the published-object
 observation and its assessment, and PostgreSQL registration evidence. Output is
 one :class:`AcquisitionState` plus machine-readable reasons. Nothing here reads
 a store, a database or a clock, and nothing acts: classification and action are
-separate steps (12.4 owns action).
+separate steps (``recovery.py`` owns action).
 
 Precedence, first match wins:
 
@@ -40,17 +40,28 @@ _ACTIVE_STATUSES = frozenset({JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUN
 
 @dataclass(frozen=True)
 class ClassificationPolicy:
-    """Thresholds that turn durable timestamps into a state. Every field
-    defaults to ``None``: with no threshold, a state is derived from facts
-    alone and no age ever promotes it.
+    """Thresholds that turn durable facts into a state. Every field defaults to
+    ``None``: with no threshold, a state is derived from facts alone and no age
+    or count ever promotes it.
 
-    ``stall_candidate_after`` is deliberately unset in the platform: the value
-    must exceed worst-case registration time and is decided from measured
-    latency (ADR-008 §5.3, B4). This is the seam that decision plugs into, not a
-    decision.
+    ``stall_candidate_after``: a Job in flight whose newest timestamp is older
+    than this is a stall candidate. It must exceed the worst legitimate
+    registration time, because a premature abandon spends one of the logical
+    registration's attempts (ADR-008 §5.3, "Stall threshold").
+
+    ``attempt_budget``: attempts without success (FAILED Jobs of the execution
+    key, abandoned ones included) after which the logical registration is out
+    of automatic retries (ADR-008 §5.2).
     """
 
     stall_candidate_after: timedelta | None = None
+    attempt_budget: int | None = None
+
+
+def attempt_budget_spent(
+    registration: RegistrationEvidence, budget: int | None
+) -> bool:
+    return budget is not None and registration.failed_job_count >= budget
 
 
 def _last_activity(job: JobFacts) -> datetime | None:
@@ -162,9 +173,12 @@ def _classify_registration(
                 (last := _last_activity(job)) is not None and now - last > threshold
                 for job in active
             ):
+                stalled_notes = ["job_inactive_beyond_threshold", *notes]
+                if attempt_budget_spent(registration, policy.attempt_budget):
+                    stalled_notes.append("attempt_budget_exhausted")
                 return (
                     AcquisitionState.REGISTRATION_STALLED_CANDIDATE,
-                    tuple(sorted(["job_inactive_beyond_threshold", *notes])),
+                    tuple(sorted(stalled_notes)),
                 )
         return (
             AcquisitionState.REGISTRATION_ACTIVE,
@@ -177,14 +191,19 @@ def _classify_registration(
     latest = jobs[-1]
     if latest.status == JobStatus.FAILED:
         permanent = latest.failure_class == RegistrationFailureClass.PERMANENT
+        failed_notes = [f"error_type:{latest.error_type or 'unknown'}", *notes]
+        # A transient failure is retried only while attempts remain; spent, it
+        # needs an operator exactly like a permanent one (an explicit forced
+        # submission is outside the budget).
+        if not permanent and attempt_budget_spent(registration, policy.attempt_budget):
+            permanent = True
+            failed_notes.append("attempt_budget_exhausted")
         state = (
             AcquisitionState.REGISTRATION_FAILED_PERMANENT
             if permanent
             else AcquisitionState.REGISTRATION_FAILED_TRANSIENT
         )
-        return state, tuple(
-            sorted([f"error_type:{latest.error_type or 'unknown'}", *notes])
-        )
+        return state, tuple(sorted(failed_notes))
     return (
         AcquisitionState.REGISTRATION_PENDING,
         tuple(sorted([f"latest_job_{latest.status.value}", *notes])),
@@ -257,4 +276,4 @@ def classify_run(
     return _classify_registration(registration, policy=policy, now=now)
 
 
-__all__ = ["ClassificationPolicy", "classify_run"]
+__all__ = ["ClassificationPolicy", "attempt_budget_spent", "classify_run"]

@@ -544,6 +544,10 @@ async def test_reconcile_once_classifies_known_durable_states_and_changes_nothin
     )
 
     # ── the one-shot entrypoint prints the same report without any server ────
+    # The command always classifies with a stall threshold and the attempt
+    # budget (its 900 s default is shorter than this fixture's Job age). A
+    # threshold so large it never fires makes it comparable to ``first``.
+    never = timedelta(days=365 * 100)
     capture_report_path = tmp_path / "capture_scan.json"
     capture_report_path.write_text(
         json.dumps(capture_report.model_dump(mode="json")), encoding="utf-8"
@@ -569,10 +573,22 @@ async def test_reconcile_once_classifies_known_durable_states_and_changes_nothin
             "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": artifact.endpoint_url,
             "SCENEOPS_API_ARTIFACT__ACCESS_KEY_ID": artifact.access_key_id,
             "SCENEOPS_API_ARTIFACT__SECRET_ACCESS_KEY": artifact.secret_access_key,
+            "SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS": str(
+                never.total_seconds()
+            ),
         },
     )
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == first.to_json_dict()
+    expected = await reconcile(
+        policy=ClassificationPolicy(stall_candidate_after=never, attempt_budget=3),
+        now=_T0,
+    )
+    assert json.loads(completed.stdout) == expected.to_json_dict()
+    assert expected.mode == "observe" and expected.actions == ()
+    # Without the policy the states are exactly the ones observed above.
+    assert {run.run_id: run.state for run in expected.runs} == {
+        run.run_id: run.state for run in first.runs
+    }
     assert (
         await _durable_snapshot(session_factory, store, root, run_ids, robot_id)
         == before

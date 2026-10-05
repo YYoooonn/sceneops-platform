@@ -23,7 +23,8 @@ Facts, in the order they are read:
 
 Nothing is written anywhere: no object, no row, no Job, no event (L-2, L-10).
 The database transaction is declared read-only so that is enforced by
-PostgreSQL, not only by this code. Acting on the report is 12.4.
+PostgreSQL, not only by this code. Acting on the report is ``recovery.py``'s
+job, never this function's: it stays observation plus classification.
 """
 
 from __future__ import annotations
@@ -53,7 +54,10 @@ from sceneops_core.robots.published_scan import (
     observe_published_runs,
     verify_recording_bytes,
 )
-from sceneops_core.robots.registration_failures import classify_registration_failure
+from sceneops_core.robots.registration_failures import (
+    JOB_ABANDONED_ERROR_TYPE,
+    classify_registration_failure,
+)
 from sceneops_core.robots.schemas import RobotRunRecord
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.jobs import PostgresJobRepository
@@ -64,6 +68,7 @@ from .model import (
     ArtifactRecordFacts,
     JobFacts,
     ReconciliationReport,
+    RecoveryPolicyFacts,
     RegistrationEvidence,
     RobotRunFacts,
     RunReport,
@@ -247,6 +252,7 @@ async def reconcile_once(
             else []
         )
         record = records.get(run_id)
+        failed_count = sum(1 for job in run_jobs if job.status == JobStatus.FAILED)
         registration = RegistrationEvidence(
             robot_run=(
                 RobotRunFacts(
@@ -267,8 +273,18 @@ async def reconcile_once(
             ),
             execution_key=execution_key,
             jobs=tuple(run_jobs),
-            failed_job_count=sum(
-                1 for job in run_jobs if job.status == JobStatus.FAILED
+            failed_job_count=failed_count,
+            abandoned_job_count=sum(
+                1
+                for job in run_jobs
+                if job.status == JobStatus.FAILED
+                and job.error_type == JOB_ABANDONED_ERROR_TYPE
+            ),
+            attempt_budget=policy.attempt_budget,
+            attempts_remaining=(
+                max(policy.attempt_budget - failed_count, 0)
+                if policy.attempt_budget is not None
+                else None
             ),
         )
 
@@ -304,6 +320,19 @@ async def reconcile_once(
             capture_report.unrecognized_entries if capture_report is not None else ()
         ),
         counts=dict(sorted(counts.items())),
+        policy=(
+            RecoveryPolicyFacts(
+                stall_threshold_seconds=(
+                    policy.stall_candidate_after.total_seconds()
+                    if policy.stall_candidate_after is not None
+                    else None
+                ),
+                attempt_budget=policy.attempt_budget,
+            )
+            if policy.stall_candidate_after is not None
+            or policy.attempt_budget is not None
+            else None
+        ),
     )
 
 

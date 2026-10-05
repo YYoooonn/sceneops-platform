@@ -57,6 +57,21 @@ read-only and reads no recording bytes; the API reconciler accepts this report
 (``reconcile --once --capture-report``) so the platform never mounts the
 capture volume.
 
+::
+
+    python -m sceneops_integrations.recording publish-pending \\
+        --capture-root /recordings/capture [--root-uri ...]
+
+one-shot recovery of publication (ADR-008 §3.2): publishes every finalized capture
+that has a valid receipt and is not completely published, through the same path
+as ``publish --from-capture``, and prints the JSON ``PublishPendingReport``. Runs
+it skips (already published, no receipt, a manifest that contradicts its
+recording) are reported with their reason and never repaired; a capture whose
+publish fails is reported as ``failed`` and the pass continues. Exit status: 0
+when nothing failed, 2 when any publish failed (the report is still printed), 1
+when the capture root or the store could not be read. It keeps no state: running
+it again is the retry.
+
 ArtifactStore backend/credentials come from environment variables via
 ``sceneops_core.config.ArtifactSettings``, e.g.::
 
@@ -91,6 +106,7 @@ from .capture_scan import scan_capture_volume
 from .conformance import check_l1_recording
 from .equivalence import compare_recordings
 from .from_capture import publish_from_capture
+from .publish_pending import publish_pending
 from .publisher import publish_recording
 
 
@@ -146,6 +162,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Do not require the ros2/cdr/ros2msg encoding profile.",
     )
+    pending = sub.add_parser("publish-pending")
+    pending.add_argument("--capture-root", required=True, type=Path)
+    pending.add_argument("--root-uri", default=None)
     scan_capture = sub.add_parser("scan-capture")
     scan_capture.add_argument("--capture-root", required=True, type=Path)
     compare = sub.add_parser("compare")
@@ -258,6 +277,23 @@ def _scan_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_pending(args: argparse.Namespace) -> int:
+    settings = RecordingPublisherSettings()
+    try:
+        report = asyncio.run(
+            publish_pending(
+                artifact_store=create_artifact_store(settings.artifact),
+                root_uri=args.root_uri or settings.artifact.robot_run_root_uri,
+                capture_root=args.capture_root,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero
+        print(f"publish-pending failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(report.model_dump(mode="json"), sort_keys=True))
+    return 2 if report.failed else 0
+
+
 def _compare(args: argparse.Namespace) -> int:
     report = compare_recordings(args.first, args.second)
     print(json.dumps(report.to_dict(), sort_keys=True))
@@ -279,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
         return _compare(args)
     if args.command == "scan-capture":
         return _scan_capture(args)
+    if args.command == "publish-pending":
+        return _publish_pending(args)
     try:
         result = asyncio.run(_publish(args))
     except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero

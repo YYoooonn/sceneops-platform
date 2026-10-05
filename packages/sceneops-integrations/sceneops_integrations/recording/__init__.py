@@ -45,6 +45,12 @@ from .from_capture import (
     publish_from_capture,
     read_capture_receipt,
 )
+from .publish_pending import (
+    PendingOutcome,
+    PendingResult,
+    PublishPendingReport,
+    publish_pending,
+)
 from .publisher import (
     MANIFEST_OBJECT_NAME,
     RECORDING_OBJECT_NAME,
@@ -84,7 +90,11 @@ __all__ = [
     "check_l1_recording",
     "derive_mcap_facts",
     "manifest_uri",
+    "PendingOutcome",
+    "PendingResult",
+    "PublishPendingReport",
     "publish_from_capture",
+    "publish_pending",
     "publish_recording",
     "read_capture_receipt",
     "recording_uri",

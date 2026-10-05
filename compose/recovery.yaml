@@ -1,0 +1,73 @@
+# Unattended acquisition recovery for local operation (ADR-008 §3.2, §8 step 12.4).
+# Opt-in (`make recovery-up`); not part of local-up.
+#
+# Each service only loops a stateless one-shot command (scripts/ops/poll_loop.sh):
+# it keeps no lifecycle state, and stopping or restarting it loses nothing. Both
+# commands are safe at any frequency, concurrently and after any crash. This is
+# the local deployment choice; a Kubernetes deployment would run the same two
+# commands from CronJobs. There is no scheduler (no Celery Beat) in the platform.
+#
+#   publication-recovery   capture volume (read-only) -> ArtifactStore:
+#                          `publish-pending` publishes every finalized capture
+#                          that has a receipt and is not completely published.
+#                          Database-free, like the recording-publisher.
+#   registration-recovery  ArtifactStore + PostgreSQL -> REGISTER_ROBOT_RUN Jobs:
+#                          `reconcile --once --apply` submits, retries (within the
+#                          attempt budget) and replaces stalled registrations.
+#                          Needs no Redis to classify; only submission does, and a
+#                          broker outage just leaves the Job for a later pass.
+#
+# RECOVERY_POLL_INTERVAL_SECONDS (default 60) is the pause between invocations.
+services:
+  publication-recovery:
+    # The publisher ships in the worker image; same ArtifactStore settings as
+    # compose/acquisition.yaml's recording-publisher, never database settings.
+    image: sceneops-platform/worker:local
+    environment:
+      SCENEOPS_PUBLISHER_ARTIFACT__BACKEND: ${SCENEOPS_WORKER_ARTIFACT__BACKEND:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI: ${SCENEOPS_WORKER_ARTIFACT__ROOT_URI:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ENDPOINT_URL: ${SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__REGION: ${SCENEOPS_WORKER_ARTIFACT__REGION:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID: ${SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY: ${SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY:-}
+    entrypoint: ["/workspace/ops/poll_loop.sh"]
+    command:
+      - "${RECOVERY_POLL_INTERVAL_SECONDS:-60}"
+      - python
+      - -m
+      - sceneops_integrations.recording
+      - publish-pending
+      - --capture-root
+      - /recordings/capture
+    volumes:
+      - acquisition-recordings:/recordings:ro
+      - ./scripts/ops:/workspace/ops:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - recovery
+
+  registration-recovery:
+    image: sceneops-platform/api:local
+    env_file:
+      - .env.local
+    entrypoint: ["/opt/sceneops/ops/poll_loop.sh"]
+    command:
+      - "${RECOVERY_POLL_INTERVAL_SECONDS:-60}"
+      - python
+      - -m
+      - app.domains.robots.reconciliation
+      - --once
+      - --apply
+    volumes:
+      - ./scripts/ops:/opt/sceneops/ops:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - recovery

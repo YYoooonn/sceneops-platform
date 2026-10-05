@@ -23,6 +23,27 @@ class RegistrationFailureClass(StrEnum):
     PERMANENT = "permanent"
 
 
+# Attempts without success the platform makes automatically for one logical
+# registration (one execution key) before it stops and an operator decides
+# (ADR-008 §5.2). Replacement Jobs share the budget; creating a Job row never
+# resets it. An internal constant, not public configuration.
+REGISTRATION_ATTEMPT_BUDGET: Final = 3
+
+# How long a REGISTER_ROBOT_RUN Job may show no activity before it is a stall
+# candidate. Derived from measured registration latency, not chosen (ADR-008
+# §5.3): execution is linear in recording size at ~5 ms/MB (1.07 GB: 5.4 s;
+# ~26 s extrapolated to the 5 GB single-PUT limit, B9), queue wait under a 5-way
+# burst was 2.2 s, and ``heartbeat_at`` moves only at claim and finish. 900 s is
+# >150x the slowest measurement and covers a 5 GB recording at ~6 MB/s. The cost
+# is asymmetric: a premature abandon spends one of three attempts of a healthy
+# registration, a late one only delays recovery.
+DEFAULT_STALL_THRESHOLD_SECONDS: Final = 900.0
+
+# ``Job.error.type`` of a Job the reconciler moved to FAILED because it was
+# neither finished nor progressing (ADR-008 §5.3). Transient, and one attempt.
+JOB_ABANDONED_ERROR_TYPE: Final = "JobAbandoned"
+
+
 PERMANENT_REGISTRATION_ERROR_TYPES: Final[frozenset[str]] = frozenset(
     {
         # Worker registration (sceneops_worker.robots.registration)
@@ -48,7 +69,10 @@ def classify_registration_failure(error_type: str | None) -> RegistrationFailure
 
 
 __all__ = [
+    "DEFAULT_STALL_THRESHOLD_SECONDS",
+    "JOB_ABANDONED_ERROR_TYPE",
     "PERMANENT_REGISTRATION_ERROR_TYPES",
+    "REGISTRATION_ATTEMPT_BUDGET",
     "RegistrationFailureClass",
     "classify_registration_failure",
 ]
