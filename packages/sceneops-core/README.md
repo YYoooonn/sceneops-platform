@@ -26,7 +26,7 @@ sceneops_core/
   robots/             ← Robot domain (v2 — Robot, RobotRun, Mission, RobotState schema)
   runs/               ← Common Run Schema (RunStatus, RunType, RunRef)
   scenarios/          ← Scenario Domain (Candidates, Predicates, Mining schema)
-  scenes/             ← Scene Domain (Manifest, WorldState, Segment schema)
+  scenes/             ← Scene Domain (canonical SceneManifest, SceneRecord, readiness; legacy/ producers)
   sensors/            ← Sensor enums (camera, LiDAR .etc)
 ```
 

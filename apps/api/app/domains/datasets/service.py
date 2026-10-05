@@ -7,7 +7,6 @@ from sceneops_core.datasets.schemas import (
     DatasetRecord,
     DatasetVersionRecord,
 )
-from sceneops_core.datasets.schemas.enums import DatasetType
 from sceneops_core.runs.schemas import RunType
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.datasets import (
@@ -29,7 +28,6 @@ from app.domains.datasets.schemas import (
     DatasetVersionListResponse,
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
-    UpdateDatasetVersionRequest,
 )
 from app.domains.scenes.quality import build_scene_quality
 from app.domains.scenes.schemas import SceneListResponse, SceneQualityResponse
@@ -54,11 +52,10 @@ class DatasetService:
     async def list_datasets(
         self,
         *,
-        type: DatasetType | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> DatasetListResponse:
-        datasets = await self._repository.list(type=type, limit=limit, offset=offset)
+        datasets = await self._repository.list(limit=limit, offset=offset)
         return DatasetListResponse(datasets=datasets, count=len(datasets))
 
     async def create_dataset(
@@ -69,8 +66,6 @@ class DatasetService:
                 dataset_id=request.dataset_id,
                 name=request.name,
                 description=request.description,
-                type=request.type,
-                metadata=request.metadata,
             )
         )
         return DatasetDetailResponse(dataset=dataset)
@@ -92,8 +87,6 @@ class DatasetService:
                 dataset_id=dataset_id,
                 name=request.name,
                 description=request.description,
-                type=request.type,
-                metadata=request.metadata,
             )
         )
         return DatasetDetailResponse(dataset=updated)
@@ -119,26 +112,16 @@ class DatasetService:
         dataset = await self._repository.get(dataset_id)
         if dataset is None:
             return None
-        # This endpoint is used as an upsert (e.g. e2e scripts re-POST to
-        # patch raw_source_root_uri). A freshly constructed record has
+        # This endpoint is used as an upsert (e.g. e2e scripts re-POST it).
+        # A freshly constructed record has
         # created_at/updated_at=None, which repository.update() would write
         # through verbatim onto an existing row and violate the NOT NULL
         # constraint — so preserve the original created_at and stamp a fresh
         # updated_at explicitly rather than relying on server_default/onupdate
         # (those only fire when a column is left unset, not set to None).
         #
-        # manifest_uri/required_channels/raw_source_root_uri are Scene-owned
-        # (SceneOps V2 Request 03/04 — raw_source_root_uri only feeds the
-        # Scene raw-log build path; Episode sources come from
-        # RobotRun.mcap_uri instead) — they must NOT be embedded in this
-        # generic record construction: on an existing version this record has
-        # scene=None, and routing scene=None through the generic upsert()
-        # would leave real scene columns untouched (see
-        # dataset_version_record_to_values), but setting
-        # scene=SceneVersionSummary(manifest_uri=...) here with scene_count/
-        # etc. left at their defaults *would* wipe out a real scene_count on
-        # update. Route them through update_scene_summary() instead, which
-        # patches only the fields actually provided.
+        # The generic upsert below passes scene=None so it leaves every
+        # registrar-owned Scene column alone.
         existing = await self._version_repository.get(
             dataset_id=dataset_id, version=body.version
         )
@@ -148,25 +131,10 @@ class DatasetService:
                 dataset_id=dataset_id,
                 version=body.version,
                 status=body.status,
-                source_dataset_id=body.source_dataset_id,
-                source_dataset_version=body.source_dataset_version,
-                metadata=body.metadata,
                 created_at=existing.created_at if existing is not None else now,
                 updated_at=now,
             )
         )
-        if (
-            body.manifest_uri is not None
-            or body.required_channels
-            or body.raw_source_root_uri is not None
-        ):
-            version = await self._version_repository.update_scene_summary(
-                dataset_id=dataset_id,
-                version=body.version,
-                manifest_uri=body.manifest_uri,
-                required_channels=body.required_channels or None,
-                raw_source_root_uri=body.raw_source_root_uri,
-            )
         return DatasetVersionDetailResponse(version=version)
 
     async def get_dataset_version(
@@ -178,53 +146,6 @@ class DatasetService:
         if record is None:
             return None
         return DatasetVersionDetailResponse(version=record)
-
-    # PATCH fields that map directly onto generic DatasetVersionRecord state.
-    _GENERIC_VERSION_PATCH_FIELDS = ("status", "metadata")
-    # PATCH fields that are Scene-owned (SceneOps V2 Request 03/04) and must
-    # go through update_scene_summary() rather than a generic model_copy+
-    # update, so an omitted field never resets an unrelated Scene column.
-    _SCENE_VERSION_PATCH_FIELDS = (
-        "manifest_uri",
-        "raw_source_root_uri",
-        "scene_count",
-        "sample_count",
-        "frame_count",
-        "channels",
-        "required_channels",
-    )
-
-    async def update_dataset_version(
-        self, dataset_id: str, version: str, request: UpdateDatasetVersionRequest
-    ) -> DatasetVersionDetailResponse | None:
-        existing = await self._version_repository.get(
-            dataset_id=dataset_id, version=version
-        )
-        if existing is None:
-            return None
-
-        dumped = request.model_dump()
-        generic_updates = {
-            k: dumped[k]
-            for k in self._GENERIC_VERSION_PATCH_FIELDS
-            if dumped[k] is not None
-        }
-        scene_updates = {
-            k: dumped[k]
-            for k in self._SCENE_VERSION_PATCH_FIELDS
-            if dumped[k] is not None
-        }
-
-        result = existing
-        if generic_updates:
-            result = await self._version_repository.update(
-                result.model_copy(update=generic_updates)
-            )
-        if scene_updates:
-            result = await self._version_repository.update_scene_summary(
-                dataset_id=dataset_id, version=version, **scene_updates
-            )
-        return DatasetVersionDetailResponse(version=result)
 
     async def get_dataset_version_quality(
         self, dataset_id: str, version: str
@@ -306,7 +227,8 @@ class DatasetService:
         dataset_id: str,
         version: str,
     ) -> list[SceneQualityResponse]:
-        """Fetch all scene quality rows for a dataset version (3 DB queries).
+        """Fetch all scene quality rows for a dataset version (3 DB queries),
+        using only runs that assessed each Scene's current revision.
 
         Shared by get_dataset_version_quality and list_scene_quality so both
         endpoints produce consistent counts from the same data.
@@ -315,14 +237,14 @@ class DatasetService:
             dataset_id=dataset_id, dataset_version=version, limit=10000, offset=0
         )
         latest_validation = (
-            await self._scene_run_repository.list_latest_by_dataset_version(
+            await self._scene_run_repository.latest_succeeded_for_current_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_VALIDATION,
             )
         )
         latest_profile = (
-            await self._scene_run_repository.list_latest_by_dataset_version(
+            await self._scene_run_repository.latest_succeeded_for_current_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_PROFILE,

@@ -14,12 +14,10 @@ from app.domains.datasets.schemas import (
     DatasetVersionListResponse,
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
-    UpdateDatasetVersionRequest,
 )
 from app.domains.scenes.schemas import SceneListResponse
 from app.platform.artifacts.schemas import ArtifactListResponse
 from sceneops_core.datasets.schemas import CreateDatasetRequest
-from sceneops_core.datasets.schemas.enums import DatasetType
 
 router = APIRouter()
 
@@ -29,11 +27,8 @@ async def list_datasets(
     *,
     service: DatasetServiceDep,
     pagination: PaginationDep,
-    type: DatasetType | None = None,
 ) -> DatasetListResponse:
-    return await service.list_datasets(
-        type=type, limit=pagination.limit, offset=pagination.offset
-    )
+    return await service.list_datasets(limit=pagination.limit, offset=pagination.offset)
 
 
 @router.post("", response_model=DatasetDetailResponse, status_code=201)
@@ -103,21 +98,6 @@ async def get_dataset_version(
     dataset_id: str, version: str, service: DatasetServiceDep
 ) -> DatasetVersionDetailResponse:
     result = await service.get_dataset_version(dataset_id, version)
-    if result is None:
-        raise_not_found("Dataset version", f"{dataset_id}:{version}")
-    return result
-
-
-@router.patch(
-    "/{dataset_id}/versions/{version}", response_model=DatasetVersionDetailResponse
-)
-async def update_dataset_version(
-    dataset_id: str,
-    version: str,
-    request: UpdateDatasetVersionRequest,
-    service: DatasetServiceDep,
-) -> DatasetVersionDetailResponse:
-    result = await service.update_dataset_version(dataset_id, version, request)
     if result is None:
         raise_not_found("Dataset version", f"{dataset_id}:{version}")
     return result

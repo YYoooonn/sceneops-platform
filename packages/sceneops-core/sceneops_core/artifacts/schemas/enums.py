@@ -18,17 +18,23 @@ class ArtifactKind(StrEnum):
     # is no separate STREAMING_MCAP kind, since the artifact itself is
     # identical MCAP content regardless of how it reached local disk).
     ROBOT_RUN_RECORDING = "robot_run_recording"
+    # The canonical RobotRunManifest (sceneops_core.robots.manifest) that
+    # publishes one recording; registered together with the recording by
+    # REGISTER_ROBOT_RUN.
+    ROBOT_RUN_MANIFEST = "robot_run_manifest"
 
     # Observation-level
-    RAW_LOG_MANIFEST = "raw_log_manifest"
-    RAW_LOG_FRAME_INDEX = "raw_log_frame_index"
-    RAW_SENSOR_FRAME = "raw_sensor_frame"
+    # Immutable bytes of one canonical observation (an image, a point
+    # cloud, ...), extracted from a registered recording and referenced
+    # from canonical manifests by artifact id
+    # (sceneops_core.artifacts.schemas.payload.PayloadRef).
+    OBSERVATION_PAYLOAD = "observation_payload"
 
     # Scene-level
-    SCENE_INDEX = "scene_index"
+    # A canonical SceneManifest revision (sceneops_core.scenes.schemas.manifests),
+    # stored under a checksum-qualified key. The only kind REGISTER_SCENES
+    # accepts.
     SCENE_MANIFEST = "scene_manifest"
-    SCENE_SAMPLE_MANIFEST = "scene_sample_manifest"
-    SCENE_SEGMENT_INDEX = "scene_segment_index"
     WORLD_STATE_MANIFEST = "world_state_manifest"
     SCENE_PACKAGE = "scene_package"
 
@@ -58,8 +64,14 @@ class ArtifactKind(StrEnum):
     # selects over.
     EPISODE_CURATION_MANIFEST = "episode_curation_manifest"
 
+    # Derived L3 inputs (ADR-007 §33): immutable, checksum-pinned revisions.
+    # A label set is post-acquisition labeling, owned by the label set, never
+    # by a Scene or RobotRun.
+    LABEL_SET_MANIFEST = "label_set_manifest"
+    # A policy-driven sample view of one Scene revision.
+    SCENE_SAMPLE_VIEW_MANIFEST = "scene_sample_view_manifest"
+
     # Dataset-level
-    DATASET_MANIFEST = "dataset_manifest"
     DATASET_VALIDATION_REPORT = "dataset_validation_report"
     DATASET_PROFILE_REPORT = "dataset_profile_report"
     ANALYTICS_TABLE = "analytics_table"

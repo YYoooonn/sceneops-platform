@@ -2,74 +2,58 @@ from __future__ import annotations
 
 from pydantic import Field, model_validator
 
-from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.episodes.alignment import (
     TemporalAlignmentConfig,
     TemporalSourceContext,
 )
 from sceneops_core.episodes.curation import CurationPolicy
-from sceneops_core.episodes.schemas import EpisodeSegmentationConfig
+from sceneops_core.episodes.recording_build import RecordingEpisodeBuildConfig
 
-from .base import BaseJobParams
+from .base import BaseJobParams, RecordingConsumerJobParams
 
 
-class BuildEpisodesJobParams(BaseJobParams):
-    """Robot rosbag/MCAP -> episodes.
+class BuildRecordingEpisodesJobParams(RecordingConsumerJobParams):
+    """One registered RobotRun recording -> the complete canonical Episode
+    set of its recording scope (ADR-007 §17.4, §29.10, §31).
 
-    Mirrors ``BuildScenesJobParams`` (raw log -> scenes), but the source
-    adapter is always ``RosbagAdapter`` (registered under
-    ``RawLogSourceType.REAL_ROBOT_LOG`` in this job's own adapter factory,
-    separate from ``build_scenes``'s) and segmentation is driven by
-    ``EpisodeSegmenter`` (see ``segmentation`` below) rather than a generic
-    gap/anchor scene segmenter.
+    The recording is identified only by ``robot_run_id`` and read through
+    the verified recording resolver; ``build_config`` is the producer's
+    whole semantic configuration. The DatasetVersion only scopes where
+    manifests are published and does not affect their bytes.
     """
 
-    dataset_id: str
-    dataset_version: str
+    dataset_id: str = Field(min_length=1)
+    dataset_version: str = Field(min_length=1)
 
-    robot_id: str
-    robot_run_id: str | None = None
-
-    # Falls back to the referenced RobotRun's mcap_uri/rosbag_uri when
-    # omitted — same convention as IngestRobotStatesJobParams.
-    mcap_uri: str | None = None
-
-    raw_log_id: str | None = None
-
-    # Default (mission_boundary, falling back to whole_run when no dated
-    # Mission exists) preserves pre-Request-13 EpisodeBuilder behavior
-    # exactly — see SceneOps V2 Request 13.
-    segmentation: EpisodeSegmentationConfig = Field(
-        default_factory=EpisodeSegmentationConfig
-    )
-
-    max_built_episodes: int | None = None
-
-    output_episode_root_uri: str | None = None
+    robot_run_id: str = Field(min_length=1)
+    build_config: RecordingEpisodeBuildConfig
 
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class RegisterEpisodeJobParams(BaseJobParams):
-    episode_ids: list[str] = Field(default_factory=list)
-    episode_manifest_uris: list[str] = Field(default_factory=list)
+class RegisterEpisodesJobParams(BaseJobParams):
+    """Canonical Episode registration (ADR-007 §17, §18).
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
+    ``manifest_artifact_ids`` name EPISODE_MANIFEST ArtifactRecords; the
+    registrar re-reads and verifies their bytes. The input must be the
+    complete unit set of one recording scope.
+    """
 
-    replace_existing: bool = False
+    dataset_id: str = Field(min_length=1)
+    dataset_version: str = Field(min_length=1)
+
+    manifest_artifact_ids: list[str] = Field(min_length=1)
+
+    replace: bool = False
 
     metadata: JsonDict = Field(default_factory=dict)
 
 
 class ValidateEpisodeJobParams(BaseJobParams):
-    """EpisodeRecord + EpisodeManifest -> structural usability check.
-
-    Keyed by episode_id (not manifest URI) — unlike build_episodes/
-    register_episode, this runs after register_episode, so EpisodeRecord
-    already exists and carries its own episode_manifest_uri; there's no need
-    to thread manifest URIs through separately (see SceneOps V2 Request 17).
-    """
+    """Validate registered Episodes. Each Episode is assessed at the manifest
+    revision its record points to when the job reads it, and the per-episode
+    run record pins that revision."""
 
     episode_id: str | None = None
     episode_ids: list[str] = Field(default_factory=list)
@@ -90,39 +74,22 @@ class ProfileEpisodeJobParams(BaseJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class AlignEpisodeJobParams(BaseJobParams):
-    """Episode + explicit TemporalAlignmentConfig -> AlignedEpisodeArtifact
-    (SceneOps V2 Request 2.3).
+class EpisodeAlignmentInput(SceneOpsBaseModel):
+    """One Episode to align, optionally pinned to the exact canonical
+    EpisodeManifest revision to consume.
 
-    The source EPISODE_MANIFEST ArtifactRecord is resolved internally at
-    execution time (latest by created_at, matching this platform's existing
-    "latest wins" convention) unless source_artifact_id/
-    source_manifest_sha256 are both pinned explicitly (Request 2.3 §7/§20).
-
-    Pinning is also the only way for a specific source revision to
-    participate in this Job's execution-key dedup identity (Request 2.3
-    §17): the API computes the execution key from these params at
-    Job-creation time, before the worker has read any source bytes, so an
-    unpinned dispatch dedups at (episode_id, alignment_config,
-    alignment_semantics_version) granularity only -- the same idempotency
-    behavior every other job type already has, and force=true is available
-    for a caller that specifically needs a fresh execution.
+    Unpinned, the revision is exactly the one the EpisodeRecord points to
+    when the job runs (``manifest_artifact_id``, ADR-007 §14.4), never "the
+    latest artifact". A pin is the pair ``source_artifact_id`` +
+    ``source_manifest_sha256`` and always wins.
     """
 
-    episode_id: str
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
-    alignment_config: TemporalAlignmentConfig
-    source_context: TemporalSourceContext | None = None
-
+    episode_id: str = Field(min_length=1)
     source_artifact_id: str | None = None
     source_manifest_sha256: str | None = None
 
-    metadata: JsonDict = Field(default_factory=dict)
-
     @model_validator(mode="after")
-    def _validate_pin_pair(self) -> AlignEpisodeJobParams:
+    def _validate_pin_pair(self) -> EpisodeAlignmentInput:
         pinned = (
             self.source_artifact_id is not None,
             self.source_manifest_sha256 is not None,
@@ -132,6 +99,40 @@ class AlignEpisodeJobParams(BaseJobParams):
                 "source_artifact_id and source_manifest_sha256 must both be "
                 "provided to pin a source revision, or both left unset"
             )
+        return self
+
+
+class AlignEpisodeJobParams(BaseJobParams):
+    """Pinned Episodes + one explicit TemporalAlignmentConfig -> one
+    AlignedEpisodeArtifact per Episode (ADR-007 §33.6).
+
+    ``source_context`` names the clock to align on; unset, it is each
+    Episode's own window clock. Every aligned artifact is write-once at a
+    deterministic key, so re-running the same inputs and config converges on
+    the same artifacts.
+
+    Pinning is also the only way for a specific source revision to
+    participate in this Job's execution-key dedup identity: the API computes
+    the execution key from these params at Job-creation time, before the
+    worker has read any source bytes (the API pins unpinned inputs to the
+    Episode's current revision for that reason). ``force=true`` is available
+    for a caller that specifically needs a fresh execution.
+    """
+
+    episodes: list[EpisodeAlignmentInput] = Field(min_length=1)
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+
+    alignment_config: TemporalAlignmentConfig
+    source_context: TemporalSourceContext | None = None
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _unique_episodes(self) -> AlignEpisodeJobParams:
+        ids = [e.episode_id for e in self.episodes]
+        if len(set(ids)) != len(ids):
+            raise ValueError("episodes must name each Episode at most once")
         return self
 
 

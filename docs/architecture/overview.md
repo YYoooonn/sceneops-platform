@@ -92,7 +92,8 @@ Pipeline -> Celery or Airflow (switchable via pipeline_backend)
 ```
 
 When a pipeline is sent to Airflow, `AirflowPipelineExecutionBackend.dispatch_pipeline`
-calls the Airflow REST API (`POST /api/v1/dags/{dag_id}/dagRuns`), setting
+calls the Airflow REST API for the DAG of the run's pipeline type
+(`POST /api/v1/dags/<prefix>_<pipeline type>/dagRuns`), setting
 `dag_run_id` equal to SceneOps' own `pipeline_run_id` for 1:1 traceability.
 Both backends write the same `ExecutionRecord` shape (distinguished by
 `execution_backend`), so query paths don't care which backend ran a given
@@ -126,7 +127,7 @@ is skipped on redispatch) are both implemented — see
 
 When `pipeline_backend=airflow`, `PipelineRunner.run()` does not run the
 whole pipeline in one process. Instead, each task in the Airflow DAG
-(`airflow/dags/sceneops_pipeline_run.py`) runs in its own `DockerOperator`
+(`airflow/dags/sceneops_pipelines.py`, one DAG per pipeline type) runs in its own `DockerOperator`
 container (the existing worker image, `apps/worker/Dockerfile`), invoking
 `sceneops-worker run-pipeline-task --task-id <id>` — which calls
 `PipelineTaskRunner.run()` directly. Quality-gate evaluation and per-task
@@ -134,8 +135,7 @@ state recording are exactly the same code path as Celery; only the process
 boundary differs.
 
 ```text
-start -> ingest_scenes -> register_scene -> validate_scene
-      -> profile_scene -> build_scene_index -> build_dataset_manifest -> finalize
+start -> build_recording_scenes -> register_scenes -> validate_scene -> profile_scene -> finalize
 ```
 
 Pipeline-level status transitions (`RUNNING`/`SUCCEEDED`/`BLOCKED`/`FAILED`),
@@ -151,7 +151,7 @@ finalize()  : read back all task-run statuses, resolve final status as
               always runs regardless of upstream outcome)
 ```
 
-Current scope is one pipeline type only — `dataset_scene_ingestion` has a
+Current scope is one pipeline type only — `recording_scene_building` has a
 hardcoded DAG task chain. Other pipeline types still only run through
 Celery. Extending the Airflow path to other pipelines means generalizing the
 DAG (or adding one per type) — out of scope for this PoC.
@@ -175,7 +175,8 @@ out of the worker process.
 
  operational / relational   binary / JSON artifacts
  - datasets, scenes,        - scene/episode manifests
-   episodes                 - dataset manifests
+   episodes                 - label sets, sample views,
+                              ScenarioSets
  - pipeline/job runs        - prediction/evaluation outputs
  - prediction/eval runs     - validation/profile reports
  - artifact metadata        - Parquet analytics tables
@@ -203,11 +204,12 @@ domain-specific docs below for Scene/Episode flow.
 | **Scalable learning data (Phase 5, frozen/authoritative)** -- production architecture, frozen contracts, performance summary, distributed-processing boundary | [scalable-learning-data.md](./scalable-learning-data.md) |
 | Learning data scaling -- full chronological per-request record (Phase 5: audit/benchmark, sharded layout, selective reads, bounded cache/bulk access, incremental export, final scale validation + distributed-processing boundary) | [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md) |
 | Dataset interoperability (external adapter contract, LeRobot semantic mapping, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
-| External integration runtime (IntegrationRequest/Result, IntegrationExecutor, HTTP transport, nuScenes + LeRobot isolated runtimes) | [external-integration-runtime.md](./external-integration-runtime.md) |
+| External integration runtime (IntegrationRequest/Result, isolated LeRobot EXPORT runtime) | [external-integration-runtime.md](./external-integration-runtime.md) |
 | **Streaming transport (Phase 6.1 + 6.2)** -- TelemetryEnvelope contract, Kafka wire/topic/partitioning contract, local Kafka dev stack, smoke test, real ROS2 -> Kafka bridge + E2E | [streaming-transport.md](./streaming-transport.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
 | Run records and derived quality/readiness | [quality-and-runs.md](./quality-and-runs.md) |
+| Labels, sample views, ScenarioSets, predictions, evaluation, aligned episodes | [derived-layer.md](./derived-layer.md) |
 | Reserved architecture and current limitations | [reserved-and-limitations.md](./reserved-and-limitations.md) |
 | Robot data ingestion (ROS2 -> MCAP -> RobotRun) | [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) |
 | Local development, testing, E2E | [../development/local-development.md](../development/local-development.md) |
@@ -226,19 +228,27 @@ the doc over the code.
 - API: `apps/api/app/domains/datasets/`
 - Doc: [data-model.md](./data-model.md) §2
 
-**SCENE** — Scene build/register/validate/profile/quality
-- Pipeline definitions: `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
-  (`DATASET_SCENE_INGESTION_PIPELINE`, `RAW_LOG_SCENE_BUILDING_PIPELINE`,
-  `SCENE_REGISTRATION_PIPELINE`)
+**SCENE** — canonical SceneManifest, registration, validate/profile/quality
+- Schema: `packages/sceneops-core/sceneops_core/scenes/` (build configuration
+  in `scenes/recording_build.py`)
+- Builder / registration / resolution: `apps/worker/sceneops_worker/scenes/`
+  (`recording_builder.py`, `registration.py`)
+- Recording reader: `packages/sceneops-integrations/sceneops_integrations/recording/reader.py`
+- Pipeline definition: `RECORDING_SCENE_BUILDING_PIPELINE` in
+  `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
 - Job handlers: `apps/worker/sceneops_worker/jobs/dataset/`
 - Quality: `apps/api/app/domains/scenes/quality.py`
 - Doc: [scene-domain.md](./scene-domain.md)
 
 **EPISODE** — Episode build/register/validate/profile/quality
-- Pipeline definition: `RAW_LOG_EPISODE_BUILDING_PIPELINE` in
+- Pipeline definition: `RECORDING_EPISODE_BUILDING_PIPELINE` in
   `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
-- Job handlers: `apps/worker/sceneops_worker/jobs/episodes/` (episode build,
-  segmentation, register, validate, profile)
+- Builder / registrar: `apps/worker/sceneops_worker/episodes/`
+  (`recording_builder.py`, `registration.py`, `resolver.py`); shared
+  recording-builder code in `apps/worker/sceneops_worker/recordings/`
+- Job handlers: `apps/worker/sceneops_worker/jobs/dataset/`
+  (`build_recording_episodes`, `register_episodes`, `validate_episode`,
+  `profile_episode`)
 - Quality: `apps/api/app/domains/episodes/quality.py`
 - Doc: [episode-domain.md](./episode-domain.md)
 
@@ -254,18 +264,14 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 semantic mapping, real Postgres/MinIO round-trip E2E (Phase 3, complete)
 - Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/`
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
-- E2E (local venv, not the container): `scripts/e2e/e2e_lerobot_{resolve,export}.py`, `scripts/e2e/e2e_lerobot_roundtrip.sh` (`make e2e-interop`)
+- Adapter tests (isolated environment): `make lerobot-test`
 - Doc: [dataset-interoperability.md](./dataset-interoperability.md)
 
 **EXTERNAL INTEGRATION RUNTIME** — IntegrationRequest/IntegrationResult
-contract, IntegrationExecutor (HTTP/container/in-process backends),
-isolated nuScenes + LeRobot runtimes/containers (Phase 4, complete)
+contract for the isolated LeRobot EXPORT runtime
 - Reference/runtime contract: `packages/sceneops-core/sceneops_core/integration_runtime/`
-- Executor + HTTP/container backends: `apps/worker/sceneops_worker/integration_execution/`
-- nuScenes SDK-bound implementation: `packages/sceneops-integrations/sceneops_integrations/nuscenes/`
-- Isolated nuScenes environment/container: `tools/nuscenes-integration/`
 - Isolated LeRobot environment/container: `tools/lerobot-integration/`
-- E2E: `make smoke-nuscenes-container`, `make e2e-lerobot-container`
+- E2E: the LeRobot round trip of `make e2e-episode-learning` (`compose/lerobot.yaml`, `scripts/e2e/lerobot_{build_request,verify_export}.py`)
 - Doc: [external-integration-runtime.md](./external-integration-runtime.md)
 
 **PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records
@@ -281,10 +287,9 @@ isolated nuScenes + LeRobot runtimes/containers (Phase 4, complete)
 - `packages/sceneops-storage/sceneops_storage/backends/`
 - Doc: [../development/local-development.md](../development/local-development.md), [storage-layout.md](./storage-layout.md)
 
-**OPTIONAL** — Airflow backend, ROS2/robot sandbox, inference server,
-scenario curation (`experimental=True`)
-- Airflow: `airflow/dags/sceneops_pipeline_run.py`, [ADR-004](../adr/004-airflow-vs-celery.md)
-- ROS2/robots: `ros2/`, `apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`,
+**OPTIONAL** — Airflow backend, ROS2/robot sandbox, inference server
+- Airflow: `airflow/dags/sceneops_pipelines.py` (one DAG per pipeline type), [ADR-004](../adr/004-airflow-vs-celery.md)
+- ROS2/robots: `ros2/`, `apps/worker/sceneops_worker/robots/telemetry.py`,
   [ADR-005](../adr/005-ros2-vs-kafka-boundary.md), [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md)
 - Inference server: `apps/inference-server/`
 - Scenario curation: `apps/worker/sceneops_worker/jobs/scenarios/`, [quality-and-runs.md](./quality-and-runs.md) §4

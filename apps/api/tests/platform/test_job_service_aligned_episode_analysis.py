@@ -102,14 +102,13 @@ class FakeArtifactRepository:
         return list(self.records.values())
 
 
-def _service() -> tuple[JobService, FakeArtifactRepository]:
+def _service(episode_repository=None) -> tuple[JobService, FakeArtifactRepository]:
     artifact_repo = FakeArtifactRepository()
     service = JobService(
         repository=FakeJobRepository(),
         event_repository=FakeJobEventRepository(),
         artifact_repository=artifact_repo,
-        default_dataset_id=DATASET_ID,
-        default_dataset_version=DATASET_VERSION,
+        episode_repository=episode_repository,
     )
     return service, artifact_repo
 
@@ -222,7 +221,17 @@ class TestUnrelatedJobTypeRegression:
         # create_job() must not disturb ALIGN_EPISODE's own branch.
         from sceneops_core.episodes.alignment import TemporalAlignmentConfig
 
-        service, artifacts = _service()
+        from types import SimpleNamespace
+
+        current = SimpleNamespace(
+            manifest_artifact_id="art-src-1", manifest_checksum="sha256:" + "a" * 64
+        )
+
+        class _Episodes:
+            async def get(self, episode_id):
+                return current if episode_id == EPISODE_ID else None
+
+        service, artifacts = _service(episode_repository=_Episodes())
         artifacts.records["art-src-1"] = ArtifactRecord(
             artifact_id="art-src-1",
             kind=ArtifactKind.EPISODE_MANIFEST.value,
@@ -236,7 +245,7 @@ class TestUnrelatedJobTypeRegression:
             dataset_id=DATASET_ID,
             dataset_version=DATASET_VERSION,
             params={
-                "episode_id": EPISODE_ID,
+                "episodes": [{"episode_id": EPISODE_ID}],
                 "alignment_config": TemporalAlignmentConfig(
                     target_frequency_hz=1.0
                 ).model_dump(mode="json", exclude_none=True),
@@ -245,4 +254,4 @@ class TestUnrelatedJobTypeRegression:
         job1 = await service.create_job(request)
         job2 = await service.create_job(request)
         assert job1.job_id == job2.job_id
-        assert job1.params["source_artifact_id"] == "art-src-1"
+        assert job1.params["episodes"][0]["source_artifact_id"] == "art-src-1"

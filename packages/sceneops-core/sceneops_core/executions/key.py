@@ -30,6 +30,31 @@ def _exclude_keys(*excluded: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
     return transform
 
 
+def _align_episode_transform(params: dict[str, Any]) -> dict[str, Any]:
+    """ALIGN_EPISODE's execution identity is content-addressed: each
+    Episode's lineage-only ``source_artifact_id`` is stripped (the pinned
+    ``source_manifest_sha256`` is the content identity, same reasoning as
+    _exclude_keys above) and the Episodes are sorted so two calls pinning
+    the same set in a different order dedup to one execution."""
+
+    episodes = params.get("episodes")
+    transformed = dict(params)
+    if isinstance(episodes, list):
+        stripped = [
+            {k: v for k, v in item.items() if k != "source_artifact_id"}
+            if isinstance(item, dict)
+            else item
+            for item in episodes
+        ]
+        stripped.sort(
+            key=lambda item: (
+                item.get("episode_id") or "" if isinstance(item, dict) else ""
+            )
+        )
+        transformed["episodes"] = stripped
+    return transformed
+
+
 def _export_learning_data_transform(params: dict[str, Any]) -> dict[str, Any]:
     """EXPORT_LEARNING_DATA's execution identity must be content-addressed,
     not caller-order-addressed (SceneOps V2 Request 2.5 §12): strip each
@@ -119,7 +144,7 @@ def _curate_episodes_transform(params: dict[str, Any]) -> dict[str, Any]:
 _EXECUTION_KEY_PARAM_TRANSFORMS: dict[
     JobType, Callable[[dict[str, Any]], dict[str, Any]]
 ] = {
-    JobType.ALIGN_EPISODE: _exclude_keys("source_artifact_id"),
+    JobType.ALIGN_EPISODE: _align_episode_transform,
     JobType.VALIDATE_ALIGNED_EPISODE: _exclude_keys("aligned_artifact_id"),
     JobType.PROFILE_ALIGNED_EPISODE: _exclude_keys("aligned_artifact_id"),
     JobType.EXPORT_LEARNING_DATA: _export_learning_data_transform,

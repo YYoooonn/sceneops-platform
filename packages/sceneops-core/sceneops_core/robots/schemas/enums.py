@@ -10,13 +10,6 @@ class RobotStatus(StrEnum):
     DECOMMISSIONED = "decommissioned"
 
 
-class RobotRunStatus(StrEnum):
-    RECORDING = "recording"
-    COMPLETED = "completed"
-    INGESTED = "ingested"
-    FAILED = "failed"
-
-
 class MissionStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"

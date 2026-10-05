@@ -22,17 +22,17 @@ from sceneops_core.artifacts.schemas import (
     ArtifactRecord,
 )
 from sceneops_core.episodes.alignment import (
-    MCAP_LOG_TIME_CLOCK,
     AlignedEpisodeArtifact,
     EpisodeSourceRevision,
     TemporalAlignmentConfig,
     TemporalSourceContext,
     align_episode,
 )
-from sceneops_core.episodes.schemas import (
-    EpisodeActionFrame,
-    EpisodeManifest,
-    EpisodeObservationFrame,
+from sceneops_core.episodes.testing import (
+    DEFAULT_CLOCK,
+    action,
+    episode_manifest,
+    state,
 )
 from sceneops_core.jobs.schemas import (
     ExportLearningDataJobParams,
@@ -51,28 +51,17 @@ from sceneops_worker.jobs.dataset.export_learning_data import (
 
 
 def _artifact_bytes(episode_id: str, *, valid: bool = True) -> bytes:
-    manifest = EpisodeManifest(
-        episode_id=episode_id,
-        observation_frames=[
-            EpisodeObservationFrame(
-                timestamp_us=0, channel="state.position", values=[0.0]
-            ),
-            EpisodeObservationFrame(
-                timestamp_us=1_000_000, channel="state.position", values=[1.0]
-            ),
+    manifest = episode_manifest(
+        [
+            state("/vehicle/odom", 0, x=0.0),
+            state("/vehicle/odom", 1_000_000_000, x=1.0),
+            action("/vehicle/control", 0, steering=0.1),
         ],
-        action_frames=[
-            EpisodeActionFrame(timestamp_us=0, channel="steering", value=0.1)
-        ],
-        observation_channels=["state.position"],
-        action_channels=["steering"],
-        start_timestamp_us=0,
-        end_timestamp_us=1_000_000,
-        frame_count=3,
+        window=(0, 1_000_000_001),
     )
     config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
-    ctx = TemporalSourceContext(source_clock=MCAP_LOG_TIME_CLOCK)
-    aligned = align_episode(manifest, config, ctx)
+    ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
+    aligned = align_episode(manifest, config, ctx, episode_id=episode_id)
     if not valid:
         aligned = aligned.model_copy(update={"step_count": 999})
 
@@ -113,8 +102,6 @@ def _make_context(
     bytes_by_uri: dict[str, bytes | None],
 ) -> MagicMock:
     context = MagicMock()
-    context.default_dataset_id = "d1"
-    context.default_dataset_version = "v1"
 
     async def _get(artifact_id: str):
         return records_by_artifact_id.get(artifact_id)
@@ -167,7 +154,7 @@ def _make_context(
     )
     context._write_calls = write_calls
 
-    context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock()
     context.commit = AsyncMock()
     return context
 
@@ -248,10 +235,10 @@ class TestSuccessfulExport:
             "manifest",
         }
         # 1 episodes table record + 1 steps shard + 1 signals shard + 1 manifest
-        assert context.artifact_record_store.create.await_count == 4
+        assert context.artifact_record_store.register.await_count == 4
         create_kinds = {
             call.kwargs["ref"].kind
-            for call in context.artifact_record_store.create.await_args_list
+            for call in context.artifact_record_store.register.await_args_list
         }
         assert create_kinds == {
             ArtifactKind.ANALYTICS_TABLE,
@@ -259,7 +246,7 @@ class TestSuccessfulExport:
         }
         owner_ids = {
             call.kwargs["owner_id"]
-            for call in context.artifact_record_store.create.await_args_list
+            for call in context.artifact_record_store.register.await_args_list
         }
         assert owner_ids == {"d1:v1"}
         context.commit.assert_awaited_once()
@@ -286,7 +273,7 @@ class TestSuccessfulExport:
         assert result.table_uris == {}
         assert result.shard_counts == {"learning_steps": 1}
         # 1 shard record + 1 manifest record
-        assert context.artifact_record_store.create.await_count == 2
+        assert context.artifact_record_store.register.await_count == 2
 
 
 class TestArtifactNotFound:
@@ -300,7 +287,7 @@ class TestArtifactNotFound:
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
         context.analytics_writer.write_learning_table_shard.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
 
 
@@ -342,7 +329,7 @@ class TestChecksumMismatchBlocksWholeExport:
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
         context.analytics_writer.write_learning_table_shard.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
 
 
@@ -384,5 +371,5 @@ class TestStructuralValidationFailureBlocksWholeExport:
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
         context.analytics_writer.write_learning_table_shard.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()

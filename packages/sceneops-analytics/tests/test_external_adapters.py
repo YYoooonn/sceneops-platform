@@ -342,6 +342,38 @@ async def test_multiple_revisions_of_same_episode_remain_distinct(tmp_path):
     assert by_ref[_ref("ep-1", "chk-b")].steps[0].observation == [50.0]
 
 
+async def test_default_task_fills_only_a_missing_task(tmp_path):
+    """Canonical Episodes carry no task but a format may require one: the caller
+    states it in the export config. An episode's own task always wins, and an
+    export that states none infers none."""
+    entries = [
+        ("chk-a", _artifact(_episode("ep-a", _steps(2), task="pick"))),
+        ("chk-b", _artifact(_episode("ep-b", _steps(2, offset=10.0), task=None))),
+    ]
+    dataset = await _open_dataset(tmp_path, entries)
+
+    adapter = _RecordingAdapter(_FULL_CAPABILITIES)
+    await adapter.export(
+        dataset, ExternalExportConfig(projection=_PROJECTION, default_task="drive")
+    )
+    assert {e.episode_ref.episode_id: e.task for e in adapter.written} == {
+        "ep-a": "pick",
+        "ep-b": "drive",
+    }
+
+    adapter = _RecordingAdapter(_FULL_CAPABILITIES)
+    await adapter.export(dataset, ExternalExportConfig(projection=_PROJECTION))
+    assert {e.episode_ref.episode_id: e.task for e in adapter.written} == {
+        "ep-a": "pick",
+        "ep-b": None,
+    }
+
+
+def test_default_task_must_not_be_empty():
+    with pytest.raises(ValueError):
+        ExternalExportConfig(projection=_PROJECTION, default_task="")
+
+
 async def test_explicit_feature_mapping(tmp_path):
     entries = [("chk-a", _artifact(_episode("ep-1", _steps(2))))]
     dataset = await _open_dataset(tmp_path, entries)

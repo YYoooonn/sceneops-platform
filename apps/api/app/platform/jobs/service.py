@@ -21,6 +21,7 @@ from sceneops_core.jobs.schemas import (
 from app.platform.jobs.schemas import JobEventListResponse, JobListResponse
 from sceneops_db.queries import resolve_current_episode_manifest_source
 from sceneops_db.repositories.artifacts import ArtifactRepository
+from sceneops_db.repositories.episodes import EpisodeRepository
 from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
 
 _DEDUP_STATUSES = {
@@ -38,31 +39,31 @@ class JobService:
         repository: JobRepository,
         event_repository: JobEventRepository,
         artifact_repository: ArtifactRepository,
-        default_dataset_id: str,
-        default_dataset_version: str,
+        episode_repository: EpisodeRepository | None = None,
     ) -> None:
         self._repository = repository
         self._event_repository = event_repository
         self._artifact_repository = artifact_repository
-        self._default_dataset_id = default_dataset_id
-        self._default_dataset_version = default_dataset_version
+        self._episode_repository = episode_repository
 
     async def create_job(self, request: CreateJobRequest) -> JobManifest:
         now = utc_now()
 
-        dataset_id = request.dataset_id or self._default_dataset_id
-        dataset_version = request.dataset_version or self._default_dataset_version
+        # The DatasetVersion scope is whatever the caller states, on the
+        # request or in the params; there is no platform-wide default.
+        dataset_id = request.dataset_id or request.params.get("dataset_id")
+        dataset_version = request.dataset_version or request.params.get(
+            "dataset_version"
+        )
 
-        raw_params = {
-            **request.params,
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-        }
+        raw_params = {**request.params}
+        if dataset_id is not None:
+            raw_params["dataset_id"] = dataset_id
+        if dataset_version is not None:
+            raw_params["dataset_version"] = dataset_version
 
         if request.type == JobType.ALIGN_EPISODE:
-            raw_params = await self._resolve_align_episode_source(
-                raw_params, dataset_id=dataset_id, dataset_version=dataset_version
-            )
+            raw_params = await self._resolve_align_episode_source(raw_params)
         elif request.type in (
             JobType.VALIDATE_ALIGNED_EPISODE,
             JobType.PROFILE_ALIGNED_EPISODE,
@@ -136,58 +137,49 @@ class JobService:
         return created
 
     async def _resolve_align_episode_source(
-        self,
-        raw_params: dict[str, Any],
-        *,
-        dataset_id: str,
-        dataset_version: str,
+        self, raw_params: dict[str, Any]
     ) -> JsonDict:
-        """SceneOps V2 Request 2.3A: resolve the current EPISODE_MANIFEST
-        source revision *before* execution-key computation, so an unpinned
-        ALIGN_EPISODE request dedups on source content, not just
-        (episode_id, config, semantics_version).
-
-        A caller-supplied pin (source_artifact_id set) is left untouched —
-        an explicit pin always wins (§7). Legacy sources with no populated
-        checksum are explicitly out of scope (§0/§18): fail clearly rather
-        than silently falling back to a weaker dedup rule.
-        """
-        if raw_params.get("source_artifact_id") is not None:
+        """Pin each Episode's current canonical revision -- exactly the
+        EPISODE_MANIFEST its record points to (ADR-007 §14.4) -- before the
+        execution key is computed, so an unpinned ALIGN_EPISODE request dedups
+        on source content. A caller-supplied pin always wins."""
+        episodes = raw_params.get("episodes")
+        if not isinstance(episodes, list):
+            # Let normal Pydantic param validation raise its own clear error.
             return raw_params
 
-        episode_id = raw_params.get("episode_id")
-        if not episode_id:
-            # Let normal Pydantic param validation raise its own clear
-            # "episode_id required" error rather than duplicating that check
-            # here.
-            return raw_params
-
-        record = await resolve_current_episode_manifest_source(
-            self._artifact_repository,
-            episode_id=episode_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-        )
-        if record is None:
-            raise ValueError(
-                f"No EPISODE_MANIFEST artifact found for episode_id={episode_id!r} "
-                f"in {dataset_id}/{dataset_version} — build_episodes must run "
-                "before align_episode can be dispatched."
+        pinned: list[Any] = []
+        for item in episodes:
+            if (
+                not isinstance(item, dict)
+                or item.get("source_artifact_id") is not None
+                or not item.get("episode_id")
+            ):
+                pinned.append(item)
+                continue
+            if self._episode_repository is None:
+                raise ValueError("align_episode source resolution needs Episode access")
+            episode_id = item["episode_id"]
+            record = await resolve_current_episode_manifest_source(
+                episode_repository=self._episode_repository,
+                artifact_repository=self._artifact_repository,
+                episode_id=episode_id,
             )
-        if record.checksum is None:
-            raise ValueError(
-                f"Current EpisodeManifest source for episode_id={episode_id!r} "
-                f"(artifact_id={record.artifact_id}) has no checksum and must be "
-                "rebuilt via build_episodes, or pin an explicit "
-                "source_artifact_id/source_manifest_sha256 if the correct hash "
-                "is already known."
+            if record is None:
+                raise ValueError(
+                    f"Episode {episode_id!r} is not registered — run "
+                    "recording_episode_building before align_episode."
+                )
+            pinned.append(
+                {
+                    **item,
+                    "source_artifact_id": record.artifact_id,
+                    "source_manifest_sha256": (record.checksum or "").removeprefix(
+                        "sha256:"
+                    ),
+                }
             )
-
-        return {
-            **raw_params,
-            "source_artifact_id": record.artifact_id,
-            "source_manifest_sha256": record.checksum.removeprefix("sha256:"),
-        }
+        return {**raw_params, "episodes": pinned}
 
     async def _resolve_aligned_artifact_checksum(
         self, raw_params: dict[str, Any]

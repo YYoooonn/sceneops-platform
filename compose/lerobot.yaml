@@ -1,0 +1,24 @@
+# LeRobot integration runtime (ADR-007 §20, external-integration-runtime.md):
+# an isolated image that executes the frozen IntegrationRequest ->
+# IntegrationResult contract for operation=EXPORT/format=lerobot. It has its
+# own dependency lock (lerobot needs numpy>=2), no database client and no
+# SceneOps worker code; ArtifactStore settings come from the environment and
+# the request is passed as a file under ./data.
+#
+#   docker compose --env-file .env.local --profile lerobot run --rm lerobot-integration \
+#     --request-file /data/runs/<run>/request.json --output-file /data/runs/<run>/result.json
+#
+# `make e2e-episode-learning` drives it; `make lerobot-image` builds it.
+services:
+  lerobot-integration:
+    build:
+      context: .
+      dockerfile: tools/lerobot-integration/Dockerfile
+    image: sceneops-platform/lerobot-integration:local
+    env_file:
+      - .env.local
+    volumes:
+      - ./data:/data
+      - ./scripts:/workspace/scripts:ro
+    profiles:
+      - lerobot

@@ -11,9 +11,10 @@ class MineScenariosJobResult(BaseJobResult):
     scenario_set_id: str
 
     scenario_set_uri: str | None = None
-    report_uri: str | None = (
-        None  # scenario candidates JSON (= mining_report_uri in run record)
-    )
+    # Pins the published ScenarioSet revision.
+    scenario_set_checksum: str | None = None
+    scenario_set_manifest_artifact_id: str | None = None
+    report_uri: str | None = None
     mining_run_id: str | None = None
 
     candidate_count: int = 0

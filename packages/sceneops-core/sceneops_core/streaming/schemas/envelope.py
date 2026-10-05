@@ -46,7 +46,13 @@ class TelemetryEnvelope(SceneOpsBaseModel):
     # a source clock that happens to read the same instant); nothing in
     # this schema enforces or should ever enforce source_timestamp_ns !=
     # ingest_timestamp_ns. See docs/architecture/streaming-transport.md §4.
-    source_timestamp_ns: int = Field(gt=0)
+    #
+    # 0 is a legal value and means "the source message carries a zero
+    # timestamp" (ROS 2's unstamped Header, typical of /tf_static). It is
+    # the source's own value passed through verbatim, never a substitute
+    # for a missing one; which channels may carry it is a per-channel
+    # decision of the producer (sceneops_core.streaming.channels).
+    source_timestamp_ns: int = Field(ge=0)
 
     # Time SceneOps accepted the message into the streaming transport
     # boundary. Ownership: the SOLE default assignment point is

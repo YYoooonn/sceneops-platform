@@ -48,6 +48,8 @@ from enum import StrEnum
 from pathlib import Path
 
 from sceneops_core.streaming import (
+    DEFAULT_REGISTRY,
+    ChannelRegistry,
     ConsumedTelemetryEnvelope,
     RunEventType,
     is_control_envelope,
@@ -187,13 +189,19 @@ class CaptureSession:
     asking."""
 
     def __init__(
-        self, *, robot_id: str, robot_run_id: str, output_root: Path, clock: Callable[[], float]
+        self,
+        *,
+        robot_id: str,
+        robot_run_id: str,
+        output_root: Path,
+        clock: Callable[[], float],
+        registry: ChannelRegistry = DEFAULT_REGISTRY,
     ) -> None:
         self.robot_id = robot_id
         self.robot_run_id = robot_run_id
         self._clock = clock
         partial_dir = prepare_partial_bag_dir(output_root, robot_run_id)
-        self.writer = McapCaptureWriter(bag_uri=str(partial_dir))
+        self.writer = McapCaptureWriter(bag_uri=str(partial_dir), registry=registry)
         self.run_filter = capture_consumer._RunFilter(
             robot_id=robot_id, robot_run_id=robot_run_id
         )
@@ -301,6 +309,7 @@ class ContinuousCaptureRouter:
         poll_timeout_seconds: float = 1.0,
         session_idle_timeout_seconds: float | None = None,
         clock: Callable[[], float] = time.monotonic,
+        registry: ChannelRegistry = DEFAULT_REGISTRY,
     ) -> None:
         """``session_idle_timeout_seconds`` -- defensive fallback (§3):
         a non-terminal session whose ``last_activity_at`` is this many
@@ -321,6 +330,7 @@ class ContinuousCaptureRouter:
         self._poll_timeout_seconds = poll_timeout_seconds
         self._session_idle_timeout_seconds = session_idle_timeout_seconds
         self._clock = clock
+        self._registry = registry
 
         self._sessions: dict[str, CaptureSession] = {}
         self._last_consumed_offset_by_partition: dict[int, int] = {}
@@ -400,7 +410,7 @@ class ContinuousCaptureRouter:
             await self.check_idle_sessions()
             return False
 
-        await self._route(consumed)
+        await self._route(consumed, receive_time_ns=time.time_ns())
         await self.check_idle_sessions()
         return True
 
@@ -432,7 +442,9 @@ class ContinuousCaptureRouter:
                 break
         return consumed_count
 
-    async def _route(self, consumed: ConsumedTelemetryEnvelope) -> None:
+    async def _route(
+        self, consumed: ConsumedTelemetryEnvelope, *, receive_time_ns: int
+    ) -> None:
         envelope = consumed.envelope
         robot_run_id = envelope.robot_run_id
         partition = consumed.partition
@@ -463,7 +475,9 @@ class ContinuousCaptureRouter:
                 sequence_number=envelope.sequence_number, payload=envelope.payload
             )
             if should_write:
-                session.writer.write_envelope(envelope)
+                session.writer.write_envelope(
+                    envelope, receive_time_ns=receive_time_ns
+                )
                 self.stats.messages_written += 1
                 if session.state is SessionState.DISCOVERED:
                     session.state = SessionState.RECORDING
@@ -487,6 +501,7 @@ class ContinuousCaptureRouter:
             robot_run_id=robot_run_id,
             output_root=self._output_root,
             clock=self._clock,
+            registry=self._registry,
         )
         self._sessions[robot_run_id] = session
         return session
@@ -638,6 +653,7 @@ class ContinuousCaptureRouter:
                 first_sequence=session.tracker.first_sequence,
                 last_sequence=session.tracker.last_sequence,
                 sha256=digest_hex,
+                per_channel_counts=dict(session.writer.stats.per_channel_counts),
             )
         except Exception as exc:
             session.state = SessionState.FAILED

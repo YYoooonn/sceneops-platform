@@ -7,4 +7,4 @@ from __future__ import annotations
 # endpoints, or interpolation semantics would change output for existing
 # inputs. align_episode() is the only place that sets it — callers cannot
 # override it.
-ALIGNMENT_SEMANTICS_VERSION = "v1"
+ALIGNMENT_SEMANTICS_VERSION = "v2"

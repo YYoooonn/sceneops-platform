@@ -32,6 +32,7 @@ class SceneRunStore:
         type: RunType | None = None,
         status: RunStatus | None = None,
         scene_id: str | None = None,
+        manifest_artifact_id: str | None = None,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         job_id: str | None = None,
@@ -43,10 +44,24 @@ class SceneRunStore:
             type=type,
             status=status,
             scene_id=scene_id,
+            manifest_artifact_id=manifest_artifact_id,
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             job_id=job_id,
             pipeline_run_id=pipeline_run_id,
             limit=limit,
             offset=offset,
+        )
+
+    async def latest_succeeded_for_current_revisions(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        run_type: RunType,
+    ) -> dict[str, SceneRunRecord]:
+        return await self._repo.latest_succeeded_for_current_revisions(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            run_type=run_type,
         )

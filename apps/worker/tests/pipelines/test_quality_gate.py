@@ -297,7 +297,7 @@ class TestNotJobTypeSpecific:
             pipeline_task_id="make_widgets",
             name="Make Widgets",
             order=0,
-            job_type=JobType.BUILD_SCENES,
+            job_type=JobType.BUILD_RECORDING_SCENES,
             quality_rules=[
                 PipelineTaskQualityRule(
                     rule_type=PipelineTaskQualityRuleType.BLOCK_IF_TRUE,

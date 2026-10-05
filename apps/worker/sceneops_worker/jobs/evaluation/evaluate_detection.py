@@ -10,23 +10,31 @@ from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.ids import default_evaluation_run_id, generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
-from sceneops_core.datasets.schemas.records import DatasetVersionRecord
-from sceneops_core.evaluations.schemas import EvaluationTaskType
+from sceneops_core.evaluations.schemas import EvaluationInputs, EvaluationTaskType
 from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
 from sceneops_core.evaluations.schemas.runs import EvaluationRunRecord
-from sceneops_core.inference.schemas.runs import InferenceRunRecord
 from sceneops_core.jobs.schemas import (
     EvaluateDetectionJobParams,
     EvaluateDetectionJobResult,
     JobManifest,
     JobType,
 )
+from sceneops_core.labels import LabelSetManifest
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.sample_views import SceneSampleViewManifest
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.derived import DerivedManifestIntegrityError
+from sceneops_worker.derived.resolution import (
+    ResolvedPrediction,
+    resolve_label_set,
+    resolve_prediction_revision,
+    resolve_sample_view,
+)
 from sceneops_worker.evaluation import create_detection_evaluator
 from sceneops_worker.evaluation.detection import DetectionEvaluationRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
+from sceneops_worker.scenes.readiness import require_no_blocked_scenes
 
 
 @dataclass(frozen=True)
@@ -37,16 +45,16 @@ class EvaluateDetectionExecution:
     params: EvaluateDetectionJobParams
     context: WorkerContext
     evaluation_run_id: str
-    dataset_version_record: DatasetVersionRecord
-    inference_run_record: InferenceRunRecord
+    prediction: ResolvedPrediction
 
 
 @dataclass(frozen=True)
 class EvaluateDetectionInputs:
-    """Resolved dataset manifest."""
+    """The pinned revisions an evaluation reads, resolved."""
 
-    dataset_manifest_uri: str
-    dataset_manifest: Any  # DatasetManifest — typed at use site
+    inputs: EvaluationInputs
+    label_set: LabelSetManifest
+    views: dict[str, SceneSampleViewManifest]
 
 
 @dataclass(frozen=True)
@@ -89,7 +97,7 @@ class EvaluateDetectionJobHandler(
         inference_run_id = inputs.refs.get("inference_run_id")
         if inference_run_id is None:
             raise ValueError("inference_run_id is required for evaluate_detection")
-        return {
+        params: JsonDict = {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
@@ -97,6 +105,10 @@ class EvaluateDetectionJobHandler(
             **inputs.params,
             "inference_run_id": inference_run_id,
         }
+        checksum = inputs.refs.get("prediction_manifest_checksum")
+        if checksum is not None:
+            params["prediction_manifest_checksum"] = checksum
+        return params
 
     def build_initial_record(
         self,
@@ -163,6 +175,7 @@ class EvaluateDetectionJobHandler(
             evaluation_manifest=evaluation_manifest,
             artifacts=artifacts,
             counts=counts,
+            inputs=inputs,
         )
 
         job_result = self._build_result(
@@ -170,6 +183,7 @@ class EvaluateDetectionJobHandler(
             evaluation_manifest=evaluation_manifest,
             artifacts=artifacts,
             counts=counts,
+            inputs=inputs,
         )
 
         return succeeded_record, job_result
@@ -184,145 +198,42 @@ class EvaluateDetectionJobHandler(
         context: WorkerContext,
         initial_record: EvaluationRunRecord,
     ) -> EvaluateDetectionExecution:
-        dataset_version = await self._require_scene_dataset_ready(
-            context, params.dataset_id, params.dataset_version
+        dataset_version = await context.dataset_store.get_version(
+            dataset_id=params.dataset_id, version=params.dataset_version
         )
-        inference_run = await self._require_inference_run(
-            context, params.inference_run_id
-        )
-        self._validate_inference_run_matches_dataset(
-            inference_run=inference_run,
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
-        )
-        self._validate_scenario_set_lineage(
-            params=params,
-            inference_run=inference_run,
+        if dataset_version is None:
+            raise ValueError(
+                f"Dataset version not found: {params.dataset_id}:{params.dataset_version}"
+            )
+        run = await context.runs.inference.get(params.inference_run_id)
+        if run is None:
+            raise ValueError(f"Inference run not found: {params.inference_run_id}")
+        if run.status != RunStatus.SUCCEEDED:
+            raise ValueError(
+                f"Inference run is not complete: "
+                f"run_id={params.inference_run_id}, status={run.status}"
+            )
+        if (run.dataset_id, run.dataset_version) != (
+            params.dataset_id,
+            params.dataset_version,
+        ):
+            raise ValueError(
+                f"Inference run dataset mismatch: run {run.run_id!r} is for "
+                f"{run.dataset_id}/{run.dataset_version}, but evaluation params "
+                f"request {params.dataset_id}/{params.dataset_version}"
+            )
+        prediction = await resolve_prediction_revision(
+            context,
+            inference_run_id=params.inference_run_id,
+            expected_checksum=params.prediction_manifest_checksum,
         )
         return EvaluateDetectionExecution(
             job=job,
             params=params,
             context=context,
             evaluation_run_id=initial_record.run_id,
-            dataset_version_record=dataset_version,
-            inference_run_record=inference_run,
+            prediction=prediction,
         )
-
-    @staticmethod
-    async def _require_scene_dataset_ready(
-        context: WorkerContext,
-        dataset_id: str,
-        dataset_version: str,
-    ) -> DatasetVersionRecord:
-        """Is this Scene dataset ready for detection evaluation?
-
-        SceneOps V2 Request 05: replaces the old generic
-        ``version.status == READY`` gate with explicit Scene prerequisites —
-        see PredictDetectionJobHandler._require_scene_dataset_ready.
-        """
-        version = await context.dataset_store.get_version(
-            dataset_id=dataset_id,
-            version=dataset_version,
-        )
-        if version is None:
-            raise ValueError(
-                f"Dataset version not found: {dataset_id}:{dataset_version}"
-            )
-        if version.scene is None:
-            raise ValueError(
-                f"Dataset version has no Scene data: {dataset_id}:{dataset_version}"
-            )
-        if not version.scene.manifest_uri:
-            raise ValueError(
-                f"Dataset version has no manifest_uri: {dataset_id}:{dataset_version}"
-            )
-        if version.scene.should_block_pipeline:
-            raise ValueError(
-                f"Dataset version Scene validation blocked downstream use: "
-                f"{dataset_id}:{dataset_version}"
-            )
-        return version
-
-    @staticmethod
-    async def _require_inference_run(
-        context: WorkerContext,
-        inference_run_id: str,
-    ) -> InferenceRunRecord:
-        inference_run = await context.runs.inference.get(inference_run_id)
-        if inference_run is None:
-            raise ValueError(f"Inference run not found: {inference_run_id}")
-        if inference_run.status != RunStatus.SUCCEEDED:
-            raise ValueError(
-                f"Inference run is not complete: "
-                f"run_id={inference_run_id}, status={inference_run.status}"
-            )
-        if inference_run.prediction_manifest_uri is None:
-            raise ValueError(
-                f"Inference run has no prediction_manifest_uri: {inference_run_id}"
-            )
-        return inference_run
-
-    @staticmethod
-    def _validate_inference_run_matches_dataset(
-        *,
-        inference_run: InferenceRunRecord,
-        dataset_id: str,
-        dataset_version: str,
-    ) -> None:
-        if (
-            inference_run.dataset_id != dataset_id
-            or inference_run.dataset_version != dataset_version
-        ):
-            raise ValueError(
-                f"Inference run dataset mismatch: "
-                f"run {inference_run.run_id!r} is for "
-                f"{inference_run.dataset_id}/{inference_run.dataset_version}, "
-                f"but evaluation params request {dataset_id}/{dataset_version}"
-            )
-
-    @staticmethod
-    def _validate_scenario_set_lineage(
-        *,
-        params: EvaluateDetectionJobParams,
-        inference_run: InferenceRunRecord,
-    ) -> None:
-        requested = params.scenario_set_id
-        if not requested:
-            return
-        inference_metadata = inference_run.metadata or {}
-        inference_scenario_set_id = inference_metadata.get("scenario_set_id")
-        if not inference_scenario_set_id:
-            raise ValueError(
-                f"scenario_set_id={requested!r} was requested but inference run "
-                f"{inference_run.run_id!r} does not contain scenario_set_id in its "
-                f"metadata. Ensure predict_detection was run with the same scenario_set_id."
-            )
-        if inference_scenario_set_id != requested:
-            raise ValueError(
-                f"ScenarioSet mismatch: requested scenario_set_id={requested!r} but "
-                f"inference run {inference_run.run_id!r} was produced with "
-                f"scenario_set_id={inference_scenario_set_id!r}."
-            )
-
-    @staticmethod
-    def _build_scenario_set_metadata(
-        *,
-        params: EvaluateDetectionJobParams,
-        inference_run: InferenceRunRecord,
-    ) -> JsonDict:
-        if not params.scenario_set_id:
-            return {}
-        inference_metadata = inference_run.metadata or {}
-        metadata: JsonDict = {"scenario_set_id": params.scenario_set_id}
-        for key in (
-            "scenario_set_uri",
-            "scenario_candidate_count",
-            "scenario_selected_count",
-            "scenario_rejected_count",
-        ):
-            if key in inference_metadata:
-                metadata[key] = inference_metadata[key]
-        return metadata
 
     # ── input resolution ───────────────────────────────────────────────────────
 
@@ -330,18 +241,43 @@ class EvaluateDetectionJobHandler(
     async def _resolve_inputs(
         execution: EvaluateDetectionExecution,
     ) -> EvaluateDetectionInputs:
-        version = execution.dataset_version_record
-        # _require_scene_dataset_ready already guaranteed version.scene and
-        # its manifest_uri are set before this runs.
-        manifest_uri = version.scene.manifest_uri
-        dataset_manifest = (
-            await execution.context.dataset_artifact_store.load_dataset_manifest(
-                manifest_uri
-            )
+        """Resolve every pin: the label set revision, and the sample view
+        revisions the predictions were made from. Each view must pin the
+        label set being evaluated against, otherwise it cannot say which
+        samples the set covers."""
+        context = execution.context
+        params = execution.params
+        prediction = execution.prediction.manifest
+
+        label_set = await resolve_label_set(context, params.label_set)
+        views: dict[str, SceneSampleViewManifest] = {}
+        for item in prediction.inputs:
+            resolved = await resolve_sample_view(context, item.sample_view)
+            pinned = {ref.label_set_id: ref for ref in resolved.view.label_sets}
+            ref = pinned.get(params.label_set.label_set_id)
+            if (
+                ref is None
+                or ref.manifest_checksum != params.label_set.manifest_checksum
+            ):
+                raise DerivedManifestIntegrityError(
+                    f"sample view {item.sample_view.manifest_artifact_id} does not "
+                    f"pin label set {params.label_set.label_set_id}"
+                    f"@{params.label_set.manifest_checksum}; rebuild the view with "
+                    "this label set revision"
+                )
+            views[item.sample_view.scene_id] = resolved.view
+        await require_no_blocked_scenes(
+            context, [view.scene for view in views.values()]
         )
         return EvaluateDetectionInputs(
-            dataset_manifest=dataset_manifest,
-            dataset_manifest_uri=manifest_uri,
+            inputs=EvaluationInputs(
+                prediction=execution.prediction.ref,
+                label_set=params.label_set,
+                sample_views=[item.sample_view for item in prediction.inputs],
+                scenario_set=prediction.scenario_set,
+            ),
+            label_set=label_set,
+            views=views,
         )
 
     # ── record patch ───────────────────────────────────────────────────────────
@@ -357,7 +293,7 @@ class EvaluateDetectionJobHandler(
         These are not available at record creation time; we get them from the
         inference run, which is resolved in _prepare_execution.
         """
-        inference_run = execution.inference_run_record
+        inference_run = execution.prediction.run
         await self._upsert(
             execution.context,
             initial_record.model_copy(
@@ -381,12 +317,21 @@ class EvaluateDetectionJobHandler(
         evaluator = create_detection_evaluator(params.evaluator_id)
         return await evaluator.run(
             DetectionEvaluationRequest(
-                dataset_manifest=inputs.dataset_manifest,
-                scene_artifact_store=context.scene_artifact_store,
-                run_artifact_store=context.run_artifact_store,
-                inference_run_id=params.inference_run_id,
                 evaluation_run_id=execution.evaluation_run_id,
+                inference_run_id=params.inference_run_id,
+                dataset_id=params.dataset_id,
+                dataset_version=params.dataset_version,
+                inputs=inputs.inputs,
+                prediction=execution.prediction.manifest,
+                label_set=inputs.label_set,
+                views=inputs.views,
+                run_artifact_store=context.run_artifact_store,
                 match_distance_m=params.match_distance_m,
+                categories=(
+                    frozenset(params.categories)
+                    if params.categories is not None
+                    else None
+                ),
                 missing_gt_policy=params.missing_gt_policy,
             )
         )
@@ -401,7 +346,7 @@ class EvaluateDetectionJobHandler(
         counts: EvaluationCounts,
     ) -> str:
         params = execution.params
-        inference_run = execution.inference_run_record
+        inference_run = execution.prediction.run
         return await execution.context.run_artifact_store.write_evaluation_run_metrics(
             evaluation_run_id=execution.evaluation_run_id,
             metrics={
@@ -520,7 +465,7 @@ class EvaluateDetectionJobHandler(
             lifting_failed_prediction_count=evaluation_manifest.lifting_failed_prediction_count
             or 0,
             ground_truth_count=evaluation_manifest.ground_truth_count or 0,
-            evaluation_unit=evaluation_manifest.evaluation_unit or "annotation",
+            evaluation_unit=evaluation_manifest.evaluation_unit or "label",
             primary_metric_name=evaluation_manifest.primary_metric_name,
             primary_metric_value=evaluation_manifest.primary_metric_value,
         )
@@ -533,12 +478,9 @@ class EvaluateDetectionJobHandler(
         evaluation_manifest: DetectionEvaluationManifest,
         artifacts: EvaluateDetectionArtifacts,
         counts: EvaluationCounts,
+        inputs: EvaluateDetectionInputs,
     ) -> EvaluationRunRecord:
-        inference_run = execution.inference_run_record
-        scenario_metadata = self._build_scenario_set_metadata(
-            params=execution.params,
-            inference_run=inference_run,
-        )
+        inference_run = execution.prediction.run
         return initial_record.model_copy(
             update={
                 "model_id": inference_run.model_id,
@@ -554,11 +496,14 @@ class EvaluateDetectionJobHandler(
                 "metrics_uri": artifacts.metrics_uri,
                 "metrics": evaluation_manifest.metrics,
                 "class_metrics": evaluation_manifest.class_metrics,
-                "summary": _build_evaluation_summary(
-                    evaluation_manifest=evaluation_manifest,
-                    counts=counts,
-                ),
-                "metadata": {**(initial_record.metadata or {}), **scenario_metadata},
+                "summary": {
+                    **_build_evaluation_summary(
+                        evaluation_manifest=evaluation_manifest,
+                        counts=counts,
+                    ),
+                    "inputs": inputs.inputs.model_dump(mode="json"),
+                },
+                "metadata": {**(initial_record.metadata or {})},
                 "finished_at": utc_now(),
             }
         )
@@ -570,9 +515,10 @@ class EvaluateDetectionJobHandler(
         evaluation_manifest: DetectionEvaluationManifest,
         artifacts: EvaluateDetectionArtifacts,
         counts: EvaluationCounts,
+        inputs: EvaluateDetectionInputs,
     ) -> EvaluateDetectionJobResult:
         params = execution.params
-        inference_run = execution.inference_run_record
+        inference_run = execution.prediction.run
         return EvaluateDetectionJobResult(
             evaluation_run_id=execution.evaluation_run_id,
             evaluation_manifest_uri=artifacts.evaluation_manifest_uri,
@@ -582,6 +528,9 @@ class EvaluateDetectionJobHandler(
             model_id=inference_run.model_id,
             model_version=inference_run.model_version,
             inference_run_id=params.inference_run_id,
+            prediction_manifest_checksum=inputs.inputs.prediction.manifest_checksum,
+            label_set_id=inputs.inputs.label_set.label_set_id,
+            label_set_checksum=inputs.inputs.label_set.manifest_checksum,
             sample_count=counts.sample_count,
             prediction_count=counts.prediction_count,
             evaluable_prediction_count=counts.evaluable_prediction_count,
@@ -599,7 +548,7 @@ class EvaluateDetectionJobHandler(
             metadata={
                 "evaluator_id": params.evaluator_id,
                 "match_distance_m": params.match_distance_m,
-                "missing_gt_policy": params.missing_gt_policy,
+                "missing_gt_policy": params.missing_gt_policy.value,
             },
         )
 

@@ -14,7 +14,12 @@ from .robots import (
     RobotStateRepository,
 )
 from .scenarios import ScenarioRunRecord, ScenarioRunRepository, ScenarioSetRepository
-from .scenes import SceneRepository, SceneRunRecord, SceneRunRepository
+from .scenes import (
+    SceneMembershipSummary,
+    SceneRepository,
+    SceneRunRecord,
+    SceneRunRepository,
+)
 
 __all__ = [
     # jobs
@@ -29,6 +34,7 @@ __all__ = [
     "DatasetRepository",
     "DatasetVersionRepository",
     # scenes
+    "SceneMembershipSummary",
     "SceneRepository",
     "SceneRunRepository",
     "SceneRunRecord",

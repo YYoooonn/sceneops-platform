@@ -4,10 +4,12 @@ from fastapi import APIRouter
 
 from app.core.errors import raise_bad_request, raise_not_found
 from app.core.pagination import PaginationDep
-from app.domains.robots.dependencies import RobotServiceDep
+from app.domains.robots.dependencies import (
+    RobotRunRegistrationServiceDep,
+    RobotServiceDep,
+)
 from app.domains.robots.schemas import (
     CreateRobotRequest,
-    CreateRobotRunRequest,
     MissionDetailResponse,
     MissionListResponse,
     RobotDetailResponse,
@@ -15,6 +17,8 @@ from app.domains.robots.schemas import (
     RobotRunDetailResponse,
     RobotRunListResponse,
     RobotStateListResponse,
+    RegisterRobotRunRequest,
+    RegisterRobotRunResponse,
 )
 from sceneops_core.robots.schemas import MissionStatus, RobotStatus
 
@@ -74,14 +78,20 @@ async def list_robot_runs(
     )
 
 
-@robot_runs_router.post("", response_model=RobotRunDetailResponse, status_code=201)
-async def create_robot_run(
-    request: CreateRobotRunRequest, service: RobotServiceDep
-) -> RobotRunDetailResponse:
-    result = await service.create_robot_run(request)
-    if result is None:
-        raise_bad_request(f"Robot not found: {request.robot_id}")
-    return result
+@robot_runs_router.post(
+    ":register", response_model=RegisterRobotRunResponse, status_code=202
+)
+async def register_robot_run(
+    request: RegisterRobotRunRequest,
+    service: RobotRunRegistrationServiceDep,
+) -> RegisterRobotRunResponse:
+    """Submit REGISTER_ROBOT_RUN for a published RobotRunManifest. Returns
+    the Job; registration outcome (created / idempotent / failed) is read
+    from the Job's status and result."""
+    try:
+        return await service.submit(request.manifest_uri)
+    except ValueError as exc:
+        raise_bad_request(str(exc))
 
 
 @robot_runs_router.get("/{run_id}", response_model=RobotRunDetailResponse)

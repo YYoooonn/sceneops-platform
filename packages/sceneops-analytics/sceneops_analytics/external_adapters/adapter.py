@@ -153,7 +153,9 @@ class ExternalDatasetAdapter(ABC):
 
             episode = ExternalEpisode(
                 episode_ref=ref,
-                task=metadata.task,
+                task=metadata.task
+                if metadata.task is not None
+                else config.default_task,
                 outcome=metadata.outcome,
                 steps=steps,
             )

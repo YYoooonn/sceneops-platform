@@ -9,7 +9,7 @@ explicit ``(aligned_artifact_checksum, artifact)`` pair rather than being
 re-derived here).
 
 Three tables, mirroring the existing Scene precedent
-(scenes/samples/sensor_frames+annotations):
+(scenes/observations/keyframes):
 
 - ``learning_episodes``: one row per (episode_id, aligned_artifact_checksum)
   — Episode-level alignment metadata that would otherwise repeat on every

@@ -3,13 +3,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class DatasetType(StrEnum):
-    NUSCENES = "nuscenes"
-    WAYMO = "waymo"
-    KITTI = "kitti"
-    CUSTOM = "custom"
-
-
 class DatasetVersionStatus(StrEnum):
     """Generic, domain-agnostic DatasetVersion lifecycle (SceneOps V2 Request 05).
 
@@ -29,22 +22,3 @@ class DatasetVersionStatus(StrEnum):
     """
 
     REGISTERED = "registered"
-
-
-class DatasetManifestStatus(StrEnum):
-    READY = "ready"
-    PARTIAL = "partial"
-    FAILED = "failed"
-
-
-class DatasetIngestMode(StrEnum):
-    UPSERT = "upsert"
-    OVERWRITE = "overwrite"
-    APPEND = "append"
-
-
-class DatasetSplit(StrEnum):
-    TRAIN = "train"
-    VAL = "val"
-    TEST = "test"
-    UNASSIGNED = "unassigned"

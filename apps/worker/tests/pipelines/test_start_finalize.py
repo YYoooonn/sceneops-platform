@@ -31,7 +31,7 @@ def _pipeline_run(status: PipelineRunStatus) -> PipelineRunManifest:
     now = utc_now()
     return PipelineRunManifest(
         pipeline_run_id=PIPELINE_RUN_ID,
-        type=PipelineType.DATASET_SCENE_INGESTION,
+        type=PipelineType.RECORDING_SCENE_BUILDING,
         status=status,
         created_at=now,
         updated_at=now,
@@ -102,7 +102,7 @@ async def test_start_allows_blocked_retry():
 async def test_finalize_succeeds_when_all_tasks_succeeded():
     pipeline_run = _pipeline_run(PipelineRunStatus.RUNNING)
     task_runs = [
-        _task_run("ingest_scenes", PipelineTaskRunStatus.SUCCEEDED),
+        _task_run("build_recording_scenes", PipelineTaskRunStatus.SUCCEEDED),
         _task_run("register_scene", PipelineTaskRunStatus.SUCCEEDED),
     ]
     ctx = _context(pipeline_run, task_runs)
@@ -115,7 +115,7 @@ async def test_finalize_succeeds_when_all_tasks_succeeded():
 async def test_finalize_blocks_when_any_task_blocked():
     pipeline_run = _pipeline_run(PipelineRunStatus.RUNNING)
     task_runs = [
-        _task_run("ingest_scenes", PipelineTaskRunStatus.SUCCEEDED),
+        _task_run("build_recording_scenes", PipelineTaskRunStatus.SUCCEEDED),
         _task_run("validate_scene", PipelineTaskRunStatus.BLOCKED),
     ]
     ctx = _context(pipeline_run, task_runs)
@@ -128,7 +128,7 @@ async def test_finalize_blocks_when_any_task_blocked():
 async def test_finalize_fails_when_any_task_failed():
     pipeline_run = _pipeline_run(PipelineRunStatus.RUNNING)
     task_runs = [
-        _task_run("ingest_scenes", PipelineTaskRunStatus.SUCCEEDED),
+        _task_run("build_recording_scenes", PipelineTaskRunStatus.SUCCEEDED),
         _task_run("register_scene", PipelineTaskRunStatus.FAILED),
     ]
     ctx = _context(pipeline_run, task_runs)

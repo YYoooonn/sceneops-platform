@@ -3,33 +3,47 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from sceneops_core.scenes.schemas.manifests import (
-    SceneAnnotationManifest as SampleAnnotationManifest,
-    SceneSampleManifest,
-)
+from sceneops_core.labels import Box3DLabel
+
+
+class FrameMismatchError(ValueError):
+    """A prediction and a label are expressed in different frames. No
+    transform is applied between frames, so the comparison would be wrong."""
 
 
 def is_evaluable_prediction(pred: dict[str, Any]) -> bool:
-    """Return False only for predictions explicitly marked as failed lifts.
-
-    Predictions without lifting_status (e.g. from mock backends) are treated
-    as evaluable to preserve backward compatibility.
-    """
-    return pred.get("lifting_status") != "failed"
+    """A prediction is scored only if it is a localized 3-D box: it names the
+    frame it is expressed in and its lift did not fail. A 2-D detection that
+    could not be lifted carries a placeholder box and no frame."""
+    return pred.get("lifting_status") != "failed" and pred.get("frame_id") is not None
 
 
 def evaluate_sample(
     *,
-    sample: SceneSampleManifest,
+    scene_id: str,
+    sample_id: str,
+    labels: list[Box3DLabel],
     predictions: list[dict[str, Any]],
     match_distance_m: float,
-    dataset_id: str | None = None,
-    dataset_version: str | None = None,
 ) -> dict[str, Any]:
-    gt_annotations = _filter_supported_gt(sample.annotations)
+    gt_labels = labels
 
     evaluable_predictions = [p for p in predictions if is_evaluable_prediction(p)]
-    lifting_failed_count = len(predictions) - len(evaluable_predictions)
+    lifting_failed_count = sum(
+        1 for p in predictions if p.get("lifting_status") == "failed"
+    )
+    not_localized_count = (
+        len(predictions) - len(evaluable_predictions) - lifting_failed_count
+    )
+
+    for prediction in evaluable_predictions:
+        for label in gt_labels:
+            if prediction["frame_id"] != label.box.frame_id:
+                raise FrameMismatchError(
+                    f"prediction {prediction['prediction_id']!r} is in frame "
+                    f"{prediction['frame_id']!r} but label {label.label_id!r} is in "
+                    f"frame {label.box.frame_id!r}; no frame transform is applied"
+                )
 
     matched_gt_indices: set[int] = set()
     matched_prediction_indices: set[int] = set()
@@ -39,14 +53,14 @@ def evaluate_sample(
         best_gt_index = None
         best_distance = float("inf")
 
-        for gt_index, gt in enumerate(gt_annotations):
+        for gt_index, gt in enumerate(gt_labels):
             if gt_index in matched_gt_indices:
                 continue
 
             if gt.category != prediction["category_name"]:
                 continue
 
-            distance = center_distance(gt.translation, prediction["translation"])
+            distance = center_distance(list(gt.box.center_m), prediction["translation"])
 
             if distance < best_distance:
                 best_distance = distance
@@ -56,10 +70,10 @@ def evaluate_sample(
             matched_gt_indices.add(best_gt_index)
             matched_prediction_indices.add(pred_index)
 
-            gt = gt_annotations[best_gt_index]
+            gt = gt_labels[best_gt_index]
             matches.append(
                 {
-                    "annotation_id": gt.annotation_id,
+                    "label_id": gt.label_id,
                     "prediction_id": prediction["prediction_id"],
                     "category_name": prediction["category_name"],
                     "center_distance": round(best_distance, 6),
@@ -68,11 +82,11 @@ def evaluate_sample(
 
     tp = len(matches)
     fp = len(evaluable_predictions) - len(matched_prediction_indices)
-    fn = len(gt_annotations) - len(matched_gt_indices)
+    fn = len(gt_labels) - len(matched_gt_indices)
     total_center_distance_error = sum(match["center_distance"] for match in matches)
 
     class_metrics = build_sample_class_metrics(
-        gt_annotations=gt_annotations,
+        gt_labels=gt_labels,
         predictions=evaluable_predictions,
         matches=matches,
         matched_gt_indices=matched_gt_indices,
@@ -80,10 +94,8 @@ def evaluate_sample(
     )
 
     return {
-        "dataset_id": dataset_id,
-        "dataset_version": dataset_version,
-        "scene_id": sample.scene_id,
-        "sample_id": sample.sample_id,
+        "scene_id": scene_id,
+        "sample_id": sample_id,
         "tp": tp,
         "fp": fp,
         "fn": fn,
@@ -100,24 +112,8 @@ def evaluate_sample(
         "prediction_count": len(predictions),
         "evaluable_prediction_count": len(evaluable_predictions),
         "lifting_failed_prediction_count": lifting_failed_count,
+        "not_localized_prediction_count": not_localized_count,
     }
-
-
-def _filter_supported_gt(
-    annotations: list[SampleAnnotationManifest],
-) -> list[SampleAnnotationManifest]:
-    supported_prefixes = (
-        "vehicle.car",
-        "human.pedestrian",
-        "movable_object.barrier",
-    )
-
-    return [
-        annotation
-        for annotation in annotations
-        if annotation.category is not None
-        and annotation.category.startswith(supported_prefixes)
-    ]
 
 
 def center_distance(a: list[float], b: list[float]) -> float:
@@ -126,13 +122,13 @@ def center_distance(a: list[float], b: list[float]) -> float:
 
 def build_sample_class_metrics(
     *,
-    gt_annotations: list[SampleAnnotationManifest],
+    gt_labels: list[Box3DLabel],
     predictions: list[dict[str, Any]],
     matches: list[dict[str, Any]],
     matched_gt_indices: set[int],
     matched_prediction_indices: set[int],
 ) -> dict[str, dict[str, int]]:
-    categories = {gt.category for gt in gt_annotations if gt.category} | {
+    categories = {gt.category for gt in gt_labels} | {
         pred["category_name"] for pred in predictions
     }
 
@@ -145,8 +141,8 @@ def build_sample_class_metrics(
         if index not in matched_prediction_indices:
             class_metrics[prediction["category_name"]]["fp"] += 1
 
-    for index, gt in enumerate(gt_annotations):
-        if index not in matched_gt_indices and gt.category:
+    for index, gt in enumerate(gt_labels):
+        if index not in matched_gt_indices:
             class_metrics[gt.category]["fn"] += 1
 
     return class_metrics

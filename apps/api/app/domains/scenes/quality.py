@@ -2,11 +2,21 @@
 
 Pure functions — receive already-fetched records, return SceneQualityResponse.
 Independently testable without a running service or DB.
+
+Only run records that assessed the Scene's current manifest revision count;
+any other run passed in is ignored, so a replaced Scene reports ``unknown``
+until its new revision is validated (ADR-007 §13.4).
 """
 
 from __future__ import annotations
 
-from sceneops_core.scenes.schemas.enums import SceneStatus
+from typing import TypeVar
+
+from sceneops_core.scenes import (
+    SceneReadiness,
+    derive_scene_readiness,
+    latest_validation_for_revision,
+)
 from sceneops_core.scenes.schemas.records import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
@@ -14,15 +24,11 @@ from sceneops_core.scenes.schemas.runs import (
 )
 
 from app.domains.scenes.schemas import (
-    SceneGroundTruthQualitySummary,
     SceneProfileQualitySummary,
     SceneQualityCounts,
-    SceneQualityReadiness,
     SceneQualityResponse,
     SceneValidationQualitySummary,
 )
-
-_VALIDATED_STATUSES = frozenset({SceneStatus.VALIDATED, SceneStatus.PROFILED})
 
 
 def build_scene_quality(
@@ -30,80 +36,49 @@ def build_scene_quality(
     validation_run: SceneValidationRunRecord | None = None,
     profile_run: SceneProfileRunRecord | None = None,
 ) -> SceneQualityResponse:
+    validation_run = _current(scene, validation_run)
+    profile_run = _current(scene, profile_run)
     readiness = compute_scene_readiness(scene, validation_run)
-    selectable, exclusion_reasons = _compute_selectability(
-        scene, validation_run, readiness
-    )
 
     return SceneQualityResponse(
         scene_id=scene.scene_id,
         dataset_id=scene.dataset_id,
         dataset_version=scene.dataset_version,
-        status=str(getattr(scene.status, "value", scene.status)),
+        manifest_artifact_id=scene.manifest_artifact_id,
+        manifest_checksum=scene.manifest_checksum,
         counts=SceneQualityCounts(
-            sample_count=scene.sample_count or 0,
-            frame_count=scene.frame_count or 0,
-            annotation_count=scene.annotation_count,
-        ),
-        ground_truth=SceneGroundTruthQualitySummary(
-            has_ground_truth=scene.has_ground_truth,
-            annotation_count=scene.annotation_count,
-            ground_truth_source=scene.ground_truth_source,
+            keyframe_count=scene.keyframe_count,
+            observation_count=scene.observation_count,
         ),
         validation=_build_validation_summary(validation_run),
         profile=_build_profile_summary(profile_run),
         readiness=readiness,
-        selectable_for_detection=selectable,
-        exclusion_reasons=exclusion_reasons,
     )
 
 
 def compute_scene_readiness(
     scene: SceneRecord,
     validation_run: SceneValidationRunRecord | None,
-) -> SceneQualityReadiness:
-    if scene.status not in _VALIDATED_STATUSES:
-        return SceneQualityReadiness.UNKNOWN
-
-    if validation_run is None:
-        return SceneQualityReadiness.UNKNOWN
-
-    val_status = (validation_run.validation_status or "").lower()
-
-    if validation_run.should_block_pipeline or val_status in ("failed", "error"):
-        return SceneQualityReadiness.BLOCKED
-
-    if val_status == "warning":
-        return SceneQualityReadiness.WARNING
-
-    if val_status == "ready":
-        return SceneQualityReadiness.READY
-
-    return SceneQualityReadiness.UNKNOWN
+) -> SceneReadiness:
+    run = latest_validation_for_revision(
+        [validation_run] if validation_run is not None else [],
+        scene_id=scene.scene_id,
+        manifest_artifact_id=scene.manifest_artifact_id,
+        manifest_checksum=scene.manifest_checksum,
+    )
+    return derive_scene_readiness(run)
 
 
-def _compute_selectability(
-    scene: SceneRecord,
-    validation_run: SceneValidationRunRecord | None,
-    readiness: SceneQualityReadiness,
-) -> tuple[bool, list[str]]:
-    reasons: list[str] = []
+_RunT = TypeVar("_RunT", SceneValidationRunRecord, SceneProfileRunRecord)
 
-    if scene.status not in _VALIDATED_STATUSES:
-        reasons.append("scene_not_ready")
 
-    if validation_run is None:
-        reasons.append("validation_missing")
-    elif validation_run.should_block_pipeline or (
-        validation_run.validation_status or ""
-    ).lower() in ("failed", "error"):
-        reasons.append("validation_blocked")
-
-    # Use canonical SceneRecord GT fields — set by register_scene from SceneManifest.
-    if not scene.has_ground_truth or scene.annotation_count <= 0:
-        reasons.append("missing_ground_truth")
-
-    return len(reasons) == 0, reasons
+def _current(scene: SceneRecord, run: _RunT | None) -> _RunT | None:
+    if run is None or not run.assessed(
+        manifest_artifact_id=scene.manifest_artifact_id,
+        manifest_checksum=scene.manifest_checksum,
+    ):
+        return None
+    return run
 
 
 def _build_validation_summary(
@@ -114,10 +89,11 @@ def _build_validation_summary(
     return SceneValidationQualitySummary(
         run_id=run.run_id,
         status=str(getattr(run.status, "value", run.status)),
+        manifest_artifact_id=run.manifest_artifact_id,
         validation_status=run.validation_status,
         should_block_pipeline=run.should_block_pipeline,
-        checked_sample_count=run.checked_sample_count,
-        checked_frame_count=run.checked_frame_count,
+        checked_observation_count=run.checked_observation_count,
+        checked_keyframe_count=run.checked_keyframe_count,
         blocking_issue_count=run.error_count,
         warning_count=run.warning_count,
         issue_count=run.issue_count,
@@ -133,9 +109,9 @@ def _build_profile_summary(
     return SceneProfileQualitySummary(
         run_id=run.run_id,
         status=str(getattr(run.status, "value", run.status)),
-        sample_count=run.sample_count,
-        frame_count=run.frame_count,
-        annotation_count=run.annotation_count,
+        manifest_artifact_id=run.manifest_artifact_id,
+        observation_count=run.observation_count,
+        keyframe_count=run.keyframe_count,
         observed_channels=list(run.observed_channels or []),
         profile_report_uri=run.profile_report_uri,
     )

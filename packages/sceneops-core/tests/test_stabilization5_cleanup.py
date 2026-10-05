@@ -10,32 +10,30 @@ import pytest
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.episodes.schemas.enums import EpisodeStatus
-from sceneops_core.scenes.schemas.enums import SceneStatus
 
 
-def test_episode_status_is_registration_lifecycle_only():
-    """EpisodeStatus deliberately stays CREATED/REGISTERED — see
-    apps/api/app/domains/episodes/quality.py's module docstring. BUILT/
-    VALIDATED/FAILED were removed: zero write sites, zero persisted rows."""
-    assert {member.value for member in EpisodeStatus} == {"created", "registered"}
+def test_episode_record_has_no_status_task_or_outcome():
+    """Record existence is registration and readiness lives in revision-
+    pinned run records (ADR-007 §13.4); a canonical Episode carries no
+    manufactured task or outcome label (§31)."""
+    import sceneops_core.episodes.schemas.enums as episode_enums
+    from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeRecord
+
+    assert not hasattr(episode_enums, "EpisodeStatus")
+    for field in ("status", "task", "outcome"):
+        assert field not in EpisodeRecord.model_fields
+        assert field not in EpisodeManifest.model_fields
 
 
-def test_scene_status_keeps_build_validate_profile_lifecycle():
-    """Unlike Episode, Scene's architecture does fold validation/profile
-    outcomes into status (validate_scene.py/profile_scene.py write these).
-    VALIDATING/PROFILING (superseded by RunStatus.RUNNING on the
-    corresponding run record) and DEPRECATED (no write path) were removed.
-    BUILT is intentionally NOT renamed to REGISTERED — see the Stabilization
-    Request 5 decision register; this is a documented naming asymmetry with
-    Episode, not a bug."""
-    assert {member.value for member in SceneStatus} == {
-        "created",
-        "built",
-        "validated",
-        "profiled",
-        "failed",
-    }
+def test_scene_record_has_no_status():
+    """Record existence is registration; quality lives in run records that
+    pin the revision they assessed (ADR-007 §13.4, I-16). Neither a status
+    enum nor a status field may come back."""
+    import sceneops_core.scenes.schemas.enums as scene_enums
+    from sceneops_core.scenes.schemas import SceneRecord
+
+    assert not hasattr(scene_enums, "SceneStatus")
+    assert "status" not in SceneRecord.model_fields
 
 
 def test_paths_module_was_removed():

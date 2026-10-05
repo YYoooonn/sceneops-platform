@@ -5,6 +5,23 @@ from datetime import datetime
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
+from sceneops_core.inference.schemas.manifests import PredictionRevisionRef
+from sceneops_core.labels.schemas import LabelSetRef
+from sceneops_core.sample_views.schemas import SampleViewRef
+from sceneops_core.scenarios.schemas.manifests import ScenarioSetRef
+
+
+class EvaluationInputs(SceneOpsBaseModel):
+    """The exact revisions an evaluation scored (ADR-007 §33.5): the
+    prediction manifest revision, the label set revision that defines
+    ground truth, and the sample view revisions whose samples were
+    compared. Nothing here is resolved at read time: re-running the
+    evaluation with these pins reads the same data."""
+
+    prediction: PredictionRevisionRef
+    label_set: LabelSetRef
+    sample_views: list[SampleViewRef] = Field(default_factory=list)
+    scenario_set: ScenarioSetRef | None = None
 
 
 class DetectionEvaluationManifest(SceneOpsBaseModel):
@@ -18,6 +35,8 @@ class DetectionEvaluationManifest(SceneOpsBaseModel):
 
     model_id: str | None = None
     model_version: str | None = None
+
+    inputs: EvaluationInputs | None = None
 
     status: str = "succeeded"
     match_distance_m: float | None = None

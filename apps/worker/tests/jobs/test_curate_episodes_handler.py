@@ -25,7 +25,6 @@ from sceneops_core.artifacts.schemas import (
     ArtifactRecord,
 )
 from sceneops_core.episodes.alignment import (
-    MCAP_LOG_TIME_CLOCK,
     AlignedEpisodeArtifact,
     AlignedEpisodeProfile,
     AlignedEpisodeValidationReport,
@@ -39,10 +38,11 @@ from sceneops_core.episodes.learning_export import (
     AlignedArtifactRevision,
     LearningDataExportManifest,
 )
-from sceneops_core.episodes.schemas import (
-    EpisodeActionFrame,
-    EpisodeManifest,
-    EpisodeObservationFrame,
+from sceneops_core.episodes.testing import (
+    DEFAULT_CLOCK,
+    action,
+    episode_manifest,
+    state,
 )
 from sceneops_core.episodes.schemas.enums import EpisodeOutcome
 from sceneops_core.jobs.schemas import (
@@ -64,30 +64,20 @@ def _checksum(data: bytes) -> str:
 
 
 def _artifact_bytes(episode_id: str, *, task: str = "pick") -> bytes:
-    manifest = EpisodeManifest(
-        episode_id=episode_id,
-        observation_frames=[
-            EpisodeObservationFrame(
-                timestamp_us=0, channel="state.position", values=[0.0]
-            ),
-            EpisodeObservationFrame(
-                timestamp_us=1_000_000, channel="state.position", values=[1.0]
-            ),
+    manifest = episode_manifest(
+        [
+            state("/vehicle/odom", 0, x=0.0),
+            state("/vehicle/odom", 1_000_000_000, x=1.0),
+            action("/vehicle/control", 0, steering=0.1),
         ],
-        action_frames=[
-            EpisodeActionFrame(timestamp_us=0, channel="steering", value=0.1)
-        ],
-        observation_channels=["state.position"],
-        action_channels=["steering"],
-        start_timestamp_us=0,
-        end_timestamp_us=1_000_000,
-        frame_count=3,
-        task=task,
-        outcome=EpisodeOutcome.SUCCESS,
+        window=(0, 1_000_000_001),
     )
     config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
-    ctx = TemporalSourceContext(source_clock=MCAP_LOG_TIME_CLOCK)
-    aligned = align_episode(manifest, config, ctx)
+    ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
+    # task / outcome are derived labels, never canonical Episode facts.
+    aligned = align_episode(manifest, config, ctx, episode_id=episode_id).model_copy(
+        update={"task": task, "outcome": EpisodeOutcome.SUCCESS}
+    )
 
     artifact = AlignedEpisodeArtifact(
         source_revision=EpisodeSourceRevision(
@@ -197,7 +187,7 @@ def _make_context(
     context.analytics_writer.write_curation_manifest = AsyncMock(
         side_effect=_write_curation_manifest
     )
-    context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock()
     context.commit = AsyncMock()
 
     if profiles_by_episode is not None:
@@ -311,7 +301,7 @@ class TestSelectedAndRejected:
         assert result.manifest_artifact_id is not None
         context.commit.assert_awaited_once()
 
-        create_call = context.artifact_record_store.create.await_args
+        create_call = context.artifact_record_store.register.await_args
         assert create_call.kwargs["ref"].kind == ArtifactKind.EPISODE_CURATION_MANIFEST
         assert create_call.kwargs["owner_type"] == ArtifactOwnerType.DATASET_VERSION
         assert create_call.kwargs["owner_id"] == "d1:v1"
@@ -439,7 +429,7 @@ class TestChecksumRaceProtection:
             await CurateEpisodesJobHandler().run(request)
 
         context.analytics_writer.write_curation_manifest.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
 
 

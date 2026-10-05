@@ -10,6 +10,9 @@ class SceneValidationIssue(SceneOpsBaseModel):
     message: str
     blocking: bool = False
     channel: str | None = None
+    # How many observations / keyframes the issue covers, for issues that
+    # are aggregated per channel instead of repeated per observation.
+    count: int | None = None
 
 
 class SceneValidationResult(SceneOpsBaseModel):
@@ -22,7 +25,7 @@ class SceneValidationResult(SceneOpsBaseModel):
     observed_channels: list[str] = Field(default_factory=list)
     missing_channels: list[str] = Field(default_factory=list)
 
-    sample_count: int = 0
-    frame_count: int = 0
+    observation_count: int = 0
+    keyframe_count: int = 0
 
     issues: list[SceneValidationIssue] = Field(default_factory=list)

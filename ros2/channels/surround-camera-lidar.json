@@ -1,0 +1,17 @@
+{
+  "channels": [
+    {"topic": "/camera/front/image/compressed", "message_type": "sensor_msgs/msg/CompressedImage", "timestamp": "header"},
+    {"topic": "/camera/front_left/image/compressed", "message_type": "sensor_msgs/msg/CompressedImage", "timestamp": "header"},
+    {"topic": "/camera/front_right/image/compressed", "message_type": "sensor_msgs/msg/CompressedImage", "timestamp": "header"},
+    {"topic": "/camera/back/image/compressed", "message_type": "sensor_msgs/msg/CompressedImage", "timestamp": "header"},
+    {"topic": "/camera/back_left/image/compressed", "message_type": "sensor_msgs/msg/CompressedImage", "timestamp": "header"},
+    {"topic": "/camera/back_right/image/compressed", "message_type": "sensor_msgs/msg/CompressedImage", "timestamp": "header"},
+    {"topic": "/camera/front/camera_info", "message_type": "sensor_msgs/msg/CameraInfo", "timestamp": "header"},
+    {"topic": "/camera/front_left/camera_info", "message_type": "sensor_msgs/msg/CameraInfo", "timestamp": "header"},
+    {"topic": "/camera/front_right/camera_info", "message_type": "sensor_msgs/msg/CameraInfo", "timestamp": "header"},
+    {"topic": "/camera/back/camera_info", "message_type": "sensor_msgs/msg/CameraInfo", "timestamp": "header"},
+    {"topic": "/camera/back_left/camera_info", "message_type": "sensor_msgs/msg/CameraInfo", "timestamp": "header"},
+    {"topic": "/camera/back_right/camera_info", "message_type": "sensor_msgs/msg/CameraInfo", "timestamp": "header"},
+    {"topic": "/lidar/top/points", "message_type": "sensor_msgs/msg/PointCloud2", "timestamp": "header"}
+  ]
+}

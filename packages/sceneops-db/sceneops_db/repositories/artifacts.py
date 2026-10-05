@@ -26,6 +26,8 @@ class ArtifactRepository(Protocol):
 
     async def get(self, artifact_id: str) -> ArtifactRecord | None: ...
 
+    async def get_many(self, artifact_ids: list[str]) -> dict[str, ArtifactRecord]: ...
+
     async def list(
         self,
         *,

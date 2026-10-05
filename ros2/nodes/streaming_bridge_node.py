@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""StreamingBridgeNode: bridges real ROS2 telemetry topics to the Kafka
-streaming transport.
+"""StreamingBridgeNode: bridges ROS2 topics to the Kafka streaming transport.
 
 Responsibility: exactly one hop --
 
-    ROS2 message -> TelemetryEnvelope -> TelemetryProducer
+    ROS2 message (serialized CDR) -> TelemetryEnvelope -> TelemetryProducer
 
 The bridge is transport infrastructure. It never imports/knows about
 PostgreSQL, DatasetVersion, Scene, RobotRun DB records, Episode,
@@ -12,14 +11,37 @@ ArtifactStore, MinIO, MCAP, Celery, or Airflow -- verified by construction
 (no such import appears anywhere in this file or its dependencies,
 sceneops_core.streaming / sceneops_streaming).
 
-Topic/type map and per-topic source-timestamp rule are audited against
-the actual ros2/nodes/can_replay_node.py implementation -- see
-docs/architecture/streaming-transport.md's ROS2 topic mapping section for
-the full per-topic contract.
+Which topics it subscribes to, with which type, QoS and source-timestamp
+rule, comes from one declarative channel registry
+(``sceneops_core.streaming.channels``): the built-in defaults plus any
+channel-set files given with ``--channels-file``. Capture validates against
+the same registry. See docs/architecture/streaming-transport.md.
+
+Payload fidelity. Subscriptions are *raw*: the bridge receives the
+serialized CDR bytes DDS delivered and forwards those bytes, so what capture
+writes is what the publisher produced. The bytes are deserialized only to
+read the source timestamp the envelope carries. One transport artifact is
+removed: DDS pads a small serialized sample to a 4-byte multiple, so a raw
+take can end in 1-3 zero bytes the publisher never wrote. ``exact_cdr``
+trims them, and only when re-serializing the decoded message proves they
+are padding (the tail beyond the canonical length is 1-3 zero bytes). Bytes
+that do not match that proof are forwarded unchanged.
+
+Time. ``source_timestamp_ns`` is a timestamp the message itself carries
+(header stamp, first transform's header stamp, or a JSON field), read
+verbatim. The bridge never substitutes its own clock for it; a message with
+no readable source timestamp fails loudly and is counted. ``ingest_timestamp_ns``
+(bridge acceptance time) is the transport's own timestamp, a separate fact
+that becomes the recording's ``publish_time`` downstream. A source timestamp
+of zero (an unstamped header) is forwarded as 0 on a channel that allows it
+(``/tf_static``) -- never replaced by the ingest time. ``sequence_number`` is
+the bridge's transport arrival counter, never a source-time order.
 
 Usage (inside the ros2 Docker sandbox):
     python3 /workspace/nodes/streaming_bridge_node.py \\
-        --robot-id robot-nuscenes-streaming --robot-run-id run-<unique>
+        --robot-id robot-nuscenes-streaming --robot-run-id run-<unique> \\
+        [--channels-file /workspace/channels/surround-camera-lidar.json] \\
+        [--emit-lifecycle-events] [--exit-after-idle-seconds 10]
 """
 
 from __future__ import annotations
@@ -30,112 +52,96 @@ import json
 import logging
 import signal
 import threading
-from dataclasses import dataclass
-from enum import Enum
-from typing import Callable
+import time
+from collections.abc import Callable
+from pathlib import Path
 
 import rclpy
-from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from rclpy.serialization import serialize_message
-from sensor_msgs.msg import BatteryState, Imu
-from std_msgs.msg import String
+from rclpy.qos import (
+    QoSDurabilityPolicy,
+    QoSHistoryPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
+)
+from rclpy.serialization import deserialize_message, serialize_message
+from rosidl_runtime_py.utilities import get_message
 
 from sceneops_core.streaming import (
+    DEFAULT_REGISTRY,
+    ChannelRegistry,
+    ChannelSpec,
     EnvelopeEncoding,
     RunEventType,
     TelemetryEnvelope,
+    TimestampRule,
+    build_channel_registry,
     build_control_envelope,
 )
 from sceneops_streaming import KafkaTelemetryProducer, StreamingSettings
 
 logger = logging.getLogger("sceneops.ros2_streaming_bridge")
 
-
-class SourceTimestampRule(str, Enum):
-    """Per-topic source-timestamp extraction rule:
-
-    HEADER     -- msg.header.stamp.{sec,nanosec} is populated by the
-                  publisher with a real source observation time; use it
-                  verbatim as source_timestamp_ns. Never replaced by
-                  bridge receive time.
-    JSON_FIELD -- msg.data is a JSON string (std_msgs/String has no
-                  Header) carrying an explicit "source_timestamp_ns"
-                  integer field, threaded through by can_replay_node.py.
-                  Used for both /vehicle/control (real CAN observation
-                  time) and /mission/status (synthetic replay-event time)
-                  -- one shared wire convention, two different semantic
-                  meanings, both documented per-topic below.
-    CALLBACK   -- for a channel that lacks any authoritative source time;
-                  falls back to this bridge's own ROS2 node-clock time at
-                  the moment the callback runs. Not used by any of the
-                  current five channels -- every channel has either a
-                  real header timestamp or an explicit JSON field (real
-                  or synthetic-but-documented).
-    """
-
-    HEADER = "header"
-    JSON_FIELD = "json_field"
-    CALLBACK = "callback"
+SUMMARY_PREFIX = "bridge_summary "
 
 
-@dataclass(frozen=True)
-class TopicSpec:
-    message_type: type
-    message_type_name: str
-    timestamp_rule: SourceTimestampRule
+def subscription_qos(spec: ChannelSpec) -> QoSProfile:
+    """Reliable delivery; transient-local for a latched channel so static
+    data published before the bridge started is still received. History is
+    keep-all unless the channel sets a depth (see ``ChannelSpec``)."""
+    durability = (
+        QoSDurabilityPolicy.TRANSIENT_LOCAL
+        if spec.latched
+        else QoSDurabilityPolicy.VOLATILE
+    )
+    if spec.queue_depth is None:
+        return QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=durability,
+            history=QoSHistoryPolicy.KEEP_ALL,
+        )
+    return QoSProfile(
+        reliability=QoSReliabilityPolicy.RELIABLE,
+        durability=durability,
+        history=QoSHistoryPolicy.KEEP_LAST,
+        depth=spec.queue_depth,
+    )
 
 
-# Single source of truth for topic subscriptions -- every subscription
-# this node creates comes from this one map; nothing is scattered across
-# ad hoc callbacks. Because the node only ever subscribes to the topics
-# listed here, an unsupported message type is prevented by construction
-# rather than handled as a runtime branch: a topic this bridge doesn't
-# know about is simply never subscribed to.
-#
-# Timestamp fidelity, audited against ros2/nodes/can_replay_node.py, not
-# assumed from docs/workflows/robot-run-and-mcap.md alone:
-#
-#   /vehicle/odom     nav_msgs/msg/Odometry        HEADER -- header.stamp
-#                     is the real nuScenes CAN 'pose' record's own utime
-#                     (can_timestamp_to_ns, ros2/nodes/can_timestamp.py).
-#   /vehicle/imu      sensor_msgs/msg/Imu          HEADER -- real CAN
-#                     'ms_imu' record utime; one record maps to exactly
-#                     one Imu message, no multi-source combining.
-#   /vehicle/status   sensor_msgs/msg/BatteryState HEADER -- real CAN
-#                     'vehicle_monitor' record utime.
-#   /vehicle/control  std_msgs/msg/String (JSON)   JSON_FIELD -- no ROS
-#                     Header exists on this type, so the real CAN
-#                     'vehicle_monitor' record's utime (the SAME record
-#                     /vehicle/status derives its header from -- one
-#                     utime owns both) is threaded through explicitly as
-#                     a "source_timestamp_ns" JSON field instead. Still
-#                     observed vehicle feedback, NOT an autonomy-policy
-#                     command -- never renamed.
-#   /mission/status   std_msgs/msg/String (JSON)   JSON_FIELD -- no
-#                     original CAN time exists (synthetic replay-boundary
-#                     signal, not a nuScenes sensor channel); the JSON's
-#                     "source_timestamp_ns" field carries the replay
-#                     session's OWN publish-time clock instead, using the
-#                     same wire field name/extraction mechanism as
-#                     /vehicle/control for one consistent convention, with
-#                     a different -- explicitly documented -- semantic
-#                     meaning.
-TOPIC_SPECS: dict[str, TopicSpec] = {
-    "/vehicle/odom": TopicSpec(
-        Odometry, "nav_msgs/msg/Odometry", SourceTimestampRule.HEADER
-    ),
-    "/vehicle/imu": TopicSpec(Imu, "sensor_msgs/msg/Imu", SourceTimestampRule.HEADER),
-    "/vehicle/status": TopicSpec(
-        BatteryState, "sensor_msgs/msg/BatteryState", SourceTimestampRule.HEADER
-    ),
-    "/vehicle/control": TopicSpec(
-        String, "std_msgs/msg/String", SourceTimestampRule.JSON_FIELD
-    ),
-    "/mission/status": TopicSpec(
-        String, "std_msgs/msg/String", SourceTimestampRule.JSON_FIELD
-    ),
-}
+def _stamp_ns(stamp: object) -> int:
+    return stamp.sec * 1_000_000_000 + stamp.nanosec
+
+
+def exact_cdr(raw: bytes, message: object) -> bytes:
+    """``raw`` without DDS alignment padding.
+
+    The padding is identified by the message itself: ``message`` is the
+    decoded ``raw``, and the length of its canonical serialization is the
+    publisher's byte length (CDR layout is deterministic in length). ``raw``
+    is trimmed to that length only if what follows is 1-3 zero bytes.
+    Anything else (already exact, a non-zero tail) is returned as is.
+
+    Only the *length* of the re-serialization is used, never its bytes: the
+    alignment padding inside a CDR message is uninitialized memory in
+    ``serialize_message`` output, so a byte comparison would be
+    nondeterministic. The forwarded bytes are always the received ones."""
+    extra = len(raw) - len(serialize_message(message))
+    if 0 < extra < 4 and not any(raw[-extra:]):
+        return raw[:-extra]
+    return raw
+
+
+def read_source_timestamp_ns(spec: ChannelSpec, message: object) -> int:
+    """The source timestamp the message carries, per the channel's rule.
+    A missing or malformed value raises (KeyError / IndexError /
+    JSONDecodeError / ...) -- never replaced by receive time."""
+    if spec.timestamp is TimestampRule.HEADER:
+        return _stamp_ns(message.header.stamp)
+    if spec.timestamp is TimestampRule.TRANSFORM_HEADER:
+        return _stamp_ns(message.transforms[0].header.stamp)
+    if spec.timestamp is TimestampRule.JSON_FIELD:
+        return int(json.loads(message.data)["source_timestamp_ns"])
+    raise ValueError(f"unhandled timestamp rule {spec.timestamp!r}")
 
 
 class _AsyncProducerBridge:
@@ -197,6 +203,7 @@ class StreamingBridgeNode(Node):
         *,
         robot_id: str,
         robot_run_id: str,
+        registry: ChannelRegistry = DEFAULT_REGISTRY,
         publish_timeout_seconds: float = 5.0,
         producer_bridge: object | None = None,
         emit_lifecycle_events: bool = False,
@@ -228,10 +235,13 @@ class StreamingBridgeNode(Node):
         self._robot_run_id = robot_run_id
         self._emit_lifecycle_events = emit_lifecycle_events
 
+        self._registry = registry
+
         # One monotonically increasing sequence per (robot_id,
-        # robot_run_id) bridge TELEMETRY stream, across all five sensor
-        # channels only -- represents bridge-observed arrival order,
-        # never source-timestamp order. No lock: the default rclpy
+        # robot_run_id) bridge TELEMETRY stream, across every registry
+        # channel -- the transport sequence: bridge-observed arrival
+        # order, never source-timestamp order. Capture carries it into the
+        # recording as the MCAP sequence. No lock: the default rclpy
         # executor (spin_once, used by main() below) runs every
         # subscription callback sequentially on one thread, so callbacks
         # never execute concurrently with each other.
@@ -255,6 +265,11 @@ class StreamingBridgeNode(Node):
 
         self.published_count = 0
         self.failed_count = 0
+        self.published_by_channel: dict[str, int] = {}
+        self.failed_by_channel: dict[str, int] = {}
+        # Monotonic time of the latest bridged message; None until the
+        # first one (idle exit never fires before any traffic).
+        self.last_message_monotonic: float | None = None
 
         if producer_bridge is None:
             settings = StreamingSettings()
@@ -269,14 +284,23 @@ class StreamingBridgeNode(Node):
         if self._emit_lifecycle_events:
             self._publish_lifecycle_event(RunEventType.RUN_START)
 
+        self._message_classes = {
+            spec.topic: get_message(spec.message_type) for spec in registry
+        }
         self._subscriptions = [
-            self.create_subscription(spec.message_type, topic, self._make_callback(topic, spec), 10)
-            for topic, spec in TOPIC_SPECS.items()
+            self.create_subscription(
+                self._message_classes[spec.topic],
+                spec.topic,
+                self._make_callback(spec),
+                subscription_qos(spec),
+                raw=True,
+            )
+            for spec in registry
         ]
 
         self.get_logger().info(
             f"streaming bridge ready: robot_id={robot_id} "
-            f"robot_run_id={robot_run_id} topics={list(TOPIC_SPECS)} "
+            f"robot_run_id={robot_run_id} topics={registry.topics()} "
             f"bootstrap_servers={bootstrap_servers} "
             f"topic={telemetry_topic}"
         )
@@ -319,50 +343,53 @@ class StreamingBridgeNode(Node):
                 f"{type(exc).__name__}: {exc}"
             )
 
-    def _make_callback(self, topic: str, spec: TopicSpec) -> Callable[[object], None]:
-        def _callback(msg: object) -> None:
-            self._handle_message(topic, spec, msg)
+    def _make_callback(self, spec: ChannelSpec) -> Callable[[bytes], None]:
+        def _callback(raw: bytes) -> None:
+            self._handle_message(spec, raw)
 
         return _callback
 
-    def _source_timestamp_ns(self, spec: TopicSpec, msg: object) -> int:
-        if spec.timestamp_rule is SourceTimestampRule.HEADER:
-            stamp = msg.header.stamp
-            return stamp.sec * 1_000_000_000 + stamp.nanosec
-        if spec.timestamp_rule is SourceTimestampRule.JSON_FIELD:
-            # msg.data is already a plain Python str (rclpy deserializes
-            # std_msgs/String before the callback runs) -- no extra CDR
-            # decode step needed here. A missing/malformed field surfaces
-            # naturally as KeyError/JSONDecodeError, caught by
-            # _handle_message's failure handling below -- never silently
-            # coerced to 0 or callback time.
-            payload = json.loads(msg.data)
-            return int(payload["source_timestamp_ns"])
-        # CALLBACK -- unused by the current five channels (see
-        # SourceTimestampRule's own docstring).
-        return self.get_clock().now().nanoseconds
-
-    def _handle_message(self, topic: str, spec: TopicSpec, msg: object) -> None:
+    def _handle_message(self, spec: ChannelSpec, raw: bytes) -> None:
+        """``raw`` is the serialized CDR as received; it is forwarded
+        without DDS alignment padding (``exact_cdr``) and otherwise
+        unchanged."""
+        # The transport sequence counts every message the bridge received,
+        # including one it then fails to forward: a dropped message leaves
+        # a sequence gap, which capture rejects, so a bridge failure can
+        # never produce a recording that silently lacks a message.
+        sequence_number = self._next_sequence_number()
         try:
-            payload = serialize_message(msg)
+            message = deserialize_message(raw, self._message_classes[spec.topic])
+            source_timestamp_ns = read_source_timestamp_ns(spec, message)
+            if source_timestamp_ns == 0 and not spec.allow_zero_stamp:
+                raise ValueError(
+                    "zero source timestamp (unstamped message) on a channel "
+                    "that carries observations"
+                )
             # ingest_timestamp_ns is deliberately left to
             # TelemetryEnvelope's own default_factory -- constructing the
             # envelope here IS accepting the message at the transport
             # boundary; the bridge captures no earlier, more-precise
             # acceptance instant, so there is exactly one
-            # default-assignment point, not two.
+            # default-assignment point, not two. It is the transport's own
+            # timestamp: distinct from the source timestamp (verbatim, may
+            # be 0 on an allowed channel) and from capture's receive time.
             envelope = TelemetryEnvelope(
                 robot_id=self._robot_id,
                 robot_run_id=self._robot_run_id,
-                channel=topic,
-                message_type=spec.message_type_name,
-                source_timestamp_ns=self._source_timestamp_ns(spec, msg),
-                sequence_number=self._next_sequence_number(),
+                channel=spec.topic,
+                message_type=spec.message_type,
+                source_timestamp_ns=source_timestamp_ns,
+                sequence_number=sequence_number,
                 encoding=EnvelopeEncoding.ROS2_CDR,
-                payload=payload,
+                payload=exact_cdr(bytes(raw), message),
             )
             self._bridge.publish(envelope)
             self.published_count += 1
+            self.published_by_channel[spec.topic] = (
+                self.published_by_channel.get(spec.topic, 0) + 1
+            )
+            self.last_message_monotonic = time.monotonic()
         except Exception as exc:
             # Fail loudly, never silently drop. No DLQ, no retry storage
             # -- those are reliability-boundary concerns, not this
@@ -371,11 +398,23 @@ class StreamingBridgeNode(Node):
             # once, ...) and rejects exc_info=True outright, so the
             # exception is formatted into the message text instead.
             self.failed_count += 1
+            self.failed_by_channel[spec.topic] = (
+                self.failed_by_channel.get(spec.topic, 0) + 1
+            )
+            self.last_message_monotonic = time.monotonic()
             self.get_logger().error(
-                f"failed to bridge message on {topic}: "
+                f"failed to bridge message on {spec.topic}: "
                 f"{type(exc).__name__}: {exc} "
                 f"(published={self.published_count} failed={self.failed_count})"
             )
+
+    def summary(self) -> dict[str, object]:
+        return {
+            "published": self.published_count,
+            "failed": self.failed_count,
+            "published_by_channel": dict(sorted(self.published_by_channel.items())),
+            "failed_by_channel": dict(sorted(self.failed_by_channel.items())),
+        }
 
     def shutdown(self, timeout_seconds: float = 10.0) -> None:
         """Flush pending Kafka production and close the producer. Does
@@ -399,7 +438,7 @@ class StreamingBridgeNode(Node):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Bridge ROS2 telemetry topics to Kafka"
+        description="Bridge ROS2 topics to the Kafka streaming transport"
     )
     parser.add_argument(
         "--robot-id", required=True, help="Logical robot identity (transport metadata only)"
@@ -410,6 +449,16 @@ def main() -> None:
         help="RobotRun/session identity -- Kafka partitioning key (transport metadata only)",
     )
     parser.add_argument(
+        "--channels-file",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "Channel-set JSON file adding channels to the built-in defaults "
+            "(repeatable); see sceneops_core.streaming.channels"
+        ),
+    )
+    parser.add_argument(
         "--publish-timeout-seconds",
         type=float,
         default=5.0,
@@ -417,21 +466,23 @@ def main() -> None:
     )
     parser.add_argument(
         "--emit-lifecycle-events",
-        action="store_true",
-        default=False,
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            "Publish RUN_START/RUN_END control events (Phase 7.2, "
-            "sceneops_core.streaming.control) for a lifecycle-aware "
-            "continuous consumer (ContinuousCaptureRouter) to key off. "
-            "Default OFF: the existing RunScopedCapture path "
-            "(ros2/capture/capture_consumer.run_capture, frozen/"
-            "unmodified) has no channel filtering of its own and would "
-            "abort with UnsupportedChannelError if a control envelope "
-            "reached it under the same robot_run_id -- e2e-streaming-"
-            "capture and e2e-ros2-streaming exercise exactly that path "
-            "against this same bridge, so this must stay opt-in until "
-            "RunScopedCapture is taught to skip non-telemetry channels "
-            "(or control events move off the shared topic)."
+            "Publish RUN_START at startup and RUN_END at graceful shutdown "
+            "(sceneops_core.streaming.control). Capture finalizes the "
+            "recording on RUN_END. Default on."
+        ),
+    )
+    parser.add_argument(
+        "--exit-after-idle-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Shut down gracefully (publishing RUN_END) once at least one "
+            "message was bridged and none arrived for this many seconds. "
+            "For finite sources such as a dataset replay; a live robot's "
+            "bridge is stopped by signal instead. Default: never."
         ),
     )
     args = parser.parse_args()
@@ -440,10 +491,12 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
 
+    registry = build_channel_registry(args.channels_file)
     rclpy.init()
     node = StreamingBridgeNode(
         robot_id=args.robot_id,
         robot_run_id=args.robot_run_id,
+        registry=registry,
         publish_timeout_seconds=args.publish_timeout_seconds,
         emit_lifecycle_events=args.emit_lifecycle_events,
     )
@@ -464,12 +517,26 @@ def main() -> None:
         # mid-callback.
         while not shutdown_requested.is_set():
             rclpy.spin_once(node, timeout_sec=0.5)
+            idle_limit = args.exit_after_idle_seconds
+            last = node.last_message_monotonic
+            if (
+                idle_limit is not None
+                and last is not None
+                and time.monotonic() - last >= idle_limit
+            ):
+                node.get_logger().info(
+                    f"no message for {idle_limit}s after traffic -- beginning "
+                    "graceful shutdown"
+                )
+                break
     finally:
         node.get_logger().info(
             f"shutting down -- published={node.published_count} "
             f"failed={node.failed_count}"
         )
         node.shutdown()
+        # One machine-readable line for orchestration (per-channel counts).
+        print(SUMMARY_PREFIX + json.dumps(node.summary(), sort_keys=True), flush=True)
         node.destroy_node()
         rclpy.shutdown()
 

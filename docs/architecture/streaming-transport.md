@@ -1,20 +1,23 @@
 # Streaming Transport
 
-> Describes how SceneOps moves robot telemetry through Kafka, and how the
-> ROS2 streaming bridge feeds real ROS2 topics into that transport. Like
+> Describes how SceneOps moves robot telemetry and sensor data through
+> Kafka, and how the ROS2 streaming bridge feeds real ROS2 topics into that
+> transport. Like
 > [external-integration-runtime.md](./external-integration-runtime.md),
 > this is a "what's actually built" document, not aspirational -- every
 > claim below is checked against the code and against real, live runs
-> (`make streaming-up && make smoke-streaming`, `make e2e-ros2-streaming`).
+> (`make streaming-up && make smoke-streaming`, `make ros2-test`,
+> `make e2e-streaming-equivalence`).
 >
-> Three parts: Part 1 covers the Kafka transport itself (envelope contract,
+> Four parts: Part 1 covers the Kafka transport itself (envelope contract,
 > wire format, delivery/ordering/partitioning semantics, configuration).
 > Part 2 covers the ROS2 streaming bridge built on top of it. Part 3
 > covers durable MCAP capture -- a run-scoped Kafka consumer
 > (`ros2/capture/`) that writes what the bridge published back out to a
-> validated, rosbag2-compatible MCAP file. No part changes another --
-> each is a producer/consumer of the contract(s) established before it,
-> not a modification of them.
+> validated L1 raw recording (ADR-007 §29.5). Part 4 covers continuous
+> multi-run capture. No part changes another -- each is a
+> producer/consumer of the contract(s) established before it, not a
+> modification of them.
 
 ## 1. Goal and scope
 
@@ -47,12 +50,12 @@ The robot-runtime-communication (ROS2) vs. data-platform-event-stream
 (Kafka) boundary this transport lives on is decided in
 [ADR-005](../adr/005-ros2-vs-kafka-boundary.md); why streaming was worth
 building only once real telemetry needed it is decided in
-[ADR-003](../adr/003-batch-first-architecture.md). The existing batch
-robot-data path (`ros2/`,
-`apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`,
-`RosbagAdapter` -- replay -> `ros2 bag record` -> MCAP -> decode ->
-ingest, see [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md))
-is untouched by this transport and remains a fully independent path.
+[ADR-003](../adr/003-batch-first-architecture.md). Batch acquisition (the
+external acquisition tool's MCAP sink -> Recording Publisher ->
+`REGISTER_ROBOT_RUN`, see
+[robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md)) is independent
+of this transport and converges with it on the same L1 recording contract
+(ADR-007 §29.12).
 
 ## 2. Package layout
 
@@ -100,7 +103,8 @@ TelemetryEnvelope
 ├── robot_run_id           str, required -- Kafka partitioning identity
 ├── channel                str, required (e.g. "/vehicle/odom")
 ├── message_type            str, required (e.g. "nav_msgs/msg/Odometry")
-├── source_timestamp_ns     int > 0, required -- robot/sensor observation time
+├── source_timestamp_ns     int >= 0, required -- the source message's own timestamp, verbatim;
+│                          0 = the message carries a zero (unstamped) header, see §11
 ├── ingest_timestamp_ns     int > 0, defaults to construction time -- see §4
 ├── sequence_number         int >= 0, required -- diagnostic only, never identity
 ├── encoding                EnvelopeEncoding (ros2-cdr | json | raw), required
@@ -379,99 +383,110 @@ configured base group id as its prefix.
 
 ## 10. Goal and scope
 
-The ROS2 streaming bridge connects real ROS2 telemetry to the Kafka
-transport described in Part 1, without changing that transport's
-contract:
+The ROS2 streaming bridge connects real ROS2 topics -- telemetry, sensor
+and transform channels -- to the Kafka transport described in Part 1,
+without changing that transport's contract:
 
 ```text
-real nuScenes CAN
-  -> ros2/nodes/can_replay_node.py
+robot, or a dataset replay (tools/dataset-acquisition, `--replay`)
   -> real ROS2 DDS
   -> ros2/nodes/streaming_bridge_node.py
   -> TelemetryEnvelope
   -> KafkaTelemetryProducer
   -> real Kafka
-  -> KafkaTelemetryConsumer
+  -> ros2/capture -> L1 MCAP -> Recording Publisher -> REGISTER_ROBOT_RUN
 ```
 
-`make e2e-ros2-streaming` leaves zero Postgres/MinIO state, verified both
-by construction (the bridge imports nothing DB/ArtifactStore-related --
-see §12) and by direct observation (dataset row count unchanged across
-real runs).
+The bridge is source-agnostic: it knows ROS2 topics, types and where a
+message carries its source timestamp, never a dataset format. The replay
+sink of the external acquisition tool is one publisher of those topics
+(§10.1); a robot's own stack is another. `make e2e-streaming-equivalence`
+drives the whole path through containers and FastAPI, leaving only the
+RobotRun, Scene and Episode state its pipelines create.
 
-## 11. ROS2 topic mapping and source-timestamp contract
+### 10.1 Replay as the external-tool boundary
 
-Audited directly against `ros2/nodes/can_replay_node.py` -- the actual
-implementation, not assumed from
-`docs/workflows/robot-run-and-mcap.md` alone. These five topics are the
-only ones the replay node publishes.
+`tools/dataset-acquisition` converts a dataset unit into tool-local
+acquisition events (topic, message type, CDR payload serialized once,
+source time) and feeds two sinks: the batch MCAP sink and the ROS2 replay
+sink (`--replay`, image `sceneops-platform/dataset-replay:local`: ROS2 Jazzy
+plus the tool, no SceneOps package). The replay sink publishes each event's
+payload as raw CDR bytes at the pace the source timeline sets (`--rate`
+multiplies it; `0` is unpaced), after every topic has a matched subscriber,
+with reliable keep-all delivery, `/tf_static` latched, and a final wait for
+every sample to be acknowledged. It rewrites no timestamp: source
+observation times stay inside the payload, so replay pacing and transport
+latency cannot enter them. The bridge and replay containers meet only over
+DDS on the compose network.
 
-| Topic | ROS2 type | Source | Representation | Semantic class |
-| --- | --- | --- | --- | --- |
-| `/vehicle/odom` | `nav_msgs/msg/Odometry` | nuScenes CAN `pose.utime` | `Odometry.header.stamp` | real observation |
-| `/vehicle/imu` | `sensor_msgs/msg/Imu` | nuScenes CAN `ms_imu.utime` | `Imu.header.stamp` | real observation |
-| `/vehicle/status` | `sensor_msgs/msg/BatteryState` | nuScenes CAN `vehicle_monitor.utime` | `BatteryState.header.stamp` | real observation |
-| `/vehicle/control` | `std_msgs/msg/String` (JSON) | nuScenes CAN `vehicle_monitor.utime` (same record as `/vehicle/status`) | `source_timestamp_ns` JSON field | real observed feedback |
-| `/mission/status` | `std_msgs/msg/String` (JSON) | replay-generated event time | `source_timestamp_ns` JSON field | synthetic replay event |
+## 11. Channel registry and source-timestamp contract
 
-`utime` is nuScenes CAN's own timestamp convention -- integer
-microseconds since the Unix epoch, converted to nanoseconds by
-`ros2/nodes/can_timestamp.py`'s `can_timestamp_to_ns`, the single
-conversion helper every publisher uses.
+Which topics the bridge subscribes to, which type each carries, and where
+its source timestamp lives come from one declarative registry,
+`sceneops_core.streaming.channels` (`ChannelSpec`, `ChannelRegistry`). The
+bridge and capture load the same registry, so they cannot disagree. It
+holds transport facts only: no Scene, Episode, modality, sensor or dataset
+format. There is no dynamic topic discovery.
 
-Header-bearing messages carry `source_timestamp_ns` as
-`stamp.sec*1e9 + stamp.nanosec`, read verbatim by the bridge -- never
-replaced by bridge receive time. `std_msgs/String` has no ROS `Header`,
-so `/vehicle/control` and `/mission/status` thread the same
-`source_timestamp_ns` concept through an explicit JSON field instead --
-one shared wire convention, two different meanings: `/vehicle/control`'s
-value is a real CAN observation time; `/mission/status`'s is this replay
-session's own publish-time clock, because `/mission/status` is a
-synthetic replay-boundary signal, not an original nuScenes sensor
-channel -- there is no CAN time to recover for it. A missing or malformed
-`source_timestamp_ns` field fails loudly (caught and counted by the
-bridge's own failure handling, §14), never silently defaulting to another
-time source.
+Built-in default channels:
 
-`/vehicle/status` and `/vehicle/control` are derived from the *same*
-`vehicle_monitor` CAN record -- one `utime` owns both emitted messages,
-no ambiguity between the two. `pose`/`ms_imu` records map one-to-one to
-`Odometry`/`Imu` messages; multiple source records are never combined
-into one message.
-
-`/vehicle/control` remains observed vehicle feedback
-(`steering`/`throttle`/`brake`) -- the bridge never renames the channel
-or reinterprets the payload as an autonomy-policy command.
-
-Verified by direct comparison against the real source data
-(`scripts/e2e/ros2_streaming_verify.py`): every consumed envelope's
-`source_timestamp_ns` for a real-observation channel is checked for exact
-match against the real CAN source file's `utime` values, not merely
-checked for being non-zero. `/mission/status`'s timestamps are
-independently checked to be disjoint from every real CAN timestamp in the
-scene.
-
-The message builders in `can_replay_node.py` never read replay rate or
-wall-clock time when computing a CAN-derived timestamp -- only the pacing
-between publishes depends on replay speed, so the same scene replayed at
-different rates produces identical `source_timestamp_ns` values.
-
-### 11.1 MCAP-readiness assessment
-
-An assessment of whether each channel's timestamp is trustworthy enough
-to build a durable capture (MCAP) from, per channel:
-
-| Channel | Timestamp provenance | MCAP-ready? |
+| Topic | ROS2 type | Source timestamp rule |
 | --- | --- | --- |
-| `/vehicle/odom` | Real nuScenes CAN `pose.utime` | **Yes** -- exact provenance-verified |
-| `/vehicle/imu` | Real nuScenes CAN `ms_imu.utime` | **Yes** -- exact provenance-verified |
-| `/vehicle/status` | Real nuScenes CAN `vehicle_monitor.utime` | **Yes** -- exact provenance-verified |
-| `/vehicle/control` | Real nuScenes CAN `vehicle_monitor.utime` (same record as status) | **Yes** -- exact provenance-verified |
-| `/mission/status` | Synthetic replay-event time (not a CAN observation) | **Documented limitation, not a defect**: an MCAP built from a streamed session preserves *when the replay boundary was observed*, never *an original mission timestamp* (none exists). A consumer that needs mission boundaries aligned to the other channels' real observation timeline must treat `/mission/status` as approximate/replay-relative, not as another real-time observation. |
+| `/vehicle/odom` | `nav_msgs/msg/Odometry` | `header` |
+| `/vehicle/imu` | `sensor_msgs/msg/Imu` | `header` |
+| `/vehicle/status` | `sensor_msgs/msg/BatteryState` | `header` |
+| `/vehicle/control` | `std_msgs/msg/String` (JSON) | `json_field` |
+| `/mission/status` | `std_msgs/msg/String` (JSON) | `json_field` |
+| `/tf` | `tf2_msgs/msg/TFMessage` | `transform_header` |
+| `/tf_static` | `tf2_msgs/msg/TFMessage` (latched) | `transform_header` |
 
-No channel is unresolved or silently untrustworthy; `/mission/status`'s
-limitation is a property of what the data IS (a synthetic boundary
-marker), not a bug left to fix.
+Sensor channels (cameras, `CameraInfo`, lidar, ...) are deployment
+configuration: a channel-set JSON file given to both the bridge and capture
+with `--channels-file` (repeatable) adds them to the defaults. The shipped
+`ros2/channels/surround-camera-lidar.json` declares six `CompressedImage` +
+`CameraInfo` pairs and a `PointCloud2` lidar. A channel entry is
+`{topic, message_type, timestamp, latched?, queue_depth?}`; a topic defined
+twice with different settings, a relative topic name, the reserved control
+channel and a non-`<pkg>/msg/<Name>` type are rejected.
+
+**Timestamp rules.** `header` reads `msg.header.stamp`; `transform_header`
+reads the first transform's header stamp (`TFMessage`); `json_field` reads
+the integer `source_timestamp_ns` of a JSON `std_msgs/String`. The rule only
+*locates* a timestamp the message already carries, verbatim as
+`stamp.sec * 1e9 + stamp.nanosec`. No rule substitutes bridge receive time,
+replay time or any wall clock, and a message whose timestamp is missing,
+or malformed fails loudly: it is counted and logged, the bridge exits
+non-zero, and the sequence gap it leaves fails the capture.
+
+**Zero stamps.** A message may carry a zero timestamp (an unstamped
+`Header`): static data such as `/tf_static` has no observation time, and many
+publishers leave it 0. The envelope accepts `source_timestamp_ns = 0` as the
+source's own value, and a channel opts in with `allow_zero_stamp` (default
+false; true for the built-in `/tf_static`). On such a channel the zero stays
+0 in the payload and in the envelope and is never replaced by the bridge's
+ingest time or any other clock. On every other channel a zero stamp is a
+missing observation time and fails loudly (counted, logged, sequence gap).
+A static transform's stamp is not read by canonicalization: a recording with
+an unstamped `/tf_static` builds the same calibrations as a stamped one.
+
+**Events on the source timeline.** `/mission/status` events carry
+`source_timestamp_ns` values on the source's own timeline, set by whoever
+publishes them (the replay sink replays the acquisition tool's events at the
+unit's first and last source times). A synthetic event never carries replay
+wall-clock or replay-pacing time.
+
+`/vehicle/status` and `/vehicle/control` come from the same source record
+when a source has one; `/vehicle/control` remains observed feedback and is
+never renamed or reinterpreted by the bridge.
+
+## 11.1 What the recording preserves per channel
+
+| Fact | Where it lives in the L1 recording |
+| --- | --- |
+| Source observation time | inside the payload, unrewritten |
+| Transport time | MCAP `publish_time` = the envelope's `ingest_timestamp_ns`: when the bridge accepted the message. Not an observation time and not a robot-side publication time (§20) |
+| Receive time | MCAP `log_time` = capture's wall clock when it took the record from Kafka (§20) |
+| Transport sequence | MCAP `sequence` = envelope `sequence_number` + 1 (§20) |
 
 ## 12. Bridge responsibility and boundaries
 
@@ -483,56 +498,70 @@ imports `sceneops-db`, `sceneops-storage`, Celery, Airflow, or anything
 API/worker-side.
 
 **Process boundary:** the bridge is a standalone ROS2 node, run inside the
-same `ros2` Docker image/service `can_replay_node.py` already uses
-(`compose/ros2.yaml`, profile `ros2`) -- not a separate image. This avoids
+`ros2` Docker image/service (`compose/ros2.yaml`, profile `ros2`) -- not a
+separate image. This avoids
 duplicating the full ROS2 environment: the `ros2/` image already has
 `rclpy`, the message packages, and the MCAP plugin; it additionally
 pip-installs `packages/sceneops-core`/`packages/sceneops-streaming`
 (`ros2/Dockerfile`) so the bridge node can import them. It is not inside
 `apps/api` or `apps/worker`.
 
-## 13. Topic subscriptions, CDR encoding, sequence numbers, ingest timestamp
+## 13. Topic subscriptions, CDR payloads, sequence numbers, ingest timestamp
 
-**Topic subscriptions** are centralized in one map, `TOPIC_SPECS`
-(`streaming_bridge_node.py`) -- every `create_subscription` call the node
-makes is derived from this one dict; nothing is scattered across ad hoc
-callbacks. No dynamic topic discovery exists.
+**Topic subscriptions** are derived from the channel registry (§11):
+every `create_subscription` call the node makes comes from one
+`ChannelSpec`; nothing is scattered across ad hoc callbacks. QoS is
+reliable, volatile -- transient-local for a latched channel, so static data
+published before the bridge started is still received. History is
+**keep-all** unless a channel sets `queue_depth`: a source can emit bursts
+(a sensor frame's messages share one instant, and nuScenes' `/tf`, IMU and
+odometry arrive in bursts of hundreds) far larger than a fixed depth, and
+DDS drops the oldest sample of a full keep-last history without any
+signal. A depth is therefore an explicit, silent-loss memory bound, never a
+default.
 
-**CDR encoding.** Every payload is produced by real
-`rclpy.serialization.serialize_message(msg)` -- never JSON, dict, or a
-custom struct. `encoding = EnvelopeEncoding.ROS2_CDR` ("ros2-cdr", the
-transport's frozen encoding identifier) is set uniformly. `message_type`
-is always the canonical ROS2 interface type string
-(`nav_msgs/msg/Odometry`, ...) -- never a SceneOps-specific alias;
-`channel` is always the literal ROS2 topic name including its leading
-slash (`/vehicle/odom`), never remapped.
+**CDR payloads.** Subscriptions are *raw*: the node receives serialized CDR
+and forwards those bytes. `encoding = EnvelopeEncoding.ROS2_CDR`
+("ros2-cdr") is set uniformly; `message_type` is the canonical ROS2
+interface type string and `channel` the literal topic name including its
+leading slash -- never a SceneOps alias or a remapped name. The bytes are
+deserialized only to read the source timestamp.
+
+**DDS alignment padding.** DDS pads a small serialized sample to a 4-byte
+multiple, so a raw take can end in 1-3 zero bytes the publisher never
+wrote (observed: 119 B published, 120 B received; 73 B -> 76 B). Large,
+fragmented samples are not padded. Forwarding the padding would make
+identical messages acquired by batch and by stream differ in bytes, so the
+bridge trims it with proof (`exact_cdr`): the received bytes may exceed the
+length of the decoded message's canonical re-serialization by 1-3 bytes, and
+only if those are all zero are they dropped. Only the re-serialization's
+*length* is used, never its bytes (alignment padding inside a CDR message is
+uninitialized memory in `serialize_message` output), and the forwarded bytes
+are always the received ones. Anything else is forwarded unchanged. The
+recording's payload bytes are therefore exactly the publisher's.
 
 **Sequence numbers.** One `int` counter (`StreamingBridgeNode._sequence`)
 per `(robot_id, robot_run_id)` bridge process instance, incremented once
 per message across all channels, not per-topic -- it represents
-bridge-observed arrival order, independent of any per-topic identity. No
-lock is needed: the node runs its default single-threaded executor
-(`rclpy.spin_once` in a loop, `main()`), so subscription callbacks never
-execute concurrently with each other. The sequence is never sorted by
-`source_timestamp_ns`; a dedicated unit test
-(`test_sequence_not_sorted_by_source_timestamp`) publishes a later source
-timestamp first and confirms it still gets the earlier sequence number.
+bridge-observed arrival order, independent of any per-topic identity.
+Source duplicates are never deduplicated: two identical messages are two
+occurrences with two sequence numbers. No lock is needed: the node runs its
+default single-threaded executor (`rclpy.spin_once` in a loop), so
+subscription callbacks never execute concurrently. The sequence is never
+sorted by `source_timestamp_ns`, and cross-channel arrival order is
+acquisition evidence only, never canonical temporal identity. Capture
+carries the sequence into the recording (§20). A source's own per-topic
+counters cannot cross a ROS2 topic; only this transport sequence exists on
+the streaming path.
 
 **Ingest timestamp.** Left entirely to `TelemetryEnvelope`'s own
-`default_factory=time.time_ns` (§4's ownership rule) -- the bridge does
-not capture or override it. Constructing the envelope inside
-`_handle_message` IS accepting the message at the transport boundary in
-this architecture; there is no earlier, more-precise acceptance instant
-the bridge could capture, so introducing a second assignment point would
-add complexity with no semantic benefit.
+`default_factory=time.time_ns` (§4's ownership rule) -- the bridge does not
+capture or override it. It becomes the recording's `publish_time` (§20).
 
 **Robot/RobotRun identity.** `--robot-id`/`--robot-run-id` are required
-CLI arguments -- the bridge never derives or defaults them, and never
-touches `sceneops-canonical/v0.0` or any canonical DB state. They are
-transport metadata only. `scripts/e2e/e2e_ros2_streaming.sh` generates a
-fresh `run-ros2-streaming-<epoch>-<pid>` per invocation, mirroring
-`smoke_streaming.py`'s own per-invocation uniqueness pattern, so repeated
-E2E runs never collide.
+CLI arguments -- the bridge never derives or defaults them. They are
+transport metadata only. `scripts/e2e/e2e_streaming_equivalence.sh`
+generates a fresh `run-equiv-stream-<epoch>-<pid>` per invocation.
 
 ## 14. Backpressure, shutdown, and failure semantics
 
@@ -540,54 +569,71 @@ E2E runs never collide.
 `KafkaTelemetryProducer` on a dedicated background asyncio event loop for
 the node's whole lifetime. A ROS2 callback's `publish()` call blocks the
 calling (ROS2 callback) thread for at most `--publish-timeout-seconds`
-(default 5.0s) waiting for the coroutine to complete on that loop. There
-is no queue of the bridge's own -- the only buffering in this data path
-is librdkafka's own internal client queue (inside
-`confluent_kafka.Producer`), bounded by its own default configuration. A
-stalled/unreachable broker surfaces as a timeout or exception in the
-callback (caught, logged, counted -- never silently dropped), not
-unbounded memory growth. This is a deliberately simple design for the
-expected message volume (one nuScenes CAN-replay scene, low thousands of
-messages over tens of seconds); whether it remains sufficient at
-materially higher throughput is left to future benchmarking work, not
-decided here.
+(default 5.0s) waiting for the coroutine to complete on that loop. There is
+no queue of the bridge's own besides the DDS subscription history (keep-all,
+§13) and librdkafka's internal client queue, bounded by its own default
+configuration. A stalled/unreachable broker surfaces as a timeout or
+exception in the callback (caught, logged, counted -- never silently
+dropped); a sustained input rate above what the bridge can forward shows up
+as growing DDS-side memory, not as silent loss.
+
+*Measured (scope: one nuScenes v1.0-mini scene, scene-0061, 8,897 messages,
+about 356 MB, 20 channels incl. six cameras and a 20 Hz lidar; Apple-silicon
+Docker Desktop, replay, bridge, capture and Kafka on one host, stock
+broker and client settings):* replayed at 1x, 2x, 8x and unpaced, every
+message reached Kafka and the recording (replay = bridge = capture counts,
+per channel); unpaced replay completed in about 5.6 s (roughly 1,600
+messages/s). A bounded history of depth 100 lost messages on the bursty
+channels at 1x and 2x (`/tf` 691 of 2,963 bridged), which is why keep-all
+is the default. This is a measurement of this workload, not a supported
+throughput limit.
+
+**Kafka message size.** The producer and broker run with stock limits (no
+override in compose or settings; librdkafka `message.max.bytes` ~1 MB).
+Largest payloads in this stack's nuScenes data: lidar `PointCloud2`
+696,320 B (3,935 sweeps+samples), camera JPEG 298,656 B (largest of
+2,342 front frames); the largest message of the scene-0061 replay was
+695,849 B. All fit, so no limit was changed.
+`ros2/capture/tests/test_sensor_payload_kafka_integration.py` round-trips
+camera- and lidar-sized payloads through a real broker and a capture, and
+asserts that a 1.5 MB payload fails loudly at publish (`Message size too
+large`) -- the bridge turns that into a counted, logged failure. A sensor
+whose messages exceed ~1 MB needs the producer `message.max.bytes`, topic
+`max.message.bytes` and broker `message.max.bytes` raised together; that
+is not configured today.
 
 **Graceful shutdown:** `main()` installs `SIGTERM`/`SIGINT` handlers that
-set a `threading.Event`; the spin loop
-(`rclpy.spin_once(node, timeout_sec=0.5)`) checks it every 0.5s. On
-shutdown: stop spinning (no new callbacks) -> `node.shutdown()` (flush the
-producer, bounded by a timeout, then close it) -> `node.destroy_node()`
--> `rclpy.shutdown()`. If any message failed during the run, the process
-exits non-zero (`raise SystemExit(1)` in `main()`) -- a clear failure
-signal. Verified directly: a real run terminated via `timeout <duration>`
-(the same mechanism `ros2-can-replay-record`, `makefiles/ros2.mk`, uses to
-bound `ros2 bag record`) logs `received signal 15 -- beginning graceful
-shutdown` followed by `shutting down -- published=N failed=0` before
-exiting, with every one of the `N` published records independently
-confirmed present in Kafka afterward.
+set a `threading.Event`; the spin loop (`rclpy.spin_once(node,
+timeout_sec=0.5)`) checks it every 0.5s. For a finite source,
+`--exit-after-idle-seconds N` ends the loop once at least one message was
+bridged and none arrived for `N` seconds. On shutdown: stop spinning (no
+new callbacks) -> publish `RUN_END` (lifecycle events are on by default,
+`--no-emit-lifecycle-events` disables them) -> flush the producer, bounded
+by a timeout -> close it -> print one `bridge_summary` JSON line (published
+and failed counts, per channel) -> `node.destroy_node()` ->
+`rclpy.shutdown()`. If any message failed during the run, the process exits
+non-zero.
 
-**Failure semantics:** `_handle_message` wraps serialize/construct/publish
-in one `try`/`except Exception`. On failure: increment `failed_count`, log
-a structured error (topic, exception type and message, running
+**Failure semantics:** `_handle_message` wraps decode/timestamp/publish in
+one `try`/`except Exception`. On failure: increment the failed count, log a
+structured error (topic, exception type and message, running
 published/failed counts) via `self.get_logger().error(...)`, and continue
 processing subsequent messages -- never crash the node, never silently
-drop. `self.get_logger()` is rclpy's own node logger, not Python's stdlib
-`logging` -- it does not accept an `exc_info` keyword, so failures are
-logged with the exception type and message formatted directly into the
-text rather than passed as a separate parameter. "Unsupported message
-type" cannot occur at runtime by construction: the node only ever
-subscribes to topics listed in `TOPIC_SPECS`, so there is no code path
-that receives a message type it doesn't already know how to handle. No
-DLQ, no persistent retry storage -- deferred to a reliability boundary,
-matching the transport's own invalid-message-handling approach (§7).
+drop. Every received message takes its sequence number before anything can
+fail, so a message the bridge drops leaves a sequence gap, which capture
+rejects: a bridge failure makes the run's recording fail rather than silently
+come out incomplete. "Unsupported
+message type" cannot occur at runtime by construction: the node only ever
+subscribes to registry topics. No DLQ, no persistent retry storage --
+deferred to a reliability boundary, matching the transport's own
+invalid-message-handling approach (§7).
 
 ## 15. Compose/runtime integration and configuration
 
 **Compose:** `compose/ros2.yaml`'s build context is the repo root (`.`)
 so `ros2/Dockerfile` can `COPY packages/sceneops-core
 packages/sceneops-streaming` in -- Docker `COPY` cannot reach outside its
-build context, the same reasoning
-`tools/nuscenes-integration/Dockerfile` documents for itself.
+build context.
 `ros2/Dockerfile` installs both via plain system `pip3 install
 --break-system-packages` (not `uv`) -- `rclpy` lives in this image's
 apt-managed system Python site-packages; a `uv`-managed venv would be
@@ -595,80 +641,58 @@ isolated from it and unable to `import rclpy`. The `ros2` service has an
 `env_file: - .env.local` entry, matching every other service's own
 convention, and a read-only `./scripts:/workspace/scripts:ro` mount
 (matching `compose/workers.yaml`'s identical mount) so
-`scripts/e2e/ros2_streaming_verify.py` can run inside the container with
-real `rclpy`. No new service and no new Compose profile exist -- the
-bridge runs as another invocation of the existing `ros2` service/profile,
-exactly like `can_replay_node.py`.
+scripts can run inside the container with real `rclpy`. No new service and
+no new Compose profile exist for the bridge -- it runs as another
+invocation of the existing `ros2` service/profile.
 
 **`make local-up` and `make streaming-up` are unaffected** -- neither
 starts ROS2 or Kafka implicitly.
 
 **Configuration:** the bridge takes `--robot-id`/`--robot-run-id`/
-`--publish-timeout-seconds` as CLI arguments and otherwise reuses the
-Kafka transport's `SCENEOPS_STREAMING_KAFKA_*` settings verbatim via
+`--channels-file`/`--publish-timeout-seconds`/`--emit-lifecycle-events`/
+`--exit-after-idle-seconds` as CLI arguments and otherwise reuses the Kafka
+transport's `SCENEOPS_STREAMING_KAFKA_*` settings verbatim via
 `StreamingSettings()` -- no bridge-specific Kafka setting aliases exist.
-No per-topic environment variable exists; the topic/type map is the one
-`TOPIC_SPECS` dict in code. `ROS_DOMAIN_ID` is not set -- the replay node
-and bridge discover each other over the default ROS2 DDS domain on the
-shared `sceneops-network` as separate `docker compose run` invocations.
+No per-topic environment variable exists; the channel set is the registry
+(§11). `ROS_DOMAIN_ID` is not set -- the publisher (a robot, or the replay
+container) and the bridge discover each other over the default ROS2 DDS
+domain on the shared `sceneops-network` as separate containers. The `ros2`
+service also mounts `./ros2/channels` (channel-set files) and the
+`acquisition-recordings` volume (capture output, read by the
+recording-publisher container).
 
 ## 16. Make surface and verification
 
-One target: `make e2e-ros2-streaming` (`SCENE`/`RATE` overridable,
-default `scene-0061`/`10.0`, matching `e2e-robot-can-replay`'s own
-defaults). No `ros2-bridge-up`/`-down`/`-debug`/`streaming-topic-create`
-exist -- internal orchestration (`scripts/e2e/e2e_ros2_streaming.sh`)
-stays an implementation detail.
-
-Three stages, all inside the `ros2` container:
-
-1. `ros2/nodes/tests/` -- no Kafka, no live ROS graph.
-   `test_can_timestamp.py` covers the pure CAN-to-nanosecond conversion;
-   `test_can_replay_node.py` covers the pure message builders in
-   `can_replay_node.py` against real CAN fixture timestamp values, with
-   no live Node/publisher involved; `test_streaming_bridge_node.py` uses
-   a `FakeProducerBridge` in place of `_AsyncProducerBridge`, with every
-   payload produced by real
-   `rclpy.serialization.serialize_message`/`deserialize_message`, never
-   JSON-mocked.
-2. Real `can_replay_node.py` + `streaming_bridge_node.py`, mirroring
-   `ros2-can-replay-record`'s own background/foreground/`wait` pattern
-   (`makefiles/ros2.mk`) -- the bridge is backgrounded, bounded by
-   `timeout $DURATION`, the replay runs in the foreground, then the
-   script waits for the bridge's own bounded shutdown.
-3. `scripts/e2e/ros2_streaming_verify.py` -- consumes everything under
-   that run's `robot_run_id` from the real broker, checks it against what
-   the bridge itself reported publishing, and cross-checks every
-   real-observation channel's `source_timestamp_ns` against the real CAN
-   source JSON files directly (§11).
-
-The verification checks, at a glance:
-
 ```text
-every published message independently consumed from Kafka
-robot_id/encoding/Kafka-key exact for every message
-every source_timestamp_ns populated
-all 5 channels observed; message_type exact per channel
-every message on every channel decodes via real rclpy.deserialize_message
-  as its declared ROS2 type
-/mission/status: exactly 2 messages, "running" then "completed"
-/vehicle/status count == /vehicle/control count (1:1 from vehicle_monitor)
-/vehicle/control payload still has steering/throttle/brake -- never renamed
-all RobotRun records in exactly one Kafka partition
-sequence_number strictly increasing with no gaps, sorted by Kafka offset
-  -- Kafka consumption order matches bridge publish order
-real-observation channels: source_timestamp_ns is an exact member of the
-  real CAN source file's utime set, for every message
-/mission/status: source_timestamp_ns disjoint from every real CAN
-  timestamp in the scene
+make ros2-test                    bridge + capture unit and real-Kafka integration
+                                  tests, inside the ros2 image (needs streaming-up)
+make e2e-streaming-equivalence    the streaming vertical + batch/streaming equivalence
+                                  (SCENE / RATE overridable; default scene-0061 / 2)
 ```
 
-Zero Postgres/MinIO writes -- confirmed both by construction (§12) and by
-direct inspection of canonical table row counts before/after (unchanged).
+`ros2/nodes/tests/test_streaming_bridge_node.py` uses a `FakeProducerBridge`
+in place of `_AsyncProducerBridge`, with every payload produced by real
+`rclpy.serialization.serialize_message`, never JSON-mocked: field mapping per
+timestamp rule (header, transform header, JSON field), raw-byte forwarding,
+DDS-padding trimming and its non-matches, duplicates, sequence behavior,
+failure counting, QoS, and lifecycle events.
+
+`scripts/e2e/e2e_streaming_equivalence.sh` runs the real chain with
+containers and FastAPI only (the host needs Docker Compose, curl, jq and the
+API port -- no `uv`, no PostgreSQL or MinIO access, no worker CLI):
+
+```text
+batch      dataset-acquisition container -> MCAP -> L1 check -> publish -> RobotRun A
+streaming  dataset-replay (paced) -> bridge -> Kafka -> capture (until RUN_END)
+             -> L1 check -> publish -> REGISTER_ROBOT_RUN -> RobotRun B
+both       recording_scene_building + recording_episode_building, same configs
+verify     counts replay = bridge = capture = batch, per channel; recording
+           equivalence (§29.12); Scene and Episode semantic equivalence (I-35)
+```
+
 `make smoke-streaming` (the Kafka transport's own smoke test) passes
-independently of this E2E -- it proves the Kafka transport itself, and is
-never replaced by the ROS2-specific E2E; they verify different
-boundaries.
+independently -- it proves the Kafka transport itself and is never replaced
+by the ROS2-specific verification.
 
 ## 17. Terminology
 
@@ -692,85 +716,103 @@ for `source_timestamp_ns` in this document.
 ## 18. Goal and scope
 
 A run-scoped Kafka consumer that writes what the ROS2 streaming bridge
-(Part 2) published back out to a validated, rosbag2/MCAP-compatible
-file, using the exact writer `ros2 bag record` itself uses
-(`rosbag2_py.SequentialWriter`) rather than a hand-rolled encoder:
+(Part 2) published back out to one validated L1 raw recording (ADR-007
+§29.5): an MCAP in the ROS 2 profile (`cdr` messages, `ros2msg` schemas),
+one channel per topic, payloads exactly as published:
 
 ```text
 real Kafka (Part 1) -> ros2/capture (run-scoped consumer)
   -> validated, finalized local MCAP file
+  -> Recording Publisher -> REGISTER_ROBOT_RUN (explicit steps)
 ```
 
 One invocation captures exactly one `(robot_id, robot_run_id)`. It
-creates no canonical `RobotRun`, `Scene`, `Episode`, or
-`ArtifactRecord`, and writes no Postgres/MinIO state -- verified by
-construction (`ros2/capture/` imports neither `sceneops-db` nor
-`ArtifactStore`) and by direct observation (`make e2e-streaming-capture`
-leaves canonical table row counts unchanged). Registering a captured
-file as a canonical `RobotRun` is the next, separate boundary (§27).
+creates no canonical `RobotRun`, `Scene`, `Episode`, or `ArtifactRecord`,
+and writes no Postgres/MinIO state -- verified by construction
+(`ros2/capture/` imports neither `sceneops-db` nor `ArtifactStore`).
+Registering a captured file as a canonical `RobotRun` is the next, separate
+boundary (§27, §34).
 
 ## 19. Package layout and placement
 
-`ros2/capture/` -- flat scripts (no `__init__.py`), matching
-`ros2/nodes/`'s own convention (absolute imports, e.g. `from
-schema_registry import SUPPORTED_CHANNELS`, not relative ones -- these
-modules are loaded via `sys.path.insert`, not as installed packages).
-Runs inside the existing `ros2` Docker image/profile (`compose/ros2.yaml`
-mounts `./ros2/capture:/workspace/capture:ro`) -- not a new service or
-profile, and not inside `can_replay_node.py`, `streaming_bridge_node.py`,
-or `apps/worker`: it needs `rosbag2_py` (apt-installed only in the `ros2`
-image) for standard-format MCAP writing, and `mcap`/`mcap-ros2-support`
-(`ros2/Dockerfile`) for the mandatory pre-finalize read-back validation
-(§25) -- neither dependency leaks into `sceneops-core`, `apps/api`, or
-any general domain package.
+`ros2/capture/` -- flat scripts (no `__init__.py`), matching `ros2/nodes/`'s
+own convention (absolute imports, loaded via `sys.path.insert`, not as
+installed packages). Runs inside the existing `ros2` Docker image/profile
+(`compose/ros2.yaml` mounts `./ros2/capture:/workspace/capture:ro`) -- not a
+new service or profile, and not inside `streaming_bridge_node.py` or
+`apps/worker`. It needs the ROS 2 interface definitions installed in that
+image (for schema text) and `mcap`/`mcap-ros2-support` (`ros2/Dockerfile`)
+for the writer, the mandatory pre-finalize read-back validation (§25) and
+the tests -- none of this leaks into `sceneops-core`, `apps/api`, or any
+general domain package. The channel registry it validates against lives in
+`sceneops-core` (§11).
 
 ```text
 ros2/capture/
-  schema_registry.py    static v1 supported channel/type set
-  mcap_writer.py         McapCaptureWriter (rosbag2_py.SequentialWriter)
-  validation.py           pre-finalize MCAP read-back validation
-  finalize.py             temp/final bag directory lifecycle
-  capture_consumer.py     RunFilter, SequenceTracker, CaptureResult, run_capture()
-  cli.py                  CLI entry point (make e2e-streaming-capture)
-  tests/                  pytest, runs only inside the ros2 container
+  message_definition.py  ros2msg schema text from the installed ROS 2 interfaces
+  mcap_writer.py         McapCaptureWriter (official mcap writer, ROS 2 profile)
+  validation.py          pre-finalize MCAP read-back validation; retry-convergence comparison
+  finalize.py            temp/final bag directory lifecycle
+  capture_consumer.py    RunFilter, SequenceTracker, CaptureResult, run_capture()
+  router.py              ContinuousCaptureRouter (Part 4)
+  cli.py                 CLI entry point (run_capture)
+  tests/                 pytest, runs only inside the ros2 container (make ros2-test)
 ```
 
-## 20. Frozen time mapping
+## 20. Time and ordering in the recording
 
-Audited directly against `apps/worker/sceneops_worker/datasets/ingestion/
-rosbag_raw_log.py`'s `RosbagAdapter` -- the actual downstream reader, not
-assumed. `_read_bag()` derives every timestamp (`RobotState.timestamp_us`,
-`Mission.started_at`/`ended_at`, frame timestamps, raw-log
-`time_range`) from `message.log_time` alone; `publish_time` and the
-CDR-decoded `header.stamp` are never read for timing anywhere in that
-file (`header.stamp` is only read for value fields, e.g.
-position/orientation).
-
-This contradicts the naive assignment (`publish_time = source`,
-`log_time = ingest`) -- so the mapping is the deliberate inverse:
+Every timing fact keeps its own meaning (ADR-007 §29.5 R4, R6); no field
+stands in for another:
 
 ```text
-MCAP log_time      = TelemetryEnvelope.source_timestamp_ns
-MCAP publish_time   = TelemetryEnvelope.ingest_timestamp_ns
+MCAP log_time      capture RECEIVE time: the wall-clock instant capture took the
+                   record from Kafka (Unix-epoch ns). Never a source timestamp.
+                   Clamped so it never decreases in write order.
+MCAP publish_time  TelemetryEnvelope.ingest_timestamp_ns: the TRANSPORT ingest
+                   time, when the bridge accepted the message. Neither an
+                   observation time nor a robot-side publication time.
+source time        inside the payload (Header.stamp / transform stamp / JSON
+                   field), untouched -- a zero stamp stays zero.
+                   TelemetryEnvelope.source_timestamp_ns is the bridge's
+                   verbatim copy of it and is not written separately.
+MCAP sequence      TelemetryEnvelope.sequence_number + 1
 ```
 
-putting the envelope's real source-observation/event time in the one
-field `RosbagAdapter` actually reads. Verified both ways: a live
-write-then-readback probe (`rosbag2_py.SequentialWriter.write(topic,
-payload, log_time, publish_time)`, 4-arg form) against the real writer
-confirmed this exact argument-to-field mapping; `ros2/capture/tests/
-test_mcap_writer.py` asserts it as a permanent regression test. Mission
-segmentation is unaffected either way -- `_missions_from_bag` only
-compares mission messages against each other (`min`/`max` of `log_time`
-among `/mission/status` records), never against `RobotState` timestamps,
-so this mapping choice cannot silently break mission boundaries.
+**Why `publish_time` is the transport ingest time.** A raw ROS 2
+subscription exposes no publisher timestamp, and a DDS source timestamp, where
+one exists, is the publisher's own wall clock (for a replay, replay wall-clock)
+and is not carried by the envelope. The only upstream-of-capture time SceneOps's
+transport observes is the bridge's acceptance time, and ADR-007 §29.5 R4 requires
+a transport-level timing fact to survive into the recording. `publish_time` is
+its only per-message slot, so it carries that time under its true name. The three
+facts stay distinct: source observation time (payload), transport ingest time
+(`publish_time`), receive time (`log_time`). A build configured from
+`mcap_publish_time` depends on the acquisition, like one from `mcap_log_time`,
+and is outside the source-time equivalence guarantee.
 
-One documented consequence: `/mission/status`'s `source_timestamp_ns` is
-a synthetic replay-boundary time, not a CAN observation (§11.1) -- an
-MCAP built from a streamed session will show `/mission/status`'s
-`log_time` far from the CAN-derived channels' `log_time` values (2018
-CAN data vs. present-day replay time). This is expected, a property of
-the data's actual semantics per §11.1, not a bug introduced by capture.
+`log_time` is the recorder's clock, so a recording's `started_at` /
+`ended_at` (derived from it) are wall-clock receive times, and the
+recording's `capture.source_clock` stays `mcap_log_time`. A downstream
+build configured from source timestamps (header stamps, payload fields)
+never reads `log_time`; one configured from `mcap_log_time` depends on
+the acquisition and is outside the source-time equivalence guarantee (§29.12).
+
+`sequence`: MCAP reserves 0 for "no sequence" and the bridge's counter
+starts at 0, so the stored value is one higher. It is increasing within
+every channel (with gaps where other channels' messages sit between).
+Messages are written in the order consumed from the run's Kafka partition;
+that cross-channel arrival order is acquisition evidence, never canonical
+temporal identity. Transport redelivery (same sequence, same payload) is
+dropped; source-level duplicates are separate occurrences and are kept.
+
+**Why the official `mcap` writer, not `rosbag2_py`.** rosbag2's MCAP
+storage plugin always writes `sequence = 0` and its Python writer takes only
+a receive and a send timestamp. Preserving the sequence required writing the
+MCAP directly. Schema text comes from the `.msg` files of the installed ROS 2
+distribution (`message_definition.py`): the type's text followed by every
+dependency, each introduced by a separator line and `MSG: <package>/<Name>`
+-- the same format rosbag2 writes. Tests decode payloads serialized by
+`rclpy` with those schemas through an independent MCAP ROS 2 decoder.
 
 ## 21. Commit-boundary ordering (durability guarantee)
 
@@ -799,27 +841,16 @@ behavior: `test_run_capture_commits_only_after_finalize`
 `call_order == ["finalize", "commit"]` -- it fails if `run_capture` is
 ever edited to call `commit()` before (or without) `finalize_bag()`.
 
-## 22. Supported channels (static v1 registry)
+## 22. Supported channels
 
-`schema_registry.SUPPORTED_CHANNELS` is the only source of channel/type
-validation -- no dynamic ROS2 topic/type discovery. An envelope naming a
-channel or `message_type` outside this set raises
-`UnsupportedChannelError` and aborts the capture attempt (§21's ordering
-means nothing gets finalized or committed):
-
-```text
-/vehicle/odom       nav_msgs/msg/Odometry
-/vehicle/imu        sensor_msgs/msg/Imu
-/vehicle/status     sensor_msgs/msg/BatteryState
-/vehicle/control    std_msgs/msg/String
-/mission/status     std_msgs/msg/String
-```
-
-The same five channels Part 2's bridge publishes (§11) -- `mcap_writer.py`
-never needs an imported ROS2 message class to write a message:
-`rosbag2_py` resolves the schema from the type string alone against the
-installed ROS2 interface definitions, and the payload is opaque CDR
-bytes (§23 confirms these pass through byte-for-byte).
+The channel registry (§11) is the only source of channel/type validation
+-- no dynamic ROS2 topic/type discovery. Capture must be given the same
+`--channels-file`s as the bridge. An envelope naming a channel or
+`message_type` outside the registry raises `UnsupportedChannelError` and
+aborts the capture attempt (§21's ordering means nothing gets finalized or
+committed). The writer needs no imported ROS2 message class: the payload is
+opaque CDR bytes and the schema text is read from the interface
+definitions by type name (§20).
 
 ## 23. Partition invariant and run filtering
 
@@ -867,10 +898,9 @@ silently accepting corrupted sequencing.
 
 ## 25. Temp/final file lifecycle
 
-`rosbag2_py.SequentialWriter` writes into a *directory* (`metadata.yaml`
-plus one or more `.mcap` files), not a single file -- the unit that must
-move atomically from "being written" to "durably captured" is that whole
-directory. Layout, per `robot_run_id`, under one capture `output_root`:
+The capture writer writes into a *directory* holding one `.mcap` file --
+the unit that moves atomically from "being written" to "durably captured"
+is that whole directory. Layout, per `robot_run_id`, under one capture `output_root`:
 
 ```text
 <output_root>/.partial/<robot_run_id>/   -- write target (in progress)
@@ -883,11 +913,9 @@ it discards it (`shutil.rmtree`) and lets the writer recreate it from
 scratch, because the source of truth for what belongs in a capture is
 Kafka, replayed from the last *committed* offset (always before anything
 a stale partial could contain under §21's ordering), never whatever bytes
-happen to already be on disk. `rosbag2_py.SequentialWriter.open()`
-itself refuses to open into a directory that already exists (even
-empty), verified directly -- so `prepare_partial_bag_dir()` guarantees
-the path does *not* exist and its parent does, rather than creating it
-itself.
+happen to already be on disk. The writer refuses to open into a directory
+that already exists, so `prepare_partial_bag_dir()` guarantees the path
+does *not* exist and its parent does, rather than creating it itself.
 
 `finalize_bag()` performs the atomic transition: `os.replace()` (atomic
 within one filesystem, guaranteed here since both paths share
@@ -898,21 +926,59 @@ the original final bag and the new attempt's `.partial` directory
 untouched, rather than silently discarding either.
 
 Before finalizing, `validate_mcap_file()` (`validation.py`) reads the
-just-closed MCAP back with the same `mcap` reader package
-`RosbagAdapter` uses (never trusts the writer's own in-memory counters),
+just-closed MCAP back with the `mcap` reader package (never trusts the
+writer's own in-memory counters),
 and raises `McapValidationError` -- refusing to finalize -- on a
 corrupt/unreadable file, a written-vs-read-back message count mismatch,
 or zero messages.
 
-## 26. Capture lifecycle, configuration, and reliability scope
+## 26. Capture lifecycle, configuration, and failure behavior
 
-**Lifecycle is externally controlled.** `run_capture()` has no built-in
-notion of "done" and never inspects `/mission/status` payload content to
-decide when to stop -- a caller supplies `stop_condition(message_count)`,
-polled before every Kafka poll. `cli.py` offers two mutually exclusive
-policies: `--max-messages N` (deterministic, used by `make
-e2e-streaming-capture`) and `--idle-timeout-seconds S` (stop after `S`
-seconds with no new matching message).
+**Lifecycle.** `run_capture()` has no built-in notion of "done" and never
+inspects payload content to decide when to stop. A caller supplies
+`stop_condition(message_count)`, polled before every Kafka poll, and may set
+`stop_on_run_end`. `cli.py` requires at least one of three policies; the
+first met ends the capture:
+
+```text
+--until-run-end        the bridge's RUN_END control event was consumed (after it passed its
+                       own sequence validation). The normal end of a streamed run: the
+                       bridge publishes RUN_END after its last telemetry record on the
+                       same partition, so everything it forwarded precedes it.
+--max-messages N       deterministic runs
+--idle-timeout-seconds finalize what was captured when nothing arrives for S seconds. The
+                       fallback when a bridge was killed without RUN_END; it cannot tell a
+                       complete run from a truncated one.
+```
+
+Channels arrive asynchronously: a channel is registered in the MCAP the
+first time a message for it is written, whenever that is, and a run is not
+required to deliver every registry channel. Control events (RUN_START /
+RUN_END) never enter the recording (§32).
+
+**Restart and failure behavior (current, explicit).**
+
+```text
+Capture process dies before finalize   the .partial directory is discarded and the capture
+                                       rebuilds from Kafka (offsets were never committed).
+Capture dies after finalize, before    a re-run consumes the same records, writes a new
+commit                                 partial and finds the final file. It converges only
+                                       if the recorded messages match (topic, schema, publish
+                                       time, sequence, payload; log_time excluded, since each
+                                       attempt stamps its own receive time): the existing file
+                                       stays the recording of record, the offsets are
+                                       committed. Different content under the same run id
+                                       fails with FinalBagExistsError and commits nothing.
+Bridge killed without RUN_END          no RUN_END arrives; only an idle timeout ends the
+                                       capture, and the recording may be truncated.
+Bridge message failure                 counted and logged; the sequence gap fails the capture.
+Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized or committed.
+partition spread, unsupported channel
+Kafka retention                        capture can only rebuild what the topic still holds.
+In-flight state across restart         RunScopedCapture holds no state beyond Kafka and the
+                                       .partial directory; the continuous router's
+                                       in-memory sessions are lost on restart (Part 4, §33).
+```
 
 **Configuration -- frozen in code, not environment variables:**
 
@@ -934,111 +1000,63 @@ capture attempt derives its own Kafka `group.id` from the base above and
 its target `robot_run_id` (`derive_capture_group_id`) -- it never passes
 the bare base to `KafkaTelemetryConsumer` directly. Two independent
 RobotRuns therefore never share committed-offset state, even when
-interleaved on the same partition: one run's poll loop reading past
-another run's messages (to reach its own target count) can no longer
-silently advance the other run's committed position, because there is
-no longer one shared position to advance. The same `robot_run_id`
-always derives the same group (a pure function of its inputs, never
-Python's randomized `hash()`), so retries land on the same group and
-offset lifecycle every time; different `robot_run_id`s derive different
-groups with cryptographic-hash collision resistance (a SHA-256 digest
-suffix, not the human-readable slug prefix alone, which is cosmetic
-only). Centralized in one module so capture code and any tooling that
-needs to know a run's own group (tests, ops/benchmark scripts querying
-Kafka consumer-group lag) derive it identically, never ad hoc.
+interleaved on the same partition. The same `robot_run_id` always derives
+the same group (a pure function of its inputs), so retries land on the same
+group and offset lifecycle every time; different `robot_run_id`s derive
+different groups (a SHA-256 digest suffix, not the human-readable slug
+prefix alone, which is cosmetic only).
 
-**Tradeoff, not fully solved:** this provides correct, isolated replay
-per RobotRun -- it does not provide efficient large-scale multi-run
-capture. Each run-scoped group is, the first time it's used, a brand
-new Kafka consumer group with no committed offset, so `auto.offset.reset
-= earliest` means it may scan the topic's entire historical record
-before reaching its own messages. On a topic that has accumulated a
-large volume of unrelated history (this repeatedly happens in local
-dev, where the same topic persists across many test/benchmark runs),
-that rescan cost can dominate a capture's wall-clock time -- measured
-directly: a 3,000-message capture that took ~3.4s against a
-lightly-used topic took ~44s once the topic had accumulated roughly
-150,000 prior messages from earlier benchmark runs. This is an accepted
-tradeoff for v1 correctness, not a regression to chase -- see
-[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md)'s
-Phase 6.6.1 addendum. Adding partitions or otherwise redesigning topic
-layout to bound this cost is explicitly out of scope here.
+**Tradeoff, not fully solved:** this provides correct, isolated replay per
+RobotRun -- it does not provide efficient large-scale multi-run capture.
+Each run-scoped group is, the first time it's used, a brand new Kafka
+consumer group with no committed offset, so `auto.offset.reset = earliest`
+means it may scan the topic's entire historical record before reaching its
+own messages (measured: ~3.4s against a lightly-used topic vs ~44s once it
+held ~150,000 prior messages; see
+[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md)).
+Redesigning topic layout to bound this cost is out of scope here.
 
 None of these are `SCENEOPS_STREAMING_KAFKA_*` settings and none are
 configurable via environment variable -- deliberately, matching Part 1's
 own "explicit code-level default until a demonstrated override need
-exists" policy (§9.1). No `MCAP_LOG_TIME_MODE`, `MCAP_PUBLISH_TIME_MODE`,
-`CAPTURE_DEDUP_MODE`, or `CAPTURE_OFFSET_RESET` variable exists.
+exists" policy (§9.1).
 
 **`CaptureResult`** (`capture_consumer.py`), returned once Kafka offsets
 are committed:
 
 ```text
 robot_id, robot_run_id, path, message_count, partition,
-first_offset, last_offset, first_sequence, last_sequence, sha256
+first_offset, last_offset, first_sequence, last_sequence, sha256,
+per_channel_counts
 ```
 
 Not a `RobotRun` -- it describes a local file and its Kafka provenance
-only; nothing here is a canonical record (§18).
+only; nothing here is a canonical record (§18). The CLI prints it and one
+`capture_summary` JSON line for orchestration.
 
-**Reliability scope (deferred, not this work):** process crash/restart
-across capture invocations, multi-instance coordination, and
-exactly-once capture guarantees beyond one invocation's own
-commit-after-finalize ordering are out of scope -- a reliability boundary
-for later work, matching Part 1's own DLQ/retry deferral (§7). A crashed
-capture's `.partial` directory is always safely discardable on the next
-attempt (§25); that is the extent of the crash-safety this work provides.
+**Out of scope:** multi-instance coordination, durable session recovery and
+exactly-once capture beyond one invocation's commit-after-finalize ordering
+-- a reliability boundary for later work, matching Part 1's own DLQ/retry
+deferral (§7).
 
 ## 27. Make surface and verification
 
-One target: `make e2e-streaming-capture` (`SCENE`/`RATE` overridable,
-same defaults as `e2e-ros2-streaming`). No `capture-up`/`-down`/CLI-only
-alias exists -- internal orchestration
-(`scripts/e2e/e2e_streaming_capture.sh`) stays an implementation detail.
+`make ros2-test` runs `ros2/capture/tests/` and `ros2/nodes/tests/` in the
+ros2 image: writer (receive time, publish time, sequence, monotonic clamp,
+payload bytes, duplicates, late channel arrival, unsupported channels),
+message definitions decoded by an independent MCAP ROS 2 decoder,
+finalize/validation, `RunFilter`/`SequenceTracker`/duplicate policy,
+`run_capture` (RUN_END stop, sensor channels from a channel file,
+durability ordering, crash boundaries C and D including conflicting retry),
+the router, and real-Kafka integration (multi-run isolation, lifecycle,
+camera- and lidar-sized payloads, oversize failure).
 
-Five stages:
-
-1. `ros2/capture/tests/` -- pure unit tests (schema registry, writer,
-   finalize, validation, `RunFilter`/`SequenceTracker`/duplicate-policy
-   logic, and the durability-ordering test, §21), no Kafka, no live ROS
-   graph. 35 tests.
-2. Real `can_replay_node.py` + `streaming_bridge_node.py` -> Kafka (same
-   pattern as `e2e-ros2-streaming`, §16) -- the bridge's own reported
-   published count becomes this capture's `--max-messages` value.
-3. `cli.py` captures that run from the real broker into a finalized MCAP.
-4. A second, independent CAN replay recorded directly via
-   `ros2 bag record` (the existing oracle path,
-   `ros2-can-replay-record`'s own pattern) to a scratch path under
-   `data/tmp_streaming_capture/` -- never `data/raw/rosbag/<scene>`, the
-   canonical baseline dataset location.
-5. `scripts/e2e/mcap_capture_verify.py` (host, `uv run` -- `RosbagAdapter`
-   needs no ROS2/rclpy install) opens the captured MCAP through the same
-   `RosbagAdapter` apps/worker uses for real ingestion (mandatory
-   compatibility check, `extract_episode_source()` only -- no DB writes,
-   no `RobotRun`/`Episode` creation) and compares it against the
-   direct-recorded bag for **semantic** equivalence, not byte-identity:
-
-```text
-captured message_count == bridge's own published count
-captured first_sequence == 0
-captured and direct-recorded bags expose the same topic/schema set
-RosbagAdapter opens the captured MCAP without error
-captured bag: robot_states non-empty, missions non-empty
-robot_state count within tolerance of the direct-recorded bag's own
-  count (a few-message delta is expected -- two INDEPENDENT replay
-  invocations, each subject to its own ROS2 DDS discovery-lag at
-  startup, and RosbagAdapter dedupes RobotState by microsecond
-  timestamp; exact equality across two separately-timed replays is not
-  the right oracle)
-mission count and mission_ids match exactly between captured and
-  direct-recorded bags
-```
-
-Verified against real scene-0061 data: a real run captured all 2915
-bridge-published messages with `first_sequence=0`, and every check above
-passed, including the mandatory `RosbagAdapter` read-back. Zero
-Postgres/MinIO writes -- confirmed both by construction (§18) and by
-direct inspection of canonical table row counts before/after (unchanged).
+`make e2e-streaming-equivalence` (§16) is the real vertical: the captured
+recording is checked with the L1 conformance suite
+(`python -m sceneops_integrations.recording check`), published, registered,
+built into Scenes and Episodes, and compared with the batch acquisition of
+the same source. Capture's output is checked by the same conformance suite as
+the batch tool's.
 
 # Part 4: Continuous Multi-Run Capture
 
@@ -1122,8 +1140,8 @@ a `TelemetryEnvelope`: same required fields, same
 `wire.partition_key`, entirely unchanged), same topic. What makes it a
 control event rather than telemetry is purely its `channel`/
 `message_type` (`SESSION_CONTROL_CHANNEL = "/session/control"`,
-reserved, never a real ROS2 topic/interface, and never present in
-`ros2/capture/schema_registry.py`'s `SUPPORTED_CHANNELS`).
+reserved, never a real ROS2 topic/interface, and rejected by
+`ChannelSpec`, so it can never enter the channel registry).
 
 Reusing the existing topic/key, rather than a separate control topic,
 is deliberate: partitioning by `robot_run_id` (frozen, §6) guarantees a
@@ -1171,7 +1189,7 @@ record its `_SequenceTracker` accepted was passed unconditionally to
 legitimately shares that run's `robot_run_id` (§30's design), an
 unfiltered control envelope would reach the writer and raise
 `UnsupportedChannelError` for `/session/control` (correctly -- it is
-not in `SUPPORTED_CHANNELS`) -- and `run_capture()` has no per-message
+not in the channel registry) -- and `run_capture()` has no per-message
 error isolation (that is the router's own, newer behavior), so the
 exception would propagate straight out and abort the entire capture.
 
@@ -1189,15 +1207,15 @@ for it, so every record takes the exact path this module always used.
 ## 33. Make surface, verification, and current limitations
 
 No CLI entry point or make/e2e target runs `ContinuousCaptureRouter`
-against a live scenario the way `cli.py`/`make e2e-streaming-capture`
-exercises `RunScopedCapture`. Verification is unit tests
+against a live scenario the way `cli.py` / `make e2e-streaming-equivalence`
+exercise `RunScopedCapture`. Verification is unit tests
 (`ros2/capture/tests/test_router.py`,
 `test_lifecycle_integration.py`) plus real-Kafka integration tests
 (`test_router_integration.py`, `test_lifecycle_integration.py`'s
 real-broker cases) -- these already run as part of
-`make e2e-streaming-capture`'s stage 1 (the full `ros2/capture/tests/`
-suite, §27), so router/lifecycle correctness is covered by the
-existing make surface without a dedicated new target.
+`make ros2-test` (the full `ros2/capture/tests/` suite, §27), so
+router/lifecycle correctness is covered by the existing make surface
+without a dedicated new target.
 
 Current limitations, verified against code:
 
@@ -1212,41 +1230,44 @@ No multi-worker / multi-partition router -- one ContinuousCaptureRouter
   instance serves one partition.
 RunScopedCapture and a lifecycle-enabled bridge run can now coexist on
   the same robot_run_id (control envelopes are tolerated, §32), but
-  the bridge's --emit-lifecycle-events still defaults to False at
-  every layer, including the CLI -- not flipped on by default, since
-  doing so changes the real Kafka wire output of every consumer of
-  that topic, not just router-fed ones.
+  the bridge CLI now emits lifecycle events by default
+  (--no-emit-lifecycle-events disables them).
 ```
 
 ## 34. What comes next
 
 The full chain from live telemetry through to a readable learning
 dataset is built: durable capture (Part 3) or continuous multi-run
-capture (Part 4) both close `Kafka -> MCAP`; canonical `RobotRun`
-registration (`sceneops-worker robots register-capture`,
-`docs/workflows/robot-run-and-mcap.md`) closes
-`MCAP -> ArtifactStore -> ArtifactRecord -> RobotRun`; and recording
-materialization (`sceneops_worker.robots.materialization`,
+capture (Part 4) both close `Kafka -> MCAP`; the database-free Recording
+Publisher plus `REGISTER_ROBOT_RUN` (`docs/workflows/robot-run-and-mcap.md`
+§3.2) close `MCAP -> MCAP + RobotRunManifest -> ArtifactRecords + RobotRun`;
+and the verified
+recording resolver (`sceneops_worker.robots.resolver`,
 `docs/workflows/robot-run-and-mcap.md` §3.1) closes
-`RobotRun -> existing Episode pipeline`, keeping `RosbagAdapter` itself
-storage-agnostic throughout.
+`RobotRun -> recording Scene / Episode building / robot-state ingestion`.
 
 ```text
 ROS2 / live robot -> stream envelope -> Kafka -> durable capture
   (Part 3, one run) or continuous capture (Part 4, many concurrent
-  runs) -> validated local MCAP -> RobotRun registration
-  -> materialization -> existing Episode pipeline -> existing
-  learning-data pipeline
+  runs) -> validated local MCAP -> Recording Publisher
+  -> REGISTER_ROBOT_RUN
+  -> resolve_recording(robot_run_id) -> existing Episode pipeline
+  -> existing learning-data pipeline
 ```
 
-RobotRun registration today is a manual step -- `sceneops-worker robots
-register-capture` must be invoked explicitly against a finalized MCAP;
-nothing in the capture or router path triggers it automatically on
-finalize.
+Publication and registration are explicit steps today -- `python -m
+sceneops_integrations.recording publish` against a finalized MCAP, then
+`POST /robot-runs:register`; nothing in the capture or router path
+triggers either automatically on finalize. Capture itself stays DB-free
+and never writes RobotRun state.
 
-Not implemented: `IngestRobotStatesJobHandler`/`BuildScenesJobHandler`
-consuming an ArtifactStore-backed `RobotRun.mcap_uri` (only
-`BuildEpisodesJobHandler` materializes today).
+Canonical Scenes and Episodes are built from a registered RobotRun's
+recording by `RECORDING_SCENE_BUILDING` / `RECORDING_EPISODE_BUILDING`
+([Scene domain](./scene-domain.md) §6). Capture records camera, lidar,
+`CameraInfo`, `/tf`, `/tf_static` and telemetry channels (§11), so a
+streamed recording is as buildable as a batch one; `make
+e2e-streaming-equivalence` shows the same source yields equivalent Scenes
+and Episodes either way.
 
 Reliability and scale characteristics of everything above -- crash
 boundaries, duplicate/gap/out-of-order handling, multi-RobotRun
@@ -1262,9 +1283,9 @@ Not built, not started, not partially wired -- listed so a future pass
 doesn't mistake absence for a bug:
 
 ```text
-Automatic triggering of RobotRun registration from a finalized capture
-  (the mechanism exists -- sceneops-worker robots register-capture --
-  but nothing invokes it without an explicit operator/caller step, §34)
+Automatic publication/registration of a finalized capture
+  (the mechanism exists -- Recording Publisher + POST /robot-runs:register
+  -- but nothing invokes it without an explicit operator/caller step, §34)
 Episode generation from streamed data
 Any Postgres/ArtifactStore write from the streaming or capture path
 Kafka Connect, Schema Registry, Avro
@@ -1273,7 +1294,7 @@ DLQ / automatic retry policy
 Consumer lag metrics platform (Prometheus/Grafana)
 Streaming UI
 Mutation of canonical baseline sceneops-canonical/v0.0
-Dynamic ROS2 topic discovery (the topic/type map is static)
+Dynamic ROS2 topic discovery (the channel registry is static, §11)
 Timestamp correction beyond what the bridge already reads from source data
 Interpretation of /mission/status boundaries beyond proving transport
   preservation (Episode-building's use of mission boundaries is a
@@ -1283,13 +1304,14 @@ Capture crash/restart reliability beyond the single-invocation,
   supervision, multi-instance coordination, and exactly-once capture
   across restarts are a separate reliability boundary, deferred
 Multi-partition-per-robot_run_id support (Part 3 fails loudly instead,
-  §23) or dynamic capture topic/channel configuration (the supported
-  channel set is a static registry, §22)
+  §23) or dynamic capture topic/channel configuration (the channel set is a
+  static registry, §11, §22)
 ContinuousCaptureRouter session persistence across restart, Kafka
   rebalance recovery, and multi-worker/multi-partition router
   instances (Part 4, §33)
-Bridge lifecycle-event emission on by default (technically compatible
-  since §32, deliberately not flipped -- §33)
+Automatic capture -> publish hand-off (the Recording Publisher and
+  REGISTER_ROBOT_RUN stay explicit steps)
+Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 ```
 
 ## 36. Source-of-truth map
@@ -1308,16 +1330,16 @@ Bridge lifecycle-event emission on by default (technically compatible
 
 **ROS2 streaming bridge:**
 
+- Channel registry (`ChannelSpec`, `ChannelRegistry`, timestamp rules, channel-set files) + tests: `packages/sceneops-core/sceneops_core/streaming/channels.py`, `packages/sceneops-core/tests/test_streaming_channels.py`; shipped channel set: `ros2/channels/surround-camera-lidar.json`
 - Bridge node: `ros2/nodes/streaming_bridge_node.py`
 - Bridge unit tests (real rclpy, no Kafka, ros2 container only): `ros2/nodes/tests/test_streaming_bridge_node.py`
-- CAN timestamp conversion helper + tests: `ros2/nodes/can_timestamp.py`, `ros2/nodes/tests/test_can_timestamp.py`
-- CAN replay node (message builders + timestamp mapping) + tests: `ros2/nodes/can_replay_node.py`, `ros2/nodes/tests/test_can_replay_node.py`
+- Replay sink (external-tool boundary; no SceneOps dependency): `tools/dataset-acquisition/src/dataset_acquisition/ros2_replay.py`, `tools/dataset-acquisition/tests/test_ros2_replay.py`, image target `replay` in `tools/dataset-acquisition/Dockerfile`, service `dataset-replay` in `compose/acquisition.yaml`
 - Container/runtime: `ros2/Dockerfile`, `compose/ros2.yaml`
-- E2E: `scripts/e2e/e2e_ros2_streaming.sh`, `scripts/e2e/ros2_streaming_verify.py`, `make e2e-ros2-streaming` (`makefiles/streaming.mk`)
+- Make: `make ros2-test`, `make e2e-streaming-equivalence` (`makefiles/streaming.mk`)
 
 **Durable MCAP capture:**
 
-- Schema registry: `ros2/capture/schema_registry.py`, `ros2/capture/tests/test_schema_registry.py`
+- Schema text from installed interfaces: `ros2/capture/message_definition.py`, `ros2/capture/tests/test_message_definition.py`
 - MCAP writer: `ros2/capture/mcap_writer.py`, `ros2/capture/tests/test_mcap_writer.py`
 - Pre-finalize validation: `ros2/capture/validation.py`, `ros2/capture/tests/test_validation.py`
 - Temp/final lifecycle: `ros2/capture/finalize.py`, `ros2/capture/tests/test_finalize.py`
@@ -1326,8 +1348,9 @@ Bridge lifecycle-event emission on by default (technically compatible
 - Multi-RobotRun isolation (real Kafka): `ros2/capture/tests/test_multi_robot_run_integration.py`
 - CLI entry point: `ros2/capture/cli.py`
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `ros2/Dockerfile`, capture source mount: `compose/ros2.yaml`
-- E2E: `scripts/e2e/e2e_streaming_capture.sh`, `scripts/e2e/mcap_capture_verify.py`, `make e2e-streaming-capture` (`makefiles/streaming.mk`)
-- RosbagAdapter (the mandatory compatibility-check target): `apps/worker/sceneops_worker/datasets/ingestion/rosbag_raw_log.py`
+- Realistic sensor payloads through real Kafka: `ros2/capture/tests/test_sensor_payload_kafka_integration.py`
+- E2E: `scripts/e2e/e2e_streaming_equivalence.sh`, `scripts/e2e/streaming_equivalence_verify.py`, `make e2e-streaming-equivalence`
+- Recording equivalence and conformance: `packages/sceneops-integrations/sceneops_integrations/recording/{equivalence,conformance}.py`
 
 **Continuous multi-run capture:**
 

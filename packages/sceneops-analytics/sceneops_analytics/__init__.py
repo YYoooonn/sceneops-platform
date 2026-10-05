@@ -56,12 +56,11 @@ from sceneops_analytics.query import query_parquet
 from sceneops_analytics.tables import (
     ROBOT_TABLE_BUILDERS,
     TABLE_BUILDERS,
-    build_annotations_table,
     build_missions_table,
     build_robot_telemetry_table,
-    build_samples_table,
+    build_keyframes_table,
     build_scenes_table,
-    build_sensor_frames_table,
+    build_observations_table,
 )
 from sceneops_analytics.writer import AnalyticsTableWriteResult, AnalyticsTableWriter
 
@@ -73,9 +72,8 @@ __all__ = [
     "LEARNING_STEPS_SCHEMA",
     "LEARNING_SIGNALS_SCHEMA",
     "build_scenes_table",
-    "build_samples_table",
-    "build_sensor_frames_table",
-    "build_annotations_table",
+    "build_keyframes_table",
+    "build_observations_table",
     "build_robot_telemetry_table",
     "build_missions_table",
     "build_learning_episodes_table",

@@ -3,7 +3,6 @@ from __future__ import annotations
 from sceneops_core.robots.schemas import (
     MissionStatus,
     RobotRecord,
-    RobotRunRecord,
     RobotStatus,
 )
 from sceneops_db.repositories.robots import (
@@ -15,7 +14,6 @@ from sceneops_db.repositories.robots import (
 
 from app.domains.robots.schemas import (
     CreateRobotRequest,
-    CreateRobotRunRequest,
     MissionDetailResponse,
     MissionListResponse,
     RobotDetailResponse,
@@ -82,24 +80,6 @@ class RobotService:
             robot_id=robot_id, limit=limit, offset=offset
         )
         return RobotRunListResponse(robot_runs=runs, count=len(runs))
-
-    async def create_robot_run(
-        self, request: CreateRobotRunRequest
-    ) -> RobotRunDetailResponse | None:
-        """Returns None if request.robot_id doesn't exist — caller 404s."""
-        robot = await self._robots.get(request.robot_id)
-        if robot is None:
-            return None
-        robot_run = await self._robot_runs.upsert(
-            RobotRunRecord(
-                run_id=request.run_id,
-                robot_id=request.robot_id,
-                mcap_uri=request.mcap_uri,
-                rosbag_uri=request.rosbag_uri,
-                metadata=request.metadata,
-            )
-        )
-        return RobotRunDetailResponse(robot_run=robot_run)
 
     async def get_robot_run(self, run_id: str) -> RobotRunDetailResponse | None:
         robot_run = await self._robot_runs.get(run_id)

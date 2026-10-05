@@ -33,11 +33,19 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from sceneops_core.streaming import ConsumedTelemetryEnvelope, is_control_envelope
+from sceneops_core.streaming import (
+    DEFAULT_REGISTRY,
+    ChannelRegistry,
+    ConsumedTelemetryEnvelope,
+    RunEventType,
+    is_control_envelope,
+    parse_run_event,
+)
 from sceneops_streaming.config import StreamingSettings
 from sceneops_streaming.consumer import KafkaTelemetryConsumer
 
@@ -49,7 +57,7 @@ from finalize import (
 )
 from group_id import derive_capture_group_id
 from mcap_writer import McapCaptureWriter
-from validation import validate_mcap_file
+from validation import same_recorded_content, validate_mcap_file
 
 
 def _sha256_file(path: Path) -> str:
@@ -93,6 +101,7 @@ class CaptureResult:
     first_sequence: int
     last_sequence: int
     sha256: str
+    per_channel_counts: dict[str, int] = field(default_factory=dict)
 
 
 class _RunFilter:
@@ -201,6 +210,8 @@ async def run_capture(
     output_root: Path,
     stop_condition: Callable[[int], bool],
     poll_timeout_seconds: float = 1.0,
+    registry: ChannelRegistry = DEFAULT_REGISTRY,
+    stop_on_run_end: bool = False,
 ) -> CaptureResult:
     """Consume from Kafka and durably capture one run's messages into a
     finalized MCAP bag, returning a ``CaptureResult`` once Kafka offsets
@@ -212,9 +223,20 @@ async def run_capture(
     ``/mission/status`` payload as a stop signal); a caller wanting an
     idle-timeout or wall-clock-deadline policy closes over its own clock
     inside the callable it passes in.
+
+    ``stop_on_run_end`` additionally ends the capture when the run's
+    explicit ``RUN_END`` control event has been consumed (after it passed
+    its own sequence validation). The bridge publishes ``RUN_END`` after
+    its last telemetry record on the same partition, so everything the
+    bridge forwarded precedes it. A run that never sends ``RUN_END`` ends
+    only through ``stop_condition``.
+
+    Each written message's ``log_time`` is the wall-clock instant this
+    function took the record from Kafka (see ``mcap_writer.py``).
     """
     partial_dir = prepare_partial_bag_dir(output_root, robot_run_id)
-    writer = McapCaptureWriter(bag_uri=str(partial_dir))
+    writer = McapCaptureWriter(bag_uri=str(partial_dir), registry=registry)
+    run_ended = False
     run_filter = _RunFilter(robot_id=robot_id, robot_run_id=robot_run_id)
     tracker = _SequenceTracker()
     # Lifecycle control events (Phase 7.2.1) get their OWN independent
@@ -244,8 +266,9 @@ async def run_capture(
 
     try:
         try:
-            while not stop_condition(writer.stats.message_count):
+            while not run_ended and not stop_condition(writer.stats.message_count):
                 consumed = await consumer.poll(poll_timeout_seconds)
+                receive_time_ns = time.time_ns()
                 if consumed is None:
                     continue
                 if not run_filter.matches(consumed):
@@ -257,7 +280,7 @@ async def run_capture(
                     # strictly as telemetry, in its own independent
                     # sequence space -- never silently bypassed -- but
                     # never written to the MCAP: a control event is not
-                    # sensor data, and schema_registry.SUPPORTED_CHANNELS
+                    # sensor data, and the channel registry
                     # deliberately never includes it (so a genuinely
                     # unsupported/unknown channel still fails loudly,
                     # unambiguously, via UnsupportedChannelError).
@@ -268,6 +291,11 @@ async def run_capture(
                     if first_offset is None:
                         first_offset = consumed.offset
                     last_offset = consumed.offset
+                    if (
+                        stop_on_run_end
+                        and parse_run_event(envelope) is RunEventType.RUN_END
+                    ):
+                        run_ended = True
                     continue
 
                 should_write = tracker.accept(
@@ -277,7 +305,7 @@ async def run_capture(
                 if not should_write:
                     continue
 
-                writer.write_envelope(envelope)
+                writer.write_envelope(envelope, receive_time_ns=receive_time_ns)
                 if first_offset is None:
                     first_offset = consumed.offset
                 last_offset = consumed.offset
@@ -303,24 +331,27 @@ async def run_capture(
             # commit" crash boundary) -- Kafka never advanced past those
             # records, so this attempt independently consumed, wrote, and
             # validated the SAME messages again. That is convergence, not
-            # a conflict: if the bytes genuinely match, commit the offset
-            # now (the durability boundary this run reached is identical
-            # to the prior one) and report the existing final file --
-            # never silently overwrite it, and never loop forever
+            # a conflict: if the recorded messages genuinely match, commit
+            # the offset now (the durability boundary this run reached is
+            # identical to the prior one) and report the existing final
+            # file -- never silently overwrite it, and never loop forever
             # crashing on the same already-finalized file either.
+            #
+            # "Match" ignores log_time only: each attempt stamps its own
+            # receive time, so the bytes of two attempts legitimately
+            # differ there and nowhere else. The existing file (and its
+            # receive times) is the recording of record.
             existing_final_dir = final_bag_path(output_root, robot_run_id)
             existing_mcap_path = existing_final_dir / Path(mcap_path).name
-            new_digest = _sha256_file(mcap_path)
-            if (
-                not existing_mcap_path.is_file()
-                or _sha256_file(existing_mcap_path) != new_digest
+            if not existing_mcap_path.is_file() or not same_recorded_content(
+                str(existing_mcap_path), mcap_path
             ):
                 # A genuine conflict (different content under the same
                 # robot_run_id) -- never silently resolved, re-raise.
                 raise
             final_dir = existing_final_dir
             final_mcap_path = existing_mcap_path
-            digest_hex = new_digest
+            digest_hex = _sha256_file(existing_mcap_path)
             shutil.rmtree(Path(mcap_path).parent, ignore_errors=True)
 
         result = CaptureResult(
@@ -334,6 +365,7 @@ async def run_capture(
             first_sequence=tracker.first_sequence,
             last_sequence=tracker.last_sequence,
             sha256=digest_hex,
+            per_channel_counts=dict(writer.stats.per_channel_counts),
         )
 
         # Only now -- after the MCAP has been validated and durably,

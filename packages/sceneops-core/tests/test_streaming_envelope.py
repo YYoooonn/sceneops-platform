@@ -86,10 +86,18 @@ def test_unknown_encoding_rejected() -> None:
         TelemetryEnvelope(**_valid_kwargs(encoding="protobuf"))
 
 
-@pytest.mark.parametrize("bad_value", [0, -1])
-def test_invalid_source_timestamp_rejected(bad_value: int) -> None:
+def test_negative_source_timestamp_rejected() -> None:
     with pytest.raises(ValidationError):
-        TelemetryEnvelope(**_valid_kwargs(source_timestamp_ns=bad_value))
+        TelemetryEnvelope(**_valid_kwargs(source_timestamp_ns=-1))
+
+
+def test_zero_source_timestamp_is_a_legal_verbatim_value() -> None:
+    """A source message may carry a zero (unstamped) timestamp, e.g. a
+    /tf_static transform. The envelope passes it through; it is the
+    producer's decision which channels may carry it."""
+    envelope = TelemetryEnvelope(**_valid_kwargs(source_timestamp_ns=0))
+    assert envelope.source_timestamp_ns == 0
+    assert envelope.ingest_timestamp_ns > 0
 
 
 @pytest.mark.parametrize("bad_value", [0, -1])

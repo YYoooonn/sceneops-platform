@@ -11,7 +11,6 @@ class ScenarioMiningRunRecord(BaseRunRecord):
 
     dataset_id: str | None = None
     dataset_version: str | None = None
-    dataset_manifest_uri: str | None = None
 
     scenario_set_id: str | None = None
     scenario_set_uri: str | None = None

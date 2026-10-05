@@ -10,7 +10,6 @@ proves the validator against genuinely engine-shaped data.
 from __future__ import annotations
 
 from sceneops_core.episodes.alignment import (
-    MCAP_LOG_TIME_CLOCK,
     AlignedEpisodeArtifact,
     AlignedEpisodeValidator,
     AlignedSignalStatus,
@@ -21,32 +20,96 @@ from sceneops_core.episodes.alignment import (
     TemporalSourceContext,
     align_episode,
 )
-from sceneops_core.episodes.schemas import (
-    EpisodeActionFrame,
-    EpisodeManifest,
-    EpisodeObservationFrame,
+
+
+from sceneops_core.episodes.alignment import field_channel
+from sceneops_core.episodes.testing import (
+    DEFAULT_CLOCK,
+    action as _action_occ,
+    episode_manifest,
+    observation as _observation_occ,
+    state as _state_occ,
 )
 
-_CTX = TemporalSourceContext(source_clock=MCAP_LOG_TIME_CLOCK)
+# Canonical Episode streams these tests align: one field ``v`` per topic.
+BATTERY = field_channel("/state/battery", "v")
+POSITION = field_channel("/state/position", "v")
+VELOCITY = field_channel("/state/velocity", "v")
+STEERING = field_channel("/control/steering", "v")
+DUP = field_channel("/dup", "v")
+CAM_FRONT = "/camera/front"
+_TOPICS = {
+    "state.battery": "/state/battery",
+    "state.position": "/state/position",
+    "state.velocity": "/state/velocity",
+    "steering": "/control/steering",
+    "dup": "/dup",
+    "CAM_FRONT": CAM_FRONT,
+}
+_SCALAR = {"state.battery"}
+
+
+def _obs(*, timestamp_us, channel, values=None, modality=None, **_):
+    if modality is not None:
+        return _observation_occ(_TOPICS[channel], timestamp_us * 1_000)
+    values = list(values or [])
+    v = values[0] if channel in _SCALAR else values
+    return _state_occ(_TOPICS[channel], timestamp_us * 1_000, v=v)
+
+
+def _act(*, timestamp_us, channel, value, **_):
+    return _action_occ(_TOPICS[channel], timestamp_us * 1_000, v=value)
+
+
+def _manifest_of(
+    *,
+    observation_frames=(),
+    action_frames=(),
+    start_timestamp_us,
+    end_timestamp_us,
+    **_,
+):
+    occurrences = [*observation_frames, *action_frames]
+    stamps = [o.timestamp_ns for o in occurrences]
+    return episode_manifest(
+        occurrences,
+        window=(
+            min([start_timestamp_us * 1_000, *stamps]),
+            max([end_timestamp_us * 1_000, *stamps]) + 1,
+        ),
+    )
+
+
+def _with_battery_hold_last(config):
+    """The battery channel holds its last value unless a test says
+    otherwise (alignment has no name-based defaults)."""
+    from sceneops_core.episodes.alignment import AssociationPolicy, ChannelPolicyConfig
+
+    if BATTERY in config.channel_policies:
+        return config
+    policies = {
+        **config.channel_policies,
+        BATTERY: ChannelPolicyConfig(policy=AssociationPolicy.PREVIOUS),
+    }
+    return config.model_copy(update={"channel_policies": policies})
+
+
+_CTX = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
 _VALIDATOR = AlignedEpisodeValidator()
 
 
-def _manifest() -> EpisodeManifest:
-    return EpisodeManifest(
+def _manifest():
+    return _manifest_of(
         episode_id="ep-1",
         observation_frames=[
-            EpisodeObservationFrame(
-                timestamp_us=0, channel="state.position", values=[0.0]
-            ),
-            EpisodeObservationFrame(
-                timestamp_us=1_000_000, channel="state.position", values=[1.0]
-            ),
+            _obs(timestamp_us=0, channel="state.position", values=[0.0]),
+            _obs(timestamp_us=1_000_000, channel="state.position", values=[1.0]),
         ],
         action_frames=[
-            EpisodeActionFrame(timestamp_us=0, channel="steering", value=0.1),
+            _act(timestamp_us=0, channel="steering", value=0.1),
         ],
-        observation_channels=["state.position"],
-        action_channels=["steering"],
+        observation_channels=[POSITION],
+        action_channels=[STEERING],
         start_timestamp_us=0,
         end_timestamp_us=1_000_000,
         frame_count=3,
@@ -55,7 +118,7 @@ def _manifest() -> EpisodeManifest:
 
 def _valid_artifact() -> AlignedEpisodeArtifact:
     config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
-    aligned = align_episode(_manifest(), config, _CTX)
+    aligned = align_episode(_manifest(), config, _CTX, episode_id="ep-1")
     return AlignedEpisodeArtifact(
         source_revision=EpisodeSourceRevision(
             episode_id="ep-1",
@@ -186,11 +249,11 @@ class TestSignalConsistency:
     def test_resolved_signal_without_value(self) -> None:
         artifact = _valid_artifact()
         step0 = artifact.aligned_episode.steps[0]
-        signal = step0.actions["steering"]
+        signal = step0.actions[STEERING]
         assert signal.status == AlignedSignalStatus.RESOLVED
         bad_signal = signal.model_copy(update={"value": None})
         step0 = step0.model_copy(
-            update={"actions": {**step0.actions, "steering": bad_signal}}
+            update={"actions": {**step0.actions, STEERING: bad_signal}}
         )
         steps = [step0] + list(artifact.aligned_episode.steps[1:])
         ae = artifact.aligned_episode.model_copy(update={"steps": steps})
@@ -200,7 +263,7 @@ class TestSignalConsistency:
     def test_missing_signal_with_contradictory_value(self) -> None:
         artifact = _valid_artifact()
         step1 = artifact.aligned_episode.steps[1]
-        resolved_signal = step1.observations["state.position"]
+        resolved_signal = step1.observations[POSITION]
         assert resolved_signal.status == AlignedSignalStatus.RESOLVED
         # Force a MISSING status but leave the value/provenance populated --
         # a direct contradiction.
@@ -208,9 +271,7 @@ class TestSignalConsistency:
             update={"status": AlignedSignalStatus.MISSING}
         )
         step1 = step1.model_copy(
-            update={
-                "observations": {**step1.observations, "state.position": bad_signal}
-            }
+            update={"observations": {**step1.observations, POSITION: bad_signal}}
         )
         steps = [artifact.aligned_episode.steps[0], step1]
         ae = artifact.aligned_episode.model_copy(update={"steps": steps})
@@ -222,11 +283,11 @@ class TestSignalConsistency:
     def test_exact_policy_with_nonzero_delta(self) -> None:
         artifact = _valid_artifact()
         step0 = artifact.aligned_episode.steps[0]
-        signal = step0.actions["steering"].model_copy(
+        signal = step0.actions[STEERING].model_copy(
             update={"policy": AssociationPolicy.EXACT, "time_delta_us": 5}
         )
         step0 = step0.model_copy(
-            update={"actions": {**step0.actions, "steering": signal}}
+            update={"actions": {**step0.actions, STEERING: signal}}
         )
         steps = [step0] + list(artifact.aligned_episode.steps[1:])
         ae = artifact.aligned_episode.model_copy(update={"steps": steps})
@@ -236,11 +297,11 @@ class TestSignalConsistency:
     def test_previous_policy_with_negative_delta(self) -> None:
         artifact = _valid_artifact()
         step0 = artifact.aligned_episode.steps[0]
-        original = step0.actions["steering"]
+        original = step0.actions[STEERING]
         assert original.policy == AssociationPolicy.PREVIOUS
         signal = original.model_copy(update={"time_delta_us": -5})
         step0 = step0.model_copy(
-            update={"actions": {**step0.actions, "steering": signal}}
+            update={"actions": {**step0.actions, STEERING: signal}}
         )
         steps = [step0] + list(artifact.aligned_episode.steps[1:])
         ae = artifact.aligned_episode.model_copy(update={"steps": steps})
@@ -254,7 +315,7 @@ class TestSignalConsistency:
     def test_interpolated_signal_without_bracket(self) -> None:
         artifact = _valid_artifact()
         step0 = artifact.aligned_episode.steps[0]
-        original = step0.observations["state.position"]
+        original = step0.observations[POSITION]
         bad_signal = original.model_copy(
             update={
                 "status": AlignedSignalStatus.INTERPOLATED,
@@ -264,9 +325,7 @@ class TestSignalConsistency:
             }
         )
         step0 = step0.model_copy(
-            update={
-                "observations": {**step0.observations, "state.position": bad_signal}
-            }
+            update={"observations": {**step0.observations, POSITION: bad_signal}}
         )
         steps = [step0] + list(artifact.aligned_episode.steps[1:])
         ae = artifact.aligned_episode.model_copy(update={"steps": steps})
@@ -276,7 +335,7 @@ class TestSignalConsistency:
     def test_invalid_interpolation_bracket_ordering(self) -> None:
         artifact = _valid_artifact()
         step0 = artifact.aligned_episode.steps[0]
-        original = step0.observations["state.position"]
+        original = step0.observations[POSITION]
         bad_signal = original.model_copy(
             update={
                 "status": AlignedSignalStatus.INTERPOLATED,
@@ -287,9 +346,7 @@ class TestSignalConsistency:
             }
         )
         step0 = step0.model_copy(
-            update={
-                "observations": {**step0.observations, "state.position": bad_signal}
-            }
+            update={"observations": {**step0.observations, POSITION: bad_signal}}
         )
         steps = [step0] + list(artifact.aligned_episode.steps[1:])
         ae = artifact.aligned_episode.model_copy(update={"steps": steps})
@@ -301,7 +358,7 @@ class TestSignalConsistency:
 
         artifact = _valid_artifact()
         step0 = artifact.aligned_episode.steps[0]
-        original = step0.observations["state.position"]
+        original = step0.observations[POSITION]
         reference_value = AlignedValue(
             kind=AlignedValueKind.REFERENCE, reference_uri=None
         )
@@ -315,9 +372,7 @@ class TestSignalConsistency:
             }
         )
         step0 = step0.model_copy(
-            update={
-                "observations": {**step0.observations, "state.position": bad_signal}
-            }
+            update={"observations": {**step0.observations, POSITION: bad_signal}}
         )
         steps = [step0] + list(artifact.aligned_episode.steps[1:])
         ae = artifact.aligned_episode.model_copy(update={"steps": steps})
@@ -349,17 +404,13 @@ class TestDescriptiveConditionsAreNotFailures:
     must never fail structural validation."""
 
     def test_large_but_valid_nearest_delta_is_not_a_failure(self) -> None:
-        manifest = EpisodeManifest(
+        manifest = _manifest_of(
             episode_id="ep-1",
             observation_frames=[
-                EpisodeObservationFrame(
-                    timestamp_us=0, channel="state.position", values=[0.0]
-                ),
-                EpisodeObservationFrame(
-                    timestamp_us=9_000_000, channel="state.position", values=[9.0]
-                ),
+                _obs(timestamp_us=0, channel="state.position", values=[0.0]),
+                _obs(timestamp_us=9_000_000, channel="state.position", values=[9.0]),
             ],
-            observation_channels=["state.position"],
+            observation_channels=[POSITION],
             start_timestamp_us=0,
             end_timestamp_us=10_000_000,
             frame_count=2,
@@ -367,7 +418,7 @@ class TestDescriptiveConditionsAreNotFailures:
         config = TemporalAlignmentConfig(
             target_frequency_hz=1.0, tolerance_us=10_000_000
         )
-        aligned = align_episode(manifest, config, _CTX)
+        aligned = align_episode(manifest, config, _CTX, episode_id="ep-1")
         artifact = AlignedEpisodeArtifact(
             source_revision=EpisodeSourceRevision(
                 episode_id="ep-1",
@@ -381,20 +432,18 @@ class TestDescriptiveConditionsAreNotFailures:
         assert report.valid is True
 
     def test_mostly_missing_episode_is_still_structurally_valid(self) -> None:
-        manifest = EpisodeManifest(
+        manifest = _manifest_of(
             episode_id="ep-1",
             observation_frames=[
-                EpisodeObservationFrame(
-                    timestamp_us=0, channel="state.position", values=[0.0]
-                ),
+                _obs(timestamp_us=0, channel="state.position", values=[0.0]),
             ],
-            observation_channels=["state.position"],
+            observation_channels=[POSITION],
             start_timestamp_us=0,
             end_timestamp_us=10_000_000,
             frame_count=1,
         )
         config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=1)
-        aligned = align_episode(manifest, config, _CTX)
+        aligned = align_episode(manifest, config, _CTX, episode_id="ep-1")
         artifact = AlignedEpisodeArtifact(
             source_revision=EpisodeSourceRevision(
                 episode_id="ep-1",

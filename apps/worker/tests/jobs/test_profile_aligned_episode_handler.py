@@ -14,17 +14,17 @@ from sceneops_core.artifacts.schemas import (
     ArtifactRecord,
 )
 from sceneops_core.episodes.alignment import (
-    MCAP_LOG_TIME_CLOCK,
     AlignedEpisodeArtifact,
     EpisodeSourceRevision,
     TemporalAlignmentConfig,
     TemporalSourceContext,
     align_episode,
 )
-from sceneops_core.episodes.schemas import (
-    EpisodeActionFrame,
-    EpisodeManifest,
-    EpisodeObservationFrame,
+from sceneops_core.episodes.testing import (
+    DEFAULT_CLOCK,
+    action,
+    episode_manifest,
+    state,
 )
 from sceneops_core.jobs.schemas import (
     JobManifest,
@@ -46,28 +46,17 @@ _ALIGNED_URI = "mem://episodes/ep-1/aligned/x.json"
 
 
 def _artifact_bytes() -> bytes:
-    manifest = EpisodeManifest(
-        episode_id="ep-1",
-        observation_frames=[
-            EpisodeObservationFrame(
-                timestamp_us=0, channel="state.position", values=[0.0]
-            ),
-            EpisodeObservationFrame(
-                timestamp_us=1_000_000, channel="state.position", values=[1.0]
-            ),
+    manifest = episode_manifest(
+        [
+            state("/vehicle/odom", 0, x=0.0),
+            state("/vehicle/odom", 1_000_000_000, x=1.0),
+            action("/vehicle/control", 0, steering=0.1),
         ],
-        action_frames=[
-            EpisodeActionFrame(timestamp_us=0, channel="steering", value=0.1)
-        ],
-        observation_channels=["state.position"],
-        action_channels=["steering"],
-        start_timestamp_us=0,
-        end_timestamp_us=1_000_000,
-        frame_count=3,
+        window=(0, 1_000_000_001),
     )
     config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
-    ctx = TemporalSourceContext(source_clock=MCAP_LOG_TIME_CLOCK)
-    aligned = align_episode(manifest, config, ctx)
+    ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
+    aligned = align_episode(manifest, config, ctx, episode_id="ep-1")
     artifact = AlignedEpisodeArtifact(
         source_revision=EpisodeSourceRevision(
             episode_id="ep-1",
@@ -91,6 +80,8 @@ def _aligned_record(
         uri=uri,
         owner_type=ArtifactOwnerType.EPISODE.value,
         owner_id="ep-1",
+        dataset_id="d1",
+        dataset_version="v1",
         checksum=checksum,
     )
 
@@ -102,8 +93,6 @@ def _make_context(
     write_should_fail: bool = False,
 ) -> MagicMock:
     context = MagicMock()
-    context.default_dataset_id = "d1"
-    context.default_dataset_version = "v1"
     context.artifact_record_store.get = AsyncMock(return_value=aligned_record)
     context.episode_artifact_store.read_aligned_episode_bytes = AsyncMock(
         return_value=artifact_bytes
@@ -120,7 +109,7 @@ def _make_context(
                 size_bytes=99,
             )
         )
-    context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock()
     context.commit = AsyncMock()
     return context
 
@@ -159,8 +148,8 @@ class TestSuccessfulProfiling:
         assert result.step_count == 2
         assert result.observation_channel_count == 1
         assert result.action_channel_count == 1
-        context.artifact_record_store.create.assert_awaited_once()
-        create_kwargs = context.artifact_record_store.create.await_args.kwargs
+        context.artifact_record_store.register.assert_awaited_once()
+        create_kwargs = context.artifact_record_store.register.await_args.kwargs
         assert create_kwargs["ref"].kind == ArtifactKind.ALIGNED_EPISODE_PROFILE_REPORT
         context.commit.assert_awaited_once()
 
@@ -187,7 +176,7 @@ class TestArtifactNotFound:
         with pytest.raises(AlignedArtifactNotFoundError):
             await ProfileAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
 
 
 class TestChecksumMismatch:
@@ -203,7 +192,7 @@ class TestChecksumMismatch:
         with pytest.raises(AlignedArtifactChecksumMismatchError):
             await ProfileAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
 
 
 class TestWriteFailureLeavesNoRecord:
@@ -221,5 +210,5 @@ class TestWriteFailureLeavesNoRecord:
         with pytest.raises(RuntimeError):
             await ProfileAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()

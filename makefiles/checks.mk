@@ -22,3 +22,10 @@ check-celery:
 .PHONY: check-minio
 check-minio:
 	uv run python scripts/checks/check_minio.py --endpoint "$${MINIO_ENDPOINT:-http://localhost:9000}"
+
+.PHONY: check-commands
+# The supported command surface is internally consistent: exactly five E2E
+# journeys, every advertised target exists, no command or script references
+# deleted architecture.
+check-commands:
+	python3 scripts/checks/command_surface.py

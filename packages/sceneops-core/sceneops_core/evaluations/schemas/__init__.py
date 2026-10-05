@@ -4,7 +4,7 @@ from .enums import (
     LeaderboardSortBy,
     MetricDirection,
 )
-from .manifests import DetectionEvaluationManifest
+from .manifests import DetectionEvaluationManifest, EvaluationInputs
 from .metrics import EvaluationMetricSpec, EvaluationMetricValue
 from .runs import EvaluationRunRecord
 
@@ -16,5 +16,6 @@ __all__ = [
     "EvaluationMetricSpec",
     "EvaluationMetricValue",
     "DetectionEvaluationManifest",
+    "EvaluationInputs",
     "EvaluationRunRecord",
 ]

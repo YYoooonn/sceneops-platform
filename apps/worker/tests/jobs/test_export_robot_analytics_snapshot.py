@@ -9,6 +9,8 @@ table builders (not mocked).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,6 +26,20 @@ from sceneops_worker.jobs.robots.export_robot_analytics_snapshot import (
 )
 
 ROBOT_RUN_ID = "run-1"
+
+
+def _robot_run() -> RobotRunRecord:
+    return RobotRunRecord(
+        run_id=ROBOT_RUN_ID,
+        robot_id="robot-1",
+        started_at=datetime(2026, 1, 1, tzinfo=UTC),
+        ended_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+        recording_format="mcap",
+        source_clock="mcap_log_time",
+        recording_artifact_id=f"art-robotrun-{ROBOT_RUN_ID}",
+        manifest_artifact_id=f"art-robotrunmanifest-{ROBOT_RUN_ID}",
+        manifest_checksum="sha256:" + "1" * 64,
+    )
 
 
 def _state(state_id: str, *, timestamp_us: int) -> RobotStateRecord:
@@ -104,7 +120,7 @@ async def test_raises_if_robot_run_not_found():
 
 
 async def test_exports_both_tables_by_default():
-    robot_run = RobotRunRecord(run_id=ROBOT_RUN_ID, robot_id="robot-1")
+    robot_run = _robot_run()
     states = [_state("s1", timestamp_us=1_000), _state("s2", timestamp_us=2_000)]
     missions = [_mission("mission-1")]
     ctx = _context(robot_run=robot_run, states=states, missions=missions)
@@ -125,7 +141,7 @@ async def test_exports_both_tables_by_default():
 
 
 async def test_respects_requested_table_subset():
-    robot_run = RobotRunRecord(run_id=ROBOT_RUN_ID, robot_id="robot-1")
+    robot_run = _robot_run()
     ctx = _context(
         robot_run=robot_run,
         states=[_state("s1", timestamp_us=1_000)],
@@ -146,7 +162,7 @@ async def test_respects_requested_table_subset():
 
 
 async def test_empty_states_and_missions_produce_empty_but_valid_tables():
-    robot_run = RobotRunRecord(run_id=ROBOT_RUN_ID, robot_id="robot-1")
+    robot_run = _robot_run()
     ctx = _context(robot_run=robot_run, states=[], missions=[])
 
     handler = ExportRobotAnalyticsSnapshotJobHandler()

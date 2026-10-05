@@ -6,28 +6,30 @@ from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
 from sceneops_worker.jobs.dataset import (
     AlignEpisodeJobHandler,
-    BuildDatasetManifestJobHandler,
-    BuildEpisodesJobHandler,
-    BuildSceneIndexJobHandler,
-    BuildScenesJobHandler,
+    BuildRecordingEpisodesJobHandler,
+    BuildRecordingScenesJobHandler,
     CurateEpisodesJobHandler,
     ExportAnalyticsSnapshotJobHandler,
     ExportLearningDataJobHandler,
-    IngestScenesJobHandler,
     ProfileAlignedEpisodeJobHandler,
     ProfileEpisodeJobHandler,
     ProfileSceneJobHandler,
-    RegisterEpisodeJobHandler,
-    RegisterSceneJobHandler,
+    RegisterEpisodesJobHandler,
+    RegisterScenesJobHandler,
     ValidateAlignedEpisodeJobHandler,
     ValidateEpisodeJobHandler,
     ValidateSceneJobHandler,
+)
+from sceneops_worker.jobs.derived import (
+    BuildSceneSampleViewsJobHandler,
+    ImportLabelsJobHandler,
 )
 from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.inference import PredictDetectionJobHandler
 from sceneops_worker.jobs.robots import (
     ExportRobotAnalyticsSnapshotJobHandler,
     IngestRobotStatesJobHandler,
+    RegisterRobotRunJobHandler,
 )
 from sceneops_worker.jobs.scenarios import (
     MineScenariosJobHandler,
@@ -63,22 +65,22 @@ class JobHandlerRegistry:
 def create_default_job_handler_registry() -> JobHandlerRegistry:
     return JobHandlerRegistry(
         handlers=[
-            IngestScenesJobHandler(),
-            RegisterSceneJobHandler(),
-            BuildSceneIndexJobHandler(),
-            BuildScenesJobHandler(),
+            BuildRecordingScenesJobHandler(),
+            RegisterScenesJobHandler(),
+            ImportLabelsJobHandler(),
+            BuildSceneSampleViewsJobHandler(),
             ValidateSceneJobHandler(),
             ProfileSceneJobHandler(),
-            BuildDatasetManifestJobHandler(),
             ExportAnalyticsSnapshotJobHandler(),
             PredictDetectionJobHandler(),
             EvaluateDetectionJobHandler(),
             MineScenariosJobHandler(),
             ScoreScenarioReadinessJobHandler(),
+            RegisterRobotRunJobHandler(),
             IngestRobotStatesJobHandler(),
             ExportRobotAnalyticsSnapshotJobHandler(),
-            BuildEpisodesJobHandler(),
-            RegisterEpisodeJobHandler(),
+            BuildRecordingEpisodesJobHandler(),
+            RegisterEpisodesJobHandler(),
             ValidateEpisodeJobHandler(),
             ProfileEpisodeJobHandler(),
             AlignEpisodeJobHandler(),

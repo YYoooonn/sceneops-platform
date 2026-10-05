@@ -48,9 +48,7 @@ def generate_fixed_frequency_timeline(
     """
     if start_timestamp_us is None or end_timestamp_us is None:
         raise InvalidEpisodeBoundsError(
-            "EpisodeManifest.start_timestamp_us/end_timestamp_us must both "
-            "be present for alignment — the engine never infers replacement "
-            "bounds (SceneOps V2 Request 2.1B §3)"
+            "timeline bounds start_timestamp_us/end_timestamp_us must both be present"
         )
     if start_timestamp_us > end_timestamp_us:
         raise InvalidEpisodeBoundsError(

@@ -1,36 +1,28 @@
-"""Tests for evaluation artifact writers.
-
-Covers:
-- write_skipped_evaluation_manifest sets evaluation_manifest_uri (non-None)
-- write_final_evaluation_manifest sets evaluation_manifest_uri (non-None)
-- "no ground truth" evaluation path returns manifest with non-None evaluation_manifest_uri
-- "no evaluable shards" evaluation path returns manifest with non-None evaluation_manifest_uri
-- skipped manifests still write to the artifact store
-"""
+"""Evaluation artifact writers: the manifest records the exact pins it
+consumed and always names the artifacts it wrote."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
-from sceneops_core.inference.schemas.manifests import DetectionPredictionManifest
+from sceneops_core.evaluations.schemas import EvaluationInputs
+from sceneops_core.inference.schemas import (
+    DetectionPredictionManifest,
+    PredictionRevisionRef,
+)
+from sceneops_core.labels import LabelSetRef
+from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.artifacts import (
     write_final_evaluation_manifest,
     write_skipped_evaluation_manifest,
 )
-from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.base import DetectionEvaluationRequest
-from sceneops_worker.evaluation.detection.center_distance import (
-    evaluate_center_distance_detection,
-)
-from sceneops_worker.evaluation.detection.loading import (
-    EvaluationSceneEntry,
-)
-
+from tests.derived.labels_support import label_document
 
 EVAL_MANIFEST_URI = "file:///runs/evaluations/eval-001/evaluation.json"
 METRICS_URI = "file:///runs/evaluations/eval-001/metrics.json"
 SAMPLES_ROOT_URI = "file:///runs/evaluations/eval-001/samples/"
+CHECKSUM = "sha256:" + "a" * 64
 
 
 def _run_store() -> MagicMock:
@@ -39,181 +31,90 @@ def _run_store() -> MagicMock:
     store.evaluation_run_metrics_uri = MagicMock(return_value=METRICS_URI)
     store.evaluation_samples_root_uri = MagicMock(return_value=SAMPLES_ROOT_URI)
     store.write_evaluation_run_manifest = AsyncMock(return_value=EVAL_MANIFEST_URI)
-    store.write_sample_evaluation_manifest = AsyncMock(return_value=None)
     return store
 
 
-def _prediction_manifest(prediction_count: int = 0) -> DetectionPredictionManifest:
-    return DetectionPredictionManifest(
+def _request() -> DetectionEvaluationRequest:
+    prediction = DetectionPredictionManifest(
         inference_run_id="infer-001",
-        dataset_id="nuscenes",
-        dataset_version="v1.0-mini",
-        model_id="dummy",
-        model_version="v1",
+        dataset_id="ds",
+        dataset_version="v1",
+        config={"model_id": "dummy", "model_version": "v1"},
+        inputs=[],
+        scene_count=0,
+        sample_count=0,
+        prediction_count=0,
+        evaluable_prediction_count=0,
+        lifting_succeeded_count=0,
+        lifting_failed_count=0,
+        lifting_not_applicable_count=0,
         prediction_shards=[],
     )
-
-
-def _skipped_request() -> DetectionEvaluationRequest:
-    dataset_manifest = MagicMock()
-    dataset_manifest.dataset_id = "nuscenes"
-    dataset_manifest.dataset_version = "v1.0-mini"
-    dataset_manifest.scenes = []
     return DetectionEvaluationRequest(
-        dataset_manifest=dataset_manifest,
-        scene_artifact_store=MagicMock(),
-        run_artifact_store=_run_store(),
-        inference_run_id="infer-001",
         evaluation_run_id="eval-001",
-        match_distance_m=2.0,
-    )
-
-
-# ── write_skipped_evaluation_manifest ────────────────────────────────────────
-
-
-async def test_skipped_manifest_has_non_null_evaluation_manifest_uri():
-    """write_skipped_evaluation_manifest must set evaluation_manifest_uri."""
-    request = _skipped_request()
-    manifest = await write_skipped_evaluation_manifest(
-        request=request,
-        prediction_manifest=_prediction_manifest(),
-        reason="no ground truth",
-    )
-    assert isinstance(manifest, DetectionEvaluationManifest)
-    assert manifest.evaluation_manifest_uri is not None
-    assert manifest.evaluation_manifest_uri == EVAL_MANIFEST_URI
-
-
-async def test_skipped_manifest_status_is_skipped():
-    request = _skipped_request()
-    manifest = await write_skipped_evaluation_manifest(
-        request=request,
-        prediction_manifest=_prediction_manifest(),
-        reason="test skip",
-    )
-    assert manifest.status == "skipped"
-
-
-async def test_skipped_manifest_reason_in_metadata():
-    request = _skipped_request()
-    manifest = await write_skipped_evaluation_manifest(
-        request=request,
-        prediction_manifest=_prediction_manifest(),
-        reason="no_gt",
-        metadata={"extra": "value"},
-    )
-    assert manifest.metadata.get("reason") == "no_gt"
-    assert manifest.metadata.get("extra") == "value"
-
-
-async def test_skipped_manifest_writes_to_artifact_store():
-    request = _skipped_request()
-    await write_skipped_evaluation_manifest(
-        request=request,
-        prediction_manifest=_prediction_manifest(),
-        reason="no ground truth",
-    )
-    request.run_artifact_store.write_evaluation_run_manifest.assert_called_once()
-
-
-# ── write_final_evaluation_manifest ──────────────────────────────────────────
-
-
-async def test_final_manifest_has_non_null_evaluation_manifest_uri():
-    """write_final_evaluation_manifest must set evaluation_manifest_uri."""
-    request = _skipped_request()
-    accumulator = EvaluationAccumulator()
-    manifest = await write_final_evaluation_manifest(
-        request=request,
-        prediction_manifest=_prediction_manifest(),
-        accumulator=accumulator,
-        evaluated_sample_count=1,
-    )
-    assert manifest.evaluation_manifest_uri is not None
-    assert manifest.evaluation_manifest_uri == EVAL_MANIFEST_URI
-
-
-async def test_final_manifest_has_non_null_metrics_uri():
-    request = _skipped_request()
-    accumulator = EvaluationAccumulator()
-    manifest = await write_final_evaluation_manifest(
-        request=request,
-        prediction_manifest=_prediction_manifest(),
-        accumulator=accumulator,
-        evaluated_sample_count=1,
-    )
-    assert manifest.metrics_uri is not None
-    assert manifest.metrics_uri == METRICS_URI
-
-
-# ── full skipped evaluation paths ─────────────────────────────────────────────
-
-
-def _no_gt_request() -> DetectionEvaluationRequest:
-    """Request where all scenes have zero annotation_count → triggers skipped path."""
-    dataset_manifest = MagicMock()
-    dataset_manifest.dataset_id = "nuscenes"
-    dataset_manifest.dataset_version = "v1.0-mini"
-
-    no_gt_entry = EvaluationSceneEntry(
-        scene_id="scene-001",
-        scene_manifest_uri="file:///scenes/scene-001/manifest.json",
-        manifest=MagicMock(
-            scene_id="scene-001",
-            annotation_count=0,
-            sample_count=2,
-            frame_count=4,
-            has_ground_truth=False,
-            ground_truth_source=None,
-            samples=[],
+        inference_run_id="infer-001",
+        dataset_id="ds",
+        dataset_version="v1",
+        inputs=EvaluationInputs(
+            prediction=PredictionRevisionRef(
+                inference_run_id="infer-001",
+                manifest_artifact_id="predmanifest-1",
+                manifest_checksum=CHECKSUM,
+            ),
+            label_set=LabelSetRef(
+                label_set_id="gt",
+                manifest_artifact_id="labelset-1",
+                manifest_checksum=CHECKSUM,
+            ),
         ),
-        sample_count=2,
-        frame_count=4,
-        annotation_count=0,
-        has_ground_truth=False,
-        ground_truth_source=None,
-    )
-    dataset_manifest.scenes = [
-        MagicMock(
-            scene_id="scene-001",
-            scene_manifest_uri="file:///scenes/scene-001/manifest.json",
-        )
-    ]
-
-    run_store = _run_store()
-    run_store.load_inference_prediction_manifest = AsyncMock(
-        return_value=DetectionPredictionManifest(
-            inference_run_id="infer-001",
-            dataset_id="nuscenes",
-            dataset_version="v1.0-mini",
-            model_id="dummy",
-            model_version="v1",
-            prediction_shards=[],
-        )
-    )
-
-    scene_store = MagicMock()
-    scene_store.load_scene_manifest = AsyncMock(
-        return_value=no_gt_entry.manifest,
-    )
-
-    return DetectionEvaluationRequest(
-        dataset_manifest=dataset_manifest,
-        scene_artifact_store=scene_store,
-        run_artifact_store=run_store,
-        inference_run_id="infer-001",
-        evaluation_run_id="eval-001",
+        prediction=prediction,
+        label_set=label_document("gt", covered=[1]),
+        views={},
+        run_artifact_store=_run_store(),
         match_distance_m=2.0,
     )
 
 
-async def test_no_gt_dataset_skipped_manifest_has_non_null_evaluation_manifest_uri():
-    """When the whole dataset has no GT, the returned manifest has evaluation_manifest_uri set."""
-    request = _no_gt_request()
-    manifest = await evaluate_center_distance_detection(request)
-    assert manifest.status == "skipped"
-    assert manifest.evaluation_manifest_uri is not None, (
-        "evaluation_manifest_uri must not be None — "
-        "this would cause ArtifactRef(uri=None) in evaluate_detection"
+async def test_skipped_manifest_records_inputs_reason_and_location():
+    request = _request()
+    manifest = await write_skipped_evaluation_manifest(
+        request=request, reason="no covered samples", metadata={"x": 1}
     )
+    assert manifest.status == "skipped"
+    assert manifest.evaluation_manifest_uri == EVAL_MANIFEST_URI
+    assert manifest.inputs == request.inputs
+    assert manifest.metadata == {"x": 1, "reason": "no covered samples"}
+    assert (manifest.model_id, manifest.model_version) == ("dummy", "v1")
+    request.run_artifact_store.write_evaluation_run_manifest.assert_awaited_once()
+
+
+async def test_final_manifest_records_inputs_locations_and_metrics():
+    request = _request()
+    accumulator = EvaluationAccumulator()
+    accumulator.add(
+        {
+            "tp": 3,
+            "fp": 1,
+            "fn": 1,
+            "total_center_distance_error": 1.5,
+            "matched_count": 3,
+            "prediction_count": 5,
+            "class_metrics": {"vehicle.car": {"tp": 3, "fp": 1, "fn": 1}},
+            "not_localized_prediction_count": 1,
+        }
+    )
+    manifest = await write_final_evaluation_manifest(
+        request=request, accumulator=accumulator, evaluated_sample_count=2
+    )
+    assert manifest.status == "succeeded"
+    assert manifest.inputs == request.inputs
+    assert (manifest.evaluation_manifest_uri, manifest.metrics_uri) == (
+        EVAL_MANIFEST_URI,
+        METRICS_URI,
+    )
+    assert manifest.samples_root_uri == SAMPLES_ROOT_URI
+    assert manifest.evaluation_unit == "label"
+    assert manifest.ground_truth_count == 4
+    assert manifest.metrics["not_localized_prediction_count"] == 1
+    assert manifest.primary_metric_name == "precision"
+    assert manifest.primary_metric_value == 0.75

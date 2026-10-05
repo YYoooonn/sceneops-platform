@@ -24,7 +24,7 @@ from sceneops_analytics import (
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
+from sceneops_core.common.derived_ids import derived_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.alignment import (
     AlignedEpisodeArtifact,
@@ -107,13 +107,18 @@ class ExportLearningDataJobHandler(
         return ExportLearningDataJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
+        params: JsonDict = {
             "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
             "dataset_version": inputs.dataset.dataset_version
             if inputs.dataset
             else None,
             **inputs.params,
         }
+        # In a pipeline the inputs are the aligned revisions the upstream
+        # align_episode stage published, pinned by checksum.
+        if "inputs" not in params and inputs.refs.get("export_inputs"):
+            params["inputs"] = inputs.refs["export_inputs"]
+        return params
 
     async def run(
         self,
@@ -329,8 +334,12 @@ class ExportLearningDataJobHandler(
         owner_id = f"{dataset_id}:{dataset_version}"
 
         for table_name, uri in table_uris.items():
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
+            await context.artifact_record_store.register(
+                artifact_id=derived_artifact_id(
+                    prefix="lexporttable",
+                    logical_id=f"{export_id}:{table_name}",
+                    checksum=table_checksums[table_name],
+                ),
                 ref=ArtifactRef(
                     kind=ArtifactKind.ANALYTICS_TABLE,
                     uri=uri,
@@ -361,8 +370,12 @@ class ExportLearningDataJobHandler(
                 for shard in getattr(shard_index, table_name):
                     if shard.uri in reused_shard_uris:
                         continue
-                    await context.artifact_record_store.create(
-                        artifact_id=generate_artifact_id(),
+                    await context.artifact_record_store.register(
+                        artifact_id=derived_artifact_id(
+                            prefix="lexportshard",
+                            logical_id=f"{export_id}:{table_name}:{shard.shard_index}",
+                            checksum=shard.checksum,
+                        ),
                         ref=ArtifactRef(
                             kind=ArtifactKind.ANALYTICS_TABLE,
                             uri=shard.uri,
@@ -383,8 +396,12 @@ class ExportLearningDataJobHandler(
                         pipeline_run_id=job.pipeline_run_id,
                     )
 
-        manifest_artifact_id = generate_artifact_id()
-        await context.artifact_record_store.create(
+        manifest_artifact_id = derived_artifact_id(
+            prefix="lexport",
+            logical_id=export_id,
+            checksum=manifest_write_result.checksum,
+        )
+        await context.artifact_record_store.register(
             artifact_id=manifest_artifact_id,
             ref=ArtifactRef(
                 kind=ArtifactKind.LEARNING_DATA_EXPORT_MANIFEST,

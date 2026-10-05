@@ -44,28 +44,14 @@ class PipelineService:
         *,
         pipeline_repository: PipelineRunRepository,
         task_repository: PipelineTaskRunRepository,
-        default_dataset_id: str,
-        default_dataset_version: str,
     ) -> None:
         self._pipeline_repository = pipeline_repository
         self._task_repository = task_repository
-        self._default_dataset_id = default_dataset_id
-        self._default_dataset_version = default_dataset_version
 
     # --- definitions (no DB) ---
 
-    def list_pipeline_definitions(
-        self,
-        *,
-        include_experimental: bool = False,
-    ) -> list[PipelineDefinition]:
-        return [
-            d
-            for d in BUILTIN_PIPELINE_DEFINITIONS
-            if d.supported
-            and d.implemented
-            and (include_experimental or not d.experimental)
-        ]
+    def list_pipeline_definitions(self) -> list[PipelineDefinition]:
+        return list(BUILTIN_PIPELINE_DEFINITIONS)
 
     def get_pipeline_definition(
         self, pipeline_type: PipelineType
@@ -84,14 +70,8 @@ class PipelineService:
         now = utc_now()
         definition = get_pipeline_definition(request.type)
 
-        if not definition.supported or not definition.implemented:
-            raise ValueError(
-                f"Pipeline '{request.type}' is not currently supported because it "
-                "contains unimplemented tasks."
-            )
-
-        dataset_id = request.dataset_id or self._default_dataset_id
-        dataset_version = request.dataset_version or self._default_dataset_version
+        dataset_id = request.dataset_id
+        dataset_version = request.dataset_version
 
         execution_key = compute_execution_key(
             kind="pipeline_run",

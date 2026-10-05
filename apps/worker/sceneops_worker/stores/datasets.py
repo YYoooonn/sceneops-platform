@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.datasets.schemas import (
-    DatasetRecord,
-    DatasetVersionRecord,
-    DatasetValidationStatus,
-)
+from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
 from sceneops_db.postgres import (
     PostgresDatasetRepository,
     PostgresDatasetVersionRepository,
@@ -55,41 +51,24 @@ class DatasetStore:
             dataset_id=dataset_id, version=version
         )
 
-    async def update_scene_summary(
+    async def replace_scene_membership_summary(
         self,
         *,
         dataset_id: str,
         version: str,
-        scene_count: int | None = None,
-        sample_count: int | None = None,
-        frame_count: int | None = None,
-        channels: list[str] | None = None,
-        required_channels: list[str] | None = None,
-        manifest_uri: str | None = None,
-        raw_source_root_uri: str | None = None,
-        latest_validation_run_id: str | None = None,
-        validation_status: DatasetValidationStatus | None = None,
-        should_block_pipeline: bool | None = None,
-        validation_report_uri: str | None = None,
-        latest_profile_run_id: str | None = None,
-        profile_report_uri: str | None = None,
+        scene_count: int,
+        keyframe_count: int,
+        observation_count: int,
+        observed_channels: list[str],
     ) -> DatasetVersionRecord:
-        return await self._versions.update_scene_summary(
+        """Scene registrar only, under ``lock_version_for_update``."""
+        return await self._versions.replace_scene_membership_summary(
             dataset_id=dataset_id,
             version=version,
             scene_count=scene_count,
-            sample_count=sample_count,
-            frame_count=frame_count,
-            channels=channels,
-            required_channels=required_channels,
-            manifest_uri=manifest_uri,
-            raw_source_root_uri=raw_source_root_uri,
-            latest_validation_run_id=latest_validation_run_id,
-            validation_status=validation_status,
-            should_block_pipeline=should_block_pipeline,
-            validation_report_uri=validation_report_uri,
-            latest_profile_run_id=latest_profile_run_id,
-            profile_report_uri=profile_report_uri,
+            keyframe_count=keyframe_count,
+            observation_count=observation_count,
+            observed_channels=observed_channels,
         )
 
     async def update_episode_summary(

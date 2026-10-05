@@ -16,7 +16,7 @@ def _make_pipeline_run(params: dict) -> PipelineRunManifest:
     now = utc_now()
     return PipelineRunManifest(
         pipeline_run_id="run-001",
-        type=PipelineType.DATASET_SCENE_INGESTION,
+        type=PipelineType.RECORDING_SCENE_BUILDING,
         status=PipelineRunStatus.RUNNING,
         params=params,
         created_at=now,

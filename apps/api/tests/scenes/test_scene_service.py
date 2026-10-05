@@ -20,12 +20,7 @@ import pytest
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
 from sceneops_core.runs.schemas import RunStatus, RunType
-from sceneops_core.scenes.schemas import (
-    SceneGenerationMethod,
-    SceneOriginType,
-    SceneRecord,
-    SceneStatus,
-)
+from sceneops_core.scenes.schemas import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
@@ -38,29 +33,15 @@ class FakeSceneRepository:
     def __init__(self, scenes: list[SceneRecord] | None = None) -> None:
         self.scenes: dict[str, SceneRecord] = {s.scene_id: s for s in (scenes or [])}
 
-    async def create(self, scene: SceneRecord) -> SceneRecord:
-        self.scenes[scene.scene_id] = scene
-        return scene
-
-    async def upsert(self, scene: SceneRecord) -> SceneRecord:
-        self.scenes[scene.scene_id] = scene
-        return scene
-
     async def get(self, scene_id: str) -> SceneRecord | None:
         return self.scenes.get(scene_id)
-
-    async def update(self, scene: SceneRecord) -> SceneRecord:
-        self.scenes[scene.scene_id] = scene
-        return scene
 
     async def list(
         self,
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        status: SceneStatus | None = None,
-        origin_type: SceneOriginType | None = None,
-        generation_method: SceneGenerationMethod | None = None,
+        robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[SceneRecord]:
@@ -69,12 +50,8 @@ class FakeSceneRepository:
             results = [s for s in results if s.dataset_id == dataset_id]
         if dataset_version is not None:
             results = [s for s in results if s.dataset_version == dataset_version]
-        if status is not None:
-            results = [s for s in results if s.status == status]
-        if origin_type is not None:
-            results = [s for s in results if s.origin_type == origin_type]
-        if generation_method is not None:
-            results = [s for s in results if s.generation_method == generation_method]
+        if robot_run_id is not None:
+            results = [s for s in results if s.robot_run_id == robot_run_id]
         return results[offset : offset + limit]
 
 
@@ -98,6 +75,7 @@ class FakeSceneRunRepository:
         type: RunType | None = None,
         status: RunStatus | None = None,
         scene_id: str | None = None,
+        manifest_artifact_id: str | None = None,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
         job_id: str | None = None,
@@ -108,13 +86,19 @@ class FakeSceneRunRepository:
         results = list(self.runs)
         if type is not None:
             results = [r for r in results if r.type == type]
+        if status is not None:
+            results = [r for r in results if r.status == status]
         if scene_id is not None:
             results = [r for r in results if r.scene_id == scene_id]
+        if manifest_artifact_id is not None:
+            results = [
+                r for r in results if r.manifest_artifact_id == manifest_artifact_id
+            ]
         # Newest-first, matching PostgresSceneRunRepository.list ordering.
         results = sorted(results, key=lambda r: r.created_at or 0, reverse=True)
         return results[offset : offset + limit]
 
-    async def list_latest_by_dataset_version(self, **kwargs):
+    async def latest_succeeded_for_current_revisions(self, **kwargs):
         raise NotImplementedError
 
 
@@ -155,9 +139,16 @@ def _scene(scene_id: str, **overrides) -> SceneRecord:
         scene_id=scene_id,
         dataset_id="nuscenes",
         dataset_version="v1.0-mini",
-        status=SceneStatus.BUILT,
-        sample_count=10,
-        frame_count=20,
+        robot_run_id="run-0",
+        unit_key=scene_id,
+        window_clock="mcap_log_time",
+        window_start_timestamp_ns=0,
+        window_end_timestamp_ns=20_000_000_000,
+        producer_fingerprint="sha256:" + "a" * 64,
+        manifest_artifact_id=f"art-{scene_id}-rev-2",
+        manifest_checksum="sha256:" + "2" * 64,
+        observation_count=20,
+        keyframe_count=10,
     )
     defaults.update(overrides)
     return SceneRecord(**defaults)
@@ -203,15 +194,10 @@ async def test_list_scenes_filters_by_dataset_version():
 
 
 @pytest.mark.asyncio
-async def test_list_scenes_filters_by_status():
-    service, _, _ = _service(
-        scenes=[
-            _scene("s1", status=SceneStatus.BUILT),
-            _scene("s2", status=SceneStatus.VALIDATED),
-        ]
-    )
-    result = await service.list_scenes(status=SceneStatus.VALIDATED)
-    assert [s.scene_id for s in result.scenes] == ["s2"]
+async def test_list_scenes_filters_by_robot_run():
+    service, _, _ = _service(scenes=[_scene("s1"), _scene("s2", robot_run_id="run-1")])
+    by_run = await service.list_scenes(robot_run_id="run-1")
+    assert [s.scene_id for s in by_run.scenes] == ["s2"]
 
 
 @pytest.mark.asyncio
@@ -293,22 +279,75 @@ async def test_get_scene_quality_missing_scene_returns_none():
     assert result is None
 
 
+def _pinned(run_cls, run_id, scene, *, revision="current", **fields):
+    artifact_id, checksum = (
+        (scene.manifest_artifact_id, scene.manifest_checksum)
+        if revision == "current"
+        else (f"art-{scene.scene_id}-rev-1", "sha256:" + "1" * 64)
+    )
+    return run_cls(
+        run_id=run_id,
+        scene_id=scene.scene_id,
+        manifest_artifact_id=artifact_id,
+        manifest_checksum=checksum,
+        status=RunStatus.SUCCEEDED,
+        **fields,
+    )
+
+
 @pytest.mark.asyncio
-async def test_get_scene_quality_uses_latest_validation_and_profile_runs():
-    scene = _scene("s1", status=SceneStatus.PROFILED)
-    validation_run = SceneValidationRunRecord(
-        run_id="val-1",
-        scene_id="s1",
-        status=RunStatus.SUCCEEDED,
+async def test_get_scene_quality_uses_runs_of_the_current_revision():
+    from datetime import UTC, datetime
+
+    scene = _scene("s1")
+    current_validation = _pinned(
+        SceneValidationRunRecord,
+        "val-1",
+        scene,
         validation_status="ready",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
-    profile_run = SceneProfileRunRecord(
-        run_id="prof-1",
-        scene_id="s1",
-        status=RunStatus.SUCCEEDED,
-        sample_count=10,
+    # Newer, but for the superseded revision: must not shadow the current one.
+    stale_validation = _pinned(
+        SceneValidationRunRecord,
+        "val-2",
+        scene,
+        revision="previous",
+        validation_status="failed",
+        should_block_pipeline=True,
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
     )
-    service, _, _ = _service(scenes=[scene], runs=[validation_run, profile_run])
+    profile_run = _pinned(
+        SceneProfileRunRecord,
+        "prof-1",
+        scene,
+        keyframe_count=10,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    service, _, _ = _service(
+        scenes=[scene], runs=[current_validation, stale_validation, profile_run]
+    )
 
     result = await service.get_scene_quality("s1")
     assert result is not None
+    assert result.validation.run_id == "val-1"
+    assert result.readiness == "ready"
+    assert result.profile.run_id == "prof-1"
+    assert result.profile.keyframe_count == 10
+
+
+@pytest.mark.asyncio
+async def test_get_scene_quality_without_current_revision_runs_is_unknown():
+    scene = _scene("s1")
+    stale = _pinned(
+        SceneValidationRunRecord,
+        "val-old",
+        scene,
+        revision="previous",
+        validation_status="ready",
+    )
+    service, _, _ = _service(scenes=[scene], runs=[stale])
+
+    result = await service.get_scene_quality("s1")
+    assert result.validation is None
+    assert result.readiness == "unknown"

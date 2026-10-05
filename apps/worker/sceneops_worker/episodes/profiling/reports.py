@@ -5,22 +5,32 @@ from pydantic import Field
 from sceneops_core.common.schemas import SceneOpsBaseModel
 
 
+class EpisodeStreamProfile(SceneOpsBaseModel):
+    topic: str
+    role: str
+    source_clock: str
+    count: int = 0
+    first_timestamp_ns: int | None = None
+    last_timestamp_ns: int | None = None
+    # Occurrences that share their timestamp with an earlier one of the same
+    # stream; kept as separate occurrences in the canonical Episode.
+    duplicate_timestamp_count: int = 0
+
+
 class EpisodeProfileResult(SceneOpsBaseModel):
     episode_id: str
 
-    frame_count: int = 0
     observation_count: int = 0
+    state_count: int = 0
     action_count: int = 0
+    event_count: int = 0
 
-    observation_channels: list[str] = Field(default_factory=list)
-    action_channels: list[str] = Field(default_factory=list)
+    observation_topics: list[str] = Field(default_factory=list)
+    state_topics: list[str] = Field(default_factory=list)
+    action_topics: list[str] = Field(default_factory=list)
+    event_topics: list[str] = Field(default_factory=list)
 
-    control_frequency_hz: float | None = None
+    window_clock: str
+    window_duration_ns: int
 
-    start_timestamp_us: int | None = None
-    end_timestamp_us: int | None = None
-    duration_us: int | None = None
-
-    task: str | None = None
-    outcome: str | None = None
-    mission_id: str | None = None
+    streams: list[EpisodeStreamProfile] = Field(default_factory=list)

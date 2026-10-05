@@ -44,7 +44,7 @@ from sceneops_core.artifacts.schemas import (  # noqa: E402
     ArtifactKind,
     ArtifactRef,
 )
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef  # noqa: E402
+from sceneops_core.integration_runtime import ExternalDatasetRef  # noqa: E402
 from sceneops_core.integration_runtime import (  # noqa: E402
     CanonicalDatasetRef,
     IntegrationOperation,
@@ -117,21 +117,6 @@ async def test_execute_runs_a_real_lerobot_export_and_returns_a_result(tmp_path)
     # the camelCase IntegrationResult envelope.
     assert result.result_metadata["exportedEpisodeCount"] == 3
     assert result.result_metadata["exportedStepCount"] == 22
-
-
-async def test_execute_rejects_ingest_operation(tmp_path):
-    bootstrap = await build_interop_test_dataset(tmp_path)
-    manifest_ref = await _write_manifest_artifact(bootstrap, tmp_path)
-    # INGEST forbids the EXPORT-only non-empty canonical_inputs validation,
-    # so build the request as EXPORT first, then flip the field directly --
-    # this test targets execute()'s own format/operation check, not
-    # IntegrationRequest's construction-time validator.
-    request = _request(tmp_path, manifest_ref=manifest_ref).model_copy(
-        update={"operation": IntegrationOperation.INGEST}
-    )
-
-    with pytest.raises(IntegrationRuntimeError, match="unsupported operation 'ingest'"):
-        await execute(request, artifact_store=bootstrap.artifact_store)
 
 
 async def test_execute_rejects_non_lerobot_format(tmp_path):

@@ -57,7 +57,7 @@ def get_pipeline_execution_backend(
         a = settings.execution.airflow
         return AirflowPipelineExecutionBackend(
             base_url=a.base_url,
-            pipeline_dag_id=a.pipeline_dag_id,
+            pipeline_dag_prefix=a.pipeline_dag_prefix,
             username=a.username,
             password=a.password,
         )

@@ -88,26 +88,50 @@ class TestExecutionKeyIdentityMatrix:
         )
 
 
+CLOCK = "mcap_log_time"
+
+
 class TestAlignmentKeyIdentity:
     def test_same_config_same_semantics_same_key(self) -> None:
         config = TemporalAlignmentConfig(target_frequency_hz=1.0)
-        assert alignment_key(config, "v1") == alignment_key(config, "v1")
+        assert alignment_key(config, "v1", CLOCK) == alignment_key(config, "v1", CLOCK)
 
     def test_different_config_different_key(self) -> None:
         a = TemporalAlignmentConfig(target_frequency_hz=1.0)
         b = TemporalAlignmentConfig(target_frequency_hz=2.0)
-        assert alignment_key(a, "v1") != alignment_key(b, "v1")
+        assert alignment_key(a, "v1", CLOCK) != alignment_key(b, "v1", CLOCK)
 
     def test_different_semantics_version_different_key(self) -> None:
         config = TemporalAlignmentConfig(target_frequency_hz=1.0)
-        assert alignment_key(config, "v1") != alignment_key(config, "v2")
+        assert alignment_key(config, "v1", CLOCK) != alignment_key(config, "v2", CLOCK)
+
+    def test_the_alignment_clock_is_part_of_the_recipe(self) -> None:
+        # The same config aligned on another clock is another result; sharing
+        # a key would let two different results claim one artifact URI.
+        config = TemporalAlignmentConfig(target_frequency_hz=1.0)
+        assert alignment_key(config, "v1", CLOCK) != alignment_key(
+            config, "v1", "sensor.header_stamp"
+        )
+
+    def test_every_config_field_participates(self) -> None:
+        base = TemporalAlignmentConfig(target_frequency_hz=1.0)
+        variants = [
+            TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=5),
+            TemporalAlignmentConfig(target_frequency_hz=1.0, max_gap_us=5),
+            TemporalAlignmentConfig(
+                target_frequency_hz=1.0, channel_policies={"c": {"policy": "previous"}}
+            ),
+            TemporalAlignmentConfig(target_frequency_hz=1.0, metadata={"note": "x"}),
+        ]
+        keys = {alignment_key(v, "v1", CLOCK) for v in variants}
+        assert len(keys) == len(variants)
+        assert alignment_key(base, "v1", CLOCK) not in keys
 
     def test_does_not_depend_on_source_content_at_all(self) -> None:
-        # By construction alignment_key() takes no source-hash argument --
-        # it is deliberately source-independent (Request 2.3 §14), so the
-        # *same* config+semantics maps to the *same* key regardless of
-        # which episode/source it will end up paired with in the URI.
+        # alignment_key() takes no source-hash argument -- it is deliberately
+        # source-independent (Request 2.3 §14), so the same recipe maps to
+        # the same key whichever episode/source it ends up paired with.
         config = TemporalAlignmentConfig(target_frequency_hz=1.0)
-        key_for_episode_a = alignment_key(config, "v1")
-        key_for_episode_b = alignment_key(config, "v1")
+        key_for_episode_a = alignment_key(config, "v1", CLOCK)
+        key_for_episode_b = alignment_key(config, "v1", CLOCK)
         assert key_for_episode_a == key_for_episode_b

@@ -1,0 +1,34 @@
+{
+  "channels": [
+    {
+      "topic": "/camera/front/image/compressed",
+      "modality": "camera",
+      "sensor_id": "cam-front",
+      "time": {"source": "header_stamp", "clock": "sensor.header_stamp"},
+      "payload": "compressed_image",
+      "camera_info_topic": "/camera/front/camera_info"
+    },
+    {
+      "topic": "/lidar/top/points",
+      "modality": "lidar",
+      "sensor_id": "lidar-top",
+      "time": {"source": "header_stamp", "clock": "sensor.header_stamp"},
+      "payload": "ros2_message"
+    }
+  ],
+  "frames": {"ego_frame_id": "base_link", "world_frame_id": "map"},
+  "calibration": {"static_transform_topics": ["/tf_static"]},
+  "poses": [
+    {
+      "topic": "/tf",
+      "parent_frame_id": "map",
+      "child_frame_id": "base_link",
+      "time": {"source": "header_stamp", "clock": "sensor.header_stamp"}
+    }
+  ],
+  "segmentation": {
+    "policy": "fixed_duration",
+    "clock": "sensor.header_stamp",
+    "duration_ns": 8000000000
+  }
+}

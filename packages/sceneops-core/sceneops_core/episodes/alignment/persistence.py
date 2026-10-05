@@ -18,21 +18,14 @@ ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION = "v1"
 
 
 class EpisodeSourceRevision(SceneOpsBaseModel):
-    """Identifies the exact EpisodeManifest revision an AlignedEpisode was
-    computed from (SceneOps V2 Request 2.1B §15/§16, Request 2.3 §5-7).
+    """The exact canonical EpisodeManifest revision an AlignedEpisode was
+    computed from (ADR-007 §18.5).
 
-    Three coordinates with three different roles -- do not collapse them:
-
-    - episode_manifest_uri: physical source location. Deterministic per
-      (dataset_id, dataset_version, episode_id); a later build_episodes
-      run silently overwrites the bytes at this same URI.
-    - source_artifact_id: producer lineage record (the ArtifactRecord this
-      revision was read through). A new artifact_id is minted on every
-      build_episodes execution even when the URI doesn't change -- useful
-      for lineage/debugging, but NOT content identity by itself.
-    - source_manifest_sha256: the actual content-revision identity. The
-      strongest of the three, and the only one guaranteed to differ when,
-      and only when, the underlying bytes actually differ.
+    - source_artifact_id: the EPISODE_MANIFEST ArtifactRecord, the revision
+      the EpisodeRecord pointed to (or the caller pinned) when aligning.
+    - source_manifest_sha256: the content identity of its bytes.
+    - episode_manifest_uri: where those bytes were read; informational only,
+      never identity.
     """
 
     episode_id: str
@@ -60,21 +53,38 @@ class AlignedEpisodeArtifact(SceneOpsBaseModel):
 
 
 def alignment_key(
-    config: TemporalAlignmentConfig, alignment_semantics_version: str
+    config: TemporalAlignmentConfig,
+    alignment_semantics_version: str,
+    source_clock: str,
 ) -> str:
-    """Combines alignment config identity + semantics version into one
-    deterministic, source-independent identity (SceneOps V2 Request 2.3
-    §14). Deliberately excludes source content -- the same alignment
-    "recipe" (config + semantics) maps to the same key across different
-    episodes and different source revisions, which is exactly what the
-    aligned-artifact URI's two path segments (source hash, then this key)
-    need to represent independently (Request 2.3 §14)."""
+    """Deterministic, source-independent identity of one alignment *recipe*:
+    the full config, the algorithm's semantics version and the clock the
+    alignment ran on (ADR-007 §33.6).
+
+    Every input that changes an AlignedEpisode's bytes participates. The
+    clock is part of the recipe because the same config aligned on another
+    clock is a different result; without it two such results would collide
+    on one key. Source content is deliberately excluded: the same recipe
+    maps to the same key across episodes and source revisions, which is
+    what the aligned-artifact URI's two path segments (source hash, then
+    this key) represent independently (SceneOps V2 Request 2.3 §14)."""
     payload = json.dumps(
         {
             "alignment_config_hash": alignment_config_hash(config),
             "alignment_semantics_version": alignment_semantics_version,
+            "source_clock": source_clock,
         },
         sort_keys=True,
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def aligned_episode_alignment_key(aligned: AlignedEpisode) -> str:
+    """The recipe key an AlignedEpisode was produced by, recomputed from the
+    result itself so readers never have to be told it."""
+    return alignment_key(
+        aligned.alignment_config,
+        aligned.alignment_semantics_version,
+        aligned.source_clock,
+    )

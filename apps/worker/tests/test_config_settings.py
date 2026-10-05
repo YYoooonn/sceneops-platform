@@ -1,9 +1,9 @@
-"""Tests for R1 config cleanup: ArtifactSettings, RawSourceSettings, WorkerSettings."""
+"""Tests for config: ArtifactSettings, InputSourceSettings, WorkerSettings."""
 
 from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactBackend
-from sceneops_core.config import ArtifactSettings, RawSourceSettings, StorageSettings
+from sceneops_core.config import ArtifactSettings, InputSourceSettings, StorageSettings
 from sceneops_worker.config import WorkerSettings
 
 
@@ -37,55 +37,46 @@ class TestArtifactSettings:
         assert issubclass(ArtifactSettings, StorageSettings)
 
 
-class TestRawSourceSettings:
+class TestInputSourceSettings:
     def test_root_uri_default(self):
-        s = RawSourceSettings()
-        assert s.root_uri == "/data/raw/nuscenes"
+        s = InputSourceSettings()
+        assert s.root_uri == "/data/raw"
 
     def test_backend_default(self):
-        s = RawSourceSettings()
+        s = InputSourceSettings()
         assert s.backend == ArtifactBackend.LOCAL
 
     def test_override_root_uri(self):
-        s = RawSourceSettings(root_uri="s3://sceneops/raw/nuscenes")
-        assert s.root_uri == "s3://sceneops/raw/nuscenes"
+        s = InputSourceSettings(root_uri="s3://sceneops/raw")
+        assert s.root_uri == "s3://sceneops/raw"
 
     def test_is_storage_settings_subclass(self):
-        assert issubclass(RawSourceSettings, StorageSettings)
+        assert issubclass(InputSourceSettings, StorageSettings)
 
     def test_no_dataset_prefix_fields(self):
-        s = RawSourceSettings()
+        s = InputSourceSettings()
         assert not hasattr(s, "dataset_prefix")
         assert not hasattr(s, "run_prefix")
         assert not hasattr(s, "model_prefix")
 
 
-class TestWorkerSettingsRawSource:
-    def test_raw_source_field_exists(self):
+class TestWorkerSettingsInputSource:
+    def test_input_source_field_exists(self):
         s = WorkerSettings()
-        assert hasattr(s, "raw_source")
-        assert isinstance(s.raw_source, RawSourceSettings)
+        assert hasattr(s, "input_source")
+        assert isinstance(s.input_source, InputSourceSettings)
 
-    def test_raw_source_root_uri_property(self):
-        s = WorkerSettings()
-        assert s.raw_source_root_uri == "/data/raw/nuscenes"
-
-    def test_raw_source_root_uri_matches_field(self):
-        s = WorkerSettings()
-        assert s.raw_source_root_uri == s.raw_source.root_uri
-
-    def test_env_override_raw_source_root_uri(self, monkeypatch):
+    def test_env_override_input_source_root_uri(self, monkeypatch):
         monkeypatch.setenv(
-            "SCENEOPS_WORKER_RAW_SOURCE__ROOT_URI", "/mnt/datasets/nuscenes"
+            "SCENEOPS_WORKER_INPUT_SOURCE__ROOT_URI", "/mnt/datasets/input"
         )
         s = WorkerSettings()
-        assert s.raw_source.root_uri == "/mnt/datasets/nuscenes"
-        assert s.raw_source_root_uri == "/mnt/datasets/nuscenes"
+        assert s.input_source.root_uri == "/mnt/datasets/input"
 
-    def test_env_override_raw_source_backend(self, monkeypatch):
-        monkeypatch.setenv("SCENEOPS_WORKER_RAW_SOURCE__BACKEND", "minio")
+    def test_env_override_input_source_backend(self, monkeypatch):
+        monkeypatch.setenv("SCENEOPS_WORKER_INPUT_SOURCE__BACKEND", "minio")
         s = WorkerSettings()
-        assert s.raw_source.backend == ArtifactBackend.MINIO
+        assert s.input_source.backend == ArtifactBackend.MINIO
 
     def test_artifact_root_uri_default(self):
         # _env_file=None: this asserts the schema's declared default, not
@@ -94,7 +85,7 @@ class TestWorkerSettingsRawSource:
         s = WorkerSettings(_env_file=None)
         assert s.artifact.root_uri == "/data/artifacts"
 
-    def test_artifact_root_uri_unchanged_by_raw_source(self):
+    def test_artifact_root_uri_unchanged_by_input_source(self):
         # Ensure the two settings are independent.
         s = WorkerSettings()
-        assert s.artifact.root_uri != s.raw_source.root_uri
+        assert s.artifact.root_uri != s.input_source.root_uri

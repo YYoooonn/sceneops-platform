@@ -1,11 +1,11 @@
-"""Tests for ALIGN_EPISODE's pre-execution-key source resolution (SceneOps
-V2 Request 2.3A).
+"""ALIGN_EPISODE's pre-execution-key source resolution.
 
-Uses the same tiny in-memory fake pattern as test_job_service.py, plus a
-fake ArtifactRepository that mimics real "latest by created_at" ordering.
-Exercises JobService.create_job() directly -- the real Job API entry point
-(POST /jobs calls exactly this) -- not a lower-level helper, per Request
-2.3A §27's "must be verified through the real Job API creation path."
+An unpinned request resolves exactly the EPISODE_MANIFEST revision the
+EpisodeRecord points to (ADR-007 §14.4) -- never the newest artifact -- so
+dedup follows source content. Exercised through JobService.create_job(),
+the real Job API entry point, with in-memory fakes; ``FakeArtifactRepository.add``
+models a registration that repoints the record (or, with ``register=False``,
+a built but unregistered revision).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from sceneops_core.artifacts.schemas import (
     ArtifactRecord,
 )
 from sceneops_core.episodes.alignment import TemporalAlignmentConfig
+from sceneops_core.episodes.schemas import EpisodeRecord
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
@@ -82,23 +83,50 @@ class FakeJobEventRepository:
         return []
 
 
-class FakeArtifactRepository:
-    """Mimics PostgresArtifactRefRepository.list()'s
-    ORDER BY created_at DESC -- records are returned in reverse insertion
-    order, matching real "latest wins" behavior."""
-
+class FakeEpisodeRepository:
     def __init__(self) -> None:
+        self.records: dict[str, EpisodeRecord] = {}
+
+    def point(self, episode_id: str, artifact_id: str, checksum: str) -> None:
+        self.records[episode_id] = EpisodeRecord(
+            episode_id=episode_id,
+            dataset_id=DATASET_ID,
+            dataset_version=DATASET_VERSION,
+            robot_run_id="run-1",
+            unit_key="recording",
+            producer_fingerprint="sha256:" + "f" * 64,
+            manifest_artifact_id=artifact_id,
+            manifest_checksum=checksum,
+            window_clock="sensor.header_stamp",
+            window_start_timestamp_ns=0,
+            window_end_timestamp_ns=1,
+            observation_count=0,
+            state_count=1,
+            action_count=0,
+            event_count=0,
+        )
+
+    async def get(self, episode_id: str) -> EpisodeRecord | None:
+        return self.records.get(episode_id)
+
+
+class FakeArtifactRepository:
+    def __init__(self, episodes: FakeEpisodeRepository) -> None:
         self.records: list[ArtifactRecord] = []
+        self.episodes = episodes
         self._counter = itertools.count()
 
     def add(
         self,
         *,
         artifact_id: str,
-        checksum: str | None,
+        checksum: str,
         episode_id: str = EPISODE_ID,
         kind: ArtifactKind = ArtifactKind.EPISODE_MANIFEST,
+        register: bool = True,
     ) -> None:
+        if register:
+            self.episodes.point(episode_id, artifact_id, checksum)
         self.records.append(
             ArtifactRecord(
                 artifact_id=artifact_id,
@@ -139,13 +167,13 @@ class FakeArtifactRepository:
 
 def _service() -> tuple[JobService, FakeJobRepository, FakeArtifactRepository]:
     job_repo = FakeJobRepository()
-    artifact_repo = FakeArtifactRepository()
+    episodes = FakeEpisodeRepository()
+    artifact_repo = FakeArtifactRepository(episodes)
     service = JobService(
         repository=job_repo,
         event_repository=FakeJobEventRepository(),
         artifact_repository=artifact_repo,
-        default_dataset_id=DATASET_ID,
-        default_dataset_version=DATASET_VERSION,
+        episode_repository=episodes,
     )
     return service, job_repo, artifact_repo
 
@@ -156,8 +184,15 @@ def _config_dict(target_frequency_hz: float = 1.0) -> dict:
     )
 
 
-def _request(**params_overrides) -> CreateJobRequest:
-    params = {"episode_id": EPISODE_ID, "alignment_config": _config_dict()}
+def _request(
+    *, source_artifact_id=None, source_manifest_sha256=None, **params_overrides
+) -> CreateJobRequest:
+    item = {"episode_id": EPISODE_ID}
+    if source_artifact_id is not None:
+        item["source_artifact_id"] = source_artifact_id
+    if source_manifest_sha256 is not None:
+        item["source_manifest_sha256"] = source_manifest_sha256
+    params = {"episodes": [item], "alignment_config": _config_dict()}
     params.update(params_overrides)
     return CreateJobRequest(
         type=JobType.ALIGN_EPISODE,
@@ -177,15 +212,15 @@ class TestChangedSourceRevision:
 
         job_a = await service.create_job(_request())
 
-        # Episode rebuilt: new ArtifactRecord, genuinely different content.
+        # Episode rebuilt and replaced: the record now points at new content.
         artifacts.add(artifact_id="art-B", checksum="sha256:" + "b" * 64)
 
         job_b = await service.create_job(_request())
 
         assert job_a.job_id != job_b.job_id
         assert job_a.execution_key != job_b.execution_key
-        assert job_a.params["source_manifest_sha256"] == "a" * 64
-        assert job_b.params["source_manifest_sha256"] == "b" * 64
+        assert job_a.params["episodes"][0]["source_manifest_sha256"] == "a" * 64
+        assert job_b.params["episodes"][0]["source_manifest_sha256"] == "b" * 64
 
 
 class TestIdenticalContentRebuild:
@@ -198,8 +233,8 @@ class TestIdenticalContentRebuild:
 
         job_1 = await service.create_job(_request())
 
-        # A second production execution wrote byte-identical content under a
-        # brand new random artifact_id.
+        # A rebuild registered byte-identical content under another
+        # artifact id.
         artifacts.add(artifact_id="art-B", checksum="sha256:" + "x" * 64)
 
         job_2 = await service.create_job(_request())
@@ -210,7 +245,7 @@ class TestIdenticalContentRebuild:
         # only on the request that actually created a job -- job_2 here is
         # the reused job_1, so provenance naturally still points at art-A,
         # which is correct: nothing new was created.
-        assert job_1.params["source_artifact_id"] == "art-A"
+        assert job_1.params["episodes"][0]["source_artifact_id"] == "art-A"
 
 
 class TestConfigChange:
@@ -242,8 +277,9 @@ class TestSemanticsVersionChange:
 
         def key(semantics_version: str) -> str:
             params = {
-                "episode_id": EPISODE_ID,
-                "source_manifest_sha256": "a" * 64,
+                "episodes": [
+                    {"episode_id": EPISODE_ID, "source_manifest_sha256": "a" * 64}
+                ],
                 "alignment_semantics_version": semantics_version,
                 "alignment_config": _config_dict(),
             }
@@ -271,8 +307,8 @@ class TestPinnedRevision:
             _request(source_artifact_id="art-old", source_manifest_sha256="o" * 64)
         )
 
-        assert job.params["source_artifact_id"] == "art-old"
-        assert job.params["source_manifest_sha256"] == "o" * 64
+        assert job.params["episodes"][0]["source_artifact_id"] == "art-old"
+        assert job.params["episodes"][0]["source_manifest_sha256"] == "o" * 64
 
     @pytest.mark.asyncio
     async def test_pinned_old_revision_and_unpinned_current_are_different_executions(
@@ -288,60 +324,51 @@ class TestPinnedRevision:
         unpinned = await service.create_job(_request())
 
         assert pinned.job_id != unpinned.job_id
-        assert unpinned.params["source_artifact_id"] == "art-new"
+        assert unpinned.params["episodes"][0]["source_artifact_id"] == "art-new"
 
 
 class TestCurrentSourceSelection:
-    """SceneOps V2 Request 2.3A §24."""
-
     @pytest.mark.asyncio
-    async def test_unpinned_resolves_the_latest_of_multiple_records(self) -> None:
+    async def test_unpinned_resolves_the_record_pointer_not_the_newest_artifact(
+        self,
+    ) -> None:
         service, _, artifacts = _service()
         artifacts.add(artifact_id="art-1", checksum="sha256:" + "1" * 64)
         artifacts.add(artifact_id="art-2", checksum="sha256:" + "2" * 64)
-        artifacts.add(artifact_id="art-3", checksum="sha256:" + "3" * 64)
+        # Built but never registered: not the Episode's current revision.
+        artifacts.add(
+            artifact_id="art-3", checksum="sha256:" + "3" * 64, register=False
+        )
 
         job = await service.create_job(_request())
 
-        assert job.params["source_artifact_id"] == "art-3"
-        assert job.params["source_manifest_sha256"] == "3" * 64
+        assert job.params["episodes"][0]["source_artifact_id"] == "art-2"
+        assert job.params["episodes"][0]["source_manifest_sha256"] == "2" * 64
 
 
-class TestChecksumMissing:
-    """SceneOps V2 Request 2.3A §0/§18/§25 -- legacy sources explicitly out
-    of scope for automatic resolution."""
-
+class TestUnresolvableSource:
     @pytest.mark.asyncio
-    async def test_unpinned_request_against_a_legacy_no_checksum_source_fails_clearly(
-        self,
-    ) -> None:
-        service, _, artifacts = _service()
-        artifacts.add(artifact_id="art-legacy", checksum=None)
-
-        with pytest.raises(ValueError, match="no checksum"):
-            await service.create_job(_request())
-
-    @pytest.mark.asyncio
-    async def test_no_source_artifact_at_all_fails_clearly(self) -> None:
+    async def test_unregistered_episode_fails_clearly(self) -> None:
         service, _, _artifacts = _service()
-
-        with pytest.raises(ValueError, match="No EPISODE_MANIFEST artifact found"):
+        with pytest.raises(ValueError, match="is not registered"):
             await service.create_job(_request())
 
     @pytest.mark.asyncio
-    async def test_explicit_pin_bypasses_the_legacy_checksum_check_entirely(
-        self,
-    ) -> None:
-        # The escape hatch: a caller who already knows the correct hash out
-        # of band can still pin even a legacy (checksum=None) record's
-        # artifact_id, since pinning skips auto-resolution altogether.
-        service, _, artifacts = _service()
-        artifacts.add(artifact_id="art-legacy", checksum=None)
+    async def test_record_pointing_at_a_missing_artifact_is_reported(self) -> None:
+        from sceneops_db.queries import InconsistentEpisodeRevisionError
 
+        service, _, artifacts = _service()
+        artifacts.episodes.point(EPISODE_ID, "art-gone", "sha256:" + "9" * 64)
+        with pytest.raises(InconsistentEpisodeRevisionError):
+            await service.create_job(_request())
+
+    @pytest.mark.asyncio
+    async def test_explicit_pin_skips_resolution(self) -> None:
+        service, _, _artifacts = _service()
         job = await service.create_job(
-            _request(source_artifact_id="art-legacy", source_manifest_sha256="z" * 64)
+            _request(source_artifact_id="art-known", source_manifest_sha256="z" * 64)
         )
-        assert job.params["source_artifact_id"] == "art-legacy"
+        assert job.params["episodes"][0]["source_artifact_id"] == "art-known"
 
 
 class TestUnrelatedJobTypeRegression:
@@ -349,25 +376,27 @@ class TestUnrelatedJobTypeRegression:
     changes."""
 
     @pytest.mark.asyncio
-    async def test_build_episodes_params_are_hashed_unchanged(self) -> None:
+    async def test_build_recording_episodes_params_are_hashed_unchanged(self) -> None:
         from sceneops_core.executions import (
             compute_execution_key,
             params_for_execution_key,
         )
 
         params = {"episode_id": EPISODE_ID, "source_artifact_id": "should-stay"}
-        assert params_for_execution_key(JobType.BUILD_EPISODES, params) == params
+        assert (
+            params_for_execution_key(JobType.BUILD_RECORDING_EPISODES, params) == params
+        )
 
         key = compute_execution_key(
             kind="job",
-            type="build_episodes",
+            type="build_recording_episodes",
             dataset_id=DATASET_ID,
             dataset_version=DATASET_VERSION,
-            params=params_for_execution_key(JobType.BUILD_EPISODES, params),
+            params=params_for_execution_key(JobType.BUILD_RECORDING_EPISODES, params),
         )
         direct_key = compute_execution_key(
             kind="job",
-            type="build_episodes",
+            type="build_recording_episodes",
             dataset_id=DATASET_ID,
             dataset_version=DATASET_VERSION,
             params=params,
@@ -413,3 +442,62 @@ class TestAcceptanceTable:
             _request(alignment_config=_config_dict(1.0))
         )
         assert reuse_k2.job_id == k2.job_id
+
+
+class TestSeveralEpisodes:
+    """One job aligns several Episodes; each unpinned Episode is pinned to its
+    own current revision, and the order the caller names them in is not part
+    of the execution identity."""
+
+    @pytest.mark.asyncio
+    async def test_each_episode_is_pinned_to_its_own_current_revision(self) -> None:
+        service, _, artifacts = _service()
+        artifacts.add(
+            artifact_id="art-1", checksum="sha256:" + "1" * 64, episode_id="ep-1"
+        )
+        artifacts.add(
+            artifact_id="art-2", checksum="sha256:" + "2" * 64, episode_id="ep-2"
+        )
+
+        job = await service.create_job(
+            _request(
+                episodes=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}],
+            )
+        )
+
+        assert [
+            (e["episode_id"], e["source_artifact_id"], e["source_manifest_sha256"])
+            for e in job.params["episodes"]
+        ] == [("ep-1", "art-1", "1" * 64), ("ep-2", "art-2", "2" * 64)]
+
+    @pytest.mark.asyncio
+    async def test_episode_order_is_not_part_of_the_execution_identity(self) -> None:
+        service, _, artifacts = _service()
+        for n in ("1", "2"):
+            artifacts.add(
+                artifact_id=f"art-{n}",
+                checksum="sha256:" + n * 64,
+                episode_id=f"ep-{n}",
+            )
+
+        forward = await service.create_job(
+            _request(episodes=[{"episode_id": "ep-1"}, {"episode_id": "ep-2"}])
+        )
+        reverse = await service.create_job(
+            _request(episodes=[{"episode_id": "ep-2"}, {"episode_id": "ep-1"}])
+        )
+
+        assert forward.job_id == reverse.job_id
+
+    @pytest.mark.asyncio
+    async def test_one_unregistered_episode_fails_the_whole_request(self) -> None:
+        service, job_repo, artifacts = _service()
+        artifacts.add(
+            artifact_id="art-1", checksum="sha256:" + "1" * 64, episode_id="ep-1"
+        )
+
+        with pytest.raises(ValueError, match="'ep-9' is not registered"):
+            await service.create_job(
+                _request(episodes=[{"episode_id": "ep-1"}, {"episode_id": "ep-9"}])
+            )
+        assert job_repo.jobs == {}

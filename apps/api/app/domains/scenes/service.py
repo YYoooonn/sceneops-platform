@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
-from sceneops_core.scenes.schemas import (
-    SceneGenerationMethod,
-    SceneOriginType,
-    SceneStatus,
-)
+from sceneops_core.runs.schemas import RunStatus, RunType
+from sceneops_core.scenes.schemas import SceneRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
 )
-from sceneops_core.runs.schemas import RunType
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
 
@@ -39,18 +35,14 @@ class SceneService:
         *,
         dataset_id: str | None = None,
         dataset_version: str | None = None,
-        status: SceneStatus | None = None,
-        origin_type: SceneOriginType | None = None,
-        generation_method: SceneGenerationMethod | None = None,
+        robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> SceneListResponse:
         scenes = await self._repository.list(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            status=status,
-            origin_type=origin_type,
-            generation_method=generation_method,
+            robot_run_id=robot_run_id,
             limit=limit,
             offset=offset,
         )
@@ -67,8 +59,12 @@ class SceneService:
         if scene is None:
             return None
 
-        validation_run = await self._latest_scene_validation_run(scene_id)
-        profile_run = await self._latest_scene_profile_run(scene_id)
+        validation_run = await self._latest_current_revision_run(
+            scene, RunType.SCENE_VALIDATION, SceneValidationRunRecord
+        )
+        profile_run = await self._latest_current_revision_run(
+            scene, RunType.SCENE_PROFILE, SceneProfileRunRecord
+        )
 
         return build_scene_quality(
             scene=scene,
@@ -86,28 +82,20 @@ class SceneService:
             scene_id=scene_id, limit=limit, offset=offset
         )
 
-    async def _latest_scene_validation_run(
-        self, scene_id: str
-    ) -> SceneValidationRunRecord | None:
+    async def _latest_current_revision_run(self, scene: SceneRecord, run_type, cls):
+        """Newest succeeded run of ``run_type`` that assessed the Scene's
+        current manifest revision."""
         runs = await self._run_repository.list(
-            type=RunType.SCENE_VALIDATION,
-            scene_id=scene_id,
-            limit=1,
+            type=run_type,
+            status=RunStatus.SUCCEEDED,
+            scene_id=scene.scene_id,
+            manifest_artifact_id=scene.manifest_artifact_id,
+            limit=20,
         )
-        if not runs:
-            return None
-        run = runs[0]
-        return run if isinstance(run, SceneValidationRunRecord) else None
-
-    async def _latest_scene_profile_run(
-        self, scene_id: str
-    ) -> SceneProfileRunRecord | None:
-        runs = await self._run_repository.list(
-            type=RunType.SCENE_PROFILE,
-            scene_id=scene_id,
-            limit=1,
-        )
-        if not runs:
-            return None
-        run = runs[0]
-        return run if isinstance(run, SceneProfileRunRecord) else None
+        for run in runs:
+            if isinstance(run, cls) and run.assessed(
+                manifest_artifact_id=scene.manifest_artifact_id,
+                manifest_checksum=scene.manifest_checksum,
+            ):
+                return run
+        return None

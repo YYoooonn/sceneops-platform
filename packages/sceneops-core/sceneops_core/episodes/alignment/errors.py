@@ -6,9 +6,14 @@ class AlignmentError(Exception):
 
 
 class InvalidEpisodeBoundsError(AlignmentError):
-    """EpisodeManifest.start_timestamp_us/end_timestamp_us are missing or
-    inverted. Alignment never infers replacement bounds — see SceneOps V2
-    Request 2.1B §3."""
+    """The aligned timeline has no bounds: no alignable occurrence, or
+    inverted bounds."""
+
+
+class ClockMismatchError(AlignmentError):
+    """A stream to align is timestamped in another clock than the one the
+    alignment runs on. Timestamps of unrelated clocks are never compared or
+    converted."""
 
 
 class InvalidAlignmentConfigError(AlignmentError):

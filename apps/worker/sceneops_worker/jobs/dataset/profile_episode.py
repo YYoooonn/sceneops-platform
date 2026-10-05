@@ -20,9 +20,11 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.episodes.profiling import EpisodeManifestProfiler
+from sceneops_worker.episodes.resolver import resolve_registered_episode
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
 _profiler = EpisodeManifestProfiler()
+_TOPIC_LISTS = ("observation_topics", "state_topics", "action_topics", "event_topics")
 
 
 class ProfileEpisodeJobHandler(
@@ -31,12 +33,11 @@ class ProfileEpisodeJobHandler(
     ],
     JobHandler[ProfileEpisodeJobParams, ProfileEpisodeJobResult],
 ):
-    """EpisodeManifest -> descriptive trajectory/data profile.
+    """Registered Episode revisions -> descriptive profiles.
 
-    Pure description, no usability judgment — that's ValidateEpisodeJobHandler's
-    job. Mirrors ProfileSceneJobHandler's job-level + per-item run-record
-    split, keyed by episode_id like validate_episode (SceneOps V2 Request 17).
-    """
+    Each Episode is profiled at the manifest revision its record points to
+    when the job reads it; the per-episode run record pins that revision.
+    An episode id that is not registered fails the job."""
 
     @property
     def job_type(self) -> JobType:
@@ -66,8 +67,8 @@ class ProfileEpisodeJobHandler(
     ) -> EpisodeProfileRunRecord:
         return EpisodeProfileRunRecord(
             run_id=default_profile_run_id(job.job_id),
-            dataset_id=job.params.get("dataset_id"),
-            dataset_version=job.params.get("dataset_version"),
+            dataset_id=params.dataset_id,
+            dataset_version=params.dataset_version,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
             pipeline_task_run_id=job.pipeline_task_run_id,
@@ -86,53 +87,37 @@ class ProfileEpisodeJobHandler(
     ) -> tuple[EpisodeProfileRunRecord, ProfileEpisodeJobResult]:
         run_id = initial_record.run_id
         episode_ids = _resolve_episode_ids(params)
-        dataset_id = job.params.get("dataset_id")
-        dataset_version = job.params.get("dataset_version")
+        dataset_id = params.dataset_id
+        dataset_version = params.dataset_version
 
         if not episode_ids:
             raise ValueError("profile_episode requires at least one episode_id.")
 
-        total_frames = 0
-        total_observations = 0
-        total_actions = 0
-        all_observation_channels: set[str] = set()
-        all_action_channels: set[str] = set()
+        totals = {
+            "observation_count": 0,
+            "state_count": 0,
+            "action_count": 0,
+            "event_count": 0,
+        }
+        topics: dict[str, set[str]] = {name: set() for name in _TOPIC_LISTS}
         episode_profiles: list[dict] = []
 
         for episode_id in episode_ids:
-            record = await context.episode_store.get(episode_id)
-            if record is None or not record.episode_manifest_uri:
-                continue
-
-            manifest = await context.episode_artifact_store.load_episode_manifest(
-                record.episode_manifest_uri
+            resolved = await resolve_registered_episode(context, episode_id)
+            record = resolved.record
+            result = _profiler.profile(
+                episode_id=episode_id, manifest=resolved.manifest
             )
-            if manifest is None:
-                continue
-
-            result = _profiler.profile(manifest=manifest)
-
-            all_observation_channels.update(result.observation_channels)
-            all_action_channels.update(result.action_channels)
-            total_frames += result.frame_count
-            total_observations += result.observation_count
-            total_actions += result.action_count
-
-            episode_profiles.append(
-                {
-                    "episode_id": episode_id,
-                    "frame_count": result.frame_count,
-                    "observation_count": result.observation_count,
-                    "action_count": result.action_count,
-                    "observation_channels": result.observation_channels,
-                    "action_channels": result.action_channels,
-                    "control_frequency_hz": result.control_frequency_hz,
-                    "duration_us": result.duration_us,
-                    "task": result.task,
-                    "outcome": result.outcome,
-                    "mission_id": result.mission_id,
-                }
-            )
+            for name in totals:
+                totals[name] += getattr(result, name)
+            for name in _TOPIC_LISTS:
+                topics[name].update(getattr(result, name))
+            profile = {
+                **result.model_dump(mode="json"),
+                "manifest_artifact_id": record.manifest_artifact_id,
+                "manifest_checksum": record.manifest_checksum,
+            }
+            episode_profiles.append(profile)
 
             per_episode_run_id = _per_episode_profile_run_id(job.job_id, episode_id)
             per_episode_report_uri = context.artifact_store.join_uri(
@@ -141,17 +126,15 @@ class ProfileEpisodeJobHandler(
                 per_episode_run_id,
                 "report.json",
             )
-            per_episode_report = {
-                "run_id": per_episode_run_id,
-                "job_id": job.job_id,
-                "episode_id": episode_id,
-                "created_at": utc_now().isoformat(),
-                **episode_profiles[-1],
-            }
             await context.artifact_store.write_json(
-                per_episode_report_uri, per_episode_report
+                per_episode_report_uri,
+                {
+                    "run_id": per_episode_run_id,
+                    "job_id": job.job_id,
+                    "created_at": utc_now().isoformat(),
+                    **profile,
+                },
             )
-
             await context.artifact_record_store.create(
                 artifact_id=generate_artifact_id(),
                 ref=ArtifactRef(
@@ -167,42 +150,36 @@ class ProfileEpisodeJobHandler(
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
             )
-
-            per_episode_record = EpisodeProfileRunRecord(
-                run_id=per_episode_run_id,
-                episode_id=episode_id,
-                episode_manifest_uri=record.episode_manifest_uri,
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
-                status=RunStatus.SUCCEEDED,
-                profile_report_uri=per_episode_report_uri,
-                frame_count=result.frame_count,
-                observation_count=result.observation_count,
-                action_count=result.action_count,
-                observation_channels=result.observation_channels,
-                action_channels=result.action_channels,
-                control_frequency_hz=result.control_frequency_hz,
-                duration_us=result.duration_us,
-                task=result.task,
-                outcome=result.outcome,
-                mission_id=result.mission_id,
-                pipeline_run_id=job.pipeline_run_id,
-                pipeline_task_run_id=job.pipeline_task_run_id,
-                job_id=job.job_id,
-                started_at=started_at,
-                finished_at=utc_now(),
+            await context.runs.episode_runs.upsert(
+                EpisodeProfileRunRecord(
+                    run_id=per_episode_run_id,
+                    episode_id=episode_id,
+                    manifest_artifact_id=record.manifest_artifact_id,
+                    manifest_checksum=record.manifest_checksum,
+                    dataset_id=dataset_id,
+                    dataset_version=dataset_version,
+                    status=RunStatus.SUCCEEDED,
+                    profile_report_uri=per_episode_report_uri,
+                    checked_episode_count=1,
+                    **{name: getattr(result, name) for name in totals},
+                    **{name: getattr(result, name) for name in _TOPIC_LISTS},
+                    window_duration_ns=result.window_duration_ns,
+                    summary={"streams": profile["streams"]},
+                    pipeline_run_id=job.pipeline_run_id,
+                    pipeline_task_run_id=job.pipeline_task_run_id,
+                    job_id=job.job_id,
+                    started_at=started_at,
+                    finished_at=utc_now(),
+                )
             )
-            await context.runs.episode_runs.upsert(per_episode_record)
 
+        observed = {name: sorted(values) for name, values in topics.items()}
         report = {
             "run_id": run_id,
             "job_id": job.job_id,
             "checked_episode_count": len(episode_profiles),
-            "frame_count": total_frames,
-            "observation_count": total_observations,
-            "action_count": total_actions,
-            "observation_channels": sorted(all_observation_channels),
-            "action_channels": sorted(all_action_channels),
+            **totals,
+            **observed,
             "episodes": episode_profiles,
             "created_at": utc_now().isoformat(),
         }
@@ -210,7 +187,6 @@ class ProfileEpisodeJobHandler(
             context.settings.run_root_uri, "episode_profiles", run_id, "report.json"
         )
         await context.artifact_store.write_json(report_uri, report)
-
         await context.artifact_record_store.create(
             artifact_id=generate_artifact_id(),
             ref=ArtifactRef(
@@ -231,23 +207,16 @@ class ProfileEpisodeJobHandler(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "checked_episode_count": len(episode_profiles),
-                "frame_count": total_frames,
-                "observation_count": total_observations,
-                "action_count": total_actions,
-                "observation_channels": sorted(all_observation_channels),
-                "action_channels": sorted(all_action_channels),
+                **totals,
+                **observed,
                 "profile_report_uri": report_uri,
                 "finished_at": utc_now(),
             }
         )
-
         return succeeded_record, ProfileEpisodeJobResult(
             checked_episode_count=len(episode_profiles),
-            frame_count=total_frames,
-            observation_count=total_observations,
-            action_count=total_actions,
-            observed_observation_channels=sorted(all_observation_channels),
-            observed_action_channels=sorted(all_action_channels),
+            **totals,
+            **observed,
             profile_run_id=run_id,
             report_uri=report_uri,
         )

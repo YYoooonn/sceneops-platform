@@ -4,25 +4,26 @@ from enum import StrEnum
 
 
 class PipelineType(StrEnum):
-    # Existing scene-aware dataset source -> SceneOps scenes -> DatasetManifest
-    DATASET_SCENE_INGESTION = "dataset_scene_ingestion"
+    """The first-class Pipelines. A Pipeline exists only where multi-stage
+    orchestration, retry and lineage justify it; single operations are Jobs
+    (ADR-007 §34)."""
 
-    # Raw log / raw sensor stream -> SceneOps scenes -> DatasetManifest
-    RAW_LOG_SCENE_BUILDING = "raw_log_scene_building"
+    # One registered RobotRun recording -> canonical Scenes -> registration
+    # -> validation / profiling (ADR-007 §17.3).
+    RECORDING_SCENE_BUILDING = "recording_scene_building"
 
-    # Generated/reconstructed/simulated scene registration flow
-    SCENE_REGISTRATION = "scene_registration"
+    # One registered RobotRun recording -> canonical Episodes -> registration
+    # -> validation / profiling (ADR-007 §17.4). A sibling of
+    # RECORDING_SCENE_BUILDING; neither depends on the other.
+    RECORDING_EPISODE_BUILDING = "recording_episode_building"
 
-    # Dataset scenes -> scenario set / readiness report
-    SCENARIO_CURATION = "scenario_curation"
+    # Registered Scenes + pinned label set revisions -> sample views ->
+    # ScenarioSet -> prediction revision -> evaluation (ADR-007 §33, §34).
+    SCENE_ML_EVALUATION = "scene_ml_evaluation"
 
-    # Dataset/model -> prediction -> evaluation
-    DETECTION_EVALUATION = "detection_evaluation"
-
-    # Robot rosbag/MCAP -> SceneOps episodes (task-oriented observation+action
-    # units, segmented by Mission boundaries) -> registered EpisodeRecords.
-    # Deliberately separate from RAW_LOG_SCENE_BUILDING.
-    RAW_LOG_EPISODE_BUILDING = "raw_log_episode_building"
+    # Pinned registered Episodes -> AlignedEpisodes -> learning data export
+    # (ADR-007 §33.6, §33.7, §34).
+    EPISODE_LEARNING_DATA_BUILDING = "episode_learning_data_building"
 
 
 class PipelineRunStatus(StrEnum):

@@ -20,8 +20,6 @@ def get_pipeline_service(
     return PipelineService(
         pipeline_repository=pipeline_repository,
         task_repository=task_repository,
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
     )
 
 
@@ -35,8 +33,6 @@ def get_pipeline_dispatch_facade(
     return PipelineDispatchFacade(
         session_factory=get_async_sessionmaker(),
         pipeline_backend=pipeline_backend,
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
     )
 
 

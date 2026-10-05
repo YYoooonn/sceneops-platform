@@ -30,13 +30,13 @@ model — see §9 (Phase 3 boundary).
 Raw asynchronous robot streams (ROS2 -> MCAP)
         |
         v
-EpisodeManifest                          (Phase 1 -- see episode-domain.md)
+EpisodeManifest                          (canonical, asynchronous streams -- see episode-domain.md)
         |
         v
 Temporal Alignment                       (2.1-2.2, pure engine)
         |
         v
-AlignedEpisode                           (canonical aligned representation)
+AlignedEpisode                           (derived aligned representation)
         |
         v
 Validation / Profiling                   (2.4, structural + descriptive)
@@ -130,8 +130,19 @@ these exactly.
   `interpolation_ratio` for interpolation).
 - Association policy (`exact`/`nearest`/`previous`/`linear_interpolation`)
   is always explicit per channel, never inferred.
-- No hidden extrapolation or backfill -- v1's policy vocabulary
+- No hidden extrapolation or backfill -- the policy vocabulary
   deliberately excludes both.
+- Input is one pinned canonical Episode revision (the record's
+  `manifest_artifact_id` unless the caller pins another). Alignment runs on
+  one clock (default: the Episode window clock) and rejects a stream on
+  any other clock. Observation and state fields become observation
+  channels and action fields action channels, named `<topic>#<field>`; an
+  observation payload is a reference channel `<topic>`; boolean / string
+  fields and event streams are not aligned. Canonical ns timestamps are
+  floored to us. Default policies come from value kind and role (action ->
+  `previous`, otherwise `nearest`), never from channel names. The timeline
+  spans the Episode window when aligning on its clock. Alignment semantics
+  version `v2`.
 
 ### Signal presence (2.2, 2.5A, 2.7A)
 
@@ -189,7 +200,7 @@ these exactly.
 
 | Component | Owns | Package |
 | --- | --- | --- |
-| `EpisodeManifest` | Raw observation/action frames from ingestion (Phase 1) | `sceneops_core.episodes.schemas` |
+| `EpisodeManifest` | Canonical asynchronous observation / state / action / event streams, each on its own clock | `sceneops_core.episodes.schemas` |
 | Temporal Alignment | Pure `EpisodeManifest -> AlignedEpisode` engine; no I/O | `sceneops_core.episodes.alignment` (`engine.py`, `timeline.py`, `policies.py`) |
 | `AlignedEpisode` | Canonical aligned representation; one logical `episode_id`, many revisions | `sceneops_core.episodes.alignment.schemas` |
 | Revision identity | `AlignedEpisodeArtifact` envelope + `alignment_key`/checksum | `sceneops_core.episodes.alignment.persistence` |
@@ -309,13 +320,12 @@ resident for the instance's lifetime.
   `MissingFeaturePolicy.ERROR` is the only implemented member.
 - A LeRobot external dataset format adapter exists (Phase 3); RLDS does
   not -- see §9 and [dataset-interoperability.md](./dataset-interoperability.md).
-- `ALIGN_EPISODE`/`VALIDATE_ALIGNED_EPISODE`/`PROFILE_ALIGNED_EPISODE`/
-  `EXPORT_LEARNING_DATA`/`CURATE_EPISODES` are registered `JobType`s
-  dispatched as standalone Jobs -- none is wired into
-  `RAW_LOG_EPISODE_BUILDING_PIPELINE` or any other `PipelineDefinition`
-  (the same pipeline-less-by-design pattern already documented for
-  `INGEST_ROBOT_STATES`/`EXPORT_ROBOT_ANALYTICS_SNAPSHOT`, see
-  [reserved-and-limitations.md](./reserved-and-limitations.md) §1).
+- `ALIGN_EPISODE` (several pinned Episodes in one job) and `EXPORT_LEARNING_DATA`
+  are the two stages of the `EPISODE_LEARNING_DATA_BUILDING` pipeline;
+  `VALIDATE_ALIGNED_EPISODE`/`PROFILE_ALIGNED_EPISODE`/`CURATE_EPISODES` are
+  atomic Jobs. `EXPORT_LEARNING_DATA` validates every aligned input itself, so
+  the pipeline has no separate validation stage. See
+  [jobs-and-pipelines.md](./jobs-and-pipelines.md) §2.
 - No dedicated API domain exists for alignment/learning-data/curation --
   `apps/api/app/domains/episodes/` only covers the Phase 1 raw-Episode
   surface (build/register/validate/profile/quality). Phase 2 jobs are

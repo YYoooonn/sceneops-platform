@@ -1,6 +1,6 @@
 """Unit tests for validation.py: pre-finalize MCAP read-back validation.
 
-Runs only inside the ros2 container (needs rosbag2_py to produce a real
+Runs only inside the ros2 container (needs the ros2 image to produce a real
 MCAP fixture, plus the mcap Python package to validate it).
 """
 
@@ -32,7 +32,8 @@ def _write_fixture_bag(tmp_path, *, message_count: int) -> str:
                 sequence_number=i,
                 encoding=EnvelopeEncoding.ROS2_CDR,
                 payload=bytes([i]) * 8,
-            )
+            ),
+            receive_time_ns=1_000_000_000 + i,
         )
     writer.close()
     return writer.mcap_file_path()

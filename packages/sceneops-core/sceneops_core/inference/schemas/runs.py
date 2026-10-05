@@ -15,12 +15,12 @@ class InferenceRunRecord(BaseRunRecord):
     model_id: str
     model_version: str
 
-    dataset_manifest_uri: str | None = None
-
     inference_backend: str = "mock"
 
     predictions_root_uri: str | None = None
     prediction_manifest_uri: str | None = None
+    # Pins the published prediction manifest revision (ADR-007 §33.5).
+    prediction_manifest_checksum: str | None = None
 
     sample_count: int | None = None
     prediction_count: int | None = None

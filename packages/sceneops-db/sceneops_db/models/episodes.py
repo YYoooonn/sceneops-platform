@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,51 +22,72 @@ from sceneops_db.base import Base
 
 
 class EpisodeModel(Base):
+    """Canonical Episode membership: one row per registered Episode,
+    projecting the manifest revision named by ``manifest_artifact_id``.
+    Written only by the Episode registrar; no status, task or outcome
+    column (ADR-007 §13.3-§13.4, §31)."""
+
     __tablename__ = "episodes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["dataset_id", "dataset_version"],
+            ["dataset_versions.dataset_id", "dataset_versions.version"],
+            ondelete="RESTRICT",
+            name="fk_episodes_dataset_version",
+        ),
+        CheckConstraint(
+            "window_end_timestamp_ns > window_start_timestamp_ns",
+            name="ck_episodes_segment_window",
+        ),
+    )
 
     episode_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
-    dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    dataset_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    dataset_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    dataset_version: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    # Lineage into the raw-log / robot domains. Plain indexed columns, not
-    # foreign keys — same cross-domain-reference convention as
-    # RobotStateModel.scene_id (the referenced row may live in a table this
-    # domain doesn't own, or may not exist yet at write time).
-    raw_log_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    robot_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    robot_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    mission_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-
-    task: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    outcome: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'unknown'")
+    # The source projection: the RobotRun the Episode was built from and the
+    # producer's unit key within its recording.
+    robot_run_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("robot_runs.run_id", ondelete="RESTRICT"),
+        nullable=False,
     )
+    unit_key: Mapped[str] = mapped_column(String(256), nullable=False)
 
-    episode_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    producer_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
 
-    observation_channels: Mapped[list[str]] = mapped_column(
+    manifest_artifact_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("artifacts.artifact_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    manifest_checksum: Mapped[str] = mapped_column(String(71), nullable=False)
+
+    # The episode window [start, end) in window_clock, the producer's
+    # declared segmentation clock.
+    window_clock: Mapped[str] = mapped_column(String(64), nullable=False)
+    window_start_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    window_end_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    observation_topics: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-    action_channels: Mapped[list[str]] = mapped_column(
+    state_topics: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-    control_frequency_hz: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    frame_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
+    action_topics: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    event_topics: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-    ended_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    state_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    action_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(
+    registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
@@ -65,17 +97,15 @@ class EpisodeModel(Base):
         onupdate=text("now()"),
     )
 
-    metadata_: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
-
 
 Index("ix_episodes_dataset", EpisodeModel.dataset_id, EpisodeModel.dataset_version)
-Index("ix_episodes_raw_log_id", EpisodeModel.raw_log_id)
-Index("ix_episodes_robot_id", EpisodeModel.robot_id)
-Index("ix_episodes_robot_run_id", EpisodeModel.robot_run_id)
-Index("ix_episodes_mission_id", EpisodeModel.mission_id)
-Index("ix_episodes_status", EpisodeModel.status)
+Index(
+    "ix_episodes_recording_scope",
+    EpisodeModel.dataset_id,
+    EpisodeModel.dataset_version,
+    EpisodeModel.robot_run_id,
+)
+Index("ix_episodes_manifest_artifact_id", EpisodeModel.manifest_artifact_id)
 
 
 class EpisodeRunRecordModel(Base):
@@ -84,17 +114,33 @@ class EpisodeRunRecordModel(Base):
     Covers: episode_validation, episode_profile. Use ``type`` to discriminate,
     same shape as ``SceneRunRecordModel`` — only a handful of typed columns,
     everything type-specific lives in ``summary`` (JSONB), reconstructed by
-    the converter. Append-only: rows are never deleted, only inserted.
+    the converter. Append-only: rows are never deleted, only inserted. A
+    per-episode row pins the manifest revision it assessed; a job-level
+    aggregate row has neither an episode nor a pin.
     """
 
     __tablename__ = "episode_run_records"
+    __table_args__ = (
+        CheckConstraint(
+            "(episode_id IS NULL AND manifest_artifact_id IS NULL "
+            "AND manifest_checksum IS NULL) OR "
+            "(episode_id IS NOT NULL AND manifest_artifact_id IS NOT NULL "
+            "AND manifest_checksum IS NOT NULL)",
+            name="ck_episode_run_records_revision_pin",
+        ),
+    )
 
     run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
     episode_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    episode_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manifest_artifact_id: Mapped[str | None] = mapped_column(
+        String(128),
+        ForeignKey("artifacts.artifact_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    manifest_checksum: Mapped[str | None] = mapped_column(String(71), nullable=True)
 
     dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     dataset_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -145,6 +191,12 @@ Index(
     EpisodeRunRecordModel.status,
 )
 Index("ix_episode_run_records_episode_id", EpisodeRunRecordModel.episode_id)
+Index(
+    "ix_episode_run_records_revision",
+    EpisodeRunRecordModel.episode_id,
+    EpisodeRunRecordModel.manifest_artifact_id,
+    EpisodeRunRecordModel.created_at,
+)
 Index(
     "ix_episode_run_records_dataset",
     EpisodeRunRecordModel.dataset_id,

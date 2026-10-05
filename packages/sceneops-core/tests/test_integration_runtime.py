@@ -13,7 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRef
-from sceneops_core.datasets import ExternalDatasetRef
+from sceneops_core.integration_runtime import ExternalDatasetRef
 from sceneops_core.integration_runtime import (
     CanonicalDatasetRef,
     IntegrationOperation,
@@ -21,9 +21,6 @@ from sceneops_core.integration_runtime import (
     IntegrationResult,
 )
 
-NUSCENES_REF = ExternalDatasetRef(
-    format="nuscenes", format_version="v1.0-mini", uri="/data/raw/nuscenes"
-)
 LEROBOT_REF = ExternalDatasetRef(
     format="lerobot",
     format_version="3.0",
@@ -39,22 +36,6 @@ def _manifest_ref(
         kind=ArtifactKind.LEARNING_DATA_EXPORT_MANIFEST,
         uri=uri,
         checksum="sha256:" + "a" * 64,
-    )
-
-
-def _raw_log_manifest_ref() -> ArtifactRef:
-    return ArtifactRef(
-        kind=ArtifactKind.RAW_LOG_MANIFEST,
-        uri="s3://sceneops/artifacts/raw/nuscenes-mini/v1/manifest.json",
-        checksum="sha256:" + "b" * 64,
-    )
-
-
-def _raw_log_frame_index_ref() -> ArtifactRef:
-    return ArtifactRef(
-        kind=ArtifactKind.RAW_LOG_FRAME_INDEX,
-        uri="s3://sceneops/artifacts/raw/nuscenes-mini/v1/frame_index.json",
-        checksum="sha256:" + "c" * 64,
     )
 
 
@@ -99,47 +80,6 @@ def test_export_request_with_canonical_input_is_valid():
     assert request.canonical_inputs["learning_manifest"].kind == (
         ArtifactKind.LEARNING_DATA_EXPORT_MANIFEST
     )
-
-
-def test_ingest_with_canonical_inputs_is_also_valid():
-    """INGEST may legitimately consume existing canonical context
-    (calibration, schema, ...) while still producing new canonical
-    artifacts -- nuScenes ingestion happening to need none today is an
-    implementation detail, not a universal runtime constraint (Request
-    4.1A follow-up)."""
-    request = IntegrationRequest(
-        operation=IntegrationOperation.INGEST,
-        external_ref=NUSCENES_REF,
-        canonical_ref=CanonicalDatasetRef(
-            dataset_id="nuscenes-mini", dataset_version="v1"
-        ),
-        canonical_inputs={"calibration": _manifest_ref()},
-    )
-    assert request.canonical_inputs["calibration"] == _manifest_ref()
-
-
-def test_ingest_request_without_canonical_inputs_is_valid():
-    request = IntegrationRequest(
-        operation=IntegrationOperation.INGEST,
-        external_ref=NUSCENES_REF,
-        canonical_ref=CanonicalDatasetRef(
-            dataset_id="nuscenes-mini", dataset_version="v1"
-        ),
-    )
-    assert request.canonical_inputs == {}
-
-
-def test_ingest_result_requires_at_least_one_produced_artifact():
-    with pytest.raises(
-        ValidationError, match="INGEST result requires at least one produced_artifacts"
-    ):
-        IntegrationResult(
-            operation=IntegrationOperation.INGEST,
-            external_ref=NUSCENES_REF,
-            canonical_ref=CanonicalDatasetRef(
-                dataset_id="nuscenes-mini", dataset_version="v1"
-            ),
-        )
 
 
 def test_export_result_may_have_no_produced_artifacts():
@@ -187,26 +127,6 @@ def test_canonical_ref_never_carries_an_artifact_pointer():
 # ── input/output ArtifactRef preservation ───────────────────────────────────
 
 
-def test_ingest_result_preserves_both_produced_artifact_refs():
-    result = IntegrationResult(
-        operation=IntegrationOperation.INGEST,
-        external_ref=NUSCENES_REF,
-        canonical_ref=CanonicalDatasetRef(
-            dataset_id="nuscenes-mini", dataset_version="v1"
-        ),
-        produced_artifacts={
-            "raw_log_manifest": _raw_log_manifest_ref(),
-            "raw_log_frame_index": _raw_log_frame_index_ref(),
-        },
-    )
-    assert result.produced_artifacts["raw_log_manifest"].kind == (
-        ArtifactKind.RAW_LOG_MANIFEST
-    )
-    assert result.produced_artifacts["raw_log_frame_index"].kind == (
-        ArtifactKind.RAW_LOG_FRAME_INDEX
-    )
-
-
 def test_export_request_preserves_the_learning_manifest_input():
     manifest = _manifest_ref()
     request = IntegrationRequest(
@@ -219,37 +139,6 @@ def test_export_request_preserves_the_learning_manifest_input():
 
 
 # ── ExternalDatasetRef / identity preservation ──────────────────────────────
-
-
-def test_ingest_result_echoes_external_source():
-    result = IntegrationResult(
-        operation=IntegrationOperation.INGEST,
-        external_ref=NUSCENES_REF,
-        canonical_ref=CanonicalDatasetRef(
-            dataset_id="nuscenes-mini", dataset_version="v1"
-        ),
-        produced_artifacts={"raw_log_manifest": _raw_log_manifest_ref()},
-    )
-    assert result.external_ref == NUSCENES_REF
-    assert result.canonical_ref.dataset_id == "nuscenes-mini"
-
-
-def test_same_external_dataset_ref_shape_covers_both_directions():
-    """Direction belongs to IntegrationRequest.operation, never to a
-    separate source/export ref type (SceneOps V2 Request 4.1 §3, reusing
-    ExternalDatasetRef's own Request 3.2B invariant)."""
-    ingest = IntegrationRequest(
-        operation=IntegrationOperation.INGEST,
-        external_ref=NUSCENES_REF,
-        canonical_ref=CanonicalDatasetRef(dataset_id="d", dataset_version="v1"),
-    )
-    export = IntegrationRequest(
-        operation=IntegrationOperation.EXPORT,
-        external_ref=LEROBOT_REF,
-        canonical_ref=CanonicalDatasetRef(dataset_id="d", dataset_version="v1"),
-        canonical_inputs={"learning_manifest": _manifest_ref()},
-    )
-    assert type(ingest.external_ref) is type(export.external_ref)
 
 
 # ── deterministic serialization ──────────────────────────────────────────────
@@ -271,16 +160,10 @@ def test_request_round_trips_through_json():
 
 def test_result_round_trips_through_json():
     result = IntegrationResult(
-        operation=IntegrationOperation.INGEST,
-        external_ref=NUSCENES_REF,
-        canonical_ref=CanonicalDatasetRef(
-            dataset_id="nuscenes-mini", dataset_version="v1"
-        ),
-        produced_artifacts={
-            "raw_log_manifest": _raw_log_manifest_ref(),
-            "raw_log_frame_index": _raw_log_frame_index_ref(),
-        },
-        result_metadata={"frame_count": 1200, "sequence_count": 10},
+        operation=IntegrationOperation.EXPORT,
+        external_ref=LEROBOT_REF,
+        canonical_ref=CanonicalDatasetRef(dataset_id="interop", dataset_version="v1"),
+        result_metadata={"episode_count": 3},
     )
     payload = json.loads(result.model_dump_json(by_alias=True))
     restored = IntegrationResult.model_validate(payload)
@@ -289,10 +172,10 @@ def test_result_round_trips_through_json():
 
 def test_serialization_is_stable_across_repeated_dumps():
     request = IntegrationRequest(
-        operation=IntegrationOperation.INGEST,
-        external_ref=NUSCENES_REF,
+        operation=IntegrationOperation.EXPORT,
+        external_ref=LEROBOT_REF,
         canonical_ref=CanonicalDatasetRef(dataset_id="d", dataset_version="v1"),
-        config={"max_source_sequences": 2},
+        canonical_inputs={"learning_manifest": _manifest_ref()},
     )
     assert request.model_dump_json() == request.model_dump_json()
 
@@ -338,7 +221,7 @@ def test_missing_external_ref_is_rejected():
     with pytest.raises(ValidationError):
         IntegrationRequest.model_validate(
             {
-                "operation": "ingest",
+                "operation": "export",
                 "canonicalRef": {"datasetId": "d", "datasetVersion": "v1"},
             }
         )
@@ -348,10 +231,15 @@ def test_missing_canonical_ref_is_rejected():
     with pytest.raises(ValidationError):
         IntegrationRequest.model_validate(
             {
-                "operation": "ingest",
-                "externalRef": NUSCENES_REF.model_dump(by_alias=True, mode="json"),
+                "operation": "export",
+                "externalRef": LEROBOT_REF.model_dump(by_alias=True, mode="json"),
             }
         )
+
+
+def test_there_is_no_ingest_operation():
+    """Acquired data enters only as a registered RobotRun (I-31)."""
+    assert [o.value for o in IntegrationOperation] == ["export"]
 
 
 def test_unknown_operation_is_rejected():
@@ -359,7 +247,7 @@ def test_unknown_operation_is_rejected():
         IntegrationRequest.model_validate(
             {
                 "operation": "sync",
-                "externalRef": NUSCENES_REF.model_dump(by_alias=True, mode="json"),
+                "externalRef": LEROBOT_REF.model_dump(by_alias=True, mode="json"),
                 "canonicalRef": {"datasetId": "d", "datasetVersion": "v1"},
             }
         )

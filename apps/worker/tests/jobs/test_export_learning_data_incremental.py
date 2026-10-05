@@ -6,7 +6,7 @@ Unlike test_export_learning_data_handler.py (which mocks
 resolution, shard reuse, and the ``learning_episodes`` merge are exercised
 against real Parquet/JSON bytes on disk -- only aligned-artifact resolution
 (``episode_artifact_store``/``artifact_record_store.get``) and lineage
-recording (``artifact_record_store.create``) are mocked, exactly like
+recording (``artifact_record_store.register``) are mocked, exactly like
 _aligned_episode_resolution's role in every other export/curation test.
 """
 
@@ -26,7 +26,6 @@ from sceneops_core.artifacts.schemas import (
     ArtifactRecord,
 )
 from sceneops_core.episodes.alignment import (
-    MCAP_LOG_TIME_CLOCK,
     AlignedEpisodeArtifact,
     EpisodeSourceRevision,
     TemporalAlignmentConfig,
@@ -34,10 +33,11 @@ from sceneops_core.episodes.alignment import (
     align_episode,
 )
 from sceneops_core.episodes.learning_export import LearningDataExportManifest
-from sceneops_core.episodes.schemas import (
-    EpisodeActionFrame,
-    EpisodeManifest,
-    EpisodeObservationFrame,
+from sceneops_core.episodes.testing import (
+    DEFAULT_CLOCK,
+    action,
+    episode_manifest,
+    state,
 )
 from sceneops_core.jobs.schemas import (
     ExportLearningDataJobParams,
@@ -53,28 +53,17 @@ from sceneops_worker.jobs.dataset.export_learning_data import (
 
 
 def _artifact_bytes(episode_id: str) -> bytes:
-    manifest = EpisodeManifest(
-        episode_id=episode_id,
-        observation_frames=[
-            EpisodeObservationFrame(
-                timestamp_us=0, channel="state.position", values=[0.0]
-            ),
-            EpisodeObservationFrame(
-                timestamp_us=1_000_000, channel="state.position", values=[1.0]
-            ),
+    manifest = episode_manifest(
+        [
+            state("/vehicle/odom", 0, x=0.0),
+            state("/vehicle/odom", 1_000_000_000, x=1.0),
+            action("/vehicle/control", 0, steering=0.1),
         ],
-        action_frames=[
-            EpisodeActionFrame(timestamp_us=0, channel="steering", value=0.1)
-        ],
-        observation_channels=["state.position"],
-        action_channels=["steering"],
-        start_timestamp_us=0,
-        end_timestamp_us=1_000_000,
-        frame_count=3,
+        window=(0, 1_000_000_001),
     )
     config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
-    ctx = TemporalSourceContext(source_clock=MCAP_LOG_TIME_CLOCK)
-    aligned = align_episode(manifest, config, ctx)
+    ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
+    aligned = align_episode(manifest, config, ctx, episode_id=episode_id)
     artifact = AlignedEpisodeArtifact(
         source_revision=EpisodeSourceRevision(
             episode_id=episode_id,
@@ -133,8 +122,6 @@ class _Fixture:
 
     def make_context(self) -> MagicMock:
         context = MagicMock()
-        context.default_dataset_id = "d1"
-        context.default_dataset_version = "v1"
 
         async def _get(artifact_id: str):
             return self.records_by_artifact_id.get(artifact_id)
@@ -147,7 +134,7 @@ class _Fixture:
             side_effect=_read_bytes
         )
         context.analytics_writer = self.writer
-        context.artifact_record_store.create = AsyncMock()
+        context.artifact_record_store.register = AsyncMock()
         context.commit = AsyncMock()
         return context
 
@@ -223,7 +210,7 @@ async def test_incremental_export_reuses_base_shards_verbatim(
     # records -- never the base's own (already-recorded) shards.
     created_uris = {
         call.kwargs["ref"].uri
-        for call in incremental_context.artifact_record_store.create.await_args_list
+        for call in incremental_context.artifact_record_store.register.await_args_list
     }
     assert len(created_uris) == 4  # learning_episodes + 2 new shards + manifest
     base_manifest_bytes = await fixture.writer.read_learning_export_manifest_bytes(
@@ -278,28 +265,17 @@ async def test_incremental_export_new_revision_of_existing_episode(
     # coexist as a distinct EpisodeRef, never dedup by episode_id alone.
     # Built with a different source_artifact_id so its bytes (and
     # therefore checksum) differ from the base's own revision.
-    manifest = EpisodeManifest(
-        episode_id="ep-0",
-        observation_frames=[
-            EpisodeObservationFrame(
-                timestamp_us=0, channel="state.position", values=[0.0]
-            ),
-            EpisodeObservationFrame(
-                timestamp_us=1_000_000, channel="state.position", values=[1.0]
-            ),
+    manifest = episode_manifest(
+        [
+            state("/vehicle/odom", 0, x=0.0),
+            state("/vehicle/odom", 1_000_000_000, x=1.0),
+            action("/vehicle/control", 0, steering=0.1),
         ],
-        action_frames=[
-            EpisodeActionFrame(timestamp_us=0, channel="steering", value=0.1)
-        ],
-        observation_channels=["state.position"],
-        action_channels=["steering"],
-        start_timestamp_us=0,
-        end_timestamp_us=1_000_000,
-        frame_count=3,
+        window=(0, 1_000_000_001),
     )
     config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=500_000)
-    ctx = TemporalSourceContext(source_clock=MCAP_LOG_TIME_CLOCK)
-    aligned = align_episode(manifest, config, ctx)
+    ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
+    aligned = align_episode(manifest, config, ctx, episode_id="ep-0")
     artifact_r2 = AlignedEpisodeArtifact(
         source_revision=EpisodeSourceRevision(
             episode_id="ep-0",
@@ -365,7 +341,7 @@ async def test_incremental_export_rejects_delta_that_redeclares_base_revision(
 
     with pytest.raises(Exception, match="duplicate"):
         await ExportLearningDataJobHandler().run(incremental_request)
-    incremental_context.artifact_record_store.create.assert_not_called()
+    incremental_context.artifact_record_store.register.assert_not_called()
     incremental_context.commit.assert_not_called()
 
 

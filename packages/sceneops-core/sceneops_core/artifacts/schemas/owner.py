@@ -13,6 +13,7 @@ class ArtifactOwnerType(StrEnum):
     MODEL = "model"
     MODEL_VERSION = "model_version"
     ROBOT_RUN = "robot_run"
+    LABEL_SET = "label_set"
     # platform
     JOB = "job"
     PIPELINE_RUN = "pipeline_run"

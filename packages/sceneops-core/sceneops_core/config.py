@@ -29,6 +29,8 @@ class ArtifactSettings(StorageSettings):
     model_prefix: str = "models"
     analytics_prefix: str = "analytical"
     robot_run_prefix: str = "robot_runs"
+    observation_payload_prefix: str = "observation_payloads"
+    label_prefix: str = "labels"
 
     # Unused legacy fields — kept for backward compatibility only.
     bucket: str | None = None
@@ -47,6 +49,14 @@ class ArtifactSettings(StorageSettings):
         return join_uri(self.root_uri, self.robot_run_prefix)
 
     @property
+    def observation_payload_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.observation_payload_prefix)
+
+    @property
+    def label_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.label_prefix)
+
+    @property
     def model_root_uri(self) -> str:
         return join_uri(self.root_uri, self.model_prefix)
 
@@ -55,22 +65,19 @@ class ArtifactSettings(StorageSettings):
         return join_uri(self.root_uri, self.analytics_prefix)
 
 
-class RawSourceSettings(StorageSettings):
-    """Configuration for the read-only raw dataset source.
+class InputSourceSettings(StorageSettings):
+    """Configuration for the read-only external input area (label documents,
+    caller-supplied files).
 
-    Separate from ArtifactSettings so that raw input data and generated
-    artifacts can be configured, rooted, and backed independently.
+    Separate from ArtifactSettings so that external input data and generated
+    artifacts can be configured, rooted, and backed independently. Absolute
+    input URIs are used as given; the root only anchors relative ones.
 
-    Local:         /data/raw/nuscenes
-    Object storage: s3://sceneops/raw/nuscenes
+    Local:         /data/raw
+    Object storage: s3://sceneops/raw
     """
 
-    root_uri: str = "/data/raw/nuscenes"
-
-
-class DefaultDatasetSettings(BaseModel):
-    dataset_id: str = "nuscenes"
-    dataset_version: str = "v1.0-mini"
+    root_uri: str = "/data/raw"
 
 
 class WorkerRuntimeSettings(BaseModel):
@@ -99,8 +106,8 @@ class AirflowSettings(BaseModel):
     username: str | None = None
     password: str | None = None
 
-    pipeline_dag_id: str = "sceneops_pipeline_run"
-    job_dag_id: str = "sceneops_job_run"
+    # Pipeline DAGs are named ``<prefix>_<pipeline type>``.
+    pipeline_dag_prefix: str = "sceneops"
 
 
 class ExecutionSettings(BaseModel):
@@ -108,48 +115,6 @@ class ExecutionSettings(BaseModel):
     pipeline_backend: ExecutionBackend = ExecutionBackend.CELERY
     celery: CelerySettings = Field(default_factory=CelerySettings)
     airflow: AirflowSettings = Field(default_factory=AirflowSettings)
-
-
-class IntegrationExecutionSettings(BaseModel):
-    """Configuration for invoking isolated integration runtimes from the
-    worker (SceneOps V2 Request 4.6/4.6A) -- explicit and swappable per
-    environment, never a scattered conditional. Credentials/backend
-    selection for a runtime's OWN ArtifactStore are never duplicated here
-    -- they're translated from this worker's own ArtifactSettings into
-    SCENEOPS_INTEGRATION_ARTIFACT__* environment variables at call time
-    (apps/worker/sceneops_worker/integration_execution/{http,container}.py).
-
-    ``nuscenes_service_url`` is the production routing config (Request
-    4.6A §3/§6): the worker's ``HttpIntegrationExecutor`` reaches the
-    nuScenes integration runtime as a plain internal HTTP service on the
-    SceneOps network (``compose/integrations.yaml``'s ``nuscenes-
-    integration`` service), resolved by service name -- never by
-    controlling Docker. A future LeRobot (or other) integration would add
-    its own ``<name>_service_url`` field here, not a registry/plugin
-    system.
-
-    ``nuscenes_image``/``docker_network``/``host_data_root``/
-    ``io_root_uri`` remain for ``ContainerIntegrationExecutor`` (Request
-    4.6), now a LOCAL/DEV-ONLY backend (``make smoke-nuscenes-container``,
-    direct runtime debugging) -- not the worker's production path since
-    Request 4.6A. ``host_data_root``/``io_root_uri`` exist only because
-    that backend runs `docker run` from inside an already-containerized
-    worker (Docker-outside-of-Docker): a sibling container's ``-v
-    host:container`` mount is resolved by the Docker daemon against the
-    HOST filesystem, never the calling container's own view of it, even
-    though the worker already sees the same content locally. A later
-    Kubernetes (or any other) executor implementing the same
-    ``IntegrationExecutor`` protocol would use its own config shape --
-    nothing about ``IntegrationRequest``/``IntegrationResult`` depends on
-    Docker, HTTP, or any field here.
-    """
-
-    nuscenes_service_url: str = "http://nuscenes-integration:8080"
-
-    nuscenes_image: str = "sceneops-platform/nuscenes-integration:local"
-    docker_network: str | None = "sceneops-network"
-    host_data_root: str | None = None
-    io_root_uri: str = "/data/runs/integration-exec"
 
 
 def join_uri(root: str, *parts: str) -> str:

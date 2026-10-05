@@ -1,21 +1,22 @@
-"""Episode quality response builder (SceneOps V2 Request 17).
+"""Episode quality response builder.
 
 Pure functions — receive already-fetched records, return
-EpisodeQualityResponse. Independently testable without a running service or
-DB, matching apps/api/app/domains/scenes/quality.py's convention.
-
-Readiness is derived purely from EpisodeRecord + the latest validation/
-profile run — NOT from EpisodeRecord.status the way Scene gates on
-scene.status in {VALIDATED, PROFILED}. EpisodeStatus deliberately stays a
-resource-registration lifecycle only (CREATED/REGISTERED) — see SceneOps V2
-Request 17 §7 — so quality/readiness lives entirely in this derivation, not
-in the record's own status field.
+EpisodeQualityResponse. Only run records that assessed the Episode's
+current manifest revision count; any other run passed in is ignored, so a
+replaced Episode reports ``unknown`` until its new revision is validated
+(ADR-007 §13.4).
 """
 
 from __future__ import annotations
 
-from sceneops_core.episodes.schemas import EpisodeProfileRunRecord, EpisodeRecord
-from sceneops_core.episodes.schemas.runs import EpisodeValidationRunRecord
+from typing import TypeVar
+
+from sceneops_core.episodes import EpisodeReadiness, derive_episode_readiness
+from sceneops_core.episodes.schemas import (
+    EpisodeProfileRunRecord,
+    EpisodeRecord,
+    EpisodeValidationRunRecord,
+)
 
 from app.domains.episodes.schemas import (
     EpisodeProfileQualitySummary,
@@ -25,61 +26,53 @@ from app.domains.episodes.schemas import (
     EpisodeValidationQualitySummary,
 )
 
+_R = TypeVar("_R", EpisodeValidationRunRecord, EpisodeProfileRunRecord)
+
+_BLOCKING_REASON = {
+    EpisodeReadiness.UNKNOWN: ["validation_missing"],
+    EpisodeReadiness.BLOCKED: ["validation_blocked"],
+    EpisodeReadiness.WARNING: ["validation_warning"],
+    EpisodeReadiness.READY: [],
+}
+
+
+def _current(episode: EpisodeRecord, run: _R | None) -> _R | None:
+    if run is None or not run.assessed(
+        manifest_artifact_id=episode.manifest_artifact_id,
+        manifest_checksum=episode.manifest_checksum,
+    ):
+        return None
+    return run
+
 
 def build_episode_quality(
     episode: EpisodeRecord,
     validation_run: EpisodeValidationRunRecord | None = None,
     profile_run: EpisodeProfileRunRecord | None = None,
 ) -> EpisodeQualityResponse:
-    readiness, blocking_reasons = _compute_readiness(validation_run)
-
+    validation_run = _current(episode, validation_run)
+    profile_run = _current(episode, profile_run)
+    readiness = derive_episode_readiness(validation_run)
     return EpisodeQualityResponse(
         episode_id=episode.episode_id,
         dataset_id=episode.dataset_id,
         dataset_version=episode.dataset_version,
-        status=str(getattr(episode.status, "value", episode.status)),
+        manifest_artifact_id=episode.manifest_artifact_id,
+        manifest_checksum=episode.manifest_checksum,
         counts=EpisodeQualityCounts(
-            frame_count=episode.frame_count or 0,
-            observation_count=profile_run.observation_count
-            if profile_run is not None
-            else None,
-            action_count=profile_run.action_count if profile_run is not None else None,
+            observation_count=episode.observation_count,
+            state_count=episode.state_count,
+            action_count=episode.action_count,
+            event_count=episode.event_count,
         ),
-        validation=_build_validation_summary(validation_run),
-        profile=_build_profile_summary(profile_run),
-        readiness=readiness,
-        blocking_reasons=blocking_reasons,
+        validation=_validation_summary(validation_run),
+        profile=_profile_summary(profile_run),
+        readiness=EpisodeQualityReadiness(readiness.value),
+        blocking_reasons=list(_BLOCKING_REASON[readiness]),
     )
 
 
-def compute_episode_readiness(
-    validation_run: EpisodeValidationRunRecord | None,
-) -> EpisodeQualityReadiness:
-    readiness, _ = _compute_readiness(validation_run)
-    return readiness
-
-
-def _compute_readiness(
-    validation_run: EpisodeValidationRunRecord | None,
-) -> tuple[EpisodeQualityReadiness, list[str]]:
-    if validation_run is None:
-        return EpisodeQualityReadiness.UNKNOWN, ["validation_missing"]
-
-    val_status = (validation_run.validation_status or "").lower()
-
-    if validation_run.should_block_pipeline or val_status in ("failed", "error"):
-        return EpisodeQualityReadiness.BLOCKED, ["validation_blocked"]
-
-    if val_status == "warning":
-        return EpisodeQualityReadiness.WARNING, ["validation_warning"]
-
-    if val_status == "ready":
-        return EpisodeQualityReadiness.READY, []
-
-    return EpisodeQualityReadiness.UNKNOWN, ["validation_missing"]
-
-
-def _build_validation_summary(
+def _validation_summary(
     run: EpisodeValidationRunRecord | None,
 ) -> EpisodeValidationQualitySummary | None:
     if run is None:
@@ -89,7 +82,6 @@ def _build_validation_summary(
         status=str(getattr(run.status, "value", run.status)),
         validation_status=run.validation_status,
         should_block_pipeline=run.should_block_pipeline,
-        checked_episode_count=run.checked_episode_count,
         blocking_issue_count=run.error_count,
         warning_count=run.warning_count,
         issue_count=run.issue_count,
@@ -97,7 +89,7 @@ def _build_validation_summary(
     )
 
 
-def _build_profile_summary(
+def _profile_summary(
     run: EpisodeProfileRunRecord | None,
 ) -> EpisodeProfileQualitySummary | None:
     if run is None:
@@ -105,14 +97,10 @@ def _build_profile_summary(
     return EpisodeProfileQualitySummary(
         run_id=run.run_id,
         status=str(getattr(run.status, "value", run.status)),
-        frame_count=run.frame_count,
         observation_count=run.observation_count,
+        state_count=run.state_count,
         action_count=run.action_count,
-        observation_channels=list(run.observation_channels or []),
-        action_channels=list(run.action_channels or []),
-        control_frequency_hz=run.control_frequency_hz,
-        duration_us=run.duration_us,
-        task=run.task,
-        outcome=run.outcome,
+        event_count=run.event_count,
+        window_duration_ns=run.window_duration_ns,
         profile_report_uri=run.profile_report_uri,
     )

@@ -39,7 +39,7 @@ from sceneops_analytics.testing.interop_dataset import (  # noqa: E402
     INTEROP_FEATURE_PROJECTION,
     build_interop_test_dataset,
 )
-from sceneops_core.datasets.schemas.external import ExternalDatasetRef  # noqa: E402
+from sceneops_core.integration_runtime import ExternalDatasetRef  # noqa: E402
 
 
 def _config(**overrides) -> ExternalExportConfig:

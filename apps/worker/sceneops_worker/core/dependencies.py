@@ -7,9 +7,8 @@ from sceneops_storage import ArtifactStore, create_artifact_store
 
 from sceneops_worker.config import WorkerSettings, get_settings
 from sceneops_worker.core.context import RunStores, WorkerContext
-from sceneops_worker.datasets.artifacts import DatasetArtifactStore
+from sceneops_worker.derived import DerivedManifestStore
 from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
-from sceneops_worker.robots.artifacts import RobotRunArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
@@ -30,7 +29,7 @@ from sceneops_worker.stores.scenes import SceneStore
 
 
 _artifact_store: ArtifactStore | None = None
-_raw_source_store: ArtifactStore | None = None
+_input_store: ArtifactStore | None = None
 
 
 def _get_artifact_store(settings: WorkerSettings) -> ArtifactStore:
@@ -40,11 +39,11 @@ def _get_artifact_store(settings: WorkerSettings) -> ArtifactStore:
     return _artifact_store
 
 
-def _get_raw_source_store(settings: WorkerSettings) -> ArtifactStore:
-    global _raw_source_store
-    if _raw_source_store is None:
-        _raw_source_store = create_artifact_store(settings.raw_source)
-    return _raw_source_store
+def _get_input_store(settings: WorkerSettings) -> ArtifactStore:
+    global _input_store
+    if _input_store is None:
+        _input_store = create_artifact_store(settings.input_source)
+    return _input_store
 
 
 def create_worker_context(
@@ -56,33 +55,33 @@ def create_worker_context(
     settings = settings or get_settings()
 
     artifact_store = _get_artifact_store(settings)
-    raw_source_store = _get_raw_source_store(settings)
+    input_store = _get_input_store(settings)
 
     return WorkerContext(
         worker_id=worker_id or settings.worker_id,
         settings=settings,
         session=session,
         artifact_store=artifact_store,
-        raw_source_store=raw_source_store,
-        dataset_artifact_store=DatasetArtifactStore(
+        input_store=input_store,
+        derived_store=DerivedManifestStore(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,
+            runs_root_uri=settings.run_root_uri,
+            label_root_uri=settings.label_root_uri,
         ),
         scene_artifact_store=SceneArtifactStore(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,
+            payload_root_uri=settings.observation_payload_root_uri,
         ),
         episode_artifact_store=EpisodeArtifactStore(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,
+            payload_root_uri=settings.observation_payload_root_uri,
         ),
         run_artifact_store=RunArtifactStore(
             artifact_store=artifact_store,
             runs_root_uri=settings.run_root_uri,
-        ),
-        robot_run_artifact_store=RobotRunArtifactStore(
-            artifact_store=artifact_store,
-            robot_run_root_uri=settings.robot_run_root_uri,
         ),
         analytics_writer=AnalyticsTableWriter(
             artifact_store=artifact_store,
@@ -104,6 +103,4 @@ def create_worker_context(
             scene_runs=SceneRunStore(session),
             episode_runs=EpisodeRunStore(session),
         ),
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
     )

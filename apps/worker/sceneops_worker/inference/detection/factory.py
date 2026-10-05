@@ -8,16 +8,12 @@ from sceneops_worker.inference.detection.grounding_dino import (
     GroundingDinoDetectionBackend,
 )
 from sceneops_worker.inference.detection.mock import MockDetectionInferenceBackend
-from sceneops_worker.inference.detection.onnx_runtime import (
-    OnnxRuntimeDetectionInferenceBackend,
-)
 
 _BACKEND_REGISTRY: dict[
     InferenceBackendType,
     Callable[[], DetectionInferenceBackend],
 ] = {
     InferenceBackendType.MOCK: MockDetectionInferenceBackend,
-    InferenceBackendType.ONNX_RUNTIME: OnnxRuntimeDetectionInferenceBackend,
     InferenceBackendType.GROUNDING_DINO: GroundingDinoDetectionBackend,
 }
 

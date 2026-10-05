@@ -22,7 +22,7 @@ from sceneops_worker.pipelines.result_builder import (
 
 
 def _pipeline_run(
-    pipeline_type: PipelineType = PipelineType.DATASET_SCENE_INGESTION,
+    pipeline_type: PipelineType = PipelineType.RECORDING_SCENE_BUILDING,
 ) -> PipelineRunManifest:
     now = utc_now()
     return PipelineRunManifest(
@@ -97,7 +97,7 @@ class TestPipelineSummary:
             _task_run(
                 "t1",
                 0,
-                JobType.INGEST_SCENES,
+                JobType.BUILD_RECORDING_SCENES,
                 PipelineTaskRunStatus.SUCCEEDED,
                 _task_result("t1"),
             ),
@@ -111,7 +111,7 @@ class TestPipelineSummary:
             _task_run(
                 "t3",
                 2,
-                JobType.BUILD_SCENE_INDEX,
+                JobType.PROFILE_SCENE,
                 PipelineTaskRunStatus.FAILED,
                 _task_result("t3"),
             ),
@@ -175,7 +175,7 @@ class TestPipelineSummary:
             _task_run(
                 "t1",
                 0,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t1",
                     refs={"dataset_manifest_uri": "s3://bucket/manifest.json"},
@@ -213,7 +213,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t1",
                 0,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t1",
                     refs={"dataset_manifest_uri": "s3://bucket/manifest.json"},
@@ -246,7 +246,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t1",
                 0,
-                JobType.REGISTER_SCENE,
+                JobType.REGISTER_SCENES,
                 result=_task_result(
                     "t1",
                     refs={"scene_manifest_uris": ["s3://early"]},
@@ -255,7 +255,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t2",
                 1,
-                JobType.BUILD_SCENE_INDEX,
+                JobType.PROFILE_SCENE,
                 result=_task_result(
                     "t2",
                     refs={"scene_manifest_uris": ["s3://later"]},
@@ -270,7 +270,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t1",
                 0,
-                JobType.INGEST_SCENES,
+                JobType.BUILD_RECORDING_SCENES,
                 result=_task_result(
                     "t1",
                     refs={"scene_manifest_uris": ["s3://scene.json"]},
@@ -279,7 +279,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t2",
                 1,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t2",
                     refs={"dataset_manifest_uri": "s3://manifest.json"},
@@ -312,7 +312,7 @@ class TestPipelineOutputs:
 class TestPipelineMetrics:
     def _build(self, task_runs):
         return build_pipeline_result_from_task_runs(
-            pipeline_run=_pipeline_run(PipelineType.DETECTION_EVALUATION),
+            pipeline_run=_pipeline_run(PipelineType.SCENE_ML_EVALUATION),
             task_runs=task_runs,
             status=PipelineRunStatus.SUCCEEDED,
         )
@@ -374,7 +374,7 @@ class TestPipelineMetrics:
             _task_run(
                 "t1",
                 0,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t1",
                     refs={"dataset_manifest_uri": "s3://manifest.json"},
@@ -510,7 +510,7 @@ class TestTaskPreservation:
         assert t.raw_result["status"] == "ready"
 
     def test_task_without_result_gets_placeholder(self) -> None:
-        tr = _task_run("t1", 0, JobType.BUILD_DATASET_MANIFEST)
+        tr = _task_run("t1", 0, JobType.EXPORT_ANALYTICS_SNAPSHOT)
         tr.job_id = "job-abc"
         result = self._build([tr])
         assert len(result.tasks) == 1
@@ -521,8 +521,8 @@ class TestTaskPreservation:
 # ── detection evaluation pipeline integration ─────────────────────────────────
 
 
-class TestDetectionEvaluationPipelineResult:
-    """Verify the detection_evaluation pipeline result shape end-to-end."""
+class TestSceneMlEvaluationPipelineResult:
+    """Verify the prediction + evaluation tail of the scene_ml_evaluation result shape."""
 
     def test_full_detection_pipeline_result(self) -> None:
         task_runs = [
@@ -576,7 +576,7 @@ class TestDetectionEvaluationPipelineResult:
             ),
         ]
 
-        pipeline_run = _pipeline_run(PipelineType.DETECTION_EVALUATION)
+        pipeline_run = _pipeline_run(PipelineType.SCENE_ML_EVALUATION)
         result = build_pipeline_result_from_task_runs(
             pipeline_run=pipeline_run,
             task_runs=task_runs,

@@ -337,15 +337,17 @@ class TestChannelPolicyResolution:
         )
         assert effective.policy == AssociationPolicy.NEAREST
 
-    def test_battery_defaults_to_previous(self) -> None:
-        config = TemporalAlignmentConfig(target_frequency_hz=10.0)
+    def test_scalar_observation_default_comes_from_kind_not_name(self) -> None:
+        # No channel-name convention picks a policy: a scalar named like a
+        # battery level is a nearest-associated observation like any other.
+        config = TemporalAlignmentConfig(target_frequency_hz=10.0, tolerance_us=1_000)
         effective = resolve_channel_policy(
-            channel="state.battery",
+            channel="/vehicle/status#percentage",
             namespace=ChannelNamespace.OBSERVATION,
             config=config,
             value_kind=AlignedValueKind.NUMERIC_SCALAR,
         )
-        assert effective.policy == AssociationPolicy.PREVIOUS
+        assert effective.policy == AssociationPolicy.NEAREST
 
     def test_reference_channel_defaults_to_nearest_via_value_kind_not_name(
         self,

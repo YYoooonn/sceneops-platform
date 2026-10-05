@@ -8,10 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sceneops_core.config import (
     ArtifactBackend,
     ArtifactSettings,
-    DefaultDatasetSettings,
     ExecutionSettings,
-    IntegrationExecutionSettings,
-    RawSourceSettings,
+    InputSourceSettings,
     WorkerRuntimeSettings,
 )
 
@@ -29,18 +27,12 @@ class WorkerSettings(BaseSettings):
     )
 
     artifact: ArtifactSettings = Field(default_factory=ArtifactSettings)
-    raw_source: RawSourceSettings = Field(default_factory=RawSourceSettings)
-    default_dataset: DefaultDatasetSettings = Field(
-        default_factory=DefaultDatasetSettings,
-    )
+    input_source: InputSourceSettings = Field(default_factory=InputSourceSettings)
     runtime: WorkerRuntimeSettings = Field(
         default_factory=WorkerRuntimeSettings,
     )
     execution: ExecutionSettings = Field(
         default_factory=ExecutionSettings,
-    )
-    integration_execution: IntegrationExecutionSettings = Field(
-        default_factory=IntegrationExecutionSettings,
     )
 
     @property
@@ -60,28 +52,20 @@ class WorkerSettings(BaseSettings):
         return self.artifact.run_root_uri
 
     @property
+    def observation_payload_root_uri(self) -> str:
+        return self.artifact.observation_payload_root_uri
+
+    @property
+    def label_root_uri(self) -> str:
+        return self.artifact.label_root_uri
+
+    @property
     def model_root_uri(self) -> str:
         return self.artifact.model_root_uri
 
     @property
     def analytics_root_uri(self) -> str:
         return self.artifact.analytics_root_uri
-
-    @property
-    def robot_run_root_uri(self) -> str:
-        return self.artifact.robot_run_root_uri
-
-    @property
-    def raw_source_root_uri(self) -> str:
-        return self.raw_source.root_uri
-
-    @property
-    def default_dataset_id(self) -> str:
-        return self.default_dataset.dataset_id
-
-    @property
-    def default_dataset_version(self) -> str:
-        return self.default_dataset.dataset_version
 
     @property
     def worker_id(self) -> str:

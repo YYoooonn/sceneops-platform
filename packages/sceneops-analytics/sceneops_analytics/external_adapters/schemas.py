@@ -34,6 +34,12 @@ class ExternalExportConfig(SceneOpsBaseModel):
         UnsupportedSemanticPolicy.FAIL
     )
 
+    # A task string for episodes whose export carries none. Canonical Episodes
+    # have no task (ADR-007 §31.2), but a format may require one (LeRobot's
+    # per-frame ``task``); the caller supplies it explicitly here. An
+    # episode's own task always wins; nothing is inferred.
+    default_task: str | None = Field(default=None, min_length=1)
+
 
 class ExternalStep(SceneOpsBaseModel):
     """Framework-neutral external-format view of one LearningStep (SceneOps

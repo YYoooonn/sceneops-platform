@@ -1,180 +1,112 @@
-"""Tests for frustum lifting filter in detection evaluation utils."""
+"""Center-distance matching of predictions against labels, and the
+conditions under which a prediction is scored at all."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
+import pytest
 
 from sceneops_worker.evaluation.detection.utils import (
+    FrameMismatchError,
     evaluate_sample,
     is_evaluable_prediction,
 )
+from tests.derived.labels_support import box_label
 
 
-# ── is_evaluable_prediction ───────────────────────────────────────────────────
+def _label(label_id, x, *, category="vehicle.car", frame="world"):
+    return box_label(label_id, "run-001", 1, x=x, category=category, frame=frame)
 
 
-def test_is_evaluable_no_lifting_status():
-    """Old-style predictions (no lifting_status) are evaluable."""
-    assert is_evaluable_prediction({"category_name": "vehicle.car"}) is True
-
-
-def test_is_evaluable_succeeded():
-    assert is_evaluable_prediction({"lifting_status": "succeeded"}) is True
-
-
-def test_is_evaluable_not_applicable():
-    assert is_evaluable_prediction({"lifting_status": "not_applicable"}) is True
-
-
-def test_is_evaluable_failed():
-    assert is_evaluable_prediction({"lifting_status": "failed"}) is False
-
-
-# ── evaluate_sample ───────────────────────────────────────────────────────────
-
-
-def _make_sample(annotations: list[MagicMock]) -> MagicMock:
-    sample = MagicMock()
-    sample.scene_id = "scene-001"
-    sample.sample_id = "sample-001"
-    sample.annotations = annotations
-    return sample
-
-
-def _make_annotation(category: str, translation: list[float]) -> MagicMock:
-    ann = MagicMock()
-    ann.category = category
-    ann.translation = translation
-    ann.annotation_id = f"ann-{id(ann)}"
-    return ann
-
-
-def _pred(
-    category: str,
-    translation: list[float],
-    lifting_status: str | None = None,
-    pred_id: str = "pred-001",
-) -> dict:
-    p = {
+def _pred(category, x, *, frame="world", lifting_status=None, pred_id="pred-001"):
+    prediction = {
         "prediction_id": pred_id,
         "category_name": category,
-        "translation": translation,
+        "frame_id": frame,
+        "translation": [x, 2.0, 0.5],
         "score": 0.9,
     }
     if lifting_status is not None:
-        p["lifting_status"] = lifting_status
-    return p
+        prediction["lifting_status"] = lifting_status
+    return prediction
 
 
-# ── failed predictions excluded from matching ─────────────────────────────────
-
-
-def test_failed_prediction_not_counted_as_fp():
-    """A failed-lift prediction at [0,0,0] must not inflate FP count."""
-    gt = _make_annotation("vehicle.car", [10.0, 10.0, 0.0])
-    sample = _make_sample([gt])
-
-    failed_pred = _pred("vehicle.car", [0.0, 0.0, 0.0], lifting_status="failed")
-    result = evaluate_sample(
-        sample=sample,
-        predictions=[failed_pred],
-        match_distance_m=2.0,
+def _evaluate(labels, predictions, **kwargs):
+    return evaluate_sample(
+        scene_id="scene-1",
+        sample_id="smp-000000",
+        labels=labels,
+        predictions=predictions,
+        match_distance_m=kwargs.pop("match_distance_m", 2.0),
     )
 
-    assert result["tp"] == 0
-    assert result["fp"] == 0  # failed excluded
-    assert result["fn"] == 1  # GT unmatched
+
+# ── what is scored ────────────────────────────────────────────────────────────
+
+
+def test_only_localized_predictions_are_evaluable():
+    assert is_evaluable_prediction(_pred("c", 1.0)) is True
+    assert is_evaluable_prediction(_pred("c", 1.0, lifting_status="succeeded")) is True
+    assert is_evaluable_prediction(_pred("c", 1.0, lifting_status="failed")) is False
+    # A 2-D detection that could not be lifted names no frame.
+    assert is_evaluable_prediction(_pred("c", 1.0, frame=None)) is False
+
+
+def test_failed_and_unlocalized_predictions_never_inflate_false_positives():
+    result = _evaluate(
+        [_label("g", 10.0)],
+        [
+            _pred("vehicle.car", 0.0, lifting_status="failed", pred_id="p1"),
+            _pred("vehicle.car", 0.0, frame=None, pred_id="p2"),
+        ],
+    )
+    assert (result["tp"], result["fp"], result["fn"]) == (0, 0, 1)
     assert result["lifting_failed_prediction_count"] == 1
+    assert result["not_localized_prediction_count"] == 1
     assert result["evaluable_prediction_count"] == 0
-    assert result["prediction_count"] == 1
+    assert result["prediction_count"] == 2
 
 
-def test_failed_prediction_excluded_precision_recall():
-    """Precision/recall uses evaluable_predictions only."""
-    gt = _make_annotation("vehicle.car", [1.0, 0.0, 0.0])
-    sample = _make_sample([gt])
+# ── matching ──────────────────────────────────────────────────────────────────
 
-    good_pred = _pred("vehicle.car", [1.0, 0.0, 0.0], lifting_status="succeeded")
-    failed_pred = _pred(
-        "vehicle.car", [0.0, 0.0, 0.0], lifting_status="failed", pred_id="pred-002"
+
+def test_a_prediction_at_the_label_center_matches():
+    result = _evaluate([_label("g", 10.0)], [_pred("vehicle.car", 10.0)])
+    assert (result["tp"], result["fp"], result["fn"]) == (1, 0, 0)
+    assert result["matches"][0]["label_id"] == "g"
+    assert result["precision"] == result["recall"] == 1.0
+
+
+def test_distance_and_category_both_gate_a_match():
+    far = _evaluate([_label("g", 10.0)], [_pred("vehicle.car", 14.0)])
+    assert (far["tp"], far["fp"], far["fn"]) == (0, 1, 1)
+    wrong = _evaluate([_label("g", 10.0)], [_pred("human.pedestrian", 10.0)])
+    assert (wrong["tp"], wrong["fp"], wrong["fn"]) == (0, 1, 1)
+    assert wrong["class_metrics"]["human.pedestrian"]["fp"] == 1
+    assert wrong["class_metrics"]["vehicle.car"]["fn"] == 1
+
+
+def test_each_label_is_matched_at_most_once():
+    result = _evaluate(
+        [_label("g", 10.0)],
+        [
+            _pred("vehicle.car", 10.0, pred_id="a"),
+            _pred("vehicle.car", 10.5, pred_id="b"),
+        ],
     )
-
-    result = evaluate_sample(
-        sample=sample,
-        predictions=[good_pred, failed_pred],
-        match_distance_m=2.0,
-    )
-
-    # good_pred matches the GT → TP=1, FP=0 (failed excluded)
-    assert result["tp"] == 1
-    assert result["fp"] == 0
-    assert result["fn"] == 0
-    assert result["precision"] == 1.0
-    assert result["recall"] == 1.0
-    assert result["lifting_failed_prediction_count"] == 1
-    assert result["evaluable_prediction_count"] == 1
+    assert (result["tp"], result["fp"], result["fn"]) == (1, 1, 0)
 
 
-# ── not_applicable and legacy predictions remain evaluable ────────────────────
+def test_a_covered_sample_without_labels_scores_every_prediction_as_false_positive():
+    result = _evaluate([], [_pred("vehicle.car", 10.0)])
+    assert (result["tp"], result["fp"], result["fn"]) == (0, 1, 0)
 
 
-def test_not_applicable_prediction_is_evaluable():
-    """'not_applicable' predictions still participate in matching (as FP if unmatched)."""
-    gt = _make_annotation("vehicle.car", [50.0, 50.0, 0.0])
-    sample = _make_sample([gt])
-
-    na_pred = _pred("vehicle.car", [0.0, 0.0, 0.0], lifting_status="not_applicable")
-    result = evaluate_sample(
-        sample=sample,
-        predictions=[na_pred],
-        match_distance_m=2.0,
-    )
-
-    assert result["fp"] == 1  # not_applicable is evaluated, just FP here
-    assert result["lifting_failed_prediction_count"] == 0
-    assert result["evaluable_prediction_count"] == 1
+# ── frames ────────────────────────────────────────────────────────────────────
 
 
-def test_legacy_prediction_no_status_is_evaluable():
-    """Mock predictions without lifting_status are treated as evaluable."""
-    gt = _make_annotation("vehicle.car", [1.0, 0.0, 0.0])
-    sample = _make_sample([gt])
-
-    legacy_pred = _pred("vehicle.car", [1.0, 0.0, 0.0])  # no lifting_status
-    result = evaluate_sample(
-        sample=sample,
-        predictions=[legacy_pred],
-        match_distance_m=2.0,
-    )
-
-    assert result["tp"] == 1
-    assert result["fp"] == 0
-    assert result["lifting_failed_prediction_count"] == 0
-
-
-# ── lifting counts returned correctly ────────────────────────────────────────
-
-
-def test_evaluate_sample_returns_lifting_counts():
-    sample = _make_sample([])  # no GT
-
-    preds = [
-        _pred("vehicle.car", [0.0, 0.0, 0.0], lifting_status="succeeded", pred_id="p1"),
-        _pred("vehicle.car", [0.0, 0.0, 0.0], lifting_status="failed", pred_id="p2"),
-        _pred(
-            "vehicle.car",
-            [0.0, 0.0, 0.0],
-            lifting_status="not_applicable",
-            pred_id="p3",
-        ),
-        _pred("vehicle.car", [0.0, 0.0, 0.0], pred_id="p4"),  # legacy, no status
-    ]
-
-    result = evaluate_sample(sample=sample, predictions=preds, match_distance_m=2.0)
-
-    assert result["prediction_count"] == 4
-    assert result["lifting_failed_prediction_count"] == 1
-    assert (
-        result["evaluable_prediction_count"] == 3
-    )  # succeeded + not_applicable + legacy
+def test_a_prediction_and_label_in_different_frames_are_never_compared():
+    with pytest.raises(FrameMismatchError, match="no frame transform is applied"):
+        _evaluate(
+            [_label("g", 10.0, frame="world")],
+            [_pred("vehicle.car", 10.0, frame="ego")],
+        )

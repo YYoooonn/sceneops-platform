@@ -5,7 +5,6 @@ from enum import StrEnum
 
 class ModelBackend(StrEnum):
     MOCK = "mock"
-    ONNX_RUNTIME = "onnx_runtime"
     GROUNDING_DINO = "grounding_dino"
     TRITON = "triton"
     REMOTE_HTTP = "remote_http"

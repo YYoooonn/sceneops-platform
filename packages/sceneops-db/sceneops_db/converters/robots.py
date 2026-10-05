@@ -52,36 +52,29 @@ def robot_run_model_to_record(model: RobotRunModel) -> RobotRunRecord:
     return RobotRunRecord(
         run_id=model.run_id,
         robot_id=model.robot_id,
-        status=model.status,
-        dataset_id=model.dataset_id,
-        dataset_version=model.dataset_version,
-        raw_log_id=model.raw_log_id,
-        rosbag_uri=model.rosbag_uri,
-        mcap_uri=model.mcap_uri,
         started_at=model.started_at,
         ended_at=model.ended_at,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-        metadata=metadata_from_model(model),
+        recording_format=model.recording_format,
+        source_clock=model.source_clock,
+        recording_artifact_id=model.recording_artifact_id,
+        manifest_artifact_id=model.manifest_artifact_id,
+        manifest_checksum=model.manifest_checksum,
+        registered_at=model.registered_at,
     )
 
 
 def robot_run_record_to_values(record: RobotRunRecord) -> dict[str, Any]:
-    return values_with_metadata(
-        {
-            "run_id": record.run_id,
-            "robot_id": record.robot_id,
-            "status": enum_to_value(record.status),
-            "dataset_id": record.dataset_id,
-            "dataset_version": record.dataset_version,
-            "raw_log_id": record.raw_log_id,
-            "rosbag_uri": record.rosbag_uri,
-            "mcap_uri": record.mcap_uri,
-            "started_at": record.started_at,
-            "ended_at": record.ended_at,
-            "metadata": record.metadata,
-        }
-    )
+    return {
+        "run_id": record.run_id,
+        "robot_id": record.robot_id,
+        "started_at": record.started_at,
+        "ended_at": record.ended_at,
+        "recording_format": record.recording_format,
+        "source_clock": record.source_clock,
+        "recording_artifact_id": record.recording_artifact_id,
+        "manifest_artifact_id": record.manifest_artifact_id,
+        "manifest_checksum": record.manifest_checksum,
+    }
 
 
 # ── Mission ──────────────────────────────────────────────────────────────────

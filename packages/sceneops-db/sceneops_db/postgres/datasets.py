@@ -4,8 +4,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
-from sceneops_core.datasets.schemas.enums import DatasetType
-from sceneops_core.datasets.schemas.validation import DatasetValidationStatus
 
 from sceneops_db.converters.datasets import (
     dataset_model_to_record,
@@ -16,7 +14,7 @@ from sceneops_db.converters.datasets import (
 )
 from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
 
-from ._utils import apply_pagination, apply_values, enum_value, values_without_none
+from ._utils import apply_pagination, apply_values, values_without_none
 
 
 class PostgresDatasetRepository:
@@ -56,13 +54,10 @@ class PostgresDatasetRepository:
     async def list(
         self,
         *,
-        type: DatasetType | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[DatasetRecord]:
         stmt = select(DatasetModel)
-        if type is not None:
-            stmt = stmt.where(DatasetModel.type == enum_value(type))
         stmt = apply_pagination(
             stmt.order_by(DatasetModel.created_at.desc()), limit=limit, offset=offset
         )
@@ -152,55 +147,31 @@ class PostgresDatasetVersionRepository:
             raise ValueError(f"DatasetVersion not found: {dataset_id}/{version}")
         return dataset_version_model_to_record(model)
 
-    async def update_scene_summary(
+    async def replace_scene_membership_summary(
         self,
         *,
         dataset_id: str,
         version: str,
-        scene_count: int | None = None,
-        sample_count: int | None = None,
-        frame_count: int | None = None,
-        channels: list[str] | None = None,
-        required_channels: list[str] | None = None,
-        manifest_uri: str | None = None,
-        raw_source_root_uri: str | None = None,
-        latest_validation_run_id: str | None = None,
-        validation_status: DatasetValidationStatus | None = None,
-        should_block_pipeline: bool | None = None,
-        validation_report_uri: str | None = None,
-        latest_profile_run_id: str | None = None,
-        profile_report_uri: str | None = None,
+        scene_count: int,
+        keyframe_count: int,
+        observation_count: int,
+        observed_channels: list[str],
     ) -> DatasetVersionRecord:
-        """Partial update of Scene-owned columns only.
-
-        None means "leave untouched" — omitted kwargs never overwrite the
-        existing value (including should_block_pipeline=False, which is
-        falsy but not None, so it round-trips correctly through
-        values_without_none). Never touches episode_count or any generic
-        identity/state column.
-        """
+        """Overwrite the Scene membership summary with values recomputed from
+        SceneRecord rows. Only the Scene registrar calls this, under
+        ``lock_for_update`` and in the same transaction as the membership
+        change (ADR-007 §16), so the cache can never drift from membership.
+        Never touches Episode columns or the Scene input columns."""
         model = await self._get_model_or_raise(dataset_id, version)
-
-        scene_values = values_without_none(
+        apply_values(
+            model,
             {
                 "scene_count": scene_count,
-                "sample_count": sample_count,
-                "frame_count": frame_count,
-                "channels": channels,
-                "required_channels": required_channels,
-                "manifest_uri": manifest_uri,
-                "raw_source_root_uri": raw_source_root_uri,
-                "latest_validation_run_id": latest_validation_run_id,
-                "validation_status": enum_value(validation_status)
-                if validation_status is not None
-                else None,
-                "should_block_pipeline": should_block_pipeline,
-                "validation_report_uri": validation_report_uri,
-                "latest_profile_run_id": latest_profile_run_id,
-                "profile_report_uri": profile_report_uri,
-            }
+                "keyframe_count": keyframe_count,
+                "observation_count": observation_count,
+                "observed_channels": list(observed_channels),
+            },
         )
-        apply_values(model, scene_values)
         await self._session.flush()
         await self._session.refresh(model)
         return dataset_version_model_to_record(model)

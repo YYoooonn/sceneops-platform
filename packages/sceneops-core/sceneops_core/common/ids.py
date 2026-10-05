@@ -90,6 +90,15 @@ def robot_run_recording_artifact_id(robot_run_id: str) -> str:
     return f"art-robotrun-{robot_run_id}"
 
 
+def robot_run_manifest_artifact_id(robot_run_id: str) -> str:
+    """Deterministic id of a RobotRun's RobotRunManifest ArtifactRecord.
+
+    The ``robotrunmanifest`` prefix cannot collide with any
+    ``robot_run_recording_artifact_id`` value (those continue with ``-``
+    after ``art-robotrun``), whatever the run id."""
+    return f"art-robotrunmanifest-{robot_run_id}"
+
+
 def generate_comparison_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"cmp-{suffix}"

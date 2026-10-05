@@ -1,52 +1,37 @@
 """Unit tests for IngestRobotStatesJobHandler.
 
 Follows the MagicMock WorkerContext convention used by
-test_export_analytics_snapshot.py. RosbagAdapter itself is exercised with a
-real synthetic MCAP file (see test_rosbag_raw_log.py) — here we mock
-RosbagAdapter to isolate the handler's own orchestration logic (robot/run
-lookup, mcap_uri fallback, persistence, RobotRun status update).
+test_export_analytics_snapshot.py. The recording is registered in a real
+LocalArtifactStore (``register_local_recording``) and read through the real
+verified recording resolver; RecordingTelemetryReader itself is mocked to isolate the
+handler's own orchestration (resolver use, robot identity, persistence;
+RobotRuns are never mutated). RecordingTelemetryReader is exercised with real MCAP
+files in robots/test_telemetry.py.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
-from sceneops_core.robots.schemas import (
-    MissionRecord,
-    MissionStatus,
-    RobotRecord,
-    RobotRunRecord,
-    RobotRunStatus,
-)
+from sceneops_core.jobs.schemas import IngestRobotStatesJobParams
+from sceneops_core.robots.schemas import MissionRecord, MissionStatus, RobotStateRecord
 from sceneops_worker.jobs.robots.ingest_robot_states import (
     IngestRobotStatesJobHandler,
 )
+from sceneops_worker.robots.resolver import (
+    RecordingArtifactInconsistentError,
+    RobotRunNotFoundError,
+)
+
+_RECORDING_BYTES = b"mcap bytes (RecordingTelemetryReader is mocked in this module)"
+_ADAPTER = "sceneops_worker.jobs.robots.ingest_robot_states.RecordingTelemetryReader"
 
 
-def _robot(robot_id: str = "robot-1") -> RobotRecord:
-    return RobotRecord(robot_id=robot_id)
-
-
-def _robot_run(
-    run_id: str = "run-1",
-    *,
-    robot_id: str = "robot-1",
-    mcap_uri: str | None = "/data/raw/rosbag/robot-1/run-1.mcap",
-    rosbag_uri: str | None = None,
-) -> RobotRunRecord:
-    return RobotRunRecord(
-        run_id=run_id,
-        robot_id=robot_id,
-        mcap_uri=mcap_uri,
-        rosbag_uri=rosbag_uri,
-    )
-
-
-def _states(count: int, *, robot_id: str = "robot-1", robot_run_id: str = "run-1"):
-    from sceneops_core.robots.schemas import RobotStateRecord
-
+def _states(count: int, *, robot_id: str, robot_run_id: str = "run-1"):
     return [
         RobotStateRecord(
             state_id=f"{robot_run_id}-{i}",
@@ -58,36 +43,19 @@ def _states(count: int, *, robot_id: str = "robot-1", robot_run_id: str = "run-1
     ]
 
 
-def _request(params: MagicMock, context: MagicMock) -> MagicMock:
+def _request(context: MagicMock, *, robot_run_id: str = "run-1") -> MagicMock:
     request = MagicMock()
     request.job = MagicMock()
-    request.params = params
+    request.params = IngestRobotStatesJobParams(robot_run_id=robot_run_id)
     request.context = context
     return request
 
 
-def _params(
-    robot_id: str = "robot-1",
-    robot_run_id: str | None = "run-1",
-    mcap_uri: str | None = None,
-) -> MagicMock:
-    p = MagicMock()
-    p.robot_id = robot_id
-    p.robot_run_id = robot_run_id
-    p.mcap_uri = mcap_uri
-    return p
-
-
-def _context(
-    *,
-    robot: RobotRecord | None,
-    robot_run: RobotRunRecord | None,
-) -> MagicMock:
+def _context() -> MagicMock:
     ctx = MagicMock()
     ctx.robot_store = MagicMock()
-    ctx.robot_store.get_robot = AsyncMock(return_value=robot)
-    ctx.robot_store.get_run = AsyncMock(return_value=robot_run)
-    ctx.robot_store.save_run = AsyncMock(side_effect=lambda run: run)
+    ctx.robot_store.get_run = AsyncMock(return_value=None)
+    ctx.artifact_record_store.get = AsyncMock(return_value=None)
     ctx.robot_store.create_states = AsyncMock(side_effect=lambda states: states)
     ctx.robot_store.upsert_mission = AsyncMock(side_effect=lambda mission: mission)
     return ctx
@@ -102,106 +70,89 @@ def _mock_adapter(MockAdapter, *, states=None, missions=None) -> None:
 
 
 class TestIngestRobotStatesJobHandler:
-    async def test_raises_if_robot_not_found(self) -> None:
-        ctx = _context(robot=None, robot_run=None)
-        handler = IngestRobotStatesJobHandler()
-
-        with pytest.raises(ValueError, match="Robot not found"):
-            await handler.run(_request(_params(), ctx))
-
     async def test_raises_if_robot_run_not_found(self) -> None:
-        ctx = _context(robot=_robot(), robot_run=None)
-        handler = IngestRobotStatesJobHandler()
+        ctx = _context()
 
-        with pytest.raises(ValueError, match="RobotRun not found"):
-            await handler.run(_request(_params(robot_run_id="run-1"), ctx))
+        with patch(_ADAPTER) as MockAdapter:
+            with pytest.raises(RobotRunNotFoundError, match="RobotRun not found"):
+                await IngestRobotStatesJobHandler().run(_request(ctx))
+            MockAdapter.assert_not_called()
+        ctx.robot_store.create_states.assert_not_called()
+        ctx.robot_store.upsert_mission.assert_not_called()
 
-    async def test_raises_if_no_mcap_uri_resolvable(self) -> None:
-        robot_run = _robot_run(mcap_uri=None, rosbag_uri=None)
-        ctx = _context(robot=_robot(), robot_run=robot_run)
-        handler = IngestRobotStatesJobHandler()
+    async def test_raises_if_recording_artifact_missing(
+        self, register_local_recording
+    ) -> None:
+        ctx = _context()
+        await register_local_recording(ctx, _RECORDING_BYTES)
+        ctx.artifact_record_store.get = AsyncMock(return_value=None)
 
-        with pytest.raises(ValueError, match="requires mcap_uri"):
-            await handler.run(_request(_params(mcap_uri=None), ctx))
+        with patch(_ADAPTER) as MockAdapter:
+            with pytest.raises(
+                RecordingArtifactInconsistentError, match="does not exist"
+            ):
+                await IngestRobotStatesJobHandler().run(_request(ctx))
+            MockAdapter.assert_not_called()
+        ctx.robot_store.create_states.assert_not_called()
+        ctx.robot_store.upsert_mission.assert_not_called()
 
-    async def test_ingests_states_and_marks_run_ingested(self) -> None:
-        robot_run = _robot_run()
-        ctx = _context(robot=_robot(), robot_run=robot_run)
-        handler = IngestRobotStatesJobHandler()
+    async def test_ingests_from_resolved_recording_as_the_run_s_robot(
+        self, register_local_recording
+    ) -> None:
+        ctx = _context()
+        robot_run, artifact = await register_local_recording(
+            ctx, _RECORDING_BYTES, robot_id="robot-of-run"
+        )
 
-        fake_states = _states(3)
-        with patch(
-            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
-        ) as MockAdapter:
+        fake_states = _states(3, robot_id="robot-of-run")
+        adapter_paths: list[Path] = []
+        with patch(_ADAPTER) as MockAdapter:
             _mock_adapter(MockAdapter, states=fake_states)
 
-            result = await handler.run(_request(_params(), ctx))
+            def _capture(**kwargs):
+                path = Path(kwargs["recording_path"])
+                # The resolver's verified copy exists while the adapter reads it.
+                assert path.read_bytes() == _RECORDING_BYTES
+                adapter_paths.append(path)
+                return MockAdapter.return_value
 
-            MockAdapter.assert_called_once()
-            _, kwargs = MockAdapter.call_args
-            assert kwargs["source_root_uri"] == robot_run.mcap_uri
+            MockAdapter.side_effect = _capture
 
+            result = await IngestRobotStatesJobHandler().run(_request(ctx))
+
+            adapter = MockAdapter.return_value
+            # Robot identity comes from the RobotRunRecord, never the caller.
+            adapter.extract_robot_states.assert_called_once_with(
+                robot_id="robot-of-run", robot_run_id="run-1"
+            )
+            adapter.extract_missions.assert_called_once_with(
+                robot_id="robot-of-run", robot_run_id="run-1"
+            )
+
+        assert len(adapter_paths) == 1
+        assert str(adapter_paths[0]) != artifact.uri
+        assert not adapter_paths[0].exists()
+        ctx.artifact_record_store.get.assert_awaited_once_with(
+            robot_run.recording_artifact_id
+        )
+        ctx.artifact_store.read_bytes.assert_awaited_once_with(artifact.uri)
         ctx.robot_store.create_states.assert_awaited_once_with(fake_states)
-        ctx.robot_store.save_run.assert_awaited_once()
-        saved_run = ctx.robot_store.save_run.await_args.args[0]
-        assert saved_run.status == RobotRunStatus.INGESTED
+        # RobotRunRecords are immutable: only reads + state/mission writes.
+        assert {call[0] for call in ctx.robot_store.method_calls} <= {
+            "get_run",
+            "create_states",
+            "upsert_mission",
+        }
 
+        assert result.robot_id == "robot-of-run"
+        assert result.robot_run_id == "run-1"
         assert result.state_count == 3
         assert result.start_timestamp_us == fake_states[0].timestamp_us
         assert result.end_timestamp_us == fake_states[-1].timestamp_us
 
-    async def test_falls_back_to_rosbag_uri_when_mcap_uri_missing(self) -> None:
-        robot_run = _robot_run(mcap_uri=None, rosbag_uri="/data/raw/rosbag/run-1.bag")
-        ctx = _context(robot=_robot(), robot_run=robot_run)
-        handler = IngestRobotStatesJobHandler()
-
-        with patch(
-            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
-        ) as MockAdapter:
-            _mock_adapter(MockAdapter)
-            await handler.run(_request(_params(), ctx))
-
-            _, kwargs = MockAdapter.call_args
-            assert kwargs["source_root_uri"] == "/data/raw/rosbag/run-1.bag"
-
-    async def test_explicit_mcap_uri_overrides_robot_run(self) -> None:
-        robot_run = _robot_run(mcap_uri="/from/run.mcap")
-        ctx = _context(robot=_robot(), robot_run=robot_run)
-        handler = IngestRobotStatesJobHandler()
-
-        with patch(
-            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
-        ) as MockAdapter:
-            _mock_adapter(MockAdapter)
-            await handler.run(
-                _request(_params(mcap_uri="/explicit/override.mcap"), ctx)
-            )
-
-            _, kwargs = MockAdapter.call_args
-            assert kwargs["source_root_uri"] == "/explicit/override.mcap"
-
-    async def test_no_robot_run_id_skips_run_lookup_and_update(self) -> None:
-        ctx = _context(robot=_robot(), robot_run=None)
-        handler = IngestRobotStatesJobHandler()
-
-        with patch(
-            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
-        ) as MockAdapter:
-            _mock_adapter(MockAdapter)
-            result = await handler.run(
-                _request(_params(robot_run_id=None, mcap_uri="/standalone.mcap"), ctx)
-            )
-
-        ctx.robot_store.get_run.assert_not_called()
-        ctx.robot_store.save_run.assert_not_called()
-        assert result.state_count == 0
-        assert result.start_timestamp_us is None
-        assert result.end_timestamp_us is None
-
-    async def test_ingests_missions_via_upsert(self) -> None:
-        robot_run = _robot_run()
-        ctx = _context(robot=_robot(), robot_run=robot_run)
-        handler = IngestRobotStatesJobHandler()
+    async def test_ingests_missions_via_upsert(self, register_local_recording) -> None:
+        ctx = _context()
+        await register_local_recording(ctx, _RECORDING_BYTES)
 
         fake_missions = [
             MissionRecord(
@@ -211,26 +162,72 @@ class TestIngestRobotStatesJobHandler:
                 status=MissionStatus.COMPLETED,
             )
         ]
-        with patch(
-            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
-        ) as MockAdapter:
+        with patch(_ADAPTER) as MockAdapter:
             _mock_adapter(MockAdapter, missions=fake_missions)
-
-            result = await handler.run(_request(_params(), ctx))
+            result = await IngestRobotStatesJobHandler().run(_request(ctx))
 
         ctx.robot_store.upsert_mission.assert_awaited_once_with(fake_missions[0])
         assert result.mission_count == 1
 
-    async def test_no_missions_found_upserts_nothing(self) -> None:
-        robot_run = _robot_run()
-        ctx = _context(robot=_robot(), robot_run=robot_run)
-        handler = IngestRobotStatesJobHandler()
+    async def test_no_missions_found_upserts_nothing(
+        self, register_local_recording
+    ) -> None:
+        ctx = _context()
+        await register_local_recording(ctx, _RECORDING_BYTES)
 
-        with patch(
-            "sceneops_worker.jobs.robots.ingest_robot_states.RosbagAdapter"
-        ) as MockAdapter:
+        with patch(_ADAPTER) as MockAdapter:
             _mock_adapter(MockAdapter)
-            result = await handler.run(_request(_params(), ctx))
+            result = await IngestRobotStatesJobHandler().run(_request(ctx))
 
         ctx.robot_store.upsert_mission.assert_not_called()
         assert result.mission_count == 0
+        assert result.start_timestamp_us is None
+        assert result.end_timestamp_us is None
+
+
+# ── job contract: robot_run_id is the only recording and robot identity ────
+
+
+def test_params_have_no_recording_uri_or_robot_fields() -> None:
+    assert not {"mcap_uri", "rosbag_uri", "robot_id"} & set(
+        IngestRobotStatesJobParams.model_fields
+    )
+
+
+@pytest.mark.parametrize("field", ["mcap_uri", "rosbag_uri", "mcapUri"])
+def test_params_reject_recording_uri(field: str) -> None:
+    with pytest.raises(ValidationError, match=field):
+        IngestRobotStatesJobParams.model_validate(
+            {"robot_run_id": "run-1", field: "/data/raw/rosbag/run.mcap"}
+        )
+
+
+@pytest.mark.parametrize("field", ["robot_id", "robotId"])
+def test_params_reject_caller_robot_identity(field: str) -> None:
+    """A caller cannot relabel a registered recording as another robot's:
+    a robot_id in the params fails validation (HTTP 400 at job creation)
+    before any decoding or write -- it is neither honored nor ignored."""
+    with pytest.raises(ValidationError, match=f"{field} is not accepted"):
+        IngestRobotStatesJobParams.model_validate(
+            {"robot_run_id": "run-1", field: "robot-b"}
+        )
+
+
+@pytest.mark.parametrize("robot_run_id", [None, ""])
+def test_params_require_robot_run_id(robot_run_id) -> None:
+    payload = {} if robot_run_id is None else {"robot_run_id": robot_run_id}
+    with pytest.raises(ValidationError, match="robot_?[rR]un_?[iI]d"):
+        IngestRobotStatesJobParams.model_validate(payload)
+
+
+def test_params_accept_job_envelope_dataset_fields() -> None:
+    """POST /jobs merges the envelope's dataset_id/dataset_version into every
+    job's params; the caller-identity guard must not reject them."""
+    params = IngestRobotStatesJobParams.model_validate(
+        {
+            "robot_run_id": "run-1",
+            "dataset_id": "nuscenes",
+            "dataset_version": "v1.0-mini",
+        }
+    )
+    assert params.robot_run_id == "run-1"

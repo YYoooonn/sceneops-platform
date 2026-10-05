@@ -5,10 +5,10 @@ DB records.  No in-memory context propagation is used.
 
 Resolution:
   pipeline  — from pipeline_run / task_definition / task_run (always authoritative)
-  dataset   — DatasetInputRef built from DatasetVersionRecord (baseline quality cache)
+  dataset   — DatasetInputRef: the DatasetVersion scope of the run
   model     — ModelInputRef built from ModelVersionRecord
   upstream  — PipelineUpstreamTaskRef per upstream task; refs/summary merged into
-               inputs.refs / inputs.summary (override dataset baseline in to_context_values)
+               inputs.refs / inputs.summary
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from sceneops_worker.core.context import WorkerContext
 class PipelineInputResolver:
     """Resolves inputs for a pipeline task prior to job planning.
 
-    Returns a PipelineTaskInputs envelope.  Call inputs.to_context_values() to
-    get the flat dict that job handlers expect via build_step_params(base, context_values).
+    Returns a PipelineTaskInputs envelope; each job handler assembles its own
+    params from it (``JobHandler.build_job_params``).
     """
 
     def __init__(self, context: WorkerContext) -> None:
@@ -46,7 +46,7 @@ class PipelineInputResolver:
         task_run: PipelineTaskRunManifest,
     ) -> PipelineTaskInputs:
         """Return PipelineTaskInputs for the given task."""
-        dataset = await self._build_dataset_ref(pipeline_run)
+        dataset = self._build_dataset_ref(pipeline_run)
         model = await self._build_model_ref(pipeline_run)
         (
             upstream_tasks,
@@ -68,72 +68,19 @@ class PipelineInputResolver:
             dataset=dataset,
             model=model,
             upstream_tasks=upstream_tasks,
-            # Upstream task results override dataset/model baselines in to_context_values()
             refs=upstream_refs,
             summary=upstream_summary,
         )
 
-    async def _build_dataset_ref(
-        self,
+    @staticmethod
+    def _build_dataset_ref(
         pipeline_run: PipelineRunManifest,
     ) -> DatasetInputRef | None:
         if not pipeline_run.dataset_id:
             return None
-
-        if not pipeline_run.dataset_version:
-            return DatasetInputRef(dataset_id=pipeline_run.dataset_id)
-
-        version = await self._context.dataset_store.get_version(
-            dataset_id=pipeline_run.dataset_id,
-            version=pipeline_run.dataset_version,
-        )
-
-        if version is None:
-            return DatasetInputRef(
-                dataset_id=pipeline_run.dataset_id,
-                dataset_version=pipeline_run.dataset_version,
-            )
-
-        # Scene-owned fields live on version.scene (SceneOps V2 Request 02).
-        # A DatasetVersion with no Scene activity has scene=None — e.g. an
-        # episode-only version — and this must still resolve to a valid,
-        # if mostly-empty, DatasetInputRef rather than raising or assuming
-        # Scene fields exist.
-        scene = version.scene
-
-        refs: JsonDict = {}
-        if scene is not None:
-            if scene.validation_report_uri:
-                refs["validation_report_uri"] = scene.validation_report_uri
-            if scene.profile_report_uri:
-                refs["profile_report_uri"] = scene.profile_report_uri
-
-        summary: JsonDict = {}
-        if scene is not None:
-            if scene.scene_count:
-                summary["scene_count"] = scene.scene_count
-            if scene.sample_count:
-                summary["sample_count"] = scene.sample_count
-            if scene.frame_count:
-                summary["frame_count"] = scene.frame_count
-            if scene.channels:
-                summary["channels"] = scene.channels
-            if scene.latest_validation_run_id:
-                summary["validation_run_id"] = scene.latest_validation_run_id
-            if scene.validation_status is not None:
-                summary["validation_status"] = str(scene.validation_status)
-            if scene.should_block_pipeline is not None:
-                summary["should_block_pipeline"] = scene.should_block_pipeline
-            if scene.latest_profile_run_id:
-                summary["profile_run_id"] = scene.latest_profile_run_id
-
         return DatasetInputRef(
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
-            manifest_uri=(scene.manifest_uri if scene is not None else None) or None,
-            required_channels=scene.required_channels if scene is not None else [],
-            refs=refs,
-            summary=summary,
         )
 
     async def _build_model_ref(
@@ -239,7 +186,6 @@ class PipelineInputResolver:
             )
 
             # Merge refs and summary into top-level inputs.refs / inputs.summary.
-            # These override dataset/model baselines in PipelineTaskInputs.to_context_values().
             for k, v in refs_dict.items():
                 if v is not None:
                     upstream_refs[k] = v

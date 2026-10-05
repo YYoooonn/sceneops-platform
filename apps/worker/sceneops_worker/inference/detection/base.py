@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
@@ -8,56 +9,88 @@ from sceneops_core.inference.schemas import (
     DetectionInferenceInput,
     DetectionInferenceResult,
 )
-from sceneops_core.sensors.manifests import SensorCalibrationManifest, EgoPoseManifest
+from sceneops_core.labels import Box3DLabel
+from sceneops_core.sample_views import ResolvedMember
+from sceneops_core.scenes.schemas.manifests import ScenePose
+from sceneops_storage import ArtifactStore
+
+from sceneops_worker.derived import DerivedManifestStore
 from sceneops_worker.runs import RunArtifactStore
-from sceneops_worker.scenes import SceneArtifactStore
 
 
 @dataclass(frozen=True)
 class DetectionSampleInput:
-    """Resolved sample ready for one inference request.
+    """One sample of a pinned SceneSampleView, resolved for inference.
 
-    ``image_uri`` is the primary image location (file:// or future remote).
-    The inference server resolves this URI to the actual image bytes.
-    Workers must not read the image themselves — they only construct and pass
-    the URI.
+    ``image_uri`` / ``lidar_uri`` are where the camera / lidar payload
+    artifacts live, resolved through their verified ArtifactRecords. The
+    inference server resolves ``image_uri`` to image bytes; workers only
+    pass it. ``camera`` / ``lidar`` carry the canonical observations with
+    their calibration, and ``pose`` is the ego pose the view associated
+    with the sample, for 3-D lifting.
 
-    calibrated_sensor_index / ego_pose_index:
-        Scene-level lookup tables built from SceneManifest.calibrated_sensors
-        and .ego_poses. Used by frustum lifting to resolve frame ID references
-        without embedding inline objects in the persisted manifest.
+    ``reference_labels`` is filled only for a backend that declares
+    ``uses_reference_labels`` (a test double that perturbs labels). Real
+    backends never see labels.
     """
 
-    dataset_id: str
-    dataset_version: str
     scene_id: str
     sample_id: str
     camera_channel: str
-    image_uri: str  # file:// URI (or future s3://, gs://)
+    image_uri: str
+    camera: ResolvedMember
 
-    timestamp_us: int | None = None
+    lidar: ResolvedMember | None = None
     lidar_uri: str | None = None
-    camera_sensor_frame: Any | None = None  # SceneSensorFrameManifest
-    lidar_sensor_frame: Any | None = None  # SceneSensorFrameManifest
-    scene_manifest_uri: str | None = None
-
-    # Scene-level registry indexes for lifting (not persisted to manifests)
-    calibrated_sensor_index: dict[str, SensorCalibrationManifest] = field(
-        default_factory=dict
-    )
-    ego_pose_index: dict[str, EgoPoseManifest] = field(default_factory=dict)
-
-    metadata: dict[str, Any] | None = None
+    pose: ScenePose | None = None
+    reference_labels: list[Box3DLabel] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class DetectionInferenceRequest:
     input: DetectionInferenceInput
-    scene_artifact_store: SceneArtifactStore
+    samples: list[DetectionSampleInput]
+    artifact_store: ArtifactStore
     run_artifact_store: RunArtifactStore
+    derived_store: DerivedManifestStore
+
+
+@dataclass(frozen=True)
+class SamplePrediction:
+    sample: DetectionSampleInput
+    predictions: list[dict[str, Any]]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BackendRun:
+    """What a backend produced: per-sample predictions and run-level metrics."""
+
+    samples: list[SamplePrediction]
+    metrics: dict[str, Any] = field(default_factory=dict)
+    inference_request_count: int | None = None
 
 
 DetectionInferenceBackend: TypeAlias = InferenceBackend[
     DetectionInferenceRequest,
     DetectionInferenceResult,
 ]
+
+
+class SampleDetectionBackend(ABC):
+    """A backend computes predictions; publication of the pinned prediction
+    manifest is shared (``publication.publish_predictions``)."""
+
+    uses_reference_labels: bool = False
+
+    @property
+    @abstractmethod
+    def backend_type(self) -> str: ...
+
+    @abstractmethod
+    async def predict(self, request: DetectionInferenceRequest) -> BackendRun: ...
+
+    async def run(self, request: DetectionInferenceRequest) -> DetectionInferenceResult:
+        from sceneops_worker.inference.detection.publication import publish_predictions
+
+        return await publish_predictions(request, await self.predict(request))

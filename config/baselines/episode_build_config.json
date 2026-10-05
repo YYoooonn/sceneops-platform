@@ -1,0 +1,56 @@
+{
+  "streams": [
+    {
+      "topic": "/camera/front/image/compressed",
+      "role": "observation",
+      "time": {"source": "header_stamp", "clock": "vehicle.source_time"},
+      "payload": "compressed_image"
+    },
+    {
+      "topic": "/vehicle/odom",
+      "role": "state",
+      "time": {"source": "header_stamp", "clock": "vehicle.source_time"},
+      "fields": [
+        {"name": "x", "path": "pose.pose.position.x"},
+        {"name": "y", "path": "pose.pose.position.y"},
+        {"name": "vx", "path": "twist.twist.linear.x"}
+      ]
+    },
+    {
+      "topic": "/vehicle/status",
+      "role": "state",
+      "time": {"source": "header_stamp", "clock": "vehicle.source_time"},
+      "fields": [{"name": "battery", "path": "percentage"}]
+    },
+    {
+      "topic": "/vehicle/control",
+      "role": "action",
+      "decoding": "json_string",
+      "time": {"source": "payload_field", "clock": "vehicle.source_time", "field": "source_timestamp_ns"},
+      "fields": [
+        {"name": "steering", "path": "steering"},
+        {"name": "throttle", "path": "throttle"},
+        {"name": "brake", "path": "brake"}
+      ]
+    }
+  ],
+  "events": [
+    {
+      "topic": "/mission/status",
+      "decoding": "json_string",
+      "time": {"source": "payload_field", "clock": "vehicle.source_time", "field": "source_timestamp_ns"},
+      "fields": [
+        {"name": "mission_id", "path": "mission_id"},
+        {"name": "state", "path": "operation_state"}
+      ]
+    }
+  ],
+  "segmentation": {
+    "policy": "event_markers",
+    "event_topic": "/mission/status",
+    "key_field": "mission_id",
+    "state_field": "state",
+    "start_values": ["running"],
+    "end_values": ["completed"]
+  }
+}

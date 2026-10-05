@@ -48,26 +48,9 @@ def test_robot_jobs_are_intentionally_absent_from_every_pipeline():
         )
 
 
-def test_orphan_job_types_are_exactly_the_documented_reservations():
-    """Locks in the Stabilization Request 5 cleanup decision register:
-    exactly these 5 JobType values have no registered handler, each with a
-    matching ArtifactOwnerType reservation documented on the enum itself
-    (see jobs/schemas/enums.py). JobType.CHECK_DISTRIBUTION — previously a
-    6th handler-less value with no such matching evidence — was removed
-    entirely in this same cleanup, alongside its dead
-    ArtifactOwnerType.DATASET_DISTRIBUTION_RUN / ArtifactKind.DISTRIBUTION_REPORT.
-
-    If this test starts failing because a *new* orphan appeared, that's a
-    real regression to investigate, not a reason to just widen the set
-    below."""
+def test_every_job_type_has_a_registered_handler():
+    """No JobType is reserved without a handler: a job type exists only while
+    something executes it (the reserved scene / dataset auto-label, export
+    and comparison types were removed with the label model, ADR-007 §33.2)."""
     registry = create_default_job_handler_registry()
-    registered = set(registry.list_job_types())
-    orphans = set(JobType) - registered
-
-    assert orphans == {
-        JobType.COMPARE_SCENES,
-        JobType.AUTO_LABEL_SCENE,
-        JobType.EXPORT_SCENE_PACKAGE,
-        JobType.AUTO_LABEL_DATASET,
-        JobType.EXPORT_DATASET,
-    }
+    assert set(JobType) - set(registry.list_job_types()) == set()

@@ -3,9 +3,12 @@ from __future__ import annotations
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
+from sceneops_core.common.derived_ids import derived_artifact_id
 from sceneops_core.common.schemas import JsonDict
-from sceneops_core.episodes.alignment import AlignedEpisodeValidator, alignment_key
+from sceneops_core.episodes.alignment import (
+    AlignedEpisodeValidator,
+    aligned_episode_alignment_key,
+)
 from sceneops_core.jobs.schemas import (
     JobType,
     ValidateAlignedEpisodeJobParams,
@@ -49,6 +52,16 @@ class ValidateAlignedEpisodeJobHandler(
             if inputs.dataset
             else None,
             **inputs.params,
+            # Pinned by the upstream align_episode task when run in a pipeline.
+            **{
+                key: inputs.refs[key]
+                for key in (
+                    "episode_id",
+                    "aligned_artifact_id",
+                    "aligned_artifact_checksum",
+                )
+                if inputs.refs.get(key) is not None
+            },
         }
 
     async def run(
@@ -59,23 +72,29 @@ class ValidateAlignedEpisodeJobHandler(
         context = request.context
         job = request.job
 
-        dataset_id = params.dataset_id or context.default_dataset_id
-        dataset_version = params.dataset_version or context.default_dataset_version
-
-        _record, artifact, _verified = await resolve_and_verify_aligned_artifact(
+        record, artifact, _verified = await resolve_and_verify_aligned_artifact(
             context,
             episode_id=params.episode_id,
             aligned_artifact_id=params.aligned_artifact_id,
             expected_checksum=params.aligned_artifact_checksum,
         )
+        # The aligned artifact carries its DatasetVersion scope; never a default.
+        dataset_id = record.dataset_id
+        dataset_version = record.dataset_version
+        if (params.dataset_id, params.dataset_version) not in (
+            (None, None),
+            (dataset_id, dataset_version),
+        ):
+            raise ValueError(
+                f"aligned artifact {params.aligned_artifact_id} belongs to "
+                f"{dataset_id}:{dataset_version}, not "
+                f"{params.dataset_id}:{params.dataset_version}"
+            )
 
         report = _validator.validate(artifact)
 
         source_hash = artifact.source_revision.source_manifest_sha256
-        key = alignment_key(
-            artifact.aligned_episode.alignment_config,
-            artifact.aligned_episode.alignment_semantics_version,
-        )
+        key = aligned_episode_alignment_key(artifact.aligned_episode)
 
         write_result = (
             await context.episode_artifact_store.write_aligned_episode_report(
@@ -89,8 +108,12 @@ class ValidateAlignedEpisodeJobHandler(
             )
         )
 
-        report_artifact_id = generate_artifact_id()
-        await context.artifact_record_store.create(
+        report_artifact_id = derived_artifact_id(
+            prefix="alignedvalidation",
+            logical_id=params.aligned_artifact_id,
+            checksum=write_result.checksum,
+        )
+        await context.artifact_record_store.register(
             artifact_id=report_artifact_id,
             ref=ArtifactRef(
                 kind=ArtifactKind.ALIGNED_EPISODE_VALIDATION_REPORT,

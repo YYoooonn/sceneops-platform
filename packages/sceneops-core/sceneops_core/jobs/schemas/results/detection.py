@@ -11,6 +11,9 @@ class PredictDetectionJobResult(BaseJobResult):
     inference_run_id: str
 
     prediction_manifest_uri: str | None = None
+    # Pins the published prediction manifest revision.
+    prediction_manifest_checksum: str | None = None
+    prediction_manifest_artifact_id: str | None = None
     predictions_root_uri: str | None = None
 
     model_id: str | None = None
@@ -41,6 +44,11 @@ class EvaluateDetectionJobResult(BaseJobResult):
     model_id: str | None = None
     model_version: str | None = None
     inference_run_id: str | None = None
+
+    # The exact revisions that were scored.
+    prediction_manifest_checksum: str | None = None
+    label_set_id: str | None = None
+    label_set_checksum: str | None = None
 
     sample_count: int | None = None
     prediction_count: int | None = None

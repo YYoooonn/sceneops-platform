@@ -45,9 +45,7 @@ class AnalyticsTableWriter:
       - dataset-scoped:  ``{root_uri}/{dataset_id}/{dataset_version}/{table_name}.parquet``
       - robot-run-scoped: ``{root_uri}/robot_runs/{robot_run_id}/{table_name}.parquet``
 
-    A rebuild overwrites the same URI (same idempotent-rebuild pattern as
-    ``DatasetArtifactStore.write_dataset_manifest``) rather than versioning
-    each write.
+    A rebuild overwrites the same URI rather than versioning each write.
     """
 
     def __init__(self, *, artifact_store: ArtifactStore, root_uri: str) -> None:

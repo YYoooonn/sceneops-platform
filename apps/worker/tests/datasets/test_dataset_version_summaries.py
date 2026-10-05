@@ -6,10 +6,8 @@ whether the underlying flat columns for each domain are still at their
 untouched defaults — see SceneVersionSummary.is_unset()/
 EpisodeVersionSummary.is_unset(). As of Request 03, DatasetVersionRecord has
 no flat top-level duplicates of these fields at all — scene/episode are the
-only way to read them. Request 04 additionally moved raw_source_root_uri
-into scene (Scene-only; Episode sources come from RobotRun.mcap_uri) and
-dropped the dead latest_distribution_run_id/distribution_report_uri fields
-entirely (no SQL columns for them anymore).
+only way to read them. A DatasetVersion carries no source location or
+source format (ADR-007 §29.16).
 """
 
 from __future__ import annotations
@@ -31,25 +29,13 @@ def _model(**overrides) -> DatasetVersionModel:
         dataset_id="d",
         version="v1",
         status="registered",
-        manifest_uri=None,
         scene_count=0,
-        sample_count=0,
-        frame_count=0,
+        keyframe_count=0,
+        observation_count=0,
         episode_count=0,
-        channels=[],
-        required_channels=[],
-        source_dataset_id=None,
-        source_dataset_version=None,
-        raw_source_root_uri=None,
-        latest_validation_run_id=None,
-        validation_status=None,
-        should_block_pipeline=None,
-        validation_report_uri=None,
-        latest_profile_run_id=None,
-        profile_report_uri=None,
+        observed_channels=[],
         created_at=_NOW,
         updated_at=_NOW,
-        metadata_={},
     )
     base.update(overrides)
     return DatasetVersionModel(**base)
@@ -59,22 +45,15 @@ class TestSceneOnly:
     def test_scene_populated_episode_none(self) -> None:
         record = dataset_version_model_to_record(
             _model(
-                scene_count=5, sample_count=10, frame_count=20, channels=["CAM_FRONT"]
+                scene_count=5,
+                keyframe_count=10,
+                observation_count=20,
+                observed_channels=["CAM_FRONT"],
             )
         )
         assert record.scene is not None
         assert record.scene.scene_count == 5
-        assert record.scene.channels == ["CAM_FRONT"]
-        assert record.episode is None
-
-    def test_scene_populated_via_quality_cache_alone(self) -> None:
-        """Counts can be zero (e.g. validate_scene ran before any scenes were
-        counted) — a quality-cache field alone must still count as scene
-        activity, not just the count fields."""
-        record = dataset_version_model_to_record(
-            _model(latest_validation_run_id="run-1")
-        )
-        assert record.scene is not None
+        assert record.scene.observed_channels == ["CAM_FRONT"]
         assert record.episode is None
 
 
@@ -102,18 +81,17 @@ class TestNeither:
         assert record.episode is None
 
 
-class TestConfigOnlyScene:
-    """SceneOps V2 Request 03 §5: a non-None `scene` is not proof that Scene
-    data was built — required_channels alone (set via the dataset-version
-    API before any scene job runs) is enough to make the summary non-default."""
+class TestNoWorkflowConfiguration:
+    """A DatasetVersion is membership and scope only: channel requirements and
+    free-form metadata live in pipeline / job parameters (ADR-007 §16)."""
 
-    def test_required_channels_alone_creates_scene_summary(self) -> None:
-        record = dataset_version_model_to_record(
-            _model(required_channels=["CAM_FRONT"])
-        )
-        assert record.scene is not None
-        assert record.scene.scene_count == 0  # no scenes actually built
-        assert record.scene.required_channels == ["CAM_FRONT"]
+    def test_the_row_and_the_record_carry_neither(self) -> None:
+        model = _model()
+        assert not hasattr(model, "required_channels")
+        assert not hasattr(model, "metadata_")
+        record = dataset_version_model_to_record(model)
+        assert "metadata" not in record.model_dump()
+        assert "required_channels" not in str(record.model_dump())
 
 
 class TestRoundTrip:
@@ -123,22 +101,11 @@ class TestRoundTrip:
     def test_full_round_trip_preserves_all_fields(self) -> None:
         model = _model(
             status="registered",
-            manifest_uri="s3://bucket/manifest.json",
             scene_count=5,
-            sample_count=10,
-            frame_count=20,
-            channels=["CAM_FRONT"],
-            required_channels=["CAM_FRONT"],
+            keyframe_count=10,
+            observation_count=20,
+            observed_channels=["CAM_FRONT"],
             episode_count=3,
-            source_dataset_id="src-d",
-            source_dataset_version="src-v1",
-            raw_source_root_uri="/data/raw/x",
-            latest_validation_run_id="run-val-1",
-            validation_status="ready",
-            should_block_pipeline=False,
-            validation_report_uri="s3://bucket/val.json",
-            latest_profile_run_id="run-prof-1",
-            profile_report_uri="s3://bucket/prof.json",
         )
         record = dataset_version_model_to_record(model)
         values = dataset_version_record_to_values(record)
@@ -147,21 +114,18 @@ class TestRoundTrip:
             "dataset_id",
             "version",
             "status",
-            "manifest_uri",
             "scene_count",
-            "sample_count",
-            "frame_count",
-            "channels",
-            "required_channels",
+            "keyframe_count",
+            "observation_count",
+            "observed_channels",
             "episode_count",
-            "source_dataset_id",
-            "source_dataset_version",
-            "raw_source_root_uri",
-            "latest_validation_run_id",
-            "should_block_pipeline",
-            "validation_report_uri",
-            "latest_profile_run_id",
-            "profile_report_uri",
         ):
             assert values[field] == getattr(model, field), field
-        assert values["validation_status"] == model.validation_status
+        for removed in (
+            "manifest_uri",
+            "input_source_root_uri",
+            "source_dataset_id",
+            "source_dataset_version",
+        ):
+            assert removed not in values
+            assert not hasattr(model, removed)

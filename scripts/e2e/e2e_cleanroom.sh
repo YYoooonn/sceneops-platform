@@ -1,36 +1,32 @@
 #!/usr/bin/env bash
-# e2e_cleanroom.sh
+# e2e_cleanroom.sh — the full-platform acceptance: from fresh platform state,
+# SceneOps reconstructs its canonical baseline and runs its representative
+# workflows through supported production paths only.
 #
-# The ONLY full-platform acceptance workflow. Proves SceneOps can
-# reconstruct its operational/canonical state from empty application state
-# + real external raw data -- not from large synthetic fixtures.
+#   images                  api / worker / dataset-acquisition / LeRobot images
+#                           built from the current tree
+#   make local-reset        DESTRUCTIVE: fresh containers, fresh PostgreSQL /
+#                           Redis / MinIO state; PRESERVES the external dataset
+#                           fixture (data/raw)
+#   canonical-bootstrap     RobotRun -> canonical Scenes and Episodes (L1/L2)
+#   canonical-verify        the baseline, read back through the API
+#   e2e-scene-ml            Scene ML journey on that baseline (L3)
+#   e2e-episode-learning    Episode learning journey on that baseline (L3)
+#   final verification      every pipeline run of the baseline succeeded, every
+#                           job succeeded, the canonical records are exactly
+#                           those the bootstrap registered, and the derived
+#                           artifacts the journeys produced exist
 #
-#   make local-reset                 (destructive: fresh Postgres/Redis/
-#                                      MinIO; PRESERVES data/raw/nuscenes,
-#                                      the CAN bus expansion, and any other
-#                                      external raw source data)
-#     -> make local-up (run by local-reset itself)
-#     -> e2e-scene                   (real nuScenes -> SceneRecord ->
-#                                      validation/profile/manifest)
-#     -> e2e-robot-learning           (real nuScenes CAN bus -> ROS2 ->
-#                                      MCAP -> RosbagAdapter -> Episode ->
-#                                      alignment -> EXPORT_LEARNING_DATA ->
-#                                      curation)
-#     -> e2e-perception BACKEND=mock  (scenario curation -> prediction ->
-#                                      evaluation, no GPU/model service
-#                                      required)
-#     -> final persisted-state validation (queries the real API for what
-#        actually got written -- not just "each script exited 0")
+# Control-plane operations go through FastAPI; bulk data moves through
+# containers and the ArtifactStore. There is no direct SQL, no direct MinIO
+# inspection, no host worker CLI and no host Python.
 #
-# Deliberately does NOT require GPU, a real GroundingDINO inference server,
-# Airflow, or the isolated LeRobot container -- those remain OPTIONAL
-# verification paths, run separately after this passes:
-#   BACKEND=grounding_dino make e2e-perception   (needs inference-local-up/-gpu-up)
-#   make verify-airflow-backend                  (needs airflow-up)
-#   make e2e-interop                             (needs lerobot-sync)
+# Does not need a GPU, a real inference server, Airflow or Kafka: the
+# model-backend, orchestrator and streaming acceptances are separate
+# (make acceptance-grounding-dino, make test-infrastructure-airflow,
+# make e2e-streaming-equivalence).
 #
-# This is DESTRUCTIVE to local Postgres/Redis/MinIO state. Requires
-# interactive confirmation (same as `make local-reset`) unless FORCE=1.
+# Requires interactive confirmation (the reset is destructive) unless FORCE=1.
 #
 # Usage:
 #   make e2e-cleanroom
@@ -40,82 +36,61 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
+source "$SCRIPT_DIR/lib.sh"
+
+API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
+export BASELINE_ID="${BASELINE_ID:-canonical}"
+export SOURCE_UNITS="${SOURCE_UNITS:-${SOURCE_UNIT:-scene-0061}}"
+source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 
 echo "=================================================================="
-echo " e2e-cleanroom: full-platform acceptance from empty SceneOps state"
+echo " e2e-cleanroom: full-platform acceptance from fresh platform state"
 echo "=================================================================="
 echo ""
 echo "This will:"
-echo "  1. make local-reset   [DESTRUCTIVE] wipe Postgres/Redis/MinIO,"
-echo "                        preserve data/raw/nuscenes + CAN bus expansion"
-echo "  2. e2e-scene          real nuScenes -> SceneRecord -> quality"
-echo "  3. e2e-robot-learning real CAN bus -> ROS2 -> MCAP -> Episode -> learning export"
-echo "  4. e2e-perception BACKEND=mock  scenario curation -> detection -> evaluation"
-echo "  5. final persisted-state validation"
+echo "  1. build images          from the current tree (api, worker, acquisition, LeRobot)"
+echo "  2. make local-reset      [DESTRUCTIVE] fresh Postgres/Redis/MinIO, preserve data/raw"
+echo "  3. canonical-bootstrap   RobotRun -> canonical Scenes and Episodes ($BASELINE_ID)"
+echo "  4. canonical-verify      the baseline through the API"
+echo "  5. e2e-scene-ml          labels -> views -> ScenarioSet -> prediction -> evaluation"
+echo "  6. e2e-episode-learning  alignment -> learning export -> LeRobot round trip"
+echo "  7. final verification    through the API"
 echo ""
 
-echo "--- 1. make local-reset ---"
+echo "--- 1. images from the current tree ---"
+make -C "$REPO_ROOT" compose-build acquisition-image lerobot-image
+echo ""
+
+echo "--- 2. make local-reset (fresh containers and platform state) ---"
 FORCE="${FORCE:-0}" make -C "$REPO_ROOT" local-reset
-echo ""
-
-echo "--- 2. Verify stack healthy ---"
 make -C "$REPO_ROOT" status
 echo ""
 
-echo "--- 3. e2e-scene ---"
-bash "$SCRIPT_DIR/e2e_scene.sh"
+echo "--- 3. canonical-bootstrap ---"
+BASELINE="$("$REPO_ROOT/scripts/canonical/canonical_bootstrap.sh")"
+echo "$BASELINE" | jq -c .
 echo ""
 
-echo "--- 4. e2e-robot-learning ---"
-bash "$SCRIPT_DIR/e2e_robot_learning.sh"
+echo "--- 4. canonical-verify ---"
+VERIFIED="$("$REPO_ROOT/scripts/canonical/canonical_verify.sh")"
+check "the verified baseline is the bootstrapped one" [ "$VERIFIED" = "$BASELINE" ]
 echo ""
 
-echo "--- 5. e2e-perception (BACKEND=mock) ---"
-BACKEND=mock bash "$SCRIPT_DIR/e2e_perception.sh"
+echo "--- 5. e2e-scene-ml on the baseline ---"
+make -C "$REPO_ROOT" e2e-scene-ml BASELINE_ID="$BASELINE_ID"
 echo ""
 
-# ── 6. Final persisted-state validation ──────────────────────────────────────
-# Queries the real, persisted API state directly -- proof this is a
-# reconstruction from empty state + real data, not just "every script
-# happened to exit 0".
+echo "--- 6. e2e-episode-learning on the baseline ---"
+make -C "$REPO_ROOT" e2e-episode-learning BASELINE_ID="$BASELINE_ID"
+echo ""
 
-echo "--- 6. Final persisted-state validation ---"
-API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-source "$SCRIPT_DIR/lib.sh"
-resolve_e2e_fixture core
-
-QUALITY_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION/quality")")"
-EPISODES_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=200")")"
-SCENARIOS_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/scenarios")")"
-EVALUATIONS_JSON="$(curl -sS "$(api_url "$API_BASE_URL" "/evaluations/runs")")"
-
-SCENE_READINESS="$(echo "$QUALITY_JSON" | jq -r '.readiness')"
-SCENE_COUNT="$(echo "$QUALITY_JSON" | jq -r '.counts.sceneCount // 0')"
-EPISODE_COUNT="$(echo "$EPISODES_JSON" | jq -r '.count // 0')"
-SCENARIO_COUNT="$(echo "$SCENARIOS_JSON" | jq -r '.count // (.scenarioSets | length) // 0')"
-EVALUATION_COUNT="$(echo "$EVALUATIONS_JSON" | jq -r '.count // (.runs | length) // 0')"
-
-echo "  dataset_version.quality.readiness = $SCENE_READINESS"
-echo "  scene_count                       = $SCENE_COUNT"
-echo "  episode_count                     = $EPISODE_COUNT"
-echo "  scenario_set_count                = $SCENARIO_COUNT"
-echo "  evaluation_run_count              = $EVALUATION_COUNT"
-
-[ "$SCENE_READINESS" = "ready" ] || { echo "❌ Expected dataset version quality readiness=ready, got $SCENE_READINESS" >&2; exit 1; }
-[ "${SCENE_COUNT:-0}" -ge 1 ] || { echo "❌ Expected scene_count >= 1" >&2; exit 1; }
-[ "${EPISODE_COUNT:-0}" -ge 1 ] || { echo "❌ Expected episode_count >= 1" >&2; exit 1; }
-[ "${SCENARIO_COUNT:-0}" -ge 1 ] || { echo "❌ Expected scenario_set_count >= 1" >&2; exit 1; }
-[ "${EVALUATION_COUNT:-0}" -ge 1 ] || { echo "❌ Expected evaluation_run_count >= 1" >&2; exit 1; }
-
-echo "  OK — SceneOps reconstructed its full operational state from empty"
-echo "       application state + real external nuScenes/CAN-bus data."
+echo "--- 7. final verification (through the API) ---"
+BASELINE_SUMMARY="$BASELINE" "$SCRIPT_DIR/cleanroom_verify.sh"
 echo ""
 
 echo "=================================================================="
 echo " PASSED: e2e-cleanroom"
 echo "=================================================================="
-echo ""
-echo "Optional follow-up verification (not required for this to pass):"
-echo "  BACKEND=grounding_dino make e2e-perception   (needs inference-local-up/-gpu-up)"
-echo "  make verify-airflow-backend                  (needs airflow-up)"
-echo "  make e2e-interop                              (needs lerobot-sync)"
+echo "SceneOps reconstructed its canonical baseline ($DATASET_ID/$DATASET_VERSION) and ran"
+echo "its Scene ML and Episode learning workflows from fresh platform state."
