@@ -126,6 +126,7 @@ help:
 	@echo "  make ros2-up / ros2-down / ros2-shell / ros2-check / ros2-logs / ros2-run ROS2_CMD='ros2 topic list'"
 	@echo "  make streaming-up / streaming-down   Local Kafka broker (opt-in)"
 	@echo "  make reconcile-once / reconcile-apply   Acquisition reconciliation: observe only / bounded registration recovery (ADR-008)"
+	@echo "  make artifact-lifecycle-once [ARGS=..]  Read-only lifecycle classification of robot_runs/ objects: referenced / pending / orphan candidate / incident (ADR-008 §6; deletes nothing)"
 	@echo "  make recovery-up / recovery-down / recovery-logs   Opt-in polling loops: publish-pending + reconcile --apply (compose/recovery.yaml)"
 	@echo "  make prepare-data / clean-artifacts / clean-python"
 	@echo ""

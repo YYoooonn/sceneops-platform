@@ -279,6 +279,48 @@ repeat `publish-pending` and `reconcile --once --apply` every
 `RECOVERY_POLL_INTERVAL_SECONDS` (default 60); `make reconcile-once` and
 `make reconcile-apply` run one pass by hand.
 
+**Artifact lifecycle of `robot_runs/`.** A read-only one-shot command classifies
+every object under the RobotRun root, and every database reference to one, by
+whether deleting it could ever be safe. It deletes, moves and repairs nothing; a
+class is a classification, not an instruction.
+
+```text
+python -m app.domains.robots.artifact_lifecycle --once \
+    [--capture-report <scan-capture JSON | ->] [--observed-at <ISO-8601 with offset>] \
+    [--pending-grace-seconds N] [--orphan-grace-seconds N] [--verify-recording-bytes]
+    -> JSON ArtifactLifecycleReport (needs ArtifactStore + PostgreSQL, not the HTTP server)
+```
+
+It builds on the reconciler's facts (the same listing, RobotRunRecords, Jobs and
+per-run states) and adds the reference query: an object is *referenced* iff some
+ArtifactRecord carries exactly its URI; ownership is never inferred from the
+object name.
+
+| Class | Meaning |
+| --- | --- |
+| `referenced` | an ArtifactRecord references the URI and nothing contradicts it |
+| `pending` | unreferenced but protected: younger than the pending grace (24 h by default), the run's registration is unfinished (`registration_pending`, `registration_active`, `registration_stalled_candidate`, `registration_failed_transient`; any age), a capture bag or receipt still exists, or older than the pending grace but not yet the orphan grace (7 d by default) |
+| `orphan_candidate` | unreferenced, unprotected and older than the orphan grace. `recording_without_manifest`: a recording with no manifest and no capture source (the capture report must show that). `recording_manifest_permanently_failed`: a consistent pair whose registration failed permanently, a spent attempt budget included. Both are high risk: they may be the only copy of a recording |
+| `integrity_incident` | the durable facts contradict each other, at any age: an ArtifactRecord whose object is absent (`dangling_reference`); a record whose size or known checksum disagrees with the object (`referenced_size_mismatch`, `referenced_corrupt`); a RobotRunRecord whose objects are gone; a run whose reconciliation state is `integrity_incident` or `permanent_conflict`; a malformed manifest or a manifest without its recording. Never a candidate |
+
+The age of an unreferenced publication is that of the newest of its two objects.
+Without `--capture-report` the capture volume is unobservable, so a recording
+without a manifest stays `pending` (`pn3_capture_source_unobserved`) and is never
+an orphan candidate. Registered recordings are compared to their records by
+listing size; `--verify-recording-bytes` re-reads and hashes them. Objects that
+match no known layout, and are unreferenced, are listed under `unclassified` and
+are never candidates.
+
+The report contains `observed_at`, which every age and grace period is measured
+against (default: now; `--observed-at` fixes it), so the same facts and the same
+`observed_at` give a byte-identical report. Its `summary` carries the referenced,
+pending (with the oldest age), orphan-candidate (by reason and risk) and
+incident counts and bytes. A finding whose object appears while the scan runs is
+dropped and counted in `unconfirmed_findings`. A classification can be stale by
+the time anyone acts on it; any future deletion must re-verify. Grace periods are
+also set by `SCENEOPS_API_ARTIFACT_LIFECYCLE__PENDING_GRACE_SECONDS` and
+`..._ORPHAN_GRACE_SECONDS`; `make artifact-lifecycle-once` runs one pass.
+
 ### 3.3 Batch acquisition and the L1 recording contract
 
 A recording that already exists — a robot's onboard recorder, or an

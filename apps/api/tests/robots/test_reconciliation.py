@@ -62,12 +62,22 @@ S = AcquisitionState
 class MemoryStore:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        # uri -> modification time; absent means ``_T0``.
+        self.modified: dict[str, datetime] = {}
+
+    def join_uri(self, root, *parts):
+        return "/".join([root.rstrip("/"), *parts])
+
+    async def exists(self, uri):
+        return uri in self.objects
 
     async def list_objects(self, uri):
         prefix = uri.rstrip("/") + "/"
         return sorted(
             (
-                ArtifactObject(uri=k, size_bytes=len(v), last_modified=_T0)
+                ArtifactObject(
+                    uri=k, size_bytes=len(v), last_modified=self.modified.get(k, _T0)
+                )
                 for k, v in self.objects.items()
                 if k.startswith(prefix)
             ),
@@ -99,8 +109,30 @@ class FakeFacts:
     async def robot_runs(self, run_ids):
         return {r: self.runs[r] for r in run_ids if r in self.runs}
 
+    async def robot_run_ids(self, root_uri):
+        directory = root_uri.rstrip("/") + "/"
+        return sorted(
+            run_id
+            for run_id, run in self.runs.items()
+            if any(
+                a.uri.startswith(directory)
+                for a in (
+                    self.artifacts.get(run.recording_artifact_id),
+                    self.artifacts.get(run.manifest_artifact_id),
+                )
+                if a is not None
+            )
+        )
+
     async def artifact_records(self, artifact_ids):
         return {a: self.artifacts[a] for a in artifact_ids if a in self.artifacts}
+
+    async def artifact_records_under(self, prefix):
+        directory = prefix.rstrip("/") + "/"
+        return sorted(
+            (a for a in self.artifacts.values() if a.uri.startswith(directory)),
+            key=lambda a: a.artifact_id,
+        )
 
     async def register_jobs(self, execution_keys):
         keys = set(execution_keys)

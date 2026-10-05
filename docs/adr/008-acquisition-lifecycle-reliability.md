@@ -2,12 +2,13 @@
 
 ## Status
 
-**Accepted — implemented through step 12.4 (§8); steps 12.5–12.6 are not.**
+**Accepted — implemented through step 12.5 (§8); step 12.6 is not.**
 
 Ratified 2026-10-05 with four clarifications, incorporated in place: reconciliation
 scheduling (§3.2), capture receipt semantics (§4.2), the retry budget across
 replacement Jobs (§5.2, §5.3) and deferral of the stall threshold to Phase 12.4
-(§5.3, §8, B4; decided in Amendment 12.4).
+(§5.3, §8, B4; decided in Amendment 12.4). Amendment 12.5 records the places where §6
+needed an interpretation to be implemented.
 
 **Amendment 12.3 — read-only classification (implementation step 12.3).**
 Accepted. Step 12.3 adds `ArtifactStore.list_objects`, a published-object scan,
@@ -216,6 +217,103 @@ registration's attempts although the registration itself never failed; it then
 needs an operator's forced submission. Plain-submission races can create duplicate
 Jobs. Capture supervision, capture-volume loss and Kafka retention remain as in B1,
 B2 and W13.
+
+**Amendment 12.5 — artifact lifecycle classification (implementation step 12.5).**
+Accepted. Step 12.5 implements §6 for the `robot_runs/` prefix as a read-only
+report (`python -m app.domains.robots.artifact_lifecycle --once`). It changes no
+decision above, deletes nothing and adds no table. It is built on `reconcile_once`
+(same listing, RobotRunRecords, Jobs and per-run states), not on a second
+scanner, and records where §6 left a case open:
+
+- **Reference query.** `referenced(object)` is evaluated with one prefix read,
+  `PostgresArtifactRefRepository.list_by_uri_prefix(root)`: an object is
+  referenced iff an ArtifactRecord carries exactly its URI. The run prefix groups
+  one publication's objects and finds its registration facts; it never decides
+  ownership. The store is listed before PostgreSQL is read, so no object is
+  called unreferenced because a registration committed after the references were
+  read. The reverse race (a publication and its registration landing between the
+  two reads) would make a fresh record look dangling, so every dangling finding is
+  confirmed with `ArtifactStore.exists`; one whose object has appeared is dropped
+  and counted (`unconfirmed_findings`).
+- **Reverse checks, and their scope.** RobotRunRecords are enumerated per root
+  (`list_run_ids_for_root`: a run belongs to the root when one of its two
+  ArtifactRecords has a URI under it), because a RobotRunRecord registered under
+  another root says nothing about this listing. The reconciler gained two opt-in
+  parameters for this: `include_database_runs` (classify a RobotRunRecord with no
+  listed object, which 12.3 left undiscovered) and `verify_registered_recordings`.
+  Defaults are unchanged, so recovery is unaffected.
+- **Classes of an unreferenced object.** A run whose reconciliation state is
+  `integrity_incident` or `permanent_conflict` makes every recording and manifest
+  of the run an `integrity_incident`, referenced or not. For an unreferenced
+  object: PN-2 states (`registration_pending`, `_active`, `_stalled_candidate`,
+  `_failed_transient`) are `pending` at any age, plus PN-4 when a Job is in
+  flight; `publication_incomplete` with a recording and no manifest is O1;
+  `registration_failed_permanent` is O2; anything else, a malformed manifest, a
+  manifest without its recording and a registered run whose records do not
+  reference its objects are incidents.
+- **Conflicting or malformed publication is an incident, not O2.** §6.2 lists
+  `publish_failed` under O2, but the platform cannot observe a failed publish
+  (that is the Publisher's report). What it can observe is a publication that
+  contradicts itself, and 12.5 treats that conservatively: an incident, never a
+  candidate, at any age. O2 is therefore the consistent pair whose registration
+  failed permanently, a spent attempt budget included; `registered_conflict`
+  cannot be O2 because its objects are referenced and are incidents.
+- **Grace periods.** `grace_pending` (24 h) and `grace_orphan` (7 d) are
+  configurable (`SCENEOPS_API_ARTIFACT_LIFECYCLE__*`, `--pending-grace-seconds`,
+  `--orphan-grace-seconds`; `orphan >= pending`) and stay defaults of the ADR's
+  proposal, not measured properties. §6.2 defines a candidate as unreferenced ∧
+  ¬pending ∧ age ≥ `grace_orphan` and PN-1 as age < `grace_pending`, which leaves
+  `[grace_pending, grace_orphan)` unassigned; it is `pending` with reason
+  `within_orphan_grace`, so an object is never a candidate before `grace_orphan`.
+  Age is that of the *newest* recording/manifest object of the run, because the
+  two live and die together; a modification time in the future counts as zero.
+- **Wall-clock dependence is explicit.** `now` is a required input of the
+  service, the CLI's `--observed-at` fixes it, and it is part of the report
+  (`observed_at`). The same facts and the same `observed_at` give byte-identical
+  JSON.
+- **PN-3 needs an observed capture volume.** O1 requires "no receipt/bag
+  anywhere". Without a capture report that cannot be established, so the object
+  is `pending` (`pn3_capture_source_unobserved`) rather than a candidate. PN-3
+  applies to O1 only: for O2 the publication is complete and the bag is not what
+  would resume it.
+- **Registered recordings are compared by size by default.** The listing size is
+  checked against the record and manifest; same-size corruption of a registered
+  recording is seen only with `--verify-recording-bytes`, which re-reads each
+  registered recording whole (like registration, B9). Manifests are always
+  verified: they are read anyway.
+- **Not classified.** An unreferenced object that matches no known layout is
+  listed under `unclassified` and is never a candidate: O3–O5 stay deferred (§6.4).
+- **Report.** `entries` (one per object, per dangling ArtifactRecord and per
+  RobotRunRecord whose objects are all gone; sorted), `unclassified`, and a
+  `summary` of referenced / pending (oldest age, by reason) / orphan candidates
+  (by reason and risk) / incidents (by subject and reason) counts and bytes. The
+  same underlying damage can appear as more than one incident entry (a dangling
+  record and the run whose objects it names); counts are per entry.
+
+Known limitations (current). The reference read is a prefix scan of `artifacts`
+(no `uri` index exists); it was not measured beyond the local stack, where it is
+immaterial, and an index is added only if it is measured to matter.
+Classification can be stale by the time any action runs, so a future deletion
+must re-verify §6.3 itself. The report loads each recording whole when
+`--verify-recording-bytes` is set. `robot_runs/` only: Scene / Episode / L3
+prefixes are not classified.
+
+Validation (2026-10-06, same host, git HEAD 7f737cc + uncommitted 12.5 work).
+Unit over doubles: 59 tests (`test_artifact_lifecycle.py`) covering each class,
+PN-1..PN-4, both graces and their boundaries, O1/O2, malformed and conflicting
+publication, dangling and corrupt references, a stalled / abandoned / replacement
+Job, determinism for a fixed `observed_at`, and that nothing is written. Real
+PostgreSQL: the two read queries, including LIKE-wildcard literals and the root
+scoping. Real PostgreSQL + MinIO vertical
+(`test_artifact_lifecycle_vertical_integration.py`): 18 runs and objects built
+through the real publisher, registrar and capture scan, damaged the way crashes
+damage them, classified into 4 referenced, 7 pending, 5 orphan-candidate and
+several incident entries, with durable state byte-identical before and after and
+the one-shot command's JSON equal to the in-process report. The vertical found
+that the first version of the DB-side scan read RobotRunRecords of every root
+and reported the live stack's baseline run, registered under another root, as
+having lost its objects; the scan is now per root and the case has a unit and a
+real-PostgreSQL regression test.
 
 Audited at:
 
@@ -855,7 +953,7 @@ platform and is DEFERRED.
       lose QUEUED message (W7), kill after commit (W9), concurrent reconcilers (W11),
       kill publisher between P3 and P5 (W5).
 
-12.5  Artifact classification for `robot_runs/`
+12.5  Artifact classification for `robot_runs/`  (implemented; see Amendment 12.5)
       - Reference query, pending rules PN-1..PN-3, O1/O2, dangling/corrupt incidents.
       Verify: PN-2 never classified as orphan at any age; classification is read-only.
 

@@ -98,9 +98,13 @@ class RegistrationFactSource(Protocol):
 
     async def robot_runs(self, run_ids: Sequence[str]) -> dict[str, RobotRunRecord]: ...
 
+    async def robot_run_ids(self, root_uri: str) -> list[str]: ...
+
     async def artifact_records(
         self, artifact_ids: Sequence[str]
     ) -> dict[str, ArtifactRecord]: ...
+
+    async def artifact_records_under(self, prefix: str) -> list[ArtifactRecord]: ...
 
     async def register_jobs(
         self, execution_keys: Sequence[str]
@@ -121,10 +125,16 @@ class PostgresRegistrationFacts:
     async def robot_runs(self, run_ids: Sequence[str]) -> dict[str, RobotRunRecord]:
         return await self._runs.get_many(run_ids)
 
+    async def robot_run_ids(self, root_uri: str) -> list[str]:
+        return await self._runs.list_run_ids_for_root(root_uri)
+
     async def artifact_records(
         self, artifact_ids: Sequence[str]
     ) -> dict[str, ArtifactRecord]:
         return await self._artifacts.get_many(list(artifact_ids))
+
+    async def artifact_records_under(self, prefix: str) -> list[ArtifactRecord]:
+        return await self._artifacts.list_by_uri_prefix(prefix)
 
     async def register_jobs(self, execution_keys: Sequence[str]) -> list[JobManifest]:
         return await self._jobs.list_for_execution_keys(
@@ -191,12 +201,22 @@ async def reconcile_once(
     policy: ClassificationPolicy | None = None,
     now: datetime | None = None,
     verify_unregistered_recordings: bool = True,
+    verify_registered_recordings: bool = False,
+    include_database_runs: bool = False,
 ) -> ReconciliationReport:
     """Observe the durable acquisition facts and classify every ``run_id``.
 
     ``now`` is read only when ``policy`` carries an age threshold; the report
     itself never contains it. ``verify_unregistered_recordings=False`` skips the
-    recording byte comparison (listing sizes are still compared)."""
+    recording byte comparison (listing sizes are still compared).
+
+    ``verify_registered_recordings=True`` also re-reads and hashes the recording
+    of every registered run (whole object in memory, like registration): the
+    default trusts registration's verification plus the listing size.
+    ``include_database_runs=True`` also classifies every RobotRunRecord registered
+    under the root that has no object in the listing, so a registered run whose objects are gone is
+    reported (``registered_manifest_missing``) instead of being invisible to a
+    scan that starts from the store. Neither changes any state's meaning."""
     policy = policy or ClassificationPolicy()
     if policy.stall_candidate_after is not None and now is None:
         now = datetime.now(UTC)
@@ -208,22 +228,25 @@ async def reconcile_once(
         if capture_report is not None
         else {}
     )
-    run_ids = sorted(set(published) | set(captured))
 
     execution_keys = {
         run_id: register_robot_run_execution_key(observation.manifest_object.uri)
         for run_id, observation in published.items()
         if observation.manifest_object is not None
     }
-    artifact_ids = [
-        make_id(run_id)
-        for run_id in run_ids
-        for make_id in (
-            robot_run_recording_artifact_id,
-            robot_run_manifest_artifact_id,
-        )
-    ]
     async with registration_facts() as facts:
+        run_ids = set(published) | set(captured)
+        if include_database_runs:
+            run_ids |= set(await facts.robot_run_ids(root_uri))
+        run_ids = sorted(run_ids)
+        artifact_ids = [
+            make_id(run_id)
+            for run_id in run_ids
+            for make_id in (
+                robot_run_recording_artifact_id,
+                robot_run_manifest_artifact_id,
+            )
+        ]
         records = await facts.robot_runs(run_ids)
         artifacts = await facts.artifact_records(artifact_ids)
         jobs = await facts.register_jobs(sorted(set(execution_keys.values())))
@@ -235,10 +258,10 @@ async def reconcile_once(
     run_reports: list[RunReport] = []
     for run_id in run_ids:
         observation: PublishedRunObservation | None = published.get(run_id)
-        if (
-            observation is not None
-            and verify_unregistered_recordings
-            and run_id not in records
+        if observation is not None and (
+            verify_unregistered_recordings
+            if run_id not in records
+            else verify_registered_recordings
         ):
             observation = await verify_recording_bytes(artifact_store, observation)
         assessment: PublicationAssessment | None = (

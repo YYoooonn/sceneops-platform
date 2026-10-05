@@ -74,6 +74,20 @@ class PostgresArtifactRefRepository:
             for model in result.scalars().all()
         }
 
+    async def list_by_uri_prefix(self, prefix: str) -> list[ArtifactRecord]:
+        """Every record whose URI lies under the directory-style ``prefix``
+        (``a/b`` matches ``a/b/x``, never ``a/bc``), ordered by artifact id.
+        Read-only. This is the reference side of the ADR-008 §6.1 query: an
+        object is referenced iff some record carries exactly its URI."""
+        directory = prefix.rstrip("/") + "/"
+        stmt = (
+            select(ArtifactModel)
+            .where(ArtifactModel.uri.startswith(directory, autoescape=True))
+            .order_by(ArtifactModel.artifact_id)
+        )
+        result = await self._session.execute(stmt)
+        return [artifact_ref_model_to_record(m) for m in result.scalars().all()]
+
     async def list(
         self,
         *,

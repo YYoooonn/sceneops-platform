@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRef
 from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
+from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.jobs import PostgresJobRepository
 from sceneops_db.postgres.robots import PostgresRobotRunRepository
 
@@ -144,3 +146,77 @@ async def test_list_for_execution_keys_chunks_large_key_lists(db_session, unique
     )
 
     assert [job.job_id for job in jobs] == [f"job-{key}"]
+
+
+# ── artifact lifecycle reads (ADR-008 §6.1) ───────────────────────────────────
+
+
+async def test_list_run_ids_for_root_returns_only_runs_registered_under_the_root(
+    db_session, unique_id, seed_robot_run
+):
+    # seed_robot_run registers under s3://sceneops-test/robot_runs/<run_id>/.
+    first, second = sorted(unique_id("run") for _ in range(2))
+    for run_id in (second, first):
+        await seed_robot_run(
+            db_session, run_id=run_id, recording_checksum="sha256:" + "1" * 64
+        )
+    repository = PostgresRobotRunRepository(db_session)
+
+    here = await repository.list_run_ids_for_root("s3://sceneops-test/robot_runs")
+
+    assert {first, second} <= set(here)
+    assert here == sorted(here)
+    assert (
+        await repository.list_run_ids_for_root("s3://sceneops-test/robot_runs/") == here
+    )
+    # Another root, and a root that merely shares a text prefix, own none of them.
+    assert not {first, second} & set(
+        await repository.list_run_ids_for_root("s3://sceneops-test/other_root")
+    )
+    assert not {first, second} & set(
+        await repository.list_run_ids_for_root("s3://sceneops-test/robot")
+    )
+
+
+async def test_list_by_uri_prefix_is_a_directory_prefix_not_a_substring(
+    db_session, unique_id
+):
+    token = unique_id("root")
+    root = f"s3://bucket/{token}"
+    repository = PostgresArtifactRefRepository(db_session)
+    for suffix, uri in {
+        "a": f"{root}/run-1/recording.mcap",
+        "b": f"{root}/run-1/robot_run_manifest.json",
+        "sibling": f"{root}-other/run-1/recording.mcap",  # shares the text, not the directory
+        "elsewhere": f"s3://bucket/{token}x/recording.mcap",
+    }.items():
+        await repository.create(
+            artifact_id=f"{token}-{suffix}",
+            ref=ArtifactRef(kind=ArtifactKind.ROBOT_RUN_RECORDING, uri=uri),
+        )
+
+    found = await repository.list_by_uri_prefix(root)
+    found_trailing_slash = await repository.list_by_uri_prefix(root + "/")
+
+    assert [r.artifact_id for r in found] == [f"{token}-a", f"{token}-b"]
+    assert found_trailing_slash == found
+    assert await repository.list_by_uri_prefix(f"{root}/no-such-run") == []
+
+
+async def test_list_by_uri_prefix_treats_like_wildcards_literally(
+    db_session, unique_id
+):
+    token = unique_id("wild")
+    repository = PostgresArtifactRefRepository(db_session)
+    for suffix, uri in {
+        "literal": f"s3://bucket/{token}_a%b/recording.mcap",
+        "lookalike": f"s3://bucket/{token}XaZZb/recording.mcap",
+    }.items():
+        await repository.create(
+            artifact_id=f"{token}-{suffix}",
+            ref=ArtifactRef(kind=ArtifactKind.ROBOT_RUN_RECORDING, uri=uri),
+        )
+
+    found = await repository.list_by_uri_prefix(f"s3://bucket/{token}_a%b")
+
+    assert [r.artifact_id for r in found] == [f"{token}-literal"]

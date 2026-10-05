@@ -17,6 +17,14 @@ reconcile-once:
 reconcile-apply:
 	$(COMPOSE) exec -T api python -m app.domains.robots.reconciliation --once --apply
 
+.PHONY: artifact-lifecycle-once
+# Read-only artifact lifecycle report of the robot_runs/ root (ADR-008 §6):
+# referenced / pending / orphan candidate / integrity incident. Classifies only;
+# nothing is deleted. Pass a capture scan for O1 / PN-3, e.g.
+#   make artifact-lifecycle-once ARGS="--capture-report /path/capture_scan.json"
+artifact-lifecycle-once:
+	$(COMPOSE) exec -T api python -m app.domains.robots.artifact_lifecycle --once $(ARGS)
+
 .PHONY: recovery-up
 recovery-up:
 	$(COMPOSE) --profile recovery up -d publication-recovery registration-recovery
