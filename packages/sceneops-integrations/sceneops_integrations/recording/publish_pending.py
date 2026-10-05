@@ -31,7 +31,7 @@ the ArtifactStore, nothing else.
 
 from __future__ import annotations
 
-import logging
+import time
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Literal
@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict
 
 from sceneops_core.artifacts.contracts import ArtifactStore
 from sceneops_core.robots.capture_scan import CaptureClass
+from sceneops_core.robots.recovery_log import ACTION_EVENT, PASS_EVENT, log_event
 from sceneops_core.robots.published_scan import (
     PublicationClass,
     classify_publication,
@@ -48,8 +49,6 @@ from sceneops_core.robots.published_scan import (
 
 from .capture_scan import scan_capture_volume
 from .from_capture import publish_from_capture
-
-logger = logging.getLogger(__name__)
 
 PUBLISH_PENDING_REPORT_SCHEMA_V1: Final = "sceneops.publish_pending_report/v1"
 
@@ -73,6 +72,14 @@ class PendingResult(BaseModel):
     manifest_written: bool | None = None
     # "ErrorType: message" for FAILED.
     error: str | None = None
+    # For a publication attempt (PUBLISHED / FAILED): the run's lifecycle state
+    # before it -- ``publish_pending`` (nothing in the store) or
+    # ``publication_incomplete`` (a recording without its manifest), the
+    # reconciler's vocabulary -- and after it: ``published`` once the publish
+    # re-read and verified both objects, otherwise unchanged. None for a skip.
+    state_before: str | None = None
+    state_after: str | None = None
+    duration_ms: int | None = None
 
 
 class PublishPendingReport(BaseModel):
@@ -96,6 +103,37 @@ def _error_text(error: BaseException) -> str:
     return f"{type(error).__name__}: {message[:300]}"
 
 
+# The reconciler's names (``AcquisitionState``) for the two states this command
+# acts on; the integrations package cannot import the API, so a test in the API
+# suite pins these to the enum.
+STATE_PUBLISH_PENDING: Final = "publish_pending"
+STATE_PUBLICATION_INCOMPLETE: Final = "publication_incomplete"
+STATE_PUBLISHED: Final = "published"
+
+
+def _log_result(result: PendingResult) -> None:
+    """One structured record per publication attempt (ADR-008 §7.3). Skips are
+    not actions and are counted in the pass record instead, so a capture that
+    stays unpublishable does not add a line to every pass."""
+    log_event(
+        ACTION_EVENT,
+        component="publish-pending",
+        run_id=result.run_id,
+        stage="publish",
+        action="publish",
+        outcome=result.outcome.value,
+        reason=result.reason,
+        state_before=result.state_before,
+        state_after=result.state_after,
+        error_type=result.error.split(":", 1)[0] if result.error else None,
+        manifest_checksum=result.manifest_checksum,
+        recording_written=result.recording_written,
+        manifest_written=result.manifest_written,
+        duration_ms=result.duration_ms,
+        error=result.error,
+    )
+
+
 _CAPTURE_SKIP_REASONS: Final = {
     CaptureClass.CAPTURE_UNFINISHED: "capture_unfinished",
     CaptureClass.FINALIZED_NO_RECEIPT: "finalized_no_receipt",
@@ -112,6 +150,7 @@ async def publish_pending(
     """Publish every finalized capture under ``capture_root`` that is not yet
     completely published. Raises only when the facts cannot be read (capture
     root missing, store listing failing); a per-run failure is a result."""
+    pass_started = time.monotonic()
     captures = scan_capture_volume(capture_root)
     published = {
         observation.run_id: observation
@@ -131,6 +170,7 @@ async def publish_pending(
             continue
 
         observation = published.get(run_id)
+        state_before = STATE_PUBLISH_PENDING
         if observation is not None:
             assessment = classify_publication(observation)
             if assessment.classification == PublicationClass.PUBLISHED:
@@ -159,7 +199,9 @@ async def publish_pending(
                     )
                 )
                 continue
+            state_before = STATE_PUBLICATION_INCOMPLETE
 
+        started = time.monotonic()
         try:
             publication = await publish_from_capture(
                 artifact_store=artifact_store,
@@ -172,6 +214,9 @@ async def publish_pending(
                 outcome=PendingOutcome.FAILED,
                 reason="publish_failed",
                 error=_error_text(exc),
+                state_before=state_before,
+                state_after=state_before,
+                duration_ms=round((time.monotonic() - started) * 1000),
             )
         else:
             result = PendingResult(
@@ -181,19 +226,32 @@ async def publish_pending(
                 manifest_checksum=publication.manifest_checksum,
                 recording_written=publication.recording_written,
                 manifest_written=publication.manifest_written,
+                state_before=state_before,
+                state_after=STATE_PUBLISHED,
+                duration_ms=round((time.monotonic() - started) * 1000),
             )
         results.append(result)
-        logger.info(
-            "acquisition_recovery %s",
-            result.model_dump_json(exclude_none=True),
-        )
+        _log_result(result)
 
     counts: dict[str, int] = {}
     for result in results:
         counts[result.outcome.value] = counts.get(result.outcome.value, 0) + 1
-    return PublishPendingReport(
+    report = PublishPendingReport(
         root_uri=root_uri, results=tuple(results), counts=dict(sorted(counts.items()))
     )
+    skipped: dict[str, int] = {}
+    for result in results:
+        if result.outcome == PendingOutcome.SKIPPED and result.reason is not None:
+            skipped[result.reason] = skipped.get(result.reason, 0) + 1
+    log_event(
+        PASS_EVENT,
+        component="publish-pending",
+        captures=len(results),
+        outcomes=report.counts,
+        skipped=dict(sorted(skipped.items())) or None,
+        duration_ms=round((time.monotonic() - pass_started) * 1000),
+    )
+    return report
 
 
 __all__ = [

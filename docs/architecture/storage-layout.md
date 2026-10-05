@@ -78,6 +78,16 @@ and different bytes are a hard conflict, never an overwrite. The manifest's
 URIs; `REGISTER_ROBOT_RUN` never moves or rewrites them. See
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2.
 
+Every object under this root is classified, read-only, by whether an
+ArtifactRecord references its exact URI: `referenced`, `pending` (protected:
+young, or its registration is unfinished, or a capture source still exists),
+`orphan_candidate` (unreferenced, unprotected and older than the orphan grace) or
+`integrity_incident`. The classification is evidence for a person: **nothing under
+`robot_runs/` is deleted, moved or repaired by the platform**, and no other prefix
+is classified. The contract and the commands are in
+[Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2 and
+[ADR-008](../adr/008-acquisition-lifecycle-reliability.md) §6.
+
 ### Scene manifests: write-once, checksum-qualified
 
 A canonical SceneManifest revision lives at

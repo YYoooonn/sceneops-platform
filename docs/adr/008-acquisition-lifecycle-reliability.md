@@ -2,13 +2,18 @@
 
 ## Status
 
-**Accepted — implemented through step 12.5 (§8); step 12.6 is not.**
+**Implemented — Closed by Amendment 12.6 (§8).**
 
 Ratified 2026-10-05 with four clarifications, incorporated in place: reconciliation
 scheduling (§3.2), capture receipt semantics (§4.2), the retry budget across
 replacement Jobs (§5.2, §5.3) and deferral of the stall threshold to Phase 12.4
 (§5.3, §8, B4; decided in Amendment 12.4). Amendment 12.5 records the places where §6
-needed an interpretation to be implemented.
+needed an interpretation to be implemented. Amendment 12.6 records those of §7, the
+full-lifecycle acceptance, the audit of every requirement of this ADR and the
+non-blocking limitations that remain. The amendments are the implementation record:
+the numbered sections state the decisions, §1 and §2 describe the repository as it
+was audited, and the active contract is in
+[Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2.
 
 **Amendment 12.3 — read-only classification (implementation step 12.3).**
 Accepted. Step 12.3 adds `ArtifactStore.list_objects`, a published-object scan,
@@ -314,6 +319,209 @@ that the first version of the DB-side scan read RobotRunRecords of every root
 and reported the live stack's baseline run, registered under another root, as
 having lost its objects; the scan is now per root and the case has a unit and a
 real-PostgreSQL regression test.
+
+**Amendment 12.6 — acquisition status, structured records, lifecycle acceptance and
+closure (implementation step 12.6).**
+Accepted. Step 12.6 implements §7, validates the whole lifecycle under injected
+failure and closes the ADR. It changes no decision above and adds no lifecycle
+state, table, column or scheduler: the status is derived on demand from the facts
+12.3-12.5 already read.
+
+- **`AcquisitionStatus` (§7.1) is a view, not a record.** `python -m
+  app.domains.robots.acquisition_status --once` reads the durable facts once (the
+  reconciler's listing, RobotRunRecords, ArtifactRecords and Jobs, and the lifecycle
+  reference query) and derives one status per run and the aggregates of §7.2. It is a
+  pure function of the reconciliation report, the artifact lifecycle report and the
+  observation time `observed_at`, which is part of the report: the same facts and the
+  same `observed_at` give byte-identical JSON, and a different `observed_at` changes
+  only ages. The two reports are built from one observation
+  (`classify_reconciled_artifacts` takes an acquisition report that was already made),
+  so they cannot disagree about what was read. The capture stages need a `scan-capture`
+  report (`--capture-report`), exactly as the reconciler does; without one a run that
+  is only on the capture volume is unobservable, and §7.4's joined view stays a join of
+  two reports on `run_id`, not a mounted volume.
+- **Interpretations of §7.1.** *Stage* is the furthest durable fact (L-1): a
+  RobotRunRecord is `registered`; a valid manifest with its recording is `published`;
+  a finalized capture or any publication object is `finalized`; a `.partial` directory
+  alone is `capture_unfinished`. *Health* and the added `operator_required` are fixed
+  functions of the reconciler's state and reasons (table in the workflow document and
+  in `derive.py`); a lifecycle entry that is an integrity incident raises any other
+  health to `inconsistent`, because the artifact classification sees contradictions
+  (a registered run whose objects its records do not reference) that the acquisition
+  state does not. `operator_required` is true exactly where no automatic path moves a
+  run on. *Failure* is the newest failed registration Job of a run that is not
+  registered, with its class, exception type, attempts, budget and attempts remaining;
+  §7.1 says "when health = failed", but a run whose transient failure is still being
+  retried has a failure worth reporting, so it is present then too, and absent once a
+  RobotRunRecord ends the logical registration (a registered run's failed Jobs stay
+  visible as `failed_job_count` / `abandoned_job_count`). Only the register stage has a
+  durable failure: a failed publish is the Publisher's report, so a capture that keeps
+  failing to publish stays `publish_pending` with a growing age. `message_count` is
+  the manifest's per-channel sum (the manifest observation gained it), else the
+  receipt's; sizes and counts are absent when neither is observed.
+- **The operational report (§7.2).** Counts by stage, health and classification;
+  runs needing an operator; registrations pending, active, stalled, failed, with the
+  attempt-budget use (a histogram of attempts used, runs whose budget is spent,
+  abandoned Jobs); the run with the oldest last durable activity for each non-terminal
+  state; incident runs by reason and the lifecycle's referenced / pending /
+  orphan-candidate / incident objects and bytes; recording bytes and message counts
+  where known; and an `attention` list of every stalled, failed, inconsistent or
+  operator-required run. `--summary-only` drops the per-run statuses and keeps every
+  aggregate. `oldest` is time since last activity, not a verdict that work is lost.
+  One `acquisition_status {json}` line with the aggregates is logged for log
+  aggregation. No metrics backend is added (§9).
+- **Structured records (§7.3).** `publish-pending` and `reconcile --once --apply`
+  log one `acquisition_recovery {json}` line per action and one
+  `acquisition_recovery_pass {json}` line per pass, to stderr (stdout stays the one JSON
+  report): run, stage, action, outcome, `state_before`, `state_after`, job ids, failure
+  class, exception type, attempt, attempts used / remaining, `duration_ms`. For
+  `reconcile`, `state_after` comes from a second observation made only when the pass
+  changed something; it skips the recording byte comparison and a failure to make it
+  never fails a pass whose actions already happened (it leaves `state_after` unset).
+  `publish-pending` logs publication attempts only: a capture that stays unpublishable
+  would otherwise add a line to every pass, so its skips are counted in the pass line
+  by reason. The 12.4 records were written to a logger no command configured, so they
+  reached no stream; every one-shot command now routes the acquisition logger to
+  stderr (the logger alone, not the root logger, which would enable statement
+  logging). The records are evidence; nothing reads them back.
+- **Acquisition acceptance** (category-C point-in-time record, below).
+
+*Full-lifecycle acceptance* (`tests/infrastructure/test_acquisition_lifecycle_acceptance.py`,
+`make test-recovery`).
+
+```text
+date          2026-10-06
+git HEAD      a5a0c6a (+ uncommitted 12.6 work)
+branch        feat/operational-reliability
+environment   one macOS host (15.3), Docker VM 7.65 GiB / 8 CPUs; PostgreSQL 16, MinIO
+              RELEASE.2024-11-07 and the dev stack on the same host; a throwaway Redis 7
+              container and Celery worker subprocesses (concurrency 2) of the test's own
+workload      nine acquisitions of the 1.4 MB repository fixture recording, one capture
+              volume, one MinIO RobotRun root, one PostgreSQL
+configuration stall threshold 5 s (and 600 s for the passes that must act on nothing),
+              attempt budget 3, real waits of 6 s and 3 s between passes; commands run as
+              subprocesses with their configuration from the environment
+result        1 passed in 177 s
+```
+
+Captures are built with Capture's own protocol (`prepare_partial_bag_dir`, the receipt
+written into `.partial/`, the atomic `finalize_bag`); the Kafka consumption that feeds
+Capture is `make ros2-test` and the streaming equivalence journey, not this test. Every
+recovery step is a production command; `recovery_worker.py` (registration) and
+`recovery_publisher.py` (publication) only add a fault point.
+
+```text
+A  broker down at first submission   7 submissions dispatch_failed, Jobs kept, nothing
+                                     registered; status answers with Redis down; after the
+                                     broker returns, 4 concurrent passes replace each stalled
+                                     Job exactly once (one winner per run); registered
+B  publisher killed (os._exit)       recording stored, no manifest; status says resumable,
+   between recording and manifest    no operator needed; publish-pending reuses the recording
+                                     (recording_written=false) and writes the marker
+C  manifest write fails once         that capture reported failed, no marker left, the others
+                                     published; two concurrent publish-pending later converge
+                                     on one manifest
+D  worker SIGKILLed mid-             Job running forever; replaced after the threshold;
+   registration                      registered after 2 abandoned attempts
+F  transient failure on every        3 attempts without success (1 abandoned, 2 failed), then
+   attempt                           no further Job however often it runs; failed, operator
+G  a different manifest appears      permanent_conflict; 3 passes + publish-pending change no
+                                     object and no row; the RobotRun is still the original
+H  the recording disappears          integrity_incident; publish-pending does not re-upload
+                                     although the capture still holds the bytes; untouched
+I  capture killed before finalize    capture_unfinished, never published
+J  finalized bag without receipt     finalized_no_receipt, operator_required, never published
+```
+
+Verified: a finalized capture reaches a RobotRun with only `--capture-root` (the manifest's
+robot, topics and clock come from the receipt and the bytes); every publication retry
+converges; each unregistered manifest is submitted; killed and never-executed Jobs are
+replaced boundedly and each replacement consumes the shared budget; a broker outage delays
+registration and loses nothing; concurrent passes yield one replacement per stalled Job;
+conflicts and incidents change no object, no row and no Job across repeated passes; the
+final operational report (4 registered, 1 permanent conflict, 1 incident, 1 budget
+exhausted, 1 unfinished, 1 without receipt; 4 runs needing an operator) is derived from the
+durable facts and leaves them byte-identical; and 6 of the 9 acquisitions end as exactly one
+RobotRun with two ArtifactRecords whose `manifest_checksum` equals the manifest published
+for them. The recovery records parsed from the commands' stderr carry the before / after
+states, `dispatch_failed` outcomes, the abandoned Job ids, the failure class and the
+attempt ordinals (for F, one retry: attempt 3, 1 remaining). The first run of the test
+failed on a wrong expectation of mine (two retries for F where the outage replacement was
+the second attempt), not on the system.
+
+Run against the dev stack's data, `acquisition_status --summary-only` reports the one
+registered canonical-baseline run (355,793,127 B, 8,897 messages) as `registered` / `ok`
+with no attention items.
+
+*Requirement audit.* Every requirement of this ADR, against the implementation at the
+audited HEAD and the evidence that proves it:
+
+```text
+requirement                                  status       evidence
+-------------------------------------------  -----------  -------------------------------------------------
+L-1 stage = fact, no status column           met          no migration in Phase 12; status is derived (12.6)
+L-2 fact ownership                           met          reconciler writes only Job rows and events;
+                                                          capture volume / store / DB writers unchanged
+L-3 at-least-once, idempotent, concurrent    met          concurrent passes and publishers in 12.4 and 12.6
+L-4 matching converge, conflicts loud        met          publish conflicts, G / H of 12.6, 12.4 conflict test
+L-5 manifest is the publication marker       met          published_scan; recording-only never registered
+L-6 recording of record                      met          capture FinalBagExistsError (12.2); H of 12.6
+L-7 receipts never override bytes            met          publish --from-capture checks (12.2)
+L-8 bounded automatic retry                  met          budget 3 across replacement Jobs; F of 12.6
+L-9 no silent repair                         met          incidents / conflicts untouched (12.4, 12.6)
+L-10 classification is pure                  met          READ ONLY transactions; status writes nothing
+L-11 grace before action                     met          stall threshold, lifecycle graces; capture_unfinished
+                                                          has no action, so no grace is needed
+L-12 independence                            met          publisher DB-free; classification needs no Redis
+A1 capture receipt                           met          12.2
+A2 ArtifactStore listing                     met          12.3 (Local, S3/MinIO, paginated)
+A3 atomic LocalArtifactStore write           met          12.2
+§5.1 every classification and its action     met          12.3 vocabulary; actions 12.4; publish_failed is
+                                                          the Publisher's report and log record
+§5.2 failure classes, budget                 met          12.4
+§5.3 stalled Job abandon + replace           met          12.4; W7 / W8 real faults; D and A of 12.6
+§6 classification of robot_runs/ (O1, O2,    met          12.5; O3-O5 are outside §6.4's Phase 12 scope
+   PN-1..PN-4, incidents)
+§7.1 AcquisitionStatus                       met          12.6 (interpretations above)
+§7.2 aggregates                              met          12.6
+§7.3 event facts                             met          12.6 (attempt ordinal and budget evidence added)
+§7.4 exposure                                met          CLI JSON; the joined view is a join of reports
+§8 steps 12.2-12.6                           met          12.2-12.5 amendments; 12.6 above
+W1-W14                                       met or       W1 and W13 recover only within Kafka retention and
+                                             bounded      by re-running capture (B1, B2); W12 / F6 / F8 matter
+                                                          only if the router is deployed (B7); all others are
+                                                          closed by a tested resumer
+```
+
+Open items of §9 at closure: B3, B4 and B6 are resolved. B1, B2, B5, B7, B8 and B9 are
+limits of claims this ADR does not make (unattended capture recovery, Redis queue
+durability, router productionization, batch receipts, objects over 5 GB), and are
+carried below as non-blocking limitations; none is an unmet requirement.
+
+*Non-blocking limitations at closure.*
+
+- No capture supervisor: a capture killed before finalize is re-run by an operator
+  (B1), and recovery of W1 / W13 depends on Kafka retention, which the repository does
+  not configure (B2).
+- The stall threshold (900 s) is measured on one host with local storage (Amendment
+  12.4); recovery of a killed or lost registration is no sooner than the threshold plus
+  one polling interval.
+- A dispatch outage longer than the attempt budget times the stall threshold (about 45
+  minutes at the defaults) can spend the shared budget without the registration having
+  failed; an operator's forced submission then registers it.
+- Plain submissions are not serialized: concurrent passes can create a duplicate Job
+  (harmless: one RobotRun).
+- The artifact lifecycle covers `robot_runs/` only; no artifact is deleted, quarantined
+  or repaired, and a future deletion must define §6.3 itself.
+- Redis durability of the Celery queue is unverified (B5); a lost message is recovered
+  by replacement, which makes its frequency, not its safety, the open question.
+- The router has no entrypoint, lease or convergence rule (B7); batch acquisition has
+  no receipt producer (B8); a single `put_object` limits a recording to 5 GB (B9).
+- The capture stages of the status need a capture report; the recovery loops do not
+  supply one and the platform does not mount the capture volume.
+- Everything is validated on one host and stack with a 1.4 MB recording in the
+  acceptance (a 356 MB recording for the stall-threshold measurement). Behavior at
+  scale is not measured here and belongs to Phase 13.
 
 Audited at:
 
@@ -957,7 +1165,7 @@ platform and is DEFERRED.
       - Reference query, pending rules PN-1..PN-3, O1/O2, dangling/corrupt incidents.
       Verify: PN-2 never classified as orphan at any age; classification is read-only.
 
-12.6  Observability facts + acceptance
+12.6  Observability facts + acceptance  (implemented; see Amendment 12.6)
       - AcquisitionStatus report + structured log lines (§7).
       - Fault-injection E2E over the full lifecycle; record it as a category-C
         point-in-time acceptance report; update active docs whose contract changed
@@ -1000,6 +1208,9 @@ B8  Batch acquisition (`dataset-acquisition`) has no receipt producer; it keeps 
 B9  Single-request S3 `put_object` limits recording size to 5 GB; larger recordings
     need multipart upload. Not measured; out of scope.
 ```
+
+State at closure (Amendment 12.6): B3, B4 and B6 are resolved; B1, B2, B5, B7, B8 and
+B9 remain as the limits listed there.
 
 DEFERRED, with triggers for revisiting:
 

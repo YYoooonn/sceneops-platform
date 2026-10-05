@@ -170,17 +170,28 @@ implements or half-implements them, so there's nothing to document as
 - Durable recovery of in-flight capture sessions across a restart, and Kafka
   message sizes beyond the stock ~1 MB limit (streaming-transport §14, §26,
   §33). Nothing supervises or restarts one-shot capture: a capture killed before
-  finalize is re-run by an operator while Kafka still retains its records.
-  Beyond that, the hand-off is recoverable but not triggered by capture: a
-  finalized capture with a receipt is published by `publish-pending`, a published
-  manifest is registered, retried within three attempts, or replaced when its Job
-  stalls, by `reconcile --once --apply` (see
-  [Robot run and MCAP](../workflows/robot-run-and-mcap.md) §3.2). They run only
-  when invoked; `make recovery-up` loops them locally and no scheduler exists in
-  the platform. Legacy finalized bags without a receipt, conflicts, integrity
-  incidents and a registration that has spent its attempts remain operator
-  decisions. A dispatch outage longer than the attempt budget times the stall
-  threshold exhausts the budget and needs an operator's forced submission.
+  finalize is re-run by an operator while Kafka still retains its records, and the
+  repository configures no broker retention.
+- A capture that triggers its own publication and registration. The hand-off is
+  recoverable, not triggered by capture: a finalized capture with a receipt is
+  published by `publish-pending`, and a published manifest is registered,
+  retried within three attempts, or replaced when its Job stalls, by `reconcile
+  --once --apply` (see [Robot run and MCAP](../workflows/robot-run-and-mcap.md)
+  §3.2). Both run only when invoked: `make recovery-up` loops them locally, a
+  deployment would run them from CronJobs, and the platform has no scheduler.
+  `make acquisition-status` reports every run's derived status and the aggregate
+  health; nothing is stored. Legacy finalized bags without a receipt, conflicts,
+  integrity incidents and a registration that has spent its attempts remain
+  operator decisions. The stall threshold (900 s) was measured on one host with
+  local storage, and a dispatch outage longer than the attempt budget times the
+  stall threshold exhausts the budget and needs an operator's forced submission.
+- Deleting, quarantining or garbage-collecting artifacts. `robot_runs/` objects
+  are classified (referenced / pending / orphan candidate / incident) and nothing
+  else; no other prefix is classified, and no artifact is ever removed by the
+  platform.
+- Prometheus, Grafana or OpenTelemetry export of acquisition health. The
+  operational report and the structured recovery log lines are the interface;
+  nothing exports them.
 - Evaluation-aware scenario mining (FP/FN-by-scene signals), pseudo-label
   candidate scoring, or VLM-based scene tagging.
 - An RLDS (or any other second) external training-format adapter —

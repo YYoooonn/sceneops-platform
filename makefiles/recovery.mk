@@ -1,5 +1,5 @@
 # --------------------
-# Acquisition recovery (ADR-008 §3.2, §8 step 12.4)
+# Acquisition recovery (ADR-008 §3.2, §8 steps 12.4-12.6)
 #
 # Both commands are stateless one-shots. `reconcile-once` only observes;
 # `reconcile-apply` performs the bounded registration recovery (submit, retry
@@ -25,6 +25,17 @@ reconcile-apply:
 artifact-lifecycle-once:
 	$(COMPOSE) exec -T api python -m app.domains.robots.artifact_lifecycle --once $(ARGS)
 
+.PHONY: acquisition-status
+# Read-only operational report (ADR-008 §7): one derived AcquisitionStatus per run
+# plus the aggregates -- runs by stage and health, pending / failed registrations,
+# oldest stalled work, retry budget use, referenced / pending / orphan-candidate
+# bytes, integrity incidents. Nothing is stored. The platform never mounts the
+# capture volume, so capture stages need a scan (`recording scan-capture`):
+#   make acquisition-status ARGS="--summary-only"
+#   make acquisition-status ARGS="--capture-report /path/capture_scan.json"
+acquisition-status:
+	$(COMPOSE) exec -T api python -m app.domains.robots.acquisition_status --once $(ARGS)
+
 .PHONY: recovery-up
 recovery-up:
 	$(COMPOSE) --profile recovery up -d publication-recovery registration-recovery
@@ -39,15 +50,23 @@ recovery-down:
 recovery-logs:
 	$(COMPOSE) --profile recovery logs -f publication-recovery registration-recovery
 
+# Both recovery suites: one fault per test (test_acquisition_recovery.py) and the
+# full-lifecycle acceptance (test_acquisition_lifecycle_acceptance.py).
+RECOVERY_TESTS ?= tests/infrastructure/test_acquisition_recovery.py \
+	tests/infrastructure/test_acquisition_lifecycle_acceptance.py
+
 .PHONY: test-recovery
 # Fault-injection acceptance of acquisition recovery: real PostgreSQL + MinIO
 # (`make local-up`), and a throwaway Redis container plus Celery worker
 # subprocesses of the test's own (Docker required) -- killing a worker or
 # stopping the broker never touches the dev stack. Needs no canonical baseline.
+# The production commands run as subprocesses: publish-pending, reconcile --once
+# --apply and the read-only acquisition status. One suite alone:
+#   make test-recovery RECOVERY_TESTS=tests/infrastructure/test_acquisition_lifecycle_acceptance.py
 test-recovery:
 	SCENEOPS_DATABASE_URL="postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$${POSTGRES_PORT:-5432}/$(POSTGRES_DB)" \
 	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
 	MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
 	MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
 	MINIO_BUCKET=$(MINIO_BUCKET) \
-	uv run pytest tests/infrastructure/test_acquisition_recovery.py -v
+	uv run pytest $(RECOVERY_TESTS) -v

@@ -38,18 +38,18 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import timedelta
 
 from app.config import get_settings
 from app.domains.robots.reconciliation import (
     ClassificationPolicy,
     postgres_registration_facts,
 )
-from sceneops_core.robots.capture_scan import CaptureScanReport
 from sceneops_core.robots.registration_failures import REGISTRATION_ATTEMPT_BUDGET
 from sceneops_db.session import dispose_async_engine, get_async_sessionmaker
 from sceneops_storage import create_artifact_store
+
+from app.domains.robots.cli_support import load_capture_report, parse_observed_at
 
 from .classify import ArtifactLifecyclePolicy
 from .service import artifact_lifecycle_once
@@ -72,22 +72,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--stall-threshold-seconds", type=float, default=None)
     parser.add_argument("--verify-recording-bytes", action="store_true")
     return parser.parse_args(argv)
-
-
-def _load_capture_report(source: str | None) -> CaptureScanReport | None:
-    if source is None:
-        return None
-    raw = sys.stdin.read() if source == "-" else Path(source).read_text("utf-8")
-    return CaptureScanReport.model_validate_json(raw)
-
-
-def _observed_at(value: str | None) -> datetime:
-    if value is None:
-        return datetime.now(UTC)
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        raise ValueError("--observed-at needs a UTC offset (e.g. 2026-10-06T00:00:00Z)")
-    return parsed
 
 
 async def _run(args: argparse.Namespace, capture_report) -> str:
@@ -118,7 +102,7 @@ async def _run(args: argparse.Namespace, capture_report) -> str:
             artifact_store=store,
             root_uri=settings.artifact.robot_run_root_uri,
             registration_facts=postgres_registration_facts(get_async_sessionmaker()),
-            now=_observed_at(args.observed_at),
+            now=parse_observed_at(args.observed_at),
             capture_report=capture_report,
             policy=policy,
             classification_policy=ClassificationPolicy(
@@ -135,7 +119,7 @@ async def _run(args: argparse.Namespace, capture_report) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
-        output = asyncio.run(_run(args, _load_capture_report(args.capture_report)))
+        output = asyncio.run(_run(args, load_capture_report(args.capture_report)))
     except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero
         print(
             f"artifact lifecycle failed: {type(exc).__name__}: {exc}", file=sys.stderr

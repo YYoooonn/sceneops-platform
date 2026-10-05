@@ -333,3 +333,90 @@ def test_cli_exits_1_when_the_capture_root_cannot_be_read(store_root, tmp_path):
 
     assert result.returncode == 1
     assert "publish-pending failed" in result.stderr
+
+
+# ── structured records (ADR-008 §7.3) ────────────────────────────────────────
+
+
+def _records(text: str, event: str) -> list[dict]:
+    """The ``<event> {json}`` records of a log stream (a handler may prefix the
+    line, so the event is looked for rather than assumed at column 0)."""
+    marker = f"{event} {{"
+    return [
+        json.loads(line[line.index(marker) + len(event) + 1 :])
+        for line in text.splitlines()
+        if marker in line
+    ]
+
+
+async def test_each_publication_attempt_is_logged_with_its_states(
+    make_capture, store_root, capture_root, caplog
+):
+    make_capture(capture_root, run_id="run-a")
+    directory = make_capture(capture_root, run_id="run-b", messages=OTHER_MESSAGES)
+    store = LocalArtifactStore(root_uri=str(store_root))
+    recording_uri = f"{_root_uri(store_root)}/run-b/recording.mcap"
+    await store.write_bytes(recording_uri, (directory / "run-b_0.mcap").read_bytes())
+    tampered = make_capture(capture_root, run_id="run-c", messages=DEFAULT_MESSAGES[:2])
+    bag = tampered / "run-c_0.mcap"
+    bag.write_bytes(b"\x00" * bag.stat().st_size)
+
+    with caplog.at_level("INFO", logger="sceneops.acquisition"):
+        report = await _run(store_root, capture_root)
+
+    actions = {
+        record["run_id"]: record
+        for record in _records(caplog.text, "acquisition_recovery")
+    }
+    assert set(actions) == {"run-a", "run-b", "run-c"}
+    published = actions["run-a"]
+    assert (published["stage"], published["action"], published["outcome"]) == (
+        "publish",
+        "publish",
+        "published",
+    )
+    assert (published["state_before"], published["state_after"]) == (
+        "publish_pending",
+        "published",
+    )
+    assert published["component"] == "publish-pending"
+    assert published["manifest_written"] is True and published["duration_ms"] >= 0
+    # A publication that resumed after the recording upload says so.
+    assert actions["run-b"]["state_before"] == "publication_incomplete"
+    assert actions["run-b"]["recording_written"] is False
+    failed = actions["run-c"]
+    assert failed["outcome"] == "failed" and failed["reason"] == "publish_failed"
+    assert failed["state_before"] == failed["state_after"] == "publish_pending"
+    assert failed["error_type"]
+    (summary,) = _records(caplog.text, "acquisition_recovery_pass")
+    assert summary["outcomes"] == report.counts == {"failed": 1, "published": 2}
+
+
+async def test_skips_are_counted_in_the_pass_record_not_logged_per_run(
+    make_capture, store_root, capture_root, caplog
+):
+    make_capture(capture_root, run_id="run-a")
+    await _run(store_root, capture_root)
+    caplog.clear()
+
+    with caplog.at_level("INFO", logger="sceneops.acquisition"):
+        await _run(store_root, capture_root)
+
+    assert _records(caplog.text, "acquisition_recovery") == []
+    (summary,) = _records(caplog.text, "acquisition_recovery_pass")
+    assert summary["outcomes"] == {"skipped": 1}
+    assert summary["skipped"] == {"already_published": 1}
+
+
+def test_the_cli_logs_records_to_stderr_and_keeps_stdout_the_report(
+    make_capture, store_root, capture_root
+):
+    make_capture(capture_root, run_id="run-a")
+
+    result = _cli(capture_root, store_root)
+
+    assert result.returncode == 0, result.stderr
+    json.loads(result.stdout)  # nothing but the report
+    (action,) = _records(result.stderr, "acquisition_recovery")
+    assert action["run_id"] == "run-a" and action["outcome"] == "published"
+    assert len(_records(result.stderr, "acquisition_recovery_pass")) == 1

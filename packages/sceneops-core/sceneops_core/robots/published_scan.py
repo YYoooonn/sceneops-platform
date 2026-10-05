@@ -97,6 +97,8 @@ class ManifestFacts(_ScanModel):
     ended_at: datetime
     source_clock: str
     channel_count: int
+    # Sum of the manifest's per-channel message counts.
+    message_count: int
 
 
 class PublishedRunObservation(_ScanModel):
@@ -161,6 +163,7 @@ def _manifest_facts(manifest: RobotRunManifest) -> ManifestFacts:
         ended_at=manifest.ended_at,
         source_clock=manifest.capture.source_clock,
         channel_count=len(manifest.channels),
+        message_count=sum(channel.message_count for channel in manifest.channels),
     )
 
 

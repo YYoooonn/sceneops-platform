@@ -22,18 +22,14 @@ skips otherwise. Run: ``make test-recovery``.
 from __future__ import annotations
 
 import asyncio
-import io
 import json
-import os
 import subprocess
 import sys
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
-import pytest_asyncio
 
 from app.domains.robots.reconciliation import (
     AcquisitionState as S,
@@ -47,41 +43,28 @@ from app.domains.robots.reconciliation import (
 )
 from app.domains.robots.reconciliation.cli import build_registration_submitter
 from sceneops_core.common.checksums import sha256_checksum
-from sceneops_core.config import ArtifactSettings
-from sceneops_core.robots.capture_receipt import (
-    CAPTURE_RECEIPT_FILENAME,
-    CaptureReceipt,
-    FinalizationReason,
-    ReceiptFinalization,
-    ReceiptKafka,
-    ReceiptRecording,
-)
 from sceneops_core.robots.manifest import (
-    CaptureInfo,
-    CaptureSource,
-    CaptureSourceKind,
-    RecordingFormat,
     load_canonical_robot_run_manifest,
 )
 from sceneops_core.robots.registration_failures import JOB_ABANDONED_ERROR_TYPE
-from sceneops_db.session import dispose_async_engine, get_async_sessionmaker
-from sceneops_integrations.recording import derive_mcap_facts, publish_pending
+from sceneops_db.session import get_async_sessionmaker
+from sceneops_integrations.recording import publish_pending
 
 from recovery_support import (
     FIXTURE_MCAP,
+    RECOVERY_FIXTURES,
     REPO_ROOT,
-    RecoveryEnv,
-    RecoveryRedis,
     WorkerProcess,
     async_wait_until,
-    cleanup_rows,
     count_rows,
-    docker_available,
     job_row_snapshot,
     jobs_of,
+    make_finalized_capture,
     robot_run_checksum,
     wait_until,
 )
+
+pytestmark = pytest.mark.usefixtures(*RECOVERY_FIXTURES)
 
 STALL = timedelta(seconds=30)
 ACTIVE = {"pending", "queued", "running"}
@@ -92,84 +75,6 @@ def _later() -> datetime:
     activity for longer than the stall threshold -- time passing, without
     sleeping."""
     return datetime.now(UTC) + timedelta(hours=1)
-
-
-# ── environment ───────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(scope="module")
-def env(tmp_path_factory):
-    if "SCENEOPS_DATABASE_URL" not in os.environ:
-        pytest.skip("SCENEOPS_DATABASE_URL not set; run `make test-recovery`")
-    if not docker_available():
-        pytest.skip("Docker is needed for the throwaway Redis")
-
-    minio = os.environ.get("MINIO_ENDPOINT_URL", "http://localhost:9000")
-    root_prefix = f"recovery_test_{uuid.uuid4().hex[:8]}"
-    artifact = ArtifactSettings(
-        backend="minio",
-        root_uri=f"s3://{os.environ.get('MINIO_BUCKET', 'sceneops')}/artifacts/{root_prefix}",
-        endpoint_url=minio,
-        region="ap-northeast-2",
-        access_key_id=os.environ.get("MINIO_ROOT_USER", "minioadmin"),
-        secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
-    )
-    tmp = tmp_path_factory.mktemp("recovery")
-    marker_dir = tmp / "markers"
-    marker_dir.mkdir()
-    redis = RecoveryRedis()
-    redis.start_new()
-    environment = RecoveryEnv(
-        redis=redis,
-        queue=f"sceneops.recovery-test.{uuid.uuid4().hex[:6]}",
-        tmp=tmp,
-        root_prefix=root_prefix,
-        artifact=artifact,
-        fault_file=tmp / "faults.json",
-        marker_dir=marker_dir,
-    )
-    environment.clear_faults()
-    try:
-        asyncio.run(environment.store().list_objects(environment.robot_run_root))
-    except Exception as exc:  # noqa: BLE001
-        redis.remove()
-        pytest.skip(f"MinIO not reachable at {minio}: {exc}")
-    yield environment
-    redis.remove()
-
-    async def _teardown() -> None:
-        from sceneops_db.session import reset_async_engine_cache
-
-        reset_async_engine_cache()
-        await environment.store().delete_prefix(
-            environment.artifact.root_uri.split(f"/{root_prefix}")[0]
-            + f"/{root_prefix}"
-        )
-        await cleanup_rows(environment.run_ids)
-        await dispose_async_engine()
-
-    asyncio.run(_teardown())
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def _fresh_engine():
-    """Each test has its own event loop; the process-wide engine must not
-    outlive it."""
-    from sceneops_db.session import reset_async_engine_cache
-
-    reset_async_engine_cache()
-    yield
-    await dispose_async_engine()
-
-
-@pytest.fixture(autouse=True)
-def _clean_faults_and_queue(env):
-    env.use_fresh_root()
-    env.clear_faults()
-    env.redis.flush()
-    for marker in env.marker_dir.iterdir():
-        marker.unlink()
-    yield
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -222,46 +127,6 @@ async def assert_one_registration(published) -> None:
     assert await robot_run_checksum(published.run_id) == published.manifest_checksum
 
 
-def make_finalized_capture(base: Path, run_id: str, robot_id: str) -> Path:
-    data = FIXTURE_MCAP.read_bytes()
-    facts = derive_mcap_facts(io.BytesIO(data), source_clock="mcap_log_time")
-    receipt = CaptureReceipt(
-        run_id=run_id,
-        robot_id=robot_id,
-        robot_platform="recovery-test",
-        recording=ReceiptRecording(
-            file=f"{run_id}_0.mcap",
-            format=RecordingFormat.MCAP,
-            checksum=sha256_checksum(data),
-            size_bytes=len(data),
-        ),
-        capture=CaptureInfo(
-            source=CaptureSource(
-                kind=CaptureSourceKind.KAFKA, topics=["sceneops.robot.telemetry.v1"]
-            ),
-            source_clock="mcap_log_time",
-        ),
-        message_count=facts.message_count,
-        per_channel_counts={c.topic: c.message_count for c in facts.channels},
-        finalization=ReceiptFinalization(
-            reason=FinalizationReason.EXPLICIT_RUN_END,
-            finalized_at=datetime(2026, 10, 5, 12, 0, tzinfo=UTC),
-        ),
-        kafka=ReceiptKafka(
-            partition=0,
-            first_offset=0,
-            last_offset=facts.message_count,
-            first_sequence=0,
-            last_sequence=facts.message_count - 1,
-        ),
-    )
-    directory = base / run_id
-    directory.mkdir(parents=True)
-    (directory / f"{run_id}_0.mcap").write_bytes(data)
-    (directory / CAPTURE_RECEIPT_FILENAME).write_bytes(receipt.to_canonical_bytes())
-    return directory
-
-
 # ── W3 / W5 / W6: finalized capture -> published -> registered, unattended ───
 
 
@@ -278,30 +143,8 @@ async def test_finalized_capture_to_registered_runs_through_the_one_shot_command
     env.run_ids.append(run_id)
     capture_root = tmp_path / "capture"
     make_finalized_capture(capture_root, run_id, robot_id)
-    art = env.artifact
-
-    publisher_env = {
-        **os.environ,
-        "SCENEOPS_PUBLISHER_ARTIFACT__BACKEND": "minio",
-        "SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI": art.root_uri,
-        "SCENEOPS_PUBLISHER_ARTIFACT__ENDPOINT_URL": art.endpoint_url,
-        "SCENEOPS_PUBLISHER_ARTIFACT__REGION": art.region,
-        "SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID": art.access_key_id,
-        "SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY": art.secret_access_key,
-    }
-    reconciler_env = {
-        **os.environ,
-        "SCENEOPS_API_ARTIFACT__BACKEND": "minio",
-        "SCENEOPS_API_ARTIFACT__ROOT_URI": art.root_uri,
-        "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": art.endpoint_url,
-        "SCENEOPS_API_ARTIFACT__REGION": art.region,
-        "SCENEOPS_API_ARTIFACT__ACCESS_KEY_ID": art.access_key_id,
-        "SCENEOPS_API_ARTIFACT__SECRET_ACCESS_KEY": art.secret_access_key,
-        "SCENEOPS_API_EXECUTION__CELERY__BROKER_URL": env.redis.url,
-        "SCENEOPS_API_EXECUTION__CELERY__RESULT_BACKEND": env.redis.result_url,
-        "SCENEOPS_API_EXECUTION__CELERY__JOB_QUEUE": env.queue,
-        "SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS": "30",
-    }
+    publisher_env = env.publisher_environment()
+    reconciler_env = env.reconciler_environment(stall_threshold_seconds=30)
 
     def publish_pending_cmd() -> dict:
         proc = subprocess.run(

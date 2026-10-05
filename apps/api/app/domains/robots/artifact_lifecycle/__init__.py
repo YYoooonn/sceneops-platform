@@ -17,7 +17,11 @@ from .model import (
     ObjectRole,
     UnclassifiedObject,
 )
-from .service import artifact_lifecycle_once
+from .service import (
+    artifact_lifecycle_once,
+    classify_reconciled_artifacts,
+    default_classification_policy,
+)
 
 __all__ = [
     "ARTIFACT_LIFECYCLE_REPORT_SCHEMA_V1",
@@ -31,5 +35,7 @@ __all__ = [
     "UnclassifiedObject",
     "artifact_lifecycle_once",
     "classify_artifact_lifecycle",
+    "classify_reconciled_artifacts",
+    "default_classification_policy",
     "summarize",
 ]

@@ -48,8 +48,9 @@ Failure semantics
 
 from __future__ import annotations
 
-import json
 import logging
+import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final, Protocol
@@ -69,6 +70,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.robots.capture_scan import CaptureScanReport
+from sceneops_core.robots.recovery_log import ACTION_EVENT, PASS_EVENT, log_event
 from sceneops_core.robots.registration_failures import (
     JOB_ABANDONED_ERROR_TYPE,
     REGISTRATION_ATTEMPT_BUDGET,
@@ -81,6 +83,7 @@ from app.domains.robots.schemas import RegisterRobotRunResponse
 from .classify import ClassificationPolicy, attempt_budget_spent
 from .model import (
     AcquisitionState,
+    JobFacts,
     ReconciliationReport,
     RecoveryAction,
     RecoveryActionKind,
@@ -98,6 +101,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_ACTIONS_PER_PASS: Final = 100
 
 _ACTIVE_STATUSES = frozenset({JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING})
+
+# Outcomes that mean a registration Job was created (or found) and handed on.
+_SUBMITTING_OUTCOMES = frozenset(
+    {
+        RecoveryOutcome.SUBMITTED,
+        RecoveryOutcome.DEDUPLICATED,
+        RecoveryOutcome.DISPATCH_FAILED,
+    }
+)
 
 
 class RegistrationSubmitter(Protocol):
@@ -187,24 +199,75 @@ class PostgresStalledJobControl:
             return abandoned
 
 
-def _log(action: RecoveryAction) -> None:
-    # One structured line per resumer action (ADR-008 §7.3).
-    logger.info(
-        "acquisition_recovery %s",
-        json.dumps(
-            {
-                "run_id": action.run_id,
-                "stage": "register",
-                "action": action.kind.value,
-                "outcome": action.outcome.value,
-                "reason": action.reason,
-                "job_id": action.job_id,
-                "abandoned_job_ids": list(action.abandoned_job_ids),
-                "attempt": (action.attempts_used or 0) + 1,
-                "error_type": action.error.split(":", 1)[0] if action.error else None,
-            },
-            sort_keys=True,
+def _newest_failure(run: RunReport) -> JobFacts | None:
+    failed = [job for job in run.registration.jobs if job.status == JobStatus.FAILED]
+    return failed[-1] if failed else None
+
+
+def log_recovery_action(run: RunReport, action: RecoveryAction, *, budget: int) -> None:
+    """One structured record per action (ADR-008 §7.3): what was observed
+    before, what was attempted, what happened, what was observed after, and the
+    retry budget evidence. A record, not a source of truth."""
+    failure = _newest_failure(run)
+    used = action.attempts_used
+    log_event(
+        ACTION_EVENT,
+        component="reconcile",
+        run_id=action.run_id,
+        stage="register",
+        action=action.kind.value,
+        outcome=action.outcome.value,
+        reason=action.reason,
+        state_before=action.state_before.value if action.state_before else None,
+        state_after=action.state_after.value if action.state_after else None,
+        job_id=action.job_id,
+        abandoned_job_ids=list(action.abandoned_job_ids) or None,
+        failure_class=(
+            failure.failure_class.value
+            if failure is not None and failure.failure_class is not None
+            else None
         ),
+        error_type=(
+            action.error.split(":", 1)[0]
+            if action.error
+            else (failure.error_type if failure is not None else None)
+        ),
+        # The ordinal of the registration attempt this action started (ADR-008
+        # §7.3); absent when no Job was submitted.
+        attempt=(
+            used + 1
+            if used is not None and action.outcome in _SUBMITTING_OUTCOMES
+            else None
+        ),
+        attempts_used=used,
+        attempt_budget=action.attempt_budget,
+        attempts_remaining=(max(budget - used, 0) if used is not None else None),
+        duration_ms=action.duration_ms,
+        error=action.error,
+    )
+
+
+def log_recovery_pass(
+    report: ReconciliationReport, *, policy: RecoveryPolicy, duration_ms: int
+) -> None:
+    log_event(
+        PASS_EVENT,
+        component="reconcile",
+        mode=report.mode,
+        runs=len(report.runs),
+        states=report.counts,
+        actions=dict(
+            sorted(
+                Counter(
+                    f"{action.kind.value}:{action.outcome.value}"
+                    for action in report.actions
+                ).items()
+            )
+        ),
+        actions_deferred=report.actions_deferred,
+        stall_threshold_seconds=policy.stall_threshold.total_seconds(),
+        attempt_budget=policy.attempt_budget,
+        duration_ms=duration_ms,
     )
 
 
@@ -383,15 +446,17 @@ async def recover(
             "attempt_budget": policy.attempt_budget,
         }
         if kind == RecoveryActionKind.NONE:
-            action = RecoveryAction(
-                run_id=run.run_id,
-                kind=kind,
-                outcome=RecoveryOutcome.SKIPPED,
-                reason=reason,
-                **base,
+            actions.append(
+                RecoveryAction(
+                    run_id=run.run_id,
+                    kind=kind,
+                    outcome=RecoveryOutcome.SKIPPED,
+                    reason=reason,
+                    state_before=run.state,
+                    duration_ms=0,
+                    **base,
+                )
             )
-            actions.append(action)
-            _log(action)
             continue
 
         manifest_uri = _manifest_uri(run)
@@ -401,6 +466,7 @@ async def recover(
             deferred += 1
             continue
         performed += 1
+        started = time.monotonic()
         try:
             if kind == RecoveryActionKind.REPLACE_STALLED_JOB:
                 action = await _replace_stalled(
@@ -429,8 +495,14 @@ async def recover(
                 error=_error_text(exc),
                 **base,
             )
-        actions.append(action)
-        _log(action)
+        actions.append(
+            action.model_copy(
+                update={
+                    "state_before": run.state,
+                    "duration_ms": round((time.monotonic() - started) * 1000),
+                }
+            )
+        )
     return tuple(actions), deferred
 
 
@@ -447,7 +519,14 @@ async def reconcile_and_recover(
 ) -> ReconciliationReport:
     """``reconcile --once --apply``: observe, classify, then act on the
     eligible registration states. Classification needs only the ArtifactStore and
-    PostgreSQL; the broker is touched only by submission (ADR-008 §3.2)."""
+    PostgreSQL; the broker is touched only by submission (ADR-008 §3.2).
+
+    When the pass changed anything it observes once more, so each action record
+    carries the state its run was in afterwards. That second observation skips
+    the recording byte comparison (every acted-on run passed it a moment ago)
+    and is evidence only: a failure to make it leaves ``state_after`` unset and
+    never fails a pass whose actions already happened."""
+    started = time.monotonic()
     now = now or datetime.now(UTC)
     report = await reconcile_once(
         artifact_store=artifact_store,
@@ -460,7 +539,30 @@ async def reconcile_and_recover(
     actions, deferred = await recover(
         report, submitter=submitter, jobs=jobs, policy=policy, now=now
     )
-    return report.model_copy(
+    if any(action.outcome != RecoveryOutcome.SKIPPED for action in actions):
+        try:
+            after = await reconcile_once(
+                artifact_store=artifact_store,
+                root_uri=root_uri,
+                registration_facts=registration_facts,
+                capture_report=capture_report,
+                policy=policy.classification(),
+                now=now,
+                verify_unregistered_recordings=False,
+            )
+        except Exception:  # noqa: BLE001 - the actions already happened
+            logger.warning("could not observe the state after recovery", exc_info=True)
+        else:
+            states_after = {run.run_id: run.state for run in after.runs}
+            actions = tuple(
+                action
+                if action.outcome == RecoveryOutcome.SKIPPED
+                else action.model_copy(
+                    update={"state_after": states_after.get(action.run_id)}
+                )
+                for action in actions
+            )
+    result = report.model_copy(
         update={
             "mode": "apply",
             "policy": policy.facts(),
@@ -468,10 +570,19 @@ async def reconcile_and_recover(
             "actions_deferred": deferred,
         }
     )
+    runs = {run.run_id: run for run in result.runs}
+    for action in result.actions:
+        log_recovery_action(runs[action.run_id], action, budget=policy.attempt_budget)
+    log_recovery_pass(
+        result, policy=policy, duration_ms=round((time.monotonic() - started) * 1000)
+    )
+    return result
 
 
 __all__ = [
     "DEFAULT_MAX_ACTIONS_PER_PASS",
+    "log_recovery_action",
+    "log_recovery_pass",
     "PostgresStalledJobControl",
     "RecoveryPolicy",
     "RegistrationSubmitter",

@@ -1167,6 +1167,12 @@ Constraints that any future control plane must honor:
 Durable capture recovery (process restart, Kafka rebalance) is explicitly
 outside this ADR's implementation scope.
 
+*See [ADR-008](./008-acquisition-lifecycle-reliability.md): the operational
+lifecycle after capture (receipts, publication and registration recovery,
+reconciliation, artifact classification, derived status) is resolved there
+without a `CaptureSessionRecord`, and records why this section's DEFERRED status
+and constraints stand.*
+
 ---
 
 ## 12. Registration protocol
@@ -2766,6 +2772,11 @@ Scenario / Evaluation redesign beyond canonical-boundary migrations
 Future realtime tracking extends the **control plane** with a separate
 operational model. It never reintroduces mutable capture state into
 `RobotRunRecord`.
+
+*[ADR-008](./008-acquisition-lifecycle-reliability.md) resolves the
+discovery/reconciliation of published-but-unregistered RobotRunManifests and
+the classification (not collection) of artifacts. Capture crash and Kafka
+rebalance recovery, artifact deletion and the control plane remain deferred.*
 
 ---
 

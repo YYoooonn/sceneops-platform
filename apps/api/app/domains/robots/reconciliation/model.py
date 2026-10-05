@@ -195,6 +195,14 @@ class RecoveryAction(_ReportModel):
     attempts_used: int | None = None
     attempt_budget: int | None = None
     error: str | None = None
+    # The run's state as observed before the action (always set), and as
+    # observed again after the pass's mutating actions (None when no second
+    # observation was made, e.g. a skip). Evidence of what the action did, not
+    # a promise of what the run is now.
+    state_before: AcquisitionState | None = None
+    state_after: AcquisitionState | None = None
+    # Wall time of the action itself; zero for a skip.
+    duration_ms: int | None = None
 
 
 class RecoveryPolicyFacts(_ReportModel):

@@ -132,6 +132,9 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | `make status` / `make logs` | Service status / follow logs |
 | `make db-migrate` | Alembic upgrade head (also run by `local-up`) |
 | `make streaming-up` / `make streaming-down` | Opt-in local Kafka broker for the streaming transport; see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) |
+| `make recovery-up` / `make recovery-down` / `make recovery-logs` | Opt-in polling loops that publish finalized captures and register published recordings (`publish-pending`, `reconcile --once --apply`); see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) §3.2 |
+| `make reconcile-once` / `make reconcile-apply` | One acquisition reconciliation pass: observe only / bounded registration recovery |
+| `make acquisition-status` / `make artifact-lifecycle-once` | Read-only reports: derived per-run acquisition status with operational aggregates / classification of `robot_runs/` objects (nothing is stored or deleted) |
 
 ### Tests
 
@@ -141,6 +144,7 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, registrars, recording Scene / Episode verticals — needs `make local-up` |
 | `make test-infrastructure` | Pipeline contracts on the live stack: the four-pipeline surface, dedup / force / convergence / replacement / blocked resumption / failure recovery / concurrent registration, Celery, MinIO selective reads |
 | `make test-infrastructure-airflow` | The same pipelines through the Airflow per-task DAGs (needs `make airflow-up` and the API on the Airflow backend) |
+| `make test-recovery` | Acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance: real Postgres + MinIO, a throwaway Redis and Celery workers (needs `make local-up` and Docker) |
 | `make acquisition-test` / `make lerobot-test` / `make ros2-test` | Isolated-environment suites: dataset-acquisition, LeRobot adapter, ROS 2 bridge + capture |
 | `make smoke-api` / `make smoke-streaming` | Transport / liveness only — never create persistent domain data |
 | `make lint` / `make format` | Ruff check / format |
@@ -252,7 +256,7 @@ The code-verified list is in [`docs/architecture/reserved-and-limitations.md`](d
 * Scenario candidates are manifest-backed (no per-scenario table); readiness scoring uses label counts, channels and Scene readiness, not image / LiDAR content.
 * Sample views associate by nearest / previous only (no pose interpolation); evaluation applies no frame transform between a prediction and a label.
 * Episodes have no label sets; learning export is numeric scalar / vector only.
-* Streamed capture feeds canonical `RobotRun` registration through explicit publish + `POST /robot-runs:register` steps; there is no live robot control and no automatic capture → registration trigger.
+* Streamed capture reaches a canonical `RobotRun` through recoverable one-shot commands (`publish-pending`, `reconcile --once --apply`; `make recovery-up` loops them locally), not through a trigger in capture itself; nothing supervises capture, and there is no live robot control.
 * DuckDB queries only work against locally downloaded Parquet files.
 * Operations and leaderboard APIs exist, but there is no web UI.
 

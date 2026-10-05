@@ -30,6 +30,10 @@ registration latency (ADR-008 §5.3).
 reads the capture volume itself. Without it, capture states are unobservable and
 the report says so (``capture_observed: false``). Recovery never depends on it.
 
+Every recovery action and the end of the pass are also logged to stderr as
+``acquisition_recovery {json}`` / ``acquisition_recovery_pass {json}`` records
+(``sceneops_core.robots.recovery_log``); stdout stays the one JSON report.
+
 Exit status: 0 when a report was produced (whatever it contains -- individual
 action outcomes are in the report), 1 when the facts could not be read.
 ``--once`` is required: the contract is one complete reconciliation per
@@ -42,16 +46,16 @@ import argparse
 import asyncio
 import json
 import sys
-from pathlib import Path
-
 from datetime import timedelta
 
 from app.config import ApiSettings, get_settings
+from app.domains.robots.cli_support import load_capture_report
 from app.domains.robots.dependencies import get_robot_run_registration_service
 from app.platform.executions.backends import CeleryJobExecutionBackend
 from app.platform.executions.factory import create_celery_app
 from app.platform.jobs.dispatch_facade import JobDispatchFacade
 from sceneops_core.robots.capture_scan import CaptureScanReport
+from sceneops_core.robots.recovery_log import configure_cli_logging
 from sceneops_db.session import dispose_async_engine, get_async_sessionmaker
 from sceneops_storage import create_artifact_store
 
@@ -96,13 +100,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="JSON from `scan-capture` ('-' reads stdin); optional.",
     )
     return parser.parse_args(argv)
-
-
-def _load_capture_report(source: str | None) -> CaptureScanReport | None:
-    if source is None:
-        return None
-    raw = sys.stdin.read() if source == "-" else Path(source).read_text("utf-8")
-    return CaptureScanReport.model_validate_json(raw)
 
 
 def _stall_threshold(settings: ApiSettings, override: float | None) -> timedelta:
@@ -177,10 +174,11 @@ async def _run(
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    configure_cli_logging()
     try:
         output = asyncio.run(
             _run(
-                _load_capture_report(args.capture_report),
+                load_capture_report(args.capture_report),
                 apply=args.apply,
                 stall_threshold_seconds=args.stall_threshold_seconds,
             )

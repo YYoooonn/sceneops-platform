@@ -70,7 +70,9 @@ recording) are reported with their reason and never repaired; a capture whose
 publish fails is reported as ``failed`` and the pass continues. Exit status: 0
 when nothing failed, 2 when any publish failed (the report is still printed), 1
 when the capture root or the store could not be read. It keeps no state: running
-it again is the retry.
+it again is the retry. Each publication attempt is also logged to stderr as one
+``acquisition_recovery {json}`` record and the pass as one
+``acquisition_recovery_pass {json}`` record.
 
 ArtifactStore backend/credentials come from environment variables via
 ``sceneops_core.config.ArtifactSettings``, e.g.::
@@ -100,6 +102,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sceneops_core.config import ArtifactSettings
 from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
 from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
+from sceneops_core.robots.recovery_log import configure_cli_logging
 from sceneops_storage import create_artifact_store
 
 from .capture_scan import scan_capture_volume
@@ -278,6 +281,7 @@ def _scan_capture(args: argparse.Namespace) -> int:
 
 
 def _publish_pending(args: argparse.Namespace) -> int:
+    configure_cli_logging()
     settings = RecordingPublisherSettings()
     try:
         report = asyncio.run(

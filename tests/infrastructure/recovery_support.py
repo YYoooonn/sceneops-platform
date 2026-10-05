@@ -14,10 +14,18 @@ take from the shared local stack:
 PostgreSQL and MinIO are the live stack's (the semantics under test: row locks,
 unique constraints, object reads). Rows are keyed by ``rec124-`` run ids and
 removed afterwards.
+
+Shared by ``test_acquisition_recovery.py`` (one fault per test) and
+``test_acquisition_lifecycle_acceptance.py`` (the whole lifecycle): the
+fixtures, the capture builders (which use Capture's own finalize and receipt
+code), the production-command runners and the fault points are the same.
 """
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
+import io
 import json
 import os
 import shutil
@@ -29,14 +37,30 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+import pytest_asyncio
 from sqlalchemy import text
 
+from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.config import ArtifactSettings, CelerySettings, ExecutionSettings
-from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
-from sceneops_db.session import get_async_sessionmaker
+from sceneops_core.robots.capture_receipt import (
+    CaptureReceipt,
+    FinalizationReason,
+    ReceiptFinalization,
+    ReceiptKafka,
+    ReceiptRecording,
+)
+from sceneops_core.robots.manifest import (
+    CaptureInfo,
+    CaptureSource,
+    CaptureSourceKind,
+    RecordingFormat,
+)
+from sceneops_db.session import dispose_async_engine, get_async_sessionmaker
+from sceneops_integrations.recording import derive_mcap_facts
 from sceneops_integrations.recording.publisher import publish_recording_bytes
 from sceneops_storage import create_artifact_store
 
@@ -201,6 +225,51 @@ class RecoveryEnv:
                 )
             ),
         )
+
+    # ── production commands ─────────────────────────────────────────────────
+
+    def publisher_environment(self) -> dict[str, str]:
+        """Configuration of ``publish-pending`` the way the polling service
+        gets it: ArtifactStore settings from the environment, nothing else."""
+        art = self.artifact
+        return {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                [
+                    str(REPO_ROOT / "tests" / "infrastructure"),
+                    os.environ.get("PYTHONPATH", ""),
+                ]
+            ),
+            "RECOVERY_FAULT_FILE": str(self.fault_file),
+            "SCENEOPS_PUBLISHER_ARTIFACT__BACKEND": "minio",
+            "SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI": art.root_uri,
+            "SCENEOPS_PUBLISHER_ARTIFACT__ENDPOINT_URL": art.endpoint_url,
+            "SCENEOPS_PUBLISHER_ARTIFACT__REGION": art.region,
+            "SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID": art.access_key_id,
+            "SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY": art.secret_access_key,
+        }
+
+    def reconciler_environment(
+        self, *, stall_threshold_seconds: float = 30
+    ) -> dict[str, str]:
+        """Configuration of ``reconcile`` / ``acquisition_status`` as the
+        registration-recovery service gets it."""
+        art = self.artifact
+        return {
+            **os.environ,
+            "SCENEOPS_API_ARTIFACT__BACKEND": "minio",
+            "SCENEOPS_API_ARTIFACT__ROOT_URI": art.root_uri,
+            "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": art.endpoint_url,
+            "SCENEOPS_API_ARTIFACT__REGION": art.region,
+            "SCENEOPS_API_ARTIFACT__ACCESS_KEY_ID": art.access_key_id,
+            "SCENEOPS_API_ARTIFACT__SECRET_ACCESS_KEY": art.secret_access_key,
+            "SCENEOPS_API_EXECUTION__CELERY__BROKER_URL": self.redis.url,
+            "SCENEOPS_API_EXECUTION__CELERY__RESULT_BACKEND": self.redis.result_url,
+            "SCENEOPS_API_EXECUTION__CELERY__JOB_QUEUE": self.queue,
+            "SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS": str(
+                stall_threshold_seconds
+            ),
+        }
 
     # ── faults ──────────────────────────────────────────────────────────────
 
@@ -439,3 +508,171 @@ async def cleanup_rows(run_ids: list[str]) -> None:
             {"p": f"{RUN_PREFIX}-robot-%"},
         )
         await session.commit()
+
+
+# ── pytest fixtures shared by the recovery suites ────────────────────────────
+#
+# Registered for the directory by conftest.py. A recovery suite opts in with
+# ``pytestmark = pytest.mark.usefixtures(*RECOVERY_FIXTURES)``.
+
+RECOVERY_FIXTURES = ("fresh_engine", "clean_faults_and_queue")
+
+
+@pytest.fixture(scope="module")
+def env(tmp_path_factory):
+    if "SCENEOPS_DATABASE_URL" not in os.environ:
+        pytest.skip("SCENEOPS_DATABASE_URL not set; run `make test-recovery`")
+    if not docker_available():
+        pytest.skip("Docker is needed for the throwaway Redis")
+
+    minio = os.environ.get("MINIO_ENDPOINT_URL", "http://localhost:9000")
+    root_prefix = f"recovery_test_{uuid.uuid4().hex[:8]}"
+    artifact = ArtifactSettings(
+        backend="minio",
+        root_uri=f"s3://{os.environ.get('MINIO_BUCKET', 'sceneops')}/artifacts/{root_prefix}",
+        endpoint_url=minio,
+        region="ap-northeast-2",
+        access_key_id=os.environ.get("MINIO_ROOT_USER", "minioadmin"),
+        secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
+    )
+    tmp = tmp_path_factory.mktemp("recovery")
+    marker_dir = tmp / "markers"
+    marker_dir.mkdir()
+    redis = RecoveryRedis()
+    redis.start_new()
+    environment = RecoveryEnv(
+        redis=redis,
+        queue=f"sceneops.recovery-test.{uuid.uuid4().hex[:6]}",
+        tmp=tmp,
+        root_prefix=root_prefix,
+        artifact=artifact,
+        fault_file=tmp / "faults.json",
+        marker_dir=marker_dir,
+    )
+    environment.clear_faults()
+    try:
+        asyncio.run(environment.store().list_objects(environment.robot_run_root))
+    except Exception as exc:  # noqa: BLE001
+        redis.remove()
+        pytest.skip(f"MinIO not reachable at {minio}: {exc}")
+    yield environment
+    redis.remove()
+
+    async def _teardown() -> None:
+        from sceneops_db.session import reset_async_engine_cache
+
+        reset_async_engine_cache()
+        await environment.store().delete_prefix(
+            environment.artifact.root_uri.split(f"/{root_prefix}")[0]
+            + f"/{root_prefix}"
+        )
+        await cleanup_rows(environment.run_ids)
+        await dispose_async_engine()
+
+    asyncio.run(_teardown())
+
+
+@pytest_asyncio.fixture
+async def fresh_engine():
+    """Each test has its own event loop; the process-wide engine must not
+    outlive it. Enabled by the recovery suites' ``pytestmark``
+    (``RECOVERY_FIXTURES``); not autouse, so the other infrastructure suites
+    never start a Redis container."""
+    from sceneops_db.session import reset_async_engine_cache
+
+    reset_async_engine_cache()
+    yield
+    await dispose_async_engine()
+
+
+@pytest.fixture
+def clean_faults_and_queue(env):
+    env.use_fresh_root()
+    env.clear_faults()
+    env.redis.flush()
+    for marker in env.marker_dir.iterdir():
+        marker.unlink()
+    yield
+
+
+# ── captures, built by Capture's own finalize and receipt code ───────────────
+
+
+def _load_capture_module(name: str):
+    """``ros2/capture/<name>.py`` under a private module name: Capture's
+    durability protocol (receipt written before the atomic rename), imported
+    without putting its flat module namespace on ``sys.path``."""
+    path = REPO_ROOT / "ros2" / "capture" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"_sceneops_capture_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_capture_finalize = _load_capture_module("finalize")
+_capture_receipt = _load_capture_module("receipt")
+
+
+def _capture_receipt_for(run_id: str, robot_id: str, data: bytes) -> CaptureReceipt:
+    facts = derive_mcap_facts(io.BytesIO(data), source_clock="mcap_log_time")
+    return CaptureReceipt(
+        run_id=run_id,
+        robot_id=robot_id,
+        robot_platform="recovery-test",
+        recording=ReceiptRecording(
+            file=f"{run_id}_0.mcap",
+            format=RecordingFormat.MCAP,
+            checksum=sha256_checksum(data),
+            size_bytes=len(data),
+        ),
+        capture=CaptureInfo(
+            source=CaptureSource(
+                kind=CaptureSourceKind.KAFKA, topics=["sceneops.robot.telemetry.v1"]
+            ),
+            source_clock="mcap_log_time",
+        ),
+        message_count=facts.message_count,
+        per_channel_counts={c.topic: c.message_count for c in facts.channels},
+        finalization=ReceiptFinalization(
+            reason=FinalizationReason.EXPLICIT_RUN_END,
+            finalized_at=datetime(2026, 10, 5, 12, 0, tzinfo=UTC),
+        ),
+        kafka=ReceiptKafka(
+            partition=0,
+            first_offset=0,
+            last_offset=facts.message_count,
+            first_sequence=0,
+            last_sequence=facts.message_count - 1,
+        ),
+    )
+
+
+def make_finalized_capture(base: Path, run_id: str, robot_id: str) -> Path:
+    """A finalized capture exactly as Capture leaves one: the MCAP and its
+    ``capture_receipt.json`` written into ``.partial/<run_id>/``, then the
+    directory renamed atomically."""
+    data = FIXTURE_MCAP.read_bytes()
+    partial = _capture_finalize.prepare_partial_bag_dir(base, run_id)
+    partial.mkdir()
+    (partial / f"{run_id}_0.mcap").write_bytes(data)
+    _capture_receipt.write_capture_receipt(
+        partial, _capture_receipt_for(run_id, robot_id, data)
+    )
+    return _capture_finalize.finalize_bag(base, run_id)
+
+
+def make_unfinished_capture(base: Path, run_id: str) -> Path:
+    """A capture killed before finalize: only ``.partial/<run_id>/``."""
+    partial = _capture_finalize.prepare_partial_bag_dir(base, run_id)
+    partial.mkdir()
+    (partial / f"{run_id}_0.mcap").write_bytes(FIXTURE_MCAP.read_bytes()[:1024])
+    return partial
+
+
+def make_legacy_capture(base: Path, run_id: str) -> Path:
+    """A finalized bag with no receipt (batch / legacy acquisition)."""
+    directory = base / run_id
+    directory.mkdir(parents=True)
+    (directory / f"{run_id}_0.mcap").write_bytes(FIXTURE_MCAP.read_bytes())
+    return directory

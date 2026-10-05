@@ -9,6 +9,11 @@ import httpx
 import pytest
 
 from infra_support import API_BASE_URL, API_PREFIX, REPO_ROOT, Api
+from recovery_support import (  # noqa: F401  (fixtures of the recovery suites)
+    clean_faults_and_queue,
+    env,
+    fresh_engine,
+)
 
 
 @pytest.fixture(scope="session")

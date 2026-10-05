@@ -42,6 +42,7 @@ from sceneops_core.robots.registration_failures import (
 
 from app.domains.robots.reconciliation import (
     ClassificationPolicy,
+    ReconciliationReport,
     RegistrationFactsScope,
     RunReport,
     reconcile_once,
@@ -82,11 +83,7 @@ async def artifact_lifecycle_once(
     (the stall threshold and attempt budget the reconciler applies)."""
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
-    policy = policy or ArtifactLifecyclePolicy()
-    classification_policy = classification_policy or ClassificationPolicy(
-        stall_candidate_after=timedelta(seconds=DEFAULT_STALL_THRESHOLD_SECONDS),
-        attempt_budget=REGISTRATION_ATTEMPT_BUDGET,
-    )
+    classification_policy = classification_policy or default_classification_policy()
 
     report = await reconcile_once(
         artifact_store=artifact_store,
@@ -98,6 +95,42 @@ async def artifact_lifecycle_once(
         verify_registered_recordings=verify_recording_bytes,
         include_database_runs=True,
     )
+    return await classify_reconciled_artifacts(
+        report=report,
+        artifact_store=artifact_store,
+        registration_facts=registration_facts,
+        now=now,
+        policy=policy,
+        classification_policy=classification_policy,
+        verify_recording_bytes=verify_recording_bytes,
+    )
+
+
+def default_classification_policy() -> ClassificationPolicy:
+    return ClassificationPolicy(
+        stall_candidate_after=timedelta(seconds=DEFAULT_STALL_THRESHOLD_SECONDS),
+        attempt_budget=REGISTRATION_ATTEMPT_BUDGET,
+    )
+
+
+async def classify_reconciled_artifacts(
+    *,
+    report: ReconciliationReport,
+    artifact_store: ArtifactStore,
+    registration_facts: RegistrationFactsScope,
+    now: datetime,
+    policy: ArtifactLifecyclePolicy | None = None,
+    classification_policy: ClassificationPolicy | None = None,
+    verify_recording_bytes: bool = False,
+) -> ArtifactLifecycleReport:
+    """The lifecycle classification of an acquisition report that was made with
+    ``include_database_runs=True`` (and ``verify_registered_recordings`` equal to
+    ``verify_recording_bytes``). Lets a caller that needs both views (the
+    acquisition status report) read the durable facts once instead of twice."""
+    policy = policy or ArtifactLifecyclePolicy()
+    classification_policy = classification_policy or default_classification_policy()
+    root_uri = report.root_uri
+
     async with registration_facts() as facts:
         records = await facts.artifact_records_under(root_uri)
 
@@ -160,4 +193,8 @@ async def artifact_lifecycle_once(
     )
 
 
-__all__ = ["artifact_lifecycle_once"]
+__all__ = [
+    "artifact_lifecycle_once",
+    "classify_reconciled_artifacts",
+    "default_classification_policy",
+]

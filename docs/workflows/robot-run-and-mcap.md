@@ -17,7 +17,7 @@ streaming  robot / dataset replay -> ROS2 topics -> streaming_bridge_node -> Kaf
              -> ros2/capture -> MCAP                      (docs/architecture/streaming-transport.md)
 
 either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
-           -> POST /robot-runs:register -> REGISTER_ROBOT_RUN -> RobotRun (§3.2)
+           -> REGISTER_ROBOT_RUN (POST /robot-runs:register, or submitted by reconcile --apply) -> RobotRun (§3.2)
            -> resolve_recording(robot_run_id) -- verified local copy (§3.1)
            +-> RecordingTelemetryReader (apps/worker) -- derived telemetry projection
            |     -> ingest_robot_states Job -> Postgres (RobotState, Mission)
@@ -150,16 +150,41 @@ recording again.
 
 ### 3.2 Publication and registration
 
+One acquisition passes through four stages. Each is defined by a durable fact,
+owned by one component, and resumed by one stateless command; no status is
+stored anywhere ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)):
+
+```text
+stage         durable fact                                             owner      resumed by
+------------  -------------------------------------------------------  ---------  ----------------------------------
+capture       <capture root>/<run_id>/ holding the MCAP and            Capture    re-running capture while Kafka
+              capture_receipt.json (one atomic rename from .partial/)             still retains the run's records
+publication   {robot_run_root}/{run_id}/recording.mcap, then           Publisher  publish-pending
+              robot_run_manifest.json (the marker, written last)
+registration  RobotRunRecord + its two ArtifactRecords                 Worker     reconcile --once --apply
+              (one transaction of a REGISTER_ROBOT_RUN Job)
+```
+
+A finalized capture therefore reaches a RobotRun with no operator input: the
+receipt carries the robot, platform, capture source and clock that publication
+needs, `publish-pending` publishes it, and `reconcile --apply` submits and, if
+need be, retries or replaces the registration. The explicit commands below are
+the same code paths run by hand, and the only paths for a recording that has no
+receipt (batch acquisition, a robot's own recorder).
+
 A RobotRun exists only for a recording that was published and verified
 (ADR-007 §7, §12):
 
 ```text
-finalized local MCAP (the acquisition tool's output, or ros2/capture's CaptureResult.path)
+finalized local MCAP (a capture directory, or the acquisition tool's output)
   -> python -m sceneops_integrations.recording publish     (DB-free, own process)
+       --from-capture <dir>   every input comes from capture_receipt.json
+       --mcap-path ... --robot-id ... --source-kind ...   explicit inputs, for a recording without a receipt
        P1 validate MCAP, derive facts (time range, channels, counts), sha256 + size
        P3 {robot_run_root}/{run_id}/recording.mcap            write-once, re-read + verified
        P5 {robot_run_root}/{run_id}/robot_run_manifest.json   canonical RobotRunManifest v1, LAST
-  -> POST /robot-runs:register {"manifest_uri": ...}   (202, REGISTER_ROBOT_RUN Job)
+  -> reconcile --once --apply submits REGISTER_ROBOT_RUN for every manifest with no RobotRun,
+     or by hand: POST /robot-runs:register {"manifest_uri": ...}   (202, REGISTER_ROBOT_RUN Job)
      or sceneops-worker robots register --manifest-uri ...  (same registrar, in-process)
        verify manifest (strict, byte-canonical) + recording (exists, size, sha256, MCAP facts)
        one transaction: Robot create / platform fill-once,
@@ -276,8 +301,34 @@ been inactive for the threshold; classification never needs Redis.
 
 Locally, `make recovery-up` starts two loops (`compose/recovery.yaml`) that only
 repeat `publish-pending` and `reconcile --once --apply` every
-`RECOVERY_POLL_INTERVAL_SECONDS` (default 60); `make reconcile-once` and
-`make reconcile-apply` run one pass by hand.
+`RECOVERY_POLL_INTERVAL_SECONDS` (default 60); `make recovery-logs` follows them,
+and `make reconcile-once` and `make reconcile-apply` run one pass by hand. A
+Kubernetes deployment would run the same two commands from CronJobs. The platform
+has no scheduler (no Celery Beat) and recovery never depends on one.
+
+**Recovery logs.** Every action `publish-pending` or `reconcile --apply` takes is
+one line on stderr, `acquisition_recovery {json}`, and every pass ends with one
+`acquisition_recovery_pass {json}` line; stdout stays the one JSON report. A
+record carries what was observed before and after, what was attempted and what
+happened:
+
+```text
+component      publish-pending | reconcile
+run_id, stage  publish | register
+action         publish | submit_registration | retry_registration | replace_stalled_job | abandon_stalled_job | none
+outcome        published | failed | skipped | submitted | deduplicated | dispatch_failed | abandoned | lost_race | error
+state_before   the run's state when the pass observed it (publish_pending, registration_stalled_candidate, ...)
+state_after    the state observed again after the pass's actions (absent for a skip, or if that observation failed)
+job_id, abandoned_job_ids, reason, error_type, error
+failure_class, attempts_used, attempt_budget, attempts_remaining      (registration actions)
+duration_ms, ts
+```
+
+`publish-pending` logs publication attempts only (a capture that stays
+unpublishable would otherwise add a line to every pass); its pass line counts
+what it skipped by reason. The lines are a record of what a command did, not a
+source of truth: nothing reads them back and every decision is recomputed from
+durable facts.
 
 **Artifact lifecycle of `robot_runs/`.** A read-only one-shot command classifies
 every object under the RobotRun root, and every database reference to one, by
@@ -320,6 +371,97 @@ dropped and counted in `unconfirmed_findings`. A classification can be stale by
 the time anyone acts on it; any future deletion must re-verify. Grace periods are
 also set by `SCENEOPS_API_ARTIFACT_LIFECYCLE__PENDING_GRACE_SECONDS` and
 `..._ORPHAN_GRACE_SECONDS`; `make artifact-lifecycle-once` runs one pass.
+
+**Acquisition status and operational report.** A read-only one-shot command
+derives an `AcquisitionStatus` for every run and aggregates them. Nothing is
+stored: there is no status table and no lifecycle column, and the view adds no
+lifecycle semantics of its own. It is a function of the reconciler's per-run
+state, the artifact lifecycle entries and the observation time.
+
+```text
+python -m app.domains.robots.acquisition_status --once \
+    [--summary-only] [--capture-report <scan-capture JSON | ->] [--observed-at <ISO-8601 with offset>] \
+    [--stall-threshold-seconds N] [--pending-grace-seconds N] [--orphan-grace-seconds N] \
+    [--verify-recording-bytes]
+    -> JSON AcquisitionOperationalReport (needs ArtifactStore + PostgreSQL, not the HTTP server, not Redis)
+```
+
+Per run (`runs`, omitted by `--summary-only`):
+
+| Field | Meaning |
+| --- | --- |
+| `stage` | the furthest durable fact: `capture_unfinished`, `finalized`, `published`, `registered` |
+| `health` | `ok`, `pending`, `stalled`, `failed` or `inconsistent` (table below) |
+| `classification`, `reasons` | the reconciler's state for the run and the codes behind it |
+| `operator_required` | nothing automatic will move the run on and a person must decide |
+| `failure` | the unresolved registration failure: class, exception type, attempts, budget and attempts remaining. Absent for a registered run, whose failed Jobs are history |
+| `capture`, `publication`, `registration` | the facts of each stage: receipt claims (needs a capture report), manifest and object facts, RobotRun and Job counts, abandoned Jobs, the latest Job |
+| `timestamps`, `durations`, `age_seconds` | `finalized_at`, `published_at`, `registered_at`, the newest durable activity, the seconds between stages, and the time since that activity |
+| `recording_bytes`, `message_count`, `channel_count`, `finalization_reason` | from the manifest, else the receipt; absent when neither was observed |
+| `artifacts`, `findings` | the run's lifecycle entries: referenced, pending, orphan-candidate objects and incident entries, with bytes; every entry that is not simply `referenced` |
+
+| State | `health` | `operator_required` |
+| --- | --- | --- |
+| `registered` | `ok` | no |
+| `capture_unfinished`, `publish_pending`, `registration_active`, `registration_failed_transient`, `registration_pending` with no Job | `pending` | no |
+| `publication_incomplete`: a recording only, resumable from a capture | `pending` | no |
+| `publication_incomplete`: a recording only, no capture source; `registration_pending` whose newest Job was cancelled; `finalized_no_receipt` | `pending` | yes |
+| `registration_stalled_candidate` | `stalled` | only when the attempt budget is spent |
+| `registration_failed_permanent` (a spent budget included) | `failed` | yes |
+| `permanent_conflict`, `integrity_incident`, `publication_incomplete` with a malformed manifest or a manifest without its recording, `registration_pending` after a success with no RobotRun | `inconsistent` | yes |
+
+A lifecycle entry that is an integrity incident raises any other health to
+`inconsistent`. `finalized_at` is the capture host's clock, `published_at` the
+object store's and `registered_at` PostgreSQL's, so a duration between two of
+them is indicative across hosts and is reported as observed. A failed publish is
+the Publisher's report (`publish-pending` prints and logs it), not a durable
+fact, so a capture whose publication keeps failing stays `publish_pending` and
+its age grows.
+
+The aggregates, always computed over every run:
+
+| Aggregate | Content |
+| --- | --- |
+| `by_stage`, `by_health`, `by_classification`, `operator_required` | run counts |
+| `registration` | runs pending, active, stalled, failed transient / permanent; runs whose attempt budget is spent; attempts used (a histogram) and abandoned Jobs of the runs not yet registered |
+| `oldest` | for each non-terminal state, the run whose newest durable activity is oldest, with its age. It is time since last activity, not a judgement that the run is lost |
+| `incidents`, `artifacts`, `unconfirmed_findings` | runs in `integrity_incident` / `permanent_conflict` by reason; referenced, pending, orphan-candidate and incident objects and bytes |
+| `recordings` | runs with a known size and message count, and their totals |
+| `attention` | every run that is stalled, failed, inconsistent or needs an operator |
+
+`observed_at` is part of the report (`--observed-at` fixes it) and ages, the stall
+threshold and the grace periods are measured against it, so the same facts and
+the same `observed_at` give a byte-identical report. One `acquisition_status
+{json}` line with the aggregates (no per-run statuses) is also logged to stderr.
+Without `--capture-report` the capture stages are unobservable: a run that is
+still capturing, or finalized but unpublished, does not appear. `make
+acquisition-status` runs one pass; the recovery loops do not run it.
+
+**Limits of the operational model.**
+
+- Nothing supervises capture. A capture killed before finalize is re-run by an
+  operator, and only while Kafka still retains the run's records; broker
+  retention is not configured by the repository and recovery assumes it exceeds
+  the time to notice. `capture_unfinished` is reported with its age; the platform
+  cannot tell an interrupted capture from one still running.
+- The stall threshold (900 s) was measured on one host with local storage;
+  deployments with slower storage or longer queues must measure and raise it. A
+  killed or lost registration is therefore recovered no sooner than the threshold
+  plus one polling interval.
+- The attempt budget is shared by every Job of a registration. A broker outage
+  longer than the budget times the threshold (about 45 minutes at the defaults)
+  can spend it without the registration ever having failed; an operator's forced
+  submission then registers the run.
+- Plain submissions (a first Job, a transient retry) are not serialized, so
+  concurrent passes can create a duplicate Job. Registration converges on one
+  RobotRun regardless.
+- The artifact lifecycle covers `robot_runs/` only and classifies without
+  deleting: no artifact is deleted, quarantined or repaired. A registered
+  recording is checked by size unless `--verify-recording-bytes`.
+- The capture volume is visible to the platform only as a `scan-capture` report;
+  there is no joined capture-to-registration view without one.
+- Everything is validated on one local host and stack. How it behaves at larger
+  scale is not measured here.
 
 ### 3.3 Batch acquisition and the L1 recording contract
 
