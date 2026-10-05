@@ -30,6 +30,7 @@ per-run assumption this relies on.
 from __future__ import annotations
 
 import io
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,11 +44,21 @@ from sceneops_core.robots.manifest import (
     RobotRunManifest,
     validate_identifier,
 )
+from sceneops_core.robots.published_scan import (
+    MANIFEST_OBJECT_NAME,
+    RECORDING_OBJECT_NAME,
+)
 
-from .facts import RecordingValidationError, derive_mcap_facts, sha256_checksum
+from .facts import (
+    RecordingFacts,
+    RecordingValidationError,
+    derive_mcap_facts,
+    sha256_checksum,
+)
 
-RECORDING_OBJECT_NAME = "recording.mcap"
-MANIFEST_OBJECT_NAME = "robot_run_manifest.json"
+# The object names are shared with the read-only scan
+# (``sceneops_core.robots.published_scan``) so what the Publisher writes and
+# what reconciliation looks for cannot drift.
 
 
 class RecordingPublicationConflictError(RuntimeError):
@@ -102,7 +113,7 @@ async def _write_once(store: ArtifactStore, uri: str, data: bytes) -> bool:
     return True
 
 
-def _read_finalized_recording(path: Path) -> bytes:
+def read_finalized_recording(path: Path) -> bytes:
     if path.suffix == ".partial" or ".partial" in path.parts:
         raise RecordingValidationError(
             f"refusing to publish a .partial (not finalized) capture path: {path}"
@@ -123,13 +134,49 @@ async def publish_recording(
     capture_source: CaptureSource,
     source_clock: str,
 ) -> RecordingPublication:
-    """Publish one finalized MCAP (P1-P5). Idempotent for identical inputs:
-    a retry reuses both objects and returns the same manifest bytes."""
+    """Publish one finalized MCAP (P1-P5) from explicitly supplied
+    publication inputs. Idempotent for identical inputs: a retry reuses both
+    objects and returns the same manifest bytes. Recoverable publication of a
+    captured run takes its inputs from the capture receipt instead
+    (``publish_from_capture``)."""
+    return await publish_recording_bytes(
+        artifact_store=artifact_store,
+        root_uri=root_uri,
+        recording_bytes=read_finalized_recording(recording_path),
+        run_id=run_id,
+        robot_id=robot_id,
+        robot_platform=robot_platform,
+        capture_source=capture_source,
+        source_clock=source_clock,
+    )
+
+
+async def publish_recording_bytes(
+    *,
+    artifact_store: ArtifactStore,
+    root_uri: str,
+    recording_bytes: bytes,
+    run_id: str,
+    robot_id: str,
+    robot_platform: str | None,
+    capture_source: CaptureSource,
+    source_clock: str,
+    verify_facts: Callable[[RecordingFacts], None] | None = None,
+) -> RecordingPublication:
+    """P1-P5 for recording bytes already read from a finalized local file.
+    The one implementation behind every publication path, so explicit-input
+    and from-capture publication share the same correctness guarantees and
+    produce byte-identical objects for identical inputs.
+
+    ``verify_facts`` runs right after P1 on the facts derived from the bytes
+    and may raise to stop publication before anything is written."""
     validate_identifier(run_id, field="run_id", max_length=RUN_ID_MAX_LENGTH)
 
-    # P1 -- validate the local recording and derive its facts.
-    data = _read_finalized_recording(recording_path)
+    # P1 -- validate the recording and derive its facts.
+    data = recording_bytes
     facts = derive_mcap_facts(io.BytesIO(data), source_clock=source_clock)
+    if verify_facts is not None:
+        verify_facts(facts)
 
     # P2 -- deterministic write-once keys.
     target_recording_uri = recording_uri(artifact_store, root_uri, run_id)

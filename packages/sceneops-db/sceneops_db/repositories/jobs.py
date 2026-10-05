@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from sceneops_core.jobs.schemas import (
@@ -41,6 +42,10 @@ class JobRepository(Protocol):
         *,
         statuses: set[JobStatus],
     ) -> JobManifest | None: ...
+
+    async def list_for_execution_keys(
+        self, execution_keys: Sequence[str], *, type: JobType
+    ) -> list[JobManifest]: ...
 
 
 @runtime_checkable

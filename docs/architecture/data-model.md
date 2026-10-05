@@ -225,6 +225,7 @@ finalized local MCAP
        {robot_run_root}/{run_id}/recording.mcap             write-once
        {robot_run_root}/{run_id}/robot_run_manifest.json    canonical RobotRunManifest v1, written last
   -> POST /robot-runs:register {manifest_uri}  ->  REGISTER_ROBOT_RUN Job
+     (submitted by hand, or for every unregistered manifest by `reconcile --once --apply`)
        verify manifest (strict + canonical bytes) and recording (size, sha256, MCAP facts)
        one transaction: Robot create / platform fill-once,
                         ArtifactRecord(robot_run_recording), ArtifactRecord(robot_run_manifest),

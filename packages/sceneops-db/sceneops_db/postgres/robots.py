@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from collections.abc import Sequence
+
+from sqlalchemy import exists, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,7 @@ from sceneops_db.converters.robots import (
     robot_state_model_to_record,
     robot_state_record_to_values,
 )
+from sceneops_db.models.artifacts import ArtifactModel
 from sceneops_db.models.robots import (
     MissionModel,
     RobotModel,
@@ -30,6 +33,7 @@ from sceneops_db.models.robots import (
     RobotStateModel,
 )
 
+from ._utils import IN_CLAUSE_CHUNK as _IN_CLAUSE_CHUNK
 from ._utils import apply_pagination, apply_values, enum_value
 
 
@@ -130,6 +134,46 @@ class PostgresRobotRunRepository:
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
         return robot_run_model_to_record(model) if model is not None else None
+
+    async def get_many(self, run_ids: Sequence[str]) -> dict[str, RobotRunRecord]:
+        """Records for the given run ids that exist, keyed by run_id. Missing
+        ids are absent from the result. Read-only."""
+        records: dict[str, RobotRunRecord] = {}
+        unique = sorted(set(run_ids))
+        for start in range(0, len(unique), _IN_CLAUSE_CHUNK):
+            stmt = select(RobotRunModel).where(
+                RobotRunModel.run_id.in_(unique[start : start + _IN_CLAUSE_CHUNK])
+            )
+            result = await self._session.execute(stmt)
+            for model in result.scalars().all():
+                records[model.run_id] = robot_run_model_to_record(model)
+        return records
+
+    async def list_run_ids_for_root(self, root_uri: str) -> list[str]:
+        """run_ids of the RobotRunRecords registered under the object-store root
+        ``root_uri``, sorted. Read-only; the reverse side of the ADR-008 §6.1
+        check (a RobotRunRecord whose objects are gone is not discoverable from
+        a listing).
+
+        A run belongs to the root when one of its two ArtifactRecords (both
+        exist: the foreign keys are RESTRICT) has a URI under it. A run
+        registered under another root is not this root's concern."""
+        directory = root_uri.rstrip("/") + "/"
+        under_root = exists().where(
+            ArtifactModel.artifact_id.in_(
+                (
+                    RobotRunModel.recording_artifact_id,
+                    RobotRunModel.manifest_artifact_id,
+                )
+            ),
+            ArtifactModel.uri.startswith(directory, autoescape=True),
+        )
+        result = await self._session.execute(
+            select(RobotRunModel.run_id)
+            .where(under_root)
+            .order_by(RobotRunModel.run_id)
+        )
+        return list(result.scalars().all())
 
     async def list(
         self,

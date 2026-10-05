@@ -1255,11 +1255,17 @@ ROS2 / live robot -> stream envelope -> Kafka -> durable capture
   -> existing learning-data pipeline
 ```
 
-Publication and registration are explicit steps today -- `python -m
-sceneops_integrations.recording publish` against a finalized MCAP, then
-`POST /robot-runs:register`; nothing in the capture or router path
-triggers either automatically on finalize. Capture itself stays DB-free
-and never writes RobotRun state.
+Publication and registration are recoverable, not triggered by capture:
+Capture writes a `capture_receipt.json` into the bag it finalizes, `python -m
+sceneops_integrations.recording publish-pending` publishes every finalized
+capture that has a receipt, and `reconcile --once --apply` registers every
+published manifest that has no RobotRun (retrying and replacing a stalled
+registration within a budget). Each is a stateless one-shot command that the
+operator, a polling loop (`make recovery-up`) or a CronJob invokes; nothing in
+the capture or router path calls them on finalize. Capture itself stays DB-free
+and never writes RobotRun state. See
+[Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2 and
+[ADR-008](../adr/008-acquisition-lifecycle-reliability.md).
 
 Canonical Scenes and Episodes are built from a registered RobotRun's
 recording by `RECORDING_SCENE_BUILDING` / `RECORDING_EPISODE_BUILDING`
@@ -1283,9 +1289,9 @@ Not built, not started, not partially wired -- listed so a future pass
 doesn't mistake absence for a bug:
 
 ```text
-Automatic publication/registration of a finalized capture
-  (the mechanism exists -- Recording Publisher + POST /robot-runs:register
-  -- but nothing invokes it without an explicit operator/caller step, §34)
+Capture-triggered publication/registration of a finalized capture
+  (publish-pending and reconcile --apply recover it when invoked; capture
+  itself calls neither, §34)
 Episode generation from streamed data
 Any Postgres/ArtifactStore write from the streaming or capture path
 Kafka Connect, Schema Registry, Avro
@@ -1309,8 +1315,8 @@ Multi-partition-per-robot_run_id support (Part 3 fails loudly instead,
 ContinuousCaptureRouter session persistence across restart, Kafka
   rebalance recovery, and multi-worker/multi-partition router
   instances (Part 4, §33)
-Automatic capture -> publish hand-off (the Recording Publisher and
-  REGISTER_ROBOT_RUN stay explicit steps)
+Capture-triggered publish hand-off (a finalized capture is published by
+  publish-pending, not by Capture; Capture imports no ArtifactStore code)
 Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 ```
 

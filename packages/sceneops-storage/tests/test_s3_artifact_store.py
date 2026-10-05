@@ -8,6 +8,8 @@ confirmation the real S3-compatible client behaves the same way.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 
@@ -152,6 +154,53 @@ async def test_list_json_empty_prefix_returns_empty_list(store, bucket, unique_k
 
     result = await artifact_store.list_json(f"s3://{bucket}/{prefix}")
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_list_objects_is_recursive_across_pages_with_size_and_mtime(
+    store, bucket, unique_key
+):
+    from datetime import UTC, datetime, timedelta
+
+    artifact_store, created = store
+    prefix = unique_key("list-objects")
+    created.append(prefix)
+
+    # More than one list_objects_v2 page (1000 keys per page), nested.
+    semaphore = asyncio.Semaphore(32)
+
+    async def _put(index: int) -> None:
+        async with semaphore:
+            await artifact_store.write_bytes(
+                f"s3://{bucket}/{prefix}/run-{index % 7}/obj-{index:04d}.bin",
+                b"x" * (index % 5 + 1),
+            )
+
+    await asyncio.gather(*(_put(i) for i in range(1005)))
+    # A sibling whose name merely starts with the prefix must not be listed.
+    await artifact_store.write_bytes(f"s3://{bucket}/{prefix}-sibling/y.bin", b"y")
+    created.append(f"{prefix}-sibling")
+
+    objects = await artifact_store.list_objects(f"s3://{bucket}/{prefix}")
+
+    assert len(objects) == 1005
+    uris = [o.uri for o in objects]
+    assert uris == sorted(uris)
+    assert all(u.startswith(f"s3://{bucket}/{prefix}/") for u in uris)
+    by_uri = {o.uri: o for o in objects}
+    sample = by_uri[f"s3://{bucket}/{prefix}/run-3/obj-0003.bin"]
+    assert sample.size_bytes == 3 % 5 + 1
+    assert sample.last_modified.tzinfo is not None
+    assert abs(datetime.now(UTC) - sample.last_modified) < timedelta(minutes=10)
+
+
+@pytest.mark.asyncio
+async def test_list_objects_empty_prefix_returns_empty_list(store, bucket, unique_key):
+    artifact_store, created = store
+    prefix = unique_key("empty-list-objects")
+    created.append(prefix)
+
+    assert await artifact_store.list_objects(f"s3://{bucket}/{prefix}") == []
 
 
 # ── URI / path resolution ────────────────────────────────────────────────────

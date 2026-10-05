@@ -187,6 +187,9 @@ class _TimedCountingArtifactStore(ArtifactStore):
     async def list_json(self, uri: ArtifactUri) -> list[ArtifactUri]:
         return await self._inner.list_json(uri)
 
+    async def list_objects(self, uri: ArtifactUri):
+        return await self._inner.list_objects(uri)
+
     async def delete_prefix(self, uri: ArtifactUri) -> None:
         await self._inner.delete_prefix(uri)
 

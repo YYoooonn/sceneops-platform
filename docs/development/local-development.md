@@ -119,6 +119,7 @@ make test                          unit suites, no infrastructure (run anywhere)
 make test-integration              real Postgres + MinIO, needs `make local-up`
 make test-infrastructure           pipeline contracts on the live stack, needs `make local-up`
 make test-infrastructure-airflow   the same pipelines through Airflow (opt-in, see below)
+make test-recovery                 acquisition recovery under injected faults + the full-lifecycle acceptance (Docker, needs `make local-up`)
 make e2e-batch-canonical | e2e-streaming-equivalence | e2e-scene-ml | e2e-episode-learning
 make e2e-cleanroom                 the full-platform acceptance (DESTRUCTIVE: runs `make local-reset`)
 make check-commands                the command surface is consistent (no pytest, no stack)
@@ -148,6 +149,14 @@ make check-commands                the command surface is consistent (no pytest,
   Airflow per-task DAGs; it needs `make airflow-up` and the `api` service
   restarted with `SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow` (a
   process-startup setting).
+- `make test-recovery` runs the two acquisition-recovery suites against the live
+  PostgreSQL and MinIO with a Redis container and Celery workers of its own, so
+  killing a worker or stopping the broker never touches the dev stack. Each test
+  uses its own MinIO RobotRun root and `rec124-` rows, removed afterwards. The
+  production commands run as subprocesses (`publish-pending`, `reconcile --once
+  --apply`, `acquisition_status`); only `recovery_worker` and `recovery_publisher`
+  add a fault point. It needs no canonical baseline. The suites share one harness
+  (`tests/infrastructure/recovery_support.py`).
 - On Apple Silicon hosts, running `sceneops-db`'s async engine outside Docker
   requires `greenlet`, which `sqlalchemy`'s own platform-marker-gated extra
   silently excludes there — `packages/sceneops-db` depends on it directly.

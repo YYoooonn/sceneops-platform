@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC
 from typing import Any
 from urllib.parse import urlparse
 
@@ -9,7 +10,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from sceneops_core.artifacts.contracts import ArtifactStore
+from sceneops_core.artifacts.contracts import ArtifactObject, ArtifactStore
 from sceneops_core.common.schemas import ArtifactUri
 from sceneops_core.config import StorageSettings
 
@@ -66,6 +67,9 @@ class S3ArtifactStore(ArtifactStore):
 
     async def list_json(self, uri: ArtifactUri) -> list[ArtifactUri]:
         return await asyncio.to_thread(self._list_json, uri)
+
+    async def list_objects(self, uri: ArtifactUri) -> list[ArtifactObject]:
+        return await asyncio.to_thread(self._list_objects, uri)
 
     async def delete_prefix(self, uri: ArtifactUri) -> None:
         await asyncio.to_thread(self._delete_prefix, uri)
@@ -172,6 +176,27 @@ class S3ArtifactStore(ArtifactStore):
                     uris.append(f"s3://{bucket}/{key}")
 
         return sorted(uris)
+
+    def _list_objects(self, uri: ArtifactUri) -> list[ArtifactObject]:
+        bucket, prefix = self._parse(uri)
+        list_prefix = prefix.rstrip("/") + "/" if prefix else ""
+
+        objects: list[ArtifactObject] = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=list_prefix):
+            for item in page.get("Contents", []):
+                key = item["Key"]
+                if key.endswith("/"):
+                    continue  # console-created directory marker, not an object
+                objects.append(
+                    ArtifactObject(
+                        uri=f"s3://{bucket}/{key}",
+                        size_bytes=item["Size"],
+                        last_modified=item["LastModified"].astimezone(UTC),
+                    )
+                )
+
+        return sorted(objects, key=lambda item: item.uri)
 
     def _delete_prefix(self, uri: ArtifactUri) -> None:
         bucket, key = self._parse(uri)

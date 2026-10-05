@@ -60,3 +60,74 @@ def write_mcap(tmp_path: Path) -> Callable[..., Path]:
         return path
 
     return _write
+
+
+@pytest.fixture()
+def make_capture() -> Callable[..., Path]:
+    """A finalized capture directory the way Capture leaves it:
+    ``<base>/<run_id>/`` holding ``<run_id>_0.mcap`` and a canonical
+    ``capture_receipt.json`` that describes those bytes."""
+    from datetime import UTC, datetime
+
+    from sceneops_core.robots.capture_receipt import (
+        CAPTURE_RECEIPT_FILENAME,
+        CaptureReceipt,
+        FinalizationReason,
+        ReceiptFinalization,
+        ReceiptKafka,
+        ReceiptRecording,
+    )
+    from sceneops_core.robots.manifest import (
+        CaptureInfo,
+        CaptureSource,
+        CaptureSourceKind,
+        RecordingFormat,
+    )
+    from sceneops_integrations.recording import derive_mcap_facts, sha256_checksum
+
+    def _make(
+        base: Path,
+        *,
+        run_id: str,
+        messages: Iterable[MessageSpec] = DEFAULT_MESSAGES,
+        robot_id: str = "robot-001",
+    ) -> Path:
+        data = build_mcap(messages)
+        facts = derive_mcap_facts(io.BytesIO(data), source_clock="mcap_log_time")
+        receipt = CaptureReceipt(
+            run_id=run_id,
+            robot_id=robot_id,
+            robot_platform="nuscenes-can-replay",
+            recording=ReceiptRecording(
+                file=f"{run_id}_0.mcap",
+                format=RecordingFormat.MCAP,
+                checksum=sha256_checksum(data),
+                size_bytes=len(data),
+            ),
+            capture=CaptureInfo(
+                source=CaptureSource(
+                    kind=CaptureSourceKind.KAFKA, topics=["sceneops.robot.telemetry.v1"]
+                ),
+                source_clock="mcap_log_time",
+            ),
+            message_count=facts.message_count,
+            per_channel_counts={c.topic: c.message_count for c in facts.channels},
+            finalization=ReceiptFinalization(
+                reason=FinalizationReason.EXPLICIT_RUN_END,
+                finalized_at=datetime(2026, 10, 5, 12, 0, tzinfo=UTC),
+            ),
+            kafka=ReceiptKafka(
+                partition=0,
+                first_offset=0,
+                last_offset=facts.message_count,
+                first_sequence=0,
+                last_sequence=facts.message_count - 1,
+            ),
+        )
+        directory = base / run_id
+        directory.mkdir(parents=True)
+        (directory / f"{run_id}_0.mcap").write_bytes(data)
+        (directory / CAPTURE_RECEIPT_FILENAME).write_bytes(receipt.to_canonical_bytes())
+        return directory
+
+    return _make

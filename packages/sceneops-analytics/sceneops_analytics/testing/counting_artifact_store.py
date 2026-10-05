@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from sceneops_core.artifacts.contracts import ArtifactStore
+from sceneops_core.artifacts.contracts import ArtifactObject, ArtifactStore
 from sceneops_core.common.schemas import ArtifactUri
 
 
@@ -67,7 +67,7 @@ class CountingArtifactStore(ArtifactStore):
     """Wraps any ArtifactStore, forwarding every call unchanged while
     recording ``read_bytes``/``read_range``/``write_bytes`` volume in
     ``self.stats``. Every other ArtifactStore method
-    (``exists``/``read_json``/``write_json``/``list_json``/
+    (``exists``/``read_json``/``write_json``/``list_json``/``list_objects``/
     ``delete_prefix``/``public_url``/``join_uri``) is forwarded without
     counting -- the learning-data access path this benchmark cares about
     never calls those for step/signal data."""
@@ -111,6 +111,9 @@ class CountingArtifactStore(ArtifactStore):
 
     async def list_json(self, uri: ArtifactUri) -> list[ArtifactUri]:
         return await self._inner.list_json(uri)
+
+    async def list_objects(self, uri: ArtifactUri) -> list[ArtifactObject]:
+        return await self._inner.list_objects(uri)
 
     async def delete_prefix(self, uri: ArtifactUri) -> None:
         await self._inner.delete_prefix(uri)

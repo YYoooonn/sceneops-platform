@@ -63,11 +63,12 @@ help:
 	@echo "Tests (docs/development/test-matrix.md):"
 	@echo "=================================================================="
 	@echo "  make test                          Unit suites (worker, api, inference-server, analytics, core, integrations, streaming) -- no infra"
-	@echo "  make test-integration              Real Postgres/MinIO: sceneops-db/storage + registrars + recording Scene/Episode verticals -- needs local-up"
+	@echo "  make test-integration              Real Postgres/MinIO: sceneops-db/storage + registrars + acquisition reconciliation + recording Scene/Episode verticals -- needs local-up"
 	@echo "  make test-infrastructure           Pipeline contracts on the live stack: the four-pipeline surface, dedup/force/convergence/"
 	@echo "                                     replacement/blocked resumption/failure recovery/concurrent registration, Celery, MinIO selective reads"
 	@echo "                                     (builds on canonical-bootstrap)"
 	@echo "  make test-infrastructure-airflow   The same pipelines through the Airflow per-task DAGs (needs airflow-up + api on the airflow backend)"
+	@echo "  make test-recovery                 Acquisition-recovery fault injection and the full-lifecycle acceptance: real Postgres/MinIO + a throwaway Redis and Celery workers (Docker; needs local-up)"
 	@echo "  make acquisition-test              tools/dataset-acquisition tests (isolated venv)"
 	@echo "  make lerobot-test                  LeRobot adapter / container-entrypoint tests (isolated venv)"
 	@echo "  make ros2-test                     Bridge + capture tests (ros2 image; needs streaming-up)"
@@ -124,6 +125,10 @@ help:
 	@echo "  make check-env / check-imports / check-celery / check-minio / check-commands"
 	@echo "  make ros2-up / ros2-down / ros2-shell / ros2-check / ros2-logs / ros2-run ROS2_CMD='ros2 topic list'"
 	@echo "  make streaming-up / streaming-down   Local Kafka broker (opt-in)"
+	@echo "  make reconcile-once / reconcile-apply   Acquisition reconciliation: observe only / bounded registration recovery (ADR-008)"
+	@echo "  make artifact-lifecycle-once [ARGS=..]  Read-only lifecycle classification of robot_runs/ objects: referenced / pending / orphan candidate / incident (ADR-008 §6; deletes nothing)"
+	@echo "  make acquisition-status [ARGS=..]       Read-only operational report: a derived AcquisitionStatus per run + aggregates (ADR-008 §7; nothing is stored)"
+	@echo "  make recovery-up / recovery-down / recovery-logs   Opt-in polling loops: publish-pending + reconcile --apply (compose/recovery.yaml)"
 	@echo "  make prepare-data / clean-artifacts / clean-python"
 	@echo ""
 	@echo "=================================================================="
@@ -157,3 +162,4 @@ include makefiles/lerobot.mk
 include makefiles/canonical.mk
 include makefiles/streaming.mk
 include makefiles/acquisition.mk
+include makefiles/recovery.mk
