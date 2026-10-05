@@ -8,11 +8,17 @@ class PipelineType(StrEnum):
     # -> validation / profiling (ADR-007 §17.3).
     RECORDING_SCENE_BUILDING = "recording_scene_building"
 
-    # Dataset scenes -> scenario set / readiness report
+    # Pinned sample views -> ScenarioSet revision / readiness report
+    # (ADR-007 §33.4).
     SCENARIO_CURATION = "scenario_curation"
 
-    # Dataset/model -> prediction -> evaluation
+    # Pinned sample views or a ScenarioSet + model -> prediction revision ->
+    # evaluation against a pinned label set revision (ADR-007 §33.5).
     DETECTION_EVALUATION = "detection_evaluation"
+
+    # One registered Episode -> AlignedEpisode -> validation / profile
+    # (ADR-007 §33.6).
+    ALIGNED_EPISODE_BUILDING = "aligned_episode_building"
 
     # One registered RobotRun recording -> canonical Episodes -> registration
     # -> validation / profiling (ADR-007 §17.4). A sibling of

@@ -109,8 +109,6 @@ def _service(episode_repository=None) -> tuple[JobService, FakeArtifactRepositor
         event_repository=FakeJobEventRepository(),
         artifact_repository=artifact_repo,
         episode_repository=episode_repository,
-        default_dataset_id=DATASET_ID,
-        default_dataset_version=DATASET_VERSION,
     )
     return service, artifact_repo
 

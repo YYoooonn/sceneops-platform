@@ -7,35 +7,24 @@ class JobType(StrEnum):
     # ── registered RobotRun recording → canonical Scenes ──
     BUILD_RECORDING_SCENES = "build_recording_scenes"
 
-    # ── dataset-level aggregation ──
-    BUILD_DATASET_MANIFEST = "build_dataset_manifest"
-    BUILD_SCENE_INDEX = "build_scene_index"
-
     # ── scene-level jobs ──
     VALIDATE_SCENE = "validate_scene"
     PROFILE_SCENE = "profile_scene"
     # The only writer of SceneRecord membership and DatasetVersion Scene
     # summaries (ADR-007 §17.5).
     REGISTER_SCENES = "register_scenes"
-    # No handler registered yet — reserved. Matching
-    # ArtifactOwnerType.SCENE_COMPARISON_RUN / SCENE_AUTO_LABEL_RUN /
-    # SCENE_EXPORT_RUN + ArtifactKind.SCENE_PACKAGE already exist for these
-    # (see artifacts/schemas/{owner,enums}.py), confirming deliberate
-    # reservation rather than accidental drift (Stabilization Request 5).
-    COMPARE_SCENES = "compare_scenes"
-    AUTO_LABEL_SCENE = "auto_label_scene"
-    EXPORT_SCENE_PACKAGE = "export_scene_package"
+
+    # ── derived L3 inputs (ADR-007 §33) ──
+    # Post-acquisition labels as an independent, lineage-bearing label set.
+    IMPORT_LABELS = "import_labels"
+    # Policy-driven synchronized sample views of registered Scenes.
+    BUILD_SCENE_SAMPLE_VIEWS = "build_scene_sample_views"
 
     # ── scenario-level jobs ──
     MINE_SCENARIOS = "mine_scenarios"
     SCORE_SCENARIO_READINESS = "score_scenario_readiness"
 
     # ── dataset version-level jobs ──
-    # No handler registered yet — reserved, same as the scene-level trio
-    # above. Matching ArtifactOwnerType.DATASET_AUTO_LABEL_RUN /
-    # DATASET_EXPORT_RUN already exist.
-    AUTO_LABEL_DATASET = "auto_label_dataset"
-    EXPORT_DATASET = "export_dataset"
     EXPORT_ANALYTICS_SNAPSHOT = "export_analytics_snapshot"
 
     # ── detection ──

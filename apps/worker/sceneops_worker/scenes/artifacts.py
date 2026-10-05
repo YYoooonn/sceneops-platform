@@ -27,7 +27,6 @@ from sceneops_core.common.checksums import (
     checksum_qualified_manifest_name,
     sha256_checksum,
 )
-from sceneops_core.datasets.schemas import DatasetSceneIndexEntry
 from sceneops_core.scenes.schemas import SceneManifest, load_canonical_scene_manifest
 from sceneops_storage import ArtifactNotFoundError, ArtifactStore
 
@@ -107,12 +106,6 @@ class SceneArtifactStore:
             robot_run_id=robot_run_id, artifact_id=artifact_id
         )
 
-    def scene_index_uri(self, *, dataset_id: str, dataset_version: str) -> str:
-        version_root = self._version_root_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
-        return self.artifact_store.join_uri(version_root, "scene_index.json")
-
     # ------------------------------------------------------------------
     # Canonical SceneManifest I/O
     # ------------------------------------------------------------------
@@ -187,29 +180,6 @@ class SceneArtifactStore:
             data=data,
             checksum=checksum,
         )
-
-    # ------------------------------------------------------------------
-    # Derived scene index
-    # ------------------------------------------------------------------
-
-    async def write_scene_index(
-        self,
-        *,
-        dataset_id: str,
-        dataset_version: str,
-        entries: list[DatasetSceneIndexEntry],
-    ) -> str:
-        uri = self.scene_index_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
-        payload = {
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-            "scene_count": len(entries),
-            "scenes": [e.model_dump(mode="json") for e in entries],
-        }
-        await self.artifact_store.write_json(uri, payload)
-        return uri
 
 
 __all__ = [

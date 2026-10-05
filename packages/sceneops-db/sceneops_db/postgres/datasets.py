@@ -182,20 +182,13 @@ class PostgresDatasetVersionRepository:
         dataset_id: str,
         version: str,
         required_channels: list[str] | None = None,
-        manifest_uri: str | None = None,
     ) -> DatasetVersionRecord:
-        """Partial update of the Scene columns that are not membership: a
-        validation default and the derived dataset index pointer. None means
-        "leave untouched"."""
+        """Partial update of the Scene columns that are not membership: the
+        validation default. None means "leave untouched"."""
         model = await self._get_model_or_raise(dataset_id, version)
         apply_values(
             model,
-            values_without_none(
-                {
-                    "required_channels": required_channels,
-                    "manifest_uri": manifest_uri,
-                }
-            ),
+            values_without_none({"required_channels": required_channels}),
         )
         await self._session.flush()
         await self._session.refresh(model)

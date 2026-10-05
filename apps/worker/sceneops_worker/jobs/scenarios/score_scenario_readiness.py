@@ -1,11 +1,11 @@
-"""score_scenario_readiness — scores scenario candidates from a prior mine_scenarios run.
+"""score_scenario_readiness: scores the members of one pinned ScenarioSet.
 
 Scoring components (total = 1.0):
-  gt           0.30  — has GT and annotation_count > 0
-  validation   0.25  — ready:+0.25  warning:+0.15  blocked/unknown:+0
-  channels     0.20  — all required_channels present:+0.20  partial:+0.10
-  density      0.15  — normalised annotation_count (max across candidates)
-  completeness 0.10  — keyframe_count > 0 AND observation_count > 0
+  labels       0.30  - the member carries at least one label
+  validation   0.25  - ready:+0.25  warning:+0.15  blocked/unknown:+0
+  channels     0.20  - all required_channels present:+0.20  partial:+0.10
+  density      0.15  - label count normalised by the set's maximum
+  completeness 0.10  - at least one selected sample on at least one channel
 
 Readiness buckets:
   ready    score >= 0.75
@@ -21,7 +21,7 @@ from typing import Any
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id, default_readiness_run_id
+from sceneops_core.common.ids import default_readiness_run_id, generate_artifact_id
 from sceneops_core.common.time import utc_now
 from sceneops_core.jobs.schemas import (
     JobType,
@@ -30,10 +30,11 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
+from sceneops_core.scenarios import ScenarioMember
 from sceneops_core.scenarios.schemas.runs import ScenarioReadinessRunRecord
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.derived.resolution import resolve_scenario_set
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-
 
 # ── scoring ───────────────────────────────────────────────────────────────────
 
@@ -41,40 +42,35 @@ _READY_THRESHOLD = 0.75
 _WARNING_THRESHOLD = 0.40
 
 
-def _score_candidate(
-    candidate: dict[str, Any],
+def _score_member(
+    member: ScenarioMember,
     *,
     required_channels: list[str],
-    max_annotation_count: int,
+    max_label_count: int,
 ) -> tuple[float, dict[str, float], list[str]]:
     """Returns (total_score, components, reasons)."""
     components: dict[str, float] = {}
     reasons: list[str] = []
 
-    # GT component
-    gt_score = 0.0
-    if candidate.get("has_ground_truth") and candidate.get("annotation_count", 0) > 0:
-        gt_score = 0.30
-        reasons.append("has_ground_truth")
-    components["gt"] = gt_score
+    labels_score = 0.0
+    if member.label_count > 0:
+        labels_score = 0.30
+        reasons.append("has_labels")
+    components["labels"] = labels_score
 
-    # Validation component
-    val_status = candidate.get("validation_status", "unknown")
-    if val_status == "ready":
+    if member.readiness == "ready":
         val_score = 0.25
         reasons.append("validation_ready")
-    elif val_status == "warning":
+    elif member.readiness == "warning":
         val_score = 0.15
         reasons.append("validation_warning")
     else:
         val_score = 0.0
     components["validation"] = val_score
 
-    # Channel component
     channel_score = 0.0
     if required_channels:
-        scene_channels = set(candidate.get("channels") or [])
-        present = [ch for ch in required_channels if ch in scene_channels]
+        present = [ch for ch in required_channels if ch in member.channels]
         if len(present) == len(required_channels):
             channel_score = 0.20
             reasons.append("required_channels_present")
@@ -82,28 +78,19 @@ def _score_candidate(
             channel_score = 0.10
             reasons.append("partial_channels_present")
     else:
-        # No required channels specified — award full channel component
         channel_score = 0.20
         reasons.append("no_channel_requirements")
     components["channels"] = channel_score
 
-    # Density component (normalised by max annotation count across all candidates)
     density_score = 0.0
-    if max_annotation_count > 0:
-        density_score = min(
-            0.15,
-            0.15 * candidate.get("annotation_count", 0) / max_annotation_count,
-        )
-        if candidate.get("annotation_count", 0) > 0:
-            reasons.append("dense_annotations")
+    if max_label_count > 0:
+        density_score = min(0.15, 0.15 * member.label_count / max_label_count)
+        if member.label_count > 0:
+            reasons.append("dense_labels")
     components["density"] = round(density_score, 4)
 
-    # Completeness component
     completeness_score = 0.0
-    if (
-        candidate.get("keyframe_count", 0) > 0
-        and candidate.get("observation_count", 0) > 0
-    ):
+    if member.sample_ids and member.channels:
         completeness_score = 0.10
         reasons.append("complete_sequence")
     components["completeness"] = completeness_score
@@ -141,14 +128,9 @@ class ScoreScenarioReadinessJobHandler(
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> dict:
         return {
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": inputs.dataset.dataset_version
-            if inputs.dataset
-            else None,
             **inputs.params,
             # Propagated from mine_scenarios via pipeline refs
             "scenario_set_id": inputs.refs.get("scenario_set_id"),
-            "scenario_set_uri": inputs.refs.get("scenario_set_uri"),
         }
 
     def build_initial_record(
@@ -161,8 +143,6 @@ class ScoreScenarioReadinessJobHandler(
         return ScenarioReadinessRunRecord(
             run_id=default_readiness_run_id(job.job_id),
             scenario_set_id=params.scenario_set_id,
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
             pipeline_task_run_id=job.pipeline_task_run_id,
@@ -180,60 +160,37 @@ class ScoreScenarioReadinessJobHandler(
         started_at: datetime,
     ) -> tuple[ScenarioReadinessRunRecord, ScoreScenarioReadinessJobResult]:
         run_id = initial_record.run_id
-
-        scenario_set_uri = params.scenario_set_uri
-        if not scenario_set_uri:
+        if not params.scenario_set_id:
             raise ValueError(
-                "score_scenario_readiness requires scenario_set_uri "
+                "score_scenario_readiness requires scenario_set_id "
                 "(passed via params or propagated from mine_scenarios)"
             )
+        resolved = await resolve_scenario_set(context, params.scenario_set_id)
+        manifest = resolved.manifest
+        scenario_set_id = manifest.scenario_set_id
+        dataset_id = manifest.dataset_id
+        dataset_version = manifest.dataset_version
 
-        # ── load candidates ───────────────────────────────────────────────────
-        candidates_payload = await context.artifact_store.read_json(scenario_set_uri)
-        candidates: list[dict[str, Any]] = candidates_payload.get("candidates", [])
-        scenario_set_id = params.scenario_set_id or candidates_payload.get(
-            "scenario_set_id"
-        )
-        dataset_id = params.dataset_id or candidates_payload.get("dataset_id")
-        dataset_version = params.dataset_version or candidates_payload.get(
-            "dataset_version"
-        )
-
-        # ── score ─────────────────────────────────────────────────────────────
-        max_annotation_count = max(
-            (c.get("annotation_count", 0) for c in candidates), default=0
-        )
-        required_channels = (
-            params.required_channels
-            or candidates_payload.get("filters", {}).get("required_channels")
-            or []
+        max_label_count = max((m.label_count for m in manifest.members), default=0)
+        required_channels = params.required_channels or list(
+            manifest.curation.required_channels
         )
 
-        scored_scenes: list[dict[str, Any]] = []
-        ready_count = 0
-        warning_count = 0
-        blocked_count = 0
+        scored: list[dict[str, Any]] = []
+        counts = {"ready": 0, "warning": 0, "blocked": 0}
         score_total = 0.0
-
-        for candidate in candidates:
-            score, components, reasons = _score_candidate(
-                candidate,
+        for member in manifest.members:
+            score, components, reasons = _score_member(
+                member,
                 required_channels=required_channels,
-                max_annotation_count=max_annotation_count,
+                max_label_count=max_label_count,
             )
             bucket = _readiness_bucket(score)
-
-            if bucket == "ready":
-                ready_count += 1
-            elif bucket == "warning":
-                warning_count += 1
-            else:
-                blocked_count += 1
-
+            counts[bucket] += 1
             score_total += score
-            scored_scenes.append(
+            scored.append(
                 {
-                    "scene_id": candidate["scene_id"],
+                    "scene_id": member.scene_id,
                     "readiness_score": score,
                     "readiness_bucket": bucket,
                     "components": components,
@@ -241,56 +198,48 @@ class ScoreScenarioReadinessJobHandler(
                 }
             )
 
-        scored_scene_count = len(scored_scenes)
+        scored_scene_count = len(scored)
         average_score = (
-            round(score_total / scored_scene_count, 4)
-            if scored_scene_count > 0
-            else None
+            round(score_total / scored_scene_count, 4) if scored_scene_count else None
         )
-
-        # top scenes: up to 5 ready scenes sorted by score desc
         top_scene_ids = [
             s["scene_id"]
             for s in sorted(
-                [s for s in scored_scenes if s["readiness_bucket"] == "ready"],
+                (s for s in scored if s["readiness_bucket"] == "ready"),
                 key=lambda s: s["readiness_score"],
                 reverse=True,
             )[:5]
         ]
 
-        # ── write readiness report ────────────────────────────────────────────
-        readiness_report_uri = context.artifact_store.join_uri(
-            context.settings.run_root_uri,
-            "scenario_readiness",
-            run_id,
-            "report.json",
+        report_uri = context.artifact_store.join_uri(
+            context.settings.run_root_uri, "scenario_readiness", run_id, "report.json"
         )
-        report_payload: dict[str, Any] = {
-            "scenario_set_id": scenario_set_id,
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-            "score_profile": params.score_profile,
-            "created_at": utc_now().isoformat(),
-            "pipeline_run_id": job.pipeline_run_id,
-            "job_id": job.job_id,
-            "scored_scene_count": scored_scene_count,
-            "summary": {
-                "ready_count": ready_count,
-                "warning_count": warning_count,
-                "blocked_count": blocked_count,
-                "average_score": average_score,
-                "top_scene_ids": top_scene_ids,
+        await context.artifact_store.write_json(
+            report_uri,
+            {
+                "scenario_set": resolved.ref.model_dump(mode="json"),
+                "dataset_id": dataset_id,
+                "dataset_version": dataset_version,
+                "score_profile": params.score_profile,
+                "created_at": utc_now().isoformat(),
+                "pipeline_run_id": job.pipeline_run_id,
+                "job_id": job.job_id,
+                "scored_scene_count": scored_scene_count,
+                "summary": {
+                    "ready_count": counts["ready"],
+                    "warning_count": counts["warning"],
+                    "blocked_count": counts["blocked"],
+                    "average_score": average_score,
+                    "top_scene_ids": top_scene_ids,
+                },
+                "scenes": scored,
             },
-            "scenes": scored_scenes,
-        }
-        await context.artifact_store.write_json(readiness_report_uri, report_payload)
-
-        # ── register artifact ─────────────────────────────────────────────────
+        )
         await context.artifact_record_store.create(
             artifact_id=generate_artifact_id(),
             ref=ArtifactRef(
                 kind=ArtifactKind.SCENARIO_READINESS_REPORT,
-                uri=readiness_report_uri,
+                uri=report_uri,
                 media_type="application/json",
             ),
             owner_type=ArtifactOwnerType.SCENARIO_READINESS_RUN,
@@ -303,44 +252,42 @@ class ScoreScenarioReadinessJobHandler(
             pipeline_run_id=job.pipeline_run_id,
         )
 
-        # ── update + persist run record ───────────────────────────────────────
         summary = {
             "score_profile": params.score_profile,
+            "scenario_set": resolved.ref.model_dump(mode="json"),
             "buckets": {
-                "ready_count": ready_count,
-                "warning_count": warning_count,
-                "blocked_count": blocked_count,
+                "ready_count": counts["ready"],
+                "warning_count": counts["warning"],
+                "blocked_count": counts["blocked"],
             },
             "top_scene_ids": top_scene_ids,
         }
-
         succeeded_record = initial_record.model_copy(
             update={
                 "status": RunStatus.SUCCEEDED,
                 "scenario_set_id": scenario_set_id,
-                "scenario_set_uri": scenario_set_uri,
+                "scenario_set_uri": resolved.record.scenario_set_uri,
                 "dataset_id": dataset_id,
                 "dataset_version": dataset_version,
-                "readiness_report_uri": readiness_report_uri,
+                "readiness_report_uri": report_uri,
                 "scenario_count": scored_scene_count,
-                "ready_count": ready_count,
-                "warning_count": warning_count,
-                "blocked_count": blocked_count,
+                "ready_count": counts["ready"],
+                "warning_count": counts["warning"],
+                "blocked_count": counts["blocked"],
                 "average_score": average_score,
                 "summary": summary,
                 "finished_at": utc_now(),
             }
         )
-
         return succeeded_record, ScoreScenarioReadinessJobResult(
             scenario_set_id=scenario_set_id,
-            readiness_report_uri=readiness_report_uri,
+            readiness_report_uri=report_uri,
             readiness_run_id=run_id,
             scored_scene_count=scored_scene_count,
             average_score=average_score,
-            ready_count=ready_count,
-            warning_count=warning_count,
-            blocked_count=blocked_count,
+            ready_count=counts["ready"],
+            warning_count=counts["warning"],
+            blocked_count=counts["blocked"],
             top_scene_ids=top_scene_ids,
             summary=summary,
         )

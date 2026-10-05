@@ -20,13 +20,9 @@ class PipelineDispatchFacade:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         pipeline_backend: PipelineExecutionBackend,
-        default_dataset_id: str,
-        default_dataset_version: str,
     ) -> None:
         self._session_factory = session_factory
         self._pipeline_backend = pipeline_backend
-        self._default_dataset_id = default_dataset_id
-        self._default_dataset_version = default_dataset_version
 
     async def dispatch(self, pipeline_run_id: str) -> ExecutionDispatchResult:
         # commit-before-backend-dispatch prevents worker RUNNING/SUCCEEDED state
@@ -37,8 +33,6 @@ class PipelineDispatchFacade:
             pipeline_service = PipelineService(
                 pipeline_repository=PostgresPipelineRunRepository(session),
                 task_repository=PostgresPipelineTaskRunRepository(session),
-                default_dataset_id=self._default_dataset_id,
-                default_dataset_version=self._default_dataset_version,
             )
             execution_service = ExecutionService(
                 pipeline_backend=self._pipeline_backend,

@@ -25,7 +25,7 @@ from __future__ import annotations
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
+from sceneops_core.common.derived_ids import derived_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.alignment import (
     ALIGNED_EPISODE_PROFILE_SEMANTICS_VERSION,
@@ -218,8 +218,12 @@ class CurateEpisodesJobHandler(
         )
 
         owner_id = f"{dataset_id}:{dataset_version}"
-        manifest_artifact_id = generate_artifact_id()
-        await context.artifact_record_store.create(
+        manifest_artifact_id = derived_artifact_id(
+            prefix="ecuration",
+            logical_id=curation_id,
+            checksum=write_result.checksum,
+        )
+        await context.artifact_record_store.register(
             artifact_id=manifest_artifact_id,
             ref=ArtifactRef(
                 kind=ArtifactKind.EPISODE_CURATION_MANIFEST,

@@ -27,7 +27,7 @@ SceneOps Platform currently implements a local-first, production-shaped data and
 | Async execution            | ✅              | Celery + Redis workers                         |
 | Dataset registry           | ✅              | Dataset/version metadata                       |
 | Scene registry              | ✅              | Canonical `SceneRecord` catalog                |
-| Dataset manifest            | ✅              | DB-backed derived manifest                     |
+| Derived perception layer    | ✅              | Label sets, sample views, ScenarioSets, pinned detection / evaluation revisions |
 | Scene validation/profile    | ✅              | Per-scene quality runs                         |
 | Dataset quality             | ✅              | Scene-quality aggregate                        |
 | Scene quality APIs          | ✅              | Scene and dataset-version quality views        |
@@ -69,56 +69,38 @@ The current platform demonstrates five end-to-end workflows:
 SceneOps is designed around a scene-first data model.
 
 ```text
-SceneRecord = canonical source
-DatasetManifest = derived artifact
-DatasetQuality = aggregate view
-ScenarioSet = curated selection artifact
+SceneRecord / EpisodeRecord = canonical units (source-faithful, asynchronous)
+LabelSet                    = post-acquisition labels, independent lineage
+SceneSampleView             = derived, policy-driven synchronization of one Scene
+ScenarioSet                 = curated selection over sample views
+prediction / evaluation     = derived results that pin the revisions they consumed
 ```
+
+Every derived object is an immutable, checksum-pinned revision (ADR-007 §33): it records the exact revisions it was built from, and a consumer resolves a pin, never "the latest".
 
 ### Scene
 
-A `Scene` is the canonical unit of registered sensor data.
+A `Scene` is the canonical unit of registered sensor data: every observation of its channels, each on its own clock, plus calibration and poses. It carries no ground truth and no synchronization. `SceneRecord` is its catalog row and pins one manifest revision.
 
-`SceneRecord` stores scene membership and metadata such as sample count, frame count, annotation count, GT availability, sensor channels, status, and artifact references.
+### Label set
 
-### DatasetManifest
+A `LabelSet` holds post-acquisition labels (human, external or model-generated) anchored on canonical observations by `(robot_run_id, channel, source_clock, timestamp_ns)`, plus the coverage it annotated. It is imported with `IMPORT_LABELS`, never written into a Scene, and every import is a new immutable revision. Format adapters live outside the platform (`dataset-acquisition nuscenes-labels`).
 
-A `DatasetManifest` is a derived snapshot generated from registered `SceneRecord` rows.
+### Scene sample view
 
-It is used by pipelines and evaluation jobs, but it is not the source of truth for scene membership.
+A `SceneSampleView` derives, from one Scene revision, an explicit policy for sampling and association: which channel defines the sample instants, which other channels and which ego pose are associated (nearest / previous, with a tolerance, never across clocks), and which label revisions attach. Built by `BUILD_SCENE_SAMPLE_VIEWS`.
 
-### Scene Quality
+### Scene and dataset quality
 
-Scene quality describes whether a scene is usable for downstream workflows.
-
-It combines validation results, profile results, GT availability, annotation count, sensor coverage, and exclusion reasons.
-
-### Dataset Quality
-
-Dataset quality is an aggregate view over scene quality.
-
-It summarizes readiness, selectable scenes, excluded scenes, GT coverage, observed channels, and dataset-level counts.
-
-### Detection Evaluation
-
-Detection evaluation runs model predictions against a scene selection.
-
-When a `ScenarioSet` is provided, detection evaluates only scenes selected by that ScenarioSet.
-Within the selected scenes, existing scene-quality filters (validation status, GT availability, annotation count) still apply.
-Scenes outside the ScenarioSet are skipped with reason `not_in_scenario_set`.
-ScenarioSet lineage is recorded in both inference and evaluation run metadata, making evaluation results explainable.
-
-### Scenario
-
-A `Scenario` is a purpose-specific, derived view of a scene or a group of scenes.
-
-It is not a new raw data unit. It represents a curated candidate for downstream use cases such as evaluation, reconstruction, pseudo-labeling, or model debugging.
+Quality is canonical Scene quality only: validation readiness, observed channels and counts. Labels and detection selectability are derived concerns of label sets and sample views.
 
 ### ScenarioSet
 
-A `ScenarioSet` is an artifact-backed curation result.
+A `ScenarioSet` is a mined, ordered selection over pinned sample views with explicit curation criteria (label counts, required channels, Scene readiness). It is an immutable revision; `scenario_curation` mines and scores it.
 
-It groups mined scenario candidates and stores readiness scores, selection reasons, and report artifacts generated by the scenario curation pipeline.
+### Detection and evaluation
+
+`predict_detection` runs on a ScenarioSet or explicit sample views and publishes a prediction revision that pins its inputs and configuration. `evaluate_detection` scores one prediction revision against one pinned label revision, only on samples the label set covers; a prediction and a label in different frames fail instead of being compared.
 
 ### Robot / RobotRun / Mission / RobotState (v2)
 
@@ -192,10 +174,13 @@ Pipeline
   build_recording_scenes → register_scenes → validate_scene → profile_scene — one registered RobotRun recording → canonical Scenes (see [Scene domain](docs/architecture/scene-domain.md))
 
 `detection_evaluation`
-  predict_detection → evaluate_detection
+  predict_detection → evaluate_detection (pinned sample views or ScenarioSet in; pinned prediction and label revisions out)
 
 `scenario_curation`
-  mine_scenarios → score_scenario_readiness
+  mine_scenarios → score_scenario_readiness (pinned sample views in; ScenarioSet revision out)
+
+`aligned_episode_building`
+  align_episode → validate_aligned_episode → profile_aligned_episode — one registered Episode → a derived, validated `AlignedEpisode` revision
 
 `recording_episode_building`
   build_recording_episodes → register_episodes → validate_episode → profile_episode
@@ -249,202 +234,47 @@ tasks[].rawResult ← debug detail
 
 ---
 
-## Demo 1: scene-first quality → scenario curation → detection evaluation
+## Demo 1: derived perception — labels, sample views, curation, detection, evaluation
 
-SceneOps treats `SceneRecord` as the canonical source.
-Dataset quality aggregates scene-level validation, profile, and GT signals into a readiness view.
-Scenario curation converts those signals into a `ScenarioSet` — a curated selection artifact over registered `SceneRecord`s.
-Detection evaluation then runs only on scenes selected by the ScenarioSet, while existing scene-quality filters (GT availability, annotation count) still apply within that set.
-ScenarioSet lineage is recorded in both inference and evaluation run metadata.
-
-> A ScenarioSet is not a new raw data unit. It is a curated selection artifact over existing SceneRecords.
-
-### Quickstart
-
-> `make e2e-recording-scene` builds canonical Scenes from a recording. The
-> detection / scenario flows below need ground truth and keyframes, which
-> recording-derived Scenes do not carry until a label ingress exists — see
-> [Reserved architecture and current limitations](docs/architecture/reserved-and-limitations.md) §2.
+Real nuScenes data enters only through the acquisition tool. The recording carries no annotation; its labels leave as a separate label document and enter the platform as an independent, pinned label set.
 
 ```bash
-make e2e-recording-scene          # nuScenes -> acquisition -> RobotRun -> canonical Scenes -> quality
+make local-up
+make e2e-perception                     # BACKEND=mock (default)
 ```
 
-`make e2e-perception` and `make e2e-scenario-curation` are **unavailable
-until ADR-007 implementation step 10** and exit with a message; the
-example outputs below are point-in-time results recorded before Scenes
-became recording-derived. `make compare-detection PIPELINE_RUN_ID=...`
-still reports on an existing detection-evaluation run.
-
-### Example output — 30-scene dataset: 10 GT (nuScenes) + 20 non-GT (raw-log-style)
-
-Scenario curation mines the 10 GT scenes into a ScenarioSet (candidate_count=10, rejected_count=20).
-Detection evaluation uses that ScenarioSet to constrain scene selection.
-
-```
-=== Scenario Curation Result ===
-  pipeline_run_id : pipe-...
-  scenario_set_id : scset-...
-  candidate_count=10  ready=8  warning=2  blocked=0
-
-=== Dataset Quality ===
-  readiness                     : warning
-  scene_count                   : 30
-  sample_count                  : 808
-  frame_count                   : 1616
-  annotation_count              : 18538
-  ready/warning/blocked/unknown : 30 / 0 / 0 / 0
-  selectable_for_detection      : 10
-  non_selectable_for_detection  : 20
-  ground_truth_scenes           : 10
-  gt_coverage_ratio             : 0.3333
-  observed_channels             : CAM_FRONT, LIDAR_TOP
-  exclusion_reasons             : {"missing_ground_truth":20}
-
-=== ScenarioSet Lineage ===
-  scenario_set_id          : scset-...
-  scenario_candidate_count : 10
-  scenario_selected_count  : 10
-  scenario_rejected_count  : 20
-  not_in_scenario_set      : 20
-  lineage_consistency      : ok
-  flow                     : 10 scenario candidates → 10 selected scenes → 10 ev
-
-=== Detection Run Comparison ===
-  selected_scene_count  : 10
-  selected_sample_count : 404
-  skipped_scene_count   : 20
-  evaluated_scene_count : 10
-  eval_skipped_count    : 0
-  ground_truth_count    : 14982
-  prediction_count      : 2340
-  evaluable_pred_count  : 2340
-  primary_metric        : precision = 0.318803
+```text
+nuScenes scene-0061
+  → dataset-acquisition            MCAP (camera, lidar PointCloud2, poses, CAN)   ┐ no labels
+  → dataset-acquisition nuscenes-labels   label document (4699 labels, 39 samples)  ┘ separate file
+  → RobotRun → recording_scene_building      canonical Scenes (annotation count 0)
+  → IMPORT_LABELS                  label set revision (external provenance)
+  → BUILD_SCENE_SAMPLE_VIEWS       camera-anchored samples + nearest lidar (≤25 ms) + ego pose (≤5 ms)
+  → scenario_curation              ScenarioSet revision pinning the views
+  → detection_evaluation           prediction revision → evaluation against the pinned label revision
 ```
 
-**Consistency check:**
-
-```
-ScenarioSet candidates constrain prediction scene selection.
-Scenes outside the ScenarioSet are skipped with not_in_scenario_set.
-Scenes inside the ScenarioSet pass through existing GT/quality filters.
-scenario_set_id is recorded in both inference and evaluation run metadata.
-
-ScenarioSet candidates → selected scenes → evaluated scenes
-10 scenario candidates → 10 selected scenes → 10 evaluated scenes
-```
-
-`readiness=warning` is expected when only 10/30 scenes are selectable for detection.
-
-`annotation_count` (18538) is the dataset-level count from `SceneRecord`;
-`ground_truth_count` (14982) is the evaluator-side count after evaluation-specific loading and filtering
-— these values can differ.
-
-The precision value (0.318803) reflects real GroundingDINO detections on this limited nuScenes mini sample, not a production benchmark.
+The script asserts that every revision pins what it consumed, that retries converge on the same revisions and ids, that Scenes are untouched by every derived step, and that a real lidar payload decodes (PointCloud2 CDR) to exactly the source `.pcd.bin` points.
 
 ---
 
 ## Demo 2: real GroundingDINO detection evaluation
 
-SceneOps supports both a fast mock backend and a real GroundingDINO backend,
-both through the same `make e2e-perception` target (`BACKEND=mock` is the
-default; `BACKEND=grounding_dino` selects the real model). Scenario curation
-runs internally either way — no separate command or ScenarioSet ID to thread
-through by hand.
+`BACKEND=grounding_dino make e2e-perception` runs the same vertical with the real model: boxes are lifted to 3-D through the sample's lidar observation (decoded by its declared media type) and the associated ego pose, and carry the frame they are expressed in.
 
 ```bash
-# Unavailable until ADR-007 implementation step 10 (see above); recorded with
-# the former nuScenes Scene ingestion:
 make local-up
 make inference-local-up   # or make inference-gpu-up for GPU
 make e2e-perception BACKEND=grounding_dino
 ```
 
-**Validated flow:**
-
-```
-GroundingDINO server readiness (/healthz + /readyz)
-→ predict_detection  backend=grounding_dino
-→ prediction manifest + prediction shards written to artifact store
-→ evaluate_detection  evaluator=center-distance, match_distance_m=2.0
-→ metrics artifact
-→ leaderboard entry
-```
-
-**Mock backend (10 nuScenes GT scenes only):**
-
-```
-prediction_count:   12544
-ground_truth_count: 14982
-primary_metric:     precision ≈ 0.991948  (mock detector)
-```
-
-**GroundingDINO backend (10 nuScenes GT scenes, CAM_FRONT only):**
-
-```
-prediction_count:   2340
-ground_truth_count: 14982
-primary_metric:     precision ≈ 0.318803
-```
-
-This is a real-model E2E smoke result on a limited nuScenes mini sample set, not a production benchmark.
+This backend path was not re-run in the step that introduced the pinned derived layer; only its unit tests and the mock vertical were.
 
 ---
 
 ## Demo 3: scenario curation
 
-Scenario curation converts scene-level quality signals into a data-selection workflow.
-
-> mines candidate scenes from `SceneRecord` metadata
-> → stores them as a `ScenarioSet` artifact
-> → scores their readiness for downstream evaluation or reconstruction workflows
->
-> No image or lidar data is loaded.
-
-```bash
-make e2e-scenario-curation   # unavailable until ADR-007 implementation step 10
-```
-
-The script prints both `pipeline_run_id` and `scenario_set_id` on completion --
-useful for inspecting scenario mining in isolation. `make e2e-perception`
-(mock or `BACKEND=grounding_dino`) runs this same scenario curation step
-internally and hands its `scenario_set_id` off automatically; you don't need
-this standalone command or its printed IDs just to run detection evaluation.
-
-**Pipeline result shape:**
-
-```json
-{
-  "outputs": {
-    "scenario_set_id": "scset-...",
-    "scenario_set_uri": "s3://.../candidates.json",
-    "mining_run_id": "mining-...",
-    "readiness_run_id": "readiness-..."
-  },
-  "metrics": {
-    "candidate_count": 10,
-    "selected_count": 10,
-    "rejected_count": 20,
-    "scored_scene_count": 10,
-    "ready_count": 10,
-    "warning_count": 0,
-    "blocked_count": 0,
-    "average_score": 0.9092
-  },
-  "lineage": {
-    "artifacts": {
-      "mining_report_uri": "s3://.../report.json",
-      "readiness_report_uri": "s3://.../report.json"
-    }
-  }
-}
-```
-
-**Current limitations (artifact-backed first phase):**
-
-- No per-scenario item table — candidates are stored in a JSON artifact
-- `selectable_for_detection` is derived from `SceneRecord` signals; full selectability from detection comparison runs is a future enhancement
-- Future: evaluation-aware mining (FP/FN by scene), pseudo-label candidate scoring, VLM semantic tags
+Curation is explicit. `mine_scenarios` takes pinned sample views and criteria — `require_labels`, label count bounds, `required_channels`, allowed Scene `readiness`, sort and limit — against one pinned label set revision, and writes an immutable ScenarioSet revision whose members pin the views and name the selected samples. `score_scenario_readiness` scores the pinned members. It is part of `make e2e-perception`.
 
 ---
 
@@ -629,7 +459,6 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | `make e2e-recording-scene [SCENE=scene-0061]` | nuScenes → acquisition container → MCAP → RobotRun → `recording_scene_building` → canonical Scenes → validation/profile, through FastAPI |
 | `make e2e-recording-episode [SCENE=scene-0061]` | nuScenes → acquisition container → MCAP → RobotRun → `recording_episode_building` → canonical Episodes → validation/profile, through FastAPI |
 | `make e2e-robot-learning` | **Unavailable until ADR-007 implementation step 11** (learning chain on canonical Episodes) |
-| `make e2e-perception [BACKEND=mock\|grounding_dino]` | **Unavailable until ADR-007 implementation step 10** (needs ground truth and keyframes on recording-derived Scenes) |
 | `make e2e-interop` | Real Postgres/MinIO → SceneOpsDataset → LeRobot → golden comparison; requires `make lerobot-sync` |
 | `make e2e-cleanroom` | **The full-platform acceptance workflow**: `local-reset` → `e2e-recording-scene` → `e2e-recording-episode` → persisted-state validation. **Destructive** (preserves `data/raw`) |
 
@@ -644,7 +473,8 @@ for the full surface and what moved to `smoke-*`/`verify-*`/`test-integration`.
 | `make e2e-streaming-capture [SCENE=scene-0061 \| RATE=10.0]` | Real Kafka → durable MCAP capture (run-scoped consumer) → RosbagAdapter compatibility check; requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md) Part 3 |
 | `make e2e-robot-run-registration [SCENE=scene-0061 \| RATE=10.0]` | Captured MCAP → ArtifactStore → ArtifactRecord → canonical `RobotRun` (real Postgres/MinIO), plus idempotent-retry/conflict verification; requires `make local-up` and `make streaming-up` |
 | `make e2e-robot-run-learning` | **Unavailable until ADR-007 implementation step 11** |
-| `make compare-detection PIPELINE_RUN_ID=<detection_pipeline_run_id>` | Report on an existing detection-evaluation run (no new one can be produced until ADR-007 step 10) |
+| `make e2e-perception [BACKEND=mock\|grounding_dino]` | Real nuScenes → RobotRun → Scenes → labels → sample views → ScenarioSet → detection → evaluation, every revision pinned |
+| `make e2e-episode-alignment` | Real nuScenes → RobotRun → canonical Episode → `AlignedEpisode` → learning export, with retry-convergence checks |
 
 **Smoke** (transport/liveness only — never creates persistent domain data): `make smoke-api`, `make smoke-lerobot-container`, `make smoke-streaming` *(requires `make streaming-up`; zero Postgres/MinIO state — see [`docs/architecture/streaming-transport.md`](docs/architecture/streaming-transport.md))*.
 
@@ -732,12 +562,13 @@ See [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved
 ### Current limitations
 
 * The default local dataset is nuScenes mini.
-* **(v2)** Episode has no `DatasetManifest`-equivalent index the way Scene has for detection evaluation. (Episode does have its own Parquet analytics tables and a `selectable_for_*`-equivalent concept, scoped to aligned revisions rather than raw Episodes — `learning_*.parquet` + `EpisodeCurationManifest`; see [Robot learning data layer](docs/architecture/robot-learning-data.md) and, for the scaled production physical layout, [Scalable learning data](docs/architecture/scalable-learning-data.md).)
+* **(v2)** Episode selection works on aligned revisions rather than raw Episodes: `learning_*.parquet` + `EpisodeCurationManifest`; see [Robot learning data layer](docs/architecture/robot-learning-data.md) and, for the scaled production physical layout, [Scalable learning data](docs/architecture/scalable-learning-data.md).)
 * The platform is local-first and optimized for architecture validation, not large-scale production throughput.
 * GroundingDINO evaluation results are integration signals, not production model benchmarks.
 * Scenario curation is implemented but still marked `experimental=True`.
 * Scenario candidates are artifact-backed; there is no per-scenario item table yet.
-* Scenario readiness scoring currently uses metadata and scene-quality signals, not image/LiDAR content.
+* Scenario readiness scoring uses label counts, channels and Scene readiness, not image/LiDAR content.
+* Sample views associate by nearest / previous only (no pose interpolation); evaluation applies no frame transform between a prediction and a label.
 * Scene reconstruction, auto-labeling, and generated dataset preparation pipelines are defined but not implemented.
 * Operations and leaderboard APIs exist, but there is no dedicated web UI yet.
 * The Airflow pipeline backend is a per-task DAG PoC hardcoded to `recording_scene_building`; other pipeline types still only run through Celery.

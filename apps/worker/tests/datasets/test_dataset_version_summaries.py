@@ -29,7 +29,6 @@ def _model(**overrides) -> DatasetVersionModel:
         dataset_id="d",
         version="v1",
         status="registered",
-        manifest_uri=None,
         scene_count=0,
         keyframe_count=0,
         observation_count=0,
@@ -105,7 +104,6 @@ class TestRoundTrip:
     def test_full_round_trip_preserves_all_fields(self) -> None:
         model = _model(
             status="registered",
-            manifest_uri="s3://bucket/manifest.json",
             scene_count=5,
             keyframe_count=10,
             observation_count=20,
@@ -120,7 +118,6 @@ class TestRoundTrip:
             "dataset_id",
             "version",
             "status",
-            "manifest_uri",
             "scene_count",
             "keyframe_count",
             "observation_count",
@@ -130,6 +127,7 @@ class TestRoundTrip:
         ):
             assert values[field] == getattr(model, field), field
         for removed in (
+            "manifest_uri",
             "raw_source_root_uri",
             "source_dataset_id",
             "source_dataset_version",

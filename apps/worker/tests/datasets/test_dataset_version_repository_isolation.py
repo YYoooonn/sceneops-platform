@@ -28,7 +28,6 @@ def _model(**overrides) -> DatasetVersionModel:
         dataset_id="d",
         version="v1",
         status="registered",
-        manifest_uri="s3://bucket/manifest.json",
         scene_count=5,
         keyframe_count=10,
         observation_count=20,
@@ -79,7 +78,7 @@ class TestSceneWriterIsolation:
 
     @pytest.mark.asyncio
     async def test_scene_inputs_update_never_touches_membership(self) -> None:
-        model = _model(manifest_uri="s3://x/m.json")
+        model = _model()
         repo = _repo_with_model(model)
 
         await repo.update_scene_inputs(
@@ -87,7 +86,6 @@ class TestSceneWriterIsolation:
         )
 
         assert model.required_channels == ["LIDAR_TOP"]
-        assert model.manifest_uri == "s3://x/m.json"  # omitted -> untouched
         assert (model.scene_count, model.observed_channels) == (5, ["CAM_FRONT"])
 
 

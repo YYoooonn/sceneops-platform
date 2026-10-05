@@ -326,6 +326,28 @@ class _Planned:
 
 
 @dataclass(frozen=True)
+class SourceAnnotation:
+    """One ``sample_annotation``: a 3-D box in the global (map) frame,
+    size ``[width, length, height]``, rotation ``[w, x, y, z]``."""
+
+    token: str
+    instance_token: str
+    category: str
+    translation: list[float]
+    size_wlh: list[float]
+    rotation_wxyz: list[float]
+    attributes: list[str]
+
+
+@dataclass(frozen=True)
+class KeyframeAnnotations:
+    sample_token: str
+    anchor_channel: str
+    anchor_timestamp_ns: int
+    annotations: list[SourceAnnotation]
+
+
+@dataclass(frozen=True)
 class NuScenesSelection:
     dataroot: Path
     version: str
@@ -537,6 +559,54 @@ class NuScenesAdapter:
             topic: ros2.message_type(planned.build().__msgtype__)
             for topic, planned in sorted(first.items())
         }
+
+    def keyframe_annotations(self, anchor_channel: str) -> list[KeyframeAnnotations]:
+        """The unit's source annotations (post-acquisition labeling), one entry
+        per sample, in sample order. Each is anchored at the ``anchor_channel``
+        key frame ``sample_data`` the sample points at, i.e. at an observation
+        the recording carries. Annotation tables never enter the recording."""
+        nusc = self._nusc
+        entries: list[KeyframeAnnotations] = []
+        token = self._scene["first_sample_token"]
+        while token:
+            sample = nusc.get("sample", token)
+            if anchor_channel not in sample["data"]:
+                raise AcquisitionError(
+                    f"{self.selection.source_unit}: sample {token} has no "
+                    f"{anchor_channel!r} data to anchor labels on"
+                )
+            anchor = nusc.get("sample_data", sample["data"][anchor_channel])
+            annotations = []
+            for ann_token in sample["anns"]:
+                ann = nusc.get("sample_annotation", ann_token)
+                instance = nusc.get("instance", ann["instance_token"])
+                category = nusc.get("category", instance["category_token"])
+                annotations.append(
+                    SourceAnnotation(
+                        token=ann["token"],
+                        instance_token=ann["instance_token"],
+                        category=category["name"],
+                        translation=list(ann["translation"]),
+                        size_wlh=list(ann["size"]),
+                        rotation_wxyz=list(ann["rotation"]),
+                        attributes=sorted(
+                            {
+                                nusc.get("attribute", t)["name"]
+                                for t in ann["attribute_tokens"]
+                            }
+                        ),
+                    )
+                )
+            entries.append(
+                KeyframeAnnotations(
+                    sample_token=token,
+                    anchor_channel=anchor_channel,
+                    anchor_timestamp_ns=_us_to_ns(anchor["timestamp"]),
+                    annotations=annotations,
+                )
+            )
+            token = sample["next"]
+        return entries
 
     def events(self) -> Iterator[AcquisitionEvent]:
         sequences: dict[str, int] = {}

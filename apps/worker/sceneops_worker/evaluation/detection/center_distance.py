@@ -1,20 +1,25 @@
 """Center-distance detection evaluator.
 
-This module is specific to the center-distance matching algorithm.
+Ground truth is the label set revision the evaluation pins; samples and
+their label attachments come from the pinned sample views. Nothing is read
+from a Scene.
 
 Evaluation policy:
-  - A Scene with at least one source annotation is ground-truth-bearing.
-  - If the selected dataset has no GT annotations at all, evaluation is skipped.
-  - Prediction shards belonging to scenes without GT are skipped.
-  - Samples inside GT-bearing scenes are evaluated even when that sample has
-    zero annotations, because those are valid negative samples.
+  - A predicted sample is evaluated only if the pinned label set *covers* it
+    (the set annotated an observation the sample holds). A covered sample
+    with no labels is a valid negative sample.
+  - A predicted sample the label set does not cover is skipped, or fails the
+    evaluation under ``MissingGroundTruthPolicy.FAIL``.
+  - Predictions and labels must be in the same frame; a mismatch fails.
+  - Labels whose category is outside ``categories`` (when given) are ignored,
+    and so are predictions of such categories.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from sceneops_worker.scenes.keyframes import KeyframeSample
+from sceneops_core.jobs.schemas.params import MissingGroundTruthPolicy
 from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.artifacts import (
     write_final_evaluation_manifest,
@@ -26,14 +31,11 @@ from sceneops_worker.evaluation.detection.base import (
     DetectionEvaluationResult,
     DetectionEvaluator,
 )
-from sceneops_worker.evaluation.detection.loading import (
-    EvaluationSceneIndex,
-    build_scene_index,
-    load_prediction_manifest,
-    load_sample_prediction_payload,
-)
+from sceneops_worker.evaluation.detection.loading import load_sample_prediction_payload
 
 from . import utils
+
+SKIP_NOT_COVERED = "sample_not_covered_by_label_set"
 
 
 class CenterDistanceDetectionEvaluator(DetectionEvaluator):
@@ -48,317 +50,98 @@ class CenterDistanceDetectionEvaluator(DetectionEvaluator):
         return await evaluate_center_distance_detection(request)
 
 
+def _policy_is_fail(request: DetectionEvaluationRequest) -> bool:
+    return request.missing_gt_policy == MissingGroundTruthPolicy.FAIL
+
+
 async def evaluate_center_distance_detection(
     request: DetectionEvaluationRequest,
 ) -> DetectionEvaluationResult:
-    prediction_manifest = await load_prediction_manifest(request)
-
-    scene_index = await build_scene_index(
-        dataset_manifest=request.dataset_manifest,
-        scene_artifact_store=request.scene_artifact_store,
-    )
-
-    if scene_index.annotation_count == 0:
-        return await _handle_missing_dataset_gt(
-            request=request,
-            prediction_manifest=prediction_manifest,
-            scene_index=scene_index,
-        )
+    labels_by_id = {label.label_id: label for label in request.label_set.labels}
+    label_set_id = request.label_set.label_set_id
 
     accumulator = EvaluationAccumulator()
-
     evaluated_sample_count = 0
-    skipped_shard_count = 0
-    skipped_prediction_count = 0
-    skipped_shards: list[dict[str, Any]] = []
     evaluated_scene_ids: set[str] = set()
-    warnings: list[dict[str, Any]] = []
+    skipped_shards: list[dict[str, Any]] = []
 
-    for shard in prediction_manifest.prediction_shards:
-        scene_entry = scene_index.get_scene(shard.scene_id)
+    for shard in request.prediction.prediction_shards:
+        view = request.views[shard.scene_id]
+        sample = view.sample(shard.sample_id)
+        assert sample is not None  # guaranteed by the pinned manifest + view
+        entry = next(e for e in sample.labels if e.label_set_id == label_set_id)
 
-        if scene_entry is not None and not scene_entry.has_ground_truth:
-            _raise_if_missing_gt_policy_fail(
-                request=request,
-                reason=(
-                    f"Prediction shard belongs to a scene without ground truth: "
-                    f"scene_id={scene_entry.scene_id!r}, sample_id={shard.sample_id!r}"
-                ),
-            )
-
-            skipped_shard_count += 1
-            skipped_prediction_count += int(shard.prediction_count or 0)
+        if not entry.covered:
+            if _policy_is_fail(request):
+                raise ValueError(
+                    f"predicted sample {shard.scene_id}/{shard.sample_id} is not "
+                    f"covered by label set {label_set_id!r}"
+                )
             skipped_shards.append(
                 {
-                    "scene_id": scene_entry.scene_id,
+                    "scene_id": shard.scene_id,
                     "sample_id": shard.sample_id,
                     "uri": shard.uri,
                     "prediction_count": shard.prediction_count,
-                    "reason": "scene_has_no_ground_truth",
+                    "reason": SKIP_NOT_COVERED,
                 }
             )
             continue
 
-        sample_payload = await load_sample_prediction_payload(
-            run_artifact_store=request.run_artifact_store,
-            uri=shard.uri,
-        )
+        payload = await load_sample_prediction_payload(request, shard)
+        predictions = payload["predictions"]
+        labels = [labels_by_id[label_id] for label_id in entry.label_ids]
+        if request.categories is not None:
+            labels = [x for x in labels if x.category in request.categories]
+            predictions = [
+                p for p in predictions if p["category_name"] in request.categories
+            ]
 
-        sample_id = sample_payload["sample_id"]
-
-        if shard.sample_id is not None and shard.sample_id != sample_id:
-            warnings.append(
-                {
-                    "type": "shard_sample_id_mismatch",
-                    "shard_sample_id": shard.sample_id,
-                    "payload_sample_id": sample_id,
-                    "scene_id": shard.scene_id,
-                    "uri": shard.uri,
-                }
-            )
-
-        payload_scene_entry = scene_index.get_scene_for_sample(sample_id)
-
-        if (
-            scene_entry is not None
-            and payload_scene_entry is not None
-            and scene_entry.scene_id != payload_scene_entry.scene_id
-        ):
-            warnings.append(
-                {
-                    "type": "shard_scene_id_mismatch",
-                    "shard_scene_id": scene_entry.scene_id,
-                    "payload_scene_id": payload_scene_entry.scene_id,
-                    "sample_id": sample_id,
-                    "uri": shard.uri,
-                }
-            )
-            scene_entry = payload_scene_entry
-
-        if scene_entry is None:
-            scene_entry = payload_scene_entry
-
-        if scene_entry is None:
-            skipped_shard_count += 1
-            skipped_prediction_count += int(shard.prediction_count or 0)
-            skipped_shards.append(
-                {
-                    "scene_id": shard.scene_id,
-                    "sample_id": sample_id,
-                    "uri": shard.uri,
-                    "prediction_count": shard.prediction_count,
-                    "reason": "sample_not_found_in_scene_index",
-                }
-            )
-            continue
-
-        if not scene_entry.has_ground_truth:
-            _raise_if_missing_gt_policy_fail(
-                request=request,
-                reason=(
-                    f"Prediction sample belongs to a scene without ground truth: "
-                    f"scene_id={scene_entry.scene_id!r}, sample_id={sample_id!r}"
-                ),
-            )
-
-            skipped_shard_count += 1
-            skipped_prediction_count += int(shard.prediction_count or 0)
-            skipped_shards.append(
-                {
-                    "scene_id": scene_entry.scene_id,
-                    "sample_id": sample_id,
-                    "uri": shard.uri,
-                    "prediction_count": shard.prediction_count,
-                    "reason": "scene_has_no_ground_truth",
-                }
-            )
-            continue
-
-        sample_eval = evaluate_center_distance_sample_payload(
-            sample_payload=sample_payload,
-            sample_index=scene_index.samples_by_id,
+        sample_eval = utils.evaluate_sample(
+            scene_id=shard.scene_id,
+            sample_id=shard.sample_id,
+            labels=labels,
+            predictions=predictions,
             match_distance_m=request.match_distance_m,
         )
-
         accumulator.add(sample_eval)
         evaluated_sample_count += 1
-        evaluated_scene_ids.add(scene_entry.scene_id)
-
+        evaluated_scene_ids.add(shard.scene_id)
         await write_sample_evaluation(
             run_artifact_store=request.run_artifact_store,
             evaluation_run_id=request.evaluation_run_id,
-            sample_id=sample_id,
+            scene_id=shard.scene_id,
+            sample_id=shard.sample_id,
             sample_eval=sample_eval,
         )
 
-    skipped_scene_ids = sorted(
-        {s["scene_id"] for s in skipped_shards if s.get("scene_id")}
-    )
+    summary = {
+        "label_set_id": label_set_id,
+        "label_set_label_count": len(request.label_set.labels),
+        "predicted_sample_count": len(request.prediction.prediction_shards),
+        "skipped_shard_count": len(skipped_shards),
+        "skipped_prediction_count": sum(s["prediction_count"] for s in skipped_shards),
+        "skipped_shards": skipped_shards[:100],
+        "skipped_scene_ids": sorted({s["scene_id"] for s in skipped_shards}),
+        "categories": sorted(request.categories) if request.categories else None,
+        "missing_gt_policy": request.missing_gt_policy.value,
+    }
 
     if evaluated_sample_count == 0:
-        return await _handle_no_evaluable_shards(
-            request=request,
-            prediction_manifest=prediction_manifest,
-            scene_index=scene_index,
-            skipped_shard_count=skipped_shard_count,
-            skipped_prediction_count=skipped_prediction_count,
-            skipped_shards=skipped_shards,
-            skipped_scene_ids=skipped_scene_ids,
-            warnings=warnings,
+        reason = (
+            "No predicted sample is covered by the pinned label set. "
+            "Detection evaluation was skipped."
+        )
+        if _policy_is_fail(request):
+            raise ValueError(reason)
+        return await write_skipped_evaluation_manifest(
+            request=request, reason=reason, metadata=summary
         )
 
     return await write_final_evaluation_manifest(
         request=request,
-        prediction_manifest=prediction_manifest,
         accumulator=accumulator,
         evaluated_sample_count=evaluated_sample_count,
-        evaluation_unit="annotation",
-        metadata={
-            "missing_gt_policy": _policy_value(request.missing_gt_policy),
-            "scene_index": _scene_index_summary(scene_index),
-            "skipped_shard_count": skipped_shard_count,
-            "skipped_prediction_count": skipped_prediction_count,
-            "skipped_shards": skipped_shards[:100],
-            "skipped_scene_ids": skipped_scene_ids,
-            "warnings": warnings[:100],
-            "evaluated_scene_ids": sorted(evaluated_scene_ids),
-        },
+        evaluation_unit="label",
+        metadata={**summary, "evaluated_scene_ids": sorted(evaluated_scene_ids)},
     )
-
-
-def evaluate_center_distance_sample_payload(
-    *,
-    sample_payload: dict[str, Any],
-    sample_index: dict[str, KeyframeSample],
-    match_distance_m: float,
-) -> dict[str, Any]:
-    """Run center-distance matching for one sample payload."""
-
-    sample_id = sample_payload["sample_id"]
-    sample_manifest = sample_index.get(sample_id)
-
-    if sample_manifest is None:
-        raise FileNotFoundError(
-            f"Sample manifest not found for sample_id: {sample_id!r}"
-        )
-
-    return utils.evaluate_sample(
-        sample=sample_manifest,
-        predictions=sample_payload.get("predictions", []),
-        match_distance_m=match_distance_m,
-        dataset_id=sample_payload.get("dataset_id"),
-        dataset_version=sample_payload.get("dataset_version"),
-    )
-
-
-async def _handle_missing_dataset_gt(
-    *,
-    request: DetectionEvaluationRequest,
-    prediction_manifest: Any,
-    scene_index: Any,
-) -> DetectionEvaluationResult:
-    reason = (
-        "No ground-truth annotations were found in the selected dataset scenes. "
-        "Detection evaluation was skipped."
-    )
-
-    _raise_if_missing_gt_policy_fail(
-        request=request,
-        reason=reason,
-    )
-
-    return await write_skipped_evaluation_manifest(
-        request=request,
-        prediction_manifest=prediction_manifest,
-        reason=reason,
-        metadata={
-            "missing_gt_policy": _policy_value(request.missing_gt_policy),
-            "scene_index": _scene_index_summary(scene_index),
-            "skipped_prediction_shard_count": len(
-                prediction_manifest.prediction_shards
-            ),
-            "skipped_prediction_count": _prediction_count_from_shards(
-                prediction_manifest.prediction_shards
-            ),
-        },
-    )
-
-
-async def _handle_no_evaluable_shards(
-    *,
-    request: DetectionEvaluationRequest,
-    prediction_manifest: Any,
-    scene_index: Any,
-    skipped_shard_count: int,
-    skipped_prediction_count: int,
-    skipped_shards: list[dict[str, Any]],
-    skipped_scene_ids: list[str],
-    warnings: list[dict[str, Any]],
-) -> DetectionEvaluationResult:
-    reason = (
-        "No prediction shards were evaluable against ground-truth scenes. "
-        "Detection evaluation was skipped."
-    )
-
-    _raise_if_missing_gt_policy_fail(
-        request=request,
-        reason=reason,
-    )
-
-    return await write_skipped_evaluation_manifest(
-        request=request,
-        prediction_manifest=prediction_manifest,
-        reason=reason,
-        metadata={
-            "missing_gt_policy": _policy_value(request.missing_gt_policy),
-            "scene_index": _scene_index_summary(scene_index),
-            "skipped_shard_count": skipped_shard_count,
-            "skipped_prediction_count": skipped_prediction_count,
-            "skipped_shards": skipped_shards[:100],
-            "skipped_scene_ids": skipped_scene_ids,
-            "warnings": warnings[:100],
-        },
-    )
-
-
-def _raise_if_missing_gt_policy_fail(
-    *,
-    request: DetectionEvaluationRequest,
-    reason: str,
-) -> None:
-    if _missing_gt_policy_is_fail(request.missing_gt_policy):
-        raise ValueError(reason)
-
-
-def _missing_gt_policy_is_fail(policy: Any) -> bool:
-    return _policy_value(policy) == "fail"
-
-
-def _policy_value(policy: Any) -> str:
-    value = getattr(policy, "value", policy)
-    return str(value).lower()
-
-
-def _scene_index_summary(scene_index: EvaluationSceneIndex) -> dict[str, Any]:
-    return {
-        "scene_count": scene_index.scene_count,
-        "keyframe_count": scene_index.keyframe_count,
-        "observation_count": scene_index.observation_count,
-        "annotation_count": scene_index.annotation_count,
-        "ground_truth_scene_count": scene_index.ground_truth_scene_count,
-        "scenes": [
-            {
-                "scene_id": scene.scene_id,
-                "keyframe_count": scene.keyframe_count,
-                "observation_count": scene.observation_count,
-                "annotation_count": scene.annotation_count,
-                "has_ground_truth": scene.has_ground_truth,
-                "ground_truth_source": scene.ground_truth_source,
-            }
-            for scene in scene_index.scenes
-        ],
-    }
-
-
-def _prediction_count_from_shards(shards: list[Any]) -> int:
-    return sum(int(shard.prediction_count or 0) for shard in shards)

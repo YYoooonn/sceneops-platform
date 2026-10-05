@@ -165,6 +165,27 @@ HEAD       7c15825 feat(episodes): build canonical Episodes from registered reco
 date       2026-10-05
 ```
 
+**Amendment A8 — derived L3 layer: labels, sample views, curation, detection
+and learning export (implementation step 10).** Accepted. A8 completes the
+derived layer on top of canonical Scenes and Episodes without changing either
+(§33). It decides Q1: labels are separate, lineage-bearing data anchored on
+canonical observations, never part of a Scene, an Episode or a RobotRun
+(§33.2). It defines `SceneSampleView`, the policy-driven synchronization and
+association layer perception needs (§33.3), and refactors ScenarioSet,
+detection inference and evaluation to consume explicit, checksum-pinned
+derived revisions instead of a DatasetVersion scan (§33.4, §33.5). It finishes
+`AlignedEpisode` identity (§33.6) and records what learning export is and is not
+(§33.7). It adds §33, invariants I-48–I-55 and a DB migration, and removes the
+stale nuScenes-era derived workflows (§33.8). It changes no decision about
+RobotRun, Scene or Episode canonicalization, identity, the fingerprint,
+registration, replacement or DatasetVersion. Audited at:
+
+```text
+branch     refactor/domain-ingestion-architecture
+HEAD       72c5aab feat(streaming): acquire sensor-bearing recordings by ROS2 replay and prove batch equivalence
+date       2026-10-05
+```
+
 Relationship to earlier ADRs:
 
 - [ADR-001](./001-postgresql-operational-metadata.md),
@@ -3815,7 +3836,7 @@ Gaps for future work (step 9):
 - Capture's `log_time` mapping must change to receive time, and the
   envelope `sequence_number` must be preserved (R4, R6, §29.20).
 
-### 29.15 Annotations and source-defined groupings (open, Q1)
+### 29.15 Annotations and source-defined groupings (Q1: decided by A8, §33.2)
 
 Ground-truth annotations and the nuScenes keyframe `sample` grouping are
 products of *labeling*, not acquisition facts: real robots never record
@@ -4058,9 +4079,10 @@ docs           scene-domain, data-model, external-integration-runtime,
 Open questions that block a later step:
 
 ```text
-Q1  Ground truth and keyframe groupings after the nuScenes Scene integration is removed
-    (§29.15). Blocks restoring detection evaluation (step 10/11); does not block 6–9.
-    Recommendation: a label ingress anchored to L1 message identity (§29.15).
+Q1  DECIDED by A8 (§33.2).
+    Ground truth and keyframe groupings after the nuScenes Scene integration is removed
+    (§29.15). Labels are separate lineage-bearing label sets anchored on canonical
+    observations; sample selection and synchronization are a derived SceneSampleView.
 Q2  DECIDED by A5 (§30.4).
     Canonical lidar payload representation (PointCloud2 bytes vs a declared SceneOps
     point layout, and its media_type). Blocks step 7's payload extraction; decided in step 7.
@@ -4874,4 +4896,352 @@ step 11  E2E / clean-room consolidation: scripts that reference the removed CAN 
          marked unavailable until then.
 open     automatic capture → publish hand-off; durable CaptureSession recovery; Kafka sizes beyond
          ~1 MB; a bridge QoS depth that bounds memory without silent loss.
+```
+
+
+---
+
+## 33. Amendment A8: derived L3 layer (step 10)
+
+### 33.0 Scope and result
+
+Steps 7–8 made Scenes and Episodes source-faithful. What was left of the old
+nuScenes-first architecture sat above them: workflows that read ground truth and
+keyframes *out of the canonical Scene*, a dataset index that only those workflows
+consumed, string defaults that named one source, and derived artifacts whose
+identity was a random id. A8 resolves that layer. L2 is unchanged: no Scene or
+Episode manifest, record, identity or fingerprint changes.
+
+```text
+Scene   --labels-->  LabelSet revision  --+
+Scene   --policy-->  SceneSampleView  <---+ (pins Scene revision + label revisions)
+                          |
+                    ScenarioSet revision (pins views)
+                          |
+                    detection prediction revision (pins views, ScenarioSet, config)
+                          |
+                    evaluation (pins prediction revision + label revision)
+
+Episode --policy-->  AlignedEpisode revision --> learning export (explicit config)
+```
+
+Every arrow is a pin, not a lookup (§33.1).
+
+Classification of the derived workflows audited at HEAD 72c5aab:
+
+| Workflow / code | Class | Outcome |
+|---|---|---|
+| keyframe sample projection (`scenes/keyframes.py`), `scenes/selection.py` | legacy nuScenes / sample-first | REMOVED; replaced by `SceneSampleView` (§33.3) |
+| ground truth read from `SceneManifest.annotations` by selection, curation, evaluation, mock backend | legacy | REMOVED from every consumer; labels are separate (§33.2) |
+| derived dataset index (`DatasetManifest`, `BUILD_DATASET_MANIFEST`, `BUILD_SCENE_INDEX`, `DatasetVersion.manifest_uri`) | dead after the consumers above are replaced | REMOVED |
+| ONNX "backend" copying ground truth into predictions | dead / misleading | REMOVED |
+| frustum lifting from a nuScenes `pcd.bin` payload, hard-coded `LIDAR_TOP`, `CAM_FRONT`, nuScenes category prefixes | legacy nuScenes assumption | REPLACED (§33.5) |
+| platform-wide default DatasetVersion `nuscenes` / `v1.0-mini` | legacy default | REMOVED |
+| reserved JobTypes (`COMPARE_SCENES`, `AUTO_LABEL_*`, `EXPORT_*`) and their params/results | dead, superseded by labels | REMOVED |
+| scenario mining profiles (`detection_ready`, ...) | legacy GT-from-Scene | REPLACED by explicit criteria (§33.4) |
+| `align_episode`, validation, profiling, `ExportLearningData`, `CurateEpisodes` | valid L3 primitives | KEPT; identity completed (§33.6) |
+| robot telemetry projections (`INGEST_ROBOT_STATES`, robot analytics snapshot) | valid L3 projection, naming debt | KEPT; Step 11 |
+| LeRobot adapter | export interoperability, downstream only | KEPT unchanged (§33.7) |
+| model-specific logic (GroundingDINO phrase to category mapping, DBSCAN lifting) | model-specific, stays downstream | KEPT in the inference server and backend |
+
+### 33.1 Derived revisions: pins, identity, write-once
+
+A derived manifest is an immutable *revision*:
+
+```text
+canonical bytes (§8.3 encoding)  ->  checksum  ->  write-once key  ->  ArtifactRecord
+revision identity  = checksum of its canonical bytes
+ArtifactRecord id  = sha256(canonical{prefix, logical id, checksum})[:32]   (never random)
+key                = .../manifest-<checksum hex>.json        (same bytes: no-op; other bytes: conflict)
+read               = always through the pinned checksum, parsed strictly
+```
+
+Label sets, sample views, ScenarioSets, prediction manifests and aligned episodes
+share this shape (`sceneops_core.common.derived_ids`,
+`sceneops_worker.derived`). A retry that rebuilds identical bytes registers the
+*same* ArtifactRecord (`ArtifactRecordStore.register` is idempotent for an
+identical record and fails loudly for a conflicting one); a changed input is a new
+revision, never an overwrite. A consumer resolves a pin by verifying that the
+ArtifactRecord it names exists, has the right kind and owner and carries exactly
+the pinned checksum, and that the bytes hash to it. A record written before pinning
+existed (a `scenario_sets` row or inference run with no checksum) is refused
+(`LegacyDerivedRecordError`); it is rebuilt, never guessed at.
+
+A manifest holds no storage location of itself, execution context, timestamp or
+DatasetVersion membership it did not need; where it lives is the ArtifactRecord's
+concern.
+
+### 33.2 Q1 decision: labels are separate, lineage-bearing data
+
+**Decision.** A `LabelSetManifest` (`sceneops.label_set/v1`) is its own artifact
+type:
+
+```text
+LabelSetManifest {
+  label_set_id
+  provenance { kind: human|external|model, producer, producer_version?, model_id?, model_version? }
+  coverage   [ObservationAnchor]     every anchor the set annotated, with or without objects
+  labels     [Box3DLabel { label_id, anchor, category, instance_id?, box{frame, center, size_wlh, rotation_wxyz}, attributes }]
+}
+ObservationAnchor = (robot_run_id, channel, source_clock, timestamp_ns)
+```
+
+- Labels are post-acquisition data. They are not part of RobotRun provenance and
+  never enter a Scene, an Episode or an L1 recording. `IMPORT_LABELS` validates and
+  canonicalizes an adapter-produced document and registers a revision; it reads
+  the document from the raw-source store (an external input), checks that every
+  anchored RobotRun is registered, and touches nothing canonical.
+- **Anchors** are source-semantic and stable across re-canonicalization and
+  DatasetVersions: the observation's channel (the recorded topic), its canonical
+  timestamp and that timestamp's clock. This refines the §29.15 recommendation
+  (RobotRun, topic, message occurrence index): a Scene manifest does not carry the
+  occurrence index (the payload id hashes it), whereas channel, clock and canonical
+  timestamp are in every Scene and Episode. An anchor matching more than one
+  observation of one Scene fails the build (`AmbiguousAnchorError`).
+- **Coverage** makes "annotated as empty" distinguishable from "never annotated".
+  An evaluation scores only covered samples, so a true negative is never confused
+  with a missing label.
+- **Revisions.** A label set id names a logical set; each serialized document is
+  one revision. Consumers always pin a revision, so a set can gain revisions
+  without changing what an earlier evaluation read. No mutable "current" pointer
+  exists.
+- **Provenance.** `human`, `external` and `model` are provenance, not trust
+  levels. Model-generated labels must name the model revision. Pseudo-labels from
+  a prediction revision are therefore ordinary label sets (this is why the
+  reserved `AUTO_LABEL_*` job types were removed).
+- **Adapters stay outside core.** Format knowledge (nuScenes annotation tables) lives
+  in `tools/dataset-acquisition` (`nuscenes-labels`), which emits the document shape
+  as plain JSON and imports no SceneOps package (I-36). `SceneManifest` still
+  *allows* an `annotations` array (schema unchanged, §33.11) but the recording
+  builder never emits it and no derived workflow reads it.
+
+### 33.3 SceneSampleView
+
+`SceneSampleViewManifest` (`sceneops.scene_sample_view/v1`) derives, per Scene
+revision, an explicit synchronization / association / sampling of its observations:
+
+```text
+Scene revision + SampleViewPolicy + [LabelSet revisions]  ->  SceneSampleViewManifest
+
+SampleViewPolicy {
+  anchor   { channel, stride }               sample instants: every stride-th observation of one channel
+  members  [{ channel, association: nearest|previous, tolerance_ns, required }]
+  pose     { parent_frame_id, child_frame_id, association, tolerance_ns, required }?
+}
+```
+
+- The Scene stays asynchronous. A sample is a chosen instant plus the
+  observations, pose and labels associated with it.
+- **No cross-clock association** (I-38 extended): every associated channel and pose
+  must be on the anchor channel's clock, otherwise the build fails; nothing is
+  converted, interpolated or resampled. Nearest ties go to the earlier timestamp
+  (then observation id).
+- A required member or pose that cannot be associated drops the anchor, and the
+  drop is recorded with its reason (`dropped`), never silent.
+- The view stores references and time deltas only (observation ids, pose ids, label
+  ids). Payloads, calibrations and pose values stay in the pinned Scene revision.
+- **Labels attach through the observations a sample holds.** An observation can be
+  held by several samples, so each labelled or covered observation is *owned* by the
+  sample whose anchor instant is nearest to it (earlier on a tie): a label is
+  counted once. `label_stats` accounts for covered observations, attached labels
+  and labels anchored on observations no sample holds.
+- The policy, the pinned Scene revision, the pinned label revisions and
+  `builder_semantics_version` are inside the manifest, so identical inputs rebuild
+  identical bytes. The view is DatasetVersion-scoped only through the Scene
+  revision it pins.
+- `BUILD_SCENE_SAMPLE_VIEWS` publishes one revision per Scene and reports skipped
+  Scenes (`scene_lacks_anchor_channel`, `no_samples`) with reasons.
+
+### 33.4 ScenarioSet
+
+A `ScenarioSetManifest` (`sceneops.scenario_set/v1`) is a curated, ordered
+selection over *sample views*. Each member pins a SceneSampleView revision and names
+the selected sample ids, label count, channels and Scene readiness (derived from
+validation runs of the exact pinned Scene revision). The curation parameters are
+explicit data in the manifest: the pinned label set revision, label count bounds,
+required channels, readiness values, sort and limit. Label criteria without a label
+set are rejected, never silently unfiltered, and every input view must pin the same
+revision of that label set. Mining profiles that encoded ground-truth-from-Scene
+(`detection_ready`, `dense_gt`, ...) are replaced by those explicit criteria.
+`ScenarioSetRecord` projects exactly one revision (`manifest_artifact_id`,
+`manifest_checksum`); a set id is immutable once written. The speculative
+`ScenarioRecord` / predicate / curation-config types, which had no consumer, were
+removed.
+
+### 33.5 Inference and evaluation
+
+- **Input.** `PREDICT_DETECTION` takes either a ScenarioSet (its pinned member views
+  and selected samples) or an explicit list of pinned views, never a DatasetVersion
+  scan. The DatasetVersion is scope only, and each view must belong to it. Channel
+  names are explicit parameters (`camera_channel` required; `lidar_channel`
+  optional, `None` disables lifting). Scene readiness gates run over exactly the
+  pinned Scene revisions.
+- **Output.** A run publishes a `DetectionPredictionManifest`
+  (`sceneops.detection_prediction_manifest/v1`): the explicit configuration, the
+  pinned view revisions and sample ids that ran, the ScenarioSet revision, and one
+  checksum-pinned shard per sample. A shard path includes the Scene id because a
+  sample id is unique only within its view. The revision is published write-once;
+  `InferenceRunRecord.prediction_manifest_checksum` pins it.
+- **Lidar.** A canonical `ros2_message` lidar payload is decoded by its declared
+  media type. `application/x.ros2-cdr.sensor_msgs.msg.pointcloud2` is read directly
+  from its CDR layout (honouring field offsets, endianness and `row_step`); an
+  unknown media type is a recorded failed lift, never a guess. The lifted box is
+  expressed in the associated pose's parent frame (or the calibration's ego frame
+  without a pose) and carries that `frame_id`; rotation is composed with the pose.
+- **Evaluation.** `EVALUATE_DETECTION` always pins a label set revision and resolves
+  the prediction revision (explicitly pinned, or the one the run recorded). Every
+  view the predictions came from must pin that label revision. The evaluation
+  manifest records `inputs {prediction, label_set, sample_views, scenario_set}`. A
+  predicted sample is scored only if the label set covers it; uncovered samples are
+  skipped, or fail the evaluation under `missing_gt_policy=fail`. A prediction and a
+  label in different frames fail loudly: no frame transform is applied. A prediction
+  is scored only if it is a localized 3-D box (`frame_id` present, lift not failed).
+  `categories` is an exact allowlist; nuScenes category prefixes are no longer
+  assumed.
+- The mock backend is a deterministic test double: it perturbs the labels attached to
+  a sample, seeded by run and sample. Real backends never receive labels.
+
+### 33.6 AlignedEpisode
+
+`align_episode` was already structural (v2). A8 completes its identity:
+
+- The alignment *recipe* key includes the clock the alignment ran on, together with
+  the full config hash and the semantics version
+  (`alignment_key(config, semantics_version, source_clock)`). Two results of one
+  config on two clocks no longer share a URI.
+- An aligned artifact is written write-once at its key: identical bytes are a retry,
+  different bytes are a conflict. Its ArtifactRecord id is derived from the episode
+  id and the artifact checksum, not random. Validation, profile and export records
+  are deterministic the same way.
+- The DatasetVersion scope of an aligned artifact is its Episode's (and, for
+  validation and profiling, the aligned artifact's), never a configured default.
+  Params naming a different scope are rejected.
+- `ALIGNED_EPISODE_BUILDING` (align, then validate with a quality gate, then optional
+  profile) is a pipeline; the canonical Episode is never rewritten.
+
+### 33.7 Learning export
+
+`EXPORT_LEARNING_DATA` takes explicit, revision-pinned aligned artifacts and an
+explicit `LearningDataExportConfig`; its export id is a content hash of the sorted
+aligned checksums, the config and the table schema version, and its ArtifactRecords
+are now deterministic (§33.1). LeRobot and other external formats are interoperability
+*outputs* produced by the isolated runtime from a pinned export manifest; they define
+no core type, and there is no ingest direction (A5, §30.7). No change to the LeRobot
+adapter was needed.
+
+### 33.8 Removed and changed
+
+```text
+removed   worker      scenes/keyframes.py, scenes/selection.py, scenes/indexing.py,
+                      datasets/artifacts.py (DatasetArtifactStore), BUILD_DATASET_MANIFEST,
+                      BUILD_SCENE_INDEX, ONNX backend, inference/constants.py,
+                      scenario resolver package, unused RunArtifactStore sections
+          core        DatasetManifest / DatasetSceneIndexEntry / DatasetSplit /
+                      DatasetIngestMode / DatasetManifestStatus, the dataset Protocols,
+                      DefaultDatasetSettings, constants/sensors.py (nuScenes channel names),
+                      reserved JobTypes and params/results, ScenarioRecord / predicates /
+                      curation config, ArtifactKinds scene_index and dataset_manifest,
+                      InferenceBackendType / ModelBackend ONNX_RUNTIME
+          api         POST /scenario-sets (a ScenarioSet exists only as a mined revision),
+                      ground-truth / selectability fields of scene and dataset quality,
+                      manifest_uri on DatasetVersion requests, default DatasetVersion on
+                      job and pipeline creation
+changed   db          migration e5a7c1d9b3f4: scenario_sets pins a manifest revision,
+                      inference_runs pins a prediction revision, dataset_versions.manifest_uri
+                      and *.dataset_manifest_uri dropped
+          jobs        IMPORT_LABELS, BUILD_SCENE_SAMPLE_VIEWS added; MINE_SCENARIOS,
+                      PREDICT_DETECTION, EVALUATE_DETECTION params reworked (§33.4, §33.5)
+          pipelines   ALIGNED_EPISODE_BUILDING added; SCENARIO_CURATION and
+                      DETECTION_EVALUATION re-pointed to pinned inputs
+          tooling     dataset-acquisition gains nuscenes-labels (label documents)
+```
+
+**Workflows.** Of the logical L3 workflows, `ALIGNED_EPISODE_BUILDING`,
+`SCENARIO_CURATION` and `DETECTION_EVALUATION` (inference + evaluation) are
+pipelines because they sequence several jobs with a gate or a ref hand-off. Label
+import, sample view building and learning export are single stages and stay Jobs; the
+final naming and command surface is Step 11.
+
+### 33.9 Invariants
+
+```text
+I-48  A derived manifest is an immutable revision: its identity is the checksum of its canonical
+      bytes, its key is write-once, and every consumer resolves it only through that pin. A record
+      that does not pin a revision is refused, never resolved to "the latest".
+I-49  Derived ArtifactRecord ids are deterministic functions of (logical id, checksum). A retry of
+      identical work registers the same record; a conflicting duplicate fails loudly.
+I-50  Labels never enter a Scene, an Episode or a recording, and are never part of RobotRun
+      provenance. A label references canonical observations only through an ObservationAnchor, and
+      a label set declares its coverage.
+I-51  Synchronization, nearest/previous association, sampling and label attachment live in
+      SceneSampleView, not in the Scene. Association never converts between clocks, and an
+      observation's labels are counted once.
+I-52  A ScenarioSet, a prediction manifest and an evaluation pin the exact revisions they consumed
+      (views, label set, ScenarioSet, prediction manifest). Evaluation scores only samples its label
+      set covers, and compares only values in the same frame.
+I-53  Channel names, frame names, category taxonomies and lidar layouts are explicit configuration
+      or declared payload metadata. No derived workflow carries a source's vocabulary as a default.
+I-54  The alignment recipe key covers the full config, the semantics version and the alignment
+      clock; an aligned artifact is write-once at its key.
+I-55  A DatasetVersion is never defaulted. A derived artifact's DatasetVersion scope comes from the
+      canonical unit or pinned input it derives from.
+```
+
+Backing tests: `packages/sceneops-core/tests/test_label_set.py`, `test_scene_sample_view.py`,
+`test_derived_manifests.py`, `test_alignment_execution_identity.py`;
+`apps/worker/tests/derived/` (import, sample views, curation, detection vertical),
+`apps/worker/tests/inference/detection/` (PointCloud2 decoder, frustum lifting),
+`apps/worker/tests/jobs/test_align_episode_handler.py`,
+`apps/worker/tests/episodes/test_episode_artifacts.py`;
+`tools/dataset-acquisition/tests/test_labels.py`; real PostgreSQL + MinIO:
+`apps/worker/tests/derived/test_derived_vertical_integration.py`,
+`packages/sceneops-db/tests/test_derived_run_repositories.py`.
+
+Real-data verticals (nuScenes v1.0-mini `scene-0061`, live stack, API only):
+
+```text
+make e2e-perception            exit 0. 3 Scenes (annotation count 0), 4699 labels over 39 covered
+                               samples imported as one external-provenance revision (re-import
+                               converges, Scenes unchanged), 3 views / 219 samples / 5 dropped
+                               anchors (lidar within 25 ms, pose within 5 ms), ScenarioSet with 2
+                               selected Scenes, mock backend: 9 samples, 880 predictions, 875 tp /
+                               5 fp / 170 fn against the pinned label revision, predict retry under
+                               the same run id converges on the same prediction checksum, a real
+                               lidar payload (34688 points) decodes to the source .pcd.bin points.
+                               The mock backend perturbs the labels, so the metrics prove wiring
+                               and pinning, not model quality. GroundingDINO was not run.
+make e2e-episode-alignment     exit 0. 1 canonical Episode, aligned_episode_building (98 steps)
+                               validated and profiled, Episode unchanged, same recipe on the same
+                               revision gives the same aligned artifact id and checksum, learning
+                               export (98 steps, 784 signals) reproduces the same export id and
+                               manifest record.
+```
+
+### 33.10 Sections affected
+
+§29.15 and the Q1 row of §29.21 are decided here. The step-10 row of §29.19 is
+implemented by A8 (the DatasetVersion fields `manifest_uri` removed; `required_channels`
+and DatasetVersion `metadata` stay, §33.11). The §29.16 table row for `manifest_uri` is
+implemented. §13.11 ("Scene alignment is optional and derived") is realized as
+SceneSampleView rather than as a generic `AlignedScene`; a generic `AlignedScene`
+remains a §26 option. §32.12's step-10 line is closed.
+
+### 33.11 Remaining work (not decided here)
+
+```text
+step 11   E2E / clean-room consolidation and the canonical baseline regeneration;
+          final workflow naming and command surface; the e2e scripts still marked
+          unavailable (episode building / curation, robot learning, canonical bootstrap).
+deferred  SceneManifest v1 still *allows* an `annotations` array and SceneRecord carries
+          annotation_count / keyframe_count. They are L2 schema; removing them is a
+          Scene manifest version bump, deliberately not done here (L2 stays frozen) and
+          best done with the step-11 baseline regeneration. Nothing derived reads them.
+          DatasetVersion.required_channels and DatasetVersion/Dataset metadata; the
+          dataset-level workflow configuration they carry belongs with step 11.
+          Robot telemetry projection naming (`datasets/ingestion/rosbag_raw_log.py`,
+          `raw_source` settings named after nuScenes).
+          Pose interpolation in SceneSampleView (nearest / previous only), cross-frame
+          transforms in evaluation, and label sets for Episodes (no consumer yet).
+          Unused `onnx` / `onnxruntime` dependencies of the worker (uv.lock is not
+          touched here).
 ```

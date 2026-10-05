@@ -58,7 +58,6 @@ def _scene_version_summary_from_model(
         observation_count=model.observation_count,
         observed_channels=model.observed_channels or [],
         required_channels=model.required_channels or [],
-        manifest_uri=model.manifest_uri,
     )
     return None if summary.is_unset() else summary
 
@@ -77,7 +76,6 @@ def _scene_summary_to_values(summary: SceneVersionSummary) -> dict[str, Any]:
         "observation_count": summary.observation_count,
         "observed_channels": summary.observed_channels,
         "required_channels": summary.required_channels,
-        "manifest_uri": summary.manifest_uri,
     }
 
 

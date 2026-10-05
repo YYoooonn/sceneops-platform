@@ -188,15 +188,18 @@ revision is validated. See [Quality and run records](./quality-and-runs.md)
 
 Everything downstream of registration reads canonical Scenes through a pin:
 
-- `BUILD_SCENE_INDEX` / `BUILD_DATASET_MANIFEST` derive index entries from
-  SceneRecords; each entry pins `manifest_artifact_id`, `manifest_checksum`
-  and the manifest URI. They do not write DatasetVersion summary counts.
-- Detection projects source keyframes into samples
-  (`sceneops_worker.scenes.keyframes`), reading each Scene at the revision
-  the dataset manifest pins and verifying its checksum, and locates the
-  payloads it reads through their ArtifactRecords. It refuses to run over a
-  pinned revision whose validation blocked downstream use.
-- Scenario mining filters on current-revision readiness.
+- `BUILD_SCENE_SAMPLE_VIEWS` derives a `SceneSampleView` from one pinned
+  Scene revision and an explicit policy (anchor channel, nearest / previous
+  association with tolerances, ego pose, label revisions). The Scene stays
+  asynchronous; synchronization exists only in the view. Each view pins the
+  Scene `manifest_artifact_id` / `manifest_checksum`. `IMPORT_LABELS`
+  produces independent label set revisions anchored on canonical
+  observations; labels are never written into a Scene.
+- Scenario mining, detection and evaluation consume sample views and label
+  sets through checksum-verified pins (`sceneops_worker.derived`), locate
+  payloads through their ArtifactRecords, and refuse a view whose Scene
+  revision blocked downstream use. See
+  [Derived layer](./derived-layer.md).
 - `EXPORT_ANALYTICS_SNAPSHOT` writes `scenes`, `observations`, `keyframes`
   and `annotations` tables from verified current revisions. Every timestamp
   column is paired with its `source_clock`; observations carry

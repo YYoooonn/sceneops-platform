@@ -1,7 +1,7 @@
 """Artifact writers for detection evaluation runs.
 
 These functions are evaluator-algorithm-agnostic. Any evaluator that produces
-an EvaluationAccumulator and a DetectionPredictionManifest can use them.
+an EvaluationAccumulator and a DetectionEvaluationRequest can use them.
 """
 
 from __future__ import annotations
@@ -10,22 +10,28 @@ from typing import Any
 
 from sceneops_core.common.time import utc_now
 from sceneops_core.evaluations.schemas.manifests import DetectionEvaluationManifest
-from sceneops_core.inference.schemas.manifests import DetectionPredictionManifest
 from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.base import DetectionEvaluationRequest
 from sceneops_worker.runs import RunArtifactStore
+
+
+def _model_identity(request: DetectionEvaluationRequest) -> tuple[Any, Any]:
+    config = request.prediction.config
+    return config.get("model_id"), config.get("model_version")
 
 
 async def write_sample_evaluation(
     *,
     run_artifact_store: RunArtifactStore,
     evaluation_run_id: str,
+    scene_id: str,
     sample_id: str,
     sample_eval: dict[str, Any],
 ) -> None:
     """Persist one sample's evaluation result to the artifact store."""
     await run_artifact_store.write_sample_evaluation_manifest(
         evaluation_run_id=evaluation_run_id,
+        scene_id=scene_id,
         sample_id=sample_id,
         manifest=sample_eval,
     )
@@ -34,21 +40,22 @@ async def write_sample_evaluation(
 async def write_skipped_evaluation_manifest(
     *,
     request: DetectionEvaluationRequest,
-    prediction_manifest: DetectionPredictionManifest,
     reason: str,
     metadata: dict[str, Any] | None = None,
 ) -> DetectionEvaluationManifest:
     evaluation_manifest_uri = request.run_artifact_store.evaluation_run_manifest_uri(
         request.evaluation_run_id
     )
+    model_id, model_version = _model_identity(request)
 
     evaluation_manifest = DetectionEvaluationManifest(
         evaluation_run_id=request.evaluation_run_id,
         inference_run_id=request.inference_run_id,
-        dataset_id=request.dataset_manifest.dataset_id,
-        dataset_version=request.dataset_manifest.dataset_version,
-        model_id=prediction_manifest.model_id,
-        model_version=prediction_manifest.model_version,
+        dataset_id=request.dataset_id,
+        dataset_version=request.dataset_version,
+        model_id=model_id,
+        model_version=model_version,
+        inputs=request.inputs,
         status="skipped",
         match_distance_m=request.match_distance_m,
         evaluation_manifest_uri=evaluation_manifest_uri,
@@ -67,10 +74,9 @@ async def write_skipped_evaluation_manifest(
 async def write_final_evaluation_manifest(
     *,
     request: DetectionEvaluationRequest,
-    prediction_manifest: DetectionPredictionManifest,
     accumulator: EvaluationAccumulator,
     evaluated_sample_count: int,
-    evaluation_unit: str = "annotation",
+    evaluation_unit: str = "label",
     metadata: dict[str, Any] | None = None,
 ) -> DetectionEvaluationManifest:
     """Assemble and persist the run-level DetectionEvaluationManifest.
@@ -91,14 +97,16 @@ async def write_final_evaluation_manifest(
     samples_root_uri = request.run_artifact_store.evaluation_samples_root_uri(
         request.evaluation_run_id
     )
+    model_id, model_version = _model_identity(request)
 
     evaluation_manifest = DetectionEvaluationManifest(
         evaluation_run_id=request.evaluation_run_id,
         inference_run_id=request.inference_run_id,
-        dataset_id=request.dataset_manifest.dataset_id,
-        dataset_version=request.dataset_manifest.dataset_version,
-        model_id=prediction_manifest.model_id,
-        model_version=prediction_manifest.model_version,
+        dataset_id=request.dataset_id,
+        dataset_version=request.dataset_version,
+        model_id=model_id,
+        model_version=model_version,
+        inputs=request.inputs,
         status="succeeded",
         match_distance_m=request.match_distance_m,
         sample_count=evaluated_sample_count,

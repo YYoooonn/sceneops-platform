@@ -30,6 +30,7 @@ class ArtifactSettings(StorageSettings):
     analytics_prefix: str = "analytical"
     robot_run_prefix: str = "robot_runs"
     observation_payload_prefix: str = "observation_payloads"
+    label_prefix: str = "labels"
 
     # Unused legacy fields — kept for backward compatibility only.
     bucket: str | None = None
@@ -52,6 +53,10 @@ class ArtifactSettings(StorageSettings):
         return join_uri(self.root_uri, self.observation_payload_prefix)
 
     @property
+    def label_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.label_prefix)
+
+    @property
     def model_root_uri(self) -> str:
         return join_uri(self.root_uri, self.model_prefix)
 
@@ -71,11 +76,6 @@ class RawSourceSettings(StorageSettings):
     """
 
     root_uri: str = "/data/raw/nuscenes"
-
-
-class DefaultDatasetSettings(BaseModel):
-    dataset_id: str = "nuscenes"
-    dataset_version: str = "v1.0-mini"
 
 
 class WorkerRuntimeSettings(BaseModel):

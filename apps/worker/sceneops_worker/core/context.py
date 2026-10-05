@@ -8,7 +8,7 @@ from sceneops_analytics import AnalyticsTableWriter
 from sceneops_storage import ArtifactStore
 
 from sceneops_worker.config import WorkerSettings
-from sceneops_worker.datasets.artifacts import DatasetArtifactStore
+from sceneops_worker.derived import DerivedManifestStore
 from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
@@ -45,7 +45,7 @@ class WorkerContext:
 
     artifact_store: ArtifactStore
     raw_source_store: ArtifactStore
-    dataset_artifact_store: DatasetArtifactStore
+    derived_store: DerivedManifestStore
     scene_artifact_store: SceneArtifactStore
     episode_artifact_store: EpisodeArtifactStore
     run_artifact_store: RunArtifactStore
@@ -64,9 +64,6 @@ class WorkerContext:
     artifact_record_store: ArtifactRecordStore
 
     runs: RunStores
-
-    default_dataset_id: str
-    default_dataset_version: str
 
     async def commit(self) -> None:
         await self.session.commit()

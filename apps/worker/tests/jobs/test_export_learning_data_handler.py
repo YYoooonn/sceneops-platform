@@ -102,8 +102,6 @@ def _make_context(
     bytes_by_uri: dict[str, bytes | None],
 ) -> MagicMock:
     context = MagicMock()
-    context.default_dataset_id = "d1"
-    context.default_dataset_version = "v1"
 
     async def _get(artifact_id: str):
         return records_by_artifact_id.get(artifact_id)
@@ -156,7 +154,7 @@ def _make_context(
     )
     context._write_calls = write_calls
 
-    context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock()
     context.commit = AsyncMock()
     return context
 
@@ -237,10 +235,10 @@ class TestSuccessfulExport:
             "manifest",
         }
         # 1 episodes table record + 1 steps shard + 1 signals shard + 1 manifest
-        assert context.artifact_record_store.create.await_count == 4
+        assert context.artifact_record_store.register.await_count == 4
         create_kinds = {
             call.kwargs["ref"].kind
-            for call in context.artifact_record_store.create.await_args_list
+            for call in context.artifact_record_store.register.await_args_list
         }
         assert create_kinds == {
             ArtifactKind.ANALYTICS_TABLE,
@@ -248,7 +246,7 @@ class TestSuccessfulExport:
         }
         owner_ids = {
             call.kwargs["owner_id"]
-            for call in context.artifact_record_store.create.await_args_list
+            for call in context.artifact_record_store.register.await_args_list
         }
         assert owner_ids == {"d1:v1"}
         context.commit.assert_awaited_once()
@@ -275,7 +273,7 @@ class TestSuccessfulExport:
         assert result.table_uris == {}
         assert result.shard_counts == {"learning_steps": 1}
         # 1 shard record + 1 manifest record
-        assert context.artifact_record_store.create.await_count == 2
+        assert context.artifact_record_store.register.await_count == 2
 
 
 class TestArtifactNotFound:
@@ -289,7 +287,7 @@ class TestArtifactNotFound:
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
         context.analytics_writer.write_learning_table_shard.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
 
 
@@ -331,7 +329,7 @@ class TestChecksumMismatchBlocksWholeExport:
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
         context.analytics_writer.write_learning_table_shard.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
 
 
@@ -373,5 +371,5 @@ class TestStructuralValidationFailureBlocksWholeExport:
 
         context.analytics_writer.write_learning_table.assert_not_awaited()
         context.analytics_writer.write_learning_table_shard.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()

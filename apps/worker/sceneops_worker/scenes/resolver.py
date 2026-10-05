@@ -67,9 +67,32 @@ async def resolve_registered_scene(
     return ResolvedScene(record=record, manifest_artifact=artifact, manifest=manifest)
 
 
+# Upper bound of SceneRecords one derived workflow lists at once; a
+# DatasetVersion with more members fails loudly instead of being processed
+# partially.
+MAX_LISTED_SCENES = 10_000
+
+
+async def list_dataset_version_scenes(
+    context: WorkerContext, *, dataset_id: str, dataset_version: str
+) -> list[SceneRecord]:
+    scenes = await context.scene_store.list(
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
+        limit=MAX_LISTED_SCENES + 1,
+    )
+    if len(scenes) > MAX_LISTED_SCENES:
+        raise ValueError(
+            f"{dataset_id}/{dataset_version} has more than {MAX_LISTED_SCENES} "
+            "registered Scenes; derived workflows do not page yet"
+        )
+    return scenes
+
+
 __all__ = [
     "InconsistentSceneStateError",
     "ResolvedScene",
     "SceneNotRegisteredError",
+    "list_dataset_version_scenes",
     "resolve_registered_scene",
 ]

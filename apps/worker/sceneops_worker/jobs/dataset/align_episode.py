@@ -5,7 +5,7 @@ import hashlib
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
+from sceneops_core.common.derived_ids import aligned_episode_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.alignment import (
     AlignedEpisodeArtifact,
@@ -77,12 +77,21 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
         context = request.context
         job = request.job
 
-        dataset_id = params.dataset_id or context.default_dataset_id
-        dataset_version = params.dataset_version or context.default_dataset_version
-
         episode_record = await context.episode_store.get(params.episode_id)
         if episode_record is None:
             raise ValueError(f"Episode not found: {params.episode_id}")
+        # An Episode belongs to exactly one DatasetVersion: that is the scope,
+        # never a configured default.
+        dataset_id = episode_record.dataset_id
+        dataset_version = episode_record.dataset_version
+        if (params.dataset_id, params.dataset_version) not in (
+            (None, None),
+            (dataset_id, dataset_version),
+        ):
+            raise ValueError(
+                f"Episode {params.episode_id} belongs to {dataset_id}:"
+                f"{dataset_version}, not {params.dataset_id}:{params.dataset_version}"
+            )
 
         source_artifact_id, source_uri, source_checksum = await self._resolve_source(
             context=context, params=params, episode_record=episode_record
@@ -123,7 +132,9 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
 
         config_hash = alignment_config_hash(params.alignment_config)
         key = alignment_key(
-            params.alignment_config, aligned.alignment_semantics_version
+            params.alignment_config,
+            aligned.alignment_semantics_version,
+            aligned.source_clock,
         )
 
         write_result = await context.episode_artifact_store.write_aligned_episode(
@@ -135,8 +146,10 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
             artifact=artifact,
         )
 
-        aligned_artifact_id = generate_artifact_id()
-        await context.artifact_record_store.create(
+        aligned_artifact_id = aligned_episode_artifact_id(
+            episode_id=params.episode_id, checksum=write_result.checksum
+        )
+        await context.artifact_record_store.register(
             artifact_id=aligned_artifact_id,
             ref=ArtifactRef(
                 kind=ArtifactKind.ALIGNED_EPISODE_MANIFEST,
@@ -150,6 +163,7 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
                     "source_manifest_sha256": computed_sha256,
                     "alignment_config_hash": config_hash,
                     "alignment_semantics_version": aligned.alignment_semantics_version,
+                    "source_clock": aligned.source_clock,
                 },
             ),
             owner_type=ArtifactOwnerType.EPISODE,

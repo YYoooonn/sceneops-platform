@@ -111,7 +111,7 @@ class TestPipelineSummary:
             _task_run(
                 "t3",
                 2,
-                JobType.BUILD_SCENE_INDEX,
+                JobType.PROFILE_SCENE,
                 PipelineTaskRunStatus.FAILED,
                 _task_result("t3"),
             ),
@@ -175,7 +175,7 @@ class TestPipelineSummary:
             _task_run(
                 "t1",
                 0,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t1",
                     refs={"dataset_manifest_uri": "s3://bucket/manifest.json"},
@@ -213,7 +213,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t1",
                 0,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t1",
                     refs={"dataset_manifest_uri": "s3://bucket/manifest.json"},
@@ -255,7 +255,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t2",
                 1,
-                JobType.BUILD_SCENE_INDEX,
+                JobType.PROFILE_SCENE,
                 result=_task_result(
                     "t2",
                     refs={"scene_manifest_uris": ["s3://later"]},
@@ -279,7 +279,7 @@ class TestPipelineOutputs:
             _task_run(
                 "t2",
                 1,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t2",
                     refs={"dataset_manifest_uri": "s3://manifest.json"},
@@ -374,7 +374,7 @@ class TestPipelineMetrics:
             _task_run(
                 "t1",
                 0,
-                JobType.BUILD_DATASET_MANIFEST,
+                JobType.EXPORT_ANALYTICS_SNAPSHOT,
                 result=_task_result(
                     "t1",
                     refs={"dataset_manifest_uri": "s3://manifest.json"},
@@ -510,7 +510,7 @@ class TestTaskPreservation:
         assert t.raw_result["status"] == "ready"
 
     def test_task_without_result_gets_placeholder(self) -> None:
-        tr = _task_run("t1", 0, JobType.BUILD_DATASET_MANIFEST)
+        tr = _task_run("t1", 0, JobType.EXPORT_ANALYTICS_SNAPSHOT)
         tr.job_id = "job-abc"
         result = self._build([tr])
         assert len(result.tasks) == 1

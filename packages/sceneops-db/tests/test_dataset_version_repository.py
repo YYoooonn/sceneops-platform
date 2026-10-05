@@ -131,13 +131,11 @@ async def test_scene_inputs_partial_update_never_touches_membership_summary(
     await repo.update_scene_inputs(
         dataset_id=dataset_id, version=version, required_channels=["CAM_FRONT"]
     )
-    await repo.update_scene_inputs(
-        dataset_id=dataset_id, version=version, manifest_uri="s3://b/dataset.json"
-    )
+    # An update that names nothing leaves the stored inputs untouched.
+    await repo.update_scene_inputs(dataset_id=dataset_id, version=version)
 
     result = await repo.get(dataset_id=dataset_id, version=version)
     assert result.scene.required_channels == ["CAM_FRONT"]
-    assert result.scene.manifest_uri == "s3://b/dataset.json"
     assert (result.scene.scene_count, result.scene.observation_count) == (10, 400)
 
 

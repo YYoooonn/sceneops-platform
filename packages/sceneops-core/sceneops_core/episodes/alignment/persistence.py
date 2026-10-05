@@ -53,21 +53,38 @@ class AlignedEpisodeArtifact(SceneOpsBaseModel):
 
 
 def alignment_key(
-    config: TemporalAlignmentConfig, alignment_semantics_version: str
+    config: TemporalAlignmentConfig,
+    alignment_semantics_version: str,
+    source_clock: str,
 ) -> str:
-    """Combines alignment config identity + semantics version into one
-    deterministic, source-independent identity (SceneOps V2 Request 2.3
-    §14). Deliberately excludes source content -- the same alignment
-    "recipe" (config + semantics) maps to the same key across different
-    episodes and different source revisions, which is exactly what the
-    aligned-artifact URI's two path segments (source hash, then this key)
-    need to represent independently (Request 2.3 §14)."""
+    """Deterministic, source-independent identity of one alignment *recipe*:
+    the full config, the algorithm's semantics version and the clock the
+    alignment ran on (ADR-007 §33.6).
+
+    Every input that changes an AlignedEpisode's bytes participates. The
+    clock is part of the recipe because the same config aligned on another
+    clock is a different result; without it two such results would collide
+    on one key. Source content is deliberately excluded: the same recipe
+    maps to the same key across episodes and source revisions, which is
+    what the aligned-artifact URI's two path segments (source hash, then
+    this key) represent independently (SceneOps V2 Request 2.3 §14)."""
     payload = json.dumps(
         {
             "alignment_config_hash": alignment_config_hash(config),
             "alignment_semantics_version": alignment_semantics_version,
+            "source_clock": source_clock,
         },
         sort_keys=True,
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def aligned_episode_alignment_key(aligned: AlignedEpisode) -> str:
+    """The recipe key an AlignedEpisode was produced by, recomputed from the
+    result itself so readers never have to be told it."""
+    return alignment_key(
+        aligned.alignment_config,
+        aligned.alignment_semantics_version,
+        aligned.source_clock,
+    )

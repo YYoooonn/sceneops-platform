@@ -6,43 +6,22 @@ cleanup pass, and (2) give a single, verified list of what the platform
 currently does not do. Everything here was confirmed against the code as of
 Stabilization Requests 1–5 — not aspirational.
 
-## 1. Reserved JobTypes
+## 1. Pipeline-less JobTypes
 
-Five `JobType` values have no registered handler in
-`create_default_job_handler_registry()`:
+Every `JobType` has a registered handler
+(`apps/worker/tests/jobs/test_job_registry.py` locks this in). Some are
+intentionally absent from every pipeline definition and are dispatched as
+standalone Jobs:
 
-```text
-COMPARE_SCENES, AUTO_LABEL_SCENE, EXPORT_SCENE_PACKAGE   # scene-level
-AUTO_LABEL_DATASET, EXPORT_DATASET                        # dataset-version-level
-```
+- `INGEST_ROBOT_STATES`, `EXPORT_ROBOT_ANALYTICS_SNAPSHOT`,
+  `REGISTER_ROBOT_RUN` — robot runtime, separate from Dataset/DatasetVersion
+  (see [Jobs and pipelines](./jobs-and-pipelines.md) §2);
+- `IMPORT_LABELS`, `BUILD_SCENE_SAMPLE_VIEWS`, `EXPORT_LEARNING_DATA` —
+  single-stage derived workflows (see [Derived layer](./derived-layer.md));
+- `CURATE_EPISODES` — see [Robot learning data layer](./robot-learning-data.md) §8.
 
-Each is retained specifically because it has a matching, otherwise-unused
-`ArtifactOwnerType` or `ArtifactKind` reservation already defined
-(`SCENE_COMPARISON_RUN`/`SCENE_AUTO_LABEL_RUN`/`SCENE_EXPORT_RUN` +
-`SCENE_PACKAGE`; `DATASET_AUTO_LABEL_RUN`/`DATASET_EXPORT_RUN`) — concrete
-evidence of a deliberate reservation, not accidental drift. This is the
-standard applied during Stabilization Request 5's cleanup: a sixth
-handler-less `JobType`, `CHECK_DISTRIBUTION`, had no such matching evidence
-and was removed entirely, along with its now-orphaned
-`ArtifactOwnerType.DATASET_DISTRIBUTION_RUN`/`ArtifactKind.DISTRIBUTION_REPORT`.
-`apps/worker/tests/jobs/test_job_registry.py`'s
-`test_orphan_job_types_are_exactly_the_documented_reservations` locks this
-exact set in — if it starts failing because a *new* orphan appeared, that's
-a real regression, not a reason to widen the set.
-
-Two other handler-registered JobTypes, `INGEST_ROBOT_STATES` and
-`EXPORT_ROBOT_ANALYTICS_SNAPSHOT`, are intentionally absent from every
-pipeline definition — they're dispatched as standalone Jobs, not through a
-pipeline (see [Jobs and pipelines](./jobs-and-pipelines.md) §2). This is
-different from the reservation above: these two are fully implemented,
-just pipeline-less by design.
-
-The five Phase 2 robot-learning-data JobTypes (`ALIGN_EPISODE`,
-`VALIDATE_ALIGNED_EPISODE`, `PROFILE_ALIGNED_EPISODE`,
-`EXPORT_LEARNING_DATA`, `CURATE_EPISODES`) follow the same pattern — fully
-implemented, handler-registered, but not wired into
-`RECORDING_EPISODE_BUILDING_PIPELINE` or any other pipeline. See
-[Robot learning data layer](./robot-learning-data.md) §8.
+Scene comparison, auto-labeling, scene package export and dataset export have
+no JobType; auto-labels would be ordinary label sets with `model` provenance.
 
 ## 2. Scenes from recordings only
 
@@ -56,19 +35,16 @@ the v1 builder:
 - calibration must be constant for the whole recording, relative to the
   ego frame, and representable (no distortion, identity rectification);
 - segmentation is `fixed_duration` only;
-- recording-derived Scenes carry no annotations or keyframe groups. Ground
-  truth needs a label ingress that does not exist yet (ADR-007 Q1), so the
-  keyframe-based detection, evaluation and ground-truth scenario workflows
-  have no input on recording Scenes;
+- recording-derived Scenes carry no annotations or keyframe groups; labels
+  are separate label sets and synchronization lives in sample views
+  ([Derived layer](./derived-layer.md));
 - the recording is materialized in memory by `resolve_recording` (whole
   bytes, no streaming read); measured with one nuScenes mini scene
   (~356 MB MCAP) only.
 
-Detection locates payloads through their ArtifactRecords; frustum lifting can
-only read `file://` payload locations and decodes lidar only in the
-`application/x.nuscenes.lidar-pcd-bin` format, and the camera / lidar
-channels it uses (`CAM_FRONT`, `LIDAR_TOP`) are still one source's
-vocabulary in workflow defaults.
+Detection locates payloads through their ArtifactRecords and decodes lidar
+by declared media type; only `PointCloud2` CDR is supported. Frustum lifting
+reads payloads through the ArtifactStore.
 
 ## 2a. Episodes from recordings only
 
@@ -83,16 +59,17 @@ the v1 builder:
 - segmentation is `whole_recording`, `fixed_duration` or `event_markers`; an
   unterminated task (start marker without end marker) fails the build;
 - canonical Episodes carry no outcome, success label, reward or language
-  instruction; `AlignedEpisode.task` / `outcome` stay empty until a label
-  import exists (ADR-007 Q1);
+  instruction; `AlignedEpisode.task` / `outcome` stay empty because label
+  sets are defined for Scene observations only;
 - the robot telemetry projection (`ingest_robot_states`, `RosbagAdapter`)
   still reads its own fixed topic set and `RobotStateRecord` columns
   (`steering` / `throttle` / `brake`, ...) — a derived table, not canonical
   Episode data;
-- the learning chain on canonical Episodes (`e2e-robot-learning`,
+- the older learning-chain scripts (`e2e-robot-learning`,
   `e2e-episode-building`, `e2e-episode-curation`, `e2e-robot-run-learning`)
-  is unavailable until the step-11 consolidation; those commands exit 3.
-  `make e2e-recording-episode` is the Episode vertical.
+  are unavailable until the step-11 consolidation; those commands exit 3.
+  `make e2e-recording-episode` is the Episode vertical and
+  `make e2e-episode-alignment` the aligned / export vertical.
 
 ## 3. `DatasetVersionStatus`: intentionally minimal
 
@@ -125,20 +102,18 @@ presence doesn't imply an export or deprecation workflow exists.
 - GroundingDINO evaluation results are integration signals, not production
   model benchmarks.
 - Scenario curation is implemented but still `experimental=True`; scenario
-  candidates are artifact-backed only (§1 of
-  [Quality and run records](./quality-and-runs.md) — no per-scenario DB
-  row), and readiness scoring uses metadata/scene-quality signals, not
-  image/LiDAR content.
-- The reserved JobTypes in §1 (scene comparison, auto-labeling, scene
-  package export, dataset auto-labeling, dataset export) are defined but
-  not implemented.
+  members are manifest-backed only (no per-scenario DB row), and readiness
+  scoring uses label counts, channels and Scene readiness, not image/LiDAR
+  content.
+- Sample views associate by nearest / previous only (no pose interpolation);
+  evaluation applies no frame transform. See [Derived layer](./derived-layer.md) §7.
+- Scene comparison, auto-labeling, scene package export and dataset export
+  are not implemented.
 - Operations and leaderboard APIs exist; there's no dedicated web UI.
 - The Airflow pipeline backend is a per-task DAG proof of concept
   hardcoded to `recording_scene_building` — every other pipeline type,
   including `recording_episode_building`, only runs through Celery.
-- Episode still has no `DatasetManifest`-equivalent aggregate index, and
-  `export_analytics_snapshot` still covers Scene only — but as of Phase 2,
-  aligned Episode revisions do get their own Parquet export
+- `export_analytics_snapshot` covers Scene only; aligned Episode revisions have their own Parquet export
   (`EXPORT_LEARNING_DATA` -> `learning_episodes/steps/signals.parquet`,
   scoped by `(dataset_id, dataset_version, export_id)`, not by
   `export_analytics_snapshot`) and their own selectable-by-quality concept

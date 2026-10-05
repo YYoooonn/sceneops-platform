@@ -55,14 +55,12 @@ class TestBuildDatasetRefWithSceneSummary:
                 observation_count=20,
                 observed_channels=["CAM_FRONT"],
                 required_channels=["CAM_FRONT"],
-                manifest_uri="s3://bucket/manifest.json",
             ),
         )
         resolver = _resolver_with_version(version)
 
         ref = await resolver._build_dataset_ref(_pipeline_run())
 
-        assert ref.manifest_uri == "s3://bucket/manifest.json"
         assert ref.required_channels == ["CAM_FRONT"]
         # No readiness / quality cache: it is derived per Scene revision.
         assert ref.refs == {}
@@ -90,7 +88,6 @@ class TestBuildDatasetRefEpisodeOnly:
 
         assert ref.dataset_id == "d2"
         assert ref.dataset_version == "v1"
-        assert ref.manifest_uri is None
         assert ref.required_channels == []
         assert ref.refs == {}
         assert ref.summary == {}

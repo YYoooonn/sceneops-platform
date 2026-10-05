@@ -1,8 +1,6 @@
 from .align_episode import AlignEpisodeJobHandler
-from .build_dataset_manifest import BuildDatasetManifestJobHandler
 from .build_recording_episodes import BuildRecordingEpisodesJobHandler
 from .build_recording_scenes import BuildRecordingScenesJobHandler
-from .build_scene_index import BuildSceneIndexJobHandler
 from .curate_episodes import CurateEpisodesJobHandler
 from .export_analytics_snapshot import ExportAnalyticsSnapshotJobHandler
 from .export_learning_data import ExportLearningDataJobHandler
@@ -21,8 +19,6 @@ __all__ = [
     "RegisterScenesJobHandler",
     "ValidateSceneJobHandler",
     "ProfileSceneJobHandler",
-    "BuildDatasetManifestJobHandler",
-    "BuildSceneIndexJobHandler",
     "ExportAnalyticsSnapshotJobHandler",
     "BuildRecordingEpisodesJobHandler",
     "RegisterEpisodesJobHandler",

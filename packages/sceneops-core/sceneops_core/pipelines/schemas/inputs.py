@@ -22,7 +22,6 @@ class DatasetInputRef(SceneOpsBaseModel):
 
     dataset_id: str | None = None
     dataset_version: str | None = None
-    manifest_uri: str | None = None
 
     # Declared required channels from DatasetVersionRecord.
     # Propagated by PipelineInputResolver into job handlers for sampling and validation.
@@ -115,8 +114,6 @@ class PipelineTaskInputs(SceneOpsBaseModel):
                 out["dataset_id"] = self.dataset.dataset_id
             if self.dataset.dataset_version is not None:
                 out["dataset_version"] = self.dataset.dataset_version
-            if self.dataset.manifest_uri is not None:
-                out["dataset_manifest_uri"] = self.dataset.manifest_uri
             for k, v in self.dataset.refs.items():
                 if v is not None:
                     out[k] = v

@@ -59,7 +59,6 @@ class DatasetVersionRepository(Protocol):
         dataset_id: str,
         version: str,
         required_channels: list[str] | None = None,
-        manifest_uri: str | None = None,
     ) -> DatasetVersionRecord: ...
 
     async def update_episode_summary(

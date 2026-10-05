@@ -7,7 +7,7 @@ from sceneops_storage import ArtifactStore, create_artifact_store
 
 from sceneops_worker.config import WorkerSettings, get_settings
 from sceneops_worker.core.context import RunStores, WorkerContext
-from sceneops_worker.datasets.artifacts import DatasetArtifactStore
+from sceneops_worker.derived import DerivedManifestStore
 from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
 from sceneops_worker.runs.artifacts import RunArtifactStore
 from sceneops_worker.scenes.artifacts import SceneArtifactStore
@@ -63,9 +63,11 @@ def create_worker_context(
         session=session,
         artifact_store=artifact_store,
         raw_source_store=raw_source_store,
-        dataset_artifact_store=DatasetArtifactStore(
+        derived_store=DerivedManifestStore(
             artifact_store=artifact_store,
             dataset_root_uri=settings.dataset_root_uri,
+            runs_root_uri=settings.run_root_uri,
+            label_root_uri=settings.label_root_uri,
         ),
         scene_artifact_store=SceneArtifactStore(
             artifact_store=artifact_store,
@@ -101,6 +103,4 @@ def create_worker_context(
             scene_runs=SceneRunStore(session),
             episode_runs=EpisodeRunStore(session),
         ),
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
     )

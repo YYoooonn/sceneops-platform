@@ -25,13 +25,16 @@ class InferenceRunModel(Base):
     model_id: Mapped[str] = mapped_column(String(128), nullable=False)
     model_version: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    dataset_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     inference_backend: Mapped[str] = mapped_column(
         String(64), nullable=False, server_default="mock"
     )
 
     predictions_root_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     prediction_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Pins the published prediction manifest revision (ADR-007 §33.5).
+    prediction_manifest_checksum: Mapped[str | None] = mapped_column(
+        String(80), nullable=True
+    )
 
     sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     prediction_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

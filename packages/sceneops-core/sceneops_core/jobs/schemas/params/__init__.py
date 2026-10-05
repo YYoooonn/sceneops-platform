@@ -1,24 +1,16 @@
 from .base import BaseJobParams
 from .dataset import (
-    AutoLabelDatasetJobParams,
-    CheckDistributionJobParams,
     ExportAnalyticsSnapshotJobParams,
-    ExportDatasetJobParams,
 )
 from .detection import (
     EvaluateDetectionJobParams,
     PredictDetectionJobParams,
     MissingGroundTruthPolicy,
-    DetectionSceneSelectionConfig,
-    DetectionSceneSelectionMode,
 )
+from .labels import ImportLabelsJobParams
+from .sample_views import BuildSceneSampleViewsJobParams
 from .scene import (
-    AutoLabelSceneJobParams,
-    BuildDatasetManifestJobParams,
-    BuildSceneIndexJobParams,
     BuildRecordingScenesJobParams,
-    CompareScenesJobParams,
-    ExportScenePackageJobParams,
     ProfileSceneJobParams,
     RegisterScenesJobParams,
     SceneKeyframeValidationConfig,
@@ -45,6 +37,8 @@ from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
 
 __all__ = [
     "BaseJobParams",
+    "ImportLabelsJobParams",
+    "BuildSceneSampleViewsJobParams",
     "RegisterRobotRunJobParams",
     "IngestRobotStatesJobParams",
     "ExportRobotAnalyticsSnapshotJobParams",
@@ -58,24 +52,14 @@ __all__ = [
     "ExportLearningDataJobParams",
     "LearningDataExportInputParams",
     "CurateEpisodesJobParams",
-    "DetectionSceneSelectionConfig",
-    "DetectionSceneSelectionMode",
     "BuildRecordingScenesJobParams",
-    "BuildDatasetManifestJobParams",
     "MissingGroundTruthPolicy",
-    "BuildSceneIndexJobParams",
     "ValidateSceneJobParams",
     "ProfileSceneJobParams",
     "RegisterScenesJobParams",
     "SceneKeyframeValidationConfig",
-    "CompareScenesJobParams",
-    "AutoLabelSceneJobParams",
-    "ExportScenePackageJobParams",
     "MineScenariosJobParams",
     "ScoreScenarioReadinessJobParams",
-    "AutoLabelDatasetJobParams",
-    "CheckDistributionJobParams",
-    "ExportDatasetJobParams",
     "ExportAnalyticsSnapshotJobParams",
     "PredictDetectionJobParams",
     "EvaluateDetectionJobParams",

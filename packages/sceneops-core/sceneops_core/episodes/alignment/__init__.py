@@ -33,6 +33,7 @@ from .persistence import (
     ALIGNED_EPISODE_ARTIFACT_SCHEMA_VERSION,
     AlignedEpisodeArtifact,
     EpisodeSourceRevision,
+    aligned_episode_alignment_key,
     alignment_key,
 )
 from .profiling import (
@@ -90,6 +91,7 @@ __all__ = [
     "alignment_samples",
     "field_channel",
     "alignment_config_hash",
+    "aligned_episode_alignment_key",
     "alignment_key",
     "canonical_config_dict",
     "canonicalize_samples",

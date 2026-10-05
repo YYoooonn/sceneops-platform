@@ -47,8 +47,6 @@ def get_robot_run_registration_service(
             repository=PostgresJobRepository(session),
             event_repository=PostgresJobEventRepository(session),
             artifact_repository=PostgresArtifactRefRepository(session),
-            default_dataset_id=settings.default_dataset_id,
-            default_dataset_version=settings.default_dataset_version,
         )
 
     return RobotRunRegistrationService(

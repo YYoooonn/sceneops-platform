@@ -92,6 +92,8 @@ def _aligned_record(
         uri=uri,
         owner_type=ArtifactOwnerType.EPISODE.value,
         owner_id="ep-1",
+        dataset_id="d1",
+        dataset_version="v1",
         checksum=checksum,
     )
 
@@ -103,8 +105,6 @@ def _make_context(
     write_should_fail: bool = False,
 ) -> MagicMock:
     context = MagicMock()
-    context.default_dataset_id = "d1"
-    context.default_dataset_version = "v1"
     context.artifact_record_store.get = AsyncMock(return_value=aligned_record)
     context.episode_artifact_store.read_aligned_episode_bytes = AsyncMock(
         return_value=artifact_bytes
@@ -121,7 +121,7 @@ def _make_context(
                 size_bytes=99,
             )
         )
-    context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock()
     context.commit = AsyncMock()
     return context
 
@@ -157,8 +157,8 @@ class TestSuccessfulValidation:
 
         assert result.valid is True
         assert result.issue_count == 0
-        context.artifact_record_store.create.assert_awaited_once()
-        create_kwargs = context.artifact_record_store.create.await_args.kwargs
+        context.artifact_record_store.register.assert_awaited_once()
+        create_kwargs = context.artifact_record_store.register.await_args.kwargs
         assert (
             create_kwargs["ref"].kind == ArtifactKind.ALIGNED_EPISODE_VALIDATION_REPORT
         )
@@ -179,7 +179,7 @@ class TestSuccessfulValidation:
         assert result.issue_count > 0
         # An invalid *aligned artifact* still produces a successful *Job* --
         # validation reporting "invalid" is not itself a job failure.
-        context.artifact_record_store.create.assert_awaited_once()
+        context.artifact_record_store.register.assert_awaited_once()
         context.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -205,7 +205,7 @@ class TestArtifactNotFound:
         with pytest.raises(AlignedArtifactNotFoundError):
             await ValidateAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_wrong_owner_raises(self) -> None:
@@ -231,7 +231,7 @@ class TestChecksumMismatch:
         with pytest.raises(AlignedArtifactChecksumMismatchError):
             await ValidateAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_pinned_checksum_mismatch_blocks_write(self) -> None:
@@ -244,7 +244,7 @@ class TestChecksumMismatch:
         with pytest.raises(AlignedArtifactChecksumMismatchError):
             await ValidateAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
 
 
 class TestWriteFailureLeavesNoRecord:
@@ -262,5 +262,5 @@ class TestWriteFailureLeavesNoRecord:
         with pytest.raises(RuntimeError):
             await ValidateAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()

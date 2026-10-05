@@ -187,7 +187,7 @@ def _make_context(
     context.analytics_writer.write_curation_manifest = AsyncMock(
         side_effect=_write_curation_manifest
     )
-    context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock()
     context.commit = AsyncMock()
 
     if profiles_by_episode is not None:
@@ -301,7 +301,7 @@ class TestSelectedAndRejected:
         assert result.manifest_artifact_id is not None
         context.commit.assert_awaited_once()
 
-        create_call = context.artifact_record_store.create.await_args
+        create_call = context.artifact_record_store.register.await_args
         assert create_call.kwargs["ref"].kind == ArtifactKind.EPISODE_CURATION_MANIFEST
         assert create_call.kwargs["owner_type"] == ArtifactOwnerType.DATASET_VERSION
         assert create_call.kwargs["owner_id"] == "d1:v1"
@@ -429,7 +429,7 @@ class TestChecksumRaceProtection:
             await CurateEpisodesJobHandler().run(request)
 
         context.analytics_writer.write_curation_manifest.assert_not_awaited()
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()
 
 

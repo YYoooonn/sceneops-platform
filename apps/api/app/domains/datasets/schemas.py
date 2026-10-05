@@ -20,7 +20,6 @@ class UpdateDatasetVersionRequest(SceneOpsBaseModel):
     """PATCH body — all fields optional, only provided values are applied."""
 
     status: DatasetVersionStatus | None = None
-    manifest_uri: str | None = None
     required_channels: list[str] | None = None
     metadata: JsonDict | None = None
 
@@ -33,7 +32,6 @@ class CreateDatasetVersionBody(SceneOpsBaseModel):
 
     version: str
     status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
-    manifest_uri: str | None = None
     required_channels: list[str] = Field(default_factory=list)
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -70,30 +68,16 @@ class DatasetVersionQualityCounts(SceneOpsBaseModel):
     scene_count: int = 0
     keyframe_count: int = 0
     observation_count: int = 0
-    annotation_count: int = 0
-    ground_truth_scene_count: int = 0
-    selectable_scene_count: int = 0
 
 
 class DatasetSceneQualitySectionSummary(SceneOpsBaseModel):
-    """Readiness and selectability buckets aggregated over all scenes."""
+    """Readiness buckets aggregated over all scenes."""
 
     ready_scene_count: int = 0
     warning_scene_count: int = 0
     blocked_scene_count: int = 0
     unknown_scene_count: int = 0
-    selectable_for_detection_count: int = 0
-    non_selectable_for_detection_count: int = 0
-    exclusion_reason_counts: dict[str, int] = Field(default_factory=dict)
     observed_channels: list[str] = Field(default_factory=list)
-
-
-class DatasetGroundTruthSummary(SceneOpsBaseModel):
-    has_ground_truth: bool = False
-    ground_truth_scene_count: int = 0
-    annotated_scene_count: int = 0
-    annotation_count: int = 0
-    ground_truth_coverage_ratio: float = 0.0
 
 
 class DatasetValidationSummary(SceneOpsBaseModel):
@@ -125,14 +109,10 @@ class DatasetVersionQualityResponse(SceneOpsBaseModel):
     scene_quality: DatasetSceneQualitySectionSummary = Field(
         default_factory=DatasetSceneQualitySectionSummary
     )
-    ground_truth: DatasetGroundTruthSummary = Field(
-        default_factory=DatasetGroundTruthSummary
-    )
     validation: DatasetValidationSummary = Field(
         default_factory=DatasetValidationSummary
     )
     profile: DatasetProfileSummary = Field(default_factory=DatasetProfileSummary)
-    manifest_uri: str | None = None
 
 
 # ── Dataset scene quality list + aggregate response ───────────────────────────
@@ -145,16 +125,9 @@ class DatasetSceneQualityAggregateSummary(SceneOpsBaseModel):
     blocked_scene_count: int = 0
     unknown_scene_count: int = 0
 
-    selectable_for_detection_count: int = 0
-    non_selectable_for_detection_count: int = 0
-
-    ground_truth_scene_count: int = 0
-    annotated_scene_count: int = 0
     total_keyframe_count: int = 0
     total_observation_count: int = 0
-    total_annotation_count: int = 0
 
-    exclusion_reason_counts: dict[str, int] = Field(default_factory=dict)
     observed_channels: list[str] = Field(default_factory=list)
 
 

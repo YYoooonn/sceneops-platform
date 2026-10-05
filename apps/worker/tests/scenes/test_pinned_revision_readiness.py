@@ -1,5 +1,5 @@
-"""Detection's readiness gate: validation results of exactly the Scene
-revisions the dataset manifest pins (ADR-007 §13.4, §18.5)."""
+"""The derived-workflow readiness gate: validation results of exactly the
+Scene revisions the workflow's sample views pin (ADR-007 §13.4, §18.5)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sceneops_core.datasets.schemas import DatasetManifest, DatasetSceneIndexEntry
+from sceneops_core.sample_views import SceneRevisionRef
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes import SceneReadiness, SceneValidationRunRecord
 from sceneops_worker.scenes.readiness import (
@@ -18,19 +18,12 @@ from sceneops_worker.scenes.readiness import (
 PIN = ("art-1", "sha256:" + "1" * 64)
 
 
-def _manifest() -> DatasetManifest:
-    return DatasetManifest(
-        dataset_id="ds",
-        dataset_version="v1",
-        scenes=[
-            DatasetSceneIndexEntry(
-                scene_id="scene-a",
-                manifest_artifact_id=PIN[0],
-                manifest_checksum=PIN[1],
-                manifest_uri="s3://b/m.json",
-            )
-        ],
-    )
+def _pins() -> list[SceneRevisionRef]:
+    return [
+        SceneRevisionRef(
+            scene_id="scene-a", manifest_artifact_id=PIN[0], manifest_checksum=PIN[1]
+        )
+    ]
 
 
 def _context(runs) -> MagicMock:
@@ -60,16 +53,16 @@ def _run(run_id, *, revision=PIN, block=False):
 
 async def test_unvalidated_revision_is_unknown_and_allowed():
     context = _context([])
-    assert await pinned_revision_readiness(context, _manifest()) == {
+    assert await pinned_revision_readiness(context, _pins()) == {
         "scene-a": SceneReadiness.UNKNOWN
     }
-    await require_no_blocked_scenes(context, _manifest())
+    await require_no_blocked_scenes(context, _pins())
 
 
 async def test_blocked_pinned_revision_refuses_the_workflow():
     context = _context([_run("val-1", block=True)])
     with pytest.raises(ValueError, match="blocked downstream use"):
-        await require_no_blocked_scenes(context, _manifest())
+        await require_no_blocked_scenes(context, _pins())
 
 
 async def test_block_on_another_revision_does_not_count():
@@ -77,4 +70,4 @@ async def test_block_on_another_revision_does_not_count():
     context = _context(
         [_run("val-1", revision=(PIN[0], "sha256:" + "2" * 64), block=True)]
     )
-    await require_no_blocked_scenes(context, _manifest())
+    await require_no_blocked_scenes(context, _pins())

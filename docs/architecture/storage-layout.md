@@ -123,8 +123,8 @@ an Episode build of the same RobotRun share every payload they both extract.
 `analytical/{dataset_id}/{dataset_version}/{table_name}.parquet` —
 `scenes`/`observations`/`keyframes`/`annotations`, written by the
 `export_analytics_snapshot` job via `sceneops-analytics`'
-`AnalyticsTableWriter`. Re-running overwrites the same URI (the same
-idempotent-rebuild pattern `build_dataset_manifest` uses).
+`AnalyticsTableWriter`. Re-running overwrites the same URI (a derived
+projection, rebuilt from canonical Scenes).
 
 Robot data is a separate scope from Dataset, so the same writer uses a
 second path scheme: `analytical/robot_runs/{robot_run_id}/{table_name}.parquet`

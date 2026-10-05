@@ -58,7 +58,6 @@ def test_config_only_scene_summary_does_not_imply_data_exists():
     summary = SceneVersionSummary(required_channels=["CAM_FRONT"])
     assert not summary.is_unset()
     assert summary.scene_count == 0
-    assert summary.manifest_uri is None
 
 
 def test_dataset_version_record_json_round_trip_with_summaries():

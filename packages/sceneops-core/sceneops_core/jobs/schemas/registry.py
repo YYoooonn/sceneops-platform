@@ -8,9 +8,9 @@ from .enums import JobType
 from .params import (
     AlignEpisodeJobParams,
     BaseJobParams,
-    BuildDatasetManifestJobParams,
+    BuildSceneSampleViewsJobParams,
+    ImportLabelsJobParams,
     BuildRecordingEpisodesJobParams,
-    BuildSceneIndexJobParams,
     BuildRecordingScenesJobParams,
     CurateEpisodesJobParams,
     EvaluateDetectionJobParams,
@@ -34,9 +34,9 @@ from .params import (
 from .results import (
     AlignEpisodeJobResult,
     BaseJobResult,
-    BuildDatasetManifestJobResult,
+    BuildSceneSampleViewsJobResult,
+    ImportLabelsJobResult,
     BuildRecordingEpisodesJobResult,
-    BuildSceneIndexJobResult,
     BuildRecordingScenesJobResult,
     CurateEpisodesJobResult,
     EvaluateDetectionJobResult,
@@ -63,8 +63,8 @@ JobResultModel: TypeAlias = type[BaseJobResult]
 
 JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.BUILD_RECORDING_SCENES: BuildRecordingScenesJobParams,
-    JobType.BUILD_DATASET_MANIFEST: BuildDatasetManifestJobParams,
-    JobType.BUILD_SCENE_INDEX: BuildSceneIndexJobParams,
+    JobType.IMPORT_LABELS: ImportLabelsJobParams,
+    JobType.BUILD_SCENE_SAMPLE_VIEWS: BuildSceneSampleViewsJobParams,
     JobType.VALIDATE_SCENE: ValidateSceneJobParams,
     JobType.PROFILE_SCENE: ProfileSceneJobParams,
     JobType.REGISTER_SCENES: RegisterScenesJobParams,
@@ -89,8 +89,8 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.BUILD_RECORDING_SCENES: BuildRecordingScenesJobResult,
-    JobType.BUILD_DATASET_MANIFEST: BuildDatasetManifestJobResult,
-    JobType.BUILD_SCENE_INDEX: BuildSceneIndexJobResult,
+    JobType.IMPORT_LABELS: ImportLabelsJobResult,
+    JobType.BUILD_SCENE_SAMPLE_VIEWS: BuildSceneSampleViewsJobResult,
     JobType.VALIDATE_SCENE: ValidateSceneJobResult,
     JobType.PROFILE_SCENE: ProfileSceneJobResult,
     JobType.REGISTER_SCENES: RegisterScenesJobResult,

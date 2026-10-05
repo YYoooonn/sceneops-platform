@@ -29,8 +29,6 @@ def get_job_service(
         event_repository=event_repository,
         artifact_repository=artifact_repository,
         episode_repository=episode_repository,
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
     )
 
 
@@ -44,8 +42,6 @@ def get_job_dispatch_facade(
     return JobDispatchFacade(
         session_factory=get_async_sessionmaker(),
         job_backend=job_backend,
-        default_dataset_id=settings.default_dataset_id,
-        default_dataset_version=settings.default_dataset_version,
     )
 
 

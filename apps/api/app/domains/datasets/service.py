@@ -123,8 +123,8 @@ class DatasetService:
         # updated_at explicitly rather than relying on server_default/onupdate
         # (those only fire when a column is left unset, not set to None).
         #
-        # manifest_uri/required_channels are Scene inputs,
-        # not generic version state: they are patched through
+        # required_channels is a Scene input,
+        # not generic version state: it is patched through
         # update_scene_inputs(), which never touches the registrar-owned
         # Scene membership summary. The generic upsert below passes
         # scene=None so it leaves every Scene column alone.
@@ -142,12 +142,11 @@ class DatasetService:
                 updated_at=now,
             )
         )
-        if body.manifest_uri is not None or body.required_channels:
+        if body.required_channels:
             version = await self._version_repository.update_scene_inputs(
                 dataset_id=dataset_id,
                 version=body.version,
-                manifest_uri=body.manifest_uri,
-                required_channels=body.required_channels or None,
+                required_channels=body.required_channels,
             )
         return DatasetVersionDetailResponse(version=version)
 
@@ -166,10 +165,7 @@ class DatasetService:
     # Scene inputs patchable through the API. The Scene membership summary
     # (counts, observed channels) is written only by Scene registration and
     # is never patchable here.
-    _SCENE_VERSION_PATCH_FIELDS = (
-        "manifest_uri",
-        "required_channels",
-    )
+    _SCENE_VERSION_PATCH_FIELDS = ("required_channels",)
 
     async def update_dataset_version(
         self, dataset_id: str, version: str, request: UpdateDatasetVersionRequest

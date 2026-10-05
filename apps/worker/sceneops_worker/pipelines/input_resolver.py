@@ -118,7 +118,6 @@ class PipelineInputResolver:
         return DatasetInputRef(
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
-            manifest_uri=(scene.manifest_uri if scene is not None else None) or None,
             required_channels=scene.required_channels if scene is not None else [],
             refs=refs,
             summary=summary,

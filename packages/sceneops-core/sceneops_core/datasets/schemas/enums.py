@@ -22,22 +22,3 @@ class DatasetVersionStatus(StrEnum):
     """
 
     REGISTERED = "registered"
-
-
-class DatasetManifestStatus(StrEnum):
-    READY = "ready"
-    PARTIAL = "partial"
-    FAILED = "failed"
-
-
-class DatasetIngestMode(StrEnum):
-    UPSERT = "upsert"
-    OVERWRITE = "overwrite"
-    APPEND = "append"
-
-
-class DatasetSplit(StrEnum):
-    TRAIN = "train"
-    VAL = "val"
-    TEST = "test"
-    UNASSIGNED = "unassigned"

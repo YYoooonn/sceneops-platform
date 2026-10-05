@@ -22,7 +22,9 @@ Robot
      +- Mission
      +- RobotState (time series)
 
-ScenarioSet
+LabelSet (immutable revisions)
+SceneSampleView (one revision per Scene revision and policy)
+ScenarioSet (immutable revision pinning views)
  +- ScenarioRunRecord (mining / readiness)
 
 PipelineRun
@@ -62,9 +64,8 @@ Key fields:
 - `episode_count`: version-level Episode statistic (`EpisodeVersionSummary`
   — its own independent rollup, not derived from or overwritten by the
   Scene fields above; see the aggregate-summary contract below).
-- `required_channels` (validation default), `manifest_uri` (derived dataset
-  manifest location): Scene inputs that are not membership, patched through
-  `update_scene_inputs`.
+- `required_channels` (validation default): a Scene input that is not
+  membership, patched through `update_scene_inputs`.
 
 A DatasetVersion carries no source location or source format; it relates
 to RobotRuns only through its units' provenance. `datasets` has no `type`.
@@ -254,24 +255,26 @@ configuration (see [Episode domain](./episode-domain.md)).
 
 ## 6. ScenarioSet
 
-`scenario_sets` — a curated bundle of scenarios mined from a specific
-`(dataset_id, dataset_version)`. `scenario_set_uri` references the actual
-candidate list; `tags` classify it.
+`scenario_sets` — one immutable ScenarioSet revision mined from a specific
+`(dataset_id, dataset_version)`. It pins `manifest_artifact_id` and
+`manifest_checksum` of its `ScenarioSetManifest`, which holds the members
+(each pinning a sample view) and the explicit curation criteria; `tags`
+classify it. Label sets and sample views have no dedicated tables: they are
+checksum-pinned artifacts whose ArtifactRecords are the registry (see
+[Derived layer](./derived-layer.md)).
 
 `scenario_run_records` — two types, `scenario_mining` / `scenario_readiness`.
 The readiness run carries dedicated aggregate columns
 (`ready_count`/`blocked_count`/`warning_count`/`average_score`).
 
-Each scenario candidate inside the artifact carries a `ScenarioStatus`
-(`candidate`/`selected`/`rejected`/`exported`/`deprecated`) — this is
-artifact-level state, not a DB column; there is currently no per-scenario
-DB row (see [Reserved architecture and current limitations](./reserved-and-limitations.md)).
+There is no per-scenario DB row; members live in the manifest
+(see [Reserved architecture and current limitations](./reserved-and-limitations.md)).
 
 ## 7. PipelineRun / PipelineTaskRun
 
 `pipeline_runs` — one pipeline execution. `type` is `PipelineType`:
 `recording_scene_building`, `recording_episode_building`,
-`scenario_curation`, `detection_evaluation`.
+`aligned_episode_building`, `scenario_curation`, `detection_evaluation`.
 
 `pipeline_task_runs` — individual tasks inside a run. `task_order` gives
 sequence; `depends_on_task_ids` (JSONB) declares dependencies but the
@@ -290,11 +293,11 @@ stops a pipeline mid-run.
 
 ```text
 BUILD_RECORDING_SCENES                               # RobotRun recording -> canonical scenes
-BUILD_DATASET_MANIFEST, BUILD_SCENE_INDEX             # dataset-level aggregation
 REGISTER_SCENES, VALIDATE_SCENE, PROFILE_SCENE         # scene-level
-COMPARE_SCENES, AUTO_LABEL_SCENE, EXPORT_SCENE_PACKAGE # scene-level, reserved (no handler)
+IMPORT_LABELS, BUILD_SCENE_SAMPLE_VIEWS                # derived: label set / sample view revisions
+ALIGN_EPISODE, VALIDATE_ALIGNED_EPISODE, PROFILE_ALIGNED_EPISODE,
+EXPORT_LEARNING_DATA, CURATE_EPISODES                  # derived: aligned episodes, learning export
 MINE_SCENARIOS, SCORE_SCENARIO_READINESS               # scenario-level
-AUTO_LABEL_DATASET, EXPORT_DATASET                     # dataset-version-level, reserved (no handler)
 EXPORT_ANALYTICS_SNAPSHOT                              # dataset-version-level
 PREDICT_DETECTION, EVALUATE_DETECTION                  # detection
 REGISTER_ROBOT_RUN                                     # published recording -> RobotRun, pipeline-less
@@ -322,7 +325,8 @@ Every `Job` also carries a `steps` list, populated at creation time from
 `inference_runs` — a model inference execution. `dataset_id` +
 `dataset_version` + `model_id` + `model_version` pin down all four
 reproducibility coordinates explicitly. `predictions_root_uri`,
-`prediction_manifest_uri` locate the result.
+`prediction_manifest_uri` locate the result and `prediction_manifest_checksum`
+pins the exact prediction revision.
 
 `evaluation_runs` — an evaluation execution. `inference_run_id` links back
 to what was evaluated; `evaluator_id` (e.g. `center-distance`) and

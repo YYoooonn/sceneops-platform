@@ -20,7 +20,9 @@ class SceneListResponse(SceneOpsBaseModel):
 #
 # Quality is reported for the Scene's current manifest revision only: the
 # validation / profile summaries come from run records that pinned exactly
-# that revision, and readiness is derived from them, never stored.
+# that revision, and readiness is derived from them, never stored. Labels and
+# detection selectability are not Scene quality: they belong to derived
+# label sets and sample views (ADR-007 §33).
 
 SceneQualityReadiness = SceneReadiness
 
@@ -28,12 +30,6 @@ SceneQualityReadiness = SceneReadiness
 class SceneQualityCounts(SceneOpsBaseModel):
     keyframe_count: int = 0
     observation_count: int = 0
-    annotation_count: int = 0
-
-
-class SceneGroundTruthQualitySummary(SceneOpsBaseModel):
-    has_ground_truth: bool = False
-    annotation_count: int = 0
 
 
 class SceneValidationQualitySummary(SceneOpsBaseModel):
@@ -56,7 +52,6 @@ class SceneProfileQualitySummary(SceneOpsBaseModel):
     manifest_artifact_id: str | None = None
     observation_count: int | None = None
     keyframe_count: int | None = None
-    annotation_count: int | None = None
     observed_channels: list[str] = Field(default_factory=list)
     profile_report_uri: str | None = None
 
@@ -69,12 +64,7 @@ class SceneQualityResponse(SceneOpsBaseModel):
     manifest_checksum: str
 
     counts: SceneQualityCounts = Field(default_factory=SceneQualityCounts)
-    ground_truth: SceneGroundTruthQualitySummary = Field(
-        default_factory=SceneGroundTruthQualitySummary
-    )
     validation: SceneValidationQualitySummary | None = None
     profile: SceneProfileQualitySummary | None = None
 
     readiness: SceneReadiness = SceneReadiness.UNKNOWN
-    selectable_for_detection: bool = False
-    exclusion_reasons: list[str] = Field(default_factory=list)

@@ -174,7 +174,8 @@ out of the worker process.
 
  operational / relational   binary / JSON artifacts
  - datasets, scenes,        - scene/episode manifests
-   episodes                 - dataset manifests
+   episodes                 - label sets, sample views,
+                              ScenarioSets
  - pipeline/job runs        - prediction/evaluation outputs
  - prediction/eval runs     - validation/profile reports
  - artifact metadata        - Parquet analytics tables
@@ -207,6 +208,7 @@ domain-specific docs below for Scene/Episode flow.
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
 | Run records and derived quality/readiness | [quality-and-runs.md](./quality-and-runs.md) |
+| Labels, sample views, ScenarioSets, predictions, evaluation, aligned episodes | [derived-layer.md](./derived-layer.md) |
 | Reserved architecture and current limitations | [reserved-and-limitations.md](./reserved-and-limitations.md) |
 | Robot data ingestion (ROS2 -> MCAP -> RobotRun) | [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) |
 | Local development, testing, E2E | [../development/local-development.md](../development/local-development.md) |

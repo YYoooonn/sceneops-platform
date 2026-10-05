@@ -43,18 +43,17 @@ The API (`apps/api/app/domains/scenes/quality.py`), scenario mining and the
 detection readiness gate all use this one derivation. The dataset-level API
 reads the latest current-revision runs in one query
 (`SceneRunRepository.latest_succeeded_for_current_revisions`). Detection
-checks the revisions its dataset manifest pins and refuses to run if any of
+checks the revisions its sample views pin and refuses to run if any of
 them is `blocked`.
 
-`selectable_for_detection` is a separate derived boolean: it requires
-readiness not `unknown` / `blocked` and at least one source annotation.
-`exclusion_reasons` lists exactly which checks failed
-(`validation_missing`, `validation_blocked`, `missing_ground_truth`).
+Quality describes canonical Scenes only: validation readiness, observed
+channels and counts. Ground truth and detection selectability are not Scene
+properties; they belong to label sets and sample views
+([Derived layer](./derived-layer.md)).
 
 Dataset-level quality (`GET /datasets/{id}/versions/{v}/quality`) is an
-aggregate over every scene's quality in that version — readiness buckets,
-GT coverage ratio, selectable/non-selectable counts, observed channels,
-exclusion-reason histogram. Per-scene quality is separately paginable via
+aggregate over every scene's quality in that version — readiness buckets
+(blocked only when every Scene is blocked), observed channels and counts. Per-scene quality is separately paginable via
 `GET /datasets/{id}/versions/{v}/scenes/quality`.
 
 ## 3. Episode quality and readiness
@@ -80,41 +79,26 @@ per-episode run record pins the `manifest_artifact_id` + `manifest_checksum`
 it assessed (CHECK `ck_episode_run_records_revision_pin`); a replaced
 Episode reports `unknown` until its new revision is validated.
 
-## 4. Scenario status and readiness
+## 4. Scenario curation and readiness
 
-Scenario curation (`mine_scenarios -> score_scenario_readiness`) mines
-candidate scenes from `SceneRecord` metadata into a `ScenarioSet` artifact,
-then scores each candidate's readiness for downstream use (evaluation,
-reconstruction, pseudo-labeling). It is implemented and E2E-tested, but
-still marked `experimental=True` — see
-[Reserved architecture and current limitations](./reserved-and-limitations.md).
+Scenario curation (`mine_scenarios -> score_scenario_readiness`) selects
+samples from pinned sample views by explicit criteria into an immutable
+`ScenarioSet` revision, then scores each member's readiness for downstream
+use. It is implemented and E2E-tested (`make e2e-perception`), but still
+marked `experimental=True`. See [Derived layer](./derived-layer.md) §4.
 
-Each scenario candidate inside the `ScenarioSet` artifact carries a
-`ScenarioStatus`:
-
-```text
-CANDIDATE -> SELECTED | REJECTED -> EXPORTED
-          -> DEPRECATED
-```
-
-This is **artifact-level state, read and written only inside the mining/
-scoring JSON payload** — there is no per-scenario DB row or repository
-today (see [Data model](./data-model.md) §6). Documenting it here only to
-the extent it's actually implemented: `mine_scenarios` assigns
-`CANDIDATE`/`REJECTED` based on predicate matches, `score_scenario_readiness`
-computes a readiness score per selected candidate. `EXPORTED`/`DEPRECATED`
-exist in the enum but are not currently written by any job — do not infer
-an export or deprecation workflow exists from the enum's presence alone.
+`ScenarioStatus` exists in the enum, but no job writes it and there is no
+per-scenario DB row or repository (see [Data model](./data-model.md) §6).
 
 `scenario_run_records` (mining/readiness) follow the same append-only
 run-record pattern as §1. The readiness run carries dedicated aggregate
 columns: `ready_count`/`warning_count`/`blocked_count`/`average_score`.
 
-## 5. Detection evaluation and ScenarioSet lineage
+## 5. Detection evaluation lineage
 
-When a `ScenarioSet` is provided to detection evaluation, only scenes it
-selected are evaluated; scenes outside it are skipped with reason
-`not_in_scenario_set`. Within the selected set, Scene's own quality filters
-(§2) still apply. Both the `InferenceRun` and `EvaluationRun` record the
-`scenario_set_id` used, so a result can always be traced back to exactly
-which curated selection produced it.
+`predict_detection` runs on a ScenarioSet revision or explicit sample views
+and records the ScenarioSet and view revisions it ran, plus the checksum of
+its prediction manifest, on the `InferenceRun`. `evaluate_detection` records
+the prediction and label set revisions it scored (`inputs` in the evaluation
+manifest). A result is therefore traceable to exact revisions of every input;
+see [Derived layer](./derived-layer.md) §5.

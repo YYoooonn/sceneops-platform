@@ -6,7 +6,7 @@ Unlike test_export_learning_data_handler.py (which mocks
 resolution, shard reuse, and the ``learning_episodes`` merge are exercised
 against real Parquet/JSON bytes on disk -- only aligned-artifact resolution
 (``episode_artifact_store``/``artifact_record_store.get``) and lineage
-recording (``artifact_record_store.create``) are mocked, exactly like
+recording (``artifact_record_store.register``) are mocked, exactly like
 _aligned_episode_resolution's role in every other export/curation test.
 """
 
@@ -122,8 +122,6 @@ class _Fixture:
 
     def make_context(self) -> MagicMock:
         context = MagicMock()
-        context.default_dataset_id = "d1"
-        context.default_dataset_version = "v1"
 
         async def _get(artifact_id: str):
             return self.records_by_artifact_id.get(artifact_id)
@@ -136,7 +134,7 @@ class _Fixture:
             side_effect=_read_bytes
         )
         context.analytics_writer = self.writer
-        context.artifact_record_store.create = AsyncMock()
+        context.artifact_record_store.register = AsyncMock()
         context.commit = AsyncMock()
         return context
 
@@ -212,7 +210,7 @@ async def test_incremental_export_reuses_base_shards_verbatim(
     # records -- never the base's own (already-recorded) shards.
     created_uris = {
         call.kwargs["ref"].uri
-        for call in incremental_context.artifact_record_store.create.await_args_list
+        for call in incremental_context.artifact_record_store.register.await_args_list
     }
     assert len(created_uris) == 4  # learning_episodes + 2 new shards + manifest
     base_manifest_bytes = await fixture.writer.read_learning_export_manifest_bytes(
@@ -343,7 +341,7 @@ async def test_incremental_export_rejects_delta_that_redeclares_base_revision(
 
     with pytest.raises(Exception, match="duplicate"):
         await ExportLearningDataJobHandler().run(incremental_request)
-    incremental_context.artifact_record_store.create.assert_not_called()
+    incremental_context.artifact_record_store.register.assert_not_called()
     incremental_context.commit.assert_not_called()
 
 

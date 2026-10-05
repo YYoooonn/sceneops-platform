@@ -44,13 +44,9 @@ class PipelineService:
         *,
         pipeline_repository: PipelineRunRepository,
         task_repository: PipelineTaskRunRepository,
-        default_dataset_id: str,
-        default_dataset_version: str,
     ) -> None:
         self._pipeline_repository = pipeline_repository
         self._task_repository = task_repository
-        self._default_dataset_id = default_dataset_id
-        self._default_dataset_version = default_dataset_version
 
     # --- definitions (no DB) ---
 
@@ -90,8 +86,8 @@ class PipelineService:
                 "contains unimplemented tasks."
             )
 
-        dataset_id = request.dataset_id or self._default_dataset_id
-        dataset_version = request.dataset_version or self._default_dataset_version
+        dataset_id = request.dataset_id
+        dataset_version = request.dataset_version
 
         execution_key = compute_execution_key(
             kind="pipeline_run",

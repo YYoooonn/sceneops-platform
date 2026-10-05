@@ -36,19 +36,6 @@ class BuildRecordingScenesJobResult(BaseJobResult):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class BuildDatasetManifestJobResult(BaseJobResult):
-    dataset_id: str
-    dataset_version: str
-
-    dataset_manifest_uri: str
-
-    scene_count: int = 0
-    keyframe_count: int = 0
-    observation_count: int = 0
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
 class ValidateSceneJobResult(BaseJobResult):
     status: str = "ready"
     should_block_pipeline: bool = False
@@ -95,47 +82,5 @@ class RegisterScenesJobResult(BaseJobResult):
     removed_scene_ids: list[str] = Field(default_factory=list)
 
     registered_scene_count: int = 0
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class BuildSceneIndexJobResult(BaseJobResult):
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
-    scene_index_uri: str
-
-    scene_count: int = 0
-    keyframe_count: int = 0
-    observation_count: int = 0
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class CompareScenesJobResult(BaseJobResult):
-    comparison_run_id: str | None = None
-    comparison_report_uri: str | None = None
-
-    summary: JsonDict = Field(default_factory=dict)
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class AutoLabelSceneJobResult(BaseJobResult):
-    scene_id: str | None = None
-
-    output_scene_manifest_uri: str | None = None
-    output_label_uri: str | None = None
-
-    annotation_count: int = 0
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class ExportScenePackageJobResult(BaseJobResult):
-    package_uri: str
-
-    package_type: str = "reconstruction"
-    output_format: str = "sceneops"
 
     metadata: JsonDict = Field(default_factory=dict)

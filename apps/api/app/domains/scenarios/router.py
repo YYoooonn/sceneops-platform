@@ -6,7 +6,6 @@ from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.domains.scenarios.dependencies import ScenarioServiceDep
 from app.domains.scenarios.schemas import (
-    CreateScenarioSetRequest,
     ScenarioSetListResponse,
     ScenarioSetResponse,
 )
@@ -29,14 +28,6 @@ async def list_scenario_sets(
         limit=pagination.limit,
         offset=pagination.offset,
     )
-
-
-@router.post("", response_model=ScenarioSetResponse, status_code=201)
-async def create_scenario_set(
-    request: CreateScenarioSetRequest,
-    service: ScenarioServiceDep,
-) -> ScenarioSetResponse:
-    return await service.create_scenario_set(request)
 
 
 @router.get("/{scenario_set_id}", response_model=ScenarioSetResponse)

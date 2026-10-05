@@ -165,7 +165,9 @@ class TestWriteAlignedEpisode:
             ),
             aligned_episode=aligned,
         )
-        key = alignment_key(config, aligned.alignment_semantics_version)
+        key = alignment_key(
+            config, aligned.alignment_semantics_version, aligned.source_clock
+        )
 
         result = await store.write_aligned_episode(
             dataset_id="d1",
@@ -186,3 +188,51 @@ class TestWriteAlignedEpisode:
         # Operational fields never appear in the envelope.
         assert "job_id" not in json.loads(on_disk)
         assert "pipeline_run_id" not in json.loads(on_disk)
+
+
+class TestAlignedEpisodeIsWriteOnce:
+    @pytest.mark.asyncio
+    async def test_a_retry_with_identical_content_is_a_no_op_and_a_change_conflicts(
+        self, tmp_path
+    ) -> None:
+        store = _store(tmp_path)
+        config = TemporalAlignmentConfig(target_frequency_hz=1.0, tolerance_us=1)
+        ctx = TemporalSourceContext(source_clock=DEFAULT_CLOCK)
+
+        def artifact(x: float) -> AlignedEpisodeArtifact:
+            return AlignedEpisodeArtifact(
+                source_revision=EpisodeSourceRevision(
+                    episode_id="ep-1",
+                    episode_manifest_uri="file:///source.json",
+                    source_artifact_id="art-1",
+                    source_manifest_sha256="a" * 64,
+                ),
+                aligned_episode=align_episode(
+                    _manifest(x), config, ctx, episode_id="ep-1"
+                ),
+            )
+
+        first = artifact(0.0)
+        key = alignment_key(
+            config, first.aligned_episode.alignment_semantics_version, DEFAULT_CLOCK
+        )
+        kwargs = dict(
+            dataset_id="d1",
+            dataset_version="v1",
+            episode_id="ep-1",
+            source_manifest_sha256="a" * 64,
+            alignment_key=key,
+        )
+        one = await store.write_aligned_episode(artifact=first, **kwargs)
+        again = await store.write_aligned_episode(artifact=first, **kwargs)
+        assert (again.uri, again.checksum) == (one.uri, one.checksum)
+
+        with pytest.raises(EpisodeManifestWriteConflictError, match="write-once"):
+            await store.write_aligned_episode(artifact=artifact(1.0), **kwargs)
+        # The original bytes survive the refused write.
+        assert (await store.artifact_store.read_bytes(one.uri)) is not None
+        assert (
+            "sha256:"
+            + hashlib.sha256(await store.artifact_store.read_bytes(one.uri)).hexdigest()
+            == one.checksum
+        )

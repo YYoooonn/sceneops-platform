@@ -14,9 +14,8 @@ class SceneVersionSummary(SceneOpsBaseModel):
     them from SceneRecord rows under the DatasetVersion row lock, in the
     same transaction as the membership change (ADR-007 §16).
 
-    ``required_channels`` and ``manifest_uri`` are not membership: they are
-    a validation default and a pointer to the derived dataset index, still
-    stored here until their owners move them off DatasetVersion.
+    ``required_channels`` is not membership: it is a validation default,
+    still stored here until its owner moves it off DatasetVersion.
 
     Validation / profile results are not cached here; Scene readiness is
     derived from run records for each Scene's current manifest revision.
@@ -31,7 +30,6 @@ class SceneVersionSummary(SceneOpsBaseModel):
     observed_channels: list[str] = Field(default_factory=list)
 
     required_channels: list[str] = Field(default_factory=list)
-    manifest_uri: str | None = None
 
     def is_unset(self) -> bool:
         """True if every field is still at its untouched default. Says

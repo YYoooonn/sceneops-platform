@@ -17,6 +17,7 @@ _SUPPORTED_TYPES = {
     PipelineType.DETECTION_EVALUATION,
     PipelineType.RECORDING_SCENE_BUILDING,
     PipelineType.RECORDING_EPISODE_BUILDING,
+    PipelineType.ALIGNED_EPISODE_BUILDING,
 }
 
 # Experimental pipelines: supported=True, implemented=True, experimental=True.
@@ -180,4 +181,4 @@ class TestPipelineServiceFilter:
         mine_task = tasks["mine_scenarios"]
         output_names = {o.name for o in mine_task.outputs}
         assert "scenario_set_id" in output_names
-        assert "scenario_set_uri" in output_names
+        assert "scenario_set_checksum" in output_names

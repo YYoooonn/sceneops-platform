@@ -1,31 +1,19 @@
 from .schemas import (
     CreateDatasetRequest,
     CreateDatasetVersionRequest,
-    DatasetIngestMode,
-    DatasetManifest,
-    DatasetManifestStatus,
     DatasetRecord,
-    DatasetSceneIndexEntry,
-    DatasetSplit,
     DatasetVersionRecord,
     DatasetVersionStatus,
     GetDatasetRequest,
     GetDatasetVersionRequest,
-    RegisterDatasetManifestRequest,
 )
 
 __all__ = [
     "DatasetVersionStatus",
-    "DatasetManifestStatus",
-    "DatasetIngestMode",
-    "DatasetSplit",
     "DatasetRecord",
     "DatasetVersionRecord",
-    "DatasetSceneIndexEntry",
-    "DatasetManifest",
     "CreateDatasetRequest",
     "CreateDatasetVersionRequest",
-    "RegisterDatasetManifestRequest",
     "GetDatasetRequest",
     "GetDatasetVersionRequest",
 ]

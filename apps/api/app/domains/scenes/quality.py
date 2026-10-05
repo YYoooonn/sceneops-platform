@@ -24,7 +24,6 @@ from sceneops_core.scenes.schemas.runs import (
 )
 
 from app.domains.scenes.schemas import (
-    SceneGroundTruthQualitySummary,
     SceneProfileQualitySummary,
     SceneQualityCounts,
     SceneQualityResponse,
@@ -40,7 +39,6 @@ def build_scene_quality(
     validation_run = _current(scene, validation_run)
     profile_run = _current(scene, profile_run)
     readiness = compute_scene_readiness(scene, validation_run)
-    selectable, exclusion_reasons = _compute_selectability(scene, readiness)
 
     return SceneQualityResponse(
         scene_id=scene.scene_id,
@@ -51,17 +49,10 @@ def build_scene_quality(
         counts=SceneQualityCounts(
             keyframe_count=scene.keyframe_count,
             observation_count=scene.observation_count,
-            annotation_count=scene.annotation_count,
-        ),
-        ground_truth=SceneGroundTruthQualitySummary(
-            has_ground_truth=scene.has_ground_truth,
-            annotation_count=scene.annotation_count,
         ),
         validation=_build_validation_summary(validation_run),
         profile=_build_profile_summary(profile_run),
         readiness=readiness,
-        selectable_for_detection=selectable,
-        exclusion_reasons=exclusion_reasons,
     )
 
 
@@ -88,23 +79,6 @@ def _current(scene: SceneRecord, run: _RunT | None) -> _RunT | None:
     ):
         return None
     return run
-
-
-def _compute_selectability(
-    scene: SceneRecord,
-    readiness: SceneReadiness,
-) -> tuple[bool, list[str]]:
-    reasons: list[str] = []
-
-    if readiness == SceneReadiness.UNKNOWN:
-        reasons.append("validation_missing")
-    elif readiness == SceneReadiness.BLOCKED:
-        reasons.append("validation_blocked")
-
-    if not scene.has_ground_truth:
-        reasons.append("missing_ground_truth")
-
-    return len(reasons) == 0, reasons
 
 
 def _build_validation_summary(
@@ -138,7 +112,6 @@ def _build_profile_summary(
         manifest_artifact_id=run.manifest_artifact_id,
         observation_count=run.observation_count,
         keyframe_count=run.keyframe_count,
-        annotation_count=run.annotation_count,
         observed_channels=list(run.observed_channels or []),
         profile_report_uri=run.profile_report_uri,
     )

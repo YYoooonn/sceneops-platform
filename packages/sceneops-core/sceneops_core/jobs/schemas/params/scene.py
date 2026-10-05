@@ -34,16 +34,6 @@ class BuildRecordingScenesJobParams(RecordingConsumerJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class BuildDatasetManifestJobParams(BaseJobParams):
-    """Derive a dataset manifest from the registered SceneRecords of one
-    DatasetVersion."""
-
-    dataset_id: str
-    dataset_version: str
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
 class ValidateSceneJobParams(BaseJobParams):
     """Validate registered Scenes. Each Scene is assessed at the manifest
     revision its record points to when the job reads it, and the per-scene
@@ -89,59 +79,5 @@ class RegisterScenesJobParams(BaseJobParams):
     manifest_artifact_ids: list[str] = Field(min_length=1)
 
     replace: bool = False
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class BuildSceneIndexJobParams(BaseJobParams):
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class CompareScenesJobParams(BaseJobParams):
-    source_scene_id: str | None = None
-    source_scene_manifest_uri: str | None = None
-
-    target_scene_id: str | None = None
-    target_scene_manifest_uri: str | None = None
-
-    compare_geometry: bool = True
-    compare_annotations: bool = True
-    compare_trajectories: bool = True
-    compare_sensor_coverage: bool = True
-    compare_world_state: bool = False
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class AutoLabelSceneJobParams(BaseJobParams):
-    scene_id: str | None = None
-    scene_manifest_uri: str
-
-    labeler_id: str = "default-auto-labeler"
-
-    target_channels: list[str] = Field(default_factory=list)
-    target_categories: list[str] = Field(default_factory=list)
-
-    output_scene_manifest_uri: str | None = None
-    output_label_uri: str | None = None
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class ExportScenePackageJobParams(BaseJobParams):
-    scene_id: str | None = None
-    scene_manifest_uri: str
-
-    package_type: str = "reconstruction"
-    output_format: str = "sceneops"
-    output_root_uri: str | None = None
-
-    include_assets: bool = True
-    include_world_state: bool = True
-    include_samples: bool = True
-    include_annotations: bool = True
 
     metadata: JsonDict = Field(default_factory=dict)

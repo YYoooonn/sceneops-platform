@@ -26,7 +26,7 @@ class DatasetRecord(SceneOpsBaseModel):
 class DatasetVersionRecord(SceneOpsBaseModel):
     """Platform-generic DatasetVersion identity/state, plus per-domain summaries.
 
-    Scene-owned and Episode-owned fields (counts, channels, manifest_uri)
+    Scene-owned and Episode-owned fields (counts, channels)
     live only under ``scene``/``episode``. A DatasetVersion relates to
     RobotRuns and sources only through its units' provenance; it carries
     no source location or source format (ADR-007 §16, §29.16). The
@@ -34,7 +34,7 @@ class DatasetVersionRecord(SceneOpsBaseModel):
     ``sceneops_db.converters.datasets`` map between the two shapes.
 
     ``extra="forbid"`` is deliberate here: this record used to expose
-    ``scene_count``, ``manifest_uri``, etc. directly, and silently accepting
+    ``scene_count``, ``required_channels``, etc. directly, and silently accepting
     those as unknown kwargs (pydantic's default) would hide exactly the kind
     of stale call site this cutover needs to surface loudly instead.
     """

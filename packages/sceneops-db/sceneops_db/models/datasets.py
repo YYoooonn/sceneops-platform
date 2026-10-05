@@ -77,8 +77,6 @@ class DatasetVersionModel(Base):
         server_default=text("'registered'"),
         index=True,
     )
-    manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     scene_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

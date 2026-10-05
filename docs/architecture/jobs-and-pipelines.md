@@ -29,6 +29,9 @@ SCENARIO_CURATION
 DETECTION_EVALUATION
   predict_detection -> evaluate_detection
 
+ALIGNED_EPISODE_BUILDING
+  align_episode -> validate_aligned_episode -> profile_aligned_episode (optional)
+
 RECORDING_EPISODE_BUILDING
   build_recording_episodes -> register_episodes -> validate_episode -> profile_episode (optional)
 ```
@@ -51,9 +54,10 @@ source-agnostic quality stage over registered Scenes;
 [Scene domain](./scene-domain.md) and [Episode domain](./episode-domain.md)
 for the domain-specific detail.
 
-Three Job types are deliberately **not** wrapped in any pipeline —
-`register_robot_run`, `ingest_robot_states` and
-`export_robot_analytics_snapshot`. Robot/RobotRun is a separate domain from
+Some Job types are deliberately **not** wrapped in any pipeline —
+`register_robot_run`, `ingest_robot_states`,
+`export_robot_analytics_snapshot`, and the single-stage derived jobs
+`import_labels`, `build_scene_sample_views` and `export_learning_data`. Robot/RobotRun is a separate domain from
 Dataset/DatasetVersion, so these dispatch as plain Jobs, not through a
 named pipeline. `register_robot_run` is submitted by
 `POST /robot-runs:register` (create + dispatch); the other two via
@@ -135,8 +139,7 @@ level.
 
 ## 6. Job steps: `JOB_STEP_DEFINITIONS_BY_TYPE`
 
-Every `JobType` (except the five reserved/orphan ones with no registered
-handler — see [Reserved architecture](./reserved-and-limitations.md)) has a
+Every `JobType` has a registered handler and a
 declarative list of named steps in
 `packages/sceneops-core/sceneops_core/jobs/schemas/step_registry.py`, e.g.:
 

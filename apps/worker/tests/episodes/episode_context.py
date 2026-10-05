@@ -87,6 +87,7 @@ def make_context(
         side_effect=lambda aid: artifacts.get(aid)
     )
     context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock(return_value=(MagicMock(), True))
     context.episode_artifact_store.read_pinned_manifest_bytes = AsyncMock(
         side_effect=read_bytes
     )

@@ -18,13 +18,9 @@ class JobDispatchFacade:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         job_backend: JobExecutionBackend,
-        default_dataset_id: str,
-        default_dataset_version: str,
     ) -> None:
         self._session_factory = session_factory
         self._job_backend = job_backend
-        self._default_dataset_id = default_dataset_id
-        self._default_dataset_version = default_dataset_version
 
     async def dispatch(self, job_id: str) -> ExecutionDispatchResult:
         # commit-before-backend-dispatch prevents worker RUNNING/SUCCEEDED state
@@ -36,8 +32,6 @@ class JobDispatchFacade:
                 repository=PostgresJobRepository(session),
                 event_repository=PostgresJobEventRepository(session),
                 artifact_repository=PostgresArtifactRefRepository(session),
-                default_dataset_id=self._default_dataset_id,
-                default_dataset_version=self._default_dataset_version,
             )
             execution_service = ExecutionService(
                 job_backend=self._job_backend,

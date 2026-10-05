@@ -117,8 +117,21 @@ def lidar_bytes(token: str) -> bytes:
     )
 
 
+ANNOTATIONS = [
+    # token, sample, instance, translation, size [w, l, h], rotation [w, x, y, z]
+    ("ann-1", "s1", "inst-1", [410.0, 1180.0, 0.9], [1.9, 4.5, 1.6], [1.0, 0.0, 0.0, 0.0]),
+    ("ann-2", "s1", "inst-2", [415.5, 1175.0, 1.0], [0.7, 0.8, 1.7], [0.7071, 0.0, 0.0, 0.7071]),
+    ("ann-3", "s2", "inst-1", [412.0, 1181.0, 0.9], [1.9, 4.5, 1.6], [1.0, 0.0, 0.0, 0.0]),
+]
+INSTANCE_CATEGORY = {"inst-1": "cat-car", "inst-2": "cat-ped"}
+
+
 def write_dataroot(
-    root: Path, *, extra_calibration: bool = False, can: bool = True
+    root: Path,
+    *,
+    extra_calibration: bool = False,
+    can: bool = True,
+    annotations: bool = False,
 ) -> Path:
     tables = root / VERSION
     tables.mkdir(parents=True)
@@ -218,11 +231,54 @@ def write_dataroot(
         },
     ]
     content = {
-        "category": [],
-        "attribute": [],
-        "visibility": [],
-        "instance": [],
-        "sample_annotation": [],
+        "category": [
+            {"token": "cat-car", "name": "vehicle.car", "description": ""},
+            {"token": "cat-ped", "name": "human.pedestrian.adult", "description": ""},
+        ]
+        if annotations
+        else [],
+        "attribute": [
+            {"token": "attr-moving", "name": "vehicle.moving", "description": ""},
+            {"token": "attr-stopped", "name": "vehicle.stopped", "description": ""},
+        ]
+        if annotations
+        else [],
+        "visibility": [{"token": "vis-4", "level": "v80-100", "description": ""}]
+        if annotations
+        else [],
+        "instance": [
+            {
+                "token": instance,
+                "category_token": category,
+                "nbr_annotations": sum(1 for a in ANNOTATIONS if a[2] == instance),
+                "first_annotation_token": next(a[0] for a in ANNOTATIONS if a[2] == instance),
+                "last_annotation_token": [a[0] for a in ANNOTATIONS if a[2] == instance][-1],
+            }
+            for instance, category in INSTANCE_CATEGORY.items()
+        ]
+        if annotations
+        else [],
+        "sample_annotation": [
+            {
+                "token": token,
+                "sample_token": sample,
+                "instance_token": instance,
+                "visibility_token": "vis-4",
+                "attribute_tokens": ["attr-stopped", "attr-moving"]
+                if token == "ann-1"
+                else [],
+                "translation": translation,
+                "size": size,
+                "rotation": rotation,
+                "prev": "",
+                "next": "",
+                "num_lidar_pts": 10,
+                "num_radar_pts": 0,
+            }
+            for token, sample, instance, translation, size, rotation in ANNOTATIONS
+        ]
+        if annotations
+        else [],
         "sensor": sensors,
         "calibrated_sensor": calibrated,
         "ego_pose": ego_poses,

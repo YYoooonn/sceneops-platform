@@ -192,13 +192,18 @@ deliberately does not require GPU, Airflow, or the isolated LeRobot venv —
 those remain optional verification, run separately afterward
 (`make verify-airflow-backend`, `make e2e-interop`).
 
-**Unavailable until ADR-007 implementation step 10** (label ingress and a
-derived synchronized-sample view): `make e2e-perception` and
-`make e2e-scenario-curation` need ground truth and keyframes, which
-recording-derived Scenes do not carry. **Until step 11**:
-`make canonical-bootstrap` / `make canonical-verify` (the v0.0 baseline was
-built by a removed pipeline). Each exits with an explicit message (script
-exit code 3) instead of failing on removed infrastructure.
+**Derived-layer verticals** (real nuScenes data, through the API):
+`make e2e-perception` (recording -> Scenes -> `IMPORT_LABELS` ->
+`BUILD_SCENE_SAMPLE_VIEWS` -> `scenario_curation` -> `detection_evaluation`,
+with pin, retry-convergence and PointCloud2 decode checks; `BACKEND=mock` by
+default, `BACKEND=grounding_dino` additionally needs an inference server) and
+`make e2e-episode-alignment` (recording -> canonical Episode ->
+`aligned_episode_building` -> `EXPORT_LEARNING_DATA`). The label document
+reaches the worker through `data/raw/labels/` (gitignored, removed after the
+run). **Until step 11**: `make canonical-bootstrap` / `make canonical-verify`
+(the v0.0 baseline was built by a removed pipeline), `e2e-robot-learning`,
+`e2e-episode-building`, `e2e-episode-curation`. Each exits with an explicit
+message (script exit code 3) instead of failing on removed infrastructure.
 
 **Engineering-level checks live outside the `e2e-*` namespace** since they
 aren't domain workflows from a real source to a persisted result:
@@ -289,8 +294,8 @@ exactly as given, never coerced into the `test-e2e-*` form —
 unset (bash's `: "${VAR:=default}"` idiom):
 
 ```bash
-make e2e-scenario-curation                                          # DATASET_ID=test-e2e-core DATASET_VERSION=test-v1
-DATASET_ID=my-local-dataset DATASET_VERSION=v3 make e2e-scenario-curation   # runs against your own dataset instead
+make e2e-perception                                          # DATASET_ID=test-e2e-perception, a per-run DatasetVersion
+DATASET_ID=my-local-dataset make e2e-perception              # runs against your own dataset id instead
 ```
 
 This is also why cleanup here is deliberately simple: **there is no

@@ -21,17 +21,6 @@ class CreateDatasetVersionRequest(SceneOpsBaseModel):
 
     status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
 
-    manifest_uri: str | None = None
-
-    metadata: JsonDict = Field(default_factory=dict)
-
-
-class RegisterDatasetManifestRequest(SceneOpsBaseModel):
-    dataset_id: str
-    dataset_version: str
-
-    manifest_uri: str
-
     metadata: JsonDict = Field(default_factory=dict)
 
 

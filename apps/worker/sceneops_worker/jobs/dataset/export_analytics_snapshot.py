@@ -19,7 +19,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.scenes.schemas import SceneManifest
-from sceneops_worker.scenes.indexing import list_dataset_version_scenes
+from sceneops_worker.scenes.resolver import list_dataset_version_scenes
 from sceneops_worker.scenes.resolver import resolve_registered_scene
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
@@ -64,7 +64,7 @@ class ExportAnalyticsSnapshotJobHandler(
         requested_tables = set(params.tables) if params.tables else set(TABLE_BUILDERS)
 
         # Analytics tables are a full snapshot of the current DB/manifest state —
-        # always query all registered scenes, same principle as build_dataset_manifest.
+        # always query all registered scenes of the DatasetVersion.
         all_scene_records = await list_dataset_version_scenes(
             context, dataset_id=dataset_id, dataset_version=dataset_version
         )

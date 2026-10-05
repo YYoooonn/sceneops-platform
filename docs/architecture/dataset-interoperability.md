@@ -356,10 +356,9 @@ interop    deterministic interoperability source, built once from hand-
            written golden AlignedEpisode/AlignedEpisodeArtifact data
            (sceneops_analytics.testing.interop_dataset, Request 3.2) —
            not derived from nuScenes ingestion.
-raw-log    intentionally isolated (own DatasetVersion) -- non-ground-truth
-           scenes would drag down core's aggregate quality readiness if
-           shared, a real previously-discovered data-requirement
-           conflict, not an oversight.
+raw-log    intentionally isolated (own DatasetVersion) -- a raw-log-style
+           fixture kept apart from the `core` fixture's aggregate quality
+           readiness.
 ```
 
 `make e2e-bootstrap-interop` and `make e2e-interop` are two different,

@@ -22,6 +22,10 @@ class ScenarioSetModel(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scenario_set_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Pins the one immutable ScenarioSet revision this record projects
+    # (ADR-007 §33.4).
+    manifest_artifact_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    manifest_checksum: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     scenario_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
@@ -63,7 +67,6 @@ class ScenarioRunRecordModel(Base):
 
     dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     dataset_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    dataset_manifest_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_task_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

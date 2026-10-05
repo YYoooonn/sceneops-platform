@@ -126,23 +126,29 @@ e2e-robot-learning:
 	scripts/e2e/e2e_robot_learning.sh
 
 .PHONY: e2e-perception
-# The canonical perception-domain E2E: scenario curation -> scenario
-# selection -> prediction -> evaluation -> persisted metrics/lineage.
-# Scenario curation is always composed in (no manual SCENARIO_SET_ID/
-# PIPELINE_RUN_ID hand-off needed -- see scripts/e2e/e2e_perception.sh's own
-# header). BACKEND=mock (default) needs nothing beyond local-up;
-# BACKEND=grounding_dino requires a real inference server already running
-# (make inference-local-up/-gpu-up).
-# UNAVAILABLE until ADR-007 implementation step 10: recording-derived Scenes
-# carry no ground truth or keyframe groups; the script exits 3 with a message.
-e2e-perception:
+# The derived perception vertical on real nuScenes data (ADR-007 §33): acquisition
+# -> RobotRun -> canonical Scenes -> IMPORT_LABELS -> BUILD_SCENE_SAMPLE_VIEWS ->
+# scenario_curation -> detection_evaluation, every step pinned to the revisions it
+# consumed, plus a real PointCloud2 payload decode check. BACKEND=mock (default)
+# needs nothing beyond local-up; BACKEND=grounding_dino additionally needs a running
+# inference server (make inference-local-up/-gpu-up) and lifts boxes through the
+# real lidar payload.
+e2e-perception: acquisition-image
 	chmod +x scripts/e2e/e2e_perception.sh
-	API_BASE_URL=$(API_BASE_URL) \
+	API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
 	BACKEND=$(or $(BACKEND),mock) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	MAX_SCENES=$(MAX_SCENES) MAX_SAMPLES=$(MAX_SAMPLES) \
+	SOURCE_UNIT=$(or $(SCENE),scene-0061) \
+	MAX_SAMPLES=$(MAX_SAMPLES) \
 	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) \
 	scripts/e2e/e2e_perception.sh
+
+.PHONY: e2e-episode-alignment
+# recording -> canonical Episode -> aligned_episode_building -> EXPORT_LEARNING_DATA
+# on real nuScenes (CAN) data, with deterministic-revision retry checks (ADR-007 §33.6).
+e2e-episode-alignment: acquisition-image
+	chmod +x scripts/e2e/e2e_episode_alignment.sh
+	SOURCE_UNIT=$(or $(SCENE),scene-0061) API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
+	scripts/e2e/e2e_episode_alignment.sh
 
 .PHONY: e2e-cleanroom
 # THE full-platform acceptance workflow -- the only place a fresh clone/
@@ -261,15 +267,3 @@ e2e-episode-curation:
 	API_BASE_URL=$(API_BASE_URL) \
 	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
 	scripts/e2e/e2e_episode_curation.sh
-
-.PHONY: e2e-scenario-curation
-# One scenario_curation pipeline dispatch in isolation -- e2e-perception
-# composes this same step automatically; kept standalone for debugging
-# mine_scenarios/score_scenario_readiness without also running detection.
-# UNAVAILABLE until ADR-007 implementation step 10 (its detection_ready
-# profile needs ground truth); the script exits 3 with a message.
-e2e-scenario-curation:
-	chmod +x scripts/e2e/e2e_scenario_curation.sh
-	API_PREFIX=$(API_PREFIX) \
-	DATASET_ID=$(DATASET_ID) DATASET_VERSION=$(DATASET_VERSION) \
-	scripts/e2e/e2e_scenario_curation.sh

@@ -122,7 +122,7 @@ echo "─── domains ──────────────────�
 check "GET /datasets"                    "$(get /datasets)"
 check "GET /scenes"                      "$(get /scenes)"
 check "GET /episodes"                    "$(get /episodes)"
-check "GET /scenario-sets"               "$(get /scenarios)"
+check "GET /scenarios"                   "$(get /scenarios)"
 check "GET /models"                      "$(get /models)"
 check "GET /inference/runs"              "$(get /inference/runs)"
 check "GET /evaluations/runs"            "$(get /evaluations/runs)"

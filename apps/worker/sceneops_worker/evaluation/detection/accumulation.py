@@ -23,6 +23,7 @@ class EvaluationAccumulator:
     matched_count: int = 0
     raw_prediction_count: int = 0
     lifting_failed_prediction_count: int = 0
+    not_localized_prediction_count: int = 0
     class_stats: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def add(self, sample_eval: dict[str, Any]) -> None:
@@ -39,6 +40,9 @@ class EvaluationAccumulator:
         self.lifting_failed_prediction_count += sample_eval.get(
             "lifting_failed_prediction_count",
             0,
+        )
+        self.not_localized_prediction_count += sample_eval.get(
+            "not_localized_prediction_count", 0
         )
         utils.merge_class_stats(self.class_stats, sample_eval["class_metrics"])
 
@@ -66,6 +70,7 @@ class EvaluationAccumulator:
             "mean_center_distance_error": round(mean_center_distance_error, 6),
             "evaluable_prediction_count": self.evaluable_prediction_count,
             "lifting_failed_prediction_count": self.lifting_failed_prediction_count,
+            "not_localized_prediction_count": self.not_localized_prediction_count,
         }
 
     def build_class_metrics(self) -> dict[str, Any]:

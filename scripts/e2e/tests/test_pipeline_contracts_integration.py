@@ -22,6 +22,7 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 API_PREFIX = os.environ.get("API_PREFIX", "/api/v1")
 
 SUPPORTED_PIPELINE_TYPES = (
+    "aligned_episode_building",
     "detection_evaluation",
     "recording_episode_building",
     "recording_scene_building",

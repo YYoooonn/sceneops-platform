@@ -6,9 +6,7 @@ from sceneops_core.jobs.schemas import JobType
 from sceneops_worker.jobs.base import AnyJobHandler
 from sceneops_worker.jobs.dataset import (
     AlignEpisodeJobHandler,
-    BuildDatasetManifestJobHandler,
     BuildRecordingEpisodesJobHandler,
-    BuildSceneIndexJobHandler,
     BuildRecordingScenesJobHandler,
     CurateEpisodesJobHandler,
     ExportAnalyticsSnapshotJobHandler,
@@ -21,6 +19,10 @@ from sceneops_worker.jobs.dataset import (
     ValidateAlignedEpisodeJobHandler,
     ValidateEpisodeJobHandler,
     ValidateSceneJobHandler,
+)
+from sceneops_worker.jobs.derived import (
+    BuildSceneSampleViewsJobHandler,
+    ImportLabelsJobHandler,
 )
 from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.inference import PredictDetectionJobHandler
@@ -65,10 +67,10 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
         handlers=[
             BuildRecordingScenesJobHandler(),
             RegisterScenesJobHandler(),
-            BuildSceneIndexJobHandler(),
+            ImportLabelsJobHandler(),
+            BuildSceneSampleViewsJobHandler(),
             ValidateSceneJobHandler(),
             ProfileSceneJobHandler(),
-            BuildDatasetManifestJobHandler(),
             ExportAnalyticsSnapshotJobHandler(),
             PredictDetectionJobHandler(),
             EvaluateDetectionJobHandler(),

@@ -39,28 +39,28 @@ class JobService:
         repository: JobRepository,
         event_repository: JobEventRepository,
         artifact_repository: ArtifactRepository,
-        default_dataset_id: str,
-        default_dataset_version: str,
         episode_repository: EpisodeRepository | None = None,
     ) -> None:
         self._repository = repository
         self._event_repository = event_repository
         self._artifact_repository = artifact_repository
         self._episode_repository = episode_repository
-        self._default_dataset_id = default_dataset_id
-        self._default_dataset_version = default_dataset_version
 
     async def create_job(self, request: CreateJobRequest) -> JobManifest:
         now = utc_now()
 
-        dataset_id = request.dataset_id or self._default_dataset_id
-        dataset_version = request.dataset_version or self._default_dataset_version
+        # The DatasetVersion scope is whatever the caller states, on the
+        # request or in the params; there is no platform-wide default.
+        dataset_id = request.dataset_id or request.params.get("dataset_id")
+        dataset_version = request.dataset_version or request.params.get(
+            "dataset_version"
+        )
 
-        raw_params = {
-            **request.params,
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-        }
+        raw_params = {**request.params}
+        if dataset_id is not None:
+            raw_params["dataset_id"] = dataset_id
+        if dataset_version is not None:
+            raw_params["dataset_version"] = dataset_version
 
         if request.type == JobType.ALIGN_EPISODE:
             raw_params = await self._resolve_align_episode_source(raw_params)

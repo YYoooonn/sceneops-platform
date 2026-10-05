@@ -80,6 +80,8 @@ def _aligned_record(
         uri=uri,
         owner_type=ArtifactOwnerType.EPISODE.value,
         owner_id="ep-1",
+        dataset_id="d1",
+        dataset_version="v1",
         checksum=checksum,
     )
 
@@ -91,8 +93,6 @@ def _make_context(
     write_should_fail: bool = False,
 ) -> MagicMock:
     context = MagicMock()
-    context.default_dataset_id = "d1"
-    context.default_dataset_version = "v1"
     context.artifact_record_store.get = AsyncMock(return_value=aligned_record)
     context.episode_artifact_store.read_aligned_episode_bytes = AsyncMock(
         return_value=artifact_bytes
@@ -109,7 +109,7 @@ def _make_context(
                 size_bytes=99,
             )
         )
-    context.artifact_record_store.create = AsyncMock()
+    context.artifact_record_store.register = AsyncMock()
     context.commit = AsyncMock()
     return context
 
@@ -148,8 +148,8 @@ class TestSuccessfulProfiling:
         assert result.step_count == 2
         assert result.observation_channel_count == 1
         assert result.action_channel_count == 1
-        context.artifact_record_store.create.assert_awaited_once()
-        create_kwargs = context.artifact_record_store.create.await_args.kwargs
+        context.artifact_record_store.register.assert_awaited_once()
+        create_kwargs = context.artifact_record_store.register.await_args.kwargs
         assert create_kwargs["ref"].kind == ArtifactKind.ALIGNED_EPISODE_PROFILE_REPORT
         context.commit.assert_awaited_once()
 
@@ -176,7 +176,7 @@ class TestArtifactNotFound:
         with pytest.raises(AlignedArtifactNotFoundError):
             await ProfileAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
 
 
 class TestChecksumMismatch:
@@ -192,7 +192,7 @@ class TestChecksumMismatch:
         with pytest.raises(AlignedArtifactChecksumMismatchError):
             await ProfileAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
 
 
 class TestWriteFailureLeavesNoRecord:
@@ -210,5 +210,5 @@ class TestWriteFailureLeavesNoRecord:
         with pytest.raises(RuntimeError):
             await ProfileAlignedEpisodeJobHandler().run(request)
 
-        context.artifact_record_store.create.assert_not_called()
+        context.artifact_record_store.register.assert_not_called()
         context.commit.assert_not_called()

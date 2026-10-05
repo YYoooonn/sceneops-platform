@@ -37,7 +37,7 @@ def _make_job(
     now = utc_now()
     return JobManifest(
         job_id=job_id,
-        type=JobType.BUILD_SCENE_INDEX,
+        type=JobType.PROFILE_SCENE,
         status=status,
         params=params or {},
         steps=steps or [],
@@ -85,7 +85,7 @@ def _make_context(job: JobManifest) -> MagicMock:
 
 def _make_registry(result: BaseModel) -> JobHandlerRegistry:
     handler = MagicMock()
-    handler.job_type = JobType.BUILD_SCENE_INDEX
+    handler.job_type = JobType.PROFILE_SCENE
     handler.params_model = MagicMock()
     handler.params_model.model_validate = MagicMock(return_value=MagicMock())
     handler.run = AsyncMock(return_value=result)
@@ -96,7 +96,7 @@ def _make_registry(result: BaseModel) -> JobHandlerRegistry:
 
 def _make_failing_registry(exc: Exception) -> JobHandlerRegistry:
     handler = MagicMock()
-    handler.job_type = JobType.BUILD_SCENE_INDEX
+    handler.job_type = JobType.PROFILE_SCENE
     handler.params_model = MagicMock()
     handler.params_model.model_validate = MagicMock(return_value=MagicMock())
     handler.run = AsyncMock(side_effect=exc)

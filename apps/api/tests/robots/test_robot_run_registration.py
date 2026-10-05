@@ -79,8 +79,6 @@ def harness():
             repository=repository,
             event_repository=_FakeEventRepository(),
             artifact_repository=object(),
-            default_dataset_id="default",
-            default_dataset_version="v0",
         )
 
     service = RobotRunRegistrationService(

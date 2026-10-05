@@ -239,7 +239,17 @@ class EpisodeArtifactStore:
             alignment_key=alignment_key,
         )
         data = _canonical_bytes(artifact.to_artifact_dict())
-        await self.artifact_store.write_bytes(uri, data)
+        # An AlignedEpisode is a pure function of (source revision, alignment
+        # recipe), and both are in the key, so the same key always holds the
+        # same bytes: a retry is a no-op, anything else is a conflict.
+        if await self.artifact_store.exists(uri):
+            if await self.artifact_store.read_bytes(uri) != data:
+                raise EpisodeManifestWriteConflictError(
+                    f"{uri} already holds a different aligned episode; aligned "
+                    "episode keys are write-once"
+                )
+        else:
+            await self.artifact_store.write_bytes(uri, data)
         return EpisodeArtifactWriteResult(
             uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
         )

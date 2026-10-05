@@ -31,15 +31,17 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("publish_observation_payloads", "Publish observation payloads"),
         step("publish_scene_manifests", "Publish scene manifests"),
     ],
-    JobType.BUILD_DATASET_MANIFEST: [
-        step("load_scene_records", "Load scene records"),
-        step("aggregate_dataset_index", "Aggregate dataset index"),
-        step("save_dataset_manifest", "Save dataset manifest"),
+    JobType.IMPORT_LABELS: [
+        step("read_label_document", "Read label document"),
+        step("validate_label_set", "Validate and canonicalize label set"),
+        step("verify_robot_runs", "Verify referenced RobotRuns"),
+        step("publish_label_set", "Publish label set revision"),
     ],
-    JobType.BUILD_SCENE_INDEX: [
-        step("load_scene_records", "Load scene records"),
-        step("build_scene_index", "Build scene index"),
-        step("save_scene_index", "Save scene index"),
+    JobType.BUILD_SCENE_SAMPLE_VIEWS: [
+        step("resolve_scene_revisions", "Resolve scene revisions"),
+        step("resolve_label_sets", "Resolve pinned label sets"),
+        step("build_sample_views", "Build sample views"),
+        step("publish_sample_views", "Publish sample view revisions"),
     ],
     JobType.VALIDATE_SCENE: [
         step("resolve_scene_revisions", "Resolve scene revisions"),
@@ -58,11 +60,10 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("apply_membership", "Apply membership and summaries"),
     ],
     JobType.MINE_SCENARIOS: [
-        step("load_dataset_manifest", "Load dataset manifest"),
-        step("load_scene_manifests", "Load scene manifests"),
-        step("apply_predicates", "Apply predicates"),
+        step("resolve_sample_views", "Resolve pinned sample views"),
+        step("apply_criteria", "Apply curation criteria"),
         step("select_scenarios", "Select scenarios"),
-        step("save_scenario_set", "Save scenario set"),
+        step("publish_scenario_set", "Publish scenario set revision"),
     ],
     JobType.SCORE_SCENARIO_READINESS: [
         step("load_scenario_set", "Load scenario set"),
@@ -76,14 +77,13 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("write_parquet_tables", "Write parquet tables"),
     ],
     JobType.PREDICT_DETECTION: [
-        step("load_dataset_manifest", "Load dataset manifest"),
+        step("resolve_inputs", "Resolve pinned sample views"),
         step("load_model", "Load model"),
         step("run_inference", "Run inference"),
-        step("save_predictions", "Save predictions"),
+        step("publish_predictions", "Publish prediction manifest"),
     ],
     JobType.EVALUATE_DETECTION: [
-        step("load_predictions", "Load predictions"),
-        step("load_ground_truth", "Load ground truth"),
+        step("resolve_revisions", "Resolve prediction and label revisions"),
         step("match_detections", "Match detections"),
         step("compute_metrics", "Compute metrics"),
         step("save_metrics", "Save metrics"),
