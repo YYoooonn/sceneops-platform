@@ -5,6 +5,11 @@ from typing import Any
 from sqlalchemy import Select
 
 
+# Upper bound on ids per ``IN (...)`` list, well below the driver's bind
+# parameter limit.
+IN_CLAUSE_CHUNK = 1000
+
+
 def enum_value(value: Any) -> Any:
     return value.value if hasattr(value, "value") else value
 

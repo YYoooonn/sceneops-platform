@@ -1,4 +1,4 @@
-from sceneops_core.artifacts.contracts import ArtifactStore
+from sceneops_core.artifacts.contracts import ArtifactObject, ArtifactStore
 from sceneops_core.artifacts.schemas import (
     ArtifactBackend,
     ArtifactKind,
@@ -9,6 +9,7 @@ from sceneops_core.artifacts.schemas import (
 )
 
 __all__ = [
+    "ArtifactObject",
     "ArtifactStore",
     "ArtifactBackend",
     "ArtifactKind",

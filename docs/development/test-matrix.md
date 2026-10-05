@@ -14,7 +14,7 @@ infrastructure semantics are part of the contract.
 | --- | --- | --- | --- |
 | Unit | `make test` | none | pure logic, schemas, state transitions, pipeline-definition and REF-chaining contracts, execution identity, API services over fakes, the Airflow DAG mirror |
 | Isolated-environment unit | `make acquisition-test`, `make lerobot-test`, `make ros2-test` | the tool's own uv project / the ROS 2 image (`ros2-test` also Kafka) | the acquisition tool (incl. its import boundary), the LeRobot adapter and container entrypoint, the streaming bridge and capture |
-| Integration | `make test-integration` | PostgreSQL, MinIO | repositories and the migrated schema (every model column exists; no column a model dropped remains), ArtifactStore semantics, the registrars, the recording Scene / Episode verticals against real stores |
+| Integration | `make test-integration` | PostgreSQL, MinIO | repositories and the migrated schema (every model column exists; no column a model dropped remains), ArtifactStore semantics, the registrars, acquisition reconciliation, the recording Scene / Episode verticals against real stores |
 | Infrastructure acceptance | `make test-infrastructure` | the live stack (+ the canonical baseline) | pipeline execution contracts: the four-pipeline surface, dedup / force, convergence, conflict-then-replacement, blocked resumption, failure recovery, concurrent registration, RobotRun registration idempotency, the orchestrator that ran them, MinIO selective Parquet reads |
 | Orchestrator acceptance | `make test-infrastructure-airflow` | live stack + Airflow | the canonical pipelines through the Airflow per-task DAGs |
 | Smoke | `make smoke-api`, `make smoke-streaming` | the API / Kafka | transport and liveness only; never creates domain data |
@@ -44,6 +44,8 @@ infrastructure semantics are part of the contract.
 | SceneManifest v2 has no annotation structure; v1 bytes are refused | unit (`packages/sceneops-core/tests/test_scene_manifest.py`) |
 | DatasetVersion carries no channel requirements or metadata | unit + integration (`test_dataset_version_*`, `test_migration_schema.py`) |
 | Canonical Scene / Episode registration, replacement, fail-loud | integration (`apps/worker/tests/{scenes,episodes}/*integration.py`) |
+| Acquisition reconciliation: every lifecycle state classified from real MinIO + PostgreSQL facts, unchanged state and identical report on a second run | integration (`apps/worker/tests/robots/test_reconciliation_vertical_integration.py`); classification rules over doubles in `apps/api/tests/robots/test_reconciliation.py` |
+| `ArtifactStore.list_objects` (recursive, paginated, atomic-write temp files excluded) | unit (`test_local_artifact_store.py`) + integration (`test_s3_artifact_store.py`) |
 | Retry, dedup, force, replacement, blocked / failed resumption, concurrency | infrastructure (`tests/infrastructure/test_pipeline_execution.py`) |
 | Celery / Airflow execution | infrastructure (`test_pipeline_execution.py`, `test_airflow_backend.py`) |
 | Batch / streaming equivalence | E2E (`e2e-streaming-equivalence`) |

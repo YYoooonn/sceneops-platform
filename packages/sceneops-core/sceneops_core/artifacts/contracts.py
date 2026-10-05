@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from sceneops_core.common.schemas import ArtifactUri
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactObject:
+    """One stored object as seen by a listing: where it is, how big it is and
+    when the store last modified it. ``last_modified`` is timezone-aware UTC and
+    is the store's own clock: the only durable timestamp an object that no
+    database row references carries."""
+
+    uri: ArtifactUri
+    size_bytes: int
+    last_modified: datetime
 
 
 @runtime_checkable
@@ -50,6 +64,14 @@ class ArtifactStore(Protocol):
 
     async def list_json(self, uri: ArtifactUri) -> list[ArtifactUri]:
         """List JSON artifact URIs under a prefix."""
+
+    async def list_objects(self, uri: ArtifactUri) -> list[ArtifactObject]:
+        """List every object under the ``uri`` prefix, recursively, sorted by
+        URI. The prefix is a directory-style prefix (``a/b`` matches ``a/b/x``,
+        never ``a/bc``); a prefix with no objects lists as empty. Returned URIs
+        keep the style of ``uri``. Directories and markers are not objects, and
+        a backend's own in-flight write state (for example an atomic-write
+        temporary file) is never listed. Read-only."""
 
     async def delete_prefix(self, uri: ArtifactUri) -> None:
         """Delete an artifact prefix or file."""

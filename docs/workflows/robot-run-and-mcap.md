@@ -196,6 +196,43 @@ different bytes are detected (post-write verification, registration and
 consumer checksums) rather than prevented; capture routing by
 `robot_run_id` provides the single-publisher assumption.
 
+**Observing acquisition state.** Two read-only one-shot commands report where
+every `run_id` is in the lifecycle; neither writes an object, a row or a Job,
+and neither acts on what it finds:
+
+```text
+python -m sceneops_integrations.recording scan-capture --capture-root <capture output root>
+    -> JSON CaptureScanReport (DB-free; reads directory entries, sizes and receipts, never recording bytes)
+python -m app.domains.robots.reconciliation --once [--capture-report <scan-capture JSON | ->]
+    -> JSON ReconciliationReport (from apps/api; needs ArtifactStore + PostgreSQL, not the HTTP server)
+```
+
+The reconciler lists `robot_run_root` and reads each manifest object, reads
+RobotRunRecords, the two RobotRun ArtifactRecords and every
+`REGISTER_ROBOT_RUN` Job with the manifest's execution key from PostgreSQL
+(one `READ ONLY` transaction), and compares the recording bytes of runs that
+are published but not registered against their manifest. The platform never
+mounts the capture volume: capture facts arrive only as the `scan-capture`
+report. One state per `run_id`, derived only from durable facts:
+
+| State | Facts |
+| --- | --- |
+| `capture_unfinished` | `.partial/<run_id>/` exists, no finalized bag |
+| `finalized_no_receipt` | finalized bag without a capture receipt, nothing published |
+| `publish_pending` | finalized bag with a valid receipt, nothing published |
+| `publication_incomplete` | recording without a valid manifest, manifest without its recording, or a malformed manifest |
+| `registration_pending` | valid manifest and recording, no RobotRunRecord, no `REGISTER_ROBOT_RUN` Job in flight |
+| `registration_active` | a Job is `pending`, `queued` or `running` |
+| `registration_stalled_candidate` | every in-flight Job is older than a caller-supplied threshold (none is configured, so this is not reported by the command) |
+| `registration_failed_transient` / `registration_failed_permanent` | the newest Job failed; classified by its recorded exception class |
+| `registered` | RobotRunRecord exists with the manifest's `manifest_checksum`; any Job state is ignored |
+| `permanent_conflict` | RobotRunRecord exists with a different `manifest_checksum` |
+| `integrity_incident` | the facts contradict each other: recording size or checksum differs from its manifest, ArtifactRecords without a RobotRunRecord, a registered run whose objects or ArtifactRecords disagree, an unusable capture receipt |
+
+A Job's success never makes a run `registered`. The report holds no
+wall-clock reading, so reconciling an unchanged system twice yields identical
+output. Exit status is 0 whenever a report was produced.
+
 ### 3.3 Batch acquisition and the L1 recording contract
 
 A recording that already exists — a robot's onboard recorder, or an

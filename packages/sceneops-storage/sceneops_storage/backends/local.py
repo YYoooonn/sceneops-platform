@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any
 from urllib.parse import urlparse
 
-from sceneops_core.artifacts.contracts import ArtifactStore
+from sceneops_core.artifacts.contracts import ArtifactObject, ArtifactStore
 from sceneops_core.common.schemas import ArtifactUri
 
 from sceneops_storage.exceptions import (
@@ -17,6 +20,15 @@ from sceneops_storage.exceptions import (
     ArtifactWriteError,
 )
 from sceneops_storage.uri import join_uri
+
+
+# ``.<name>.<32 hex>.tmp``: the in-flight name ``write_bytes`` writes under
+# before the atomic rename. Never an object: listing skips it.
+_TEMP_FILE_PATTERN = re.compile(r"^\..+\.[0-9a-f]{32}\.tmp$")
+
+
+def _temp_name(final_name: str) -> str:
+    return f".{final_name}.{uuid.uuid4().hex}.tmp"
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -94,7 +106,7 @@ class LocalArtifactStore(ArtifactStore):
         ``.<name>.<random>.tmp`` file behind; it never matches a final key.
         """
         path = self._to_path(uri)
-        tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        tmp_path = path.with_name(_temp_name(path.name))
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             # 0o666 & ~umask: the same mode Path.write_bytes produced.
@@ -117,6 +129,32 @@ class LocalArtifactStore(ArtifactStore):
         if not path.exists():
             return []
         return [str(item) for item in sorted(path.glob("*.json")) if item.is_file()]
+
+    async def list_objects(self, uri: ArtifactUri) -> list[ArtifactObject]:
+        root = self._to_path(uri)
+        if not root.is_dir():
+            return []
+        objects: list[ArtifactObject] = []
+        for directory, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            relative_dir = Path(directory).relative_to(root)
+            for name in sorted(filenames):
+                if _TEMP_FILE_PATTERN.match(name):
+                    continue
+                try:
+                    stat = (Path(directory) / name).stat()
+                except FileNotFoundError:
+                    continue  # removed between the walk and the stat
+                if not S_ISREG(stat.st_mode):
+                    continue
+                objects.append(
+                    ArtifactObject(
+                        uri=self.join_uri(uri, *relative_dir.parts, name),
+                        size_bytes=stat.st_size,
+                        last_modified=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                    )
+                )
+        return sorted(objects, key=lambda item: item.uri)
 
     async def delete_prefix(self, uri: ArtifactUri) -> None:
         path = self._to_path(uri)

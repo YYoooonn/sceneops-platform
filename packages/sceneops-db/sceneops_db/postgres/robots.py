@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +32,7 @@ from sceneops_db.models.robots import (
     RobotStateModel,
 )
 
+from ._utils import IN_CLAUSE_CHUNK as _IN_CLAUSE_CHUNK
 from ._utils import apply_pagination, apply_values, enum_value
 
 
@@ -130,6 +133,20 @@ class PostgresRobotRunRepository:
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
         return robot_run_model_to_record(model) if model is not None else None
+
+    async def get_many(self, run_ids: Sequence[str]) -> dict[str, RobotRunRecord]:
+        """Records for the given run ids that exist, keyed by run_id. Missing
+        ids are absent from the result. Read-only."""
+        records: dict[str, RobotRunRecord] = {}
+        unique = sorted(set(run_ids))
+        for start in range(0, len(unique), _IN_CLAUSE_CHUNK):
+            stmt = select(RobotRunModel).where(
+                RobotRunModel.run_id.in_(unique[start : start + _IN_CLAUSE_CHUNK])
+            )
+            result = await self._session.execute(stmt)
+            for model in result.scalars().all():
+                records[model.run_id] = robot_run_model_to_record(model)
+        return records
 
     async def list(
         self,

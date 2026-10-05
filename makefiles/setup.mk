@@ -66,7 +66,7 @@ test-integration:
 	MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
 	MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
 	MINIO_BUCKET=$(MINIO_BUCKET) \
-	uv run pytest apps/worker/tests/robots/test_registration_integration.py apps/worker/tests/robots/test_resolver_integration.py apps/worker/tests/episodes/test_recording_episode_vertical_integration.py apps/worker/tests/scenes/test_scene_registration_integration.py apps/worker/tests/scenes/test_recording_scene_vertical_integration.py -v
+	uv run pytest apps/worker/tests/robots/test_registration_integration.py apps/worker/tests/robots/test_resolver_integration.py apps/worker/tests/robots/test_reconciliation_vertical_integration.py apps/worker/tests/episodes/test_recording_episode_vertical_integration.py apps/worker/tests/scenes/test_scene_registration_integration.py apps/worker/tests/scenes/test_recording_scene_vertical_integration.py -v
 
 .PHONY: test-infrastructure
 # Infrastructure acceptance of the pipeline contracts below the E2E journeys:

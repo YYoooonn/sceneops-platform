@@ -5,6 +5,8 @@ this package's MinIO integration tests.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from sceneops_storage.backends.local import LocalArtifactStore
@@ -176,3 +178,97 @@ class TestAtomicWriteJson:
             await store.write_json(uri, {"v": 2})
         monkeypatch.undo()
         assert await store.read_json(uri) == {"v": 1}
+
+
+# ── list_objects ─────────────────────────────────────────────────────────────
+
+
+async def test_list_objects_is_recursive_sorted_and_reports_size_and_mtime(
+    store, tmp_path
+):
+    from datetime import UTC, datetime, timedelta
+
+    await store.write_bytes(str(tmp_path / "root" / "b" / "two.bin"), b"22")
+    await store.write_bytes(str(tmp_path / "root" / "a" / "deep" / "one.bin"), b"1")
+    await store.write_bytes(str(tmp_path / "root" / "top.bin"), b"333")
+
+    objects = await store.list_objects(str(tmp_path / "root"))
+
+    assert [o.uri for o in objects] == [
+        str(tmp_path / "root" / "a" / "deep" / "one.bin"),
+        str(tmp_path / "root" / "b" / "two.bin"),
+        str(tmp_path / "root" / "top.bin"),
+    ]
+    assert [o.size_bytes for o in objects] == [1, 2, 3]
+    now = datetime.now(UTC)
+    for item in objects:
+        assert item.last_modified.tzinfo is not None
+        assert timedelta(0) <= now - item.last_modified < timedelta(minutes=5)
+
+
+async def test_list_objects_ignores_atomic_write_temp_files(store, tmp_path):
+    from sceneops_storage.backends.local import _temp_name
+
+    root = tmp_path / "root" / "run-1"
+    await store.write_bytes(str(root / "recording.mcap"), b"data")
+    # What a hard kill between the temp write and os.replace leaves behind.
+    (root / _temp_name("robot_run_manifest.json")).write_bytes(b"{trunc")
+    (root / _temp_name("recording.mcap")).write_bytes(b"partial")
+
+    objects = await store.list_objects(str(tmp_path / "root"))
+
+    assert [o.uri for o in objects] == [str(root / "recording.mcap")]
+
+
+async def test_list_objects_temp_exclusion_does_not_hide_lookalike_objects(
+    store, tmp_path
+):
+    root = tmp_path / "root"
+    root.mkdir()
+    # Not the write_bytes temp shape: ordinary objects that must be listed.
+    for name in (".hidden.json", "x.tmp", ".x.tmp", ".x.notahex.tmp"):
+        (root / name).write_bytes(b"1")
+
+    objects = await store.list_objects(str(root))
+
+    assert sorted(Path(o.uri).name for o in objects) == sorted(
+        [".hidden.json", "x.tmp", ".x.tmp", ".x.notahex.tmp"]
+    )
+
+
+async def test_list_objects_is_a_directory_prefix_not_a_string_prefix(store, tmp_path):
+    await store.write_bytes(str(tmp_path / "runs" / "a" / "x.bin"), b"1")
+    await store.write_bytes(str(tmp_path / "runs" / "ab" / "y.bin"), b"1")
+
+    objects = await store.list_objects(str(tmp_path / "runs" / "a"))
+
+    assert [Path(o.uri).name for o in objects] == ["x.bin"]
+
+
+async def test_list_objects_missing_prefix_empty_dirs_and_files_list_empty(
+    store, tmp_path
+):
+    (tmp_path / "empty" / "nested").mkdir(parents=True)
+    await store.write_bytes(str(tmp_path / "file.bin"), b"1")
+
+    assert await store.list_objects(str(tmp_path / "never")) == []
+    assert await store.list_objects(str(tmp_path / "empty")) == []
+    assert await store.list_objects(str(tmp_path / "file.bin")) == []
+
+
+async def test_list_objects_preserves_file_uri_style(store, tmp_path):
+    await store.write_bytes(str(tmp_path / "root" / "run" / "x.bin"), b"1")
+
+    objects = await store.list_objects(f"file://{tmp_path}/root/")
+
+    assert [o.uri for o in objects] == [f"file://{tmp_path}/root/run/x.bin"]
+    assert await store.read_bytes(objects[0].uri) == b"1"
+
+
+async def test_list_objects_writes_nothing(store, tmp_path):
+    await store.write_bytes(str(tmp_path / "root" / "x.bin"), b"1")
+    before = sorted(p.name for p in (tmp_path / "root").iterdir())
+
+    await store.list_objects(str(tmp_path / "root"))
+
+    assert sorted(p.name for p in (tmp_path / "root").iterdir()) == before

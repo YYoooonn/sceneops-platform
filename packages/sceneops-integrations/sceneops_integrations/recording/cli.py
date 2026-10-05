@@ -45,6 +45,18 @@ ignoring receive times, write order and file bytes; exits non-zero otherwise.
 prints its JSON report and exits non-zero if the recording does not
 conform. It reads only the file: no ArtifactStore, no database.
 
+::
+
+    python -m sceneops_integrations.recording scan-capture \
+        --capture-root /recordings/capture
+
+classifies every run on a capture output root (``capture_unfinished``,
+``finalized_with_receipt``, ``finalized_no_receipt``,
+``finalized_receipt_invalid``) and prints the JSON ``CaptureScanReport``. It is
+read-only and reads no recording bytes; the API reconciler accepts this report
+(``reconcile --once --capture-report``) so the platform never mounts the
+capture volume.
+
 ArtifactStore backend/credentials come from environment variables via
 ``sceneops_core.config.ArtifactSettings``, e.g.::
 
@@ -75,6 +87,7 @@ from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
 from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
 from sceneops_storage import create_artifact_store
 
+from .capture_scan import scan_capture_volume
 from .conformance import check_l1_recording
 from .equivalence import compare_recordings
 from .from_capture import publish_from_capture
@@ -133,6 +146,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Do not require the ros2/cdr/ros2msg encoding profile.",
     )
+    scan_capture = sub.add_parser("scan-capture")
+    scan_capture.add_argument("--capture-root", required=True, type=Path)
     compare = sub.add_parser("compare")
     compare.add_argument("--first", required=True, type=Path)
     compare.add_argument("--second", required=True, type=Path)
@@ -233,6 +248,16 @@ def _check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _scan_capture(args: argparse.Namespace) -> int:
+    try:
+        report = scan_capture_volume(args.capture_root)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero
+        print(f"scan-capture failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(report.model_dump(mode="json"), sort_keys=True))
+    return 0
+
+
 def _compare(args: argparse.Namespace) -> int:
     report = compare_recordings(args.first, args.second)
     print(json.dumps(report.to_dict(), sort_keys=True))
@@ -252,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
         return _check(args)
     if args.command == "compare":
         return _compare(args)
+    if args.command == "scan-capture":
+        return _scan_capture(args)
     try:
         result = asyncio.run(_publish(args))
     except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero

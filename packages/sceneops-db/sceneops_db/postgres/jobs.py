@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +22,7 @@ from sceneops_db.converters.jobs import (
 )
 from sceneops_db.models.jobs import JobEventModel, JobModel
 
-from ._utils import apply_pagination, apply_values, enum_value
+from ._utils import IN_CLAUSE_CHUNK, apply_pagination, apply_values, enum_value
 
 
 class PostgresJobRepository:
@@ -103,6 +105,28 @@ class PostgresJobRepository:
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
         return job_model_to_manifest(model) if model is not None else None
+
+    async def list_for_execution_keys(
+        self, execution_keys: Sequence[str], *, type: JobType
+    ) -> list[JobManifest]:
+        """Every Job of ``type`` carrying one of the execution keys, in any
+        status, oldest first (ties broken by job_id so the order is total).
+        Read-only; unlike ``find_by_execution_key`` it applies no status
+        filter and does not stop at the newest row."""
+        jobs: list[JobManifest] = []
+        unique = sorted(set(execution_keys))
+        for start in range(0, len(unique), IN_CLAUSE_CHUNK):
+            stmt = (
+                select(JobModel)
+                .where(JobModel.type == enum_value(type))
+                .where(
+                    JobModel.execution_key.in_(unique[start : start + IN_CLAUSE_CHUNK])
+                )
+            )
+            result = await self._session.execute(stmt)
+            jobs.extend(job_model_to_manifest(m) for m in result.scalars().all())
+        jobs.sort(key=lambda job: (job.created_at, job.job_id))
+        return jobs
 
     async def claim_for_run(
         self,

@@ -2,12 +2,72 @@
 
 ## Status
 
-**Accepted — architecture decision only. Nothing in this ADR is implemented.**
+**Accepted — implemented through step 12.3 (§8); steps 12.4–12.6 are not.**
 
 Ratified 2026-10-05 with four clarifications, incorporated in place: reconciliation
 scheduling (§3.2), capture receipt semantics (§4.2), the retry budget across
 replacement Jobs (§5.2, §5.3) and deferral of the stall threshold to Phase 12.4
 (§5.3, §8, B4).
+
+**Amendment 12.3 — read-only classification (implementation step 12.3).**
+Accepted. Step 12.3 adds `ArtifactStore.list_objects`, a published-object scan,
+a capture-volume scan and the stateless `reconcile --once`. It changes no
+decision above; it fixes where the observations live and what the report calls
+things, because §5.1 left both open:
+
+- **Where observation lives.** The published-object scan and its classification
+  are in `sceneops-core` (`robots/published_scan.py`) so the API reconciler uses
+  them without depending on the Publisher. The capture-volume scan is the
+  Publisher's (`python -m sceneops_integrations.recording scan-capture`, DB-free)
+  and emits a `CaptureScanReport`; the reconciler accepts that JSON
+  (`--capture-report`). The platform never mounts the capture volume and the
+  API imports nothing from `ros2/` (§7.4's joined view stays DEFERRED for a
+  mounted volume; the report is the boundary). There is no combined Publisher
+  `scan` command yet.
+- **Report vocabulary.** One state per `run_id`; §5.1 names map as follows.
+
+  ```text
+  capture_unfinished                        capture_unfinished
+  finalized_no_receipt                      finalized_no_receipt
+  finalized_unpublished                     publish_pending
+  publishing_incomplete, unpublished_       publication_incomplete   (reasons carry the
+    recording_no_source, malformed manifest   §5.1 name and whether a capture can resume it)
+  published_unregistered                    registration_pending     (no Job in flight)
+  registration_pending                      registration_active      (Job pending/queued/running)
+  registration_stalled                      registration_stalled_candidate
+  registration_failed_transient/_permanent  registration_failed_transient/_permanent
+  registered                                registered
+  registered_conflict                       permanent_conflict
+  inconsistent (and corrupt inputs)         integrity_incident       (reasons name the contradiction)
+  ```
+
+- **Stall threshold stays undecided (§5.3, B4).** Classification accepts an
+  optional caller-supplied threshold and, with none, never reports
+  `registration_stalled_candidate`. The command supplies none.
+- **Failure classes (§5.2)** are encoded in `sceneops-core`
+  (`robots/registration_failures.py`) as exception-class names, tied to the
+  worker's real exception classes by a test. Classification counts failed Jobs
+  per execution key but enforces no budget.
+- **What is verified.** A run that is published but not registered has its
+  recording bytes (size, sha256) compared to the manifest, because registration
+  would reject a mismatch. A registered run is not re-hashed: its listing size
+  and its ArtifactRecords are compared to the manifest. A matching
+  RobotRunRecord is `registered` regardless of any Job, unless one of those
+  facts contradicts it, which is an `integrity_incident`. A Job's success never
+  makes a run registered.
+- **Reads.** PostgreSQL is read in one `READ ONLY` transaction through two
+  batch queries (`PostgresRobotRunRepository.get_many`,
+  `PostgresJobRepository.list_for_execution_keys`); no schema change. A run
+  that only PostgreSQL knows (a RobotRunRecord with no object under the scanned
+  root) is not discovered here; that reverse check belongs to §6.1 (step 12.5).
+
+Audited at:
+
+```text
+branch     feat/operational-reliability
+HEAD       9b90f43 feat(acquisition): recover publication from finalized captures
+date       2026-10-05
+```
 
 This ADR fixes the operational contract for the acquisition lifecycle
 

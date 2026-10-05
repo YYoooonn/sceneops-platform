@@ -169,7 +169,11 @@ implements or half-implements them, so there's nothing to document as
   a robot is not built (see [ADR-005](../adr/005-ros2-vs-kafka-boundary.md)).
 - Automatic capture -> publish -> register hand-off, durable recovery of
   in-flight capture sessions across a restart, and Kafka message sizes
-  beyond the stock ~1 MB limit (streaming-transport §14, §26, §33).
+  beyond the stock ~1 MB limit (streaming-transport §14, §26, §33). Where a
+  run stands is observable (`reconcile --once`, read-only; see
+  [Robot run and MCAP](../workflows/robot-run-and-mcap.md) §3.2), but
+  nothing acts on it: publishing, registration submission and stalled-Job
+  handling remain explicit operator steps.
 - Evaluation-aware scenario mining (FP/FN-by-scene signals), pseudo-label
   candidate scoring, or VLM-based scene tagging.
 - An RLDS (or any other second) external training-format adapter —

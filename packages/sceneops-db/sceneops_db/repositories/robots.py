@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from sceneops_core.robots.schemas import (
@@ -40,6 +41,8 @@ class RobotRunRepository(Protocol):
     async def create(self, run: RobotRunRecord) -> RobotRunRecord: ...
 
     async def get(self, run_id: str) -> RobotRunRecord | None: ...
+
+    async def get_many(self, run_ids: Sequence[str]) -> dict[str, RobotRunRecord]: ...
 
     async def list(
         self,

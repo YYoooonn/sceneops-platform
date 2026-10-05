@@ -63,7 +63,7 @@ help:
 	@echo "Tests (docs/development/test-matrix.md):"
 	@echo "=================================================================="
 	@echo "  make test                          Unit suites (worker, api, inference-server, analytics, core, integrations, streaming) -- no infra"
-	@echo "  make test-integration              Real Postgres/MinIO: sceneops-db/storage + registrars + recording Scene/Episode verticals -- needs local-up"
+	@echo "  make test-integration              Real Postgres/MinIO: sceneops-db/storage + registrars + acquisition reconciliation + recording Scene/Episode verticals -- needs local-up"
 	@echo "  make test-infrastructure           Pipeline contracts on the live stack: the four-pipeline surface, dedup/force/convergence/"
 	@echo "                                     replacement/blocked resumption/failure recovery/concurrent registration, Celery, MinIO selective reads"
 	@echo "                                     (builds on canonical-bootstrap)"

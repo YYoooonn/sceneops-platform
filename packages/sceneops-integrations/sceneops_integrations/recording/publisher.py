@@ -44,6 +44,10 @@ from sceneops_core.robots.manifest import (
     RobotRunManifest,
     validate_identifier,
 )
+from sceneops_core.robots.published_scan import (
+    MANIFEST_OBJECT_NAME,
+    RECORDING_OBJECT_NAME,
+)
 
 from .facts import (
     RecordingFacts,
@@ -52,8 +56,9 @@ from .facts import (
     sha256_checksum,
 )
 
-RECORDING_OBJECT_NAME = "recording.mcap"
-MANIFEST_OBJECT_NAME = "robot_run_manifest.json"
+# The object names are shared with the read-only scan
+# (``sceneops_core.robots.published_scan``) so what the Publisher writes and
+# what reconciliation looks for cannot drift.
 
 
 class RecordingPublicationConflictError(RuntimeError):

@@ -11,6 +11,7 @@ Like the rest of ``sceneops_integrations`` it never imports ``sceneops-db``,
 never opens a DB session and never writes ArtifactRecords.
 """
 
+from .capture_scan import PARTIAL_DIRNAME, scan_capture_volume
 from .conformance import (
     ACQUISITION_ORIGIN_METADATA,
     ChannelReport,
@@ -58,6 +59,7 @@ from .publisher import (
 __all__ = [
     "ACQUISITION_ORIGIN_METADATA",
     "MANIFEST_OBJECT_NAME",
+    "PARTIAL_DIRNAME",
     "RECORDING_OBJECT_NAME",
     "SUPPORTED_SOURCE_CLOCKS",
     "CaptureReceiptMismatchError",
@@ -86,5 +88,6 @@ __all__ = [
     "publish_recording",
     "read_capture_receipt",
     "recording_uri",
+    "scan_capture_volume",
     "sha256_checksum",
 ]
