@@ -193,7 +193,9 @@ acceptance entry point.
   every revision pins what it consumed and that the canonical Scenes / Episodes
   are untouched. `e2e-episode-learning` also needs the LeRobot image
   (`make lerobot-image`, built by the target). The label document reaches the
-  worker through `data/raw/labels/` (gitignored, removed after the run).
+  worker through `data/inputs/labels/` (the worker's input root; gitignored,
+  removed after the run). It is rendered from the fixture's locked reference labels;
+  the journey reads no source dataset.
 - `acceptance-grounding-dino` runs the Scene ML journey with the GroundingDINO
   backend (needs `make inference-local-up` or `inference-gpu-up`): the model-backend
   acceptance, separate from the default mock-backend journey.

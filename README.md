@@ -100,7 +100,8 @@ cp .env.example .env.local          # configure storage backend, DB, Redis
 make setup                          # install deps + pre-commit hooks
 make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
 make test                           # unit suites, no infrastructure
-make canonical-bootstrap            # dataset fixture -> RobotRun -> Scenes -> Episodes (the L1/L2 baseline)
+make reference-data-bootstrap       # prepare + verify the nuScenes mini batch recordings (once per scope)
+make canonical-bootstrap            # prepared recordings -> RobotRun -> Scenes -> Episodes (the L1/L2 baseline)
 make e2e-scene-ml                   # Scenes -> labels -> views -> ScenarioSet -> prediction -> evaluation
 make e2e-episode-learning           # Episodes -> aligned -> learning export -> LeRobot round trip
 ```
@@ -155,7 +156,7 @@ There are exactly five E2E journeys. Platform operations go through FastAPI and 
 
 | Command | Journey |
 | --- | --- |
-| `make canonical-bootstrap` / `make canonical-verify` | Developer orchestration, not a pipeline: dataset fixture → RobotRun → Scenes → Episodes → validate / profile, then read-only verification. Builds nothing derived. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
+| `make canonical-bootstrap` / `make canonical-verify` | Developer orchestration, not a pipeline: prepared reference-corpus recordings → one RobotRun per fixture → Scenes → Episodes → validate / profile, then read-only verification. Builds nothing derived. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make e2e-batch-canonical` | dataset fixture → batch MCAP → RobotRun → Scenes + Episodes |
 | `make e2e-streaming-equivalence` | One source acquired in batch and by ROS 2 → Kafka → capture; the canonical Scenes and Episodes are semantically equivalent (needs Kafka) |
 | `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend) |

@@ -73,11 +73,11 @@ class InputSourceSettings(StorageSettings):
     artifacts can be configured, rooted, and backed independently. Absolute
     input URIs are used as given; the root only anchors relative ones.
 
-    Local:         /data/raw
-    Object storage: s3://sceneops/raw
+    Local:         /data/inputs
+    Object storage: s3://sceneops/inputs
     """
 
-    root_uri: str = "/data/raw"
+    root_uri: str = "/data/inputs"
 
 
 class WorkerRuntimeSettings(BaseModel):
