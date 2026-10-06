@@ -736,6 +736,13 @@ to the same partition interleave their offsets without changing the run's own
 records). `scripts/e2e/streaming_kafka_audit.py` reads the topic and asserts exactly
 those records and that the receipt's range runs from `RUN_START` to `RUN_END`.
 
+`make streaming-bootstrap` applies the same streaming path (the shared
+`scripts/streaming/streaming_lib.sh`) to every fixture of a corpus scope and keeps the
+results as the persistent streaming baseline (`docs/development/canonical-baseline.md`).
+It checks per fixture that replay, bridge, capture and the receipt carry exactly the
+locked recording's messages per channel; payload-level equivalence stays the
+equivalence journey's.
+
 `make smoke-streaming` (the Kafka transport's own smoke test) passes
 independently -- it proves the Kafka transport itself and is never replaced
 by the ROS2-specific verification.

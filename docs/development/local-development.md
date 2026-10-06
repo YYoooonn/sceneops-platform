@@ -215,7 +215,10 @@ corpus scope (prepared recordings -> one RobotRun per fixture -> Scenes ->
 Episodes, validated and profiled; run `make reference-data-bootstrap` first) and
 `make canonical-verify` re-checks it read-only; see [canonical-baseline.md](./canonical-baseline.md). The Scene and
 Episode build configurations every journey uses are the files under
-`config/baselines/`.
+`config/baselines/`. `make streaming-bootstrap` builds the same baseline by replaying
+each fixture's locked recording through ROS 2 -> Kafka -> capture (needs Kafka and
+`make reference-data-bootstrap`), `make streaming-verify` re-checks it read-only and
+`make streaming-compare` compares it with the batch baseline.
 
 ### Identity
 
@@ -223,7 +226,8 @@ Episode build configurations every journey uses are the files under
 never constrained by an external dataset's naming. A baseline is named by
 `BASELINE_ID`: the RobotRun is `run-<BASELINE_ID>-<fixture>`, the robot
 `robot-<BASELINE_ID>`, the DatasetVersion `sceneops-<BASELINE_ID>/baseline`. The
-persistent baselines are `ref-smoke-1` and `ref-nuscenes-mini-full-10` (see
+persistent baselines are `ref-smoke-1` and `ref-nuscenes-mini-full-10`, and their
+streamed counterparts `stream-ref-smoke-1` and `stream-ref-nuscenes-mini-full-10` (see
 [canonical-baseline.md](./canonical-baseline.md)); a journey that mutates its scope (or that you
 simply run again) uses a unique id per run (`e2e-<journey>-<timestamp>-<pid>`),
 and `BASELINE_ID=ref-smoke-1 make e2e-scene-ml` runs it on the persistent baseline.

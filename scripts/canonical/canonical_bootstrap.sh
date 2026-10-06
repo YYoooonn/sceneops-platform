@@ -53,22 +53,6 @@ source "$SCRIPT_DIR/baseline_lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 
-# build_scope <pipeline-type> <build-task> <register-task> <profile-task> <run-id> <config>
-# One pipeline run over one RobotRun's recording scope.
-build_scope() {
-  local type="$1" build_task="$2" register_task="$3" profile_task="$4" run_id="$5" config="$6"
-  local params pipeline
-  params="$(jq -cn --arg b "$build_task" --arg r "$register_task" --arg p "$profile_task" \
-    --arg run "$run_id" --argjson config "$config" '{
-      ($b): {robot_run_id: $run, build_config: $config},
-      ($r): {replace: false},
-      ($p): {triggered: true}}')"
-  pipeline="$(run_pipeline "$API_BASE_URL" "$type" "$DATASET_ID" "$DATASET_VERSION" "$params")"
-  assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$pipeline")" \
-    "$type for $run_id should succeed" "$API_BASE_URL" "$pipeline" >&2
-  log "  ✅  $type ($run_id): $pipeline"
-}
-
 log "=== canonical baseline '$BASELINE_ID': $DATASET_ID/$DATASET_VERSION from $REFERENCE_CORPUS (${FIXTURE:-$REFERENCE_SCOPE}) ==="
 require_api "$API_BASE_URL"
 
@@ -91,9 +75,9 @@ upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" >/dev/nu
 for id in $(echo "$BASELINE_FIXTURES" | jq -r '.[].fixture_id'); do
   run_id="$(baseline_run_id "$id")"
   log "--- canonical Scenes and Episodes of $run_id"
-  build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
+  baseline_build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
     "$run_id" "$(scene_build_config)"
-  build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
+  baseline_build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
     "$run_id" "$(episode_build_config)"
 done
 

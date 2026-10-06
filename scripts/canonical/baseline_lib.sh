@@ -17,6 +17,12 @@
 # not prepared, or does not match the lock, is an error that points at
 # `make reference-data-bootstrap`.
 #
+# BASELINE_PREFIX (default `ref`) prefixes the default BASELINE_ID, and
+# BASELINE_RECORDING_ASSERT names the function that checks a registered RobotRun's
+# recording against its fixture: the streaming baseline (scripts/streaming) is
+# `stream-ref-<selection>`, and its recording is the captured MCAP, not the locked
+# one.
+#
 # Sourced by canonical_bootstrap.sh and canonical_verify.sh after
 # scripts/e2e/lib.sh. Every read goes through the FastAPI control plane.
 
@@ -32,7 +38,7 @@ if [ -n "$FIXTURE" ]; then
 else
   BASELINE_SELECTION="$REFERENCE_SCOPE"
 fi
-BASELINE_ID="${BASELINE_ID:-ref-$BASELINE_SELECTION}"
+BASELINE_ID="${BASELINE_ID:-${BASELINE_PREFIX:-ref}-$BASELINE_SELECTION}"
 ROBOT_ID="${ROBOT_ID:-robot-$BASELINE_ID}"
 DATASET_ID="${DATASET_ID:-sceneops-$BASELINE_ID}"
 DATASET_VERSION="${DATASET_VERSION:-baseline}"
@@ -106,6 +112,22 @@ baseline_register_fixture() {
   baseline_assert_recording "$run_id" "$sha" "$size"
 }
 
+# baseline_build_scope <pipeline-type> <build-task> <register-task> <profile-task> <run-id> <config>
+# One pipeline run over one RobotRun's recording scope, in $DATASET_ID/$DATASET_VERSION.
+baseline_build_scope() {
+  local type="$1" build_task="$2" register_task="$3" profile_task="$4" run_id="$5" config="$6"
+  local params pipeline
+  params="$(jq -cn --arg b "$build_task" --arg r "$register_task" --arg p "$profile_task" \
+    --arg run "$run_id" --argjson config "$config" '{
+      ($b): {robot_run_id: $run, build_config: $config},
+      ($r): {replace: false},
+      ($p): {triggered: true}}')"
+  pipeline="$(run_pipeline "$API_BASE_URL" "$type" "$DATASET_ID" "$DATASET_VERSION" "$params")"
+  assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$pipeline")" \
+    "$type for $run_id should succeed" "$API_BASE_URL" "$pipeline" >&2
+  log "  ✅  $type ($run_id): $pipeline"
+}
+
 # baseline_verify <api>
 # Read-only. Checks the baseline through supported APIs and artifact pins and
 # prints one JSON summary on stdout; exits non-zero on the first violation.
@@ -138,7 +160,7 @@ baseline_verify() {
     run_id="$(baseline_run_id "$id")"
     sha="$(echo "$fixture" | jq -r '.recording.sha256')"
     size="$(echo "$fixture" | jq -r '.recording.size_bytes')"
-    baseline_assert_recording "$run_id" "$sha" "$size"
+    "${BASELINE_RECORDING_ASSERT:-baseline_assert_recording}" "$run_id" "$sha" "$size"
     run_ids="$(echo "$run_ids" | jq -c --arg r "$run_id" '. + [$r]')"
 
     fixture_scenes="$(echo "$all_scenes" | jq -c --arg r "$run_id" '[.scenes[] | select(.robotRunId == $r)]')"

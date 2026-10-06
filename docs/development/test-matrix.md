@@ -22,6 +22,7 @@ infrastructure semantics are part of the contract.
 | E2E journey | the five `make e2e-*` | live stack + containers | a user journey through production paths (below) |
 | Clean room | `make e2e-cleanroom` | fresh platform state | the platform reconstructs its baseline and runs its representative workflows from nothing |
 | Model-backend acceptance | `make acceptance-grounding-dino` | inference server | the Scene ML journey with the real detector |
+| Streaming baseline | `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | live stack + Kafka + ROS 2 images | the persistent streamed baseline of a scope (create-or-verify, resumable), its registered per-channel counts against the lock, and its canonical agreement with the batch baseline; not a journey and not a benchmark |
 | Command surface | `make check-commands` | none | the advertised commands exist and nothing references removed architecture |
 | Runtime source boundary | `make check-runtime-boundary` | Docker (starts no platform service) | only the acquisition / reference-preparation services mount the raw dataset; every normal runtime service sees neither `/data/raw` nor `/input/nuscenes` and keeps the paths it needs |
 

@@ -47,10 +47,6 @@
 
 set -euo pipefail
 
-# The bridge and capture run as named one-off containers; compose would warn
-# about them as orphans on every later command.
-export COMPOSE_IGNORE_ORPHANS=1
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
@@ -73,20 +69,12 @@ START_EPOCH="$(date +%s)"
 STREAM_ROBOT_ID="robot-streaming-equivalence"
 STREAM_DATASET_ID="${STREAM_DATASET_ID:-test-e2e-streaming-equivalence}"
 STREAM_VERSION="stream-$SUFFIX"
-RATE="${RATE:-}" # empty: the fixture's replay definition
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-180}"
-KAFKA_TOPIC="sceneops.robot.telemetry.v1"
-CHANNELS_FILE="${CHANNELS_FILE:-/workspace/channels/surround-camera-lidar.json}"
 CAPTURE_ROOT="/recordings/capture-$SUFFIX"
 
-COMPOSE=(docker compose --env-file "$ENV_FILE" --profile acquisition --profile ros2 --profile streaming)
-# The replay service mounts no source dataset: it can read only the locked recording.
-REPLAY=("${COMPOSE[@]}" run --rm -T dataset-replay)
-REPLAY_PROBE=("${COMPOSE[@]}" run --rm -T --entrypoint sh dataset-replay)
-PUBLISHER=("${COMPOSE[@]}" run --rm -T recording-publisher)
-ROS2=("${COMPOSE[@]}" run --rm -T ros2)
-API_EXEC=("${COMPOSE[@]}" exec -T api)
-RECONCILE=(python -m app.domains.robots.reconciliation --once)
+# The streaming acquisition path (replay -> ROS 2 -> bridge -> Kafka -> capture ->
+# publish-pending -> reconcile) is the streaming baseline's own.
+source "$REPO_ROOT/scripts/streaming/streaming_lib.sh"
 BRIDGE="bridge-$SUFFIX"
 CAPTURE="capture-$SUFFIX"
 
@@ -103,10 +91,6 @@ fail() {
     docker logs --tail 15 "$c" 2>&1 | cut -c1-400 >&2 || true
   done
   exit 1
-}
-
-summary_line() { # <log-text> <prefix> -> the JSON after "<prefix> "
-  grep -E "^$2 " <<<"$1" | tail -1 | sed "s/^$2 //"
 }
 
 artifact_uri() {
@@ -194,32 +178,10 @@ EPISODES_A="$(manifest_uris episodes "$DATASET_ID" "$DATASET_VERSION")"
 echo ""
 
 echo "=== [3/9] B — streaming arm: locked MCAP -> replay -> ROS 2 -> bridge -> Kafka -> capture ==="
-PROBE="$("${REPLAY_PROBE[@]}" -c 'for p in /input/nuscenes /data/raw; do [ -e "$p" ] && echo "visible:$p"; done; [ -r /reference ] && [ -r /config/reference ] && echo ok' </dev/null)"
-[ "$(echo "$PROBE" | tr -d '[:space:]')" = ok ] || fail "the replay container sees a raw dataset or lacks the reference mounts: $PROBE"
+streaming_acquire "$FIXTURE_JSON" "$RUN_B" "$STREAM_ROBOT_ID" "$CAPTURE_ROOT" "$BRIDGE" "$CAPTURE"
 echo "  ✅  raw nuScenes is unavailable to the replay container (no /input/nuscenes, no /data/raw); the reference cache and corpus are mounted"
-"${COMPOSE[@]}" run -d --name "$BRIDGE" -T ros2 python3 /workspace/nodes/streaming_bridge_node.py \
-  --robot-id "$STREAM_ROBOT_ID" --robot-run-id "$RUN_B" --channels-file "$CHANNELS_FILE" \
-  --exit-after-idle-seconds 10 >/dev/null
-"${COMPOSE[@]}" run -d --name "$CAPTURE" -T ros2 python3 /workspace/capture/cli.py \
-  --robot-id "$STREAM_ROBOT_ID" --robot-run-id "$RUN_B" --channels-file "$CHANNELS_FILE" \
-  --output-root "$CAPTURE_ROOT" --until-run-end --idle-timeout-seconds 120 >/dev/null
-for _ in $(seq 1 60); do
-  docker logs "$BRIDGE" 2>&1 | grep -q "streaming bridge ready" && break
-  sleep 1
-done
-docker logs "$BRIDGE" 2>&1 | grep -q "streaming bridge ready" || fail "bridge did not start"
-REPLAY_OUT="$("${REPLAY[@]}" reference replay --corpus "/config/reference/$REFERENCE_CORPUS" \
-  --cache-root /reference --fixture "$FIXTURE_ID" ${RATE:+--rate "$RATE"} </dev/null)" || fail "replay failed"
-REPLAY_SOURCE="$(summary_line "$REPLAY_OUT" replay_source)"
-REPLAY_SUMMARY="$(summary_line "$REPLAY_OUT" replay_summary)"
 echo "$REPLAY_SOURCE" | jq -c '{fixture_id, path, sha256: .recording.sha256}'
 echo "$REPLAY_SUMMARY" | jq -c '{message_count, rate, elapsed_seconds, max_lag_seconds, largest_payload_bytes}'
-[ "$(docker wait "$BRIDGE")" = 0 ] || fail "bridge exited non-zero"
-[ "$(docker wait "$CAPTURE")" = 0 ] || fail "capture exited non-zero"
-BRIDGE_SUMMARY="$(summary_line "$(docker logs "$BRIDGE" 2>&1)" bridge_summary)"
-CAPTURE_SUMMARY="$(summary_line "$(docker logs "$CAPTURE" 2>&1)" capture_summary)"
-STREAM_RECORDING="$(echo "$CAPTURE_SUMMARY" | jq -r '.path')"
-RECEIPT_PATH="$(echo "$CAPTURE_SUMMARY" | jq -r '.receipt_path')"
 echo "$CAPTURE_SUMMARY" | jq -c '{path, message_count, sha256}'
 echo ""
 

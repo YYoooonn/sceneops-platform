@@ -116,12 +116,120 @@ Through the API and artifact pins only; it reads the lock but no recording:
 - the DatasetVersion's registrar-owned Scene and Episode summaries equal the
   registered membership.
 
+## Streaming baseline
+
+The same fixtures reach canonical state a second way: replayed from the locked
+reference MCAP through the streaming transport. The streaming baseline is the
+persistent counterpart of the batch baseline, built from the same corpus with the
+same Scene and Episode build configurations.
+
+```text
+locked reference MCAP (one per fixture)
+  -> reference replay          dataset-replay container; the corpus and cache read-only, no raw dataset
+  -> ROS 2 -> bridge -> Kafka -> capture      finalized on the run's RUN_END; MCAP + capture receipt
+  -> publish-pending           publisher CLI, from the receipt
+  -> reconcile --once --apply  submits REGISTER_ROBOT_RUN
+  -> one streamed RobotRun per fixture
+  -> recording_scene_building / recording_episode_building   (config/baselines/, whole_recording)
+  -> verify                    read back through the API
+```
+
+```text
+make streaming-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [BASELINE_ID=...] [RATE=...]
+make streaming-verify    [same selection]            read-only re-check
+make streaming-compare   [same selection]            read-only: batch baseline vs streaming baseline
+```
+
+- `BASELINE_ID` defaults to `stream-ref-<selection>` (`stream-ref-smoke-1`,
+  `stream-ref-nuscenes-mini-full-10`, `stream-ref-<fixture>`). Robot, RobotRun
+  (`run-<BASELINE_ID>-<fixture>`) and DatasetVersion follow the same identity rules as
+  the batch baseline, so the two never share a RobotRun set or a DatasetVersion.
+- `RATE` overrides every fixture's replay rate. The bootstrap needs Kafka (it starts
+  the broker if absent), `make local-up`, and the fixtures prepared by
+  `make reference-data-bootstrap`. It reads no raw dataset and converts nothing.
+- Publication and registration are the production commands of
+  [ADR-008](../adr/008-acquisition-lifecycle-reliability.md); nothing writes PostgreSQL
+  or MinIO directly.
+- `scripts/streaming/streaming_lib.sh` holds the acquisition path shared with
+  `make e2e-streaming-equivalence`.
+
+### create-or-verify, per fixture
+
+The next step is chosen from the platform's durable state; a registered RobotRun is
+never replayed over.
+
+| State of the fixture's run | Action |
+| --- | --- |
+| RobotRun registered; one Scene and one Episode, validated, profiled, ready | reused |
+| RobotRun registered; Scene or Episode missing or not ready | built (converges on registered revisions) |
+| capture finalized or published, registration pending / active / stalled / transiently failed | `publish-pending` and `reconcile --apply`; not replayed |
+| capture unfinished (interrupted) | capture resumed from Kafka's committed offsets; not replayed |
+| nothing | replayed (streamed) |
+| any other reconciler state (conflict, integrity incident, permanent failure) | fails and names the state; the bootstrap repairs nothing |
+
+After a run's recording is registered and byte-identical to its capture, the
+transient capture files of that run are removed from the recordings volume; the
+durable state is in the ArtifactStore and PostgreSQL. A capture that is not provably
+published is kept.
+
+Before each fixture it would replay, the bootstrap requires `MIN_FREE_GIB` (default 6)
+free on both the host volume and the Docker VM disk, and otherwise stops; it resumes
+from the durable state when re-run. Per fixture it logs `streaming_fixture {json}`
+(action and replay, capture, publish-and-register, Scene build and Episode build
+seconds) and `streaming_storage {json}` (free space, MinIO, Kafka and recordings
+sizes) on stderr. A pipeline still running after `STALL_REPORT_SECONDS` (default 240)
+is reported with worker CPU, memory and log tails; a rejected pipeline execute is
+reported with its HTTP status.
+
+### What `streaming-verify` checks
+
+The checks of `canonical-verify` (membership, Scene / Episode shape, manifest pins,
+readiness, DatasetVersion summaries), with the recording check replaced. A streamed
+RobotRun pins the **captured** recording, not the locked one: capture stamps its own
+receive times, so the bytes differ. Instead, through the RobotRun's registered
+manifest:
+
+- the recording ArtifactRecord equals the manifest's recording, and is not the locked
+  recording itself;
+- the manifest is a Kafka capture of the baseline's robot, on the recording clock;
+- the message count and the per-channel counts equal the lock's for that fixture.
+
+The summary is the canonical baseline summary plus `transport` and, per fixture,
+`streamed_recording` (sha256, size, message count, per-channel counts);
+`recording_sha256` / `recording_bytes` remain the locked source recording's. It is
+deterministic for an unchanged baseline.
+
+### Batch and streaming compared
+
+`make streaming-compare` verifies both baselines read-only, then checks at corpus
+level: the same fixture set and locked recordings; equal RobotRun, Scene, Episode and
+message totals; and per fixture the locked, batch and streamed message counts and
+per-channel counts agree, the batch RobotRun pins the locked recording and the
+streamed one its own capture. It loads every Scene and Episode manifest of both
+sides and requires an equal semantic projection per unit key
+(`semantic_scene_content` / `semantic_episode_content`, ADR-007 I-35). It loads no
+recording payload: payload-level equivalence of the two acquisitions is proven on one
+fixture by `make e2e-streaming-equivalence`.
+
+### Limitations
+
+- Fixtures are streamed one at a time, sequentially; the run owns its Kafka offset
+  range, which the capture receipt check relies on.
+- Kafka retains every streamed run (no retention is configured); the broker's disk use
+  grows by about one recording per fixture. Reset Kafka only deliberately.
+- The streamed recording's checksum is specific to the execution that captured it
+  and is not reproducible; the baseline is verified by its registered facts, not by
+  a fixed checksum.
+- An interrupted capture resumes only if the run's RUN_END is already in Kafka; if the
+  replay itself was interrupted, the run's partial state is cleared by hand.
+
 ## Where baselines are used
 
 | Consumer | Baseline |
 | --- | --- |
 | `make e2e-batch-canonical` | its own unique baseline of one fixture; also proves bootstrap re-runs change nothing |
 | `make e2e-scene-ml`, `make e2e-episode-learning` | a unique baseline of one fixture per run, or `BASELINE_ID=<id>` of a baseline that contains exactly that fixture |
+| `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | the persistent `stream-ref-<selection>`; the batch baseline is only read |
 | `make e2e-streaming-equivalence` | the persistent `ref-<selection>` (`ref-smoke-1` by default) as the batch arm: verified read-only when registered, created only when absent, never rebuilt; the streamed arm is a unique RobotRun in its own DatasetVersion |
 | `make e2e-cleanroom` | the persistent `ref-smoke-1`, built from fresh platform state |
 | `make test-infrastructure` | the persistent `ref-smoke-1` (create-or-verify); tests build one RobotRun's Scenes / Episodes into throwaway DatasetVersions |

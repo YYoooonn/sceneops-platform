@@ -64,3 +64,47 @@ e2e-streaming-equivalence: acquisition-image
 	chmod +x scripts/e2e/e2e_streaming_equivalence.sh scripts/canonical/*.sh
 	$(E2E_ENV) REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(RATE),RATE=$(RATE)) \
 	scripts/e2e/e2e_streaming_equivalence.sh
+
+# --------------------
+# Streaming reference baseline (docs/development/canonical-baseline.md)
+#
+# streaming-bootstrap -- developer/test orchestration, not a Pipeline: each fixture
+#                        of the selection is replayed from its LOCKED reference MCAP
+#                        through replay -> ROS 2 -> bridge -> Kafka -> capture ->
+#                        receipt -> publish-pending -> reconcile --apply into one
+#                        streamed RobotRun, then built into one Scene and one
+#                        Episode with the canonical baseline's configurations.
+#                        create-or-verify: a complete fixture is reused, never
+#                        replayed over; an incomplete one is recovered through the
+#                        ADR-008 commands. Reads no raw dataset.
+# streaming-verify    -- read-only re-check of the same baseline through the API.
+# streaming-compare   -- read-only corpus-level comparison with the batch baseline.
+#
+# REFERENCE_SCOPE (default smoke-1; nuscenes-mini-full-10) or FIXTURE selects the
+# fixtures; BASELINE_ID (default stream-ref-<scope> / stream-ref-<fixture>) names
+# the baseline; RATE overrides the replay rate. The batch baseline `ref-<scope>`
+# is never touched. Prerequisites: `make local-up` and
+# `make reference-data-bootstrap REFERENCE_SCOPE=<scope>`.
+# --------------------
+
+FIXTURE ?=
+
+STREAMING_ENV = $(E2E_ENV) REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(FIXTURE),FIXTURE=$(FIXTURE)) $(if $(RATE),RATE=$(RATE))
+
+.PHONY: streaming-bootstrap
+streaming-bootstrap: acquisition-image
+	$(COMPOSE) --profile ros2 build ros2
+	chmod +x scripts/streaming/*.sh scripts/canonical/*.sh
+	$(STREAMING_ENV) scripts/streaming/streaming_bootstrap.sh
+
+.PHONY: streaming-verify
+streaming-verify:
+	chmod +x scripts/streaming/*.sh scripts/canonical/*.sh
+	$(STREAMING_ENV) scripts/streaming/streaming_verify.sh
+
+.PHONY: streaming-compare
+streaming-compare:
+	chmod +x scripts/streaming/*.sh scripts/canonical/*.sh
+	$(STREAMING_ENV) $(if $(BATCH_BASELINE_ID),BATCH_BASELINE_ID=$(BATCH_BASELINE_ID)) \
+		$(if $(STREAM_BASELINE_ID),STREAM_BASELINE_ID=$(STREAM_BASELINE_ID)) \
+		scripts/streaming/streaming_compare.sh

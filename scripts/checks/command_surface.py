@@ -36,6 +36,9 @@ MUST_BE_ADVERTISED = (
     | {
         "canonical-bootstrap",
         "canonical-verify",
+        "streaming-bootstrap",
+        "streaming-verify",
+        "streaming-compare",
         "reference-data-bootstrap",
         "reference-data-verify",
         "test",

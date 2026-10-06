@@ -102,6 +102,7 @@ make local-up                       # idempotent: Postgres + Redis + MinIO + mig
 make test                           # unit suites, no infrastructure
 make reference-data-bootstrap       # prepare + verify the nuScenes mini batch recordings (once per scope)
 make canonical-bootstrap            # prepared recordings -> RobotRun -> Scenes -> Episodes (the L1/L2 baseline)
+make streaming-bootstrap            # locked MCAPs -> replay -> ROS 2 -> Kafka -> capture -> RobotRun -> Scenes -> Episodes (the streamed L1/L2 baseline)
 make e2e-scene-ml                   # Scenes -> labels -> views -> ScenarioSet -> prediction -> evaluation
 make e2e-episode-learning           # Episodes -> aligned -> learning export -> LeRobot round trip
 ```
@@ -157,6 +158,7 @@ There are exactly five E2E journeys. Platform operations go through FastAPI and 
 | Command | Journey |
 | --- | --- |
 | `make canonical-bootstrap` / `make canonical-verify` | Developer orchestration, not a pipeline: prepared reference-corpus recordings → one RobotRun per fixture → Scenes → Episodes → validate / profile, then read-only verification. Builds nothing derived. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
+| `make streaming-bootstrap` / `make streaming-verify` / `make streaming-compare` | Developer orchestration, not a pipeline: each fixture's locked reference MCAP → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → one streamed RobotRun → Scene → Episode (`stream-ref-<scope>`), then read-only verification and a corpus-level comparison with the batch baseline. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make e2e-batch-canonical` | dataset fixture → batch MCAP → RobotRun → Scenes + Episodes |
 | `make e2e-streaming-equivalence` | One locked reference MCAP reaches Scenes and Episodes via the batch baseline and via replay → ROS 2 → Kafka → capture → publish-pending → reconcile; the two are semantically equivalent (needs Kafka) |
 | `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend) |
@@ -236,6 +238,7 @@ sceneops-platform/
 ├── scripts/
 │   ├── e2e/                        # the five journeys, shared helpers, container-run verifiers
 │   ├── canonical/                  # canonical-bootstrap / canonical-verify
+│   ├── streaming/                  # streaming-bootstrap / -verify / -compare, shared streaming acquisition path
 │   └── checks/                     # environment checks, command-surface consistency
 ├── tests/infrastructure/           # pipeline-contract / orchestrator / MinIO acceptance tests
 ├── docs/                           # architecture/, adr/, development/, workflows/
