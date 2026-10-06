@@ -809,6 +809,96 @@ def verify(
     return 1 if failed else 0
 
 
+def _lock_problems(
+    corpus: Corpus, lock: Mapping[str, Any] | None, fixture_id: str
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """The fixture's lock entry, and why it cannot be used: not locked, or its
+    resolved definition is not the locked one."""
+    locked = lock["fixtures"].get(fixture_id) if lock else None
+    problems: list[str] = []
+    if locked is None:
+        problems.append(
+            f"{fixture_id} is not in {LOCK_FILE} (run reference-data-bootstrap "
+            "with UPDATE_LOCK=1 to lock it)"
+        )
+    else:
+        _compare(
+            problems,
+            "fixture definition",
+            locked["definition_sha256"],
+            corpus.definition_sha256(fixture_id),
+        )
+    return locked, problems
+
+
+def _cached_recording_problems(
+    corpus: Corpus,
+    lock: Mapping[str, Any],
+    locked: Mapping[str, Any],
+    fixture_id: str,
+    cache_root: Path,
+) -> tuple[Path, list[str]]:
+    """Find the fixture's cached recording by the key the lock implies (the
+    lock holds the source fingerprint, so no source access is needed) and check
+    its bytes, size and counts against the lock."""
+    key = _recording_key(
+        corpus,
+        corpus.resolve(fixture_id),
+        lock["tool"]["identity_sha256"],
+        locked["source"]["fingerprint_sha256"],
+    )
+    path = recording_path(cache_root, corpus, fixture_id, key)
+    if not path.is_file():
+        return path, [f"recording not prepared: {path} (run reference-data-bootstrap)"]
+    return path, check_recording(locked, read_recording_facts(path))
+
+
+@dataclass(frozen=True)
+class LockedRecording:
+    """A cached recording that agrees with the lock, and the fixture's replay
+    definition."""
+
+    fixture_id: str
+    source_unit: str
+    path: Path
+    recording: dict[str, Any]  # the lock's facts: sha256, size, counts
+    replay: dict[str, Any]  # resolved replay definition (rate, subscriber wait)
+
+
+def locked_recording(
+    corpus_dir: Path, fixture_id: str, *, cache_root: Path
+) -> LockedRecording:
+    """The fixture's cached batch MCAP, verified against the lock.
+
+    For consumers that read the recording's bytes -- the streaming replay --
+    and need no source dataset. It requires the fixture to be locked with its
+    locked definition and the cached file to have the locked sha256, size and
+    counts. Unlike :func:`resolve` it does not compare the tool identity: that
+    pins the environment that *produces* recordings, which a consumer need
+    not share (the replay image is a different interpreter), and the
+    recording's own bytes are what the consumer relies on. Raises
+    :class:`ReferenceDataError` naming every disagreement; nothing is written.
+    """
+    corpus = load_corpus(corpus_dir)
+    lock = read_lock(corpus_dir, corpus)
+    locked, problems = _lock_problems(corpus, lock, fixture_id)
+    path: Path | None = None
+    if not problems and lock is not None and locked is not None:
+        path, problems = _cached_recording_problems(
+            corpus, lock, locked, fixture_id, cache_root
+        )
+    if problems or locked is None or path is None:
+        raise ReferenceDataError(f"{fixture_id}: " + "; ".join(problems))
+    resolved = corpus.resolve(fixture_id)
+    return LockedRecording(
+        fixture_id=fixture_id,
+        source_unit=resolved["source_unit"],
+        path=path,
+        recording=locked["recording"],
+        replay=resolved["replay"],
+    )
+
+
 def resolve(
     corpus_dir: Path,
     fixtures: list[str],
@@ -833,22 +923,9 @@ def resolve(
     tool = tool_identity() if check_recordings else None
     failed = 0
     for fixture_id in fixtures:
-        locked = lock["fixtures"].get(fixture_id) if lock else None
-        problems: list[str] = []
+        locked, problems = _lock_problems(corpus, lock, fixture_id)
         path: Path | None = None
         labels_file: Path | None = None
-        if locked is None:
-            problems.append(
-                f"{fixture_id} is not in {LOCK_FILE} (run reference-data-bootstrap "
-                "with UPDATE_LOCK=1 to lock it)"
-            )
-        else:
-            _compare(
-                problems,
-                "fixture definition",
-                locked["definition_sha256"],
-                corpus.definition_sha256(fixture_id),
-            )
         if not problems and tool is not None:
             _compare(
                 problems,
@@ -857,19 +934,9 @@ def resolve(
                 tool["identity_sha256"],
             )
         if not problems and tool is not None:
-            key = _recording_key(
-                corpus,
-                corpus.resolve(fixture_id),
-                lock["tool"]["identity_sha256"],
-                locked["source"]["fingerprint_sha256"],
+            path, problems = _cached_recording_problems(
+                corpus, lock, locked, fixture_id, cache_root
             )
-            path = recording_path(cache_root, corpus, fixture_id, key)
-            if not path.is_file():
-                problems.append(
-                    f"recording not prepared: {path} (run reference-data-bootstrap)"
-                )
-            else:
-                problems.extend(check_recording(locked, read_recording_facts(path)))
         if not problems and check_labels and locked is not None:
             labels_file, _, label_problems = _locate_labels(
                 corpus, locked, fixture_id, cache_root

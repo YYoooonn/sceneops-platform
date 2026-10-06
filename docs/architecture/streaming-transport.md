@@ -419,6 +419,14 @@ observation times stay inside the payload, so replay pacing and transport
 latency cannot enter them. The bridge and replay containers meet only over
 DDS on the compose network.
 
+The replay sink's events come from either of two sources: a dataset adapter
+(`nuscenes --replay`) or a finalized MCAP (`reference replay`). The MCAP source
+derives channels, schemas, payload bytes and source time from the recording
+itself; the source time of a locked batch MCAP is its MCAP `log_time`, and
+messages with equal `log_time` keep their file order. `reference replay` resolves
+the recording through the reference corpus lock and verifies it before the first
+message is published (see `docs/development/reference-corpus.md`).
+
 ## 11. Channel registry and source-timestamp contract
 
 Which topics the bridge subscribes to, which type each carries, and where

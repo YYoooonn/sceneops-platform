@@ -110,6 +110,14 @@ the cached label artifact and prints its entry and path; the canonical baseline
 does not ask for labels, because it contains nothing derived. The canonical baseline
 never converts source data; see [canonical-baseline.md](./canonical-baseline.md).
 
+The streaming replay is the other consumer of a recording:
+`dataset-acquisition reference replay --fixture <id>` (service `dataset-replay`, which
+mounts the corpus and the cache read-only) verifies one fixture's cached recording
+against the lock and publishes that MCAP on ROS 2 topics through the replay sink. It
+reads no source dataset and does not compare the tool identity, since the replay image
+is not the interpreter that wrote the recording; the recording's sha256, size and counts
+are what it relies on.
+
 A recording is reused only when the definition, the tool identity, the source
 fingerprint and the recording's own sha256, size and counts agree with the lock; a
 label artifact only when its own sha256, size and counts do (and, in preparation,

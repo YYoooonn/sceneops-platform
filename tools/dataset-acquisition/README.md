@@ -61,6 +61,28 @@ largest lag behind schedule, the largest payload).
 A ROS 2 topic carries no per-topic publisher counter, so the replay sink drops the
 event's `sequence`; the bridge assigns a transport sequence on arrival.
 
+### Replaying a reference fixture
+
+```bash
+$COMPOSE run --rm dataset-replay reference replay \
+    --corpus /config/reference/nuscenes-mini-v1 --cache-root /reference --fixture scene-0061
+```
+
+`reference replay` publishes a fixture's locked batch MCAP through the same replay sink,
+and reads no source dataset. It first checks the cached recording against
+`corpus.lock.json` (the fixture's definition, then the recording's sha256, size and
+counts; the tool identity is not compared, because the replay image is a different
+interpreter from the one that wrote the recording), prints one `replay_source` line
+with the locked facts, and then replays. Exactly one fixture is replayed per run. `--rate` and
+`--wait-subscribers-seconds` default to the fixture's `replay` definition.
+
+The events come from the MCAP itself (`mcap_source.py`): topics, ROS 2 schema name and
+definition and message encoding from the summary, payload bytes unchanged, source time
+= the message's MCAP `log_time`. Messages are ordered by `log_time`; equal `log_time`
+keeps file order, so `/tf_static` and the other messages of one instant replay in the
+order the batch sink wrote them. Reading streams one chunk at a time; an MCAP without a
+chunk index is refused.
+
 ## Boundary
 
 - Its own uv project and `uv.lock`, outside the root workspace.

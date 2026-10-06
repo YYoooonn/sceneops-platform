@@ -7,13 +7,14 @@ real corpus, which ``make reference-data-verify`` checks.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
 import pytest
 from synthetic_nuscenes import UNIT, VERSION, write_dataroot
 
-from dataset_acquisition import reference
+from dataset_acquisition import reference, ros2_replay
 from dataset_acquisition.cli import main as cli_main
 from dataset_acquisition.events import AcquisitionError
 
@@ -631,6 +632,164 @@ def test_lock_only_is_a_resolve_option(
         ]
     )
     assert code == 1 and "--lock-only applies to" in capsys.readouterr().err
+
+
+# -- replay: the streaming consumer's view, no source ---------------------------------
+
+
+def replay_args(corpus_dir: Path, cache_root: Path, *args: str) -> list[str]:
+    return [
+        "reference",
+        "replay",
+        "--corpus",
+        str(corpus_dir),
+        "--cache-root",
+        str(cache_root),
+        *args,
+    ]
+
+
+@contextlib.contextmanager
+def fake_ros2(published: dict[str, list[bytes]]):
+    class Publisher:
+        def __init__(self, topic: str) -> None:
+            self.topic = topic
+
+        def publish(self, payload: bytes) -> None:
+            published.setdefault(self.topic, []).append(payload)
+
+        def subscription_count(self) -> int:
+            return 1
+
+        def wait_for_all_acked(self, timeout_seconds: float) -> bool:
+            return True
+
+    yield lambda topic, message_type, latched: Publisher(topic)
+
+
+def test_locked_recording_returns_the_verified_path_and_replay_definition(
+    corpus_dir: Path, prepared: Path
+) -> None:
+    found = reference.locked_recording(corpus_dir, "unit-one", cache_root=prepared)
+    lock = json.loads(lock_bytes(corpus_dir))
+    assert found.path in cached(prepared)
+    assert found.source_unit == UNIT
+    assert found.recording == lock["fixtures"]["unit-one"]["recording"]
+    assert found.replay == {"rate": 2.0, "wait_subscribers_seconds": 60}
+
+
+def test_locked_recording_does_not_compare_the_tool_identity(
+    monkeypatch, corpus_dir: Path, prepared: Path
+) -> None:
+    """The consumer relies on the recording's bytes, not on the environment
+    that produced them (the replay image is a different interpreter)."""
+    real = reference.tool_identity()
+    monkeypatch.setattr(
+        reference,
+        "tool_identity",
+        lambda: {**real, "identity_sha256": "sha256:" + "0" * 64},
+    )
+    assert reference.locked_recording(corpus_dir, "unit-one", cache_root=prepared)
+
+
+def test_locked_recording_refuses_what_the_lock_does_not_describe(
+    corpus_dir: Path, prepared: Path
+) -> None:
+    one, two = cached(prepared)
+    two.unlink()
+    data = bytearray(one.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    one.write_bytes(bytes(data))
+    with pytest.raises(reference.ReferenceDataError, match="recording sha256"):
+        reference.locked_recording(corpus_dir, "unit-one", cache_root=prepared)
+    with pytest.raises(reference.ReferenceDataError, match="not prepared"):
+        reference.locked_recording(corpus_dir, "unit-two", cache_root=prepared)
+
+    document = corpus_document()
+    document["fixtures"][0]["replay"] = {"rate": 4.0}
+    write_corpus(corpus_dir, document)
+    with pytest.raises(reference.ReferenceDataError, match="fixture definition"):
+        reference.locked_recording(corpus_dir, "unit-one", cache_root=prepared)
+    document["fixtures"].append(
+        {"fixture_id": "unit-three", "source_unit": "scene-0003"}
+    )
+    write_corpus(corpus_dir, document)
+    with pytest.raises(reference.ReferenceDataError, match="not in corpus.lock.json"):
+        reference.locked_recording(corpus_dir, "unit-three", cache_root=prepared)
+
+
+def test_reference_replay_publishes_the_locked_recording_without_the_source(
+    capsys, monkeypatch, corpus_dir: Path, prepared: Path
+) -> None:
+    published: dict[str, list[bytes]] = {}
+    monkeypatch.setattr(ros2_replay, "ros2_publishers", lambda: fake_ros2(published))
+
+    code = cli_main(
+        replay_args(corpus_dir, prepared, "--fixture", "unit-one", "--rate", "0")
+    )
+
+    assert code == 0
+    lines = capsys.readouterr().out.splitlines()
+    source = json.loads(lines[0].removeprefix("replay_source "))
+    summary = json.loads(lines[1].removeprefix("replay_summary "))
+    lock = json.loads(lock_bytes(corpus_dir))["fixtures"]["unit-one"]["recording"]
+    assert source["recording"] == lock and Path(source["path"]) in cached(prepared)
+    assert summary["topic_counts"] == lock["topic_counts"]
+    assert summary["message_count"] == lock["message_count"]
+    assert {t: len(p) for t, p in published.items()} == lock["topic_counts"]
+    # Rate comes from the fixture's definition unless given.
+    assert summary["rate"] == 0
+
+
+def test_reference_replay_uses_the_definition_rate_by_default(
+    capsys, monkeypatch, corpus_dir: Path, prepared: Path
+) -> None:
+    monkeypatch.setattr(ros2_replay, "ros2_publishers", lambda: fake_ros2({}))
+    code = cli_main(replay_args(corpus_dir, prepared, "--fixture", "unit-one"))
+    assert code == 0
+    summary = json.loads(
+        capsys.readouterr().out.splitlines()[-1].removeprefix("replay_summary ")
+    )
+    assert summary["rate"] == 2.0
+
+
+def test_reference_replay_verifies_the_cache_before_publishing_anything(
+    capsys, monkeypatch, corpus_dir: Path, prepared: Path
+) -> None:
+    published: dict[str, list[bytes]] = {}
+    monkeypatch.setattr(ros2_replay, "ros2_publishers", lambda: fake_ros2(published))
+    (one, _) = cached(prepared)
+    data = bytearray(one.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    one.write_bytes(bytes(data))
+
+    code = cli_main(replay_args(corpus_dir, prepared, "--fixture", "unit-one"))
+
+    captured = capsys.readouterr()
+    assert code == 1 and "recording sha256" in captured.err
+    assert captured.out == "" and published == {}
+
+
+def test_reference_replay_needs_exactly_one_fixture_and_owns_its_options(
+    capsys, corpus_dir: Path, prepared: Path
+) -> None:
+    assert cli_main(replay_args(corpus_dir, prepared, "--scope", "all")) == 1
+    assert "exactly one fixture" in capsys.readouterr().err
+    code = cli_main(
+        [
+            "reference",
+            "resolve",
+            "--corpus",
+            str(corpus_dir),
+            "--cache-root",
+            str(prepared),
+            "--fixture",
+            "unit-one",
+            "--rate",
+            "1",
+        ]
+    )
+    assert code == 1 and "apply to `reference replay` only" in capsys.readouterr().err
 
 
 # -- reference labels: the fixture's source-derived ground truth ---------------------------

@@ -19,6 +19,10 @@ timed ROS 2 replay (streaming).
         --fixture scene-0061 --robot-run-id run-1 \\
         --label-set-id labels-scene-0061 --output out/labels.json
 
+    dataset-acquisition reference replay \\
+        --corpus config/reference/nuscenes-mini-v1 --cache-root data/reference \\
+        --fixture scene-0061 [--rate 2.0]
+
 ``reference`` works on a versioned corpus of fixtures (``reference.py``):
 ``inspect`` prints a fixture's definition and live source facts, ``verify``
 checks source, definition, tool identity and the cached recording against
@@ -30,7 +34,9 @@ fixture's locked facts and recording path (``--with-labels``: also the verified
 reference label artifact). ``render-labels`` is the other no-source command: the
 locked reference label artifact of one fixture and a target RobotRun id become a
 ``sceneops.label_set/v1`` document. One JSON line per fixture goes to stdout;
-exit 1 if any fixture disagrees.
+exit 1 if any fixture disagrees. ``replay`` is the streaming counterpart of
+``resolve``: it verifies one fixture's cached recording against the lock, then
+publishes that MCAP (``mcap_source``) on ROS 2 topics. It reads no source dataset.
 
 Batch prints one JSON summary (path, sha256, size, message and per-topic
 counts) on stdout and exits 0. Replay prints one ``replay_summary`` JSON
@@ -53,6 +59,7 @@ from .events import AcquisitionError
 from .mcap_sink import write_mcap
 from .nuscenes import CHANNEL_GROUPS, NuScenesAdapter, NuScenesSelection
 
+REPLAY_SOURCE_PREFIX = "replay_source "
 REPLAY_SUMMARY_PREFIX = "replay_summary "
 
 
@@ -103,7 +110,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     reference.add_argument(
         "command",
-        choices=("inspect", "verify", "prepare", "resolve", "render-labels"),
+        choices=("inspect", "verify", "prepare", "resolve", "render-labels", "replay"),
     )
     reference.add_argument(
         "--corpus", required=True, type=Path, help="corpus directory"
@@ -142,6 +149,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--output", type=Path, help="render-labels only: write the document here"
     )
     reference.add_argument(
+        "--rate",
+        type=float,
+        help="replay only: speed relative to the source timeline, 0 for no pacing "
+        "(default: the fixture's replay definition)",
+    )
+    reference.add_argument(
+        "--wait-subscribers-seconds",
+        type=float,
+        help="replay only: fail if a topic has no subscriber after this long "
+        "(default: the fixture's replay definition)",
+    )
+    reference.add_argument(
         "--update-lock",
         action="store_true",
         help="prepare only: record what the current source and tool produce in "
@@ -165,8 +184,20 @@ def _reference(args: argparse.Namespace) -> int:
             "--robot-run-id, --label-set-id and --output apply to "
             "`reference render-labels` only"
         )
+    replay_options = (args.rate, args.wait_subscribers_seconds)
+    if args.command != "replay" and any(o is not None for o in replay_options):
+        raise AcquisitionError(
+            "--rate and --wait-subscribers-seconds apply to `reference replay` only"
+        )
     corpus = reference.load_corpus(args.corpus)
     fixtures = corpus.select(args.scope, args.fixture)
+    if args.command == "replay":
+        if len(fixtures) != 1:
+            raise AcquisitionError(
+                "`reference replay` replays exactly one fixture (one RobotRun per "
+                f"replay), got {len(fixtures)}"
+            )
+        return _reference_replay(args, fixtures[0])
     if args.command == "render-labels":
         if len(fixtures) != 1 or not all(render_options):
             raise AcquisitionError(
@@ -203,6 +234,46 @@ def _reference(args: argparse.Namespace) -> int:
     return run(
         args.corpus, fixtures, dataroot=args.dataroot, cache_root=args.cache_root
     )
+
+
+def _reference_replay(args: argparse.Namespace, fixture_id: str) -> int:
+    """Replay a fixture's locked recording. Nothing is published before the
+    cached MCAP has been verified against the lock."""
+    from . import reference
+    from .mcap_source import McapAdapter
+    from .ros2_replay import replay, ros2_publishers
+
+    locked = reference.locked_recording(
+        args.corpus, fixture_id, cache_root=args.cache_root
+    )
+    rate = args.rate if args.rate is not None else locked.replay["rate"]
+    wait = (
+        args.wait_subscribers_seconds
+        if args.wait_subscribers_seconds is not None
+        else locked.replay["wait_subscribers_seconds"]
+    )
+    print(
+        REPLAY_SOURCE_PREFIX
+        + json.dumps(
+            {
+                "fixture_id": locked.fixture_id,
+                "source_unit": locked.source_unit,
+                "path": str(locked.path),
+                "recording": locked.recording,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    with ros2_publishers() as factory:
+        summary = replay(
+            McapAdapter(locked.path),
+            factory,
+            rate=rate,
+            wait_subscribers_seconds=wait,
+        )
+    print(REPLAY_SUMMARY_PREFIX + json.dumps(summary.to_dict(), sort_keys=True))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
