@@ -140,7 +140,6 @@ async def test_finalized_capture_to_registered_runs_through_the_one_shot_command
     command changes nothing."""
     run_id = f"rec124-vertical-{uuid.uuid4().hex[:6]}"
     robot_id = f"rec124-robot-{uuid.uuid4().hex[:6]}"
-    env.run_ids.append(run_id)
     capture_root = tmp_path / "capture"
     make_finalized_capture(capture_root, run_id, robot_id)
     publisher_env = env.publisher_environment()
@@ -226,7 +225,6 @@ async def test_publish_pending_resumes_after_the_recording_was_uploaded(env, tmp
     not (a publisher killed between P3 and P5). The pass reuses the recording,
     writes the marker, and the run then registers."""
     run_id = f"rec124-w5-{uuid.uuid4().hex[:6]}"
-    env.run_ids.append(run_id)
     capture_root = tmp_path / "capture"
     make_finalized_capture(capture_root, run_id, f"rec124-robot-{uuid.uuid4().hex[:6]}")
     store = env.store()

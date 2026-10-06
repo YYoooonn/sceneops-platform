@@ -145,10 +145,10 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | Command | Description |
 | --- | --- |
 | `make test` | Unit suites (worker, api, inference-server, core, analytics, integrations, streaming) — no infrastructure |
-| `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, every `*_integration.py` module (registrars, recording Scene / Episode and derived verticals, selective Parquet reads) — needs `make local-up`; a skipped test fails the run |
+| `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, every `*_integration.py` module (registrars, recording Scene / Episode and derived verticals, selective Parquet reads) — in a disposable database and bucket, needs `make local-up`; a skipped test fails the run |
 | `make test-infrastructure` | Pipeline contracts on the live stack: dedup / force / convergence / replacement / blocked resumption / failure recovery / concurrent registration, the configured orchestrator |
 | `make test-infrastructure-airflow` | The same pipelines through the Airflow per-task DAGs (needs `make airflow-up` and the API on the Airflow backend) |
-| `make test-recovery` | Acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance: real Postgres + MinIO, a throwaway Redis and Celery workers (needs `make local-up` and Docker) |
+| `make test-recovery` | Acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance: real Postgres + MinIO in a disposable database and bucket, a throwaway Redis and Celery workers (needs `make local-up` and Docker) |
 | `make acquisition-test` / `make lerobot-test` / `make ros2-test` | Isolated-environment suites: dataset-acquisition, LeRobot adapter, ROS 2 bridge + capture |
 | `make smoke-streaming` | Transport / liveness only — never create persistent domain data |
 | `make lint` / `make format` | Ruff check / format |

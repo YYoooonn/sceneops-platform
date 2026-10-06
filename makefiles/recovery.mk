@@ -56,17 +56,14 @@ RECOVERY_TESTS ?= tests/infrastructure/test_acquisition_recovery.py \
 	tests/infrastructure/test_acquisition_lifecycle_acceptance.py
 
 .PHONY: test-recovery
-# Fault-injection acceptance of acquisition recovery: real PostgreSQL + MinIO
-# (`make local-up`), and a throwaway Redis container plus Celery worker
-# subprocesses of the test's own (Docker required) -- killing a worker or
-# stopping the broker never touches the dev stack. Needs no canonical baseline.
+# Fault-injection acceptance of acquisition recovery: real PostgreSQL + MinIO in
+# the disposable database and bucket of `make test-integration` (the servers of
+# `make local-up`; the reference database and bucket are not touched), and a
+# throwaway Redis container plus Celery worker subprocesses of the test's own
+# (Docker required) -- killing a worker or stopping the broker never touches the
+# dev stack. Needs no canonical baseline.
 # The production commands run as subprocesses: publish-pending, reconcile --once
 # --apply and the read-only acquisition status. One suite alone:
 #   make test-recovery RECOVERY_TESTS=tests/infrastructure/test_acquisition_lifecycle_acceptance.py
 test-recovery:
-	SCENEOPS_DATABASE_URL="postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$${POSTGRES_PORT:-5432}/$(POSTGRES_DB)" \
-	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
-	MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
-	MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
-	MINIO_BUCKET=$(MINIO_BUCKET) \
-	$(REAL_INFRA_PYTEST) $(RECOVERY_TESTS) -v
+	$(DISPOSABLE_ENV_RUN) $(DISPOSABLE_PYTEST) $(RECOVERY_TESTS) -v

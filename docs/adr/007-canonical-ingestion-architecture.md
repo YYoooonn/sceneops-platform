@@ -5810,7 +5810,28 @@ recreated as another journey.
 
 ### 36.4 Not decided here
 
-Making `e2e-streaming-equivalence` read-only over the contract's two RobotRuns,
-isolating integration and recovery tests in a disposable `sceneops_test` database,
-and giving each L3 journey one fixed, converging `sceneops-test-*` identity are
-accepted directions, implemented separately; until then the behavior of §35.3 stands.
+Making `e2e-streaming-equivalence` read-only over the contract's two RobotRuns and
+giving each L3 journey one fixed, converging `sceneops-test-*` identity are accepted
+directions, implemented separately; until then the behavior of §35.3 stands for them.
+
+### 36.5 Integration and recovery tests run in a disposable database and bucket
+
+**Decision.** `make test-integration` and `make test-recovery` run in a PostgreSQL
+database (`sceneops_test`, migrated with the repository's migrations) and a MinIO
+bucket (`sceneops-test`) that exist only for the run: created first, dropped after it,
+recreated by the next run if an interrupted one left them behind. They never connect
+to the reference database or bucket, and no fixture deletes rows or objects to restore
+shared state.
+
+**Why.** Each integration run registered RobotRuns of its own into the reference
+database and left them there, and the platform has no removal path to undo that
+(§35.3). Dropping an environment that was created for the run needs no deletion
+semantics at all; per-row cleanup was a second, untested removal implementation that
+also had to be kept in step with every foreign key. The disposable names are the only
+ones the runner will act on, so the destructive step cannot be pointed at the reference
+environment.
+
+**Consequences.** §35.3 and §36.4 stay in force for every workflow that runs on the
+reference environment. The recovery suites keep their own Redis container and Celery
+workers; only their PostgreSQL and MinIO moved. See
+[test-matrix.md](../development/test-matrix.md).

@@ -370,9 +370,12 @@ def scene_world(tmp_path) -> SceneWorld:
 # ── Real PostgreSQL / MinIO (integration tests only; never autouse) ─────────
 #
 # Requested only by tests that touch real infrastructure; each skips (not
-# fails) when SCENEOPS_DATABASE_URL or MinIO is unavailable.
+# fails) when SCENEOPS_DATABASE_URL or MinIO is unavailable. They run against the
+# disposable database and bucket of `make test-integration`
+# (tests/infrastructure/disposable_env.py), which is dropped as a whole, so no
+# fixture removes rows or objects.
 
-_BUCKET = os.environ.get("MINIO_BUCKET", "sceneops")
+_BUCKET = os.environ.get("MINIO_BUCKET", "sceneops-test")
 _TEST_PREFIX = "_test-integration-worker"
 
 
@@ -432,7 +435,7 @@ def worker_settings(unique_id) -> WorkerSettings:
     return WorkerSettings(
         database_url=os.environ.get(
             "SCENEOPS_DATABASE_URL",
-            "postgresql+asyncpg://sceneops:sceneops@localhost:5432/sceneops",
+            "postgresql+asyncpg://sceneops:sceneops@localhost:5432/sceneops_test",
         ),
         artifact={
             "backend": ArtifactBackend.MINIO,
@@ -448,8 +451,15 @@ def worker_settings(unique_id) -> WorkerSettings:
 
 @pytest_asyncio.fixture()
 async def _minio_reachable(worker_settings):
-    """Skips (not fails) if MinIO isn't reachable. Independent of Postgres
+    """Skips (not fails) if MinIO isn't reachable, or if the suite was not
+    pointed at a MinIO by `make test-integration` (a bare `pytest` run must not
+    fall back to the local stack's default bucket). Independent of Postgres
     reachability -- requested explicitly wherever MinIO is touched."""
+    if not os.environ.get("MINIO_ENDPOINT_URL"):
+        pytest.skip(
+            "MINIO_ENDPOINT_URL not set -- run via `make test-integration`, which "
+            "points the suite at its disposable bucket."
+        )
     probe = S3ArtifactStore(settings=worker_settings.artifact)
     try:
         await probe.exists(f"{worker_settings.artifact_root_uri}/_connectivity_check")
@@ -476,10 +486,3 @@ async def worker_context(db_session, worker_settings, _minio_reachable):
 
     dependencies_module._artifact_store = None
     dependencies_module._input_store = None
-
-
-@pytest_asyncio.fixture()
-async def cleanup_minio_prefix(worker_settings):
-    store = S3ArtifactStore(settings=worker_settings.artifact)
-    yield
-    await store.delete_prefix(worker_settings.artifact_root_uri)

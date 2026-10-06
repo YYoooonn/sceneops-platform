@@ -116,7 +116,7 @@ layer a given contract belongs to; this section is the command surface.
 
 ```
 make test                          unit suites, no infrastructure (run anywhere)
-make test-integration              real Postgres + MinIO, needs `make local-up`
+make test-integration              real Postgres + MinIO in a disposable database + bucket, needs `make local-up`
 make test-infrastructure           pipeline contracts on the live stack, needs `make local-up`
 make test-infrastructure-airflow   the same pipelines through Airflow (opt-in, see below)
 make test-recovery                 acquisition recovery under injected faults + the full-lifecycle acceptance (Docker, needs `make local-up`)
@@ -140,9 +140,16 @@ make check-commands                the command surface is consistent (no pytest,
   editing the Makefile; `make test` collects the same files but they skip without
   `SCENEOPS_DATABASE_URL` / `MINIO_ENDPOINT_URL`. The real-infrastructure commands run
   with `-p require_infrastructure` (`tests/infrastructure/require_infrastructure.py`):
-  a skipped test, such as an unreachable Postgres or MinIO, fails the command. Each
-  test either rolls back or deletes what it wrote, so they are safe on the persistent
-  local stack.
+  a skipped test, such as an unreachable Postgres or MinIO, fails the command. The
+  suites run in a disposable database (`sceneops_test`, migrated with alembic) and a
+  disposable bucket (`sceneops-test`) that `tests/infrastructure/disposable_env.py`
+  creates before the run and drops after it, so the reference database and bucket are
+  never written to and no test cleans up after itself. A run killed before the drop
+  leaves them behind and the next run recreates them;
+  `uv run python tests/infrastructure/disposable_env.py status` shows whether they
+  exist, and `... drop` removes them. `TEST_POSTGRES_DB` / `TEST_MINIO_BUCKET` rename
+  them; names outside `sceneops_test*` / `sceneops-test*`, or equal to `POSTGRES_DB` /
+  `MINIO_BUCKET`, are refused.
 - `make test-infrastructure` runs `tests/infrastructure` against the live stack:
   execution-key dedup / force, convergence of an unchanged rebuild,
   conflict-then-explicit-replacement, resumption of a blocked pipeline, recovery
@@ -159,10 +166,11 @@ make check-commands                the command surface is consistent (no pytest,
   reference labels, rendered by the `reference-labels` container) in a
   DatasetVersion of its own, so it also needs `make acquisition-image` and
   `make reference-data-bootstrap`.
-- `make test-recovery` runs the two acquisition-recovery suites against the live
-  PostgreSQL and MinIO with a Redis container and Celery workers of its own, so
-  killing a worker or stopping the broker never touches the dev stack. Each test
-  uses its own MinIO RobotRun root and `rec124-` rows, removed afterwards. The
+- `make test-recovery` runs the two acquisition-recovery suites against PostgreSQL and
+  MinIO in the same disposable database and bucket as `make test-integration`, with a
+  Redis container and Celery workers of its own, so killing a worker or stopping the
+  broker never touches the dev stack. Each test uses its own MinIO RobotRun root and
+  `rec124-` rows; the database and bucket are dropped as a whole. The
   production commands run as subprocesses (`publish-pending`, `reconcile --once
   --apply`, `acquisition_status`); only `recovery_worker` and `recovery_publisher`
   add a fault point. It needs no canonical baseline. The suites share one harness

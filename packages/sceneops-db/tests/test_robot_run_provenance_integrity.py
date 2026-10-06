@@ -2,8 +2,8 @@
 the Robot that owns a RobotRun must be refused by the database, leaving the
 Robot, the RobotRun and both of its ArtifactRecords untouched.
 
-These tests commit real rows (registration commits too), so each one removes
-its own rows afterwards in FK-dependency order."""
+These tests commit real rows (registration commits too) into the disposable
+database of `make test-integration`, which is dropped as a whole."""
 
 from __future__ import annotations
 
@@ -22,8 +22,7 @@ from sceneops_core.common.ids import (
     robot_run_recording_artifact_id,
 )
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
-from sceneops_db.models.artifacts import ArtifactModel
-from sceneops_db.models.robots import RobotModel, RobotRunModel
+from sceneops_db.models.robots import RobotModel
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.robots import (
     PostgresRobotRepository,
@@ -89,34 +88,19 @@ async def _assert_all_present(
             assert await artifacts.get(artifact_id) is not None
 
 
-async def _cleanup(robot_id: str, run_id: str, artifact_ids: tuple[str, str]) -> None:
-    async with get_async_sessionmaker()() as session:
-        await session.execute(
-            delete(RobotRunModel).where(RobotRunModel.run_id == run_id)
-        )
-        await session.execute(
-            delete(ArtifactModel).where(ArtifactModel.artifact_id.in_(artifact_ids))
-        )
-        await session.execute(delete(RobotModel).where(RobotModel.robot_id == robot_id))
-        await session.commit()
-
-
 @pytest.mark.asyncio
 async def test_sql_delete_of_robot_with_robot_run_is_refused(unique_id):
     robot_id, run_id = unique_id("robot"), unique_id("run")
     artifact_ids = await _register(robot_id, run_id)
-    try:
-        async with get_async_sessionmaker()() as session:
-            with pytest.raises(IntegrityError, match=_FK_NAME):
-                await session.execute(
-                    text("DELETE FROM robots WHERE robot_id = :robot_id"),
-                    {"robot_id": robot_id},
-                )
-            await session.rollback()
+    async with get_async_sessionmaker()() as session:
+        with pytest.raises(IntegrityError, match=_FK_NAME):
+            await session.execute(
+                text("DELETE FROM robots WHERE robot_id = :robot_id"),
+                {"robot_id": robot_id},
+            )
+        await session.rollback()
 
-        await _assert_all_present(robot_id, run_id, artifact_ids)
-    finally:
-        await _cleanup(robot_id, run_id, artifact_ids)
+    await _assert_all_present(robot_id, run_id, artifact_ids)
 
 
 @pytest.mark.asyncio
@@ -126,25 +110,22 @@ async def test_orm_delete_of_robot_with_loaded_runs_is_refused(unique_id):
     ORM must do neither and leave the refusal to the database."""
     robot_id, run_id = unique_id("robot"), unique_id("run")
     artifact_ids = await _register(robot_id, run_id)
-    try:
-        async with get_async_sessionmaker()() as session:
-            robot = (
-                await session.execute(
-                    select(RobotModel)
-                    .where(RobotModel.robot_id == robot_id)
-                    .options(selectinload(RobotModel.runs))
-                )
-            ).scalar_one()
-            assert [r.run_id for r in robot.runs] == [run_id]
+    async with get_async_sessionmaker()() as session:
+        robot = (
+            await session.execute(
+                select(RobotModel)
+                .where(RobotModel.robot_id == robot_id)
+                .options(selectinload(RobotModel.runs))
+            )
+        ).scalar_one()
+        assert [r.run_id for r in robot.runs] == [run_id]
 
-            await session.delete(robot)
-            with pytest.raises(IntegrityError, match=_FK_NAME):
-                await session.flush()
-            await session.rollback()
+        await session.delete(robot)
+        with pytest.raises(IntegrityError, match=_FK_NAME):
+            await session.flush()
+        await session.rollback()
 
-        await _assert_all_present(robot_id, run_id, artifact_ids)
-    finally:
-        await _cleanup(robot_id, run_id, artifact_ids)
+    await _assert_all_present(robot_id, run_id, artifact_ids)
 
 
 @pytest.mark.asyncio

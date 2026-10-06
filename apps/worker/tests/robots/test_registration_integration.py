@@ -38,8 +38,6 @@ _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "rosbag"
 _VALID_MCAP = _FIXTURES_DIR / "can_replay_scene_0061.mcap"
 _OTHER_MCAP = _FIXTURES_DIR / "nav_msgs_odometry.mcap"
 
-pytestmark = pytest.mark.usefixtures("cleanup_minio_prefix")
-
 
 async def _state(robot_id: str, run_id: str) -> tuple[list, list]:
     """Committed canonical state, read through a fresh session."""
@@ -144,14 +142,9 @@ async def test_different_manifest_for_registered_run_is_hard_conflict(
         capture_source=CaptureSource(kind=CaptureSourceKind.FILE),
         source_clock="mcap_log_time",
     )
-    try:
-        with pytest.raises(RobotRunRegistrationConflictError):
-            await register_robot_run(
-                context=worker_context, manifest_uri=other.manifest_uri
-            )
-    finally:
-        await S3ArtifactStore(settings=other_settings.artifact).delete_prefix(
-            other_settings.artifact.root_uri
+    with pytest.raises(RobotRunRegistrationConflictError):
+        await register_robot_run(
+            context=worker_context, manifest_uri=other.manifest_uri
         )
 
     runs, _ = await _state(robot_id, run_id)

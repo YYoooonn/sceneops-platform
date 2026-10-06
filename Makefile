@@ -21,6 +21,12 @@ MINIO_ROOT_USER     ?= minioadmin
 MINIO_ROOT_PASSWORD ?= minioadmin
 MINIO_BUCKET        ?= sceneops
 
+# The disposable PostgreSQL database and MinIO bucket of test-integration and
+# test-recovery (makefiles/setup.mk): created for the run and dropped after it,
+# never the reference environment's POSTGRES_DB / MINIO_BUCKET.
+TEST_POSTGRES_DB  ?= sceneops_test
+TEST_MINIO_BUCKET ?= sceneops-test
+
 JOB_ID          ?=
 PIPELINE_RUN_ID ?=
 TASK_ID         ?=
@@ -69,11 +75,11 @@ help:
 	@echo "Tests (docs/development/test-matrix.md):"
 	@echo "=================================================================="
 	@echo "  make test                          Unit suites (worker, api, inference-server, analytics, core, integrations, streaming, reference contract) -- no infra"
-	@echo "  make test-integration              Real Postgres/MinIO: sceneops-db/storage + every *_integration.py module (registrars, reconciliation, Scene/Episode/derived verticals, selective reads) -- needs local-up; a skipped test fails the run"
+	@echo "  make test-integration              Real Postgres/MinIO: sceneops-db/storage + every *_integration.py module (registrars, reconciliation, Scene/Episode/derived verticals, selective reads) in a disposable database + bucket -- needs local-up; a skipped test fails the run"
 	@echo "  make test-infrastructure           Pipeline contracts on the live stack: dedup/force/convergence/replacement/blocked resumption/"
 	@echo "                                     failure recovery/concurrent registration, the configured orchestrator (builds on canonical-bootstrap)"
 	@echo "  make test-infrastructure-airflow   The same pipelines through the Airflow per-task DAGs (needs airflow-up + api on the airflow backend)"
-	@echo "  make test-recovery                 Acquisition-recovery fault injection and the full-lifecycle acceptance: real Postgres/MinIO + a throwaway Redis and Celery workers (Docker; needs local-up)"
+	@echo "  make test-recovery                 Acquisition-recovery fault injection and the full-lifecycle acceptance: real Postgres/MinIO in the same disposable database + bucket + a throwaway Redis and Celery workers (Docker; needs local-up)"
 	@echo "  make acquisition-test              tools/dataset-acquisition tests (isolated venv)"
 	@echo "  make lerobot-test                  LeRobot adapter / container-entrypoint tests (isolated venv)"
 	@echo "  make ros2-test                     Bridge + capture tests (ros2 image; needs streaming-up)"

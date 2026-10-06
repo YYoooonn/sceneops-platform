@@ -18,9 +18,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_write_then_read_json_round_trips(store, bucket, unique_key):
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("round-trip.json")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
 
     await artifact_store.write_json(uri, {"hello": "world", "count": 3})
@@ -31,9 +30,8 @@ async def test_write_then_read_json_round_trips(store, bucket, unique_key):
 
 @pytest.mark.asyncio
 async def test_exists_false_before_write_true_after(store, bucket, unique_key):
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("exists-check.json")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
 
     assert await artifact_store.exists(uri) is False
@@ -45,9 +43,8 @@ async def test_exists_false_before_write_true_after(store, bucket, unique_key):
 async def test_read_missing_object_raises_not_found(store, bucket, unique_key):
     from sceneops_storage.exceptions import ArtifactNotFoundError
 
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("never-written.json")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
 
     with pytest.raises(ArtifactNotFoundError):
@@ -56,9 +53,8 @@ async def test_read_missing_object_raises_not_found(store, bucket, unique_key):
 
 @pytest.mark.asyncio
 async def test_write_then_read_bytes_round_trips(store, bucket, unique_key):
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("blob.bin")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
 
     payload = b"\x00\x01binary-payload\xff"
@@ -73,9 +69,8 @@ async def test_write_then_read_bytes_round_trips(store, bucket, unique_key):
 
 @pytest.mark.asyncio
 async def test_read_range_returns_exact_slice(store, bucket, unique_key):
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("range.bin")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
 
     await artifact_store.write_bytes(uri, b"0123456789abcdef")
@@ -88,9 +83,8 @@ async def test_read_range_returns_exact_slice(store, bucket, unique_key):
 async def test_read_range_missing_object_raises_not_found(store, bucket, unique_key):
     from sceneops_storage.exceptions import ArtifactNotFoundError
 
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("never-written.bin")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
 
     with pytest.raises(ArtifactNotFoundError):
@@ -101,9 +95,8 @@ async def test_read_range_missing_object_raises_not_found(store, bucket, unique_
 async def test_read_range_negative_offset_raises(store, bucket, unique_key):
     from sceneops_storage.exceptions import ArtifactReadError
 
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("range-invalid.bin")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
     await artifact_store.write_bytes(uri, b"0123456789")
 
@@ -115,9 +108,8 @@ async def test_read_range_negative_offset_raises(store, bucket, unique_key):
 async def test_read_range_past_end_of_object_raises(store, bucket, unique_key):
     from sceneops_storage.exceptions import ArtifactReadError
 
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("range-past-end.bin")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
     await artifact_store.write_bytes(uri, b"0123456789")
 
@@ -132,9 +124,8 @@ async def test_read_range_past_end_of_object_raises(store, bucket, unique_key):
 async def test_list_json_returns_written_objects_under_prefix(
     store, bucket, unique_key
 ):
-    artifact_store, created = store
+    artifact_store = store
     prefix = unique_key("listing")
-    created.append(prefix)
 
     await artifact_store.write_json(f"s3://{bucket}/{prefix}/a.json", {"n": "a"})
     await artifact_store.write_json(f"s3://{bucket}/{prefix}/b.json", {"n": "b"})
@@ -148,9 +139,8 @@ async def test_list_json_returns_written_objects_under_prefix(
 
 @pytest.mark.asyncio
 async def test_list_json_empty_prefix_returns_empty_list(store, bucket, unique_key):
-    artifact_store, created = store
+    artifact_store = store
     prefix = unique_key("empty-listing")
-    created.append(prefix)
 
     result = await artifact_store.list_json(f"s3://{bucket}/{prefix}")
     assert result == []
@@ -162,9 +152,8 @@ async def test_list_objects_is_recursive_across_pages_with_size_and_mtime(
 ):
     from datetime import UTC, datetime, timedelta
 
-    artifact_store, created = store
+    artifact_store = store
     prefix = unique_key("list-objects")
-    created.append(prefix)
 
     # More than one list_objects_v2 page (1000 keys per page), nested.
     semaphore = asyncio.Semaphore(32)
@@ -179,7 +168,6 @@ async def test_list_objects_is_recursive_across_pages_with_size_and_mtime(
     await asyncio.gather(*(_put(i) for i in range(1005)))
     # A sibling whose name merely starts with the prefix must not be listed.
     await artifact_store.write_bytes(f"s3://{bucket}/{prefix}-sibling/y.bin", b"y")
-    created.append(f"{prefix}-sibling")
 
     objects = await artifact_store.list_objects(f"s3://{bucket}/{prefix}")
 
@@ -196,9 +184,8 @@ async def test_list_objects_is_recursive_across_pages_with_size_and_mtime(
 
 @pytest.mark.asyncio
 async def test_list_objects_empty_prefix_returns_empty_list(store, bucket, unique_key):
-    artifact_store, created = store
+    artifact_store = store
     prefix = unique_key("empty-list-objects")
-    created.append(prefix)
 
     assert await artifact_store.list_objects(f"s3://{bucket}/{prefix}") == []
 
@@ -208,7 +195,7 @@ async def test_list_objects_empty_prefix_returns_empty_list(store, bucket, uniqu
 
 @pytest.mark.asyncio
 async def test_join_uri_builds_expected_key_structure(store, bucket):
-    artifact_store, _ = store
+    artifact_store = store
     joined = artifact_store.join_uri(
         f"s3://{bucket}/datasets/ds1/versions/v1", "raw", "log.json"
     )
@@ -217,7 +204,7 @@ async def test_join_uri_builds_expected_key_structure(store, bucket):
 
 @pytest.mark.asyncio
 async def test_unsupported_uri_scheme_raises(store):
-    artifact_store, _ = store
+    artifact_store = store
     with pytest.raises(ValueError, match="Unsupported S3 artifact URI scheme"):
         await artifact_store.exists("file:///not/an/s3/uri.json")
 
@@ -230,9 +217,8 @@ async def test_write_json_overwrites_same_uri(store, bucket, unique_key):
     """Writing the SAME uri twice is an intentional overwrite — this is the
     behavior F-01's raw_log_id scoping exists to avoid triggering
     accidentally (see test_raw_log_isolation_same_dataset_version below)."""
-    artifact_store, created = store
+    artifact_store = store
     key = unique_key("overwrite.json")
-    created.append(key.rsplit("/", 1)[0])
     uri = f"s3://{bucket}/{key}"
 
     await artifact_store.write_json(uri, {"version": 1})
@@ -254,9 +240,8 @@ async def test_raw_log_isolation_same_dataset_version(store, bucket, unique_key)
     (apps/worker's ObservationArtifactStore is unit-tested against
     LocalArtifactStore already; this confirms the same contract holds for
     the real S3-compatible client, not the abstraction alone)."""
-    artifact_store, created = store
+    artifact_store = store
     version_root = unique_key("datasets/nuscenes-it/versions/v1")
-    created.append(version_root)
 
     def raw_log_manifest_uri(raw_log_id: str) -> str:
         return artifact_store.join_uri(

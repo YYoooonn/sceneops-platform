@@ -7,13 +7,15 @@ take from the shared local stack:
   pause and restart -- the dev stack's Redis is never touched;
 * Celery **worker subprocesses** (``WorkerProcess``) running
   ``recovery_worker`` on a queue of their own, killable with SIGKILL;
-* an isolated **RobotRun root** in MinIO per module (``RecoveryEnv``), so the
+* an isolated **RobotRun root** in MinIO per test (``RecoveryEnv``), so the
   reconciler under test sees only the runs the test published and can never
   act on another suite's objects.
 
-PostgreSQL and MinIO are the live stack's (the semantics under test: row locks,
-unique constraints, object reads). Rows are keyed by ``rec124-`` run ids and
-removed afterwards.
+PostgreSQL and MinIO are real servers (the semantics under test: row locks,
+unique constraints, object reads), but not the reference environment's: the suites
+run in the disposable database and bucket of ``make test-recovery``
+(``disposable_env.py``), which are dropped as a whole, so no test removes rows or
+objects. Rows are keyed by ``rec124-`` run ids.
 
 Shared by ``test_acquisition_recovery.py`` (one fault per test) and
 ``test_acquisition_lifecycle_acceptance.py`` (the whole lifecycle): the
@@ -36,7 +38,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -193,7 +195,6 @@ class RecoveryEnv:
     artifact: ArtifactSettings
     fault_file: Path
     marker_dir: Path
-    run_ids: list[str] = field(default_factory=list)
 
     def use_fresh_root(self) -> None:
         """A RobotRun root of its own for the next test: the reconciler scans
@@ -299,7 +300,6 @@ class RecoveryEnv:
             ),
             source_clock="mcap_log_time",
         )
-        self.run_ids.append(run_id)
         return Published(
             run_id=run_id,
             robot_id=robot_id,
@@ -480,36 +480,6 @@ async def job_row_snapshot(run_id: str) -> list[tuple]:
         return [tuple(row) for row in rows.all()]
 
 
-async def cleanup_rows(run_ids: list[str]) -> None:
-    if not run_ids:
-        return
-    async with get_async_sessionmaker()() as session:
-        for run_id in run_ids:
-            pattern = f"%/{run_id}/%"
-            await session.execute(
-                text(
-                    "DELETE FROM execution_records WHERE resource_id IN "
-                    "(SELECT job_id FROM jobs WHERE params->>'manifest_uri' LIKE :p)"
-                ),
-                {"p": pattern},
-            )
-            await session.execute(
-                text("DELETE FROM jobs WHERE params->>'manifest_uri' LIKE :p"),
-                {"p": pattern},
-            )
-            await session.execute(
-                text("DELETE FROM robot_runs WHERE run_id = :r"), {"r": run_id}
-            )
-            await session.execute(
-                text("DELETE FROM artifacts WHERE owner_id = :r"), {"r": run_id}
-            )
-        await session.execute(
-            text("DELETE FROM robots WHERE robot_id LIKE :p"),
-            {"p": f"{RUN_PREFIX}-robot-%"},
-        )
-        await session.commit()
-
-
 # ── pytest fixtures shared by the recovery suites ────────────────────────────
 #
 # Registered for the directory by conftest.py. A recovery suite opts in with
@@ -557,19 +527,6 @@ def env(tmp_path_factory):
         pytest.skip(f"MinIO not reachable at {minio}: {exc}")
     yield environment
     redis.remove()
-
-    async def _teardown() -> None:
-        from sceneops_db.session import reset_async_engine_cache
-
-        reset_async_engine_cache()
-        await environment.store().delete_prefix(
-            environment.artifact.root_uri.split(f"/{root_prefix}")[0]
-            + f"/{root_prefix}"
-        )
-        await cleanup_rows(environment.run_ids)
-        await dispose_async_engine()
-
-    asyncio.run(_teardown())
 
 
 @pytest_asyncio.fixture

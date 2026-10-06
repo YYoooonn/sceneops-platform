@@ -33,7 +33,7 @@ from sceneops_core.config import StorageSettings
 from sceneops_core.episodes.learning_export import ShardPolicy
 from sceneops_storage.backends.s3 import S3ArtifactStore
 
-BUCKET = os.environ.get("MINIO_BUCKET", "sceneops")
+BUCKET = os.environ.get("MINIO_BUCKET", "sceneops-test")
 _TEST_PREFIX = "_test-integration/selective-reads"
 
 # A tight shard policy so a single-episode fetch genuinely leaves other
@@ -66,9 +66,7 @@ async def minio_store():
     except Exception as exc:  # noqa: BLE001 - report as a skip, not a failure
         pytest.skip(f"MinIO not reachable: {exc}")
 
-    yield artifact_store, f"s3://{BUCKET}/{prefix}"
-
-    await artifact_store.delete_prefix(f"s3://{BUCKET}/{prefix}")
+    return artifact_store, f"s3://{BUCKET}/{prefix}"
 
 
 class _PrefixedRoot:

@@ -23,7 +23,6 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 
-import pytest
 
 from app.domains.robots.artifact_lifecycle import (
     ArtifactLifecyclePolicy,
@@ -48,13 +47,9 @@ from tests.robots.test_reconciliation_vertical_integration import (
     _OTHER_MCAP,
     _VALID_MCAP,
     _add_job,
-    _cleanup_database,  # noqa: F401 - fixture
-    _cleanup_root,
     _durable_snapshot,
     _finalized_capture,
 )
-
-pytestmark = pytest.mark.usefixtures("cleanup_minio_prefix")
 
 _JOB_TIME = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 _HOUR = timedelta(hours=1)
@@ -66,7 +61,6 @@ async def test_artifact_lifecycle_classifies_every_class_on_real_infrastructure(
     worker_settings,
     unique_id,
     tmp_path,
-    _cleanup_database,  # noqa: F811
 ) -> None:
     from sceneops_integrations.recording import publish_recording
 
@@ -74,7 +68,6 @@ async def test_artifact_lifecycle_classifies_every_class_on_real_infrastructure(
     store = S3ArtifactStore(settings=worker_settings.artifact)
     root = worker_settings.artifact.robot_run_root_uri
     robot_id = unique_id("robot")
-    _cleanup_root[0] = root
     capture_root = tmp_path / "capture"
     capture_root.mkdir()
 
@@ -234,8 +227,6 @@ async def test_artifact_lifecycle_classifies_every_class_on_real_infrastructure(
     await store.write_bytes(f"{root}/stray.bin", b"stray")
 
     run_ids = sorted(names.values())
-    _cleanup_database[0].append(robot_id)
-    _cleanup_database[1].append(run_ids)
 
     async def lifecycle(now: datetime, **kwargs):
         return await artifact_lifecycle_once(

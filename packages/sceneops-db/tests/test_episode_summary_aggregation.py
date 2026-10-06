@@ -17,15 +17,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from sqlalchemy import delete
 
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from sceneops_core.scenes.testing import recording_source
-from sceneops_db.models.artifacts import ArtifactModel
-from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
-from sceneops_db.models.episodes import EpisodeModel
-from sceneops_db.models.robots import RobotRunModel
-from sceneops_db.models.scenes import SceneModel
 from sceneops_db.postgres.datasets import (
     PostgresDatasetRepository,
     PostgresDatasetVersionRepository,
@@ -294,37 +288,6 @@ async def _register_episode_concurrently(
         await session.commit()
 
 
-async def _cleanup(dataset_id: str) -> None:
-    sessionmaker = get_async_sessionmaker()
-    async with sessionmaker() as session:
-        await session.execute(
-            delete(EpisodeModel).where(EpisodeModel.dataset_id == dataset_id)
-        )
-        await session.execute(
-            delete(SceneModel).where(SceneModel.dataset_id == dataset_id)
-        )
-        await session.execute(
-            delete(ArtifactModel).where(ArtifactModel.dataset_id == dataset_id)
-        )
-        await session.execute(
-            delete(RobotRunModel).where(RobotRunModel.run_id.like(f"run-{dataset_id}%"))
-        )
-        await session.execute(
-            delete(ArtifactModel).where(
-                ArtifactModel.owner_id.like(f"run-{dataset_id}%")
-            )
-        )
-        await session.execute(
-            delete(DatasetVersionModel).where(
-                DatasetVersionModel.dataset_id == dataset_id
-            )
-        )
-        await session.execute(
-            delete(DatasetModel).where(DatasetModel.dataset_id == dataset_id)
-        )
-        await session.commit()
-
-
 @pytest.mark.asyncio
 async def test_concurrent_registrations_without_lock_lose_an_update(
     unique_id, episode_record_for
@@ -347,37 +310,34 @@ async def test_concurrent_registrations_without_lock_lose_an_update(
         )
         await session.commit()
 
-    try:
-        records = {
-            e: await _prepare(
-                episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
-            )
-            for e in ("ep-a", "ep-b")
-        }
-        barrier = asyncio.Barrier(2)
-        await asyncio.gather(
-            _register_episode_concurrently(
-                record=records["ep-a"], barrier=barrier, use_lock=False
-            ),
-            _register_episode_concurrently(
-                record=records["ep-b"], barrier=barrier, use_lock=False
-            ),
+    records = {
+        e: await _prepare(
+            episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
         )
+        for e in ("ep-a", "ep-b")
+    }
+    barrier = asyncio.Barrier(2)
+    await asyncio.gather(
+        _register_episode_concurrently(
+            record=records["ep-a"], barrier=barrier, use_lock=False
+        ),
+        _register_episode_concurrently(
+            record=records["ep-b"], barrier=barrier, use_lock=False
+        ),
+    )
 
-        async with sessionmaker() as verify_session:
-            episode_repo = PostgresEpisodeRepository(verify_session)
-            version_repo = PostgresDatasetVersionRepository(verify_session)
-            live_count = await episode_repo.count(
-                dataset_id=dataset_id, dataset_version=version
-            )
-            fetched = await version_repo.get(dataset_id=dataset_id, version=version)
+    async with sessionmaker() as verify_session:
+        episode_repo = PostgresEpisodeRepository(verify_session)
+        version_repo = PostgresDatasetVersionRepository(verify_session)
+        live_count = await episode_repo.count(
+            dataset_id=dataset_id, dataset_version=version
+        )
+        fetched = await version_repo.get(dataset_id=dataset_id, version=version)
 
-        assert live_count == 2
-        # The lost-update: cached summary is stuck at 1, disagreeing with
-        # the true live count of 2.
-        assert fetched.episode.episode_count == 1
-    finally:
-        await _cleanup(dataset_id)
+    assert live_count == 2
+    # The lost-update: cached summary is stuck at 1, disagreeing with
+    # the true live count of 2.
+    assert fetched.episode.episode_count == 1
 
 
 @pytest.mark.asyncio
@@ -400,35 +360,32 @@ async def test_concurrent_registrations_with_lock_converge_on_true_total(
         )
         await session.commit()
 
-    try:
-        records = {
-            e: await _prepare(
-                episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
-            )
-            for e in ("ep-a", "ep-b")
-        }
-        barrier = asyncio.Barrier(2)
-        await asyncio.gather(
-            _register_episode_concurrently(
-                record=records["ep-a"], barrier=barrier, use_lock=True
-            ),
-            _register_episode_concurrently(
-                record=records["ep-b"], barrier=barrier, use_lock=True
-            ),
+    records = {
+        e: await _prepare(
+            episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
         )
+        for e in ("ep-a", "ep-b")
+    }
+    barrier = asyncio.Barrier(2)
+    await asyncio.gather(
+        _register_episode_concurrently(
+            record=records["ep-a"], barrier=barrier, use_lock=True
+        ),
+        _register_episode_concurrently(
+            record=records["ep-b"], barrier=barrier, use_lock=True
+        ),
+    )
 
-        async with sessionmaker() as verify_session:
-            episode_repo = PostgresEpisodeRepository(verify_session)
-            version_repo = PostgresDatasetVersionRepository(verify_session)
-            live_count = await episode_repo.count(
-                dataset_id=dataset_id, dataset_version=version
-            )
-            fetched = await version_repo.get(dataset_id=dataset_id, version=version)
+    async with sessionmaker() as verify_session:
+        episode_repo = PostgresEpisodeRepository(verify_session)
+        version_repo = PostgresDatasetVersionRepository(verify_session)
+        live_count = await episode_repo.count(
+            dataset_id=dataset_id, dataset_version=version
+        )
+        fetched = await version_repo.get(dataset_id=dataset_id, version=version)
 
-        assert live_count == 2
-        assert fetched.episode.episode_count == 2
-    finally:
-        await _cleanup(dataset_id)
+    assert live_count == 2
+    assert fetched.episode.episode_count == 2
 
 
 @pytest.mark.asyncio
@@ -479,27 +436,24 @@ async def test_concurrent_scene_and_episode_summary_writes_do_not_clobber(
             )
             await session.commit()
 
-    try:
-        records = {
-            e: await _prepare(
-                episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
-            )
-            for e in ("ep-a",)
-        }
-        barrier = asyncio.Barrier(2)
-        await asyncio.gather(
-            _register_episode_concurrently(
-                record=records["ep-a"], barrier=barrier, use_lock=True
-            ),
-            _scene_writer(barrier),
+    records = {
+        e: await _prepare(
+            episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
+        )
+        for e in ("ep-a",)
+    }
+    barrier = asyncio.Barrier(2)
+    await asyncio.gather(
+        _register_episode_concurrently(
+            record=records["ep-a"], barrier=barrier, use_lock=True
+        ),
+        _scene_writer(barrier),
+    )
+
+    async with sessionmaker() as verify_session:
+        fetched = await PostgresDatasetVersionRepository(verify_session).get(
+            dataset_id=dataset_id, version=version
         )
 
-        async with sessionmaker() as verify_session:
-            fetched = await PostgresDatasetVersionRepository(verify_session).get(
-                dataset_id=dataset_id, version=version
-            )
-
-        assert fetched.episode.episode_count == 1
-        assert fetched.scene.scene_count == 1
-    finally:
-        await _cleanup(dataset_id)
+    assert fetched.episode.episode_count == 1
+    assert fetched.scene.scene_count == 1

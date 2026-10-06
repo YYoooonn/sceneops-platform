@@ -300,7 +300,6 @@ async def test_full_acquisition_lifecycle_recovers_through_the_production_comman
     }
     ids = {key: f"{RUN_PREFIX}-acc-{label}-{tag}" for key, label in labels.items()}
     robots = {key: f"{RUN_PREFIX}-robot-{label}-{tag}" for key, label in labels.items()}
-    env.run_ids.extend(ids.values())
     all_ids = list(ids.values())
     store = env.store()
     capture_root = tmp_path / "capture"

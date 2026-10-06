@@ -3,8 +3,10 @@
 Requires a reachable MinIO instance (the local stack's `minio` service,
 `make local-up`). Reads connection info from the same env vars
 .env.example documents (MINIO_ENDPOINT_URL / MINIO_ROOT_USER /
-MINIO_ROOT_PASSWORD / MINIO_BUCKET), with defaults matching the local
-stack's host-side ports. Skips (not fails) if MinIO is unreachable.
+MINIO_ROOT_PASSWORD / MINIO_BUCKET). `make test-integration` points
+MINIO_BUCKET at the disposable bucket it creates and drops
+(tests/infrastructure/disposable_env.py), so these tests delete nothing.
+Skips (not fails) if MinIO is unreachable.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from sceneops_core.artifacts.schemas.enums import ArtifactBackend
 from sceneops_core.config import StorageSettings
 from sceneops_storage.backends.s3 import S3ArtifactStore
 
-BUCKET = os.environ.get("MINIO_BUCKET", "sceneops")
+BUCKET = os.environ.get("MINIO_BUCKET", "sceneops-test")
 _TEST_PREFIX = "_test-integration"
 
 
@@ -48,10 +50,15 @@ def unique_key():
 
 @pytest_asyncio.fixture()
 async def store():
+    if not os.environ.get("MINIO_ENDPOINT_URL"):
+        pytest.skip(
+            "MINIO_ENDPOINT_URL not set -- run via `make test-integration`, which "
+            "points the suite at its disposable bucket."
+        )
     settings = StorageSettings(
         backend=ArtifactBackend.MINIO,
         root_uri=f"s3://{BUCKET}",
-        endpoint_url=os.environ.get("MINIO_ENDPOINT_URL", "http://localhost:9000"),
+        endpoint_url=os.environ["MINIO_ENDPOINT_URL"],
         region=None,
         access_key_id=os.environ.get("MINIO_ROOT_USER", "minioadmin"),
         secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
@@ -63,8 +70,4 @@ async def store():
     except Exception as exc:  # noqa: BLE001 - report as a skip, not a failure
         pytest.skip(f"MinIO not reachable: {exc}")
 
-    created_prefixes: list[str] = []
-    yield artifact_store, created_prefixes
-
-    for prefix in created_prefixes:
-        await artifact_store.delete_prefix(f"s3://{BUCKET}/{prefix}")
+    return artifact_store
