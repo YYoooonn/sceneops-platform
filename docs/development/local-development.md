@@ -208,9 +208,10 @@ journeys: they never create persistent domain data.
 
 ### Canonical baseline
 
-`make canonical-bootstrap` builds the reproducible L1/L2 baseline (RobotRun ->
-Scenes -> Episodes, validated and profiled) and `make canonical-verify` re-checks
-it read-only; see [canonical-baseline.md](./canonical-baseline.md). The Scene and
+`make canonical-bootstrap` builds the reproducible L1/L2 baseline of a reference
+corpus scope (prepared recordings -> one RobotRun per fixture -> Scenes ->
+Episodes, validated and profiled; run `make reference-data-bootstrap` first) and
+`make canonical-verify` re-checks it read-only; see [canonical-baseline.md](./canonical-baseline.md). The Scene and
 Episode build configurations every journey uses are the files under
 `config/baselines/`.
 
@@ -218,11 +219,12 @@ Episode build configurations every journey uses are the files under
 
 `DATASET_ID`/`DATASET_VERSION` mean **SceneOps' own canonical identity only**,
 never constrained by an external dataset's naming. A baseline is named by
-`BASELINE_ID`: the RobotRun is `run-<BASELINE_ID>-<scene>`, the robot
+`BASELINE_ID`: the RobotRun is `run-<BASELINE_ID>-<fixture>`, the robot
 `robot-<BASELINE_ID>`, the DatasetVersion `sceneops-<BASELINE_ID>/baseline`. The
-persistent baseline is `canonical`; a journey that mutates its scope (or that you
+persistent baselines are `ref-smoke-1` and `ref-nuscenes-mini-full-10` (see
+[canonical-baseline.md](./canonical-baseline.md)); a journey that mutates its scope (or that you
 simply run again) uses a unique id per run (`e2e-<journey>-<timestamp>-<pid>`),
-and `BASELINE_ID=canonical make e2e-scene-ml` runs it on the persistent baseline.
+and `BASELINE_ID=ref-smoke-1 make e2e-scene-ml` runs it on the persistent baseline.
 Every pipeline-run-creating script passes `force: true`, so re-running a journey
 re-executes its pipelines instead of returning an old run through execution-key
 dedup, and assertions are scoped to values the current run returned, not to

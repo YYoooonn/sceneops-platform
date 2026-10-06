@@ -60,6 +60,13 @@ make reference-data-verify    [REFERENCE_SCOPE=...]
 - Neither starts or touches PostgreSQL, MinIO, Redis or Kafka: they run two
   one-shot containers with `--no-deps`.
 
+Consumers (`canonical-bootstrap`, `canonical-verify`) read the corpus through
+`dataset-acquisition reference resolve`, which needs no source dataset: it checks
+the lock against `corpus.json` and, without `--lock-only`, the cached recordings
+(the tool identity, then each recording's bytes, size and counts), and prints each
+fixture's locked facts and recording path. The canonical baseline never converts
+source data; see [canonical-baseline.md](./canonical-baseline.md).
+
 A recording is reused only when the definition, the tool identity, the source
 fingerprint and the recording's own sha256, size and counts agree with the lock.
 Any disagreement fails and names the field. Nothing is regenerated, rewritten or

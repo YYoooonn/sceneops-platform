@@ -1,0 +1,4 @@
+{
+  "scenes_per_robot_run": 1,
+  "episodes_per_robot_run": 1
+}

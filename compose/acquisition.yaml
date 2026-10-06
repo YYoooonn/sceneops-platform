@@ -94,6 +94,8 @@ services:
       SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY: ${SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY:-}
     volumes:
       - acquisition-recordings:/recordings:ro
+      # Prepared reference-corpus recordings are published in place.
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
     depends_on:
       minio:
         condition: service_healthy
