@@ -3,10 +3,11 @@ blocked resumption, failure recovery, concurrent registration and the
 orchestrator that ran them.
 
 Each test builds one baseline RobotRun's Scenes or Episodes into a DatasetVersion it
-owns under the fixed Dataset `sceneops-test-infra-pipelines` (REFERENCE_DERIVED,
-docs/development/test-matrix.md). The version is named after the test and reused by every
-later run, so a test starts from the state the previous run left and moves it with the
-platform's own replacement semantics. Retry semantics are properties of the execution
+owns under the fixed Dataset `sceneops-test-infra-pipelines`, named after the test. The
+suite runs on a disposable execution runtime (DISPOSABLE_ENVIRONMENT,
+docs/development/test-matrix.md), so every test starts from empty state and moves it with
+the platform's own replacement semantics; the Jobs and PipelineRuns the re-executions
+append are dropped with the runtime. Retry semantics are properties of the execution
 model and the registrars, so they are proven here once, on the two canonical build
 pipelines, rather than inside every user journey.
 """
@@ -173,9 +174,9 @@ def test_a_changed_configuration_conflicts_until_replacement_is_explicit(api, ba
     dataset = _dataset(api, f"replace-{scope}")
     run_id = baseline_run["robot_run_id"]
 
-    # The scope may hold the changed configuration a previous run left. Explicit
-    # replacement (a forced run, because an identical request would return the old run)
-    # puts the original configuration in place whatever the scope holds.
+    # The first build of the scope is an explicit-replacement run too (a forced run,
+    # because an identical request would return an earlier run): replace=True is
+    # valid on an empty scope and puts the original configuration in place.
     original = api.run(pipeline_type, dataset, params_for(run_id, replace=True))
     assert original["status"] == "succeeded"
     members = getattr(api, listing)(dataset)
@@ -204,7 +205,7 @@ def test_a_blocked_pipeline_resumes_at_the_blocked_task(api, baseline_run):
     created = api.create_run("recording_scene_building", dataset, params)
     run_id = created["pipelineRunId"]
 
-    assert api.dispatch(run_id).status_code in (200, 202)
+    api.dispatched(run_id)
     assert api.wait(run_id)["status"] == "blocked"
 
     def finished_tasks() -> dict:
@@ -217,7 +218,7 @@ def test_a_blocked_pipeline_resumes_at_the_blocked_task(api, baseline_run):
     before = finished_tasks()
     assert {status for _, _, status in before.values()} == {"succeeded"}
 
-    assert api.dispatch(run_id).status_code in (200, 202), "a BLOCKED run must be redispatchable"
+    api.dispatched(run_id)  # a BLOCKED run must be redispatchable
     assert api.wait(run_id)["status"] == "blocked", "the same params block again"
     assert finished_tasks() == before, "succeeded tasks must not be re-executed on retry"
 
@@ -229,52 +230,55 @@ def test_a_failed_pipeline_is_redispatchable_and_registers_nothing(api):
     )
     run_id = created["pipelineRunId"]
 
-    assert api.dispatch(run_id).status_code in (200, 202)
+    api.dispatched(run_id)
     first = api.wait(run_id)
     assert first["status"] == "failed"
     build = api.tasks(run_id)["build_recording_scenes"]
     assert build["status"] == "failed" and build["error"]
     assert api.scenes(dataset) == []
 
-    assert api.dispatch(run_id).status_code in (200, 202), "a FAILED run must be redispatchable"
+    api.dispatched(run_id)  # a FAILED run must be redispatchable
     assert api.wait(run_id)["status"] == "failed"
     assert api.scenes(dataset) == []
 
 
-def test_concurrent_runs_over_one_scope_converge_on_one_canonical_membership(api, baseline_run):
-    """Three concurrent runs register one membership. A scope with no Scenes (the first
-    run ever) is a concurrent first registration; a scope a previous run built is a
-    concurrent explicit replacement, alternating between the original and the changed
-    configuration so every run races something."""
-    dataset = _dataset(api, "concurrent")
-    run_id = baseline_run["robot_run_id"]
-    changed = SCOPES["scene"][4]
-    before = api.scenes(dataset)
-    if not before:
-        params = scene_params(run_id)
-    elif len(before) == baseline_run["scene_count"]:
-        params = scene_params(run_id, config=changed, replace=True)
-    else:
-        params = scene_params(run_id, replace=True)
-
+def _concurrent_runs(api, dataset, params) -> list[dict]:
     with ThreadPoolExecutor(max_workers=3) as pool:
-        runs = list(
+        return list(
             pool.map(lambda _: api.run("recording_scene_building", dataset, params), range(3))
         )
 
-    assert [r["status"] for r in runs] == ["succeeded"] * 3
-    scenes = api.scenes(dataset)
-    assert len({s["producerFingerprint"] for s in scenes}) == 1
-    if before:
-        assert {s["producerFingerprint"] for s in scenes}.isdisjoint(
-            {s["producerFingerprint"] for s in before}
-        )
-    if params["build_recording_scenes"]["build_config"] == SCENE_BUILD_CONFIG:
-        assert len(scenes) == baseline_run["scene_count"], (
-            "one RobotRun builds exactly the Scenes the baseline registered for it"
-        )
+
+def test_concurrent_runs_over_one_scope_converge_on_one_canonical_membership(api, baseline_run):
+    """Three concurrent runs register one membership, twice over: the first
+    registration of an empty scope, then an explicit replacement of what the first
+    round registered (the changed configuration), so every run races something both
+    times."""
+    dataset = _dataset(api, "concurrent")
+    run_id = baseline_run["robot_run_id"]
+    changed = SCOPES["scene"][4]
+    assert api.scenes(dataset) == [], "the disposable runtime starts without Scenes"
+
+    first_round = _concurrent_runs(api, dataset, scene_params(run_id))
+    assert [r["status"] for r in first_round] == ["succeeded"] * 3
+    registered = api.scenes(dataset)
+    assert len({s["producerFingerprint"] for s in registered}) == 1
+    assert len(registered) == baseline_run["scene_count"], (
+        "one RobotRun builds exactly the Scenes the baseline registered for it"
+    )
+
+    second_round = _concurrent_runs(
+        api, dataset, scene_params(run_id, config=changed, replace=True)
+    )
+    assert [r["status"] for r in second_round] == ["succeeded"] * 3
+    replaced = api.scenes(dataset)
+    assert len({s["producerFingerprint"] for s in replaced}) == 1
+    assert {s["producerFingerprint"] for s in replaced}.isdisjoint(
+        {s["producerFingerprint"] for s in registered}
+    )
+
     summary = api.get(f"/datasets/{dataset[0]}/versions/{dataset[1]}")["version"]
-    assert summary["scene"]["sceneCount"] == len(scenes), (
+    assert summary["scene"]["sceneCount"] == len(replaced), (
         "the registrar-owned DatasetVersion summary equals the registered membership"
     )
 

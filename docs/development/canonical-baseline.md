@@ -264,7 +264,7 @@ fixture by `make e2e-streaming-equivalence`, which reads the two registered Robo
 | `make e2e-scene-ml`, `make e2e-episode-learning` | the contract's Recording Import RobotRun of `SOURCE_UNIT` (default `scene-0061`); Scenes, Episodes and everything derived are written to the fixed Datasets `sceneops-test-scene-ml` / `sceneops-test-episode-learning` (DatasetVersion `baseline`), which a repeated run reuses | `REFERENCE_DERIVED` |
 | `make e2e-streaming-equivalence` | the contract's Recording Import and Streaming Acquisition RobotRuns of `SOURCE_UNIT` (default `scene-0061`), their recordings and their Scenes and Episodes; it creates nothing | `REFERENCE_READ_ONLY` |
 | `make e2e-cleanroom` | resets the runtime, bootstraps the contract's baseline for `smoke-1`, then both L3 journeys in one DatasetVersion of their own | `CLEANROOM_ACCEPTANCE` |
-| `make test-infrastructure` | the contract's Recording Import RobotRun (create-or-verify, `smoke-1`); the tests build its Scenes / Episodes into the fixed `sceneops-test-infra-pipelines` Dataset, one named DatasetVersion per test | `REFERENCE_DERIVED` |
+| `make test-infrastructure`, `make test-infrastructure-airflow` | the contract's Recording Import RobotRun of `smoke-1`, create-or-verify seeded into the command's own disposable database and bucket (the reference environment is not read); the tests build its Scenes / Episodes into the fixed `sceneops-test-infra-pipelines` / `sceneops-test-infra-airflow` Datasets, one named DatasetVersion per test | `DISPOSABLE_ENVIRONMENT` |
 
 The baseline is independent of `make local-reset`: reset only destroys generated
 state, the bootstrap (re)creates the baseline on top of a running stack, and the

@@ -1,20 +1,19 @@
 """Pipelines through the Airflow per-task DAGs (airflow/dags/sceneops_pipelines.py).
 
 Opt-in: the Airflow stack is not part of `make local-up`, and the API picks its
-pipeline backend at process start, so this module needs
-
-    make airflow-up
-    SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow  (api restarted with it)
-    SCENEOPS_TEST_AIRFLOW=1 make test-infrastructure-airflow
+pipeline backend at process start, so `make test-infrastructure-airflow` starts a
+private Airflow and an API on the airflow backend in the disposable execution runtime
+(execution_runtime.py); the reference environment's API and Airflow are not used or
+reconfigured. Run any other way, the module is skipped (and a skip fails the command).
 
 Each DAG runs every task of one pipeline as its own DockerOperator process,
 recomposing the state transitions of the Celery path (start / finalize). The
 tests prove the canonical pipelines reach the same terminal state and the same
 canonical records through that orchestrator.
 
-The tests own the fixed Dataset `sceneops-test-infra-airflow`, one DatasetVersion per test
-(REFERENCE_DERIVED, docs/development/test-matrix.md). A repeated run reuses them: each
-pipeline is executed again through Airflow and converges on the records already there.
+The tests own the fixed Dataset `sceneops-test-infra-airflow`, one DatasetVersion per test,
+in the disposable database (DISPOSABLE_ENVIRONMENT, docs/development/test-matrix.md);
+the Jobs, PipelineRuns and reports the executions append are dropped with it.
 """
 
 from __future__ import annotations
@@ -101,8 +100,7 @@ def test_scene_ml_evaluation_through_airflow(api, baseline, baseline_run):
     """The L3 Scene ML pipeline over the Scenes of the test's own DatasetVersion, with a
     LabelSet the test itself imports (the fixture's locked reference labels, rendered for
     the baseline RobotRun). The ScenarioSet, inference run and evaluation run carry fixed
-    ids, so a repeated run converges on the same derived records instead of adding new
-    ones. The reference DatasetVersion is never written to; a missing prerequisite
+    ids. The reference environment is never written to; a missing prerequisite
     (reference labels, the acquisition image) fails."""
     dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "scene-ml")
     built = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
@@ -172,7 +170,7 @@ def test_scene_ml_evaluation_through_airflow(api, baseline, baseline_run):
             },
         },
     ).json()["pipelineRun"]
-    api.dispatch(created["pipelineRunId"])
+    api.dispatched(created["pipelineRunId"])
     run = api.wait(created["pipelineRunId"])
 
     assert run["status"] == "succeeded", run

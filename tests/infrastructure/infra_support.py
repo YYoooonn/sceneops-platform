@@ -1,26 +1,27 @@
 """Helpers for the infrastructure acceptance tests (client, params builders).
 
-These run against the live local stack (`make local-up`): the FastAPI control
-plane, the Celery workers, PostgreSQL, MinIO and (for the Airflow module) the
-Airflow orchestrator. They exercise the contracts of the four pipelines that
-no single user journey proves: dedup, force, retry, replacement, blocked
-resumption, failure recovery, concurrent registration and execution through
-each orchestrator.
+These run against the disposable execution runtime that `make test-infrastructure`
+(Celery) and `make test-infrastructure-airflow` start on a disposable PostgreSQL
+database and MinIO bucket (execution_runtime.py): the FastAPI control plane, the
+Celery workers, Redis, PostgreSQL, MinIO and (for the Airflow module) Airflow. They
+exercise the contracts of the pipelines that no single user journey proves: dedup,
+force, retry, replacement, blocked resumption, failure recovery, concurrent
+registration and execution through each orchestrator.
 
-The pipelines need a registered RobotRun. The tests consume the golden reference
-contract's Recording Import RobotRuns (`scripts/canonical/canonical_bootstrap.sh`,
-create-or-verify; the smoke-1 selection, scene-0061, unless REFERENCE_SCOPE says
-otherwise), take one of them (`baseline_run`) and build into DatasetVersions the tests own
-(class REFERENCE_DERIVED, docs/development/test-matrix.md): no RobotRun is created and the
-reference DatasetVersion is never mutated.
+The pipelines need a registered RobotRun. The runtime starts empty, so the suite's
+`baseline` fixture seeds the one it consumes: the golden reference contract's Recording
+Import RobotRun (`scripts/canonical/canonical_bootstrap.sh`, create-or-verify; the
+smoke-1 selection, scene-0061, unless REFERENCE_SCOPE says otherwise), published from
+the locked recording into the disposable bucket. `baseline_run` takes one of them and
+the tests build into DatasetVersions they own: the reference environment is never read
+or written.
 
-Test-owned identity is fixed. `sceneops-test-infra-pipelines` (Celery / default
-orchestrator) and `sceneops-test-infra-airflow` (Airflow) each hold one DatasetVersion per
-test, named after the test, so a repeated run reuses them instead of adding new ones. A test
-therefore starts from whatever state the previous run left and states the transitions it
-proves from there (explicit replacement, never deletion). Execution records (PipelineRuns,
-Jobs) and the job-keyed validation / profile reports of a re-executed pipeline are history
-the platform appends; a runtime reset (`make local-reset`) drops everything.
+Test-owned identity is still fixed and named after the test: `sceneops-test-infra-pipelines`
+(Celery / default orchestrator) and `sceneops-test-infra-airflow` (Airflow) each hold one
+DatasetVersion per test. Everything the tests append (PipelineRuns, Jobs, the job-keyed
+validation / profile reports of a re-executed pipeline, duplicate ArtifactRecords of a
+re-executed evaluation) is execution history the platform keeps by design; it lives in the
+disposable database and bucket and is dropped with them. No test deletes anything.
 """
 
 from __future__ import annotations
@@ -101,6 +102,20 @@ class Api:
     def dispatch(self, run_id: str) -> httpx.Response:
         return self.post(f"/pipelines/runs/{run_id}/execute", {})
 
+    def dispatched(self, run_id: str) -> None:
+        """Dispatch and fail fast unless the API accepted it. A rejection reports whether
+        the run is readable right after: a 404 for a run that a GET then finds means the
+        dispatch ran before the creating request's commit became visible (the API commits
+        its request session after the response has started), not that the run is missing."""
+        response = self.dispatch(run_id)
+        if response.status_code in (200, 202):
+            return
+        visible = self._client.get(f"/pipelines/runs/{run_id}").status_code
+        raise AssertionError(
+            f"POST /pipelines/runs/{run_id}/execute -> {response.status_code} {response.text}; "
+            f"GET of the run right after -> {visible}"
+        )
+
     def wait(self, run_id: str, *, timeout: float = 900.0) -> dict:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -118,7 +133,7 @@ class Api:
             # An identical request returns the run that already holds this result; a
             # succeeded run is not dispatched again (a failed or blocked one is).
             return created
-        assert self.dispatch(created["pipelineRunId"]).status_code in (200, 202)
+        self.dispatched(created["pipelineRunId"])
         return self.wait(created["pipelineRunId"])
 
     def run_job(

@@ -88,6 +88,10 @@ def database_name_of(url: str) -> str:
     return urlsplit(url).path.lstrip("/")
 
 
+def bucket_name_of(root_uri: str) -> str:
+    return urlsplit(root_uri).netloc
+
+
 def check_environment(environ: dict[str, str]) -> None:
     """Raise unless the database and bucket an environment points at are disposable.
 
@@ -102,6 +106,10 @@ def check_environment(environ: dict[str, str]) -> None:
     bucket = environ.get("MINIO_BUCKET")
     if bucket:
         check_disposable_bucket(bucket)
+    # The ArtifactStore root a compose-run publisher would write into.
+    root = environ.get("SCENEOPS_WORKER_ARTIFACT__ROOT_URI")
+    if root:
+        check_disposable_bucket(bucket_name_of(root))
 
 
 @dataclass(frozen=True)
@@ -310,11 +318,28 @@ class DisposableEnvironment:
             "bucket_objects": self._object_count(s3) if bucket_exists else 0,
         }
 
-    def run(self, command: list[str]) -> int:
-        """create -> command -> drop. The drop runs on success, failure and
-        interruption, including a create that fails halfway; a run that cannot
-        drop (SIGKILL) is recovered by the next create."""
+    def run(
+        self,
+        command: list[str],
+        *,
+        runtime: str | None = None,
+        env_file: str = ".env.local",
+    ) -> int:
+        """create -> [start the execution runtime] -> command -> [stop it] -> drop.
+        The teardown runs on success, failure and interruption, including a create
+        or start that fails halfway; a run that cannot tear down (SIGKILL) is
+        recovered by the next create / start.
+
+        ``runtime`` names the pipeline orchestrator of an execution runtime
+        (execution_runtime.py) started on the disposable database and bucket for
+        suites that generate execution history; the suite sees its API."""
         process: subprocess.Popen | None = None
+        execution = None
+        if runtime is not None:
+            from execution_runtime import ExecutionRuntime
+
+            execution = ExecutionRuntime(self, runtime, env_file=env_file)
+        child_base = self.child_environment(dict(os.environ))
 
         def _forward_sigterm(signum, _frame):
             if process is not None and process.poll() is None:
@@ -333,21 +358,31 @@ class DisposableEnvironment:
         completed = False
         try:
             self.create()
-            process = subprocess.Popen(
-                command, cwd=REPO_ROOT, env=self.child_environment(dict(os.environ))
-            )
+            child = child_base
+            if execution is not None:
+                execution.up(child)
+                child = execution.child_environment(child)
+            process = subprocess.Popen(command, cwd=REPO_ROOT, env=child)
             code = process.wait()
             completed = True
             return code
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
-            try:
-                self.drop()
-            except Exception as exc:  # noqa: BLE001
+            # The runtime first: its processes hold connections to the database.
+            steps = [self.drop]
+            if execution is not None:
+                steps.insert(0, lambda: execution.down(child_base))
+            failures: list[Exception] = []
+            for step in steps:
+                try:
+                    step()
+                except Exception as exc:  # noqa: BLE001 - the later steps still run
+                    failures.append(exc)
+            if failures:
                 if completed:
-                    raise
-                print(f"disposable_env: drop also failed: {exc}", file=sys.stderr)
+                    raise failures[0]
+                print(f"disposable_env: teardown also failed: {failures}", file=sys.stderr)
 
 
 def _parse(argv: list[str]) -> argparse.Namespace:
@@ -359,6 +394,13 @@ def _parse(argv: list[str]) -> argparse.Namespace:
         argv, command = argv[:split], argv[split + 1 :]
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("action", choices=["run", "create", "drop", "status"])
+    parser.add_argument(
+        "--runtime",
+        choices=["celery", "airflow"],
+        help="run: also start the disposable execution runtime with this pipeline "
+        "orchestrator (execution_runtime.py)",
+    )
+    parser.add_argument("--env-file", default=os.environ.get("ENV_FILE", ".env.local"))
     parser.add_argument("--database", default=DEFAULT_DATABASE)
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument(
@@ -394,7 +436,9 @@ def main(argv: list[str] | None = None) -> int:
         if not args.command:
             print("disposable_env: run needs a command after `--`", file=sys.stderr)
             return 2
-        return environment.run(args.command)
+        return environment.run(
+            args.command, runtime=args.runtime, env_file=args.env_file
+        )
     if args.action == "create":
         environment.create()
     elif args.action == "drop":

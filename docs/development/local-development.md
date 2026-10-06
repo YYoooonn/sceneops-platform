@@ -117,8 +117,8 @@ layer a given contract belongs to; this section is the command surface.
 ```
 make test                          unit suites, no infrastructure (run anywhere)
 make test-integration              real Postgres + MinIO in a disposable database + bucket, needs `make local-up`
-make test-infrastructure           pipeline contracts on the live stack, needs `make local-up`
-make test-infrastructure-airflow   the same pipelines through Airflow (opt-in, see below)
+make test-infrastructure           pipeline contracts on a disposable execution runtime, needs `make local-up`
+make test-infrastructure-airflow   the same pipelines through a private Airflow (Docker, see below)
 make test-recovery                 acquisition recovery under injected faults + the full-lifecycle acceptance (Docker, needs `make local-up`)
 make e2e-streaming-equivalence | e2e-scene-ml | e2e-episode-learning
 make e2e-cleanroom                 the full-platform acceptance (DESTRUCTIVE: runs `make local-reset`)
@@ -150,25 +150,33 @@ make check-commands                the command surface is consistent (no pytest,
   exist, and `... drop` removes them. `TEST_POSTGRES_DB` / `TEST_MINIO_BUCKET` rename
   them; names outside `sceneops_test*` / `sceneops-test*`, or equal to `POSTGRES_DB` /
   `MINIO_BUCKET`, are refused.
-- `make test-infrastructure` runs `tests/infrastructure` against the live stack:
+- `make test-infrastructure` runs `tests/infrastructure` on a disposable execution runtime:
   execution-key dedup / force, convergence of an unchanged rebuild,
   conflict-then-explicit-replacement, resumption of a blocked pipeline, recovery
   of a failed one, concurrent runs over one scope and the orchestrator that
   executed them (the Airflow and acquisition-recovery modules have their own
-  targets). It builds on
-  the canonical baseline (`canonical-bootstrap`, create-or-verify) and writes only
-  into the fixed Dataset `sceneops-test-infra-pipelines`, one DatasetVersion per test
-  that every run reuses (`REFERENCE_DERIVED`), so the baseline's scope is never mutated
-  and a repeated run adds no Dataset or DatasetVersion. Each test starts from the state
-  the previous run left and moves it with explicit replacement.
+  targets). These tests re-execute pipelines on purpose and the platform keeps every
+  Job and PipelineRun that results, so the command creates the disposable database and
+  bucket of `make test-integration`, starts an API, Celery workers and a Redis of its own
+  on them (compose project `sceneops-test`, `compose/test-runtime.yaml`), seeds the one
+  RobotRun of the golden contract it consumes by the production create-or-verify path
+  (`canonical-bootstrap`'s script, `smoke-1`, from the prepared reference recording), and
+  removes everything afterwards. The reference api, workers, Redis, database and bucket
+  are not used or modified; the tests build into the fixed Dataset
+  `sceneops-test-infra-pipelines`, one DatasetVersion per test, inside the disposable
+  database. It needs `make local-up` (the PostgreSQL / MinIO servers and the images) and
+  `make reference-data-bootstrap`, and takes its ports from the free ones on the host.
   `make test-infrastructure-airflow` runs the same canonical pipelines through the
-  Airflow per-task DAGs; it needs `make airflow-up` and the `api` service
-  restarted with `SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow` (a
-  process-startup setting), and fails rather than skips when they are missing. Its
-  Scene ML test builds Scenes and imports a LabelSet (the fixture's locked
-  reference labels, rendered by the `reference-labels` container) in a
-  DatasetVersion of the fixed Dataset `sceneops-test-infra-airflow`, so it also needs `make acquisition-image` and
-  `make reference-data-bootstrap`.
+  Airflow per-task DAGs in the same kind of runtime plus a private Airflow (own metadata
+  database, webserver and scheduler, the Docker socket for the per-task worker
+  containers) and an API started on the `airflow` pipeline backend; it needs neither
+  `make airflow-up` nor a restarted reference `api`, builds the Airflow image on first
+  use, and fails rather than skips when a prerequisite is missing. Its Scene ML test
+  builds Scenes and imports a LabelSet (the fixture's locked reference labels, rendered
+  by the `reference-labels` container) in a DatasetVersion of the fixed Dataset
+  `sceneops-test-infra-airflow`, so it also needs `make acquisition-image`.
+  `uv run python tests/infrastructure/disposable_env.py status` shows leftovers of a
+  killed run; `docker compose -p sceneops-test down -v` removes a leftover runtime.
 - `make test-recovery` runs the two acquisition-recovery suites against PostgreSQL and
   MinIO in the same disposable database and bucket as `make test-integration`, with a
   Redis container and Celery workers of its own, so killing a worker or stopping the
@@ -255,7 +263,7 @@ dedup, and assertions are scoped to values the current run returned, not to
 global counts. The exceptions are the Scene ML pipeline and the first Episode learning
 pipeline of the journeys: they are requested without `force`, because a forced
 re-execution of the Scene ML stages appends scenario-mining and readiness reports under
-fresh Job ids on every run (`test-matrix.md`, `REFERENCE_DERIVED` convergence).
+fresh Job ids on every run (`test-matrix.md`, Execution history).
 
 ### Disk usage
 

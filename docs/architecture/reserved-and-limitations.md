@@ -112,9 +112,18 @@ presence doesn't imply an export or deprecation workflow exists.
 - Scene comparison, auto-labeling, scene package export and dataset export
   are not implemented.
 - Operations and leaderboard APIs exist; there's no dedicated web UI.
+- The API commits a control-plane write in the exit code of its request-scoped session
+  dependency, which FastAPI runs after the response has started. A client that acts on a
+  response immediately (`POST /pipelines/runs`, then `POST .../execute`) can in principle
+  read before that commit and get a 404. The ordering is pinned as an expected failure
+  (`apps/api/tests/platform/test_session_commit_timing.py`); about 1,500 create-then-execute
+  pairs against a real runtime did not provoke the failure, so a 404 seen by the
+  infrastructure tests is reported together with a re-read of the run
+  (`Api.dispatched`).
 - The Airflow pipeline backend is a per-task DAG proof of concept: one DAG per
   pipeline type, serial tasks, the API backend chosen at process start. Its
-  acceptance (`make test-infrastructure-airflow`) is opt-in.
+  acceptance (`make test-infrastructure-airflow`) is opt-in and runs on a private
+  Airflow in a disposable runtime.
 - `export_analytics_snapshot` covers Scene only; aligned Episode revisions have their own Parquet export
   (`EXPORT_LEARNING_DATA` -> `learning_episodes/steps/signals.parquet`,
   scoped by `(dataset_id, dataset_version, export_id)`, not by

@@ -19,11 +19,18 @@ from recovery_support import (  # noqa: F401  (fixtures of the recovery suites)
 
 @pytest.fixture(scope="session")
 def api() -> Api:
+    # These tests re-execute pipelines on purpose and the platform keeps every Job and
+    # PipelineRun that results, so they run only against the disposable execution
+    # runtime a make target started for them -- never a developer's API on :8000.
+    assert os.environ.get("SCENEOPS_EXECUTION_RUNTIME") == "disposable", (
+        "the infrastructure tests run on a disposable execution runtime: "
+        "`make test-infrastructure` / `make test-infrastructure-airflow`"
+    )
     client = httpx.Client(base_url=f"{API_BASE_URL}{API_PREFIX}", timeout=60.0)
     try:
         client.get("/pipelines/definitions").raise_for_status()
     except httpx.HTTPError as exc:
-        pytest.skip(f"API not reachable at {API_BASE_URL} ({exc}); run `make local-up`")
+        pytest.skip(f"API not reachable at {API_BASE_URL} ({exc}); run `make test-infrastructure`")
     yield Api(client)
     client.close()
 

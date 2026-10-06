@@ -73,6 +73,10 @@ DISPOSABLE_ENV := POSTGRES_USER=$(POSTGRES_USER) POSTGRES_PASSWORD=$(POSTGRES_PA
 DISPOSABLE_ENV_FLAGS := --database $(TEST_POSTGRES_DB) --bucket $(TEST_MINIO_BUCKET) \
 	--reference-database $(POSTGRES_DB) --reference-bucket $(MINIO_BUCKET)
 DISPOSABLE_ENV_RUN := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --
+# The same, plus a disposable execution runtime (compose/test-runtime.yaml: API,
+# Celery workers, Redis and optionally Airflow on that database and bucket) for the
+# suites whose subject is orchestration. Usage: $(DISPOSABLE_ENV_RUNTIME) <celery|airflow> -- <cmd>
+DISPOSABLE_ENV_RUNTIME := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --env-file $(ENV_FILE) --runtime
 
 INTEGRATION_COMMAND := $(DISPOSABLE_PYTEST) packages/sceneops-db/tests/ packages/sceneops-storage/tests/ -v \
 	&& $(DISPOSABLE_PYTEST) -o python_files="*_integration.py" apps/worker/tests packages/sceneops-analytics/tests -v
@@ -92,31 +96,34 @@ test-integration:
 .PHONY: test-infrastructure
 # Infrastructure acceptance of the pipeline contracts below the E2E journeys:
 # dedup / force / convergence / replacement / blocked resumption / failure
-# recovery / concurrent registration. Runs against the live stack (`make
-# local-up`); builds on the canonical baseline (canonical-bootstrap) and writes
-# only into the fixed sceneops-test-infra-pipelines Dataset, one DatasetVersion per
-# test, reused by every run (REFERENCE_DERIVED). The Airflow and acquisition-recovery
-# modules are their own targets (test-infrastructure-airflow, test-recovery); a
-# skip here is a failure.
-test-infrastructure: canonical-bootstrap
-	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_FILE) \
-	$(REAL_INFRA_PYTEST) tests/infrastructure \
+# recovery / concurrent registration, on the Celery orchestrator. These tests
+# re-execute pipelines on purpose, and every Job, PipelineRun and report the platform
+# appends stays, so they never run on the reference environment: the command
+# creates a disposable PostgreSQL database and MinIO bucket, starts an execution
+# runtime of its own on them (API, Celery workers, Redis; compose/test-runtime.yaml),
+# seeds the one RobotRun of the golden contract it consumes by the production
+# create-or-verify path, runs the suite and drops everything (DISPOSABLE_ENVIRONMENT).
+# Prerequisite: `make local-up` (the PostgreSQL / MinIO servers and the images) and
+# `make reference-data-bootstrap` (the locked recording); the reference database,
+# bucket, api, workers and Redis are neither read nor written. The Airflow and
+# acquisition-recovery modules are their own targets; a skip here is a failure.
+test-infrastructure:
+	$(DISPOSABLE_ENV_RUNTIME) celery -- $(DISPOSABLE_PYTEST) tests/infrastructure \
 		--ignore=tests/infrastructure/test_airflow_backend.py \
 		--ignore=tests/infrastructure/test_acquisition_recovery.py \
 		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
 
 .PHONY: test-infrastructure-airflow
-# The same canonical pipelines through the Airflow per-task DAGs, into the fixed
-# sceneops-test-infra-airflow Dataset (REFERENCE_DERIVED). Requires:
-# `make airflow-up`, and the api service restarted with
-# SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow (a process-startup
-# setting, not automatable from here). Fails -- never skips -- when the API,
-# Airflow backend or prerequisites are missing.
-test-infrastructure-airflow: canonical-bootstrap
-	SCENEOPS_TEST_AIRFLOW=1 EXPECTED_PIPELINE_BACKEND=airflow \
-	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_FILE) \
-	$(REAL_INFRA_PYTEST) tests/infrastructure/test_airflow_backend.py -v
+# The canonical pipelines through the Airflow per-task DAGs, in the same disposable
+# environment as test-infrastructure plus a private Airflow (its own metadata
+# database, scheduler and webserver; the reference environment's Airflow is not used
+# and `airflow-up` is not required). The API of the runtime is started on the
+# airflow pipeline backend, so nothing is reconfigured in place. Needs the Docker
+# socket (the DAGs start the worker image per task) and builds the Airflow image on
+# first use. Fails -- never skips -- when a prerequisite is missing.
+test-infrastructure-airflow:
+	$(DISPOSABLE_ENV_RUNTIME) airflow -- $(DISPOSABLE_PYTEST) tests/infrastructure/test_airflow_backend.py -v
 
 .PHONY: lint
 lint:

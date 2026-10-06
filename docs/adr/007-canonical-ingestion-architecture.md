@@ -5921,3 +5921,37 @@ the contract.
   afterwards. Making those registrations idempotent is not decided here.
 - A runtime that ran the previous, timestamped journeys holds `sceneops-test-*` Datasets
   that the fixed identities do not reuse; they are removed by `make local-reset`.
+
+### 36.8 Infrastructure suites run on a disposable execution runtime
+
+**Decision.** `make test-infrastructure` and `make test-infrastructure-airflow` leave the
+reference environment. Each runs in the disposable PostgreSQL database and MinIO bucket of
+§36.5 and starts an execution runtime of its own on them: an API, the Celery workers and a
+Redis (the compose project `sceneops-test`, `compose/test-runtime.yaml`), and for the
+Airflow command a private Airflow with the API started on the `airflow` pipeline backend.
+The suite's `baseline` fixture seeds the one RobotRun of the golden contract it consumes by
+the production create-or-verify path, publishing the locked recording into the disposable
+bucket. The runtime and the database and bucket are removed after the run. The reference
+environment's api, workers, Redis, Airflow, database and bucket are neither used nor
+reconfigured; only the PostgreSQL and MinIO servers are shared. The two commands move from
+`REFERENCE_DERIVED` to `DISPOSABLE_ENVIRONMENT`; their fixed `sceneops-test-infra-*` Dataset
+names (§36.7) are kept, now inside the disposable database. Execution history stays
+append-only by platform design and no delete API, SQL cleanup or production semantics
+change was introduced for the tests.
+
+**Why.** The infrastructure suites exist to prove force, retry, resumption, conflict and
+orchestration, so every run appended Jobs, PipelineRuns and job-keyed reports to the
+reference environment, unboundedly, and nothing removes them (§35.3). A fixed Dataset
+identity bounds the semantic state (§36.7) but cannot bound execution history that the
+tests generate on purpose. Seeding a disposable runtime from the same locked recording
+needs one RobotRun and no copy of the contract's twenty, and reuses the bootstrap path
+instead of adding a second one.
+
+**Consequences.** The reference environment's stale `sceneops-test-infra-*` Datasets and
+history from earlier runs are not removed (there is no removal path); `make local-reset`
+drops them. Each run starts from empty state, so the tests state their transitions from
+there; the concurrency test covers a first registration race and an explicit-replacement
+race in one run instead of alternating between them across runs. A run costs the runtime's
+start-up plus one RobotRun seeding. Airflow's per-task containers are started by the
+Docker daemon outside the compose project; one that failed stays until removed
+(`auto_remove` is `success`).
