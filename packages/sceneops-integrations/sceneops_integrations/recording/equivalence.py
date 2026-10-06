@@ -104,10 +104,11 @@ def semantic_recording_content(path: Path) -> RecordingContent:
     return RecordingContent(channels=channels)
 
 
-def compare_recordings(first: Path, second: Path) -> EquivalenceReport:
-    """Whether the recordings at ``first`` and ``second`` are semantically
-    equivalent, with every difference named."""
-    a, b = semantic_recording_content(first), semantic_recording_content(second)
+def compare_recording_contents(
+    a: RecordingContent, b: RecordingContent
+) -> EquivalenceReport:
+    """Whether two comparison projections are semantically equivalent, with
+    every difference named."""
     differences: list[str] = []
     for topic in sorted(set(a.channels) ^ set(b.channels)):
         side = "first" if topic in a.channels else "second"
@@ -145,10 +146,19 @@ def compare_recordings(first: Path, second: Path) -> EquivalenceReport:
     )
 
 
+def compare_recordings(first: Path, second: Path) -> EquivalenceReport:
+    """Whether the recordings at ``first`` and ``second`` are semantically
+    equivalent, with every difference named."""
+    return compare_recording_contents(
+        semantic_recording_content(first), semantic_recording_content(second)
+    )
+
+
 __all__ = [
     "ChannelContent",
     "EquivalenceReport",
     "RecordingContent",
+    "compare_recording_contents",
     "compare_recordings",
     "semantic_recording_content",
 ]

@@ -158,7 +158,7 @@ There are exactly five E2E journeys. Platform operations go through FastAPI and 
 | --- | --- |
 | `make canonical-bootstrap` / `make canonical-verify` | Developer orchestration, not a pipeline: prepared reference-corpus recordings → one RobotRun per fixture → Scenes → Episodes → validate / profile, then read-only verification. Builds nothing derived. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make e2e-batch-canonical` | dataset fixture → batch MCAP → RobotRun → Scenes + Episodes |
-| `make e2e-streaming-equivalence` | One source acquired in batch and by ROS 2 → Kafka → capture; the canonical Scenes and Episodes are semantically equivalent (needs Kafka) |
+| `make e2e-streaming-equivalence` | One locked reference MCAP reaches Scenes and Episodes via the batch baseline and via replay → ROS 2 → Kafka → capture → publish-pending → reconcile; the two are semantically equivalent (needs Kafka) |
 | `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend) |
 | `make e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → export verification + LeRobot round trip |
 | `make e2e-cleanroom` | **The full-platform acceptance**: fresh platform state → canonical-bootstrap → both L3 journeys → final verification. **Destructive** (preserves `data/raw`) |

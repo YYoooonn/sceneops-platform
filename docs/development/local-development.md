@@ -170,7 +170,7 @@ or MinIO access, no worker CLI.
 
 ```
 make e2e-batch-canonical [SCENE=...]         dataset fixture -> batch MCAP -> RobotRun -> Scenes -> Episodes
-make e2e-streaming-equivalence [SCENE=...]   the same source in batch and by replay -> ROS2 -> Kafka -> capture: canonically equivalent (needs Kafka)
+make e2e-streaming-equivalence [SCENE=...]   the locked reference MCAP via the batch baseline and via replay -> ROS2 -> Kafka -> capture: equivalent (needs Kafka)
 make e2e-scene-ml [SCENE=...]                Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)
 make e2e-episode-learning [SCENE=...]        Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip
 make e2e-cleanroom                           fresh state -> canonical-bootstrap -> both L3 journeys -> final verification

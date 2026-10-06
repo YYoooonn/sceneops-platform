@@ -4847,6 +4847,16 @@ Kafka address; it meets the platform only over DDS. Pacing schedules `source_tim
 reliable keep-all delivery with `/tf_static` latched, and fails unless every sample is acknowledged
 after the last message.
 
+**Amendment note (reference streaming acceptance, after A9).** The decision above stands as
+written for the source adapter → replay sink design of step 9, and as history: the sink
+consumed the nuScenes adapter's events (`nuscenes --replay`) and the original acceptance
+replayed a source scene. That runtime path has since been removed: the replay sink now has
+one source, a finalized MCAP, and the current streaming acceptance replays the *locked L1
+reference MCAP* of a reference-corpus fixture (`reference replay`, which reads no source
+dataset) through the same sink. The sink, its payload-exactness, pacing and delivery rules
+and I-47 are unchanged; only the origin of the events differs. The consequence for the
+acceptance is stated in §32.9.
+
 ### 32.7 Q3 decided: Kafka transport of large sensor messages
 
 Stock broker, producer and consumer limits (~1 MB message size) are sufficient for the measured
@@ -4888,6 +4898,29 @@ L1-conformant and every channel sequenced; both RobotRuns register; 3 Scenes (60
 recording equivalence holds; every Scene's and the Episode's semantic content is equal. RobotRun B's
 extent is wall-clock receive time, RobotRun A's the source timeline. This is one scene at one rate,
 a measurement and not a general proof.
+
+**Amendment note (reference streaming acceptance, after A9).** The result above was
+measured when the batch arm was a fresh conversion of a source scene and the streaming arm a
+replay of the adapter's events, so the comparison covered two conversions as well as the
+transport. `make e2e-streaming-equivalence` now uses one shared acquisition fixture: the locked
+reference MCAP is both the batch arm (the persistent reference baseline's RobotRun, read as
+it is and verified against the corpus lock) and the replay source of the streaming arm
+(replay → ROS 2 → bridge → Kafka → capture → `publish-pending` → `reconcile --apply` →
+RobotRun → Scene / Episode, with the baseline's build configuration files). Equivalence is
+therefore a transport-preservation test, not a conversion test, and §29.12's relation is
+checked over the locked and the captured recording: channels, message types and encodings,
+per-channel payload sequences and counts, every `Header.stamp` and the mission event times,
+and `/tf_static`; then I-35 over the Scene and Episode. Not compared: container bytes,
+capture `log_time`, schema-definition text, cross-channel write order. The negative controls
+are minimal perturbations of the loaded data (a dropped message, a 1 ns time shift, a changed
+payload checksum), each of which the verifier must report. The run's Kafka records are asserted
+as `RUN_START`, `message_count` telemetry records and `RUN_END`; the two lifecycle control
+records are why a capture receipt's offset range spans `message_count + 2` offsets (see
+`docs/architecture/streaming-transport.md` §16). Measured once on the local stack for the
+smoke fixture (`scene-0061`, 8,897 messages, 20 channels, rate 2×, two executions, a persistent
+baseline reused unchanged): 1 RobotRun, 1 Scene (606 observations) and 1 Episode (224
+observations) per arm, every comparison equal, every negative control detected. That is one
+fixture at one rate, not a general proof.
 
 ### 32.10 Invariants
 

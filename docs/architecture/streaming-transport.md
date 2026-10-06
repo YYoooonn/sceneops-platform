@@ -388,7 +388,8 @@ and transform channels -- to the Kafka transport described in Part 1,
 without changing that transport's contract:
 
 ```text
-robot, or a dataset replay (tools/dataset-acquisition, `--replay`)
+robot, or a replay of a locked reference MCAP
+(tools/dataset-acquisition, `reference replay`)
   -> real ROS2 DDS
   -> ros2/nodes/streaming_bridge_node.py
   -> TelemetryEnvelope
@@ -406,26 +407,29 @@ RobotRun, Scene and Episode state its pipelines create.
 
 ### 10.1 Replay as the external-tool boundary
 
-`tools/dataset-acquisition` converts a dataset unit into tool-local
-acquisition events (topic, message type, CDR payload serialized once,
-source time) and feeds two sinks: the batch MCAP sink and the ROS2 replay
-sink (`--replay`, image `sceneops-platform/dataset-replay:local`: ROS2 Jazzy
-plus the tool, no SceneOps package). The replay sink publishes each event's
-payload as raw CDR bytes at the pace the source timeline sets (`--rate`
-multiplies it; `0` is unpaced), after every topic has a matched subscriber,
-with reliable keep-all delivery, `/tf_static` latched, and a final wait for
-every sample to be acknowledged. It rewrites no timestamp: source
-observation times stay inside the payload, so replay pacing and transport
-latency cannot enter them. The bridge and replay containers meet only over
-DDS on the compose network.
+`tools/dataset-acquisition` turns a source into tool-local acquisition
+events (topic, message type, CDR payload serialized once, source time) and
+feeds two sinks: the batch MCAP sink and the ROS2 replay sink (image
+`sceneops-platform/dataset-replay:local`: ROS2 Jazzy plus the tool, no
+SceneOps package). A dataset adapter feeds the batch sink; the replay sink
+has one runtime source, a finalized MCAP (`reference replay`), so a raw
+dataset is converted to a recording first and never replayed directly. The
+replay sink publishes each event's payload as raw CDR bytes at the pace the
+source timeline sets (`--rate` multiplies it; `0` is unpaced), after every
+topic has a matched subscriber, with reliable keep-all delivery,
+`/tf_static` latched, and a final wait for every sample to be acknowledged.
+It rewrites no timestamp: source observation times stay inside the payload,
+so replay pacing and transport latency cannot enter them. The bridge and
+replay containers meet only over DDS on the compose network.
 
-The replay sink's events come from either of two sources: a dataset adapter
-(`nuscenes --replay`) or a finalized MCAP (`reference replay`). The MCAP source
-derives channels, schemas, payload bytes and source time from the recording
-itself; the source time of a locked batch MCAP is its MCAP `log_time`, and
-messages with equal `log_time` keep their file order. `reference replay` resolves
-the recording through the reference corpus lock and verifies it before the first
-message is published (see `docs/development/reference-corpus.md`).
+The MCAP source derives channels, schemas, payload bytes and source time
+from the recording itself; the source time of a locked batch MCAP is its
+MCAP `log_time`, and messages with equal `log_time` keep their file order.
+`reference replay` resolves the recording through the reference corpus lock
+and verifies it before the first message is published (see
+`docs/development/reference-corpus.md`). It reads no source dataset, and the
+streaming acceptance runs it with the replay container's raw-dataset mount
+shadowed by an empty volume.
 
 ## 11. Channel registry and source-timestamp contract
 
@@ -674,8 +678,10 @@ recording-publisher container).
 ```text
 make ros2-test                    bridge + capture unit and real-Kafka integration
                                   tests, inside the ros2 image (needs streaming-up)
-make e2e-streaming-equivalence    the streaming vertical + batch/streaming equivalence
-                                  (SCENE / RATE overridable; default scene-0061 / 2)
+make e2e-streaming-equivalence    the streaming vertical + transport-preservation
+                                  equivalence over one locked reference MCAP
+                                  (SCENE / RATE overridable; default smoke-1 /
+                                  the fixture's replay rate)
 ```
 
 `ros2/nodes/tests/test_streaming_bridge_node.py` uses a `FakeProducerBridge`
@@ -687,16 +693,48 @@ failure counting, QoS, and lifecycle events.
 
 `scripts/e2e/e2e_streaming_equivalence.sh` runs the real chain with
 containers and FastAPI only (the host needs Docker Compose, curl, jq and the
-API port -- no `uv`, no PostgreSQL or MinIO access, no worker CLI):
+API port -- no `uv`, no PostgreSQL or MinIO access, no worker CLI). The shared
+logical source of both arms is the locked reference MCAP of one fixture
+(`docs/development/reference-corpus.md`), so equality of the results is a
+statement about the transport, not about two conversions of a dataset:
 
 ```text
-batch      dataset-acquisition container -> MCAP -> L1 check -> publish -> RobotRun A
-streaming  dataset-replay (paced) -> bridge -> Kafka -> capture (until RUN_END)
-             -> L1 check -> publish -> REGISTER_ROBOT_RUN -> RobotRun B
-both       recording_scene_building + recording_episode_building, same configs
-verify     counts replay = bridge = capture = batch, per channel; recording
-           equivalence (§29.12); Scene and Episode semantic equivalence (I-35)
+batch      the persistent reference baseline (`ref-<selection>`, canonical-baseline.md):
+             locked MCAP -> RobotRun A -> Scene / Episode. Read as it is
+             (canonical-verify); created by canonical-bootstrap only when absent;
+             never rebuilt. Its RobotRun pins the lock's recording sha256.
+streaming  locked MCAP -> `reference replay` (raw dataset mount shadowed) -> ROS 2
+             -> bridge -> Kafka -> capture (until RUN_END; receipt)
+             -> publish-pending -> reconcile --apply (REGISTER_ROBOT_RUN) -> RobotRun B
+             -> recording_scene_building + recording_episode_building, with the
+             baseline's build configuration files (config/baselines/)
+verify     replay = bridge = capture = locked counts, per channel; the Kafka audit
+           below; acquisition equivalence (§29.12): channels, message types and
+           encodings, per-channel payload sequences, every Header.stamp and the
+           mission event times, `/tf_static`; Scene and Episode semantic
+           equivalence (I-35); negative controls; the baseline unchanged afterwards
 ```
+
+Container bytes, capture `log_time`, schema-definition text and cross-channel
+write order are not compared; Scene / Episode builds that read
+`mcap_log_time` or `mcap_publish_time` would legitimately differ and are not part
+of the comparison (the baseline configurations use source-semantic clocks only).
+
+The negative controls are minimal, real perturbations of the loaded data: a
+message dropped from a channel, one `Header.stamp` or one Scene / Episode
+observation time shifted by 1 ns, one payload checksum changed. The verifier
+must report each as a difference.
+
+**Kafka offsets of a streamed run.** A run's records on its partition are
+`RUN_START`, `message_count` telemetry records and `RUN_END`: the bridge publishes
+the two lifecycle control envelopes (channel `/session/control`) with the run's own
+key, before the first and after the last telemetry record. Capture validates them
+in their own sequence space and never writes them to the MCAP, but they are consumed
+records, so the capture receipt's `kafka.first_offset .. kafka.last_offset` spans
+`message_count + 2` offsets when the run owns that offset range (other runs hashed
+to the same partition interleave their offsets without changing the run's own
+records). `scripts/e2e/streaming_kafka_audit.py` reads the topic and asserts exactly
+those records and that the receipt's range runs from `RUN_START` to `RUN_END`.
 
 `make smoke-streaming` (the Kafka transport's own smoke test) passes
 independently -- it proves the Kafka transport itself and is never replaced
@@ -1061,9 +1099,9 @@ camera- and lidar-sized payloads, oversize failure).
 
 `make e2e-streaming-equivalence` (§16) is the real vertical: the captured
 recording is checked with the L1 conformance suite
-(`python -m sceneops_integrations.recording check`), published, registered,
-built into Scenes and Episodes, and compared with the batch acquisition of
-the same source. Capture's output is checked by the same conformance suite as
+(`python -m sceneops_integrations.recording check`), published from its capture
+receipt, registered, built into Scenes and Episodes, and compared with the locked
+recording it was replayed from. Capture's output is checked by the same conformance suite as
 the batch tool's.
 
 # Part 4: Continuous Multi-Run Capture
@@ -1280,8 +1318,8 @@ recording by `RECORDING_SCENE_BUILDING` / `RECORDING_EPISODE_BUILDING`
 ([Scene domain](./scene-domain.md) §6). Capture records camera, lidar,
 `CameraInfo`, `/tf`, `/tf_static` and telemetry channels (§11), so a
 streamed recording is as buildable as a batch one; `make
-e2e-streaming-equivalence` shows the same source yields equivalent Scenes
-and Episodes either way.
+e2e-streaming-equivalence` shows a locked recording replayed through the
+transport yields Scenes and Episodes equivalent to the batch baseline's.
 
 Reliability and scale characteristics of everything above -- crash
 boundaries, duplicate/gap/out-of-order handling, multi-RobotRun
@@ -1348,6 +1386,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - Bridge node: `ros2/nodes/streaming_bridge_node.py`
 - Bridge unit tests (real rclpy, no Kafka, ros2 container only): `ros2/nodes/tests/test_streaming_bridge_node.py`
 - Replay sink (external-tool boundary; no SceneOps dependency): `tools/dataset-acquisition/src/dataset_acquisition/ros2_replay.py`, `tools/dataset-acquisition/tests/test_ros2_replay.py`, image target `replay` in `tools/dataset-acquisition/Dockerfile`, service `dataset-replay` in `compose/acquisition.yaml`
+- Replay source (a locked MCAP): `tools/dataset-acquisition/src/dataset_acquisition/mcap_source.py` (`reference replay` in `cli.py`), `tools/dataset-acquisition/tests/test_mcap_source.py`
 - Container/runtime: `ros2/Dockerfile`, `compose/ros2.yaml`
 - Make: `make ros2-test`, `make e2e-streaming-equivalence` (`makefiles/streaming.mk`)
 
@@ -1363,7 +1402,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - CLI entry point: `ros2/capture/cli.py`
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `ros2/Dockerfile`, capture source mount: `compose/ros2.yaml`
 - Realistic sensor payloads through real Kafka: `ros2/capture/tests/test_sensor_payload_kafka_integration.py`
-- E2E: `scripts/e2e/e2e_streaming_equivalence.sh`, `scripts/e2e/streaming_equivalence_verify.py`, `make e2e-streaming-equivalence`
+- E2E: `scripts/e2e/e2e_streaming_equivalence.sh`, `scripts/e2e/streaming_equivalence_verify.py`, `scripts/e2e/streaming_kafka_audit.py`, `make e2e-streaming-equivalence`
 - Recording equivalence and conformance: `packages/sceneops-integrations/sceneops_integrations/recording/{equivalence,conformance}.py`
 
 **Continuous multi-run capture:**

@@ -116,7 +116,10 @@ mounts the corpus and the cache read-only) verifies one fixture's cached recordi
 against the lock and publishes that MCAP on ROS 2 topics through the replay sink. It
 reads no source dataset and does not compare the tool identity, since the replay image
 is not the interpreter that wrote the recording; the recording's sha256, size and counts
-are what it relies on.
+are what it relies on. The locked recording is the one runtime replay source: there is no
+replay of the raw dataset. `make e2e-streaming-equivalence` replays a fixture with the replay
+container's raw-dataset mount shadowed by an empty volume and compares the streamed
+acquisition with the same locked recording's batch baseline.
 
 A recording is reused only when the definition, the tool identity, the source
 fingerprint and the recording's own sha256, size and counts agree with the lock; a

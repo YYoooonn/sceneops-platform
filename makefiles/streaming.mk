@@ -41,18 +41,26 @@ ros2-test:
 		"python3 -m pytest /workspace/nodes/tests /workspace/capture/tests -q -p no:cacheprovider"
 
 # --------------------
-# Streaming acquisition vertical + batch-vs-streaming equivalence
-# (ADR-007 §29.12, §29.19 step 9): one nuScenes scene acquired in batch and by
-# paced ROS 2 replay -> bridge -> Kafka -> capture, both registered as
-# RobotRuns, built into Scenes and Episodes with identical configs through
-# FastAPI, and proven semantically equivalent. Containers + FastAPI only: no
-# host uv, no PostgreSQL/MinIO access, no worker CLI. Prerequisites:
-# `make local-up` with images built from the current tree.
+# Streaming acquisition vertical + transport-preservation equivalence
+# (ADR-007 §29.12, §29.19 step 9): the LOCKED reference MCAP of one fixture is
+# the shared logical source. The batch arm is the persistent reference baseline
+# (read as it is; created only if missing); the streaming arm replays the same
+# MCAP -> ROS 2 -> bridge -> Kafka -> capture -> publish-pending ->
+# reconcile --apply -> RobotRun -> Scenes + Episodes with the same build configs,
+# through FastAPI. Equivalence is proven on acquisition and on canonical Scene /
+# Episode content, with negative controls. No raw source dataset is read: the
+# replay container's raw mount is shadowed. Containers + FastAPI only: no host
+# uv, no PostgreSQL/MinIO access, no worker CLI.
+#
+# Selection: REFERENCE_SCOPE (default smoke-1) or SCENE=<fixture> (one fixture is
+# replayed per run); RATE overrides the fixture's replay rate; BASELINE_ID names
+# the batch baseline. Prerequisites: `make local-up` with images built from the
+# current tree, and `make reference-data-bootstrap` for the fixture.
 # --------------------
 
 .PHONY: e2e-streaming-equivalence
 e2e-streaming-equivalence: acquisition-image
 	$(COMPOSE) --profile ros2 build ros2
-	chmod +x scripts/e2e/e2e_streaming_equivalence.sh
-	SOURCE_UNIT=$(or $(SCENE),scene-0061) RATE=$(or $(RATE),2) API_BASE_URL=$(API_BASE_URL) ENV_FILE=$(ENV_FILE) \
+	chmod +x scripts/e2e/e2e_streaming_equivalence.sh scripts/canonical/*.sh
+	$(E2E_ENV) REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(RATE),RATE=$(RATE)) \
 	scripts/e2e/e2e_streaming_equivalence.sh

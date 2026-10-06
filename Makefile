@@ -29,9 +29,11 @@ ROS2_CMD        ?=
 
 # Journey selection -- the only user-facing variables of the E2E / baseline
 # surface (see makefiles/e2e.mk). SCENE: the nuScenes scene (default
-# scene-0061). RATE: streaming replay rate. BASELINE_ID: run a journey on a
-# named canonical baseline (default: a unique one per run). BACKEND /
-# MAX_SAMPLES: the detection backend and sample cap of the Scene ML journey.
+# scene-0061). RATE: streaming replay rate (default: the fixture's replay
+# definition). BASELINE_ID: run a journey on a named canonical baseline (default:
+# a unique one per run; streaming equivalence reads the persistent ref-<selection>
+# baseline). BACKEND / MAX_SAMPLES: the detection backend and sample cap of the
+# Scene ML journey.
 SCENE           ?=
 RATE            ?=
 BASELINE_ID     ?=
@@ -78,7 +80,7 @@ help:
 	@echo "E2E journeys -- exactly five (containers + FastAPI; host needs docker compose, curl, jq):"
 	@echo "=================================================================="
 	@echo "  make e2e-batch-canonical [SCENE=scene-0061]      dataset fixture -> batch MCAP -> RobotRun -> Scenes -> Episodes"
-	@echo "  make e2e-streaming-equivalence [SCENE=.. RATE=2] the same source in batch and ROS 2 -> Kafka -> capture: canonically equivalent"
+	@echo "  make e2e-streaming-equivalence [SCENE=.. RATE=..] the locked reference MCAP via the batch baseline and via replay -> ROS 2 -> Kafka -> capture: equivalent"
 	@echo "  make e2e-scene-ml [SCENE=scene-0061]             Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)"
 	@echo "  make e2e-episode-learning [SCENE=scene-0061]     Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip"
 	@echo "  make e2e-cleanroom                               [DESTRUCTIVE] local-reset -> images -> canonical-bootstrap -> both L3 journeys -> verification"

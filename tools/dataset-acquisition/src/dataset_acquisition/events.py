@@ -4,7 +4,7 @@ a sink (ADR-007 §29.13).
 An event is one message as a robot would have published it: a topic, a
 self-describing message type, the payload serialized exactly once, and the
 source time the adapter took from the dataset. Sinks never re-serialize the
-payload, so a batch MCAP and a future live replay carry identical bytes.
+payload, so a batch MCAP and a replay of it carry identical bytes.
 
 Events carry acquisition facts only. Nothing here names a Scene, an
 Episode, a DatasetVersion, a canonical modality or a sampling decision.

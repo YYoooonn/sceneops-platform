@@ -122,6 +122,7 @@ Through the API and artifact pins only; it reads the lock but no recording:
 | --- | --- |
 | `make e2e-batch-canonical` | its own unique baseline of one fixture; also proves bootstrap re-runs change nothing |
 | `make e2e-scene-ml`, `make e2e-episode-learning` | a unique baseline of one fixture per run, or `BASELINE_ID=<id>` of a baseline that contains exactly that fixture |
+| `make e2e-streaming-equivalence` | the persistent `ref-<selection>` (`ref-smoke-1` by default) as the batch arm: verified read-only when registered, created only when absent, never rebuilt; the streamed arm is a unique RobotRun in its own DatasetVersion |
 | `make e2e-cleanroom` | the persistent `ref-smoke-1`, built from fresh platform state |
 | `make test-infrastructure` | the persistent `ref-smoke-1` (create-or-verify); tests build one RobotRun's Scenes / Episodes into throwaway DatasetVersions |
 

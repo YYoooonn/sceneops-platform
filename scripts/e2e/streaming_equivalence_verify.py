@@ -1,27 +1,39 @@
 """Batch-vs-streaming equivalence verifier (ADR-007 §29.12, I-35).
 
 Runs INSIDE the recording-publisher container (worker image: SceneOps core +
-integrations, ArtifactStore settings, the shared recordings volume). It
-needs no database and no host-side credentials: the host passes artifact
-URIs it read from the FastAPI control plane.
+integrations, ArtifactStore settings, the shared recordings volume and the
+read-only reference cache). It needs no database and no host-side credentials:
+the host passes artifact URIs it read from the FastAPI control plane.
+
+Both arms acquire one logical source: the locked reference MCAP. The batch arm
+is that MCAP itself (published as the reference baseline's RobotRun); the
+streaming arm is what ROS 2 replay -> bridge -> Kafka -> capture recorded from
+it. The verifier therefore proves *transport preservation*.
 
 stdin (JSON)::
 
-    {"batch":  {"recording": "/recordings/a.mcap",
+    {"batch":  {"recording": "/reference/.../scene-0061-<key>.mcap",
                 "scene_manifest_uris": [...], "episode_manifest_uris": [...]},
      "stream": {...same shape, the capture output...}}
 
 It checks, and prints one JSON report:
 
-1. L1 conformance of the streamed recording, and that its timing is the
-   recorder's: log_time is wall-clock receive time, every channel carries a
-   sequence, and source observation times (inside payloads) are untouched.
-2. Semantic recording equivalence (§29.12): same channels, same per-channel
-   message multisets, same per-channel sequence order.
+1. Streamed recording timing: L1 conformance, log_time is wall-clock receive
+   time, publish_time is transport ingest time, every channel carries a
+   sequence; the batch recording's timeline is the simulated source timeline.
+2. Acquisition equivalence (§29.12): same channels, same message types and
+   encodings, same per-channel payload sequences (sha256 multiset and per-channel
+   sequence order), same source observation times (every ``Header.stamp`` the
+   payloads carry, and the ``/mission/status`` event times), ``/tf_static``
+   preserved. Container bytes, receive times, schema text and cross-channel
+   write order are not compared.
 3. Canonical equivalence (I-35): for every Scene / Episode unit key, the
    semantic projection (``semantic_scene_content`` /
-   ``semantic_episode_content``) of the batch and streamed manifests is
-   equal; and provenance really differs (so equality is not vacuous).
+   ``semantic_episode_content``) of the batch and streamed manifests is equal;
+   provenance really differs (so equality is not vacuous).
+4. Negative controls: one real, minimal perturbation of the loaded data per
+   comparison (a dropped message, a 1 ns source-time shift, a flipped payload
+   checksum) must each be detected.
 
 Exit 0 only when everything holds.
 """
@@ -29,9 +41,12 @@ Exit 0 only when everything holds.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import sys
 import time
+from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +58,14 @@ from sceneops_storage import create_artifact_store
 
 from sceneops_integrations.recording import (
     check_l1_recording,
-    compare_recordings,
+    compare_recording_contents,
     iter_recording_messages,
+    semantic_recording_content,
+)
+from sceneops_integrations.recording.reader import (
+    Ros2Decoder,
+    header_stamps,
+    stamp_ns,
 )
 
 RECOGNIZABLY_NOT_NOW_NS = 1_600_000_000_000_000_000  # 2020-09: the source data is 2018
@@ -108,6 +129,89 @@ def _string_data(cdr: bytes) -> str:
     return cdr[8 : 8 + length - 1].decode()
 
 
+def source_stamps(path: Path) -> dict[str, list[int]]:
+    """Every ``Header.stamp`` the payloads of each channel carry (one per
+    transform for ``/tf``), sorted: the source observation times."""
+    decoder = Ros2Decoder()
+    stamps: dict[str, list[int]] = {}
+    for message in iter_recording_messages(path):
+        decoded = decoder.decode(message)
+        for header in header_stamps(decoded, message.schema_name):
+            stamps.setdefault(message.topic, []).append(stamp_ns(header.stamp))
+    return {topic: sorted(values) for topic, values in sorted(stamps.items())}
+
+
+def _differs(a: Any, b: Any) -> bool:
+    return first_difference(a, b) is not None
+
+
+def negative_controls(
+    batch_content: Any,
+    batch_stamps: dict[str, list[int]],
+    scenes: dict[str, Any],
+    episodes: dict[str, Any],
+) -> dict[str, bool]:
+    """One minimal, real perturbation of the loaded batch data per comparison;
+    each must be reported as a difference. ``True`` means detected."""
+    results: dict[str, bool] = {}
+
+    topic = next(
+        t for t, c in sorted(batch_content.channels.items()) if c.message_count > 1
+    )
+    channel = batch_content.channels[topic]
+    payloads = Counter(channel.payloads)
+    payloads.subtract([next(iter(payloads))])
+    dropped = replace(
+        batch_content,
+        channels={
+            **batch_content.channels,
+            topic: replace(
+                channel,
+                message_count=channel.message_count - 1,
+                payloads=+payloads,
+            ),
+        },
+    )
+    results["one message dropped from a channel"] = not compare_recording_contents(
+        batch_content, dropped
+    ).equivalent
+
+    shifted = copy.deepcopy(batch_stamps)
+    stamp_topic = next(t for t, v in sorted(shifted.items()) if v)
+    shifted[stamp_topic][0] += 1
+    results["one Header.stamp shifted by 1 ns"] = _differs(batch_stamps, shifted)
+
+    for key, projection in scenes.items():
+        changed = copy.deepcopy(projection)
+        changed["observations"][0]["timestamp_ns"] += 1
+        results["Scene observation time shifted by 1 ns"] = _differs(
+            projection, changed
+        )
+        changed = copy.deepcopy(projection)
+        changed["observations"][0]["payload"]["checksum"] = "sha256:" + "0" * 64
+        results["Scene observation payload checksum changed"] = _differs(
+            projection, changed
+        )
+        break
+    for key, projection in episodes.items():
+        for kind in ("observations", "states", "actions"):
+            if not projection[kind]:
+                continue
+            changed = copy.deepcopy(projection)
+            changed[kind][0]["timestamp_ns"] += 1
+            results[f"Episode {kind[:-1]} time shifted by 1 ns"] = _differs(
+                projection, changed
+            )
+        changed = copy.deepcopy(projection)
+        with_payload = next(o for o in changed["observations"] if o["payload"])
+        with_payload["payload"]["checksum"] = "sha256:" + "0" * 64
+        results["Episode observation payload checksum changed"] = _differs(
+            projection, changed
+        )
+        break
+    return results
+
+
 async def load_manifests(
     store: Any, uris: list[str], loader: Any, project: Any, key: Any
 ):
@@ -158,19 +262,57 @@ async def verify(request: dict[str, Any]) -> dict[str, Any]:
         failures.append("batch log_time is not the simulated source-timeline time")
     stream_missions = mission_source_times(stream_path)
     batch_missions = mission_source_times(batch_path)
-    report["mission_source_times_ns"] = stream_missions
-    if stream_missions != batch_missions or len(stream_missions) != 2:
+    if stream_missions != batch_missions:
         failures.append(
             f"mission event times differ: {batch_missions} vs {stream_missions}"
         )
     if any(t >= RECOGNIZABLY_NOT_NOW_NS for t in stream_missions):
         failures.append("a mission event carries a wall-clock / replay time")
 
-    recordings = compare_recordings(batch_path, stream_path)
+    batch_content = semantic_recording_content(batch_path)
+    stream_content = semantic_recording_content(stream_path)
+    recordings = compare_recording_contents(batch_content, stream_content)
     report["recording_equivalence"] = recordings.to_dict()
     failures.extend(recordings.differences)
+    report["channels"] = {
+        topic: {
+            "message_type": c.schema_name,
+            "encodings": [c.schema_encoding, c.message_encoding],
+            "message_count": c.message_count,
+        }
+        for topic, c in sorted(stream_content.channels.items())
+    }
+    locked_counts = request.get("locked_topic_counts")
+    if locked_counts is not None:
+        stream_counts = {t: c.message_count for t, c in stream_content.channels.items()}
+        if stream_counts != locked_counts:
+            failures.append(
+                "streamed per-channel counts differ from the locked recording"
+            )
+    tf_static = {
+        side: content.channels.get("/tf_static")
+        for side, content in (("batch", batch_content), ("stream", stream_content))
+    }
+    if any(c is None or c.message_count < 1 for c in tf_static.values()):
+        failures.append("/tf_static is missing from a recording")
+    report["tf_static_messages"] = {
+        side: (c.message_count if c else 0) for side, c in tf_static.items()
+    }
+
+    batch_stamps = source_stamps(batch_path)
+    stream_stamps = source_stamps(stream_path)
+    report["source_stamp_channels"] = {t: len(v) for t, v in stream_stamps.items()}
+    if batch_stamps != stream_stamps:
+        differing = sorted(
+            t
+            for t in set(batch_stamps) | set(stream_stamps)
+            if batch_stamps.get(t) != stream_stamps.get(t)
+        )
+        failures.append(f"source observation times differ on {differing}")
+    report["mission_source_times_ns"] = stream_missions
 
     store = create_artifact_store(_artifact_settings())
+    projections: dict[str, dict[str, Any]] = {}
     for name, loader, project in (
         ("scene", load_canonical_scene_manifest, semantic_scene_content),
         ("episode", load_canonical_episode_manifest, semantic_episode_content),
@@ -206,6 +348,18 @@ async def verify(request: dict[str, Any]) -> dict[str, Any]:
                 )
         section["observations"] = sum(len(m.observations) for m, _ in a.values())
         report[name] = section
+        projections[name] = {k: v[1] for k, v in a.items()}
+
+    if all(projections.get(n) for n in ("scene", "episode")):
+        controls = negative_controls(
+            batch_content, batch_stamps, projections["scene"], projections["episode"]
+        )
+        report["negative_controls"] = controls
+        failures.extend(
+            f"negative control not detected: {name}"
+            for name, detected in controls.items()
+            if not detected
+        )
 
     report["equivalent"] = not failures
     report["failures"] = failures

@@ -1,5 +1,5 @@
-"""Command line: external dataset -> one finalized local MCAP (batch) or a
-timed ROS 2 replay (streaming).
+"""Command line: external dataset -> one finalized local MCAP (batch); a
+locked reference MCAP -> a timed ROS 2 replay (streaming).
 
 ::
 
@@ -7,8 +7,6 @@ timed ROS 2 replay (streaming).
         --dataroot data/raw/nuscenes --version v1.0-mini \\
         --source-unit scene-0061 --output out/scene-0061.mcap \\
         [--channels camera,lidar,pose,can,mission]
-
-    dataset-acquisition nuscenes ... --replay [--rate 2.0]
 
     dataset-acquisition reference {inspect,verify,prepare,resolve} \\
         --corpus config/reference/nuscenes-mini-v1 --dataroot data/raw/nuscenes \\
@@ -38,9 +36,11 @@ exit 1 if any fixture disagrees. ``replay`` is the streaming counterpart of
 ``resolve``: it verifies one fixture's cached recording against the lock, then
 publishes that MCAP (``mcap_source``) on ROS 2 topics. It reads no source dataset.
 
-Batch prints one JSON summary (path, sha256, size, message and per-topic
-counts) on stdout and exits 0. Replay prints one ``replay_summary`` JSON
-line. On failure both print the error on stderr and exit 1.
+``nuscenes`` prints one JSON summary (path, sha256, size, message and per-topic
+counts) on stdout and exits 0. ``reference replay`` prints one ``replay_source``
+and one ``replay_summary`` JSON line. On failure both print the error on stderr
+and exit 1. The only runtime replay source is a locked reference MCAP: a raw
+dataset is converted to an MCAP first and never replayed directly.
 
 The tool stops at the local MCAP or the ROS 2 topics. Publication and
 registration are the platform's: ``python -m sceneops_integrations.recording
@@ -67,7 +67,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="dataset-acquisition",
         description="Convert an external dataset into an L1 acquisition recording "
-        "(MCAP) or replay it onto ROS 2 topics.",
+        "(MCAP), or replay a locked reference recording onto ROS 2 topics.",
     )
     sub = parser.add_subparsers(dest="format", required=True)
     nuscenes = sub.add_parser(
@@ -80,29 +80,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         required=True,
         help="nuScenes scene name selecting the source records, e.g. scene-0061",
     )
-    sink = nuscenes.add_mutually_exclusive_group(required=True)
-    sink.add_argument("--output", type=Path, help="batch: write a finalized MCAP here")
-    sink.add_argument(
-        "--replay",
-        action="store_true",
-        help="streaming: publish the events on ROS 2 topics (needs the replay image)",
+    nuscenes.add_argument(
+        "--output", required=True, type=Path, help="write a finalized MCAP here"
     )
     nuscenes.add_argument(
         "--channels",
         default=",".join(CHANNEL_GROUPS),
         help=f"comma-separated channel groups (default: all of {','.join(CHANNEL_GROUPS)})",
-    )
-    nuscenes.add_argument(
-        "--rate",
-        type=float,
-        default=1.0,
-        help="replay speed relative to the source timeline; 0 publishes without pacing",
-    )
-    nuscenes.add_argument(
-        "--wait-subscribers-seconds",
-        type=float,
-        default=60.0,
-        help="replay: fail if a topic has no subscriber after this long",
     )
     reference = sub.add_parser(
         "reference",
@@ -294,18 +278,6 @@ def main(argv: list[str] | None = None) -> int:
             ),
         )
         adapter = NuScenesAdapter(selection)
-        if args.replay:
-            from .ros2_replay import replay, ros2_publishers
-
-            with ros2_publishers() as factory:
-                summary = replay(
-                    adapter,
-                    factory,
-                    rate=args.rate,
-                    wait_subscribers_seconds=args.wait_subscribers_seconds,
-                )
-            print(REPLAY_SUMMARY_PREFIX + json.dumps(summary.to_dict(), sort_keys=True))
-            return 0
         summary = write_mcap(adapter.events(), args.output, origin=adapter.origin())
     except AcquisitionError as exc:
         print(f"acquisition failed: {exc}", file=sys.stderr)

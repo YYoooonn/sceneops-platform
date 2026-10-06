@@ -29,7 +29,7 @@ infrastructure semantics are part of the contract.
 | Journey | Source → result | Proves |
 | --- | --- | --- |
 | `e2e-batch-canonical` | dataset fixture → batch MCAP → RobotRun → Scenes + Episodes | L1 → L2 canonicalization from one recording: windows on declared clocks, source-faithful streams, pinned manifest revisions, shared payloads, validated and profiled units, and that re-running the bootstrap changes no record |
-| `e2e-streaming-equivalence` | one source in batch and by ROS 2 → Kafka → capture → both RobotRuns → Scenes + Episodes | recording equivalence and canonical Scene / Episode equivalence (I-35), with a negative control |
+| `e2e-streaming-equivalence` | locked reference MCAP → batch baseline RobotRun, and → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → streamed RobotRun; both → Scenes + Episodes | transport preservation: acquisition equivalence (per-channel payloads, source times, `/tf_static`), the run's Kafka control records, canonical Scene / Episode equivalence (I-35), negative controls, baseline untouched |
 | `e2e-scene-ml` | Scenes → LabelSet → sample views → ScenarioSet → prediction → evaluation | every derived revision pins what it consumed; retries converge; the real lidar payload decodes; canonical Scenes are untouched |
 | `e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → verification + LeRobot round trip | pinned, deterministic alignment and export; shard checksums and `SceneOpsDataset` reads; every LeRobot frame equals the export's dense window; canonical Episodes are untouched |
 | `e2e-cleanroom` | fresh state → canonical-bootstrap → both L3 journeys | supported production paths only: no direct SQL, no direct MinIO inspection, no host worker CLI |

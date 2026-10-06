@@ -29,9 +29,10 @@ either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + Robo
            +-> recording reader -> build_recording_scenes -> ... (RECORDING_SCENE_BUILDING)
 ```
 
-The same source acquired either way yields semantically equivalent recordings
-and, with source-timestamp build configurations, equivalent canonical Scenes
-and Episodes (ADR-007 §29.12, §32; `make e2e-streaming-equivalence`).
+A recording replayed through the streaming path yields a semantically equivalent
+recording and, with source-timestamp build configurations, equivalent canonical
+Scenes and Episodes (ADR-007 §29.12, §32; `make e2e-streaming-equivalence`
+replays a locked reference MCAP and compares it with the batch baseline).
 
 The telemetry projection and canonical Episode / Scene building read the
 same resolved recording independently. Canonical Episodes never read the
@@ -557,8 +558,9 @@ make canonical-bootstrap             # the same path as a reusable L1/L2 baselin
 make e2e-episode-learning            # Episodes -> AlignedEpisodes -> learning export -> LeRobot round trip
 ```
 
-The streaming vertical (replay -> ROS2 -> bridge -> Kafka -> capture ->
-RobotRun, then Scenes and Episodes equivalent to the batch acquisition):
+The streaming vertical (locked reference MCAP -> replay -> ROS2 -> bridge -> Kafka
+-> capture -> publish-pending -> reconcile -> RobotRun, then Scenes and Episodes
+equivalent to the batch baseline's; needs `make reference-data-bootstrap` once):
 
 ```bash
 make local-up
