@@ -4,7 +4,8 @@
 # revision pinned to the revisions it consumed.
 #
 #   canonical-bootstrap                     RobotRun -> canonical Scenes (L1/L2)
-#   dataset-acquisition nuscenes-labels     post-acquisition label document
+#   reference render-labels                 the fixture's locked reference labels,
+#                                           rendered for the RobotRun (no source dataset)
 #   IMPORT_LABELS                           independent, pinned LabelSet revision
 #   BUILD_SCENE_SAMPLE_VIEWS                policy-driven synchronized views
 #   scene_ml_evaluation pipeline            build_scene_sample_views ->
@@ -12,11 +13,14 @@
 #                                           -> predict_detection -> evaluate_detection
 #   lineage                                 every revision pins what it consumed;
 #                                           a retried atomic job converges
-#   the real lidar payload                  decodes to the source points
+#   the real lidar payload                  is a message of the locked recording and
+#                                           decodes to that message's points
 #
 # The host needs Docker Compose, curl and jq, plus the API port. It never
 # reads PostgreSQL or MinIO directly; label documents reach the worker the way
-# any external input does, through the bind-mounted ./data/raw area.
+# any external input does, through the bind-mounted ./data/inputs area. The
+# journey reads no source dataset: ground truth and the lidar reference both come
+# from the prepared reference corpus.
 #
 # BACKEND=mock (default) needs nothing beyond `make local-up`: the mock backend
 # perturbs the labels, so its metrics prove wiring and pinning, not model
@@ -28,8 +32,8 @@
 # BASELINE_ID selects the baseline to run on (default: a unique one per run;
 # `canonical` reuses the persistent baseline, e.g. from e2e-cleanroom).
 #
-# Prerequisites: `make local-up`, `make acquisition-image`, data/raw/nuscenes
-# with v1.0-mini and can_bus.
+# Prerequisites: `make local-up`, `make acquisition-image` and
+# `make reference-data-bootstrap` (recordings and reference labels in data/reference).
 
 set -euo pipefail
 
@@ -40,11 +44,10 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 BACKEND="${BACKEND:-mock}"
-SOURCE_VERSION="${SOURCE_VERSION:-v1.0-mini}"
 SOURCE_UNIT="${SOURCE_UNIT:-scene-0061}"
 SUFFIX="$(date +%s)-$$"
 export BASELINE_ID="${BASELINE_ID:-e2e-scene-ml-$SUFFIX}"
-export SOURCE_UNITS="$SOURCE_UNIT"
+export FIXTURE="$SOURCE_UNIT"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 RUN_ID="$(baseline_run_id "$SOURCE_UNIT")"
 LABEL_SET_ID="labels-$BASELINE_ID-$SOURCE_UNIT"
@@ -69,17 +72,34 @@ case "$BACKEND" in
     ;;
 esac
 
-LABELS_IN_VOLUME="/recordings/$RUN_ID.labels.json"
-LABELS_DIR="$REPO_ROOT/data/raw/labels"
+# The runtime input area IMPORT_LABELS reads (SCENEOPS_WORKER_INPUT_SOURCE__ROOT_URI).
+LABELS_DIR="$REPO_ROOT/data/inputs/labels"
 LABELS_FILE="$LABELS_DIR/$LABEL_SET_ID.labels.json"
 # The same file as the worker container sees it.
-LABELS_URI="/data/raw/labels/$LABEL_SET_ID.labels.json"
+LABELS_URI="/data/inputs/labels/$LABEL_SET_ID.labels.json"
 
 cleanup() {
-  compose run --rm -T --entrypoint rm dataset-acquisition -f "$LABELS_IN_VOLUME" >/dev/null 2>&1 || true
   rm -f "$LABELS_FILE"
 }
 trap cleanup EXIT
+
+# render_reference_labels <fixture> <run-id> <label-set-id>
+# The fixture's locked reference label artifact, verified against the lock and
+# rendered for the RobotRun into the runtime input area. The reference-labels
+# service mounts no source dataset. Prints the tool's summary JSON.
+render_reference_labels() {
+  local output status=0
+  mkdir -p "$LABELS_DIR"
+  output="$(compose run --rm -T --no-deps --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    reference-labels reference render-labels --corpus "/config/reference/$REFERENCE_CORPUS" \
+    --cache-root /reference --fixture "$1" --robot-run-id "$2" --label-set-id "$3" \
+    --output "/inputs/labels/$3.labels.json" </dev/null)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "$output" | jq -r 'select(.status == "failed") | .problems[] | "    \(.)"' >&2 || echo "$output" >&2
+    fail "no verified reference labels for $1; run \`make reference-data-bootstrap\` (UPDATE_LOCK=1 once to lock labels)"
+  fi
+  echo "$output"
+}
 
 scenes_json() {
   api_get "$API_BASE_URL" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500"
@@ -107,22 +127,19 @@ require_api "$API_BASE_URL"
 BASELINE="$("$REPO_ROOT/scripts/canonical/canonical_bootstrap.sh")"
 echo "$BASELINE" | jq -c '{dataset_id, dataset_version, scene_count, episode_count}'
 SCENE_COUNT="$(echo "$BASELINE" | jq -r '.scene_count')"
-check "$SCENE_COUNT canonical Scenes are registered" [ "$SCENE_COUNT" -gt 1 ]
+check "$SCENE_COUNT canonical Scene(s) are registered" [ "$SCENE_COUNT" -ge 1 ]
 check "the canonical Scenes embed no annotation" \
   [ "$(scenes_json | jq '[.scenes[] | has("annotationCount")] | any')" = false ]
 SCENE_REVISIONS="$(scene_revisions)"
 echo ""
 
-echo "=== [1/8] nuScenes -> label document (post-acquisition labels) ==="
-LABELS_SUMMARY="$(compose run --rm -T dataset-acquisition nuscenes-labels --dataroot /input/nuscenes \
-  --version "$SOURCE_VERSION" --source-unit "$SOURCE_UNIT" --robot-run-id "$RUN_ID" \
-  --label-set-id "$LABEL_SET_ID" --output "$LABELS_IN_VOLUME")"
-echo "$LABELS_SUMMARY" | jq -c '{label_set_id, coverage_count, label_count}'
+echo "=== [1/8] reference fixture -> label document for the RobotRun (no source dataset) ==="
+LABELS_SUMMARY="$(render_reference_labels "$SOURCE_UNIT" "$RUN_ID" "$LABEL_SET_ID")"
+echo "$LABELS_SUMMARY" | jq -c '{label_set_id, coverage_count, label_count, labels_sha256}'
 SOURCE_LABELS="$(echo "$LABELS_SUMMARY" | jq -r '.label_count')"
 SOURCE_COVERAGE="$(echo "$LABELS_SUMMARY" | jq -r '.coverage_count')"
-mkdir -p "$LABELS_DIR"
-compose run --rm -T --entrypoint cat dataset-acquisition "$LABELS_IN_VOLUME" >"$LABELS_FILE"
-check "label document written for the RobotRun ($SOURCE_LABELS labels over $SOURCE_COVERAGE samples)" \
+[ -f "$LABELS_FILE" ] || fail "the rendered label document is not at $LABELS_FILE"
+check "label document rendered for the RobotRun ($SOURCE_LABELS labels over $SOURCE_COVERAGE samples)" \
   [ "$SOURCE_LABELS" -gt 0 ]
 echo ""
 
@@ -246,15 +263,20 @@ check "the same predictions and labels give the same primary metric" \
   [ "$(job_result "$REEVAL" | jq -c '[.primary_metric_name, .primary_metric_value]')" = "$(echo "$EVALUATION" | jq -c '[.run.primaryMetricName, .run.primaryMetricValue]')" ]
 echo ""
 
-echo "=== [7/8] the real lidar payload decodes as PointCloud2 (CDR) ==="
+echo "=== [7/8] the real lidar payload is the locked recording's PointCloud2 message ==="
 LIDAR_PAYLOAD="$(api_get "$API_BASE_URL" "/artifacts?kind=observation_payload&owner_type=robot_run&owner_id=$RUN_ID&limit=500" \
   | jq -c '[.artifacts[] | select(.mediaType == "application/x.ros2-cdr.sensor_msgs.msg.pointcloud2")][0]')"
 check "lidar payloads are canonical PointCloud2 CDR messages" [ "$LIDAR_PAYLOAD" != "null" ]
-DECODE="$(worker_python /workspace/scripts/e2e/verify_lidar_payload_decode.py \
-  --uri "$(echo "$LIDAR_PAYLOAD" | jq -r '.uri')" --source-root /data/raw/nuscenes)"
+# The payload is compared with the locked reference recording it was built
+# from, read in place from the read-only reference mount.
+baseline_resolve full
+RECORDING_PATH="$(echo "$BASELINE_FIXTURES" | jq -r --arg f "$SOURCE_UNIT" '.[] | select(.fixture_id == $f) | .path')"
+DECODE="$(compose run --rm -T -v "$REPO_ROOT/scripts/e2e:/workspace/e2e:ro" --entrypoint python \
+  recording-publisher /workspace/e2e/verify_lidar_payload_decode.py \
+  --uri "$(echo "$LIDAR_PAYLOAD" | jq -r '.uri')" --recording "$RECORDING_PATH" </dev/null)"
 echo "  $DECODE"
-check "the decoded cloud equals the source .pcd.bin points" \
-  [ "$(echo "$DECODE" | jq -r '.matches_source')" = true ]
+check "the payload is one message of the locked recording and decodes to that message's points" \
+  [ "$(echo "$DECODE" | jq -r '.matches_recording')" = true ]
 echo ""
 
 echo "=== [8/8] canonical state untouched by every derived step ==="

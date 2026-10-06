@@ -17,8 +17,8 @@ cd "$REPO_ROOT"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-export BASELINE_ID="${BASELINE_ID:-canonical}"
-export SOURCE_UNITS="${SOURCE_UNITS:-${SOURCE_UNIT:-scene-0061}}"
+# The fixture the L3 journeys ran on (their SOURCE_UNIT).
+UNIT="${SOURCE_UNIT:-scene-0061}"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 [ -n "${BASELINE_SUMMARY:-}" ] || fail "BASELINE_SUMMARY (the canonical-bootstrap JSON) is required"
 
@@ -47,7 +47,7 @@ for kind in scene_manifest episode_manifest scene_sample_view_manifest \
 done
 # A LabelSet is independent of any DatasetVersion: it is owned by the label set.
 check "the label set revision is registered under its own label set" \
-  [ "$(api_get "$API_BASE_URL" "/artifacts?kind=label_set_manifest&owner_type=label_set&owner_id=labels-$BASELINE_ID-${SOURCE_UNITS%% *}&limit=1" | jq '.artifacts | length')" -ge 1 ]
+  [ "$(api_get "$API_BASE_URL" "/artifacts?kind=label_set_manifest&owner_type=label_set&owner_id=labels-$BASELINE_ID-$UNIT&limit=1" | jq '.artifacts | length')" -ge 1 ]
 check "observation payloads are registered on the baseline RobotRun" \
-  [ "$(count_artifacts "$API_BASE_URL" observation_payload robot_run "$(baseline_run_id "${SOURCE_UNITS%% *}")")" -ge 1 ]
+  [ "$(count_artifacts "$API_BASE_URL" observation_payload robot_run "$(baseline_run_id "$UNIT")")" -ge 1 ]
 echo ""

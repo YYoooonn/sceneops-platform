@@ -27,7 +27,7 @@
 # BASELINE_ID selects the baseline to run on (default: a unique one per run;
 # `canonical` reuses the persistent baseline, e.g. from e2e-cleanroom).
 #
-# Prerequisites: `make local-up`, `make acquisition-image`, `make lerobot-image`,
+# Prerequisites: `make local-up`, `make acquisition-image`, `make reference-data-bootstrap`, `make lerobot-image`,
 # data/raw/nuscenes with v1.0-mini and can_bus.
 
 set -euo pipefail
@@ -41,7 +41,7 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 SOURCE_UNIT="${SOURCE_UNIT:-scene-0061}"
 SUFFIX="$(date +%s)-$$"
 export BASELINE_ID="${BASELINE_ID:-e2e-episode-learning-$SUFFIX}"
-export SOURCE_UNITS="$SOURCE_UNIT"
+export FIXTURE="$SOURCE_UNIT"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 
 # The alignment, stated explicitly: a 5 Hz timeline over the Episode window on

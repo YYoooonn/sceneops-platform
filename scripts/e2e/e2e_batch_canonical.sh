@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # e2e_batch_canonical.sh — L1 -> L2 canonicalization from a batch recording.
 #
-#   dataset fixture (nuScenes mini, read-only mount)
-#     -> dataset-acquisition container        finalized sensor-bearing MCAP
-#     -> recording-publisher container        L1 conformance + publication
+#   reference fixture (nuScenes mini, prepared by reference-data-bootstrap)
+#     -> prepared batch MCAP                  finalized sensor-bearing recording,
+#                                             checked against the corpus lock
+#     -> recording-publisher container        publication, read in place
 #     -> POST /robot-runs:register            RobotRun
 #     -> canonical-bootstrap                  recording_scene_building and
 #                                             recording_episode_building over
@@ -20,8 +21,8 @@
 # through FastAPI. The host needs Docker Compose, curl and jq plus the API
 # port: no uv, no PostgreSQL or MinIO access.
 #
-# Prerequisites: `make local-up`, `make acquisition-image`, data/raw/nuscenes
-# with v1.0-mini and can_bus.
+# Prerequisites: `make local-up`, `make acquisition-image` and
+# `make reference-data-bootstrap` (data/reference holds the prepared recording).
 
 set -euo pipefail
 
@@ -31,16 +32,13 @@ cd "$REPO_ROOT"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-SOURCE_VERSION="${SOURCE_VERSION:-v1.0-mini}"
 SOURCE_UNIT="${SOURCE_UNIT:-scene-0061}"
 SUFFIX="$(date +%s)-$$"
 export BASELINE_ID="${BASELINE_ID:-e2e-batch-$SUFFIX}"
-export SOURCE_UNITS="$SOURCE_UNIT"
+export FIXTURE="$SOURCE_UNIT"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 RUN_ID="$(baseline_run_id "$SOURCE_UNIT")"
 CLOCK="vehicle.source_time"
-
-trap 'remove_recording "$RUN_ID"' EXIT
 
 latest_run() { # <pipeline-type> -> pipeline_run_id of the newest run of the scope
   api_get "$API_BASE_URL" "/pipelines/runs?pipeline_type=$1&dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=100" \
@@ -52,28 +50,25 @@ require_api "$API_BASE_URL"
 echo "  ✅  API healthy at $API_BASE_URL  baseline=$BASELINE_ID  run=$RUN_ID"
 echo ""
 
-echo "=== [1/5] nuScenes -> acquisition container -> MCAP -> L1 conformance ==="
-SUMMARY="$(acquire_recording "$SOURCE_VERSION" "$SOURCE_UNIT" "$RUN_ID")"
-echo "$SUMMARY" | jq -c '{sha256, size_bytes, message_count}'
-check "the recording is L1-conformant" check_recording "$RUN_ID"
-TOPIC_COUNTS="$(echo "$SUMMARY" | jq -c '.topic_counts')"
+echo "=== [1/5] prepared reference recording, verified against the corpus lock ==="
+baseline_resolve full
+FIXTURE_JSON="$(echo "$BASELINE_FIXTURES" | jq -c '.[0]')"
+echo "$FIXTURE_JSON" | jq -c '{fixture_id, path, sha256: .recording.sha256, message_count: .recording.message_count}'
+TOPIC_COUNTS="$(echo "$FIXTURE_JSON" | jq -c '.recording.topic_counts')"
 echo ""
 
 echo "=== [2/5] publish + POST /robot-runs:register -> RobotRun ==="
-PUBLICATION="$(publish_recording "$RUN_ID" "$ROBOT_ID")"
-REGISTRATION="$(register_robot_run "$API_BASE_URL" "$(echo "$PUBLICATION" | jq -r '.manifest_uri')")"
-assert_job_succeeded "$REGISTRATION" "REGISTER_ROBOT_RUN should succeed"
+baseline_register_fixture "$FIXTURE_JSON"
 RUN="$(api_get "$API_BASE_URL" "/robot-runs/$RUN_ID" | jq -c '.robotRun')"
-check "the RobotRun pins exactly the acquired recording" \
-  [ "$(api_get "$API_BASE_URL" "/artifacts/$(echo "$RUN" | jq -r '.recordingArtifactId')" | jq -r '.artifact.checksum')" = "$(echo "$SUMMARY" | jq -r '.sha256')" ]
-remove_recording "$RUN_ID"
+check "the RobotRun pins exactly the locked recording" \
+  [ "$(api_get "$API_BASE_URL" "/artifacts/$(echo "$RUN" | jq -r '.recordingArtifactId')" | jq -r '.artifact.checksum')" = "$(echo "$FIXTURE_JSON" | jq -r '.recording.sha256')" ]
 echo ""
 
 echo "=== [3/5] canonical-bootstrap: the same RobotRun -> Scenes and Episodes ==="
 BASELINE="$("$REPO_ROOT/scripts/canonical/canonical_bootstrap.sh")"
 echo "$BASELINE" | jq -c '{dataset_id, dataset_version, scene_count, episode_count}'
 SCENE_COUNT="$(echo "$BASELINE" | jq -r '.scene_count')"
-check "more than one Scene was built from the one RobotRun" [ "$SCENE_COUNT" -gt 1 ]
+check "the whole recording is one Scene (whole_recording segmentation)" [ "$SCENE_COUNT" -eq 1 ]
 SCENE_RUN="$(latest_run recording_scene_building)"
 EPISODE_RUN="$(latest_run recording_episode_building)"
 SCENE_BUILD="$(task_json "$API_BASE_URL" "$SCENE_RUN" build_recording_scenes)"

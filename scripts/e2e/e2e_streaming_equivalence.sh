@@ -217,9 +217,9 @@ for side in A B; do
 done
 SCENES_A="$(manifest_uris scenes "$VERSION_A")"; SCENES_B="$(manifest_uris scenes "$VERSION_B")"
 EPISODES_A="$(manifest_uris episodes "$VERSION_A")"; EPISODES_B="$(manifest_uris episodes "$VERSION_B")"
-check "both acquisitions yielded the same number of Scenes and Episodes (>1 Scene, 1 Episode)" \
+check "both acquisitions yielded the same number of Scenes and Episodes (1 Scene, 1 Episode)" \
   [ "$(jq -rn --argjson a "$SCENES_A" --argjson b "$SCENES_B" --argjson ea "$EPISODES_A" --argjson eb "$EPISODES_B" \
-      '[($a | length) == ($b | length), ($a | length) > 1, ($ea | length) == 1, ($eb | length) == 1] | all')" = true ]
+      '[($a | length) == ($b | length), ($a | length) == 1, ($ea | length) == 1, ($eb | length) == 1] | all')" = true ]
 echo ""
 
 echo "=== [6/8] equivalence: recordings (§29.12) and canonical Scene/Episode content (I-35) ==="

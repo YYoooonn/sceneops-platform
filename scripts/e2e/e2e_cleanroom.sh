@@ -40,8 +40,9 @@ cd "$REPO_ROOT"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-export BASELINE_ID="${BASELINE_ID:-canonical}"
-export SOURCE_UNITS="${SOURCE_UNITS:-${SOURCE_UNIT:-scene-0061}}"
+# The persistent baseline of the selection (REFERENCE_SCOPE, default smoke-1 ->
+# ref-smoke-1); the L3 journeys below run on the one fixture SOURCE_UNIT names
+# (default scene-0061), so they need a baseline that contains exactly that one.
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 
 echo "=================================================================="

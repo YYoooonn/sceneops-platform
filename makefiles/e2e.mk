@@ -33,11 +33,12 @@ E2E_ENV = API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_F
 	$(if $(SCENE),SOURCE_UNIT=$(SCENE)) $(if $(BASELINE_ID),BASELINE_ID=$(BASELINE_ID))
 
 .PHONY: e2e-batch-canonical
-# nuScenes -> dataset-acquisition container -> MCAP -> recording-publisher
-# container -> POST /robot-runs:register -> RobotRun -> canonical-bootstrap
+# prepared reference recording (make reference-data-bootstrap) -> recording-
+# publisher container -> POST /robot-runs:register -> RobotRun -> canonical-bootstrap
 # (recording_scene_building + recording_episode_building) -> canonical Scenes
 # and Episodes, checked against the recording they came from.
-# Prerequisite: `make local-up` with images built from the current tree.
+# Prerequisites: `make local-up` with images built from the current tree, and the
+# fixture's recording prepared by `make reference-data-bootstrap`.
 e2e-batch-canonical: acquisition-image
 	chmod +x scripts/e2e/e2e_batch_canonical.sh scripts/canonical/*.sh
 	$(E2E_ENV) scripts/e2e/e2e_batch_canonical.sh
