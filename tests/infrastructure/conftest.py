@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 import httpx
@@ -38,3 +39,19 @@ def baseline(api: Api) -> dict:
     )
     assert result.returncode == 0, result.stderr[-4000:]
     return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+@pytest.fixture(scope="session")
+def baseline_run(baseline: dict) -> dict:
+    """One RobotRun of the baseline, with that run's own facts (``robot_run_id``,
+    ``fixture_id``, ``source_unit``, ``scene_count``, ``episode_count``).
+
+    Pipelines build per RobotRun, so every expectation about a build is stated
+    against this run, never against the baseline's totals. The first fixture of
+    the selection is used; INFRASTRUCTURE_FIXTURE names another."""
+    by_fixture = {f["fixture_id"]: f for f in baseline["fixtures"]}
+    wanted = os.environ.get("INFRASTRUCTURE_FIXTURE") or next(iter(by_fixture))
+    assert wanted in by_fixture, (
+        f"{wanted!r} is not a fixture of the baseline {sorted(by_fixture)}"
+    )
+    return by_fixture[wanted]

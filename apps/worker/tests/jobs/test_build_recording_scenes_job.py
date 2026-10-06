@@ -106,6 +106,29 @@ async def _register(world, result, *, replace=False):
     )
 
 
+async def test_whole_recording_builds_and_registers_one_scene_sharing_the_payloads(
+    world,
+):
+    """Segmentation is a build policy: the same recording gives one Scene under
+    whole_recording, built from the same observation payloads as the fixed
+    windows, and a registered scope converges on a rebuild."""
+    config = {
+        **build_config(),
+        "segmentation": {"policy": "whole_recording", "clock": "sensor.header_stamp"},
+    }
+    result = await _build(world, config)
+
+    assert result.scene_count == 1
+    assert result.unit_keys == ["recording"]
+    assert result.payload_artifact_count == result.created_payload_count == 8
+    await _register(world, result)
+    assert [r.unit_key for r in world.scenes.committed.values()] == ["recording"]
+
+    again = await _build(world, config, "job-2")
+    assert again.manifest_artifact_ids == result.manifest_artifact_ids
+    assert again.created_payload_count == 0
+
+
 async def test_build_publishes_payloads_and_manifests_then_registers(world):
     result = await _build(world)
 

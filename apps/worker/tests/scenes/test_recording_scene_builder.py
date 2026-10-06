@@ -17,6 +17,7 @@ from sceneops_worker.scenes.recording_builder import (
     RECORDING_SCENE_PRODUCER_ID,
     RecordingRevision,
     RecordingSceneBuildError,
+    WHOLE_RECORDING_UNIT_KEY,
     iter_planned_payloads,
     observation_payload_artifact_id,
     plan_recording_scenes,
@@ -103,6 +104,101 @@ def test_segmentation_is_deterministic_and_part_of_the_fingerprint(recording):
         "duration_ns": 10_000_000_000,
         "policy": "fixed_duration",
     }
+
+
+def whole_recording_config(*, clock: str = "sensor.header_stamp", **kwargs) -> dict:
+    return {
+        **build_config(clock=clock, **kwargs),
+        "segmentation": {"policy": "whole_recording", "clock": clock},
+    }
+
+
+def test_whole_recording_is_one_scene_covering_the_recording(recording):
+    plan = _plan(recording, whole_recording_config())
+
+    (scene,) = plan.scenes
+    source = scene.manifest.lineage.source
+    assert scene.unit_key == WHOLE_RECORDING_UNIT_KEY == source.unit_key == "recording"
+    # Half-open [earliest, latest + 1) over every observation and pose on the
+    # segmentation clock: the last stamp is the lidar's, 7 ns after its frame.
+    assert (
+        source.source_clock,
+        source.start_timestamp_ns,
+        source.end_timestamp_ns,
+    ) == (
+        "sensor.header_stamp",
+        1_000_000_000,
+        2_500_000_007 + 1,
+    )
+    assert scene.manifest.observations[-1].timestamp_ns == 2_500_000_007
+    assert plan.producer.build_config["segmentation"] == {
+        "clock": "sensor.header_stamp",
+        "policy": "whole_recording",
+    }
+
+
+def test_whole_recording_keeps_exactly_what_fixed_windows_keep(recording):
+    """Segmentation only groups: the observations, poses, calibration and
+    payload identities are those of the fixed-duration plan, in one Scene."""
+    whole = _plan(recording, whole_recording_config())
+    windows = _plan(recording)
+
+    (scene,) = whole.scenes
+    assert len(windows.scenes) == 2
+    assert scene.manifest.observations == sorted(
+        (o for s in windows.scenes for o in s.manifest.observations),
+        key=lambda o: (o.channel, o.timestamp_ns, o.observation_id),
+    )
+    assert scene.manifest.poses == [p for s in windows.scenes for p in s.manifest.poses]
+    assert scene.manifest.calibrations == windows.scenes[0].manifest.calibrations
+    assert whole.payloads == windows.payloads
+    assert whole.producer.producer_fingerprint != windows.producer.producer_fingerprint
+
+
+def test_whole_recording_is_deterministic(recording):
+    a = _plan(recording, whole_recording_config())
+    b = _plan(recording, whole_recording_config())
+    assert [s.manifest.to_canonical_bytes() for s in a.scenes] == [
+        s.manifest.to_canonical_bytes() for s in b.scenes
+    ]
+    assert a.producer.producer_fingerprint == b.producer.producer_fingerprint
+
+
+def test_whole_recording_window_starts_at_the_earliest_pose_not_only_observation(
+    tmp_path,
+):
+    """A pose recorded before the first observation is part of the recording;
+    fixed windows start at the first observation and leave it out."""
+    rec = default_recording()
+    rec.add(
+        "/tf",
+        "tf2_msgs/msg/TFMessage",
+        tf_message(transform(950_000_000, "map", "base_link", (-1.0, 0.0, 0.0))),
+        950_000_000 + LOG_LAG_NS,
+        sequence=99,
+    )
+    path = rec.write(tmp_path / "early-pose.mcap")
+
+    whole = _plan(path, whole_recording_config())
+    windows = _plan(path)
+
+    (scene,) = whole.scenes
+    assert scene.manifest.lineage.source.start_timestamp_ns == 950_000_000
+    assert whole.pose_count == windows.pose_count + 1
+
+
+def test_whole_recording_on_the_recording_clock_keeps_source_stamps(recording):
+    plan = _plan(recording, whole_recording_config(clock="mcap_log_time"))
+    (scene,) = plan.scenes
+    source = scene.manifest.lineage.source
+    assert source.source_clock == "mcap_log_time"
+    assert source.start_timestamp_ns == 1_000_000_000 + LOG_LAG_NS
+    assert [o.timestamp_ns for o in _observations(plan, CAMERA_TOPIC)] == [
+        1_000_000_000,
+        1_500_000_000,
+        2_000_000_000,
+        2_500_000_000,
+    ]
 
 
 def test_log_time_segmentation_keeps_source_stamps_unconverted(recording):

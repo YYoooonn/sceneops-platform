@@ -8,9 +8,10 @@ resumption, failure recovery, concurrent registration and execution through
 each orchestrator.
 
 The pipelines need a registered RobotRun. The tests build on the canonical
-baseline (`scripts/canonical/canonical_bootstrap.sh`, create-or-verify) and
-build into their own throwaway DatasetVersions, so the baseline's scope is
-never mutated.
+baseline of the reference corpus (`scripts/canonical/canonical_bootstrap.sh`,
+create-or-verify; smoke-1 unless REFERENCE_SCOPE says otherwise), take one of
+its RobotRuns (`baseline_run`) and build into their own throwaway
+DatasetVersions, so the baseline's scope is never mutated.
 """
 
 from __future__ import annotations

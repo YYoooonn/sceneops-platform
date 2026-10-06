@@ -32,28 +32,28 @@ def _executed_by_airflow(api, run: dict) -> None:
     assert {e["executionBackend"] for e in executions} == {"airflow"}
 
 
-def test_recording_scene_building_through_airflow(api, baseline):
+def test_recording_scene_building_through_airflow(api, baseline_run):
     dataset = api.new_dataset_version("airflow-scene")
-    run = api.run("recording_scene_building", dataset, scene_params(baseline["robot_run_ids"][0]))
+    run = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
 
     assert run["status"] == "succeeded", run
     _executed_by_airflow(api, run)
-    assert len(api.scenes(dataset)) == baseline["scene_count"]
+    assert len(api.scenes(dataset)) == baseline_run["scene_count"]
 
 
-def test_recording_episode_building_through_airflow(api, baseline):
+def test_recording_episode_building_through_airflow(api, baseline_run):
     dataset = api.new_dataset_version("airflow-episode")
     run = api.run(
-        "recording_episode_building", dataset, episode_params(baseline["robot_run_ids"][0])
+        "recording_episode_building", dataset, episode_params(baseline_run["robot_run_id"])
     )
 
     assert run["status"] == "succeeded", run
     _executed_by_airflow(api, run)
-    assert len(api.episodes(dataset)) == baseline["episode_count"]
+    assert len(api.episodes(dataset)) == baseline_run["episode_count"]
 
 
-def test_episode_learning_data_building_through_airflow(api, baseline):
-    """The L3 pipeline over the baseline's pinned Episodes."""
+def test_episode_learning_data_building_through_airflow(api, baseline, baseline_run):
+    """The L3 pipeline over one RobotRun's pinned Episodes of the baseline."""
     dataset = (baseline["dataset_id"], baseline["dataset_version"])
     pins = [
         {
@@ -62,6 +62,7 @@ def test_episode_learning_data_building_through_airflow(api, baseline):
             "source_manifest_sha256": e["manifestChecksum"].removeprefix("sha256:"),
         }
         for e in api.episodes(dataset)
+        if e["robotRunId"] == baseline_run["robot_run_id"]
     ]
     run = api.run(
         "episode_learning_data_building",
@@ -82,20 +83,18 @@ def test_episode_learning_data_building_through_airflow(api, baseline):
     _executed_by_airflow(api, run)
 
 
-def test_scene_ml_evaluation_through_airflow(api, baseline):
+def test_scene_ml_evaluation_through_airflow(api, baseline, baseline_run):
     """The L3 Scene ML pipeline over the baseline, with the label set
-    `make e2e-scene-ml` imported for it (`BASELINE_ID=canonical`). A label
+    `make e2e-scene-ml` imported for it (on this baseline). A label
     document reaches the platform only through that journey, so the test is
     skipped on a baseline that has none."""
     dataset = (baseline["dataset_id"], baseline["dataset_version"])
-    run_id = baseline["robot_run_ids"][0]
-    unit = "scene-" + run_id.rsplit("-scene-", 1)[-1]
-    label_set_id = f"labels-{baseline['baseline_id']}-{unit}"
+    label_set_id = f"labels-{baseline['baseline_id']}-{baseline_run['source_unit']}"
     revisions = api.get(
         "/artifacts", kind="label_set_manifest", owner_type="label_set", owner_id=label_set_id, limit=1
     )["artifacts"]
     if not revisions:
-        pytest.skip(f"label set {label_set_id} is not imported; run `make e2e-scene-ml BASELINE_ID=canonical`")
+        pytest.skip(f"label set {label_set_id} is not imported; run `make e2e-scene-ml BASELINE_ID={baseline['baseline_id']}`")
     label_set = {
         "label_set_id": label_set_id,
         "manifest_artifact_id": revisions[0]["artifactId"],
