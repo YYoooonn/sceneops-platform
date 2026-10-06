@@ -100,9 +100,10 @@ cp .env.example .env.local          # configure storage backend, DB, Redis
 make setup                          # install deps + pre-commit hooks
 make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
 make test                           # unit suites, no infrastructure
-make reference-data-bootstrap       # prepare + verify the nuScenes mini batch recordings (once per scope)
-make canonical-bootstrap            # prepared recordings -> RobotRun -> Scenes -> Episodes (the L1/L2 baseline)
-make streaming-bootstrap            # locked MCAPs -> replay -> ROS 2 -> Kafka -> capture -> RobotRun -> Scenes -> Episodes (the streamed L1/L2 baseline)
+make reference-data-bootstrap       # source preparation: nuScenes mini -> locked MCAPs, verified (once per scope)
+make canonical-bootstrap            # Recording Import: prepared MCAPs -> RobotRun -> Scenes -> Episodes (the L1/L2 baseline)
+make streaming-bootstrap            # Streaming Acquisition: locked MCAPs -> replay -> ROS 2 -> Kafka -> capture -> RobotRun -> Scenes -> Episodes
+make reference-contract-bootstrap   # converge on the golden reference contract: 10 fixtures x both modes = 20 RobotRuns (reuses what exists)
 make e2e-scene-ml                   # Scenes -> labels -> views -> ScenarioSet -> prediction -> evaluation
 make e2e-episode-learning           # Episodes -> aligned -> learning export -> LeRobot round trip
 ```
@@ -158,9 +159,10 @@ There are exactly five E2E journeys. Platform operations go through FastAPI and 
 | Command | Journey |
 | --- | --- |
 | `make canonical-bootstrap` / `make canonical-verify` | Developer orchestration, not a pipeline: prepared reference-corpus recordings → one RobotRun per fixture → Scenes → Episodes → validate / profile, then read-only verification. Builds nothing derived. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
-| `make streaming-bootstrap` / `make streaming-verify` / `make streaming-compare` | Developer orchestration, not a pipeline: each fixture's locked reference MCAP → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → one streamed RobotRun → Scene → Episode (`stream-ref-<scope>`), then read-only verification and a corpus-level comparison with the batch baseline. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
-| `make e2e-batch-canonical` | dataset fixture → batch MCAP → RobotRun → Scenes + Episodes |
-| `make e2e-streaming-equivalence` | One locked reference MCAP reaches Scenes and Episodes via the batch baseline and via replay → ROS 2 → Kafka → capture → publish-pending → reconcile; the two are semantically equivalent (needs Kafka) |
+| `make streaming-bootstrap` / `make streaming-verify` / `make streaming-compare` | Developer orchestration, not a pipeline: each fixture's locked reference MCAP → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → one streamed RobotRun → Scene → Episode (`stream-ref-<scope>`), then read-only verification and a corpus-level comparison with the Recording Import baseline. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
+| `make reference-contract-bootstrap` / `make reference-contract-verify` | Developer orchestration, not a pipeline: the golden reference contract — each corpus fixture ingested once by Recording Import and once by Streaming Acquisition under a fixed identity (20 RobotRuns, 20 whole-recording Scenes, 20 Episodes); the bootstrap composes the two baseline bootstraps, the verifier is read-only and reports contract vs non-contract RobotRuns. See [`docs/development/reference-contract.md`](docs/development/reference-contract.md) |
+| `make e2e-batch-canonical` | dataset fixture → MCAP → RobotRun (Recording Import) → Scenes + Episodes |
+| `make e2e-streaming-equivalence` | One locked reference MCAP reaches Scenes and Episodes via the Recording Import baseline and via replay → ROS 2 → Kafka → capture → publish-pending → reconcile; the two are semantically equivalent (needs Kafka) |
 | `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend) |
 | `make e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → export verification + LeRobot round trip |
 | `make e2e-cleanroom` | **The full-platform acceptance**: fresh platform state → canonical-bootstrap → both L3 journeys → final verification. **Destructive** (preserves `data/raw`) |

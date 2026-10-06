@@ -22,7 +22,8 @@ infrastructure semantics are part of the contract.
 | E2E journey | the five `make e2e-*` | live stack + containers | a user journey through production paths (below) |
 | Clean room | `make e2e-cleanroom` | fresh platform state | the platform reconstructs its baseline and runs its representative workflows from nothing |
 | Model-backend acceptance | `make acceptance-grounding-dino` | inference server | the Scene ML journey with the real detector |
-| Streaming baseline | `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | live stack + Kafka + ROS 2 images | the persistent streamed baseline of a scope (create-or-verify, resumable), its registered per-channel counts against the lock, and its canonical agreement with the batch baseline; not a journey and not a benchmark |
+| Streaming baseline | `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | live stack + Kafka + ROS 2 images | the persistent streamed baseline of a scope (create-or-verify, resumable), its registered per-channel counts against the lock, and its canonical agreement with the Recording Import baseline; not a journey and not a benchmark |
+| Golden reference contract | `make reference-contract-verify`, `make reference-contract-bootstrap` (unit: `scripts/reference/tests` in `make test`) | live stack (+ Kafka and ROS 2 images for the bootstrap) | exactly the contract's 20 RobotRuns (10 fixtures × Recording Import and Streaming Acquisition) with their Scenes and Episodes: identity, provenance, locked message and channel facts, whole-recording shape; reports non-contract RobotRuns; the bootstrap reuses what is complete and never replaces an identity |
 | Command surface | `make check-commands` | none | the advertised commands exist and nothing references removed architecture |
 | Runtime source boundary | `make check-runtime-boundary` | Docker (starts no platform service) | only the acquisition / reference-preparation services mount the raw dataset; every normal runtime service sees neither `/data/raw` nor `/input/nuscenes` and keeps the paths it needs |
 
@@ -30,8 +31,8 @@ infrastructure semantics are part of the contract.
 
 | Journey | Source → result | Proves |
 | --- | --- | --- |
-| `e2e-batch-canonical` | dataset fixture → batch MCAP → RobotRun → Scenes + Episodes | L1 → L2 canonicalization from one recording: windows on declared clocks, source-faithful streams, pinned manifest revisions, shared payloads, validated and profiled units, and that re-running the bootstrap changes no record |
-| `e2e-streaming-equivalence` | locked reference MCAP → batch baseline RobotRun, and → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → streamed RobotRun; both → Scenes + Episodes | transport preservation: acquisition equivalence (per-channel payloads, source times, `/tf_static`), the run's Kafka control records, canonical Scene / Episode equivalence (I-35), negative controls, baseline untouched |
+| `e2e-batch-canonical` | dataset fixture → MCAP → RobotRun (Recording Import) → Scenes + Episodes | L1 → L2 canonicalization from one recording: windows on declared clocks, source-faithful streams, pinned manifest revisions, shared payloads, validated and profiled units, and that re-running the bootstrap changes no record |
+| `e2e-streaming-equivalence` | locked reference MCAP → Recording Import baseline RobotRun, and → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → streamed RobotRun; both → Scenes + Episodes | transport preservation: acquisition equivalence (per-channel payloads, source times, `/tf_static`), the run's Kafka control records, canonical Scene / Episode equivalence (I-35), negative controls, baseline untouched |
 | `e2e-scene-ml` | Scenes → LabelSet → sample views → ScenarioSet → prediction → evaluation | every derived revision pins what it consumed; retries converge; the real lidar payload decodes; canonical Scenes are untouched |
 | `e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → verification + LeRobot round trip | pinned, deterministic alignment and export; shard checksums and `SceneOpsDataset` reads; every LeRobot frame equals the export's dense window; canonical Episodes are untouched |
 | `e2e-cleanroom` | fresh state → canonical-bootstrap → both L3 journeys | supported production paths only: no direct SQL, no direct MinIO inspection, no host worker CLI |
@@ -57,7 +58,7 @@ infrastructure semantics are part of the contract.
 | `ArtifactStore.list_objects` (recursive, paginated, atomic-write temp files excluded) | unit (`test_local_artifact_store.py`) + integration (`test_s3_artifact_store.py`) |
 | Retry, dedup, force, replacement, blocked / failed resumption, concurrency | infrastructure (`tests/infrastructure/test_pipeline_execution.py`) |
 | Celery / Airflow execution | infrastructure (`test_pipeline_execution.py`, `test_airflow_backend.py`) |
-| Batch / streaming equivalence | E2E (`e2e-streaming-equivalence`) |
+| Recording Import / Streaming Acquisition equivalence | E2E (`e2e-streaming-equivalence`) |
 | Lineage pins, LeRobot round trip | E2E (`e2e-scene-ml`, `e2e-episode-learning`) |
 
 ## Rules

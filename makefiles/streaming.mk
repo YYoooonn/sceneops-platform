@@ -43,7 +43,7 @@ ros2-test:
 # --------------------
 # Streaming acquisition vertical + transport-preservation equivalence
 # (ADR-007 §29.12, §29.19 step 9): the LOCKED reference MCAP of one fixture is
-# the shared logical source. The batch arm is the persistent reference baseline
+# the shared logical source. The Recording Import arm is the persistent reference baseline
 # (read as it is; created only if missing); the streaming arm replays the same
 # MCAP -> ROS 2 -> bridge -> Kafka -> capture -> publish-pending ->
 # reconcile --apply -> RobotRun -> Scenes + Episodes with the same build configs,
@@ -54,7 +54,7 @@ ros2-test:
 #
 # Selection: REFERENCE_SCOPE (default smoke-1) or SCENE=<fixture> (one fixture is
 # replayed per run); RATE overrides the fixture's replay rate; BASELINE_ID names
-# the batch baseline. Prerequisites: `make local-up` with images built from the
+# the Recording Import baseline. Prerequisites: `make local-up` with images built from the
 # current tree, and `make reference-data-bootstrap` for the fixture.
 # --------------------
 
@@ -78,12 +78,12 @@ e2e-streaming-equivalence: acquisition-image
 #                        replayed over; an incomplete one is recovered through the
 #                        ADR-008 commands. Reads no raw dataset.
 # streaming-verify    -- read-only re-check of the same baseline through the API.
-# streaming-compare   -- read-only corpus-level comparison with the batch baseline.
+# streaming-compare   -- read-only corpus-level comparison with the Recording Import baseline.
 #
 # REFERENCE_SCOPE (default smoke-1; nuscenes-mini-full-10) or FIXTURE selects the
 # fixtures; BASELINE_ID (default stream-ref-<scope> / stream-ref-<fixture>) names
-# the baseline; RATE overrides the replay rate. The batch baseline `ref-<scope>`
-# is never touched. Prerequisites: `make local-up` and
+# the baseline; RATE overrides the replay rate. The Recording Import baseline
+# `ref-<scope>` is never touched. Prerequisites: `make local-up` and
 # `make reference-data-bootstrap REFERENCE_SCOPE=<scope>`.
 # --------------------
 

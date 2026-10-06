@@ -39,6 +39,8 @@ MUST_BE_ADVERTISED = (
         "streaming-bootstrap",
         "streaming-verify",
         "streaming-compare",
+        "reference-contract-bootstrap",
+        "reference-contract-verify",
         "reference-data-bootstrap",
         "reference-data-verify",
         "test",

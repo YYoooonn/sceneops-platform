@@ -17,6 +17,17 @@ reference corpus (corpus.json + corpus.lock.json), prepared recordings
   -> verify                             read back through the API
 ```
 
+The platform has two ingestion modes, and a baseline exists for each:
+
+```text
+Recording Import        existing MCAP -> RobotRun           ref-<selection>         canonical-bootstrap
+Streaming Acquisition   ROS 2 -> Kafka -> capture -> RobotRun   stream-ref-<selection>  streaming-bootstrap
+```
+
+Preparing the source (nuScenes -> locked MCAP) is neither: it is
+[source preparation](./reference-corpus.md). The promoted full-corpus baselines of
+both modes together are the [golden reference contract](./reference-contract.md).
+
 It contains **nothing derived**: no labels, sample views, ScenarioSets,
 predictions, evaluations, aligned episodes or learning exports. Those are L3
 workflows that run on top of a baseline (`make e2e-scene-ml`,
@@ -116,11 +127,11 @@ Through the API and artifact pins only; it reads the lock but no recording:
 - the DatasetVersion's registrar-owned Scene and Episode summaries equal the
   registered membership.
 
-## Streaming baseline
+## Streaming baseline (Streaming Acquisition)
 
 The same fixtures reach canonical state a second way: replayed from the locked
 reference MCAP through the streaming transport. The streaming baseline is the
-persistent counterpart of the batch baseline, built from the same corpus with the
+persistent counterpart of the Recording Import baseline, built from the same corpus with the
 same Scene and Episode build configurations.
 
 ```text
@@ -137,13 +148,13 @@ locked reference MCAP (one per fixture)
 ```text
 make streaming-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [BASELINE_ID=...] [RATE=...]
 make streaming-verify    [same selection]            read-only re-check
-make streaming-compare   [same selection]            read-only: batch baseline vs streaming baseline
+make streaming-compare   [same selection]            read-only: Recording Import baseline vs Streaming Acquisition baseline
 ```
 
 - `BASELINE_ID` defaults to `stream-ref-<selection>` (`stream-ref-smoke-1`,
   `stream-ref-nuscenes-mini-full-10`, `stream-ref-<fixture>`). Robot, RobotRun
   (`run-<BASELINE_ID>-<fixture>`) and DatasetVersion follow the same identity rules as
-  the batch baseline, so the two never share a RobotRun set or a DatasetVersion.
+  the Recording Import baseline, so the two never share a RobotRun set or a DatasetVersion.
 - `RATE` overrides every fixture's replay rate. The bootstrap needs Kafka (it starts
   the broker if absent), `make local-up`, and the fixtures prepared by
   `make reference-data-bootstrap`. It reads no raw dataset and converts nothing.
@@ -199,12 +210,12 @@ The summary is the canonical baseline summary plus `transport` and, per fixture,
 `recording_sha256` / `recording_bytes` remain the locked source recording's. It is
 deterministic for an unchanged baseline.
 
-### Batch and streaming compared
+### Recording Import and Streaming Acquisition compared
 
 `make streaming-compare` verifies both baselines read-only, then checks at corpus
 level: the same fixture set and locked recordings; equal RobotRun, Scene, Episode and
-message totals; and per fixture the locked, batch and streamed message counts and
-per-channel counts agree, the batch RobotRun pins the locked recording and the
+message totals; and per fixture the locked, imported and streamed message counts and
+per-channel counts agree, the imported RobotRun pins the locked recording and the
 streamed one its own capture. It loads every Scene and Episode manifest of both
 sides and requires an equal semantic projection per unit key
 (`semantic_scene_content` / `semantic_episode_content`, ADR-007 I-35). It loads no
@@ -229,8 +240,8 @@ fixture by `make e2e-streaming-equivalence`.
 | --- | --- |
 | `make e2e-batch-canonical` | its own unique baseline of one fixture; also proves bootstrap re-runs change nothing |
 | `make e2e-scene-ml`, `make e2e-episode-learning` | a unique baseline of one fixture per run, or `BASELINE_ID=<id>` of a baseline that contains exactly that fixture |
-| `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | the persistent `stream-ref-<selection>`; the batch baseline is only read |
-| `make e2e-streaming-equivalence` | the persistent `ref-<selection>` (`ref-smoke-1` by default) as the batch arm: verified read-only when registered, created only when absent, never rebuilt; the streamed arm is a unique RobotRun in its own DatasetVersion |
+| `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | the persistent `stream-ref-<selection>`; the Recording Import baseline is only read |
+| `make e2e-streaming-equivalence` | the persistent `ref-<selection>` (`ref-smoke-1` by default) as the Recording Import arm: verified read-only when registered, created only when absent, never rebuilt; the streamed arm is a unique RobotRun in its own DatasetVersion |
 | `make e2e-cleanroom` | the persistent `ref-smoke-1`, built from fresh platform state |
 | `make test-infrastructure` | the persistent `ref-smoke-1` (create-or-verify); tests build one RobotRun's Scenes / Episodes into throwaway DatasetVersions |
 

@@ -5668,3 +5668,40 @@ scripts). §16's DatasetVersion table is now fully implemented. §13.7's allowan
 embedded source annotations is withdrawn by I-60. Active documentation
 (`docs/architecture/*`, `docs/development/*`, `README.md`) describes the system as
 of A9.
+
+---
+
+## 35. Amendment A10: ingestion-mode terminology and the golden reference contract
+
+### 35.0 Scope and result
+
+A10 decides no ingestion or canonicalization question. RobotRun, registration,
+identity, Scene / Episode canonicalization and the derived layer are unchanged. It
+records two things about how the reference baselines are named and promoted.
+
+### 35.1 Terminology
+
+```text
+Source preparation      nuScenes -> locked MCAP                         (reference-data-bootstrap)
+Recording Import        existing MCAP -> RobotRun                       (the `ref-<scope>` baseline)
+Streaming Acquisition   ROS 2 -> Kafka -> capture -> RobotRun           (the `stream-ref-<scope>` baseline)
+RobotRun boundary       the immutable recording + manifest both modes end at
+Canonical platform      RobotRun -> Scenes -> Episodes -> derived layers
+```
+
+Source preparation is not an ingestion mode. "Batch" in earlier sections of this
+ADR (the "batch" baseline, the `e2e-batch-canonical` journey, "batch MCAP") names
+Recording Import; the earlier text is not rewritten, and command names are unchanged.
+
+### 35.2 Golden reference contract
+
+The full-corpus baselines of both modes are promoted to an explicit, versioned
+contract (`config/reference/<corpus>/reference_contract.json`): every fixture of
+the corpus scope, ingested once through each mode under a deterministic identity
+(20 RobotRuns, 20 whole-recording Scenes and 20 Episodes for `nuscenes-mini-v1`).
+The restriction to one Scene and one Episode per RobotRun belongs to the contract and
+the baseline build configuration only; the platform keeps supporting any recording
+count, any Scene segmentation policy and several Scenes per RobotRun. The contract
+is verified read-only and converged by composing the existing baseline bootstraps;
+it never replaces a registered RobotRun. See
+[`docs/development/reference-contract.md`](../development/reference-contract.md).

@@ -169,8 +169,8 @@ ArtifactStore. The host needs Docker Compose, curl and jq — no uv, no PostgreS
 or MinIO access, no worker CLI.
 
 ```
-make e2e-batch-canonical [SCENE=...]         dataset fixture -> batch MCAP -> RobotRun -> Scenes -> Episodes
-make e2e-streaming-equivalence [SCENE=...]   the locked reference MCAP via the batch baseline and via replay -> ROS2 -> Kafka -> capture: equivalent (needs Kafka)
+make e2e-batch-canonical [SCENE=...]         dataset fixture -> MCAP -> RobotRun (Recording Import) -> Scenes -> Episodes
+make e2e-streaming-equivalence [SCENE=...]   the locked reference MCAP via the Recording Import baseline and via replay -> ROS2 -> Kafka -> capture: equivalent (needs Kafka)
 make e2e-scene-ml [SCENE=...]                Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)
 make e2e-episode-learning [SCENE=...]        Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip
 make e2e-cleanroom                           fresh state -> canonical-bootstrap -> both L3 journeys -> final verification
@@ -218,7 +218,7 @@ Episode build configurations every journey uses are the files under
 `config/baselines/`. `make streaming-bootstrap` builds the same baseline by replaying
 each fixture's locked recording through ROS 2 -> Kafka -> capture (needs Kafka and
 `make reference-data-bootstrap`), `make streaming-verify` re-checks it read-only and
-`make streaming-compare` compares it with the batch baseline.
+`make streaming-compare` compares it with the Recording Import baseline.
 
 ### Identity
 

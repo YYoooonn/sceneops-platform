@@ -16,11 +16,15 @@ reference fixture =
 
 The source dataset is needed to prepare or re-prepare a fixture, never to consume
 one: consumers read the recording and the labels through the lock and the cache.
+Preparation (nuScenes -> MCAP) is source preparation; it is not an ingestion mode.
+The two ingestion modes (Recording Import, Streaming Acquisition) and the 20
+RobotRuns the corpus promotes are described in
+[reference-contract.md](./reference-contract.md).
 
 ```text
 config/reference/nuscenes-mini-v1/corpus.json        hand-written definition      (Git)
 config/reference/nuscenes-mini-v1/corpus.lock.json   generated fingerprints       (Git)
-data/reference/nuscenes-mini-v1/recordings/          cached batch MCAPs           (local, git-ignored)
+data/reference/nuscenes-mini-v1/recordings/          cached locked MCAPs          (local, git-ignored)
 data/reference/nuscenes-mini-v1/labels/              cached reference labels      (local, git-ignored)
 ```
 
@@ -36,7 +40,7 @@ data/reference/nuscenes-mini-v1/labels/              cached reference labels    
 Corpus id, source format and version, shared `defaults` for `acquisition`
 (channel groups) and `replay` (rate, subscriber wait), the fixtures
 (`fixture_id`, `source_unit`, optional per-fixture overrides) and the scopes
-(`["*"]` is every fixture). One resolved fixture definition drives both the batch
+(`["*"]` is every fixture). One resolved fixture definition drives both the locked
 recording and the streaming replay. The file names no Scene, Episode or build
 configuration; those stay in `config/baselines/`.
 
@@ -49,7 +53,7 @@ the Git diff like `uv.lock`, never edited by hand. Per fixture:
 - `source`: a content fingerprint of every input the fixture reads (the unit's
   table rows, the bytes of each converted image and point-cloud file, the CAN
   extracts), plus counts and total blob bytes;
-- `recording`: sha256, size, message count and per-topic counts of the batch MCAP;
+- `recording`: sha256, size, message count and per-topic counts of the locked MCAP;
 - `labels`: schema, sha256, size, sample count and label count of the reference
   label artifact (below).
 
@@ -120,7 +124,7 @@ are what it relies on. The locked recording is the one runtime replay source: th
 replay of the raw dataset. `make streaming-bootstrap` replays every fixture of a scope this
 way into the persistent streaming baseline ([canonical-baseline.md](./canonical-baseline.md)). `make e2e-streaming-equivalence` replays a fixture with the replay
 container mounting no raw dataset (the run probes that none is visible) and compares the streamed
-acquisition with the same locked recording's batch baseline.
+acquisition with the same locked recording's Recording Import baseline.
 
 A recording is reused only when the definition, the tool identity, the source
 fingerprint and the recording's own sha256, size and counts agree with the lock; a
