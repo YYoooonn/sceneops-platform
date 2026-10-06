@@ -23,7 +23,11 @@ def _config(**overrides):
     config = {
         "channels": [_channel("/lidar/b"), _channel("/lidar/a")],
         "frames": {"ego_frame_id": "base_link"},
-        "segmentation": {"clock": "sensor.stamp", "duration_ns": 1_000},
+        "segmentation": {
+            "policy": "fixed_duration",
+            "clock": "sensor.stamp",
+            "duration_ns": 1_000,
+        },
     }
     config.update(overrides)
     return config
@@ -73,7 +77,11 @@ def test_source_clock_segmentation_requires_every_channel_on_that_clock():
     RecordingSceneBuildConfig.model_validate(
         _config(
             channels=[_channel("/lidar/a"), _channel("/cam", clock="other.clock")],
-            segmentation={"clock": "mcap_log_time", "duration_ns": 1},
+            segmentation={
+                "policy": "fixed_duration",
+                "clock": "mcap_log_time",
+                "duration_ns": 1,
+            },
         )
     )
 
@@ -94,7 +102,13 @@ def test_camera_channels_need_intrinsics_and_compressed_extraction_needs_a_camer
     [
         {"channels": [_channel("/x"), _channel("/x")]},
         {"channels": []},
-        {"segmentation": {"clock": "sensor.stamp", "duration_ns": 0}},
+        {
+            "segmentation": {
+                "policy": "fixed_duration",
+                "clock": "sensor.stamp",
+                "duration_ns": 0,
+            }
+        },
         {"frames": {"ego_frame_id": "base_link", "world_frame_id": "base_link"}},
         {"source_format": "nuscenes"},
         {"robot_run_id": "run-1"},
@@ -103,3 +117,48 @@ def test_camera_channels_need_intrinsics_and_compressed_extraction_needs_a_camer
 def test_invalid_or_non_semantic_configuration_is_rejected(overrides):
     with pytest.raises(ValidationError):
         RecordingSceneBuildConfig.model_validate(_config(**overrides))
+
+
+# --- segmentation policies ---------------------------------------------------------
+
+
+def test_whole_recording_is_an_explicit_policy_on_one_declared_clock():
+    config = RecordingSceneBuildConfig.model_validate(
+        _config(segmentation={"policy": "whole_recording", "clock": "sensor.stamp"})
+    )
+    assert config.normalized()["segmentation"] == {
+        "policy": "whole_recording",
+        "clock": "sensor.stamp",
+    }
+
+
+@pytest.mark.parametrize(
+    "segmentation",
+    [
+        {"clock": "sensor.stamp", "duration_ns": 1_000},  # no policy
+        {"clock": "sensor.stamp"},  # no policy
+        {"policy": "whole_recording"},  # no clock
+        {"policy": "whole_recording", "clock": "sensor.stamp", "duration_ns": 1_000},
+        {"policy": "fixed_duration", "clock": "sensor.stamp"},  # no duration
+        {"policy": "per_keyframe", "clock": "sensor.stamp"},
+    ],
+)
+def test_a_segmentation_must_state_its_policy_and_only_that_policy_fields(segmentation):
+    with pytest.raises(ValidationError):
+        RecordingSceneBuildConfig.model_validate(_config(segmentation=segmentation))
+
+
+def test_whole_recording_on_a_source_clock_needs_every_channel_on_that_clock():
+    with pytest.raises(ValidationError, match="must take its time from it"):
+        RecordingSceneBuildConfig.model_validate(
+            _config(
+                channels=[_channel("/lidar/a"), _channel("/cam", clock="other.clock")],
+                segmentation={"policy": "whole_recording", "clock": "sensor.stamp"},
+            )
+        )
+    RecordingSceneBuildConfig.model_validate(
+        _config(
+            channels=[_channel("/lidar/a"), _channel("/cam", clock="other.clock")],
+            segmentation={"policy": "whole_recording", "clock": "mcap_log_time"},
+        )
+    )

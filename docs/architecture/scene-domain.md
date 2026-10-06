@@ -234,14 +234,24 @@ time policy    header_stamp (declared clock) | log_time (mcap_log_time)
 frames         ego_frame_id · world_frame_id?   (channel frames are sensor frames)
 calibration    static transform topics (default /tf_static)
 poses          TFMessage topic + parent → child frames + time policy
-segmentation   fixed_duration { clock, duration_ns }
+segmentation   whole_recording { clock } | fixed_duration { clock, duration_ns }   (policy is explicit)
 ```
 
-- **Segmentation.** Windows `[origin + k·d, origin + (k+1)·d)` on the
-  segmentation clock, with the origin at the earliest included observation.
-  A window with observations is one Scene with `unit_key = segment-<k>`.
-  Every channel and pose source must be placeable on that clock: its own
-  time is in it, or the clock is `mcap_log_time` / `mcap_publish_time`.
+- **Segmentation.** The policy is explicit, and each policy is a half-open
+  window on one declared segmentation clock:
+
+  ```text
+  whole_recording  [earliest, latest + 1) over every included observation
+                   and pose                                   unit_key recording
+  fixed_duration   [origin + k·d, origin + (k+1)·d), origin at the earliest
+                   included observation; non-empty windows    unit_key segment-<k>
+  ```
+
+  Segmentation only groups: observations, poses, calibration and payload
+  identities are the same under either policy, and the policy is part of the
+  producer fingerprint. Every channel and pose source must be placeable on the
+  segmentation clock: its own time is in it, or the clock is `mcap_log_time` /
+  `mcap_publish_time`.
 - **Observations** keep their canonical timestamp in their channel's clock,
   ordered by timestamp, then MCAP sequence, then per-channel file order;
   `observation_id = <topic slug>-<rank>`.
