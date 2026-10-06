@@ -33,7 +33,7 @@ check:
 UNIT_TEST_SUITES := apps/worker/tests apps/api/tests apps/inference-server/tests \
 	packages/sceneops-analytics/tests packages/sceneops-core/tests \
 	packages/sceneops-integrations/tests packages/sceneops-streaming/tests \
-	scripts/reference/tests tests/infrastructure/unit
+	scripts/reference/tests scripts/e2e/tests tests/infrastructure/unit
 
 .PHONY: test
 # All infrastructure-independent automated tests -- no Postgres/MinIO/network/
@@ -43,7 +43,8 @@ UNIT_TEST_SUITES := apps/worker/tests apps/api/tests apps/inference-server/tests
 # `make acceptance-grounding-dino`. packages/sceneops-streaming/tests is pure
 # wire/schema unit tests (no Kafka broker) -- real-broker behavior is
 # `make smoke-streaming`, not this tier. scripts/reference/tests evaluates the
-# golden reference contract on synthetic state only.
+# golden reference contract on synthetic state only; scripts/e2e/tests covers the
+# decisions of the read-only equivalence verifier the same way.
 test:
 	@set -e; for suite in $(UNIT_TEST_SUITES); do \
 		echo "=== $$suite"; \

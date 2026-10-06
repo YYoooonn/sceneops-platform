@@ -35,8 +35,8 @@ ROS2_CMD        ?=
 
 # Journey selection -- the only user-facing variables of the E2E / baseline
 # surface (see makefiles/e2e.mk). SCENE: the nuScenes scene (default
-# scene-0061). RATE: streaming replay rate (default: the fixture's replay
-# definition). BASELINE_ID: the baseline whose RobotRuns a journey uses (default: the
+# scene-0061). RATE: streaming replay rate of streaming-bootstrap (default: the
+# fixture's replay definition). BASELINE_ID: the baseline whose RobotRuns a journey uses (default: the
 # golden reference contract's; a different one registers non-contract RobotRuns and
 # needs DISPOSABLE_RUNTIME=1). DATASET_ID: the DatasetVersion an L3 journey writes
 # into (default: a new sceneops-test-<journey>-<suffix>). DISPOSABLE_RUNTIME=1: this
@@ -88,12 +88,12 @@ help:
 	@echo "=================================================================="
 	@echo "E2E journeys (containers + FastAPI; host needs docker compose, curl, jq):"
 	@echo "=================================================================="
-	@echo "  make e2e-streaming-equivalence [SCENE=.. RATE=..] [DISPOSABLE_RUNTIME=1] the locked reference MCAP via the reference RobotRun and via replay -> ROS 2 -> Kafka -> capture: equivalent"
+	@echo "  make e2e-streaming-equivalence [SCENE=..]        [READ-ONLY] the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture: equivalent"
 	@echo "  make e2e-scene-ml [SCENE=scene-0061]             reference RobotRun -> Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)"
 	@echo "  make e2e-episode-learning [SCENE=scene-0061]     reference RobotRun -> Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip"
 	@echo "  make e2e-cleanroom                               [DESTRUCTIVE] local-reset -> images -> canonical-bootstrap (golden identity, scene-0061) -> both L3 journeys -> verification"
 	@echo "  e2e-scene-ml / e2e-episode-learning consume the golden reference RobotRun and write into a DatasetVersion of their own (DATASET_ID=<id>);"
-	@echo "  e2e-streaming-equivalence registers RobotRuns of its own and needs DISPOSABLE_RUNTIME=1 (docs/development/test-matrix.md)."
+	@echo "  e2e-streaming-equivalence reads both golden RobotRuns from the ArtifactStore and writes nothing (REFERENCE_READ_ONLY; docs/development/test-matrix.md)."
 	@echo "  make acceptance-grounding-dino                   Model-backend acceptance of e2e-scene-ml (needs an inference server)"
 	@echo ""
 	@echo "=================================================================="

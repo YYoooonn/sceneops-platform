@@ -17,7 +17,8 @@ The contract layer is the only place that states how many RobotRuns, Scenes or
 Episodes the reference state has, and which Scene policy produced them. Generic
 SceneOps logic knows none of it. Host Python, standard library only.
 
-Subcommands: show | validate | verify | bootstrap   (see docs/development/reference-contract.md)
+Subcommands: show | validate | verify | bootstrap | pair | fingerprint
+(see docs/development/reference-contract.md)
 """
 
 from __future__ import annotations
@@ -98,6 +99,60 @@ def expand(contract: dict[str, Any]) -> list[Entry]:
 
 def _fixture(contract: dict[str, Any], fixture_id: str) -> dict[str, Any]:
     return next(f for f in contract["fixtures"] if f["fixture_id"] == fixture_id)
+
+
+def equivalence_pair(
+    contract: dict[str, Any],
+    corpus: dict[str, Any],
+    lock: dict[str, Any],
+    *,
+    fixture_id: str | None = None,
+    scope: str | None = None,
+) -> dict[str, Any]:
+    """The two golden RobotRuns of one fixture, resolved from the contract.
+
+    A fixture is named directly or selected by a corpus scope that contains
+    exactly one (``smoke-1`` selects ``scene-0061``). Returns the fixture's
+    locked recording facts and, per ingestion mode, the RobotRun and the
+    DatasetVersion that holds its Scenes and Episodes; nothing is read from the
+    platform.
+    """
+    if fixture_id is None:
+        if scope not in corpus["scopes"]:
+            raise ContractError(f"the corpus has no scope {scope!r}")
+        selected = _scope_fixture_ids(corpus, scope)
+        if len(selected) != 1:
+            raise ContractError(
+                f"scope {scope!r} selects {len(selected)} fixtures; an equivalence "
+                "pair is one fixture (name it with --fixture)"
+            )
+        fixture_id = selected[0]
+    fixture = next(
+        (f for f in contract["fixtures"] if f["fixture_id"] == fixture_id), None
+    )
+    if fixture is None:
+        raise ContractError(
+            f"{fixture_id!r} is not a fixture of the reference contract"
+        )
+    recording = lock["fixtures"][fixture_id]["recording"]
+    pair: dict[str, Any] = {
+        "fixture_id": fixture_id,
+        "recording": {
+            "sha256": fixture["recording_sha256"],
+            "size_bytes": recording["size_bytes"],
+            "message_count": fixture["message_count"],
+            "topic_counts": recording["topic_counts"],
+        },
+    }
+    for mode in MODES:
+        spec = contract["ingestion_modes"][mode]
+        pair[mode] = {
+            "robot_run_id": run_id(contract, mode, fixture_id),
+            "robot_id": spec["robot_id"],
+            "dataset_id": spec["dataset_id"],
+            "dataset_version": spec["dataset_version"],
+        }
+    return pair
 
 
 def _scope_fixture_ids(corpus: dict[str, Any], scope: str) -> list[str]:
@@ -706,6 +761,41 @@ def snapshot(contract: dict[str, Any], obs: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def platform_fingerprint(state: dict[str, Any]) -> dict[str, Any]:
+    """Every RobotRun, Dataset, Scene and Episode the platform holds, as the
+    identity plus the fields that change when a record is rewritten. Two
+    fingerprints are equal exactly when no record was added, removed or changed."""
+    return {
+        "counts": {
+            "robot_runs": len(state["robot_runs"]),
+            "datasets": len(state["datasets"]),
+            "scenes": len(state["scenes"]),
+            "episodes": len(state["episodes"]),
+        },
+        "robot_runs": {
+            r["runId"]: [r["robotId"], r.get("registeredAt"), r.get("manifestChecksum")]
+            for r in state["robot_runs"]
+        },
+        "datasets": sorted(state["datasets"]),
+        "scenes": {
+            u["sceneId"]: [
+                u["robotRunId"],
+                u.get("manifestChecksum"),
+                u.get("updatedAt"),
+            ]
+            for u in state["scenes"]
+        },
+        "episodes": {
+            u["episodeId"]: [
+                u["robotRunId"],
+                u.get("manifestChecksum"),
+                u.get("updatedAt"),
+            ]
+            for u in state["episodes"]
+        },
+    }
+
+
 def plan(contract: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any]]:
     """Per contract RobotRun, what the platform holds now (before a bootstrap)."""
     by_id = {r["runId"] for r in obs["robot_runs"]}
@@ -892,6 +982,11 @@ def _log(message: str) -> None:
 
 
 def _require_valid() -> tuple[dict[str, Any], dict[str, Any]]:
+    contract, _corpus, lock = _load_valid()
+    return contract, lock
+
+
+def _load_valid() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     contract, corpus, lock, scene_config, shape = _sources()
     problems = validate_contract(contract, corpus, lock, scene_config, shape)
     for p in problems:
@@ -900,7 +995,7 @@ def _require_valid() -> tuple[dict[str, Any], dict[str, Any]]:
         raise ContractError(
             f"the reference contract is not valid ({len(problems)} problem(s))"
         )
-    return contract, lock
+    return contract, corpus, lock
 
 
 def cmd_show(_: argparse.Namespace) -> int:
@@ -919,6 +1014,27 @@ def cmd_validate(_: argparse.Namespace) -> int:
     _log(
         f"✅ reference contract v{contract['contract_version']} is consistent with the corpus lock and baseline configuration"
     )
+    return 0
+
+
+def cmd_pair(args: argparse.Namespace) -> int:
+    """Both golden RobotRuns of one fixture; reads no platform state."""
+    contract, corpus, lock = _load_valid()
+    _emit(
+        equivalence_pair(
+            contract,
+            corpus,
+            lock,
+            fixture_id=args.fixture,
+            scope=None if args.fixture else args.scope,
+        )
+    )
+    return 0
+
+
+def cmd_fingerprint(_: argparse.Namespace) -> int:
+    """The platform's records through FastAPI, one compact JSON line; read-only."""
+    print(json.dumps(platform_fingerprint(collect_state()), sort_keys=True))
     return 0
 
 
@@ -1017,6 +1133,8 @@ def main(argv: list[str] | None = None) -> int:
         ("validate", cmd_validate),
         ("verify", cmd_verify),
         ("bootstrap", cmd_bootstrap),
+        ("pair", cmd_pair),
+        ("fingerprint", cmd_fingerprint),
     ):
         command = sub.add_parser(name)
         command.set_defaults(func=fn)
@@ -1025,6 +1143,13 @@ def main(argv: list[str] | None = None) -> int:
                 "--require-clean",
                 action="store_true",
                 help="also fail on any non-contract RobotRun or Dataset (the reference environment)",
+            )
+        if name == "pair":
+            command.add_argument("--fixture", help="a fixture of the contract")
+            command.add_argument(
+                "--scope",
+                default="smoke-1",
+                help="a corpus scope that selects one fixture (default smoke-1)",
             )
     args = parser.parse_args(argv)
     try:

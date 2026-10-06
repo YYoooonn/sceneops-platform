@@ -2,8 +2,9 @@
 # End-to-end journeys -- each a user journey through production paths from a
 # real source to a persisted result (ADR-007 §36):
 #
-#   e2e-streaming-equivalence    one source acquired in batch and by ROS 2 ->
-#                                Kafka -> capture, canonically equivalent
+#   e2e-streaming-equivalence    the contract's Recording Import and Streaming
+#                                Acquisition RobotRuns of one fixture, read
+#                                from the ArtifactStore: equivalent
 #                                (makefiles/streaming.mk)
 #   e2e-scene-ml                 Scenes -> labels -> sample views -> ScenarioSet
 #                                -> prediction -> evaluation
@@ -17,7 +18,7 @@
 # (no uv, no PostgreSQL / MinIO access, no worker CLI).
 #
 # There is deliberately no bare `make e2e` aggregate: the journeys differ in
-# what infrastructure they need (default stack / ROS 2 + Kafka / LeRobot
+# what infrastructure they need (default stack / LeRobot
 # image), and an aggregate would hide which one a failure needed.
 # `make e2e-cleanroom` is the only full-platform acceptance entry point.
 #
@@ -26,9 +27,9 @@
 #   READ_ONLY_REFERENCE         e2e-scene-ml, e2e-episode-learning: the RobotRun is the golden
 #                               reference contract's; they register none and write into a
 #                               DatasetVersion of their own (DATASET_ID=<id> names it)
-#   MUTATING_ACQUISITION_TEST   e2e-streaming-equivalence: it registers RobotRuns of its own
-#                               and refuses to run unless DISPOSABLE_RUNTIME=1 says the
-#                               runtime will be reset afterwards
+#   REFERENCE_READ_ONLY         e2e-streaming-equivalence: reads both golden RobotRuns of a
+#                               fixture and creates no durable state at all (it fingerprints
+#                               the platform before and after)
 # ============================================================================
 
 # Baseline identity, target DatasetVersion and scene selection, passed to the scripts

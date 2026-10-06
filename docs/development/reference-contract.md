@@ -82,6 +82,8 @@ make reference-contract-verify      read-only
 make reference-contract-bootstrap   converge on the contract
 make reference-contract-verify REQUIRE_CLEAN=1    ... and nothing but the contract
 python3 scripts/reference/reference_contract.py show|validate|verify|bootstrap [--require-clean]
+python3 scripts/reference/reference_contract.py pair [--fixture <id> | --scope <scope>]
+python3 scripts/reference/reference_contract.py fingerprint
 ```
 
 Both print one JSON report on stdout (`sceneops.reference_contract_report/1`);
@@ -117,6 +119,22 @@ Episodes. The kinds are a naming heuristic for reporting only.
 `REQUIRE_CLEAN=1` (`--require-clean`) is the check of the dedicated **reference
 environment**: every non-contract RobotRun (`non_contract_robot_run`) and Dataset
 (`non_contract_dataset`) is then a violation.
+
+### `pair` and `fingerprint`
+
+Two read-only helpers for workflows that consume the contract.
+
+`pair` resolves one fixture (`--fixture`, or a `--scope` that selects exactly one:
+`smoke-1` is `scene-0061`) to its two RobotRuns, with their robot and DatasetVersion
+per ingestion mode and the lock's recording facts (sha256, size, message count,
+per-channel counts). It reads no platform state. `make e2e-streaming-equivalence`
+takes both identities from it, so no journey states a RobotRun id of its own.
+
+`fingerprint` prints one JSON line with every RobotRun, Dataset, Scene and Episode the
+platform holds, through FastAPI: identities plus the registration, manifest-checksum and
+update fields that change when a record is rewritten. Two fingerprints are equal exactly
+when no record was added, removed or changed; a workflow that must create no state
+compares one taken before and after.
 
 ### `reference-contract-bootstrap`
 
@@ -164,7 +182,8 @@ non-contract state that nothing removes, so it runs only on a runtime declared
 disposable and the reference environment is rebuilt afterwards; the workflows that
 only consume the contract (`READ_ONLY_REFERENCE`) register no RobotRun and write into
 `sceneops-test-*` DatasetVersions of their own, which `REQUIRE_CLEAN=1` reports as
-residue. See [test-matrix.md](./test-matrix.md#test-state-classes) and
+residue; those that create nothing (`REFERENCE_READ_ONLY`, `e2e-streaming-equivalence`)
+leave the environment exactly as it was. See [test-matrix.md](./test-matrix.md#test-state-classes) and
 [ADR-007](../adr/007-canonical-ingestion-architecture.md) §35.3.
 
 ## Refreshing the contract

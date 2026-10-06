@@ -32,7 +32,8 @@ either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + Robo
 A recording replayed through the streaming path yields a semantically equivalent
 recording and, with source-timestamp build configurations, equivalent canonical
 Scenes and Episodes (ADR-007 §29.12, §32; `make e2e-streaming-equivalence`
-replays a locked reference MCAP and compares it with the batch baseline).
+compares the reference contract's streamed RobotRun of a locked MCAP with the
+imported one, read-only).
 
 The telemetry projection and canonical Episode / Scene building read the
 same resolved recording independently. Canonical Episodes never read the
@@ -558,12 +559,14 @@ make e2e-episode-learning            # Episodes -> AlignedEpisodes -> learning e
 
 The streaming vertical (locked reference MCAP -> replay -> ROS2 -> bridge -> Kafka
 -> capture -> publish-pending -> reconcile -> RobotRun, then Scenes and Episodes
-equivalent to the batch baseline's; needs `make reference-data-bootstrap` once):
+equivalent to the batch baseline's; needs `make reference-data-bootstrap` once) is the
+reference contract's Streaming Acquisition baseline, and its equivalence with Recording
+Import is checked read-only:
 
 ```bash
 make local-up
-make streaming-up
-make e2e-streaming-equivalence       # containers + FastAPI only; no host uv, PostgreSQL or MinIO access
+make reference-contract-bootstrap    # (once) both baselines; replays through ROS 2 -> Kafka -> capture
+make e2e-streaming-equivalence       # reads the two registered RobotRuns of a fixture; creates nothing
 ```
 
 Or fully manually (batch):

@@ -122,9 +122,9 @@ reads no source dataset and does not compare the tool identity, since the replay
 is not the interpreter that wrote the recording; the recording's sha256, size and counts
 are what it relies on. The locked recording is the one runtime replay source: there is no
 replay of the raw dataset. `make streaming-bootstrap` replays every fixture of a scope this
-way into the persistent streaming baseline ([canonical-baseline.md](./canonical-baseline.md)). `make e2e-streaming-equivalence` replays a fixture with the replay
-container mounting no raw dataset (the run probes that none is visible) and compares the streamed
-acquisition with the same locked recording's Recording Import baseline.
+way into the persistent streaming baseline ([canonical-baseline.md](./canonical-baseline.md)). The streaming replay container mounts no raw dataset (the run probes that none is visible).
+`make e2e-streaming-equivalence` compares a fixture's registered streamed acquisition with the same
+locked recording's Recording Import RobotRun, reading both from the ArtifactStore.
 
 A recording is reused only when the definition, the tool identity, the source
 fingerprint and the recording's own sha256, size and counts agree with the lock; a

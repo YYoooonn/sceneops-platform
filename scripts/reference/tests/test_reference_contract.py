@@ -641,3 +641,84 @@ def _fixture_sha(fixture_id):
         for f in CONTRACT["fixtures"]
         if f["fixture_id"] == fixture_id
     )
+
+
+# ── Equivalence pair and platform fingerprint ────────────────────────────────
+
+CORPUS = json.loads((rc.CORPUS_DIR / "corpus.json").read_text())
+
+
+def test_smoke_scope_resolves_to_the_two_golden_runs_of_scene_0061():
+    pair = rc.equivalence_pair(CONTRACT, CORPUS, LOCK, scope="smoke-1")
+    assert pair["fixture_id"] == "scene-0061"
+    assert pair["recording_import"]["robot_run_id"] == rc.run_id(
+        CONTRACT, "recording_import", "scene-0061"
+    )
+    assert pair["streaming_acquisition"]["robot_run_id"] == rc.run_id(
+        CONTRACT, "streaming_acquisition", "scene-0061"
+    )
+    for mode in rc.MODES:
+        spec_ = CONTRACT["ingestion_modes"][mode]
+        assert pair[mode]["dataset_id"] == spec_["dataset_id"]
+        assert pair[mode]["robot_id"] == spec_["robot_id"]
+
+
+def test_the_pair_carries_the_locks_recording_facts():
+    pair = rc.equivalence_pair(CONTRACT, CORPUS, LOCK, fixture_id="scene-0103")
+    locked = LOCK["fixtures"]["scene-0103"]["recording"]
+    assert pair["recording"] == {
+        "sha256": _fixture_sha("scene-0103"),
+        "size_bytes": locked["size_bytes"],
+        "message_count": locked["message_count"],
+        "topic_counts": locked["topic_counts"],
+    }
+
+
+def test_a_pair_is_one_fixture_of_the_contract():
+    with pytest.raises(rc.ContractError, match="selects 10 fixtures"):
+        rc.equivalence_pair(CONTRACT, CORPUS, LOCK, scope="nuscenes-mini-full-10")
+    with pytest.raises(rc.ContractError, match="not a fixture"):
+        rc.equivalence_pair(CONTRACT, CORPUS, LOCK, fixture_id="scene-9999")
+    with pytest.raises(rc.ContractError, match="no scope"):
+        rc.equivalence_pair(CONTRACT, CORPUS, LOCK, scope="nope")
+
+
+def test_fingerprint_of_an_unchanged_platform_is_equal():
+    state = build_obs()
+    assert rc.platform_fingerprint(state) == rc.platform_fingerprint(
+        copy.deepcopy(state)
+    )
+    assert rc.platform_fingerprint(state)["counts"] == {
+        "robot_runs": 20,
+        "datasets": 2,
+        "scenes": 20,
+        "episodes": 20,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda s: s["robot_runs"].append(
+            {"runId": "run-test-x", "robotId": "robot-test-x"}
+        ),
+        lambda s: s["robot_runs"].pop(),
+        lambda s: s["datasets"].append("sceneops-test-x"),
+        lambda s: s["scenes"][0].update(updatedAt="t1"),
+        lambda s: s["episodes"][0].update(manifestChecksum="sha256:other"),
+        lambda s: s["scenes"].pop(),
+    ],
+    ids=[
+        "run added",
+        "run removed",
+        "dataset added",
+        "scene rewritten",
+        "episode re-pinned",
+        "scene removed",
+    ],
+)
+def test_fingerprint_detects_any_added_removed_or_rewritten_record(mutate):
+    before = build_obs()
+    after = copy.deepcopy(before)
+    mutate(after)
+    assert rc.platform_fingerprint(before) != rc.platform_fingerprint(after)

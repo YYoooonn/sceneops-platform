@@ -1,55 +1,56 @@
 #!/usr/bin/env bash
-# e2e_streaming_equivalence.sh — streaming acquisition vertical and the
-# transport-preservation proof (ADR-007 §29.12, §29.19 step 9).
+# e2e_streaming_equivalence.sh — transport-preservation acceptance over the golden
+# reference contract (ADR-007 §29.12, I-35).
 #
-# One logical source — the LOCKED REFERENCE MCAP of one corpus fixture — reaches
-# canonical Scenes and Episodes two ways, with identical build configurations:
+# One logical source — the LOCKED REFERENCE MCAP of one corpus fixture — is in the
+# platform twice, as two RobotRuns of the golden reference contract
+# (docs/development/reference-contract.md):
 #
-#   A  batch      the reference baseline (docs/development/canonical-baseline.md):
-#                 locked MCAP -> publish -> RobotRun -> Scene / Episode
-#                 Consumed as it is (create-or-verify, never rebuilt): the batch
-#                 arm converts nothing and reads no source dataset.
+#   Recording Import        the locked MCAP -> publish -> RobotRun -> Scene / Episode
+#   Streaming Acquisition   the locked MCAP -> replay -> ROS 2 -> bridge -> Kafka
+#                           -> capture -> publish-pending -> reconcile -> RobotRun
+#                           -> Scene / Episode
 #
-#   B  streaming  locked MCAP -> `reference replay` (dataset-replay container)
-#                   -> ROS 2 topics -> streaming_bridge_node -> Kafka
-#                   -> capture (MCAP, finalized on RUN_END, capture receipt)
-#                   -> publish-pending -> reconcile --apply -> REGISTER_ROBOT_RUN
-#                   -> RobotRun B -> recording_scene_building / _episode_building
+# This journey proves, read-only, that the two are the same acquisition:
 #
-#   then: streaming_equivalence_verify.py (recording-publisher container):
-#         acquisition equivalence (§29.12) over the locked MCAP and the captured
-#         MCAP, canonical equivalence via semantic_scene_content /
-#         semantic_episode_content (I-35), and in-process negative controls.
+#   identity         each RobotRun pins its own registered recording; the import is the
+#                    locked recording, the stream a different recording captured from
+#                    Kafka; both carry the locked message and per-channel counts
+#   acquisition      same channels, message types and encodings, per-channel payload
+#                    sequences and counts, source observation times, /tf_static
+#                    (§29.12); container bytes, capture log_time, schema text and
+#                    cross-channel write order are not compared
+#   canonical        every Scene's and Episode's semantic content is equal (I-35),
+#                    with provenance that really differs
+#   negative control the verifier detects a dropped message, a 1 ns source-time shift,
+#                    a changed payload checksum, a Scene and an Episode semantic change
 #
-# Because both arms start from one acquisition fixture, equality of the results
-# is a statement about the transport (ROS 2 -> bridge -> Kafka -> capture ->
-# publication), not about two conversions of a source dataset.
+# Both recordings are read from the ArtifactStore (the RobotRuns' registered
+# recordings and manifests) by streaming_equivalence_verify.py in a one-shot
+# recording-publisher container, checked against their registered checksums, held
+# in that container's temporary directory and removed with it. Nothing is replayed,
+# captured, published, registered or built; Kafka, ROS 2, the bridge, the replay
+# container, the capture volume and the reference cache are not involved. The
+# Kafka lifecycle records of a streamed run (RUN_START, N telemetry records,
+# RUN_END, and the receipt's offsets over them) are proven against a real broker in
+# ros2/capture/tests/test_lifecycle_integration.py.
 #
-# The replay service mounts no raw dataset, and the run probes that none is
-# visible in the container: the replay can only have read the locked MCAP.
+# Test-state class: REFERENCE_READ_ONLY (docs/development/test-matrix.md). It writes
+# no PostgreSQL row, no MinIO object, no DatasetVersion and no RobotRun, so it runs
+# on the reference environment and needs no DISPOSABLE_RUNTIME. The journey
+# fingerprints every RobotRun, Dataset, Scene and Episode before and after and fails
+# if anything differs.
 #
-# Bulk data moves between containers (the reference cache, the
-# acquisition-recordings volume, DDS, Kafka); platform operations go through
-# FastAPI and the production recovery commands. The host needs only Docker
-# Compose, curl, jq and the API port: no uv, no PostgreSQL or MinIO access.
+# Platform reads go through FastAPI; the host needs Docker Compose, curl, jq and
+# python3 (standard library only, for the contract).
 #
-# Test-state class: MUTATING_ACQUISITION_TEST for arm B (docs/development/test-matrix.md);
-# arm A only reads the golden reference contract's RobotRun. Run it on a disposable
-# runtime: `make local-reset && make reference-contract-bootstrap` (or just the
-# fixture: `make canonical-bootstrap`), then
-# `make e2e-streaming-equivalence DISPOSABLE_RUNTIME=1`. It refuses otherwise.
-#
-# Prerequisites:
-#   make local-up                  API + workers + Postgres + MinIO from current images
-#   make reference-data-bootstrap  the fixture's locked recording is prepared
-#   make streaming-up              Kafka (this script starts it if absent)
-#   make acquisition-image         dataset-replay + ros2 images (the make target builds both)
-#   no capture / bridge / recovery container running (checked below)
+# Prerequisites: `make local-up`, and the golden reference contract's RobotRuns for
+# the fixture (`make reference-contract-bootstrap`; checked by `make
+# reference-contract-verify`).
 #
 # Usage:
 #   make e2e-streaming-equivalence                       # smoke-1 (scene-0061)
 #   make e2e-streaming-equivalence SCENE=scene-0103      # one named fixture
-#   REFERENCE_SCOPE=smoke-1 RATE=0 scripts/e2e/e2e_streaming_equivalence.sh
 
 set -euo pipefail
 
@@ -61,265 +62,110 @@ source "$SCRIPT_DIR/lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 export API_BASE_URL ENV_FILE
 
-# Fixture selection and the batch baseline identity are the canonical baseline's own
-# (scripts/canonical/baseline_lib.sh): REFERENCE_SCOPE (default smoke-1, i.e. scene-0061)
-# or FIXTURE/SOURCE_UNIT select the fixture; the identity is the golden reference
-# contract's recording_import baseline.
-export FIXTURE="${FIXTURE:-${SOURCE_UNIT:-}}"
-export REFERENCE_SCOPE="${REFERENCE_SCOPE:-smoke-1}"
-source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
-export BASELINE_ID
+# Selection is the corpus's own: a fixture (SOURCE_UNIT / FIXTURE) or a scope that
+# selects exactly one (smoke-1 = scene-0061). Identities come from the contract.
+FIXTURE="${FIXTURE:-${SOURCE_UNIT:-}}"
+REFERENCE_SCOPE="${REFERENCE_SCOPE:-smoke-1}"
+CONTRACT_TOOL=(python3 "$REPO_ROOT/scripts/reference/reference_contract.py")
+VERIFIER=/workspace/e2e/streaming_equivalence_verify.py
 
-# Streaming arm identity: unique per execution, never shared with the baseline. The arm
-# captures and registers a RobotRun of its own (the thing under test), which nothing
-# removes: disposable runtimes only.
-require_disposable_runtime "e2e-streaming-equivalence streams and registers a RobotRun of its own"
-SUFFIX="$(date +%s)-$$"
-START_EPOCH="$(date +%s)"
-STREAM_ROBOT_ID="robot-test-streaming-equivalence"
-STREAM_DATASET_ID="${STREAM_DATASET_ID:-sceneops-test-streaming-equivalence}"
-STREAM_VERSION="stream-$SUFFIX"
-POLL_ATTEMPTS="${POLL_ATTEMPTS:-180}"
-CAPTURE_ROOT="/recordings/capture-$SUFFIX"
-
-# The streaming acquisition path (replay -> ROS 2 -> bridge -> Kafka -> capture ->
-# publish-pending -> reconcile) is the streaming baseline's own.
-source "$REPO_ROOT/scripts/streaming/streaming_lib.sh"
-BRIDGE="bridge-$SUFFIX"
-CAPTURE="capture-$SUFFIX"
-
-cleanup() {
-  docker rm -f "$BRIDGE" "$CAPTURE" >/dev/null 2>&1 || true
-  "${COMPOSE[@]}" run --rm -T --entrypoint rm ros2 -rf "$CAPTURE_ROOT" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-fail() {
-  echo "❌ $*" >&2
-  for c in "$BRIDGE" "$CAPTURE"; do
-    echo "--- last log lines: $c" >&2
-    docker logs --tail 15 "$c" 2>&1 | cut -c1-400 >&2 || true
-  done
-  exit 1
+artifact_field() { # <artifact-id> <jq-field> -> a field of the ArtifactRecord
+  api_get "$API_BASE_URL" "/artifacts/$1" | jq -r ".artifact.$2"
 }
 
-artifact_uri() {
-  api_get "$API_BASE_URL" "/artifacts/$1" | jq -r '.artifact.uri'
-}
-
-manifest_uris() { # <scenes|episodes> <dataset-id> <version> -> JSON array of manifest URIs
+manifest_uris() { # <scenes|episodes> <dataset-id> <version> <robot-run-id> -> JSON array of manifest URIs
   local ids id
   ids="$(api_get "$API_BASE_URL" "/$1?dataset_id=$2&dataset_version=$3&limit=500" \
-    | jq -r "[.$1[].manifestArtifactId] | sort | .[]")"
-  for id in $ids; do artifact_uri "$id"; done | jq -R . | jq -sc .
+    | jq -r --arg r "$4" "[.$1[] | select(.robotRunId == \$r) | .manifestArtifactId] | sort | .[]")"
+  for id in $ids; do artifact_field "$id" uri; done | jq -R . | jq -sc .
 }
 
-# Scene and Episode records of a DatasetVersion without their bookkeeping
-# timestamps: what must stay byte-identical for a baseline this journey only reads.
-records_of() { # <dataset-id> <version>
-  api_get "$API_BASE_URL" "/scenes?dataset_id=$1&dataset_version=$2&limit=500" | jq -cS '[.scenes[] | del(.updatedAt)]'
-  api_get "$API_BASE_URL" "/episodes?dataset_id=$1&dataset_version=$2&limit=500" | jq -cS '[.episodes[] | del(.updatedAt)]'
+# arm_request <mode-json> -> the verifier's description of one registered RobotRun:
+# its manifest, its recording (as registered) and its Scene / Episode manifests.
+arm_request() {
+  local arm="$1" run_id robot_id dataset version run
+  run_id="$(echo "$arm" | jq -r '.robot_run_id')"
+  robot_id="$(echo "$arm" | jq -r '.robot_id')"
+  dataset="$(echo "$arm" | jq -r '.dataset_id')"
+  version="$(echo "$arm" | jq -r '.dataset_version')"
+  run="$(api_get "$API_BASE_URL" "/robot-runs/$run_id" | jq -c '.robotRun')" \
+    || fail "RobotRun $run_id is not registered (make reference-contract-bootstrap)"
+  [ "$(echo "$run" | jq -r '.robotId')" = "$robot_id" ] \
+    || fail "RobotRun $run_id is registered under $(echo "$run" | jq -r '.robotId'), the contract's robot is $robot_id"
+  jq -cn --arg id "$run_id" \
+    --arg manifest "$(artifact_field "$(echo "$run" | jq -r '.manifestArtifactId')" uri)" \
+    --argjson recording "$(api_get "$API_BASE_URL" "/artifacts/$(echo "$run" | jq -r '.recordingArtifactId')" \
+      | jq -c '.artifact | {uri, checksum, size_bytes: .sizeBytes}')" \
+    --argjson scenes "$(manifest_uris scenes "$dataset" "$version" "$run_id")" \
+    --argjson episodes "$(manifest_uris episodes "$dataset" "$version" "$run_id")" \
+    '{robot_run_id: $id, manifest_uri: $manifest, recording: $recording,
+      scene_manifest_uris: $scenes, episode_manifest_uris: $episodes}'
 }
 
-# build_scope <pipeline-type> <build-task> <register-task> <profile-task> <config>
-# One pipeline run over the streamed RobotRun: the same task parameters the
-# reference baseline's bootstrap uses, with the same build configuration files.
-build_scope() {
-  local type="$1" build_task="$2" register_task="$3" profile_task="$4" config="$5" params pipeline
-  params="$(jq -cn --arg b "$build_task" --arg r "$register_task" --arg p "$profile_task" \
-    --arg run "$RUN_B" --argjson config "$config" '{
-      ($b): {robot_run_id: $run, build_config: $config},
-      ($r): {replace: false},
-      ($p): {triggered: true}}')"
-  pipeline="$(run_pipeline "$API_BASE_URL" "$type" "$STREAM_DATASET_ID" "$STREAM_VERSION" "$params")"
-  assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$pipeline")" \
-    "$type for $RUN_B should succeed" "$API_BASE_URL" "$pipeline"
-}
-
-run_state() { # <reconciliation-report-json> -> the streamed run's observed state
-  jq -r --arg r "$RUN_B" '.runs[] | select(.run_id == $r) | .state' <<<"$1"
-}
-
-echo "=== [0/9] control plane, Kafka, images; no unrelated capture active ==="
+echo "=== [0/5] control plane (no Kafka, ROS 2, bridge, replay or capture involved) ==="
 require_api "$API_BASE_URL"
-ACTIVE="$(docker ps --no-trunc --format '{{.Names}} {{.Command}}' \
-  | grep -E 'capture/cli\.py|streaming_bridge_node|publication-recovery|registration-recovery' || true)"
-[ -z "$ACTIVE" ] || fail "an unrelated capture, bridge or recovery loop is running (stop it first, e.g. make recovery-down):
-$ACTIVE"
-"${COMPOSE[@]}" up -d --wait kafka >/dev/null 2>&1 || fail "Kafka did not become healthy"
-echo "  ✅  API healthy; Kafka up; no capture, bridge or recovery container running"
+echo "  ✅  API healthy"
 echo ""
 
-echo "=== [1/9] the fixture: resolved through the corpus lock (no source dataset) ==="
-baseline_resolve full
-[ "$(echo "$BASELINE_FIXTURES" | jq 'length')" = 1 ] \
-  || fail "streaming equivalence replays one fixture per run; selection ${FIXTURE:-$REFERENCE_SCOPE} resolves to $(echo "$BASELINE_FIXTURES" | jq 'length') (pass SCENE=<fixture>)"
-FIXTURE_JSON="$(echo "$BASELINE_FIXTURES" | jq -c '.[0]')"
-FIXTURE_ID="$(echo "$FIXTURE_JSON" | jq -r '.fixture_id')"
-LOCKED_PATH="$(echo "$FIXTURE_JSON" | jq -r '.path')"
-LOCKED_SHA="$(echo "$FIXTURE_JSON" | jq -r '.recording.sha256')"
-LOCKED_SIZE="$(echo "$FIXTURE_JSON" | jq -r '.recording.size_bytes')"
-LOCKED_COUNTS="$(echo "$FIXTURE_JSON" | jq -cS '.recording.topic_counts')"
-LOCKED_MESSAGES="$(echo "$FIXTURE_JSON" | jq -r '.recording.message_count')"
-RUN_A="$(baseline_run_id "$FIXTURE_ID")"
-RUN_B="run-test-streaming-equivalence-$SUFFIX-$FIXTURE_ID"
-echo "$FIXTURE_JSON" | jq -c '{fixture_id, source_unit, path, sha256: .recording.sha256, message_count: .recording.message_count}'
-echo "  baseline=$BASELINE_ID  A=$RUN_A  B=$RUN_B  stream dataset=$STREAM_DATASET_ID/$STREAM_VERSION"
+echo "=== [1/5] the fixture: both golden RobotRuns resolved from the reference contract ==="
+if [ -n "$FIXTURE" ]; then SELECTION=(--fixture "$FIXTURE"); else SELECTION=(--scope "$REFERENCE_SCOPE"); fi
+PAIR="$("${CONTRACT_TOOL[@]}" pair "${SELECTION[@]}")" || fail "could not resolve a fixture from the reference contract"
+FIXTURE_ID="$(echo "$PAIR" | jq -r '.fixture_id')"
+IMPORT_ARM="$(echo "$PAIR" | jq -c '.recording_import')"
+STREAM_ARM="$(echo "$PAIR" | jq -c '.streaming_acquisition')"
+RUN_A="$(echo "$IMPORT_ARM" | jq -r '.robot_run_id')"
+RUN_B="$(echo "$STREAM_ARM" | jq -r '.robot_run_id')"
+echo "$PAIR" | jq -c '{fixture_id, sha256: .recording.sha256, message_count: .recording.message_count, channels: (.recording.topic_counts | length)}'
+echo "  Recording Import       $RUN_A"
+echo "  Streaming Acquisition  $RUN_B"
 echo ""
 
-echo "=== [2/9] A — batch arm: the persistent reference baseline, read as it is ==="
-# Reused, not rebuilt: a registered baseline RobotRun is verified read-only
-# (canonical_verify); only a missing baseline is created, by the bootstrap that
-# publishes this very locked MCAP. Either way the baseline RobotRun must pin
-# exactly the locked recording.
-if api_get "$API_BASE_URL" "/robot-runs/$RUN_A" >/dev/null 2>&1; then
-  BASELINE_ACTION=reused
-  BASELINE_SUMMARY="$("$REPO_ROOT/scripts/canonical/canonical_verify.sh")"
-else
-  BASELINE_ACTION=created
-  BASELINE_SUMMARY="$("$REPO_ROOT/scripts/canonical/canonical_bootstrap.sh")"
-fi
-baseline_assert_recording "$RUN_A" "$LOCKED_SHA" "$LOCKED_SIZE"
-RECORDS_BEFORE="$(records_of "$DATASET_ID" "$DATASET_VERSION")"
-echo "$BASELINE_SUMMARY" | jq -c '{baseline_id, dataset_id, scene_count, episode_count}'
-echo "  ✅  baseline $BASELINE_ID $BASELINE_ACTION; RobotRun $RUN_A pins the locked recording ($LOCKED_SHA)"
-SCENES_A="$(manifest_uris scenes "$DATASET_ID" "$DATASET_VERSION")"
-EPISODES_A="$(manifest_uris episodes "$DATASET_ID" "$DATASET_VERSION")"
+echo "=== [2/5] the platform before: every RobotRun, Dataset, Scene and Episode ==="
+BEFORE="$("${CONTRACT_TOOL[@]}" fingerprint)"
+echo "$BEFORE" | jq -c '.counts'
 echo ""
 
-echo "=== [3/9] B — streaming arm: locked MCAP -> replay -> ROS 2 -> bridge -> Kafka -> capture ==="
-streaming_acquire "$FIXTURE_JSON" "$RUN_B" "$STREAM_ROBOT_ID" "$CAPTURE_ROOT" "$BRIDGE" "$CAPTURE"
-echo "  ✅  raw nuScenes is unavailable to the replay container (no /input/nuscenes, no /data/raw); the reference cache and corpus are mounted"
-echo "$REPLAY_SOURCE" | jq -c '{fixture_id, path, sha256: .recording.sha256}'
-echo "$REPLAY_SUMMARY" | jq -c '{message_count, rate, elapsed_seconds, max_lag_seconds, largest_payload_bytes}'
-echo "$CAPTURE_SUMMARY" | jq -c '{path, message_count, sha256}'
+echo "=== [3/5] the registered recordings and manifests of both RobotRuns ==="
+IMPORT_REQUEST="$(arm_request "$IMPORT_ARM")"
+STREAM_REQUEST="$(arm_request "$STREAM_ARM")"
+REQUEST="$(jq -cn --argjson pair "$PAIR" --argjson a "$IMPORT_REQUEST" --argjson b "$STREAM_REQUEST" '{
+  locked: $pair.recording,
+  recording_import: $a,
+  streaming_acquisition: $b}')"
+echo "$REQUEST" | jq -c '[.recording_import, .streaming_acquisition][]
+  | {robot_run_id, recording: .recording.uri, bytes: .recording.size_bytes,
+     scenes: (.scene_manifest_uris | length), episodes: (.episode_manifest_uris | length)}'
 echo ""
 
-echo "=== [4/9] the locked MCAP is the replay source; nothing lost; Kafka control records ==="
-check "the replay source is the locked recording (path under the read-only reference cache, locked sha256)" \
-  [ "$(echo "$REPLAY_SOURCE" | jq -r --arg sha "$LOCKED_SHA" --arg f "$FIXTURE_ID" '[(.path | startswith("/reference/")), .recording.sha256 == $sha, .fixture_id == $f] | all')" = true ]
-check "replay published exactly the locked recording's messages, per topic" \
-  [ "$(echo "$REPLAY_SUMMARY" | jq -cS '.topic_counts')" = "$LOCKED_COUNTS" ]
-check "bridge forwarded every replayed message, none failed" \
-  [ "$(echo "$BRIDGE_SUMMARY" | jq -cS '[.published_by_channel, .failed]')" \
-    = "$(jq -cS --argjson c "$LOCKED_COUNTS" -n '[$c, 0]')" ]
-check "capture recorded every forwarded message, per channel" \
-  [ "$(echo "$CAPTURE_SUMMARY" | jq -cS '.per_channel_counts')" = "$LOCKED_COUNTS" ]
-RECEIPT="$("${COMPOSE[@]}" run --rm -T --entrypoint cat ros2 "$RECEIPT_PATH" </dev/null)"
-check "the capture receipt: finalized by the explicit RUN_END, from Kafka, covering every locked message" \
-  [ "$(echo "$RECEIPT" | jq -r --arg t "$KAFKA_TOPIC" --argjson n "$LOCKED_MESSAGES" \
-      '[.finalization.reason == "explicit_run_end", .capture.source.kind == "kafka", .capture.source.topics == [$t], .message_count == $n] | all')" = true ]
-# The receipt's Kafka offset range spans message_count + 2 offsets: the run's
-# records on its partition are RUN_START, message_count telemetry records and
-# RUN_END. The two lifecycle control records share the run's key and topic, are
-# validated by capture in their own sequence space and never written to the MCAP.
-KAFKA_AUDIT="$("${ROS2[@]}" python3 /workspace/scripts/e2e/streaming_kafka_audit.py \
-  --robot-run-id "$RUN_B" --receipt "$RECEIPT_PATH" </dev/null)" || {
-  echo "$KAFKA_AUDIT" | jq '.problems' >&2 || true
-  fail "the run's Kafka records are not RUN_START + message_count telemetry + RUN_END"
-}
-echo "$KAFKA_AUDIT" | jq -c '{partition, records, telemetry_records, control_records, receipt_offset_span, run_alone_in_offset_span}'
-check "Kafka holds exactly RUN_START, $LOCKED_MESSAGES telemetry records and RUN_END for the run (message_count + 2)" \
-  [ "$(echo "$KAFKA_AUDIT" | jq -r --argjson n "$LOCKED_MESSAGES" '[.records == $n + 2, .telemetry_records == $n, ([.control_records[].control] == ["RUN_START", "RUN_END"])] | all')" = true ]
-check "the receipt's offset range is RUN_START .. RUN_END" \
-  [ "$(echo "$KAFKA_AUDIT" | jq -r '.problems | length')" = 0 ]
-echo ""
-
-echo "=== [5/9] receipt -> publish-pending -> reconcile --apply -> RobotRun B ==="
-SCAN="$("${PUBLISHER[@]}" scan-capture --capture-root "$CAPTURE_ROOT" </dev/null)"
-OBSERVED="$("${API_EXEC[@]}" "${RECONCILE[@]}" --capture-report - <<<"$SCAN")"
-check "the reconciler observes the finalized capture as publish_pending (nothing in the store yet)" \
-  [ "$(run_state "$OBSERVED")" = publish_pending ]
-PENDING="$("${PUBLISHER[@]}" publish-pending --capture-root "$CAPTURE_ROOT" </dev/null)" || {
-  echo "$PENDING" | jq . >&2 || true
-  fail "publish-pending failed"
-}
-echo "$PENDING" | jq -c '{counts, results: [.results[] | {run_id, outcome, state_before, state_after}]}'
-check "publish-pending published the run from its receipt, and verified both objects" \
-  [ "$(echo "$PENDING" | jq -r --arg r "$RUN_B" '.results[] | select(.run_id == $r) | [.outcome == "published", .state_before == "publish_pending", .state_after == "published"] | all')" = true ]
-SCAN="$("${PUBLISHER[@]}" scan-capture --capture-root "$CAPTURE_ROOT" </dev/null)"
-RECONCILED="$("${API_EXEC[@]}" "${RECONCILE[@]}" --apply --capture-report - <<<"$SCAN")"
-check "the reconciler observes registration_pending and submits REGISTER_ROBOT_RUN" \
-  [ "$(echo "$RECONCILED" | jq -r --arg r "$RUN_B" '[(.runs[] | select(.run_id == $r) | .state == "registration_pending"), ([.actions[] | select(.run_id == $r and .kind == "submit_registration" and .outcome == "submitted")] | length == 1)] | all')" = true ]
-for _ in $(seq 1 60); do
-  api_get "$API_BASE_URL" "/robot-runs/$RUN_B" >/dev/null 2>&1 && break
-  sleep 2
-done
-RUN_B_JSON="$(api_get "$API_BASE_URL" "/robot-runs/$RUN_B" | jq -c '.robotRun')" || fail "RobotRun $RUN_B was not registered"
-RUN_A_JSON="$(api_get "$API_BASE_URL" "/robot-runs/$RUN_A" | jq -c '.robotRun')"
-RUN_B_RECORDING="$(api_get "$API_BASE_URL" "/artifacts/$(echo "$RUN_B_JSON" | jq -r '.recordingArtifactId')" | jq -c '.artifact')"
-check "RobotRun B: an mcap recording on the recording clock, registered from the captured bytes' receipt" \
-  [ "$(echo "$RUN_B_JSON" | jq -r '[.robotId, .recordingFormat, .sourceClock] | @tsv')" = "$(printf '%s\tmcap\tmcap_log_time' "$STREAM_ROBOT_ID")" ]
-check "RobotRun B pins exactly the captured recording (the receipt's checksum)" \
-  [ "$(echo "$RUN_B_RECORDING" | jq -r '.checksum')" = "$(echo "$RECEIPT" | jq -r '.recording.checksum')" ]
-check "RobotRun B's extent is this execution's wall-clock receive time; RobotRun A's is the source timeline, long before" \
-  [ "$(jq -rn --argjson a "$RUN_A_JSON" --argjson b "$RUN_B_JSON" --argjson now "$START_EPOCH" \
-      'def t: sub("\\.[0-9]+"; "") | fromdateiso8601; [($a.startedAt | t) < $now, ($b.startedAt | t) >= $now - 1] | all')" = true ]
-echo ""
-
-echo "=== [6/9] canonical Scenes + Episodes of RobotRun B, the baseline's build configurations ==="
-upsert_dataset "$API_BASE_URL" "$STREAM_DATASET_ID" "Streaming Equivalence E2E" >/dev/null
-upsert_dataset_version "$API_BASE_URL" "$STREAM_DATASET_ID" "$STREAM_VERSION" >/dev/null
-build_scope recording_scene_building build_recording_scenes register_scenes profile_scene "$(scene_build_config)"
-build_scope recording_episode_building build_recording_episodes register_episodes profile_episode "$(episode_build_config)"
-SCENES_B="$(manifest_uris scenes "$STREAM_DATASET_ID" "$STREAM_VERSION")"
-EPISODES_B="$(manifest_uris episodes "$STREAM_DATASET_ID" "$STREAM_VERSION")"
-EXPECTED_SCENES="$(jq -r '.scenes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
-EXPECTED_EPISODES="$(jq -r '.episodes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
-check "both arms yield the baseline's shape: $EXPECTED_SCENES Scene(s) and $EXPECTED_EPISODES Episode(s) per RobotRun" \
-  [ "$(jq -rn --argjson sa "$SCENES_A" --argjson sb "$SCENES_B" --argjson ea "$EPISODES_A" --argjson eb "$EPISODES_B" \
-      --argjson s "$EXPECTED_SCENES" --argjson e "$EXPECTED_EPISODES" \
-      '[($sa | length) == $s, ($sb | length) == $s, ($ea | length) == $e, ($eb | length) == $e] | all')" = true ]
-for scene_id in $(api_get "$API_BASE_URL" "/scenes?dataset_id=$STREAM_DATASET_ID&dataset_version=$STREAM_VERSION&limit=500" | jq -r '.scenes[].sceneId'); do
-  api_get "$API_BASE_URL" "/scenes/$scene_id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null \
-    || fail "streamed Scene $scene_id is not validated, profiled and ready"
-done
-for episode_id in $(api_get "$API_BASE_URL" "/episodes?dataset_id=$STREAM_DATASET_ID&dataset_version=$STREAM_VERSION&limit=500" | jq -r '.episodes[].episodeId'); do
-  api_get "$API_BASE_URL" "/episodes/$episode_id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null \
-    || fail "streamed Episode $episode_id is not validated, profiled and ready"
-done
-echo "  ✅  every streamed Scene and Episode is validated, profiled and ready"
-echo ""
-
-echo "=== [7/9] equivalence: acquisition (§29.12) and canonical Scene / Episode content (I-35) ==="
-REQUEST="$(jq -cn --arg a "$LOCKED_PATH" --arg b "$STREAM_RECORDING" --argjson counts "$LOCKED_COUNTS" \
-  --argjson sa "$SCENES_A" --argjson sb "$SCENES_B" --argjson ea "$EPISODES_A" --argjson eb "$EPISODES_B" '{
-    locked_topic_counts: $counts,
-    batch:  {recording: $a, scene_manifest_uris: $sa, episode_manifest_uris: $ea},
-    stream: {recording: $b, scene_manifest_uris: $sb, episode_manifest_uris: $eb}}')"
-VERIFY="$("${COMPOSE[@]}" run --rm -T -v "$REPO_ROOT/scripts/e2e:/workspace/e2e:ro" \
-  --entrypoint python recording-publisher /workspace/e2e/streaming_equivalence_verify.py <<<"$REQUEST")" || {
+echo "=== [4/5] equivalence, read from the ArtifactStore (one-shot recording-publisher container) ==="
+VERIFY="$(compose run --rm -T -v "$REPO_ROOT/scripts/e2e:/workspace/e2e:ro" \
+  --entrypoint python recording-publisher "$VERIFIER" <<<"$REQUEST")" || {
   echo "$VERIFY" | jq '.failures' >&2 || true
-  fail "the locked recording and its streamed acquisition are not semantically equivalent"
+  fail "the Recording Import and Streaming Acquisition RobotRuns of $FIXTURE_ID are not equivalent"
 }
-echo "$VERIFY" | jq -c '{equivalent, recording_equivalence, tf_static_messages, scene, episode}'
+echo "$VERIFY" | jq -c '{equivalent, recordings: (.recordings | map_values({size_bytes, message_count, capture_source_kind})), recording_equivalence, tf_static_messages, scene, episode}'
+check "identity: the import pins the locked recording from a file; the stream is a different recording captured from Kafka; both carry the locked counts" \
+  [ "$(echo "$VERIFY" | jq -r --arg a "$RUN_A" --arg b "$RUN_B" --arg sha "$(echo "$PAIR" | jq -r '.recording.sha256')" \
+      '[.recordings.recording_import.checksum == $sha, .recordings.recording_import.capture_source_kind == "file",
+        .recordings.streaming_acquisition.checksum != $sha, .recordings.streaming_acquisition.capture_source_kind == "kafka",
+        .recordings.recording_import.robot_run_id == $a, .recordings.streaming_acquisition.robot_run_id == $b] | all')" = true ]
 check "acquisition: same channels, message types and encodings, per-channel payload sequences and counts" \
   [ "$(echo "$VERIFY" | jq -r '.recording_equivalence.equivalent')" = true ]
 check "acquisition: same source observation times (every Header.stamp and the mission event times)" \
   [ "$(echo "$VERIFY" | jq -r '(.failures | map(select(startswith("source observation times") or startswith("mission event"))) | length) == 0 and (.source_stamp_channels | length) > 0')" = true ]
 check "acquisition: /tf_static is preserved in both recordings" \
   [ "$(echo "$VERIFY" | jq -r '(.tf_static_messages | to_entries | map(.value >= 1) | all)')" = true ]
-check "canonical: every Scene's and Episode's semantic content is equal across the two arms" \
+check "canonical: every Scene's and Episode's semantic content is equal across the two RobotRuns" \
   [ "$(echo "$VERIFY" | jq -r '.equivalent')" = true ]
-echo ""
-
-echo "=== [8/9] negative control: the verifier detects real, minimal semantic differences ==="
 echo "$VERIFY" | jq -c '.negative_controls'
-check "every control is detected (a dropped message, a 1 ns source-time shift, a changed payload checksum)" \
+check "negative control: every perturbation is detected (a dropped message, a 1 ns source-time shift, a changed payload checksum, a Scene and an Episode semantic change)" \
   [ "$(echo "$VERIFY" | jq -r '(.negative_controls | length) >= 6 and (.negative_controls | to_entries | map(.value) | all)')" = true ]
 echo ""
 
-echo "=== [9/9] the persistent batch baseline is unchanged; diagnostics ==="
-BASELINE_AFTER="$("$REPO_ROOT/scripts/canonical/canonical_verify.sh")"
-check "canonical-verify of $BASELINE_ID prints the same summary as before this journey" \
-  [ "$BASELINE_AFTER" = "$BASELINE_SUMMARY" ]
-check "the baseline's SceneRecords and EpisodeRecords are unchanged" \
-  [ "$(records_of "$DATASET_ID" "$DATASET_VERSION")" = "$RECORDS_BEFORE" ]
-echo "  diagnostics (not benchmarks): $(jq -cn --argjson r "$REPLAY_SUMMARY" --argjson t "$(echo "$VERIFY" | jq '.stream_recording')" \
-  --arg total "$(($(date +%s) - START_EPOCH))" --arg size "$LOCKED_SIZE" --argjson cap "$CAPTURE_SUMMARY" '{
-    replay_elapsed_s: $r.elapsed_seconds, replay_max_lag_s: $r.max_lag_seconds,
-    locked_recording_bytes: ($size | tonumber), streamed_messages: $cap.message_count,
-    stream_log_span_s: ((($t.last_log_time_ns - $t.first_log_time_ns) / 1e8 | round) / 10),
-    journey_wall_s: ($total | tonumber)}')"
+echo "=== [5/5] the platform after: nothing was added, removed or rewritten ==="
+AFTER="$("${CONTRACT_TOOL[@]}" fingerprint)"
+echo "$AFTER" | jq -c '.counts'
+check "every RobotRun, Dataset, Scene and Episode record is exactly as it was before the journey" \
+  [ "$(echo "$AFTER" | jq -cS .)" = "$(echo "$BEFORE" | jq -cS .)" ]
 echo ""
-echo "=== streaming equivalence E2E complete: fixture=$FIXTURE_ID A=$RUN_A ($BASELINE_ACTION) B=$RUN_B dataset=$STREAM_DATASET_ID/$STREAM_VERSION ==="
+echo "=== streaming equivalence E2E complete (read-only): fixture=$FIXTURE_ID import=$RUN_A stream=$RUN_B ==="

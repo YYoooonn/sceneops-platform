@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # streaming_lib.sh — the streaming acquisition path of a locked reference
-# fixture, shared by the streaming baseline (streaming_bootstrap.sh /
-# streaming_verify.sh) and the transport-equivalence journey
-# (scripts/e2e/e2e_streaming_equivalence.sh):
+# fixture, used by the streaming baseline (streaming_bootstrap.sh /
+# streaming_verify.sh):
 #
 #   locked reference MCAP
 #     -> `reference replay` (dataset-replay container, no raw dataset mounted)

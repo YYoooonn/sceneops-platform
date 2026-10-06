@@ -187,7 +187,7 @@ ArtifactStore. The host needs Docker Compose, curl and jq — no uv, no PostgreS
 or MinIO access, no worker CLI.
 
 ```
-make e2e-streaming-equivalence [SCENE=...]   the locked reference MCAP via the Recording Import baseline and via replay -> ROS2 -> Kafka -> capture: equivalent (needs Kafka)
+make e2e-streaming-equivalence [SCENE=...]   the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture, read-only: equivalent (needs neither Kafka nor ROS 2)
 make e2e-scene-ml [SCENE=...]                Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)
 make e2e-episode-learning [SCENE=...]        Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip
 make e2e-cleanroom                           fresh state -> canonical-bootstrap -> both L3 journeys -> final verification
@@ -241,7 +241,8 @@ persistent baselines are `ref-nuscenes-mini-full-10` and its streamed counterpar
 `stream-ref-nuscenes-mini-full-10` (the [golden reference contract](./reference-contract.md);
 `REFERENCE_SCOPE=smoke-1` selects `scene-0061` of them and creates no baseline of its own; see
 [canonical-baseline.md](./canonical-baseline.md)). The L3 journeys use the reference RobotRun
-and write into a `sceneops-test-<journey>-<suffix>` DatasetVersion; a journey that registers
+and write into a `sceneops-test-<journey>-<suffix>` DatasetVersion; `e2e-streaming-equivalence`
+reads the contract's two RobotRuns and creates no state at all; a workflow that registers
 RobotRuns of its own uses a unique `test-` id per run and only runs on a disposable runtime
 (`DISPOSABLE_RUNTIME=1`, [test-matrix.md](./test-matrix.md#test-state-classes)).
 Every pipeline-run-creating script passes `force: true`, so re-running a journey

@@ -32,7 +32,9 @@ smoke-streaming:
 # ROS 2 -> Kafka -> MCAP unit tests: the streaming bridge node, the capture
 # consumer/router/writer, and the channel registry they share. Runs inside the
 # ros2 image (rclpy, ROS 2 interface definitions); the capture suite includes
-# real-Kafka integration tests, so run `make streaming-up` first.
+# real-Kafka integration tests (including the lifecycle envelope of a run: the
+# real bridge's RUN_START, telemetry and RUN_END, and the capture receipt's
+# offsets over them), so run `make streaming-up` first.
 # --------------------
 
 .PHONY: ros2-test
@@ -41,28 +43,25 @@ ros2-test:
 		"python3 -m pytest /workspace/nodes/tests /workspace/capture/tests -q -p no:cacheprovider"
 
 # --------------------
-# Streaming acquisition vertical + transport-preservation equivalence
-# (ADR-007 §29.12, §29.19 step 9): the LOCKED reference MCAP of one fixture is
-# the shared logical source. The Recording Import arm is the golden reference baseline
-# (read as it is; created only if missing); the streaming arm replays the same
-# MCAP -> ROS 2 -> bridge -> Kafka -> capture -> publish-pending ->
-# reconcile --apply -> RobotRun -> Scenes + Episodes with the same build configs,
-# through FastAPI. Equivalence is proven on acquisition and on canonical Scene /
-# Episode content, with negative controls. No raw source dataset is read: the
-# replay container mounts no raw dataset. Containers + FastAPI only: no host
-# uv, no PostgreSQL/MinIO access, no worker CLI.
+# Transport-preservation equivalence (ADR-007 §29.12, I-35), read-only: the
+# golden reference contract's Recording Import and Streaming Acquisition
+# RobotRuns of one fixture are read from the ArtifactStore and compared on
+# acquisition (per-channel payloads, source times, /tf_static) and on canonical
+# Scene / Episode content, with negative controls. Nothing is replayed, captured,
+# registered or built, and no Kafka, ROS 2 or replay container is involved; it
+# creates no durable state and runs on the reference environment
+# (REFERENCE_READ_ONLY, docs/development/test-matrix.md). The Kafka lifecycle
+# records of a streamed run are proven by `make ros2-test`.
 #
-# Selection: REFERENCE_SCOPE (default smoke-1) or SCENE=<fixture> (one fixture is
-# replayed per run); RATE overrides the fixture's replay rate; BASELINE_ID names
-# the Recording Import baseline. Prerequisites: `make local-up` with images built from the
-# current tree, and `make reference-data-bootstrap` for the fixture.
+# Selection: SCENE=<fixture> (default smoke-1, i.e. scene-0061). Prerequisites:
+# `make local-up` and the contract's RobotRuns (`make reference-contract-bootstrap`).
 # --------------------
 
 .PHONY: e2e-streaming-equivalence
-e2e-streaming-equivalence: acquisition-image
-	$(COMPOSE) --profile ros2 build ros2
-	chmod +x scripts/e2e/e2e_streaming_equivalence.sh scripts/canonical/*.sh
-	$(E2E_ENV) REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(RATE),RATE=$(RATE)) \
+e2e-streaming-equivalence:
+	chmod +x scripts/e2e/e2e_streaming_equivalence.sh
+	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_FILE) \
+	REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(SCENE),SOURCE_UNIT=$(SCENE)) \
 	scripts/e2e/e2e_streaming_equivalence.sh
 
 # --------------------

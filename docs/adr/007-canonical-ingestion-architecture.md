@@ -5835,3 +5835,37 @@ environment.
 reference environment. The recovery suites keep their own Redis container and Celery
 workers; only their PostgreSQL and MinIO moved. See
 [test-matrix.md](../development/test-matrix.md).
+
+### 36.6 `e2e-streaming-equivalence` is read-only over the contract's two RobotRuns
+
+**Decision.** `e2e-streaming-equivalence` implements the first accepted direction of
+§36.4. For one fixture it reads the golden reference contract's Recording Import
+RobotRun and Streaming Acquisition RobotRun (both identities resolved from the
+contract) and compares what is registered: each RobotRun's recording is read from the
+ArtifactStore and checked against its registered checksum and manifest, and the two are
+compared on acquisition (§29.12), on canonical Scene / Episode content (I-35) and by
+negative controls. It replays, captures, publishes, registers and builds nothing,
+needs no Kafka, ROS 2, replay container, capture volume or reference cache, and
+creates no durable state: it fingerprints every RobotRun, Dataset, Scene and Episode
+before and after and fails on any difference. Its class is `REFERENCE_READ_ONLY`; it
+needs no `DISPOSABLE_RUNTIME`.
+
+**Why.** The contract already holds the same acquisition twice, once per ingestion
+mode. Streaming a third time into non-contract RobotRuns proved nothing the registered
+pair does not, and left state that nothing removes (§35.3). The streaming path itself is
+exercised, and its output registered, by the streaming baseline.
+
+**Where the rest of the old journey's claims live.** The Kafka lifecycle of a streamed
+run (one `RUN_START`, the run's telemetry records, one `RUN_END`, capture finalized by the
+explicit `RUN_END`, the receipt's offsets spanning `message_count + 2` records) is
+a property of the live transport, so it is pinned against a real broker in
+`ros2/capture/tests/test_lifecycle_integration.py` with the real bridge node
+(`make ros2-test`). The streaming baseline checks per fixture that replay, bridge,
+capture and receipt carry the locked per-channel counts.
+
+**Consequences.** `MUTATING_ACQUISITION_TEST` now covers only a bootstrap with a
+non-contract `BASELINE_ID`. The measured scope is one fixture per run (default
+`scene-0061`) against the registered recordings of the local reference environment;
+the equivalence of the other nine fixtures is carried by `make streaming-compare`
+(counts and canonical projections, no payloads) and by running the journey with
+`SCENE=<fixture>`.

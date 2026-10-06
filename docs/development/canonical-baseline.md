@@ -182,8 +182,8 @@ make streaming-compare   [same selection]            read-only: Recording Import
 - Publication and registration are the production commands of
   [ADR-008](../adr/008-acquisition-lifecycle-reliability.md); nothing writes PostgreSQL
   or MinIO directly.
-- `scripts/streaming/streaming_lib.sh` holds the acquisition path shared with
-  `make e2e-streaming-equivalence`.
+- `scripts/streaming/streaming_lib.sh` holds the acquisition path of the streaming
+  baseline.
 
 ### create-or-verify, per fixture
 
@@ -241,7 +241,7 @@ streamed one its own capture. It loads every Scene and Episode manifest of both
 sides and requires an equal semantic projection per unit key
 (`semantic_scene_content` / `semantic_episode_content`, ADR-007 I-35). It loads no
 recording payload: payload-level equivalence of the two acquisitions is proven on one
-fixture by `make e2e-streaming-equivalence`.
+fixture by `make e2e-streaming-equivalence`, which reads the two registered RobotRuns.
 
 ### Limitations
 
@@ -262,7 +262,7 @@ fixture by `make e2e-streaming-equivalence`.
 | `make reference-contract-bootstrap` | both contract baselines, all ten fixtures | the reference state itself |
 | `make canonical-bootstrap`, `streaming-bootstrap`, `*-verify`, `streaming-compare` | the contract's baselines, restricted to the selection (`smoke-1` = `scene-0061`) | the reference state itself / read-only |
 | `make e2e-scene-ml`, `make e2e-episode-learning` | the contract's Recording Import RobotRun of `SOURCE_UNIT` (default `scene-0061`); Scenes, Episodes and everything derived are written to a `sceneops-test-<journey>-<suffix>` DatasetVersion | `READ_ONLY_REFERENCE` |
-| `make e2e-streaming-equivalence` | arm A is the contract's Recording Import RobotRun, read as it is; arm B streams and registers a RobotRun of its own in its own DatasetVersion | `MUTATING_ACQUISITION_TEST` |
+| `make e2e-streaming-equivalence` | the contract's Recording Import and Streaming Acquisition RobotRuns of `SOURCE_UNIT` (default `scene-0061`), their recordings and their Scenes and Episodes; it creates nothing | `REFERENCE_READ_ONLY` |
 | `make e2e-cleanroom` | resets the runtime, bootstraps the contract's baseline for `smoke-1`, then both L3 journeys in one DatasetVersion of their own | destructive acceptance |
 | `make test-infrastructure` | the contract's Recording Import RobotRun (create-or-verify, `smoke-1`); the tests build its Scenes / Episodes into `sceneops-test-infra-*` DatasetVersions | `READ_ONLY_REFERENCE` |
 

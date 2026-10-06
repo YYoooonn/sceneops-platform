@@ -401,9 +401,9 @@ robot, or a replay of a locked reference MCAP
 The bridge is source-agnostic: it knows ROS2 topics, types and where a
 message carries its source timestamp, never a dataset format. The replay
 sink of the external acquisition tool is one publisher of those topics
-(§10.1); a robot's own stack is another. `make e2e-streaming-equivalence`
-drives the whole path through containers and FastAPI, leaving only the
-RobotRun, Scene and Episode state its pipelines create.
+(§10.1); a robot's own stack is another. `make streaming-bootstrap` drives
+the whole path through containers and FastAPI into the Reference Contract's
+Streaming Acquisition RobotRuns.
 
 ### 10.1 Replay as the external-tool boundary
 
@@ -572,8 +572,8 @@ capture or override it. It becomes the recording's `publish_time` (§20).
 
 **Robot/RobotRun identity.** `--robot-id`/`--robot-run-id` are required
 CLI arguments -- the bridge never derives or defaults them. They are
-transport metadata only. `scripts/e2e/e2e_streaming_equivalence.sh`
-generates a fresh `run-equiv-stream-<epoch>-<pid>` per invocation.
+transport metadata only. The streaming bootstrap passes the Reference Contract's
+RobotRun identity (`run-stream-ref-<corpus>-<fixture>`).
 
 ## 14. Backpressure, shutdown, and failure semantics
 
@@ -678,10 +678,9 @@ recording-publisher container).
 ```text
 make ros2-test                    bridge + capture unit and real-Kafka integration
                                   tests, inside the ros2 image (needs streaming-up)
-make e2e-streaming-equivalence    the streaming vertical + transport-preservation
-                                  equivalence over one locked reference MCAP
-                                  (SCENE / RATE overridable; default smoke-1 /
-                                  the fixture's replay rate; needs DISPOSABLE_RUNTIME=1)
+make e2e-streaming-equivalence    transport-preservation equivalence of one fixture's
+                                  two golden RobotRuns, read-only (SCENE overridable;
+                                  default smoke-1); needs neither Kafka nor ROS 2
 ```
 
 `ros2/nodes/tests/test_streaming_bridge_node.py` uses a `FakeProducerBridge`
@@ -691,39 +690,46 @@ timestamp rule (header, transform header, JSON field), raw-byte forwarding,
 DDS-padding trimming and its non-matches, duplicates, sequence behavior,
 failure counting, QoS, and lifecycle events.
 
-`scripts/e2e/e2e_streaming_equivalence.sh` runs the real chain with
-containers and FastAPI only (the host needs Docker Compose, curl, jq and the
-API port -- no `uv`, no PostgreSQL or MinIO access, no worker CLI). The shared
-logical source of both arms is the locked reference MCAP of one fixture
-(`docs/development/reference-corpus.md`), so equality of the results is a
-statement about the transport, not about two conversions of a dataset:
+`scripts/e2e/e2e_streaming_equivalence.sh` proves the transport preserved the
+acquisition without running it. The Reference Contract holds the same locked MCAP
+(`docs/development/reference-corpus.md`) twice, as two registered RobotRuns of one
+fixture (`docs/development/reference-contract.md`), so equality of the results is
+a statement about the transport, not about two conversions of a dataset:
 
 ```text
-batch      the persistent reference baseline (`ref-<selection>`, canonical-baseline.md):
-             locked MCAP -> RobotRun A -> Scene / Episode. Read as it is
-             (canonical-verify); created by canonical-bootstrap only when absent;
-             never rebuilt. Its RobotRun pins the lock's recording sha256.
-streaming  locked MCAP -> `reference replay` (no raw dataset mounted) -> ROS 2
-             -> bridge -> Kafka -> capture (until RUN_END; receipt)
-             -> publish-pending -> reconcile --apply (REGISTER_ROBOT_RUN) -> RobotRun B
-             -> recording_scene_building + recording_episode_building, with the
-             baseline's build configuration files (config/baselines/)
-verify     replay = bridge = capture = locked counts, per channel; the Kafka audit
-           below; acquisition equivalence (§29.12): channels, message types and
-           encodings, per-channel payload sequences, every Header.stamp and the
-           mission event times, `/tf_static`; Scene and Episode semantic
-           equivalence (I-35); negative controls; the baseline unchanged afterwards
+Recording Import       locked MCAP -> RobotRun -> Scene / Episode. The RobotRun pins
+                       the lock's recording sha256.
+Streaming Acquisition  locked MCAP -> `reference replay` (no raw dataset mounted)
+                       -> ROS 2 -> bridge -> Kafka -> capture (until RUN_END; receipt)
+                       -> publish-pending -> reconcile --apply (REGISTER_ROBOT_RUN)
+                       -> RobotRun -> Scene / Episode, built with the baseline's
+                       build configuration files (config/baselines/). Its RobotRun
+                       pins the captured recording.
+verify                 both recordings read from the ArtifactStore (the registered
+                       recording of each RobotRun, checked against its registered
+                       checksum and manifest) and compared: the locked message and
+                       per-channel counts on both; acquisition equivalence (§29.12):
+                       channels, message types and encodings, per-channel payload
+                       sequences, every Header.stamp and the mission event times,
+                       `/tf_static`; Scene and Episode semantic equivalence (I-35);
+                       negative controls; every RobotRun, Dataset, Scene and
+                       Episode record unchanged afterwards
 ```
+
+The journey replays, captures, publishes, registers and builds nothing, uses no
+Kafka, ROS 2, bridge, replay container, capture volume or reference cache, and
+writes no durable state (`REFERENCE_READ_ONLY`, `docs/development/test-matrix.md`).
+The host needs Docker Compose, curl, jq, python3 (standard library) and the API port.
 
 Container bytes, capture `log_time`, schema-definition text and cross-channel
 write order are not compared; Scene / Episode builds that read
 `mcap_log_time` or `mcap_publish_time` would legitimately differ and are not part
 of the comparison (the baseline configurations use source-semantic clocks only).
 
-The negative controls are minimal, real perturbations of the loaded data: a
-message dropped from a channel, one `Header.stamp` or one Scene / Episode
-observation time shifted by 1 ns, one payload checksum changed. The verifier
-must report each as a difference.
+The negative controls are minimal, real perturbations of the loaded data, applied
+to in-memory copies: a message dropped from a channel, one `Header.stamp` or one
+Scene / Episode observation time shifted by 1 ns, one payload checksum changed. The
+verifier must report each as a difference.
 
 **Kafka offsets of a streamed run.** A run's records on its partition are
 `RUN_START`, `message_count` telemetry records and `RUN_END`: the bridge publishes
@@ -733,8 +739,11 @@ in their own sequence space and never writes them to the MCAP, but they are cons
 records, so the capture receipt's `kafka.first_offset .. kafka.last_offset` spans
 `message_count + 2` offsets when the run owns that offset range (other runs hashed
 to the same partition interleave their offsets without changing the run's own
-records). `scripts/e2e/streaming_kafka_audit.py` reads the topic and asserts exactly
-those records and that the receipt's range runs from `RUN_START` to `RUN_END`.
+records). `ros2/capture/tests/test_lifecycle_integration.py` proves this on a real
+broker: the real bridge node publishes through its real producer, the topic holds
+exactly one `RUN_START`, the run's telemetry records and one `RUN_END` in that order,
+and capture finalizes on the explicit `RUN_END` with a receipt whose offset range
+runs from `RUN_START` to `RUN_END`.
 
 `make streaming-bootstrap` applies the same streaming path (the shared
 `scripts/streaming/streaming_lib.sh`) to every fixture of a corpus scope and keeps the
@@ -1104,10 +1113,11 @@ durability ordering, crash boundaries C and D including conflicting retry),
 the router, and real-Kafka integration (multi-run isolation, lifecycle,
 camera- and lidar-sized payloads, oversize failure).
 
-`make e2e-streaming-equivalence` (§16) is the real vertical: the captured
-recording is checked with the L1 conformance suite
+`make streaming-bootstrap` is the real vertical: the captured recording is
+checked with the L1 conformance suite
 (`python -m sceneops_integrations.recording check`), published from its capture
-receipt, registered, built into Scenes and Episodes, and compared with the locked
+receipt, registered and built into Scenes and Episodes; `make
+e2e-streaming-equivalence` (§16) compares the registered result with the locked
 recording it was replayed from. Capture's output is checked by the same conformance suite as
 the batch tool's.
 
@@ -1260,7 +1270,7 @@ for it, so every record takes the exact path this module always used.
 ## 33. Make surface, verification, and current limitations
 
 No CLI entry point or make/e2e target runs `ContinuousCaptureRouter`
-against a live scenario the way `cli.py` / `make e2e-streaming-equivalence`
+against a live scenario the way `cli.py` / `make streaming-bootstrap`
 exercise `RunScopedCapture`. Verification is unit tests
 (`ros2/capture/tests/test_router.py`,
 `test_lifecycle_integration.py`) plus real-Kafka integration tests
@@ -1326,7 +1336,7 @@ recording by `RECORDING_SCENE_BUILDING` / `RECORDING_EPISODE_BUILDING`
 `CameraInfo`, `/tf`, `/tf_static` and telemetry channels (§11), so a
 streamed recording is as buildable as a batch one; `make
 e2e-streaming-equivalence` shows a locked recording replayed through the
-transport yields Scenes and Episodes equivalent to the batch baseline's.
+transport yields Scenes and Episodes equivalent to the Recording Import RobotRun's.
 
 Reliability and scale characteristics of everything above -- crash
 boundaries, duplicate/gap/out-of-order handling, multi-RobotRun
@@ -1409,7 +1419,8 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - CLI entry point: `ros2/capture/cli.py`
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `ros2/Dockerfile`, capture source mount: `compose/ros2.yaml`
 - Realistic sensor payloads through real Kafka: `ros2/capture/tests/test_sensor_payload_kafka_integration.py`
-- E2E: `scripts/e2e/e2e_streaming_equivalence.sh`, `scripts/e2e/streaming_equivalence_verify.py`, `scripts/e2e/streaming_kafka_audit.py`, `make e2e-streaming-equivalence`
+- Lifecycle envelope of a run (real bridge, real Kafka, capture receipt offsets): `ros2/capture/tests/test_lifecycle_integration.py`
+- E2E (read-only over the Reference Contract): `scripts/e2e/e2e_streaming_equivalence.sh`, `scripts/e2e/streaming_equivalence_verify.py` (decisions unit-tested in `scripts/e2e/tests`), `make e2e-streaming-equivalence`
 - Recording equivalence and conformance: `packages/sceneops-integrations/sceneops_integrations/recording/{equivalence,conformance}.py`
 
 **Continuous multi-run capture:**

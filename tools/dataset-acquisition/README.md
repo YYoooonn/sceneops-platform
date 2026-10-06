@@ -213,7 +213,7 @@ only. Canonicalization, RobotRun identity and registration never read it
 ```bash
 make acquisition-test        # synthetic dataroot + replay scheduling + import boundary + real nuScenes mini
 make acquisition-image-check # boundary check inside both built images
-make e2e-streaming-equivalence # locked MCAP replay -> ROS 2 -> bridge -> Kafka -> capture, equivalent to the batch baseline
+make e2e-streaming-equivalence # read-only: the streamed RobotRun of a locked MCAP is equivalent to the imported one
 ```
 
 `tests/test_nuscenes_mini.py` converts a full real scene and compares every
