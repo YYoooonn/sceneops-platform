@@ -15,9 +15,12 @@
 # locked reference corpus: no raw dataset is read or mounted.
 #
 # Selection: REFERENCE_SCOPE (default smoke-1; nuscenes-mini-full-10) or FIXTURE (one
-# fixture). Identity: BASELINE_ID defaults to `stream-ref-<scope>` (`stream-ref-<fixture>`
-# for FIXTURE), so it never shares a robot, RobotRun or DatasetVersion with the batch
-# baseline `ref-<scope>`. One fixture is one streamed RobotRun
+# fixture) chooses which fixtures are acted on. Identity: the golden reference contract's
+# streaming_acquisition baseline (`stream-ref-nuscenes-mini-full-10`) whatever the
+# selection (smoke-1 is scene-0061 of that baseline, not another one), so it never shares
+# a robot, RobotRun or DatasetVersion with the Recording Import baseline. A different
+# BASELINE_ID names non-contract streamed RobotRuns and needs a disposable runtime
+# (DISPOSABLE_RUNTIME=1). One fixture is one streamed RobotRun
 # (run-<BASELINE_ID>-<fixture>), one whole-recording Scene and one Episode.
 # RATE overrides every fixture's replay rate.
 #
@@ -52,7 +55,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 source "$REPO_ROOT/scripts/e2e/lib.sh"
-BASELINE_PREFIX="${BASELINE_PREFIX:-stream-ref}"
+BASELINE_MODE=streaming_acquisition
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
@@ -98,26 +101,6 @@ stall_watch_start() {
 stall_watch_stop() {
   [ -z "$STALL_WATCH_PID" ] || { kill "$STALL_WATCH_PID" 2>/dev/null || true; wait "$STALL_WATCH_PID" 2>/dev/null || true; }
   STALL_WATCH_PID=""
-}
-
-# fixture_complete <run-id> — the RobotRun has its expected Scenes and Episodes,
-# all validated, profiled and ready at their current revision.
-fixture_complete() {
-  local run_id="$1" scenes episodes id
-  local scenes_expected episodes_expected
-  scenes_expected="$(jq -r '.scenes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
-  episodes_expected="$(jq -r '.episodes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
-  scenes="$(api_get "$API_BASE_URL" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500" 2>/dev/null \
-    | jq -c --arg r "$run_id" '[.scenes[]? | select(.robotRunId == $r)]')" || return 1
-  episodes="$(api_get "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500" 2>/dev/null \
-    | jq -c --arg r "$run_id" '[.episodes[]? | select(.robotRunId == $r)]')" || return 1
-  [ "$(echo "$scenes" | jq length)" = "$scenes_expected" ] && [ "$(echo "$episodes" | jq length)" = "$episodes_expected" ] || return 1
-  for id in $(echo "$scenes" | jq -r '.[].sceneId'); do
-    api_get "$API_BASE_URL" "/scenes/$id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null || return 1
-  done
-  for id in $(echo "$episodes" | jq -r '.[].episodeId'); do
-    api_get "$API_BASE_URL" "/episodes/$id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null || return 1
-  done
 }
 
 # disk_guard — stop before a fixture if the host or the Docker VM is short of space.
@@ -213,7 +196,7 @@ process_fixture() {
   fi
 
   t3="$(now)"
-  if fixture_complete "$run_id"; then
+  if baseline_fixture_complete "$run_id"; then
     log "  Scene and Episode of $run_id are built and ready: reused"
     t4="$t3"
     t5="$t3"
@@ -240,20 +223,28 @@ process_fixture() {
 
 log "=== streaming baseline '$BASELINE_ID': $DATASET_ID/$DATASET_VERSION from $REFERENCE_CORPUS (${FIXTURE:-$REFERENCE_SCOPE}) ==="
 require_api "$API_BASE_URL"
-ACTIVE="$(docker ps --no-trunc --format '{{.Names}} {{.Command}}' \
-  | grep -E 'capture/cli\.py|streaming_bridge_node|publication-recovery|registration-recovery' || true)"
-[ -z "$ACTIVE" ] || fail "an unrelated capture, bridge or recovery loop is running (stop it first, e.g. make recovery-down):
+baseline_guard_identity
+log "--- reference corpus: locked facts of the selection"
+baseline_resolve lock-only
+# Kafka, the capture containers and the cached recordings matter only while a
+# RobotRun has still to be streamed; a baseline whose RobotRuns are all registered
+# is checked and, if needed, built into, without touching any of them.
+ACQUIRING=0
+if ! baseline_all_registered; then
+  ACQUIRING=1
+  ACTIVE="$(docker ps --no-trunc --format '{{.Names}} {{.Command}}' \
+    | grep -E 'capture/cli\.py|streaming_bridge_node|publication-recovery|registration-recovery' || true)"
+  [ -z "$ACTIVE" ] || fail "an unrelated capture, bridge or recovery loop is running (stop it first, e.g. make recovery-down):
 $ACTIVE"
-"${COMPOSE[@]}" up -d --wait kafka >/dev/null 2>&1 || fail "Kafka did not become healthy"
-log "  Kafka up; no capture, bridge or recovery container running"
-log "streaming_storage $(streaming_storage)"
-
-log "--- reference corpus: fixtures and cached recordings, verified against the lock"
-baseline_resolve full
+  "${COMPOSE[@]}" up -d --wait kafka >/dev/null 2>&1 || fail "Kafka did not become healthy"
+  log "  Kafka up; no capture, bridge or recovery container running"
+  log "streaming_storage $(streaming_storage)"
+  log "--- a RobotRun has to be streamed: cached recordings verified against the lock"
+  baseline_resolve full
+fi
 log "  $(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id]')"
 
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "Streaming baseline $BASELINE_ID" >/dev/null
-upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" >/dev/null
+baseline_ensure_dataset "Streaming baseline $BASELINE_ID"
 
 # Collected into an array first: a docker container inside a `while read` loop would
 # consume the remaining fixtures from stdin. (No mapfile: the host bash may be 3.2.)
@@ -261,7 +252,7 @@ fixtures=()
 while IFS= read -r fixture; do fixtures+=("$fixture"); done < <(echo "$BASELINE_FIXTURES" | jq -c '.[]')
 for fixture in "${fixtures[@]}"; do
   process_fixture "$fixture"
-  log "streaming_storage $(streaming_storage)"
+  [ "$ACQUIRING" = 0 ] || log "streaming_storage $(streaming_storage)"
 done
 
 log "--- verify"

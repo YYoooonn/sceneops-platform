@@ -29,8 +29,11 @@
 # inference server (`make inference-local-up` / `inference-gpu-up`) and lifts
 # boxes through the real lidar payload.
 #
-# BASELINE_ID selects the baseline to run on (default: a unique one per run;
-# `canonical` reuses the persistent baseline, e.g. from e2e-cleanroom).
+# Test-state class: READ_ONLY_REFERENCE (docs/development/test-matrix.md). The RobotRun is
+# the golden reference contract's (BASELINE_ID, default ref-nuscenes-mini-full-10); no
+# RobotRun is created, and nothing is written to the reference DatasetVersion: the
+# Scenes, labels, views, ScenarioSet, predictions and evaluations of the journey live in
+# DATASET_ID (default: a new sceneops-test-scene-ml-<suffix>), which a runtime reset drops.
 #
 # Prerequisites: `make local-up`, `make acquisition-image` and
 # `make reference-data-bootstrap` (recordings and reference labels in data/reference).
@@ -46,11 +49,13 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 BACKEND="${BACKEND:-mock}"
 SOURCE_UNIT="${SOURCE_UNIT:-scene-0061}"
 SUFFIX="$(date +%s)-$$"
-export BASELINE_ID="${BASELINE_ID:-e2e-scene-ml-$SUFFIX}"
+# The source RobotRun is the golden reference contract's (BASELINE_ID defaults to it);
+# everything the journey writes goes to a DatasetVersion of its own.
+export DATASET_ID="${DATASET_ID:-sceneops-test-scene-ml-$SUFFIX}"
 export FIXTURE="$SOURCE_UNIT"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 RUN_ID="$(baseline_run_id "$SOURCE_UNIT")"
-LABEL_SET_ID="labels-$BASELINE_ID-$SOURCE_UNIT"
+LABEL_SET_ID="labels-$DATASET_ID-$SOURCE_UNIT"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
 
 CAMERA="/camera/front/image/compressed"

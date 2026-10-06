@@ -52,9 +52,14 @@ def test_recording_episode_building_through_airflow(api, baseline_run):
     assert len(api.episodes(dataset)) == baseline_run["episode_count"]
 
 
-def test_episode_learning_data_building_through_airflow(api, baseline, baseline_run):
-    """The L3 pipeline over one RobotRun's pinned Episodes of the baseline."""
-    dataset = (baseline["dataset_id"], baseline["dataset_version"])
+def test_episode_learning_data_building_through_airflow(api, baseline_run):
+    """The L3 pipeline over one RobotRun's pinned Episodes, built into a DatasetVersion of
+    the test's own: the reference DatasetVersion is never written to."""
+    dataset = api.new_dataset_version("airflow-learning")
+    built = api.run(
+        "recording_episode_building", dataset, episode_params(baseline_run["robot_run_id"])
+    )
+    assert built["status"] == "succeeded", built
     pins = [
         {
             "episode_id": e["episodeId"],

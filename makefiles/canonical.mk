@@ -15,7 +15,9 @@
 #                        API; creates and mutates nothing.
 #
 # REFERENCE_SCOPE (default smoke-1; nuscenes-mini-full-10) or FIXTURE selects the
-# fixtures; BASELINE_ID (default ref-<scope> / ref-<fixture>) names the baseline.
+# fixtures; the baseline is the golden reference contract's recording_import baseline
+# whatever the selection (smoke-1 = scene-0061 of it). A BASELINE_ID of another name
+# registers non-contract RobotRuns and needs DISPOSABLE_RUNTIME=1.
 # Independent of `local-reset`, which only destroys state.
 # --------------------
 

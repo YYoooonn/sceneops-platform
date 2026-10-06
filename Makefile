@@ -30,13 +30,17 @@ ROS2_CMD        ?=
 # Journey selection -- the only user-facing variables of the E2E / baseline
 # surface (see makefiles/e2e.mk). SCENE: the nuScenes scene (default
 # scene-0061). RATE: streaming replay rate (default: the fixture's replay
-# definition). BASELINE_ID: run a journey on a named canonical baseline (default:
-# a unique one per run; streaming equivalence reads the persistent ref-<selection>
-# baseline). BACKEND / MAX_SAMPLES: the detection backend and sample cap of the
-# Scene ML journey.
+# definition). BASELINE_ID: the baseline whose RobotRuns a journey uses (default: the
+# golden reference contract's; a different one registers non-contract RobotRuns and
+# needs DISPOSABLE_RUNTIME=1). DATASET_ID: the DatasetVersion an L3 journey writes
+# into (default: a new sceneops-test-<journey>-<suffix>). DISPOSABLE_RUNTIME=1: this
+# runtime will be reset afterwards (docs/development/test-matrix.md). BACKEND /
+# MAX_SAMPLES: the detection backend and sample cap of the Scene ML journey.
 SCENE           ?=
 RATE            ?=
 BASELINE_ID     ?=
+DATASET_ID      ?=
+DISPOSABLE_RUNTIME ?=
 BACKEND         ?=
 MAX_SAMPLES     ?=
 
@@ -79,12 +83,13 @@ help:
 	@echo "=================================================================="
 	@echo "E2E journeys -- exactly five (containers + FastAPI; host needs docker compose, curl, jq):"
 	@echo "=================================================================="
-	@echo "  make e2e-batch-canonical [SCENE=scene-0061]      dataset fixture -> batch MCAP -> RobotRun -> Scenes -> Episodes"
-	@echo "  make e2e-streaming-equivalence [SCENE=.. RATE=..] the locked reference MCAP via the batch baseline and via replay -> ROS 2 -> Kafka -> capture: equivalent"
-	@echo "  make e2e-scene-ml [SCENE=scene-0061]             Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)"
-	@echo "  make e2e-episode-learning [SCENE=scene-0061]     Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip"
-	@echo "  make e2e-cleanroom                               [DESTRUCTIVE] local-reset -> images -> canonical-bootstrap -> both L3 journeys -> verification"
-	@echo "  BASELINE_ID=<id> runs a journey on a named baseline; default is a unique one per run."
+	@echo "  make e2e-batch-canonical [SCENE=scene-0061]      [DISPOSABLE_RUNTIME=1] dataset fixture -> batch MCAP -> RobotRun -> Scenes -> Episodes"
+	@echo "  make e2e-streaming-equivalence [SCENE=.. RATE=..] [DISPOSABLE_RUNTIME=1] the locked reference MCAP via the reference RobotRun and via replay -> ROS 2 -> Kafka -> capture: equivalent"
+	@echo "  make e2e-scene-ml [SCENE=scene-0061]             reference RobotRun -> Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)"
+	@echo "  make e2e-episode-learning [SCENE=scene-0061]     reference RobotRun -> Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip"
+	@echo "  make e2e-cleanroom                               [DESTRUCTIVE] local-reset -> images -> canonical-bootstrap (golden identity, scene-0061) -> both L3 journeys -> verification"
+	@echo "  e2e-scene-ml / e2e-episode-learning consume the golden reference RobotRun and write into a DatasetVersion of their own (DATASET_ID=<id>);"
+	@echo "  e2e-batch-canonical / e2e-streaming-equivalence register RobotRuns of their own and need DISPOSABLE_RUNTIME=1 (docs/development/test-matrix.md)."
 	@echo "  make acceptance-grounding-dino                   Model-backend acceptance of e2e-scene-ml (needs an inference server)"
 	@echo ""
 	@echo "=================================================================="
@@ -96,17 +101,17 @@ help:
 	@echo "=================================================================="
 	@echo "Canonical baseline (docs/development/canonical-baseline.md):"
 	@echo "=================================================================="
-	@echo "  make canonical-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [BASELINE_ID=ref-<scope>]"
+	@echo "  make canonical-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [DISPOSABLE_RUNTIME=1 BASELINE_ID=<other>]"
 	@echo "                                create-or-verify the Recording Import baseline (existing MCAP -> RobotRun -> Scene -> Episode) from the prepared recordings (converts nothing)"
 	@echo "  make canonical-verify [same selection]   read-only re-check through the API"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Streaming baseline (docs/development/canonical-baseline.md):"
 	@echo "=================================================================="
-	@echo "  make streaming-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [BASELINE_ID=stream-ref-<scope>] [RATE=..]"
+	@echo "  make streaming-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [RATE=..]"
 	@echo "                                create-or-verify the Streaming Acquisition baseline: locked MCAP -> replay -> ROS 2 -> Kafka -> capture -> publish-pending -> reconcile -> RobotRun -> Scene -> Episode"
 	@echo "  make streaming-verify [same selection]   read-only re-check through the API"
-	@echo "  make streaming-compare [same selection]  read-only: ref-<scope> (Recording Import) vs stream-ref-<scope> (Streaming Acquisition), corpus level"
+	@echo "  make streaming-compare [same selection]  read-only: the Recording Import vs the Streaming Acquisition baseline of the contract, corpus level"
 	@echo ""
 	@echo "=================================================================="
 	@echo "Golden reference contract (docs/development/reference-contract.md):"

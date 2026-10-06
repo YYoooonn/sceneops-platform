@@ -341,6 +341,50 @@ def test_unrelated_temporary_runs_are_reported_and_leave_the_contract_unchanged(
     assert inventory["orphan_scenes"] == []
 
 
+def test_state_summarizes_the_reference_environment():
+    report = evaluate(build_obs())
+    assert report["state"] == {
+        "contract_robot_runs": 20,
+        "non_contract_robot_runs": 0,
+        "contract_scenes": 20,
+        "contract_episodes": 20,
+        "non_contract_datasets": 0,
+        "clean": True,
+    }
+
+
+def _polluted_obs():
+    obs = build_obs()
+    obs["robot_runs"].append(
+        {"runId": "run-test-batch-1-scene-0061", "robotId": "robot-test-batch-1", "registeredAt": "t1"}
+    )  # fmt: skip
+    obs["datasets"].append("sceneops-test-scene-ml-1")
+    return obs
+
+
+def test_non_contract_state_is_reported_but_only_fails_a_clean_environment():
+    obs = _polluted_obs()
+    report = evaluate(obs)
+    assert report["ok"], report["violations"]
+    assert report["state"]["clean"] is False
+    assert report["state"]["non_contract_robot_runs"] == 1
+    assert report["state"]["non_contract_datasets"] == 1
+    assert report["inventory"]["non_contract_robot_runs_by_kind"] == {
+        "temporary_e2e": 1
+    }
+
+    strict = rc.evaluate(CONTRACT, LOCK, obs, require_clean=True)
+    assert not strict["ok"]
+    assert codes(strict) == ["non_contract_dataset", "non_contract_robot_run"]
+    # The contract itself is unaffected: still 20 / 20 / 20.
+    assert strict["state"]["contract_robot_runs"] == 20
+    assert strict["totals"]["observed"]["robot_runs"] == 20
+
+
+def test_a_clean_environment_passes_the_strict_check():
+    assert rc.evaluate(CONTRACT, LOCK, build_obs(), require_clean=True)["ok"]
+
+
 def test_orphan_units_are_inventoried():
     obs = build_obs()
     obs["scenes"].append(

@@ -5705,3 +5705,40 @@ count, any Scene segmentation policy and several Scenes per RobotRun. The contra
 is verified read-only and converged by composing the existing baseline bootstraps;
 it never replaces a registered RobotRun. See
 [`docs/development/reference-contract.md`](../development/reference-contract.md).
+
+### 35.3 The reference environment and disposable test state
+
+**Decision.** The local reference environment holds exactly the golden reference
+contract. Generated runtime state is disposable and is reconstructed, never
+selectively deleted:
+
+```text
+make local-reset                       drops PostgreSQL, Redis, MinIO, the Kafka log, the capture volume
+make reference-contract-bootstrap      rebuilds the 20 RobotRuns from the locked corpus (data/reference)
+make reference-contract-verify REQUIRE_CLEAN=1   20 RobotRuns / 20 Scenes / 20 Episodes, nothing else
+```
+
+`smoke-1` is a fixture selection (`scene-0061` of the contract's baselines), not a
+baseline: no `ref-smoke-1` or `stream-ref-smoke-1` RobotRun or DatasetVersion exists.
+
+**Why.** Canonical identity is immutable and the platform removes none of it (no
+delete API for RobotRuns, Scenes, Episodes, Datasets, Jobs or ArtifactRecords; nothing
+under `robot_runs/` is deleted, ADR-008 §6). A test-only deletion lifecycle, whether
+direct SQL or a purpose-built API, would bypass the semantics every other consumer
+relies on (RESTRICT foreign keys, write-once pinned artifacts, lineage) and would be a
+second, untested implementation of removal. The reference corpus is locked and
+byte-identical, so reconstruction is reproducible by construction and costs only time.
+
+**Consequences.**
+
+- Workflows are classed by what they leave behind (`READ_ONLY_REFERENCE` or
+  `MUTATING_ACQUISITION_TEST`, [test-matrix.md](../development/test-matrix.md)). The first
+  consume the contract's RobotRuns, register none and write only into
+  `sceneops-test-*` DatasetVersions of their own; the second register RobotRuns of
+  their own and refuse to run without `DISPOSABLE_RUNTIME=1`.
+- A runtime that ran a mutating workflow is not the reference environment until it is
+  reset and rebuilt; `REQUIRE_CLEAN=1` is the check, and it applies to the dedicated
+  reference environment only (a general development platform may hold any RobotRun).
+- Isolating the mutating workflows on a runtime of their own (separate Compose project
+  and network) is a separate piece of work; until then the guard and the reset are the
+  mechanism.

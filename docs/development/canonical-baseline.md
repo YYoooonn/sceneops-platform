@@ -36,7 +36,7 @@ workflows that run on top of a baseline (`make e2e-scene-ml`,
 ## Commands
 
 ```text
-make canonical-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [BASELINE_ID=...]
+make canonical-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>]
 make canonical-verify    [same selection]                      read-only re-check
 ```
 
@@ -67,15 +67,24 @@ make canonical-verify    [same selection]                      read-only re-chec
 ## Selection and identity
 
 `REFERENCE_SCOPE` (default `smoke-1`) selects the fixtures of a corpus scope;
-`FIXTURE=<id>` selects one fixture instead. `BASELINE_ID` names everything the
-baseline owns and defaults to the selection, so a smoke baseline and a full
-baseline never share a RobotRun set or a DatasetVersion:
+`FIXTURE=<id>` selects one fixture instead. A selection only chooses **which
+fixtures are acted on**: the baseline is always the
+[golden reference contract's](./reference-contract.md) `recording_import` baseline
+(`BASELINE_ID=ref-nuscenes-mini-full-10`), so
 
-| Selection | Default `BASELINE_ID` |
-| --- | --- |
-| `REFERENCE_SCOPE=smoke-1` | `ref-smoke-1` |
-| `REFERENCE_SCOPE=nuscenes-mini-full-10` | `ref-nuscenes-mini-full-10` |
-| `FIXTURE=scene-0103` | `ref-scene-0103` |
+| Selection | Fixtures acted on | Baseline |
+| --- | --- | --- |
+| `REFERENCE_SCOPE=smoke-1` | `scene-0061` | `ref-nuscenes-mini-full-10` |
+| `REFERENCE_SCOPE=nuscenes-mini-full-10` | all ten | `ref-nuscenes-mini-full-10` |
+| `FIXTURE=scene-0103` | `scene-0103` | `ref-nuscenes-mini-full-10` |
+
+`smoke-1` is `scene-0061` of the full baseline, never a second baseline with
+RobotRuns and a DatasetVersion of its own. `canonical-verify` on a selection that is
+a part of the baseline requires the selected RobotRuns (and everything of the
+DatasetVersion to belong to a RobotRun of the baseline's robot); on the whole scope
+it requires exactly the contract's.
+
+`BASELINE_ID` names everything the baseline owns:
 
 | Entity | Identity |
 | --- | --- |
@@ -83,17 +92,27 @@ baseline never share a RobotRun set or a DatasetVersion:
 | Robot | `robot-<BASELINE_ID>` |
 | DatasetVersion | `sceneops-<BASELINE_ID>` / `baseline` |
 
-A journey that mutates its scope uses a unique id per run
-(`e2e-batch-<timestamp>-<pid>`).
+A baseline of any other `BASELINE_ID` registers RobotRuns that are not part of the
+reference contract. Only a disposable runtime may hold them
+(`DISPOSABLE_RUNTIME=1`; see [test-matrix.md](./test-matrix.md#test-state-classes));
+the bootstrap refuses otherwise. `DATASET_ID` may name another DatasetVersion: the
+bootstrap then builds the Scenes and Episodes of the (reference) RobotRuns into it
+and registers no RobotRun, which is how the L3 journeys keep the reference
+DatasetVersion untouched.
 
 ## create-or-verify
 
 - A RobotRun that is already registered is **reused**, never re-published, and must
   pin exactly the fixture's locked recording (sha256 and size): a mismatch fails
   loudly. Recovery from a mismatched baseline is an explicit `make local-reset`
-  and rebuild, or another `BASELINE_ID`.
-- A Scene / Episode build over an unchanged scope **converges** on the registered
-  revisions (`replace: false`; the registrar reports every unit as unchanged).
+  and rebuild.
+- A RobotRun whose Scenes and Episodes are all in the DatasetVersion, validated,
+  profiled and ready is **reused as it is**: no build pipeline runs over it. The cached
+  recordings are hashed against the lock only when a RobotRun has to be published, so
+  the bootstrap of a complete baseline reads the platform and writes nothing.
+- A Scene / Episode build over an incomplete or changed scope **converges** on the
+  registered revisions (`replace: false`; the registrar reports every unit as
+  unchanged).
 - A changed producer or build configuration fails **loudly at registration**; it
   never replaces canonical membership.
 - Nothing writes PostgreSQL or MinIO directly. Prepared recordings are published
@@ -146,18 +165,20 @@ locked reference MCAP (one per fixture)
 ```
 
 ```text
-make streaming-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [BASELINE_ID=...] [RATE=...]
+make streaming-bootstrap [REFERENCE_SCOPE=smoke-1|nuscenes-mini-full-10 | FIXTURE=<id>] [RATE=...]
 make streaming-verify    [same selection]            read-only re-check
 make streaming-compare   [same selection]            read-only: Recording Import baseline vs Streaming Acquisition baseline
 ```
 
-- `BASELINE_ID` defaults to `stream-ref-<selection>` (`stream-ref-smoke-1`,
-  `stream-ref-nuscenes-mini-full-10`, `stream-ref-<fixture>`). Robot, RobotRun
-  (`run-<BASELINE_ID>-<fixture>`) and DatasetVersion follow the same identity rules as
-  the Recording Import baseline, so the two never share a RobotRun set or a DatasetVersion.
+- `BASELINE_ID` is the contract's `streaming_acquisition` baseline,
+  `stream-ref-nuscenes-mini-full-10`, whatever the selection (`smoke-1` is
+  `scene-0061` of it). Robot, RobotRun (`run-<BASELINE_ID>-<fixture>`) and DatasetVersion
+  follow the same identity rules as the Recording Import baseline, so the two never share
+  a RobotRun set or a DatasetVersion.
 - `RATE` overrides every fixture's replay rate. The bootstrap needs Kafka (it starts
-  the broker if absent), `make local-up`, and the fixtures prepared by
-  `make reference-data-bootstrap`. It reads no raw dataset and converts nothing.
+  the broker only when a RobotRun has still to be streamed), `make local-up`, and the
+  fixtures prepared by `make reference-data-bootstrap`. It reads no raw dataset and
+  converts nothing.
 - Publication and registration are the production commands of
   [ADR-008](../adr/008-acquisition-lifecycle-reliability.md); nothing writes PostgreSQL
   or MinIO directly.
@@ -236,14 +257,15 @@ fixture by `make e2e-streaming-equivalence`.
 
 ## Where baselines are used
 
-| Consumer | Baseline |
-| --- | --- |
-| `make e2e-batch-canonical` | its own unique baseline of one fixture; also proves bootstrap re-runs change nothing |
-| `make e2e-scene-ml`, `make e2e-episode-learning` | a unique baseline of one fixture per run, or `BASELINE_ID=<id>` of a baseline that contains exactly that fixture |
-| `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | the persistent `stream-ref-<selection>`; the Recording Import baseline is only read |
-| `make e2e-streaming-equivalence` | the persistent `ref-<selection>` (`ref-smoke-1` by default) as the Recording Import arm: verified read-only when registered, created only when absent, never rebuilt; the streamed arm is a unique RobotRun in its own DatasetVersion |
-| `make e2e-cleanroom` | the persistent `ref-smoke-1`, built from fresh platform state |
-| `make test-infrastructure` | the persistent `ref-smoke-1` (create-or-verify); tests build one RobotRun's Scenes / Episodes into throwaway DatasetVersions |
+| Consumer | Baseline | Test-state class |
+| --- | --- | --- |
+| `make reference-contract-bootstrap` | both contract baselines, all ten fixtures | the reference state itself |
+| `make canonical-bootstrap`, `streaming-bootstrap`, `*-verify`, `streaming-compare` | the contract's baselines, restricted to the selection (`smoke-1` = `scene-0061`) | the reference state itself / read-only |
+| `make e2e-scene-ml`, `make e2e-episode-learning` | the contract's Recording Import RobotRun of `SOURCE_UNIT` (default `scene-0061`); Scenes, Episodes and everything derived are written to a `sceneops-test-<journey>-<suffix>` DatasetVersion | `READ_ONLY_REFERENCE` |
+| `make e2e-streaming-equivalence` | arm A is the contract's Recording Import RobotRun, read as it is; arm B streams and registers a RobotRun of its own in its own DatasetVersion | `MUTATING_ACQUISITION_TEST` |
+| `make e2e-batch-canonical` | its own unique `test-e2e-batch-<timestamp>-<pid>` baseline of one fixture; also proves bootstrap re-runs change nothing | `MUTATING_ACQUISITION_TEST` |
+| `make e2e-cleanroom` | resets the runtime, bootstraps the contract's baseline for `smoke-1`, then both L3 journeys in one DatasetVersion of their own | destructive acceptance |
+| `make test-infrastructure` | the contract's Recording Import RobotRun (create-or-verify, `smoke-1`); the tests build its Scenes / Episodes into `sceneops-test-infra-*` DatasetVersions | `READ_ONLY_REFERENCE` |
 
 The baseline is independent of `make local-reset`: reset only destroys generated
 state, the bootstrap (re)creates the baseline on top of a running stack, and the

@@ -17,11 +17,21 @@
 # not prepared, or does not match the lock, is an error that points at
 # `make reference-data-bootstrap`.
 #
-# BASELINE_PREFIX (default `ref`) prefixes the default BASELINE_ID, and
+# Identity: the baseline of a mode is the golden reference contract's
+# (config/reference/<corpus>/reference_contract.json), whatever the selection.
+# A selection only narrows which fixtures are acted on: `smoke-1` is scene-0061
+# of the contract's baseline, never a second baseline with RobotRuns of its own.
+# BASELINE_MODE (recording_import by default; streaming_acquisition for the
+# streaming baseline) picks the contract mode. An explicit BASELINE_ID names a
+# different baseline: that creates non-contract RobotRuns, which only a
+# disposable runtime may hold (require_disposable_runtime, scripts/e2e/lib.sh).
+# DATASET_ID / ROBOT_ID default to the baseline's own and may be overridden: a
+# journey that only needs Scenes / Episodes of a contract RobotRun builds them
+# into a DatasetVersion of its own and registers no RobotRun.
+#
 # BASELINE_RECORDING_ASSERT names the function that checks a registered RobotRun's
-# recording against its fixture: the streaming baseline (scripts/streaming) is
-# `stream-ref-<selection>`, and its recording is the captured MCAP, not the locked
-# one.
+# recording against its fixture: the streaming baseline (scripts/streaming) pins
+# its captured MCAP, not the locked one.
 #
 # Sourced by canonical_bootstrap.sh and canonical_verify.sh after
 # scripts/e2e/lib.sh. Every read goes through the FastAPI control plane.
@@ -31,14 +41,13 @@ REFERENCE_SCOPE="${REFERENCE_SCOPE:-smoke-1}"
 FIXTURE="${FIXTURE:-}"
 export REFERENCE_DATA_ROOT="${REFERENCE_DATA_ROOT:-$REPO_ROOT/data/reference}"
 
-# A single fixture and a scope are different baselines: the identity follows the
-# selection, so smoke and full never share a RobotRun set or a DatasetVersion.
-if [ -n "$FIXTURE" ]; then
-  BASELINE_SELECTION="$FIXTURE"
-else
-  BASELINE_SELECTION="$REFERENCE_SCOPE"
-fi
-BASELINE_ID="${BASELINE_ID:-${BASELINE_PREFIX:-ref}-$BASELINE_SELECTION}"
+BASELINE_MODE="${BASELINE_MODE:-recording_import}"
+REFERENCE_CONTRACT_FILE="${REFERENCE_CONTRACT_FILE:-$REPO_ROOT/config/reference/$REFERENCE_CORPUS/reference_contract.json}"
+[ -r "$REFERENCE_CONTRACT_FILE" ] || fail "no reference contract at $REFERENCE_CONTRACT_FILE"
+CONTRACT_BASELINE_ID="$(jq -r --arg m "$BASELINE_MODE" '.ingestion_modes[$m].baseline_id // empty' "$REFERENCE_CONTRACT_FILE")"
+[ -n "$CONTRACT_BASELINE_ID" ] || fail "the reference contract has no ingestion mode '$BASELINE_MODE'"
+CONTRACT_FIXTURE_IDS="$(jq -c '[.fixtures[].fixture_id] | sort' "$REFERENCE_CONTRACT_FILE")"
+BASELINE_ID="${BASELINE_ID:-$CONTRACT_BASELINE_ID}"
 ROBOT_ID="${ROBOT_ID:-robot-$BASELINE_ID}"
 DATASET_ID="${DATASET_ID:-sceneops-$BASELINE_ID}"
 DATASET_VERSION="${DATASET_VERSION:-baseline}"
@@ -105,11 +114,75 @@ baseline_register_fixture() {
   if api_get "$API_BASE_URL" "/robot-runs/$run_id" >/dev/null 2>&1; then
     log "--- RobotRun $run_id is registered: reused"
   else
+    { [ -n "$path" ] && [ "$path" != null ]; } \
+      || fail "RobotRun $run_id is not registered and the fixture was resolved without its recording (baseline_resolve full)"
     log "--- $id -> publish -> register ($(basename "$path"))"
     register_recording "$API_BASE_URL" "$path" "$run_id" "$ROBOT_ID" file >/dev/null
     log "  ✅  RobotRun $run_id registered"
   fi
   baseline_assert_recording "$run_id" "$sha" "$size"
+}
+
+# baseline_run_registered <run-id>
+baseline_run_registered() {
+  api_get "$API_BASE_URL" "/robot-runs/$1" >/dev/null 2>&1
+}
+
+# baseline_all_registered — every fixture of the selection already has its RobotRun
+# (so nothing has to be published or replayed, and the cached recordings need not
+# be re-hashed against the lock).
+baseline_all_registered() {
+  local id
+  for id in $(echo "$BASELINE_FIXTURES" | jq -r '.[].fixture_id'); do
+    baseline_run_registered "$(baseline_run_id "$id")" || return 1
+  done
+}
+
+# baseline_ensure_dataset <name> — the Dataset and DatasetVersion exist; nothing is
+# written when they already do.
+baseline_ensure_dataset() {
+  if api_get "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION" >/dev/null 2>&1; then
+    return 0
+  fi
+  upsert_dataset "$API_BASE_URL" "$DATASET_ID" "$1" >/dev/null
+  upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" >/dev/null
+}
+
+# baseline_fixture_complete <run-id> — the RobotRun has the Scenes and Episodes the
+# reference baseline expects in $DATASET_ID/$DATASET_VERSION, all validated, profiled
+# and ready at their current revision. A complete fixture is reused: the build
+# pipelines are not run over it again.
+baseline_fixture_complete() {
+  local run_id="$1" scenes episodes id scenes_expected episodes_expected
+  scenes_expected="$(jq -r '.scenes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
+  episodes_expected="$(jq -r '.episodes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
+  scenes="$(api_get "$API_BASE_URL" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500" 2>/dev/null \
+    | jq -c --arg r "$run_id" '[.scenes[]? | select(.robotRunId == $r)]')" || return 1
+  episodes="$(api_get "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500" 2>/dev/null \
+    | jq -c --arg r "$run_id" '[.episodes[]? | select(.robotRunId == $r)]')" || return 1
+  [ "$(echo "$scenes" | jq length)" = "$scenes_expected" ] && [ "$(echo "$episodes" | jq length)" = "$episodes_expected" ] || return 1
+  for id in $(echo "$scenes" | jq -r '.[].sceneId'); do
+    api_get "$API_BASE_URL" "/scenes/$id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null || return 1
+  done
+  for id in $(echo "$episodes" | jq -r '.[].episodeId'); do
+    api_get "$API_BASE_URL" "/episodes/$id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null || return 1
+  done
+}
+
+# baseline_guard_identity — only the golden reference identity may be created on a
+# runtime that holds the reference state; any other baseline registers RobotRuns
+# that outlive the run.
+baseline_guard_identity() {
+  [ "$BASELINE_ID" = "$CONTRACT_BASELINE_ID" ] && return 0
+  require_disposable_runtime "baseline '$BASELINE_ID' is not the golden reference identity '$CONTRACT_BASELINE_ID'"
+}
+
+# baseline_exact_membership — the baseline's robot holds exactly the selection. It
+# does not when the selection (smoke-1, FIXTURE=) is a part of the contract's
+# baseline: the rest of the contract's RobotRuns are then expected to be there.
+baseline_exact_membership() {
+  [ "$BASELINE_ID" != "$CONTRACT_BASELINE_ID" ] \
+    || [ "$(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id] | sort')" = "$CONTRACT_FIXTURE_IDS" ]
 }
 
 # baseline_build_scope <pipeline-type> <build-task> <register-task> <profile-task> <run-id> <config>
@@ -147,8 +220,13 @@ baseline_verify() {
   # The registered RobotRuns of the baseline's robot are exactly the expected set.
   expected="$(echo "$BASELINE_FIXTURES" | jq -c --arg b "$BASELINE_ID" '[.[].fixture_id | "run-" + $b + "-" + .] | sort')"
   registered="$(api_get "$api" "/robot-runs?robot_id=$ROBOT_ID&limit=500" | jq -c '[.robotRuns[].runId] | sort')"
-  [ "$registered" = "$expected" ] \
-    || fail "the RobotRuns of $ROBOT_ID are not the baseline's fixtures: missing $(jq -cn --argjson e "$expected" --argjson r "$registered" '$e - $r'), unexpected $(jq -cn --argjson e "$expected" --argjson r "$registered" '$r - $e')"
+  if baseline_exact_membership; then
+    [ "$registered" = "$expected" ] \
+      || fail "the RobotRuns of $ROBOT_ID are not the baseline's fixtures: missing $(jq -cn --argjson e "$expected" --argjson r "$registered" '$e - $r'), unexpected $(jq -cn --argjson e "$expected" --argjson r "$registered" '$r - $e')"
+  else
+    [ "$(jq -cn --argjson e "$expected" --argjson r "$registered" '$e - $r')" = "[]" ] \
+      || fail "the selected RobotRuns are not all registered under $ROBOT_ID: missing $(jq -cn --argjson e "$expected" --argjson r "$registered" '$e - $r')"
+  fi
 
   all_scenes="$(api_get "$api" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500")"
   all_episodes="$(api_get "$api" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500")"
@@ -211,16 +289,24 @@ baseline_verify() {
         scenes_ready: $sr, episodes_ready: $er}]')"
   done
 
-  # Every Scene and Episode of the DatasetVersion belongs to one of the runs.
-  [ "$(echo "$all_scenes" | jq '.scenes | length')" = "$(echo "$entries" | jq '[.[].scene_count] | add')" ] \
-    || fail "a Scene of $DATASET_ID/$DATASET_VERSION points at a RobotRun outside the baseline"
-  [ "$(echo "$all_episodes" | jq '.episodes | length')" = "$(echo "$entries" | jq '[.[].episode_count] | add')" ] \
-    || fail "an Episode of $DATASET_ID/$DATASET_VERSION points at a RobotRun outside the baseline"
+  # Every Scene and Episode of the DatasetVersion belongs to the baseline: to a
+  # selected run, or (a selection that is a part of the contract's baseline) to a
+  # RobotRun registered under the baseline's robot.
+  if baseline_exact_membership; then
+    [ "$(echo "$all_scenes" | jq '.scenes | length')" = "$(echo "$entries" | jq '[.[].scene_count] | add')" ] \
+      || fail "a Scene of $DATASET_ID/$DATASET_VERSION points at a RobotRun outside the baseline"
+    [ "$(echo "$all_episodes" | jq '.episodes | length')" = "$(echo "$entries" | jq '[.[].episode_count] | add')" ] \
+      || fail "an Episode of $DATASET_ID/$DATASET_VERSION points at a RobotRun outside the baseline"
+  else
+    [ "$(jq -cn --argjson s "$all_scenes" --argjson e "$all_episodes" --argjson r "$registered" \
+        '[$s.scenes[].robotRunId, $e.episodes[].robotRunId] | unique - $r')" = "[]" ] \
+      || fail "a Scene or Episode of $DATASET_ID/$DATASET_VERSION points at a RobotRun outside the baseline"
+  fi
 
   version="$(api_get "$api" "/datasets/$DATASET_ID/versions/$DATASET_VERSION" | jq -c '.version')"
-  [ "$(echo "$version" | jq -r '.scene.sceneCount')" = "$(echo "$entries" | jq '[.[].scene_count] | add')" ] \
+  [ "$(echo "$version" | jq -r '.scene.sceneCount')" = "$(echo "$all_scenes" | jq '.scenes | length')" ] \
     || fail "DatasetVersion scene summary differs from the registered Scenes"
-  [ "$(echo "$version" | jq -r '.episode.episodeCount')" = "$(echo "$entries" | jq '[.[].episode_count] | add')" ] \
+  [ "$(echo "$version" | jq -r '.episode.episodeCount')" = "$(echo "$all_episodes" | jq '.episodes | length')" ] \
     || fail "DatasetVersion episode summary differs from the registered Episodes"
 
   jq -cn --arg id "$BASELINE_ID" --arg robot "$ROBOT_ID" --arg ds "$DATASET_ID" \

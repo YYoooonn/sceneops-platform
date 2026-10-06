@@ -117,8 +117,8 @@ def test_registering_a_published_recording_again_converges(api, baseline_run):
     )
 
 
-def test_identical_jobs_dedup_and_force_creates_a_fresh_job(api, baseline):
-    dataset = (baseline["dataset_id"], baseline["dataset_version"])
+def test_identical_jobs_dedup_and_force_creates_a_fresh_job(api):
+    dataset = api.new_dataset_version("dedup")
     body = {
         "type": "export_analytics_snapshot",
         "dataset_id": dataset[0],

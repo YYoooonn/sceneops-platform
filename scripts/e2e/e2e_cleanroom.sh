@@ -8,14 +8,14 @@
 #   make local-reset        DESTRUCTIVE: fresh containers, fresh PostgreSQL /
 #                           Redis / MinIO state; PRESERVES the external dataset
 #                           fixture (data/raw)
-#   canonical-bootstrap     RobotRun -> canonical Scenes and Episodes (L1/L2)
+#   canonical-bootstrap     RobotRun -> canonical Scenes and Episodes (L1/L2) of the golden
+#                           reference baseline, selection smoke-1 (scene-0061)
 #   canonical-verify        the baseline, read back through the API
-#   e2e-scene-ml            Scene ML journey on that baseline (L3)
-#   e2e-episode-learning    Episode learning journey on that baseline (L3)
-#   final verification      every pipeline run of the baseline succeeded, every
-#                           job succeeded, the canonical records are exactly
-#                           those the bootstrap registered, and the derived
-#                           artifacts the journeys produced exist
+#   e2e-scene-ml            Scene ML journey (L3) on that RobotRun, in a DatasetVersion of its own
+#   e2e-episode-learning    Episode learning journey (L3), likewise
+#   final verification      the reference baseline is exactly what the bootstrap registered;
+#                           every pipeline run and job of the journeys' DatasetVersion
+#                           succeeded, and the derived artifacts they produced exist
 #
 # Control-plane operations go through FastAPI; bulk data moves through
 # containers and the ArtifactStore. There is no direct SQL, no direct MinIO
@@ -40,9 +40,12 @@ cd "$REPO_ROOT"
 source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
-# The persistent baseline of the selection (REFERENCE_SCOPE, default smoke-1 ->
-# ref-smoke-1); the L3 journeys below run on the one fixture SOURCE_UNIT names
-# (default scene-0061), so they need a baseline that contains exactly that one.
+# The golden reference baseline restricted to the selection (REFERENCE_SCOPE, default
+# smoke-1 = scene-0061); the L3 journeys below run on the one fixture SOURCE_UNIT names
+# (default scene-0061) and write into one DatasetVersion of their own, so the reference
+# baseline stays exactly what the bootstrap registered. For the whole reference
+# environment: `make reference-contract-bootstrap` after the reset.
+L3_DATASET_ID="sceneops-test-cleanroom-$(date +%s)"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 
 echo "=================================================================="
@@ -54,8 +57,8 @@ echo "  1. build images          from the current tree (api, worker, acquisition
 echo "  2. make local-reset      [DESTRUCTIVE] fresh Postgres/Redis/MinIO, preserve data/raw"
 echo "  3. canonical-bootstrap   RobotRun -> canonical Scenes and Episodes ($BASELINE_ID)"
 echo "  4. canonical-verify      the baseline through the API"
-echo "  5. e2e-scene-ml          labels -> views -> ScenarioSet -> prediction -> evaluation"
-echo "  6. e2e-episode-learning  alignment -> learning export -> LeRobot round trip"
+echo "  5. e2e-scene-ml          labels -> views -> ScenarioSet -> prediction -> evaluation ($L3_DATASET_ID)"
+echo "  6. e2e-episode-learning  alignment -> learning export -> LeRobot round trip ($L3_DATASET_ID)"
 echo "  7. final verification    through the API"
 echo ""
 
@@ -79,15 +82,15 @@ check "the verified baseline is the bootstrapped one" [ "$VERIFIED" = "$BASELINE
 echo ""
 
 echo "--- 5. e2e-scene-ml on the baseline ---"
-make -C "$REPO_ROOT" e2e-scene-ml BASELINE_ID="$BASELINE_ID"
+make -C "$REPO_ROOT" e2e-scene-ml BASELINE_ID="$BASELINE_ID" DATASET_ID="$L3_DATASET_ID"
 echo ""
 
 echo "--- 6. e2e-episode-learning on the baseline ---"
-make -C "$REPO_ROOT" e2e-episode-learning BASELINE_ID="$BASELINE_ID"
+make -C "$REPO_ROOT" e2e-episode-learning BASELINE_ID="$BASELINE_ID" DATASET_ID="$L3_DATASET_ID"
 echo ""
 
 echo "--- 7. final verification (through the API) ---"
-BASELINE_SUMMARY="$BASELINE" "$SCRIPT_DIR/cleanroom_verify.sh"
+BASELINE_SUMMARY="$BASELINE" L3_DATASET_ID="$L3_DATASET_ID" "$SCRIPT_DIR/cleanroom_verify.sh"
 echo ""
 
 echo "=================================================================="

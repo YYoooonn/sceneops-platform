@@ -33,6 +33,12 @@
 # FastAPI and the production recovery commands. The host needs only Docker
 # Compose, curl, jq and the API port: no uv, no PostgreSQL or MinIO access.
 #
+# Test-state class: MUTATING_ACQUISITION_TEST for arm B (docs/development/test-matrix.md);
+# arm A only reads the golden reference contract's RobotRun. Run it on a disposable
+# runtime: `make local-reset && make reference-contract-bootstrap` (or just the
+# fixture: `make canonical-bootstrap`), then
+# `make e2e-streaming-equivalence DISPOSABLE_RUNTIME=1`. It refuses otherwise.
+#
 # Prerequisites:
 #   make local-up                  API + workers + Postgres + MinIO from current images
 #   make reference-data-bootstrap  the fixture's locked recording is prepared
@@ -55,19 +61,23 @@ source "$SCRIPT_DIR/lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 export API_BASE_URL ENV_FILE
 
-# Fixture selection and the persistent batch baseline identity are the canonical
-# baseline's own (scripts/canonical/baseline_lib.sh): REFERENCE_SCOPE (default
-# smoke-1) or FIXTURE/SOURCE_UNIT, and BASELINE_ID (default ref-<selection>).
+# Fixture selection and the batch baseline identity are the canonical baseline's own
+# (scripts/canonical/baseline_lib.sh): REFERENCE_SCOPE (default smoke-1, i.e. scene-0061)
+# or FIXTURE/SOURCE_UNIT select the fixture; the identity is the golden reference
+# contract's recording_import baseline.
 export FIXTURE="${FIXTURE:-${SOURCE_UNIT:-}}"
 export REFERENCE_SCOPE="${REFERENCE_SCOPE:-smoke-1}"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 export BASELINE_ID
 
-# Streaming arm identity: unique per execution, never shared with the baseline.
+# Streaming arm identity: unique per execution, never shared with the baseline. The arm
+# captures and registers a RobotRun of its own (the thing under test), which nothing
+# removes: disposable runtimes only.
+require_disposable_runtime "e2e-streaming-equivalence streams and registers a RobotRun of its own"
 SUFFIX="$(date +%s)-$$"
 START_EPOCH="$(date +%s)"
-STREAM_ROBOT_ID="robot-streaming-equivalence"
-STREAM_DATASET_ID="${STREAM_DATASET_ID:-test-e2e-streaming-equivalence}"
+STREAM_ROBOT_ID="robot-test-streaming-equivalence"
+STREAM_DATASET_ID="${STREAM_DATASET_ID:-sceneops-test-streaming-equivalence}"
 STREAM_VERSION="stream-$SUFFIX"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-180}"
 CAPTURE_ROOT="/recordings/capture-$SUFFIX"
@@ -152,7 +162,7 @@ LOCKED_SIZE="$(echo "$FIXTURE_JSON" | jq -r '.recording.size_bytes')"
 LOCKED_COUNTS="$(echo "$FIXTURE_JSON" | jq -cS '.recording.topic_counts')"
 LOCKED_MESSAGES="$(echo "$FIXTURE_JSON" | jq -r '.recording.message_count')"
 RUN_A="$(baseline_run_id "$FIXTURE_ID")"
-RUN_B="run-e2e-streaming-$SUFFIX-$FIXTURE_ID"
+RUN_B="run-test-streaming-equivalence-$SUFFIX-$FIXTURE_ID"
 echo "$FIXTURE_JSON" | jq -c '{fixture_id, source_unit, path, sha256: .recording.sha256, message_count: .recording.message_count}'
 echo "  baseline=$BASELINE_ID  A=$RUN_A  B=$RUN_B  stream dataset=$STREAM_DATASET_ID/$STREAM_VERSION"
 echo ""

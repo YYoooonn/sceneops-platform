@@ -19,7 +19,7 @@ infrastructure semantics are part of the contract.
 | Recovery acceptance | `make test-recovery` | PostgreSQL, MinIO + a throwaway Redis and Celery workers (Docker) | acquisition recovery under injected faults, one per test: finalized capture never published, a Job left queued, a worker killed during registration, a committed registration whose completion is lost, transient failures across replacement Jobs and the attempt budget, Redis down / unresponsive then restored, concurrent reconciliation passes, and that conflicts and integrity incidents are left untouched. And the full-lifecycle acceptance: nine acquisitions, each hit by a different failure between capture and RobotRun, recovered only by the production commands |
 | Orchestrator acceptance | `make test-infrastructure-airflow` | live stack + Airflow | the canonical pipelines through the Airflow per-task DAGs |
 | Smoke | `make smoke-api`, `make smoke-streaming` | the API / Kafka | transport and liveness only; never creates domain data |
-| E2E journey | the five `make e2e-*` | live stack + containers | a user journey through production paths (below) |
+| E2E journey | the five `make e2e-*` | live stack + containers | a user journey through production paths (below); the test-state class of each is in [Test-state classes](#test-state-classes) |
 | Clean room | `make e2e-cleanroom` | fresh platform state | the platform reconstructs its baseline and runs its representative workflows from nothing |
 | Model-backend acceptance | `make acceptance-grounding-dino` | inference server | the Scene ML journey with the real detector |
 | Streaming baseline | `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | live stack + Kafka + ROS 2 images | the persistent streamed baseline of a scope (create-or-verify, resumable), its registered per-channel counts against the lock, and its canonical agreement with the Recording Import baseline; not a journey and not a benchmark |
@@ -27,15 +27,37 @@ infrastructure semantics are part of the contract.
 | Command surface | `make check-commands` | none | the advertised commands exist and nothing references removed architecture |
 | Runtime source boundary | `make check-runtime-boundary` | Docker (starts no platform service) | only the acquisition / reference-preparation services mount the raw dataset; every normal runtime service sees neither `/data/raw` nor `/input/nuscenes` and keeps the paths it needs |
 
+## Test-state classes
+
+Platform state is durable and nothing in the platform removes it, so every workflow is
+classed by what it leaves behind. The local reference environment holds exactly the
+[golden reference contract](./reference-contract.md); anything else is residue of a
+disposable runtime and is dropped by `make local-reset`, never deleted piecemeal
+([ADR-007](../adr/007-canonical-ingestion-architecture.md) §35.3).
+
+| Class | May create | Runs on | Workflows |
+| --- | --- | --- | --- |
+| reference state | the contract's RobotRuns, Scenes and Episodes | the reference environment | `reference-contract-bootstrap`; `canonical-bootstrap` / `streaming-bootstrap` with the contract's identity (`smoke-1` selects `scene-0061` of it) |
+| `READ_ONLY_REFERENCE` | no RobotRun; derived state only in a `sceneops-test-*` DatasetVersion of its own; never the reference DatasetVersion | the reference environment | `*-verify`, `streaming-compare`, `reference-contract-verify`, `smoke-api`, `smoke-streaming` (write nothing); `e2e-scene-ml`, `e2e-episode-learning`, `test-infrastructure` (Scenes / Episodes / derived records in `sceneops-test-*`) |
+| `MUTATING_ACQUISITION_TEST` | RobotRuns, captures, Kafka records, their artifacts | a disposable runtime (`DISPOSABLE_RUNTIME=1`; refused otherwise) | `e2e-batch-canonical`, `e2e-streaming-equivalence`, any bootstrap with a non-contract `BASELINE_ID` |
+| self-cleaning fixtures | rows keyed by a per-test unique id | any runtime with PostgreSQL / MinIO | `make test-integration`, `make test-recovery` (their own teardown removes their rows) |
+
+Temporary identities carry the reserved `test-` namespace: `run-test-*`,
+`robot-test-*`, `sceneops-test-*`. The reference environment is checked with
+`make reference-contract-verify REQUIRE_CLEAN=1` (20 contract RobotRuns, 0 non-contract
+RobotRuns, 20 Scenes, 20 Episodes, 0 non-contract Datasets); after a `READ_ONLY_REFERENCE`
+run it reports the `sceneops-test-*` DatasetVersions as residue while the contract
+itself stays verified.
+
 ## The journeys
 
 | Journey | Source → result | Proves |
 | --- | --- | --- |
-| `e2e-batch-canonical` | dataset fixture → MCAP → RobotRun (Recording Import) → Scenes + Episodes | L1 → L2 canonicalization from one recording: windows on declared clocks, source-faithful streams, pinned manifest revisions, shared payloads, validated and profiled units, and that re-running the bootstrap changes no record |
-| `e2e-streaming-equivalence` | locked reference MCAP → Recording Import baseline RobotRun, and → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → streamed RobotRun; both → Scenes + Episodes | transport preservation: acquisition equivalence (per-channel payloads, source times, `/tf_static`), the run's Kafka control records, canonical Scene / Episode equivalence (I-35), negative controls, baseline untouched |
-| `e2e-scene-ml` | Scenes → LabelSet → sample views → ScenarioSet → prediction → evaluation | every derived revision pins what it consumed; retries converge; the real lidar payload decodes; canonical Scenes are untouched |
-| `e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → verification + LeRobot round trip | pinned, deterministic alignment and export; shard checksums and `SceneOpsDataset` reads; every LeRobot frame equals the export's dense window; canonical Episodes are untouched |
-| `e2e-cleanroom` | fresh state → canonical-bootstrap → both L3 journeys | supported production paths only: no direct SQL, no direct MinIO inspection, no host worker CLI |
+| `e2e-batch-canonical` | prepared reference MCAP → RobotRun (Recording Import) → Scenes + Episodes | L1 → L2 canonicalization from one recording: windows on declared clocks, source-faithful streams, pinned manifest revisions, shared payloads, validated and profiled units, and that re-running the bootstrap changes no record |
+| `e2e-streaming-equivalence` | locked reference MCAP → the contract's Recording Import RobotRun (read as it is), and → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → streamed RobotRun; both → Scenes + Episodes | transport preservation: acquisition equivalence (per-channel payloads, source times, `/tf_static`), the run's Kafka control records, canonical Scene / Episode equivalence (I-35), negative controls, baseline untouched |
+| `e2e-scene-ml` | reference RobotRun → Scenes (own DatasetVersion) → LabelSet → sample views → ScenarioSet → prediction → evaluation | every derived revision pins what it consumed; retries converge; the real lidar payload decodes; canonical Scenes are untouched |
+| `e2e-episode-learning` | reference RobotRun → Episodes (own DatasetVersion) → AlignedEpisodes → learning export → verification + LeRobot round trip | pinned, deterministic alignment and export; shard checksums and `SceneOpsDataset` reads; every LeRobot frame equals the export's dense window; canonical Episodes are untouched |
+| `e2e-cleanroom` | fresh state → canonical-bootstrap (contract identity, `smoke-1`) → both L3 journeys | supported production paths only: no direct SQL, no direct MinIO inspection, no host worker CLI |
 
 ## Where a contract is verified
 
@@ -64,6 +86,10 @@ infrastructure semantics are part of the contract.
 ## Rules
 
 - A smoke target never creates persistent application-domain data.
+- A workflow that registers RobotRuns of its own never runs on the reference
+  environment: it requires `DISPOSABLE_RUNTIME=1`, and the runtime is reset afterwards.
+- No test removes platform state through SQL or a test-only API; disposable state is
+  dropped with the runtime.
 - An infrastructure behavior (offsets, locks, object semantics, DDS, image
   contents) is claimed only from a layer that runs the real infrastructure.
 - An infrastructure check is not a user journey: retry, dedup, force,

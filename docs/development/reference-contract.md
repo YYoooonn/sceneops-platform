@@ -70,9 +70,9 @@ construction. For `nuscenes-mini-full-10`:
 
 `<fixture>` ranges over `scene-0061`, `scene-0103`, `scene-0553`, `scene-0655`,
 `scene-0757`, `scene-0796`, `scene-0916`, `scene-1077`, `scene-1094`, `scene-1100`.
-The smoke baselines (`run-ref-smoke-1-*`, `run-stream-ref-smoke-1-*`) share fixtures
-with the contract but are different RobotRuns and are not part of it. A RobotRun of
-a test journey can never satisfy the contract: membership is the exact identity,
+There is no smoke baseline: `REFERENCE_SCOPE=smoke-1` selects `scene-0061` of the
+contract's baselines and creates no RobotRun or DatasetVersion of its own. A RobotRun
+of a test journey can never satisfy the contract: membership is the exact identity,
 under the contract's robot.
 
 ## Commands
@@ -80,7 +80,8 @@ under the contract's robot.
 ```text
 make reference-contract-verify      read-only
 make reference-contract-bootstrap   converge on the contract
-python3 scripts/reference/reference_contract.py show|validate|verify|bootstrap
+make reference-contract-verify REQUIRE_CLEAN=1    ... and nothing but the contract
+python3 scripts/reference/reference_contract.py show|validate|verify|bootstrap [--require-clean]
 ```
 
 Both print one JSON report on stdout (`sceneops.reference_contract_report/1`);
@@ -104,11 +105,18 @@ Read-only. It validates the contract against its sources, then:
    of a contract DatasetVersion that belongs to another RobotRun; observed totals
    equal `expected_totals`.
 
-It does not require the database to hold exactly the contract's RobotRuns. The
-report's `inventory` lists the contract RobotRuns and every non-contract one (by
-kind: `temporary_e2e`, `reference_like_baseline`, `unclassified`), the non-contract
-DatasetVersions, the Scenes and Episodes outside the contract DatasetVersions, and
-orphan Scenes and Episodes. The kinds are a naming heuristic for reporting only.
+By default it does not require the platform to hold exactly the contract's RobotRuns
+(a general development platform may hold any). The report's `state` is the compact
+check (`contract_robot_runs`, `non_contract_robot_runs`, `contract_scenes`,
+`contract_episodes`, `non_contract_datasets`, `clean`), and its `inventory` lists the
+contract RobotRuns and every non-contract one (by kind: `temporary_e2e`,
+`reference_like_baseline`, `unclassified`), the non-contract DatasetVersions, the
+Scenes and Episodes outside the contract DatasetVersions, and orphan Scenes and
+Episodes. The kinds are a naming heuristic for reporting only.
+
+`REQUIRE_CLEAN=1` (`--require-clean`) is the check of the dedicated **reference
+environment**: every non-contract RobotRun (`non_contract_robot_run`) and Dataset
+(`non_contract_dataset`) is then a violation.
 
 ### `reference-contract-bootstrap`
 
@@ -124,7 +132,7 @@ validate the contract
 
 | State | Outcome |
 | --- | --- |
-| complete and consistent | reused: no publication, replay, registration or build |
+| complete and consistent | reused: no publication, replay, registration or build; the cached recordings are not re-hashed and Kafka is not started |
 | RobotRun missing | created through its mode's supported path |
 | RobotRun registered, Scene or Episode missing or not ready | converged on the registered revisions |
 | streaming capture finalized, published or registration pending | recovered by `publish-pending` / `reconcile --apply`, not replayed |
@@ -137,6 +145,27 @@ cleared, so no timestamp, random or single-fixture identity can be created throu
 this entry point. The report's `bootstrap` section lists the records reused,
 created, and any that changed or vanished; an immutable RobotRun or Scene / Episode
 record that changed during the run is a violation.
+
+## The reference environment
+
+The reference environment is a local runtime that holds exactly the contract.
+Generated runtime state is disposable and nothing deletes part of it; the environment
+is reconstructed from the locked corpus, which `local-reset` keeps:
+
+```text
+make local-reset                              PostgreSQL, Redis, MinIO, Kafka log, capture volume dropped
+make reference-data-verify REFERENCE_SCOPE=nuscenes-mini-full-10     the locked corpus is intact
+make reference-contract-bootstrap REQUIRE_CLEAN=1                    20 RobotRuns, 20 Scenes, 20 Episodes
+make reference-contract-verify REQUIRE_CLEAN=1                       the state check, read-only
+```
+
+A workflow that registers RobotRuns of its own (`MUTATING_ACQUISITION_TEST`) leaves
+non-contract state that nothing removes, so it runs only on a runtime declared
+disposable and the reference environment is rebuilt afterwards; the workflows that
+only consume the contract (`READ_ONLY_REFERENCE`) register no RobotRun and write into
+`sceneops-test-*` DatasetVersions of their own, which `REQUIRE_CLEAN=1` reports as
+residue. See [test-matrix.md](./test-matrix.md#test-state-classes) and
+[ADR-007](../adr/007-canonical-ingestion-architecture.md) §35.3.
 
 ## Refreshing the contract
 
@@ -158,5 +187,7 @@ removed by an explicit reset. No such operation exists yet.
   container; it takes about a minute on the local stack.
 - The inventory reports platform state reachable through FastAPI. Orphan objects in
   the ArtifactStore are classified by `make artifact-lifecycle-once`, not here.
-- Test journeys still create their own unique RobotRuns on the same platform; the
-  contract does not remove them.
+- The contract does not isolate the mutating workflows from the reference runtime: they
+  are guarded (`DISPOSABLE_RUNTIME=1`), not run on a runtime of their own.
+- A reconstruction from an empty runtime replays every fixture through ROS 2 and Kafka
+  and builds 40 Scenes / Episodes; it takes as long as that, once.

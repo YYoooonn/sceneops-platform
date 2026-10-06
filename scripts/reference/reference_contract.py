@@ -239,7 +239,7 @@ def validate_contract(
 
 # ── Observed state against the contract (pure) ───────────────────────────────
 
-_KIND_TEMPORARY = re.compile(r"^run-e2e-")
+_KIND_TEMPORARY = re.compile(r"^run-(e2e|test)-")
 # `run-ref-*` / `run-stream-ref-*` are the baseline identity rules of
 # scripts/canonical/baseline_lib.sh; a heuristic for reporting only.
 _KIND_REFERENCE_LIKE = re.compile(r"^run-(stream-)?ref-")
@@ -382,7 +382,10 @@ def inventory(contract: dict[str, Any], obs: dict[str, Any]) -> dict[str, Any]:
 
 
 def evaluate(
-    contract: dict[str, Any], lock: dict[str, Any], obs: dict[str, Any]
+    contract: dict[str, Any],
+    lock: dict[str, Any],
+    obs: dict[str, Any],
+    require_clean: bool = False,
 ) -> dict[str, Any]:
     """The contract report for an observation.
 
@@ -390,6 +393,10 @@ def evaluate(
     (ids), facts ({run_id: registered manifest facts} of the registered contract
     RobotRuns) and baselines ({mode: {ok, summary, error}} from the existing
     baseline verifiers).
+
+    require_clean: the platform is the reference environment, which holds nothing
+    but the contract: every non-contract RobotRun or Dataset is a violation. Off,
+    they are only reported (a general development platform may hold any).
     """
     violations = conflicts(contract, obs)
     units = contract["units"]
@@ -525,6 +532,32 @@ def evaluate(
                 f"observed {totals}, the contract expects {contract['expected_totals']}",
             )
         )
+    inv = inventory(contract, obs)
+    state = {
+        "contract_robot_runs": inv["contract_robot_runs"],
+        "non_contract_robot_runs": len(inv["non_contract_robot_runs"]),
+        "contract_scenes": totals["scenes"],
+        "contract_episodes": totals["episodes"],
+        "non_contract_datasets": len(inv["non_contract_datasets"]),
+        "clean": not inv["non_contract_robot_runs"]
+        and not inv["non_contract_datasets"],
+    }
+    if require_clean:
+        for r in inv["non_contract_robot_runs"]:
+            violations.append(
+                _violation(
+                    "non_contract_robot_run",
+                    f"RobotRun {r['robot_run_id']} ({r['kind']}) is not part of the contract; "
+                    "the reference environment holds only the contract (make local-reset, then reference-contract-bootstrap)",
+                )
+            )
+        for dataset in inv["non_contract_datasets"]:
+            violations.append(
+                _violation(
+                    "non_contract_dataset",
+                    f"Dataset {dataset} is not a contract dataset; the reference environment holds only the contract",
+                )
+            )
     return {
         "schema": REPORT_SCHEMA,
         "ok": not violations,
@@ -536,8 +569,9 @@ def evaluate(
         },
         "totals": {"expected": contract["expected_totals"], "observed": totals},
         "modes": mode_report,
+        "state": state,
         "contract_robot_runs": run_rows,
-        "inventory": inventory(contract, obs),
+        "inventory": inv,
         "violations": violations,
     }
 
@@ -888,9 +922,14 @@ def cmd_validate(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_verify(_: argparse.Namespace) -> int:
+def cmd_verify(args: argparse.Namespace) -> int:
     contract, lock = _require_valid()
-    report = evaluate(contract, lock, collect_observation(contract))
+    report = evaluate(
+        contract,
+        lock,
+        collect_observation(contract),
+        require_clean=getattr(args, "require_clean", False),
+    )
     _emit(report)
     _report_log(report)
     return 0 if report["ok"] else 1
@@ -898,7 +937,7 @@ def cmd_verify(_: argparse.Namespace) -> int:
 
 def _report_log(report: dict[str, Any]) -> None:
     obs, exp = report["totals"]["observed"], report["totals"]["expected"]
-    inv = report["inventory"]
+    inv, state = report["inventory"], report["state"]
     for v in report["violations"]:
         _log(
             f"❌ [{v['code']}] {v['mode'] or ''} {v['fixture_id'] or ''}: {v['message']}"
@@ -906,11 +945,13 @@ def _report_log(report: dict[str, Any]) -> None:
     _log(
         f"{'✅' if report['ok'] else '❌'} reference contract: RobotRuns {obs['robot_runs']}/{exp['robot_runs']}, "
         f"Scenes {obs['scenes']}/{exp['scenes']}, Episodes {obs['episodes']}/{exp['episodes']}; "
-        f"{len(inv['non_contract_robot_runs'])} non-contract RobotRun(s) {inv['non_contract_robot_runs_by_kind']}"
+        f"{len(inv['non_contract_robot_runs'])} non-contract RobotRun(s) {inv['non_contract_robot_runs_by_kind']}, "
+        f"{state['non_contract_datasets']} non-contract dataset(s); "
+        f"environment {'clean' if state['clean'] else 'NOT clean'}"
     )
 
 
-def cmd_bootstrap(_: argparse.Namespace) -> int:
+def cmd_bootstrap(args: argparse.Namespace) -> int:
     """Converge the platform on the contract by composing the existing bootstraps."""
     contract, lock = _require_valid()
     before = collect_state()
@@ -950,7 +991,9 @@ def cmd_bootstrap(_: argparse.Namespace) -> int:
 
     observation = collect_observation(contract)
     changes = diff_snapshots(pre, snapshot(contract, observation))
-    report = evaluate(contract, lock, observation)
+    report = evaluate(
+        contract, lock, observation, require_clean=getattr(args, "require_clean", False)
+    )
     for kind in ("robot_runs", "units"):
         for key in changes[kind]["changed"] + changes[kind]["removed"]:
             report["violations"].append(
@@ -975,7 +1018,14 @@ def main(argv: list[str] | None = None) -> int:
         ("verify", cmd_verify),
         ("bootstrap", cmd_bootstrap),
     ):
-        sub.add_parser(name).set_defaults(func=fn)
+        command = sub.add_parser(name)
+        command.set_defaults(func=fn)
+        if name in ("verify", "bootstrap"):
+            command.add_argument(
+                "--require-clean",
+                action="store_true",
+                help="also fail on any non-contract RobotRun or Dataset (the reference environment)",
+            )
     args = parser.parse_args(argv)
     try:
         return args.func(args)

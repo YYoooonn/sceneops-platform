@@ -9,7 +9,8 @@
 # membership. Creates and mutates nothing; replays nothing.
 #
 # Same selection and identity variables as streaming_bootstrap.sh
-# (REFERENCE_SCOPE, FIXTURE, BASELINE_ID). Prints one JSON summary on stdout,
+# (REFERENCE_SCOPE, FIXTURE, BASELINE_ID); the default identity is the reference
+# contract's streaming_acquisition baseline. Prints one JSON summary on stdout,
 # identical to the one the bootstrap printed.
 
 set -euo pipefail
@@ -18,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 source "$REPO_ROOT/scripts/e2e/lib.sh"
-BASELINE_PREFIX="${BASELINE_PREFIX:-stream-ref}"
+BASELINE_MODE=streaming_acquisition
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 source "$SCRIPT_DIR/streaming_lib.sh"

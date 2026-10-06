@@ -7,11 +7,13 @@ no single user journey proves: dedup, force, retry, replacement, blocked
 resumption, failure recovery, concurrent registration and execution through
 each orchestrator.
 
-The pipelines need a registered RobotRun. The tests build on the canonical
-baseline of the reference corpus (`scripts/canonical/canonical_bootstrap.sh`,
-create-or-verify; smoke-1 unless REFERENCE_SCOPE says otherwise), take one of
-its RobotRuns (`baseline_run`) and build into their own throwaway
-DatasetVersions, so the baseline's scope is never mutated.
+The pipelines need a registered RobotRun. The tests consume the golden reference
+contract's Recording Import RobotRuns (`scripts/canonical/canonical_bootstrap.sh`,
+create-or-verify; the smoke-1 selection, scene-0061, unless REFERENCE_SCOPE says
+otherwise), take one of them (`baseline_run`) and build into their own
+`sceneops-test-infra-*` DatasetVersions: no RobotRun is created and the reference
+DatasetVersion is never mutated. Those DatasetVersions are test residue that a runtime
+reset (`make local-reset`) drops.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ class Api:
         return response
 
     def new_dataset_version(self, prefix: str = "infra") -> tuple[str, str]:
-        dataset_id = f"sceneops-infra-{prefix}"
+        dataset_id = f"sceneops-test-infra-{prefix}"
         version = f"v-{uuid.uuid4().hex[:10]}"
         self.post("/datasets", {"dataset_id": dataset_id, "name": "Infrastructure tests"})
         self.post(f"/datasets/{dataset_id}/versions", {"version": version}, expect=201)

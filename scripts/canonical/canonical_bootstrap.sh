@@ -19,21 +19,27 @@
 # (make e2e-scene-ml / e2e-episode-learning) that run on top of a baseline.
 #
 # Selection: REFERENCE_SCOPE (default smoke-1; nuscenes-mini-full-10) or FIXTURE
-# (one fixture). Scene and Episode builds run independently per RobotRun with
-# the build configurations of config/baselines/; output counts are whatever each
-# fixture yields.
+# (one fixture) chooses which fixtures are acted on. Scene and Episode builds run
+# independently per RobotRun with the build configurations of config/baselines/;
+# output counts are whatever each fixture yields.
 #
 # create-or-verify: a RobotRun that is already registered is reused (and must pin
-# the locked recording); a Scene / Episode build over an unchanged scope
-# converges on the registered revisions; a changed producer or configuration
-# fails loudly at registration instead of replacing canonical membership.
-# Recovery from a mismatched baseline is an explicit `make local-reset` + rebuild.
+# the locked recording); a RobotRun whose Scenes and Episodes are all there,
+# validated, profiled and ready is reused as it is, with no build pipeline run
+# over it; an incomplete one converges on the registered revisions; a changed
+# producer or configuration fails loudly at registration instead of replacing
+# canonical membership. The cached recordings are hashed against the lock only
+# when a RobotRun has to be published. Recovery from a mismatched baseline is an
+# explicit `make local-reset` + rebuild.
 #
-# Identity (all overridable): BASELINE_ID (default `ref-<scope>`, or
-# `ref-<fixture>` for FIXTURE) names the robot, the RobotRuns
-# (run-<BASELINE_ID>-<fixture>) and the DatasetVersion (sceneops-<BASELINE_ID>/
-# baseline). Smoke and full are different baselines. The journeys that mutate
-# their scope use a unique BASELINE_ID per run.
+# Identity: the golden reference contract's recording_import baseline
+# (`ref-nuscenes-mini-full-10`: robot, RobotRuns run-<BASELINE_ID>-<fixture>,
+# DatasetVersion sceneops-<BASELINE_ID>/baseline) whatever the selection: smoke-1
+# is scene-0061 of that baseline, not another one. A different BASELINE_ID names
+# a baseline of non-contract RobotRuns and needs a disposable runtime
+# (DISPOSABLE_RUNTIME=1). DATASET_ID may name another DatasetVersion: the
+# Scenes and Episodes of the (contract) RobotRuns are then built into it and no
+# RobotRun is created.
 #
 # stdout: one JSON summary (baseline_verify). Progress goes to stderr, so
 #   BASELINE="$(scripts/canonical/canonical_bootstrap.sh)"
@@ -55,9 +61,14 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 
 log "=== canonical baseline '$BASELINE_ID': $DATASET_ID/$DATASET_VERSION from $REFERENCE_CORPUS (${FIXTURE:-$REFERENCE_SCOPE}) ==="
 require_api "$API_BASE_URL"
+baseline_guard_identity
 
-log "--- reference corpus: fixtures and cached recordings, verified against the lock"
-baseline_resolve full
+log "--- reference corpus: locked facts of the selection"
+baseline_resolve lock-only
+if ! baseline_all_registered; then
+  log "--- a RobotRun has to be published: cached recordings verified against the lock"
+  baseline_resolve full
+fi
 log "  $(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id]')"
 
 # Collected into an array first: a docker container inside a `while read` loop
@@ -69,11 +80,14 @@ for fixture in "${fixtures[@]}"; do
   baseline_register_fixture "$fixture"
 done
 
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "Canonical baseline $BASELINE_ID" >/dev/null
-upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" >/dev/null
+baseline_ensure_dataset "Canonical baseline $BASELINE_ID"
 
 for id in $(echo "$BASELINE_FIXTURES" | jq -r '.[].fixture_id'); do
   run_id="$(baseline_run_id "$id")"
+  if baseline_fixture_complete "$run_id"; then
+    log "--- Scenes and Episodes of $run_id are built and ready: reused"
+    continue
+  fi
   log "--- canonical Scenes and Episodes of $run_id"
   baseline_build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
     "$run_id" "$(scene_build_config)"

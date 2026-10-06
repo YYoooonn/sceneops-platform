@@ -23,14 +23,21 @@
 # image), and an aggregate would hide which one a failure needed.
 # `make e2e-cleanroom` is the only full-platform acceptance entry point.
 #
-# Selection: SCENE=<nuScenes scene> (default scene-0061); BASELINE_ID=<id>
-# runs a journey on a named baseline (default: a unique one per run).
+# Selection: SCENE=<nuScenes scene> (default scene-0061). Test-state classes
+# (docs/development/test-matrix.md):
+#   READ_ONLY_REFERENCE         e2e-scene-ml, e2e-episode-learning: the RobotRun is the golden
+#                               reference contract's; they register none and write into a
+#                               DatasetVersion of their own (DATASET_ID=<id> names it)
+#   MUTATING_ACQUISITION_TEST   e2e-batch-canonical, e2e-streaming-equivalence: they register
+#                               RobotRuns of their own and refuse to run unless
+#                               DISPOSABLE_RUNTIME=1 says the runtime will be reset afterwards
 # ============================================================================
 
-# Baseline identity and scene selection, passed to the scripts through the
-# environment (unset variables keep the scripts' own defaults).
+# Baseline identity, target DatasetVersion and scene selection, passed to the scripts
+# through the environment (unset variables keep the scripts' own defaults).
 E2E_ENV = API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_FILE) \
-	$(if $(SCENE),SOURCE_UNIT=$(SCENE)) $(if $(BASELINE_ID),BASELINE_ID=$(BASELINE_ID))
+	$(if $(SCENE),SOURCE_UNIT=$(SCENE)) $(if $(BASELINE_ID),BASELINE_ID=$(BASELINE_ID)) \
+	$(if $(DATASET_ID),DATASET_ID=$(DATASET_ID)) $(if $(DISPOSABLE_RUNTIME),DISPOSABLE_RUNTIME=$(DISPOSABLE_RUNTIME))
 
 .PHONY: e2e-batch-canonical
 # prepared reference recording (make reference-data-bootstrap) -> recording-

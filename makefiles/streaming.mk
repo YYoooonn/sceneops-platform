@@ -43,7 +43,7 @@ ros2-test:
 # --------------------
 # Streaming acquisition vertical + transport-preservation equivalence
 # (ADR-007 §29.12, §29.19 step 9): the LOCKED reference MCAP of one fixture is
-# the shared logical source. The Recording Import arm is the persistent reference baseline
+# the shared logical source. The Recording Import arm is the golden reference baseline
 # (read as it is; created only if missing); the streaming arm replays the same
 # MCAP -> ROS 2 -> bridge -> Kafka -> capture -> publish-pending ->
 # reconcile --apply -> RobotRun -> Scenes + Episodes with the same build configs,
@@ -81,9 +81,9 @@ e2e-streaming-equivalence: acquisition-image
 # streaming-compare   -- read-only corpus-level comparison with the Recording Import baseline.
 #
 # REFERENCE_SCOPE (default smoke-1; nuscenes-mini-full-10) or FIXTURE selects the
-# fixtures; BASELINE_ID (default stream-ref-<scope> / stream-ref-<fixture>) names
+# fixtures; BASELINE_ID (default: the reference contract's stream-ref baseline) names
 # the baseline; RATE overrides the replay rate. The Recording Import baseline
-# `ref-<scope>` is never touched. Prerequisites: `make local-up` and
+# of the contract is never touched. Prerequisites: `make local-up` and
 # `make reference-data-bootstrap REFERENCE_SCOPE=<scope>`.
 # --------------------
 

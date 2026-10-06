@@ -21,6 +21,11 @@
 # through FastAPI. The host needs Docker Compose, curl and jq plus the API
 # port: no uv, no PostgreSQL or MinIO access.
 #
+# Test-state class: MUTATING_ACQUISITION_TEST (docs/development/test-matrix.md). The
+# RobotRun, its Scenes, Episodes and artifacts are durable and nothing removes them,
+# so it runs only on a disposable runtime: `make local-reset && make e2e-batch-canonical
+# DISPOSABLE_RUNTIME=1` (it refuses otherwise).
+#
 # Prerequisites: `make local-up`, `make acquisition-image` and
 # `make reference-data-bootstrap` (data/reference holds the prepared recording).
 
@@ -34,9 +39,11 @@ source "$SCRIPT_DIR/lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 SOURCE_UNIT="${SOURCE_UNIT:-scene-0061}"
 SUFFIX="$(date +%s)-$$"
-export BASELINE_ID="${BASELINE_ID:-e2e-batch-$SUFFIX}"
+export BASELINE_ID="${BASELINE_ID:-test-e2e-batch-$SUFFIX}"
 export FIXTURE="$SOURCE_UNIT"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
+# Registers a RobotRun of its own (the thing under test): disposable runtimes only.
+baseline_guard_identity
 RUN_ID="$(baseline_run_id "$SOURCE_UNIT")"
 CLOCK="vehicle.source_time"
 

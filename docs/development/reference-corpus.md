@@ -32,7 +32,7 @@ data/reference/nuscenes-mini-v1/labels/              cached reference labels    
 
 | Scope | Fixtures | Use |
 | --- | --- | --- |
-| `smoke-1` (default) | `scene-0061` | fast checks |
+| `smoke-1` (default) | `scene-0061` | a fixture selection: `scene-0061` of the full corpus, for fast checks and the journeys (it names no baseline of its own) |
 | `nuscenes-mini-full-10` | all ten | the stable real-data input for benchmarks and release acceptance |
 
 ## Definition (`corpus.json`)

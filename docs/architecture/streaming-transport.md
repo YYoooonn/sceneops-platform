@@ -681,7 +681,7 @@ make ros2-test                    bridge + capture unit and real-Kafka integrati
 make e2e-streaming-equivalence    the streaming vertical + transport-preservation
                                   equivalence over one locked reference MCAP
                                   (SCENE / RATE overridable; default smoke-1 /
-                                  the fixture's replay rate)
+                                  the fixture's replay rate; needs DISPOSABLE_RUNTIME=1)
 ```
 
 `ros2/nodes/tests/test_streaming_bridge_node.py` uses a `FakeProducerBridge`

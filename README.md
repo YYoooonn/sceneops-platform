@@ -101,9 +101,10 @@ make setup                          # install deps + pre-commit hooks
 make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
 make test                           # unit suites, no infrastructure
 make reference-data-bootstrap       # source preparation: nuScenes mini -> locked MCAPs, verified (once per scope)
-make canonical-bootstrap            # Recording Import: prepared MCAPs -> RobotRun -> Scenes -> Episodes (the L1/L2 baseline)
+make canonical-bootstrap            # Recording Import: prepared MCAPs -> RobotRun -> Scenes -> Episodes (default selection smoke-1 = scene-0061 of the reference baseline)
 make streaming-bootstrap            # Streaming Acquisition: locked MCAPs -> replay -> ROS 2 -> Kafka -> capture -> RobotRun -> Scenes -> Episodes
 make reference-contract-bootstrap   # converge on the golden reference contract: 10 fixtures x both modes = 20 RobotRuns (reuses what exists)
+make local-reset                    # [destructive] drop all generated runtime state; the reference environment is then rebuilt from the locked corpus
 make e2e-scene-ml                   # Scenes -> labels -> views -> ScenarioSet -> prediction -> evaluation
 make e2e-episode-learning           # Episodes -> aligned -> learning export -> LeRobot round trip
 ```

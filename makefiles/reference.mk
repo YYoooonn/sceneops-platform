@@ -47,15 +47,20 @@ reference-data-verify:
 #                                 complete, create or recover what is missing,
 #                                 fail loudly on a conflicting identity. Needs
 #                                 `make local-up` and the prepared corpus.
+# REQUIRE_CLEAN=1 makes both also fail on any RobotRun or Dataset outside the
+# contract: the check of the dedicated reference environment (a general
+# development platform may hold others). Every report carries a compact `state`.
 # Both print one JSON report on stdout (progress on stderr).
 # --------------------
+
+REQUIRE_CLEAN ?=
 
 .PHONY: reference-contract-verify
 reference-contract-verify:
 	@ENV_FILE=$(ENV_FILE) API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-		python3 scripts/reference/reference_contract.py verify
+		python3 scripts/reference/reference_contract.py verify $(if $(REQUIRE_CLEAN),--require-clean)
 
 .PHONY: reference-contract-bootstrap
 reference-contract-bootstrap:
 	@MAKE=$(MAKE) ENV_FILE=$(ENV_FILE) API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-		python3 scripts/reference/reference_contract.py bootstrap
+		python3 scripts/reference/reference_contract.py bootstrap $(if $(REQUIRE_CLEAN),--require-clean)

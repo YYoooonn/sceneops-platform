@@ -226,11 +226,13 @@ each fixture's locked recording through ROS 2 -> Kafka -> capture (needs Kafka a
 never constrained by an external dataset's naming. A baseline is named by
 `BASELINE_ID`: the RobotRun is `run-<BASELINE_ID>-<fixture>`, the robot
 `robot-<BASELINE_ID>`, the DatasetVersion `sceneops-<BASELINE_ID>/baseline`. The
-persistent baselines are `ref-smoke-1` and `ref-nuscenes-mini-full-10`, and their
-streamed counterparts `stream-ref-smoke-1` and `stream-ref-nuscenes-mini-full-10` (see
-[canonical-baseline.md](./canonical-baseline.md)); a journey that mutates its scope (or that you
-simply run again) uses a unique id per run (`e2e-<journey>-<timestamp>-<pid>`),
-and `BASELINE_ID=ref-smoke-1 make e2e-scene-ml` runs it on the persistent baseline.
+persistent baselines are `ref-nuscenes-mini-full-10` and its streamed counterpart
+`stream-ref-nuscenes-mini-full-10` (the [golden reference contract](./reference-contract.md);
+`REFERENCE_SCOPE=smoke-1` selects `scene-0061` of them and creates no baseline of its own; see
+[canonical-baseline.md](./canonical-baseline.md)). The L3 journeys use the reference RobotRun
+and write into a `sceneops-test-<journey>-<suffix>` DatasetVersion; a journey that registers
+RobotRuns of its own uses a unique `test-` id per run and only runs on a disposable runtime
+(`DISPOSABLE_RUNTIME=1`, [test-matrix.md](./test-matrix.md#test-state-classes)).
 Every pipeline-run-creating script passes `force: true`, so re-running a journey
 re-executes its pipelines instead of returning an old run through execution-key
 dedup, and assertions are scoped to values the current run returned, not to
@@ -240,8 +242,11 @@ global counts.
 
 Each baseline stores its recording and extracted payloads in MinIO (the nuScenes
 mini `scene-0061` recording is ~350 MB), and the Kafka and MinIO volumes keep
-growing across runs. There is no automated cleanup: `make local-reset` is the
-supported way to clear generated PostgreSQL / Redis / MinIO state (it keeps
-`data/raw`), and `make clean-artifacts` clears generated `./data` output. Journeys
+growing across runs. There is no automated cleanup and no selective removal:
+`make local-reset` is the supported way to clear generated runtime state
+(PostgreSQL, Redis, MinIO, the Kafka log and the capture volume; it keeps `data/raw`
+and the reference corpus under `data/reference`), after which
+`make reference-contract-bootstrap` rebuilds the reference environment from the
+locked corpus. `make clean-artifacts` clears generated `./data` output. Journeys
 remove the scratch they own — the MCAP in the acquisition volume after
 publication, the label document, the LeRobot export directory.
