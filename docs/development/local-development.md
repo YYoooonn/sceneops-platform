@@ -157,14 +157,17 @@ make check-commands                the command surface is consistent (no pytest,
   executed them (the Airflow and acquisition-recovery modules have their own
   targets). It builds on
   the canonical baseline (`canonical-bootstrap`, create-or-verify) and writes only
-  into throwaway DatasetVersions, so the baseline's scope is never mutated.
+  into the fixed Dataset `sceneops-test-infra-pipelines`, one DatasetVersion per test
+  that every run reuses (`REFERENCE_DERIVED`), so the baseline's scope is never mutated
+  and a repeated run adds no Dataset or DatasetVersion. Each test starts from the state
+  the previous run left and moves it with explicit replacement.
   `make test-infrastructure-airflow` runs the same canonical pipelines through the
   Airflow per-task DAGs; it needs `make airflow-up` and the `api` service
   restarted with `SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow` (a
   process-startup setting), and fails rather than skips when they are missing. Its
   Scene ML test builds Scenes and imports a LabelSet (the fixture's locked
   reference labels, rendered by the `reference-labels` container) in a
-  DatasetVersion of its own, so it also needs `make acquisition-image` and
+  DatasetVersion of the fixed Dataset `sceneops-test-infra-airflow`, so it also needs `make acquisition-image` and
   `make reference-data-bootstrap`.
 - `make test-recovery` runs the two acquisition-recovery suites against PostgreSQL and
   MinIO in the same disposable database and bucket as `make test-integration`, with a
@@ -241,14 +244,18 @@ persistent baselines are `ref-nuscenes-mini-full-10` and its streamed counterpar
 `stream-ref-nuscenes-mini-full-10` (the [golden reference contract](./reference-contract.md);
 `REFERENCE_SCOPE=smoke-1` selects `scene-0061` of them and creates no baseline of its own; see
 [canonical-baseline.md](./canonical-baseline.md)). The L3 journeys use the reference RobotRun
-and write into a `sceneops-test-<journey>-<suffix>` DatasetVersion; `e2e-streaming-equivalence`
+and write into a fixed, test-owned Dataset (`sceneops-test-scene-ml`,
+`sceneops-test-episode-learning`) that every run reuses; `e2e-streaming-equivalence`
 reads the contract's two RobotRuns and creates no state at all; a workflow that registers
 RobotRuns of its own uses a unique `test-` id per run and only runs on a disposable runtime
 (`DISPOSABLE_RUNTIME=1`, [test-matrix.md](./test-matrix.md#test-state-classes)).
-Every pipeline-run-creating script passes `force: true`, so re-running a journey
+Pipeline-run-creating scripts pass `force: true` by default, so re-running one
 re-executes its pipelines instead of returning an old run through execution-key
 dedup, and assertions are scoped to values the current run returned, not to
-global counts.
+global counts. The exceptions are the Scene ML pipeline and the first Episode learning
+pipeline of the journeys: they are requested without `force`, because a forced
+re-execution of the Scene ML stages appends scenario-mining and readiness reports under
+fresh Job ids on every run (`test-matrix.md`, `REFERENCE_DERIVED` convergence).
 
 ### Disk usage
 

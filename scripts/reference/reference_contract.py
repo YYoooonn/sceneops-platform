@@ -44,6 +44,13 @@ REPORT_SCHEMA = "sceneops.reference_contract_report/1"
 # recording reaches a RobotRun; preparing the source (nuScenes -> MCAP) is not one.
 MODES = ("recording_import", "streaming_acquisition")
 
+# Datasets of the reserved test namespace are derived test state: the fixed, test-owned
+# DatasetVersions the L3 journeys and infrastructure tests build from the contract's
+# RobotRuns (docs/development/test-matrix.md, REFERENCE_DERIVED). They are never part of
+# the contract and never make it invalid; the verifier reports them apart from datasets
+# that belong to nobody.
+DERIVED_TEST_NAMESPACE = "sceneops-test-"
+
 Violation = dict[str, Any]
 Entry = dict[str, str]
 
@@ -420,15 +427,27 @@ def inventory(contract: dict[str, Any], obs: dict[str, Any]) -> dict[str, Any]:
     kinds: dict[str, int] = {}
     for r in non_contract:
         kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
+    non_contract_datasets = sorted(
+        d for d in obs.get("datasets", []) if d not in {x for x, _ in contract_datasets}
+    )
+
+    def derived(units: list[dict[str, Any]]) -> int:
+        return sum(
+            1 for u in units if u["datasetId"].startswith(DERIVED_TEST_NAMESPACE)
+        )
+
     return {
         "contract_robot_runs": len(contract_ids & present),
         "non_contract_robot_runs": non_contract,
         "non_contract_robot_runs_by_kind": dict(sorted(kinds.items())),
-        "non_contract_datasets": sorted(
-            d
-            for d in obs.get("datasets", [])
-            if d not in {x for x, _ in contract_datasets}
-        ),
+        "derived_test_datasets": [
+            d for d in non_contract_datasets if d.startswith(DERIVED_TEST_NAMESPACE)
+        ],
+        "derived_test_scenes": derived(obs["scenes"]),
+        "derived_test_episodes": derived(obs["episodes"]),
+        "foreign_datasets": [
+            d for d in non_contract_datasets if not d.startswith(DERIVED_TEST_NAMESPACE)
+        ],
         "scenes_outside_contract_datasets": len(outside(obs["scenes"])),
         "episodes_outside_contract_datasets": len(outside(obs["episodes"])),
         "orphan_scenes": orphans(obs["scenes"], "sceneId"),
@@ -440,7 +459,7 @@ def evaluate(
     contract: dict[str, Any],
     lock: dict[str, Any],
     obs: dict[str, Any],
-    require_clean: bool = False,
+    require_pristine: bool = False,
 ) -> dict[str, Any]:
     """The contract report for an observation.
 
@@ -449,9 +468,13 @@ def evaluate(
     RobotRuns) and baselines ({mode: {ok, summary, error}} from the existing
     baseline verifiers).
 
-    require_clean: the platform is the reference environment, which holds nothing
-    but the contract: every non-contract RobotRun or Dataset is a violation. Off,
-    they are only reported (a general development platform may hold any).
+    Validity is the contract's alone: the 20 RobotRuns, their Scenes and Episodes. State
+    outside it is reported, never a violation, so the contract stays valid while fixed
+    derived test datasets (DERIVED_TEST_NAMESPACE) exist on the platform.
+
+    require_pristine: the platform holds nothing but the contract, derived test state
+    included: every non-contract RobotRun, derived test dataset and foreign dataset is a
+    violation. Off, they are only reported (a general development platform may hold any).
     """
     violations = conflicts(contract, obs)
     units = contract["units"]
@@ -593,24 +616,35 @@ def evaluate(
         "non_contract_robot_runs": len(inv["non_contract_robot_runs"]),
         "contract_scenes": totals["scenes"],
         "contract_episodes": totals["episodes"],
-        "non_contract_datasets": len(inv["non_contract_datasets"]),
-        "clean": not inv["non_contract_robot_runs"]
-        and not inv["non_contract_datasets"],
+        "derived_test_datasets": len(inv["derived_test_datasets"]),
+        "foreign_datasets": len(inv["foreign_datasets"]),
+        "pristine": not inv["non_contract_robot_runs"]
+        and not inv["derived_test_datasets"]
+        and not inv["foreign_datasets"],
     }
-    if require_clean:
+    if require_pristine:
         for r in inv["non_contract_robot_runs"]:
             violations.append(
                 _violation(
                     "non_contract_robot_run",
                     f"RobotRun {r['robot_run_id']} ({r['kind']}) is not part of the contract; "
-                    "the reference environment holds only the contract (make local-reset, then reference-contract-bootstrap)",
+                    "a pristine environment holds only the contract (make local-reset, then reference-contract-bootstrap)",
                 )
             )
-        for dataset in inv["non_contract_datasets"]:
+        for dataset in inv["derived_test_datasets"]:
             violations.append(
                 _violation(
-                    "non_contract_dataset",
-                    f"Dataset {dataset} is not a contract dataset; the reference environment holds only the contract",
+                    "derived_test_dataset",
+                    f"Dataset {dataset} is derived test state; a pristine environment holds none "
+                    "(make local-reset, then reference-contract-bootstrap)",
+                )
+            )
+        for dataset in inv["foreign_datasets"]:
+            violations.append(
+                _violation(
+                    "foreign_dataset",
+                    f"Dataset {dataset} is neither a contract dataset nor derived test state; "
+                    "a pristine environment holds only the contract",
                 )
             )
     return {
@@ -1044,7 +1078,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         contract,
         lock,
         collect_observation(contract),
-        require_clean=getattr(args, "require_clean", False),
+        require_pristine=getattr(args, "require_pristine", False),
     )
     _emit(report)
     _report_log(report)
@@ -1062,8 +1096,8 @@ def _report_log(report: dict[str, Any]) -> None:
         f"{'✅' if report['ok'] else '❌'} reference contract: RobotRuns {obs['robot_runs']}/{exp['robot_runs']}, "
         f"Scenes {obs['scenes']}/{exp['scenes']}, Episodes {obs['episodes']}/{exp['episodes']}; "
         f"{len(inv['non_contract_robot_runs'])} non-contract RobotRun(s) {inv['non_contract_robot_runs_by_kind']}, "
-        f"{state['non_contract_datasets']} non-contract dataset(s); "
-        f"environment {'clean' if state['clean'] else 'NOT clean'}"
+        f"{state['derived_test_datasets']} derived test dataset(s), {state['foreign_datasets']} foreign dataset(s); "
+        f"environment {'pristine' if state['pristine'] else 'NOT pristine'}"
     )
 
 
@@ -1108,7 +1142,10 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     observation = collect_observation(contract)
     changes = diff_snapshots(pre, snapshot(contract, observation))
     report = evaluate(
-        contract, lock, observation, require_clean=getattr(args, "require_clean", False)
+        contract,
+        lock,
+        observation,
+        require_pristine=getattr(args, "require_pristine", False),
     )
     for kind in ("robot_runs", "units"):
         for key in changes[kind]["changed"] + changes[kind]["removed"]:
@@ -1140,9 +1177,9 @@ def main(argv: list[str] | None = None) -> int:
         command.set_defaults(func=fn)
         if name in ("verify", "bootstrap"):
             command.add_argument(
-                "--require-clean",
+                "--require-pristine",
                 action="store_true",
-                help="also fail on any non-contract RobotRun or Dataset (the reference environment)",
+                help="also fail on any non-contract RobotRun, derived test dataset or foreign dataset",
             )
         if name == "pair":
             command.add_argument("--fixture", help="a fixture of the contract")

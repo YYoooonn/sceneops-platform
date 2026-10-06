@@ -24,11 +24,14 @@
 # Data-plane steps run as one-shot containers; every platform operation goes
 # through FastAPI. The host needs Docker Compose, curl and jq.
 #
-# Test-state class: READ_ONLY_REFERENCE (docs/development/test-matrix.md). The RobotRun is
+# Test-state class: REFERENCE_DERIVED (docs/development/test-matrix.md). The RobotRun is
 # the golden reference contract's (BASELINE_ID, default ref-nuscenes-mini-full-10); no
-# RobotRun is created, and nothing is written to the reference DatasetVersion: the
-# Episodes, AlignedEpisodes and learning export of the journey live in DATASET_ID
-# (default: a new sceneops-test-episode-learning-<suffix>), which a runtime reset drops.
+# RobotRun is created, and nothing is written to the reference DatasetVersion. The
+# Episodes, AlignedEpisodes and learning export of the journey live in a fixed, test-owned
+# identity (DATASET_ID, default sceneops-test-episode-learning). Aligned revisions and the
+# export are addressed by the revisions they consume, so a repeated run reuses the
+# DatasetVersion and converges on the same records instead of adding new ones; a runtime
+# reset (make local-reset) drops them.
 #
 # Prerequisites: `make local-up`, `make acquisition-image`, `make reference-data-bootstrap`, `make lerobot-image`,
 # data/raw/nuscenes with v1.0-mini and can_bus.
@@ -42,10 +45,9 @@ source "$SCRIPT_DIR/lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 SOURCE_UNIT="${SOURCE_UNIT:-scene-0061}"
-SUFFIX="$(date +%s)-$$"
 # The source RobotRun is the golden reference contract's (BASELINE_ID defaults to it);
-# everything the journey writes goes to a DatasetVersion of its own.
-export DATASET_ID="${DATASET_ID:-sceneops-test-episode-learning-$SUFFIX}"
+# everything the journey writes goes to a fixed DatasetVersion of its own.
+export DATASET_ID="${DATASET_ID:-sceneops-test-episode-learning}"
 export FIXTURE="$SOURCE_UNIT"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 
@@ -97,7 +99,11 @@ echo ""
 echo "=== [1/7] episode_learning_data_building: align the pinned Episodes, export exactly those revisions ==="
 PIPELINE_PARAMS="$(jq -cn --argjson pins "$PINS" --argjson alignment "$ALIGNMENT" \
   '{align_episode: {episodes: $pins, alignment_config: $alignment}}')"
-PIPELINE="$(run_pipeline "$API_BASE_URL" episode_learning_data_building "$DATASET_ID" "$DATASET_VERSION" "$PIPELINE_PARAMS")"
+# Not forced: the identical request returns the PipelineRun that already holds this result (a
+# failed or interrupted one is redispatched), so a repeated journey adds no PipelineRun here.
+# The forced retry below is what re-executes the stages every run.
+PIPELINE="$(run_pipeline "$API_BASE_URL" episode_learning_data_building "$DATASET_ID" "$DATASET_VERSION" "$PIPELINE_PARAMS" \
+  '{"force": false}')"
 assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$PIPELINE")" \
   "episode_learning_data_building should succeed" "$API_BASE_URL" "$PIPELINE"
 fetch_pipeline_tasks "$API_BASE_URL" "$PIPELINE" | jq -r '.tasks[] | "  \(.pipelineTaskId): \(.status)"'

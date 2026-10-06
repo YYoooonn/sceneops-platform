@@ -94,7 +94,8 @@ test-integration:
 # dedup / force / convergence / replacement / blocked resumption / failure
 # recovery / concurrent registration. Runs against the live stack (`make
 # local-up`); builds on the canonical baseline (canonical-bootstrap) and writes
-# only into throwaway DatasetVersions. The Airflow and acquisition-recovery
+# only into the fixed sceneops-test-infra-pipelines Dataset, one DatasetVersion per
+# test, reused by every run (REFERENCE_DERIVED). The Airflow and acquisition-recovery
 # modules are their own targets (test-infrastructure-airflow, test-recovery); a
 # skip here is a failure.
 test-infrastructure: canonical-bootstrap
@@ -106,7 +107,8 @@ test-infrastructure: canonical-bootstrap
 		--ignore=tests/infrastructure/unit -v
 
 .PHONY: test-infrastructure-airflow
-# The same canonical pipelines through the Airflow per-task DAGs. Requires:
+# The same canonical pipelines through the Airflow per-task DAGs, into the fixed
+# sceneops-test-infra-airflow Dataset (REFERENCE_DERIVED). Requires:
 # `make airflow-up`, and the api service restarted with
 # SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow (a process-startup
 # setting, not automatable from here). Fails -- never skips -- when the API,

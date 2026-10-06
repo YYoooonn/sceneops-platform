@@ -26,6 +26,9 @@
 # (make acceptance-grounding-dino, make test-infrastructure-airflow,
 # make e2e-streaming-equivalence).
 #
+# Test-state class: CLEANROOM_ACCEPTANCE (docs/development/test-matrix.md). The runtime is
+# reset first, so its one timestamped DatasetVersion (L3_DATASET_ID) never accumulates.
+#
 # Requires interactive confirmation (the reset is destructive) unless FORCE=1.
 #
 # Usage:

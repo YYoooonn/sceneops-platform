@@ -8,7 +8,9 @@ Checks, without running any workflow:
   * every `make <target>` that `make help` advertises is a real target, and
     every journey / baseline / test target is advertised;
   * no Makefile, makefile fragment or script under scripts/ references a
-    deleted pipeline, job type or workflow.
+    deleted pipeline, job type or workflow;
+  * no command, script or active document uses a retired test-state class name
+    (the vocabulary is docs/development/test-matrix.md#test-state-classes).
 
 Prints one line per violation and exits non-zero when there is any.
 """
@@ -81,6 +83,20 @@ DELETED = [
 ]
 
 
+# Test-state class names and flags that were renamed. A retired name beside the final one
+# makes the vocabulary ambiguous (READ_ONLY_REFERENCE vs REFERENCE_READ_ONLY), so none may
+# appear in a command, a script, the README or an active document. ADRs and historical
+# records keep the words they were written with and are not scanned. The value lists the
+# files that must name the retired term to refuse it.
+RETIRED_VOCABULARY = {
+    "READ_ONLY_REFERENCE": (),
+    "MUTATING_ACQUISITION_TEST": (),
+    "REQUIRE_CLEAN": ("makefiles/reference.mk",),
+    "--require-clean": ("scripts/reference/tests/test_reference_contract.py",),
+}
+ACTIVE_DOCS = ("README.md", "docs/development", "docs/architecture", "docs/workflows")
+
+
 def _make(*args: str, check: bool = True) -> str:
     return subprocess.run(
         ["make", "--no-print-directory", *args],
@@ -112,6 +128,14 @@ def scanned_files() -> list[Path]:
     return files
 
 
+def vocabulary_files() -> list[Path]:
+    files = scanned_files()
+    for entry in ACTIVE_DOCS:
+        path = REPO_ROOT / entry
+        files += sorted(path.rglob("*.md")) if path.is_dir() else [path]
+    return files
+
+
 def main() -> int:
     problems: list[str] = []
     defined = defined_targets()
@@ -136,6 +160,13 @@ def main() -> int:
         for name in DELETED:
             if name in text:
                 problems.append(f"{path.relative_to(REPO_ROOT)} references deleted `{name}`")
+
+    for path in vocabulary_files():
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        text = path.read_text()
+        for term, allowed in RETIRED_VOCABULARY.items():
+            if term in text and relative not in allowed:
+                problems.append(f"{relative} uses the retired name `{term}`")
 
     for problem in problems:
         print(f"❌ {problem}")

@@ -29,11 +29,15 @@
 # inference server (`make inference-local-up` / `inference-gpu-up`) and lifts
 # boxes through the real lidar payload.
 #
-# Test-state class: READ_ONLY_REFERENCE (docs/development/test-matrix.md). The RobotRun is
+# Test-state class: REFERENCE_DERIVED (docs/development/test-matrix.md). The RobotRun is
 # the golden reference contract's (BASELINE_ID, default ref-nuscenes-mini-full-10); no
-# RobotRun is created, and nothing is written to the reference DatasetVersion: the
-# Scenes, labels, views, ScenarioSet, predictions and evaluations of the journey live in
-# DATASET_ID (default: a new sceneops-test-scene-ml-<suffix>), which a runtime reset drops.
+# RobotRun is created, and nothing is written to the reference DatasetVersion. The Scenes,
+# labels, views, ScenarioSet, predictions and evaluations of the journey live in a fixed,
+# test-owned identity (DATASET_ID, default sceneops-test-scene-ml; the GroundingDINO
+# acceptance uses sceneops-test-scene-ml-grounding-dino), and every derived record carries
+# an id derived from it. A repeated run therefore reuses the DatasetVersion and converges on
+# the same Scenes, LabelSet, views, ScenarioSet, InferenceRun and EvaluationRuns instead of
+# adding new ones; a runtime reset (make local-reset) drops them.
 #
 # Prerequisites: `make local-up`, `make acquisition-image` and
 # `make reference-data-bootstrap` (recordings and reference labels in data/reference).
@@ -48,15 +52,26 @@ source "$SCRIPT_DIR/lib.sh"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 BACKEND="${BACKEND:-mock}"
 SOURCE_UNIT="${SOURCE_UNIT:-scene-0061}"
-SUFFIX="$(date +%s)-$$"
 # The source RobotRun is the golden reference contract's (BASELINE_ID defaults to it);
-# everything the journey writes goes to a DatasetVersion of its own.
-export DATASET_ID="${DATASET_ID:-sceneops-test-scene-ml-$SUFFIX}"
+# everything the journey writes goes to a fixed DatasetVersion of its own. The backend is
+# part of the identity: two detectors never share predictions.
+case "$BACKEND" in
+  mock) DEFAULT_DATASET_ID="sceneops-test-scene-ml" ;;
+  grounding_dino) DEFAULT_DATASET_ID="sceneops-test-scene-ml-grounding-dino" ;;
+  *) fail "Unknown BACKEND='$BACKEND' (expected mock|grounding_dino)" ;;
+esac
+export DATASET_ID="${DATASET_ID:-$DEFAULT_DATASET_ID}"
 export FIXTURE="$SOURCE_UNIT"
 source "$REPO_ROOT/scripts/canonical/baseline_lib.sh"
 RUN_ID="$(baseline_run_id "$SOURCE_UNIT")"
-LABEL_SET_ID="labels-$DATASET_ID-$SOURCE_UNIT"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
+# Ids of the derived records, fixed by the identity above. Inference and evaluation runs
+# are immutable per id, so a capped run (MAX_SAMPLES) is a different identity from a full one.
+LABEL_SET_ID="labels-$DATASET_ID-$SOURCE_UNIT"
+SCENARIO_SET_ID="scset-$DATASET_ID"
+INFERENCE_RUN_ID="infer-$DATASET_ID${MAX_SAMPLES:+-max$MAX_SAMPLES}"
+EVALUATION_RUN_ID="eval-$DATASET_ID${MAX_SAMPLES:+-max$MAX_SAMPLES}"
+RECHECK_EVALUATION_RUN_ID="$EVALUATION_RUN_ID-recheck"
 
 CAMERA="/camera/front/image/compressed"
 LIDAR="/lidar/top/points"
@@ -195,16 +210,23 @@ else
     grounding_dino "$INFERENCE_ENDPOINT_URL"
 fi
 PIPELINE_PARAMS="$(jq -cn --argjson views "$VIEW_PARAMS" --argjson ls "$LABEL_SET" --arg lsid "$LABEL_SET_ID" \
-  --arg backend "$BACKEND" --arg cam "$CAMERA" --arg lidar "$LIDAR" --arg max "$MAX_SAMPLES" '{
+  --arg backend "$BACKEND" --arg cam "$CAMERA" --arg lidar "$LIDAR" --arg max "$MAX_SAMPLES" \
+  --arg scset "$SCENARIO_SET_ID" --arg infer "$INFERENCE_RUN_ID" --arg eval "$EVALUATION_RUN_ID" '{
   build_scene_sample_views: $views,
-  mine_scenarios: {label_set_id: $lsid, require_labels: true, required_channels: [$cam, $lidar], max_candidates: 50},
+  mine_scenarios: {label_set_id: $lsid, require_labels: true, required_channels: [$cam, $lidar], max_candidates: 50,
+    output_scenario_set_id: $scset},
   score_scenario_readiness: {},
-  predict_detection: ({inference_backend: $backend, camera_channel: $cam}
+  predict_detection: ({inference_backend: $backend, camera_channel: $cam, inference_run_id: $infer}
     + (if $backend == "grounding_dino" then {lidar_channel: $lidar} else {} end)
     + (if $max == "" then {} else {max_samples: ($max | tonumber)} end)),
-  evaluate_detection: {label_set: $ls, match_distance_m: 2.0}}')"
+  evaluate_detection: {label_set: $ls, match_distance_m: 2.0, evaluation_run_id: $eval}}')"
+# Not forced: the scenario-mining and readiness stages record their runs under the id of the
+# Job that executed them, so a forced re-execution would append a new pair of reports on
+# every run. The identical request returns the PipelineRun that already holds this result
+# (a failed or interrupted one is redispatched); the stages' retry behaviour is proven by the
+# atomic re-runs below and in tests/infrastructure.
 PIPELINE="$(run_pipeline "$API_BASE_URL" scene_ml_evaluation "$DATASET_ID" "$DATASET_VERSION" "$PIPELINE_PARAMS" \
-  "$(jq -cn --arg m "$MODEL_ID" --arg v "$MODEL_VERSION" '{model_id: $m, model_version: $v}')")"
+  "$(jq -cn --arg m "$MODEL_ID" --arg v "$MODEL_VERSION" '{model_id: $m, model_version: $v, force: false}')")"
 assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$PIPELINE")" \
   "scene_ml_evaluation should succeed" "$API_BASE_URL" "$PIPELINE"
 fetch_pipeline_tasks "$API_BASE_URL" "$PIPELINE" | jq -r '.tasks[] | "  \(.pipelineTaskId): \(.status)"'
@@ -215,7 +237,8 @@ PIPELINE_VIEWS="$(task_json "$API_BASE_URL" "$PIPELINE" build_scene_sample_views
 check "the pipeline's view stage reproduced exactly the views of the atomic job (all reused)" \
   [ "$(echo "$PIPELINE_VIEWS" | jq -c '[.result.refs.views, .result.summary.created_count]')" = "$(echo "$SAMPLE_VIEWS" | jq -c '[., 0]')" ]
 MINE="$(task_json "$API_BASE_URL" "$PIPELINE" mine_scenarios)"
-SCENARIO_SET_ID="$(echo "$MINE" | jq -r '.result.refs.scenario_set_id')"
+check "the ScenarioSet carries its fixed id" \
+  [ "$(echo "$MINE" | jq -r '.result.refs.scenario_set_id')" = "$SCENARIO_SET_ID" ]
 SCENARIO_SET_CHECKSUM="$(echo "$MINE" | jq -r '.result.refs.scenario_set_checksum')"
 SELECTED="$(echo "$MINE" | jq -r '.result.summary.selected_count_summary // .result.summary.selected_count // 0')"
 echo "  scenario_set_id=$SCENARIO_SET_ID selected=$SELECTED"
@@ -224,9 +247,11 @@ check "the ScenarioSet record pins exactly the mined revision" \
   [ "$(api_get "$API_BASE_URL" "/scenarios/$SCENARIO_SET_ID" | jq -r '.scenarioSet.manifestChecksum')" = "$SCENARIO_SET_CHECKSUM" ]
 
 PREDICT="$(task_json "$API_BASE_URL" "$PIPELINE" predict_detection)"
-INFERENCE_RUN_ID="$(echo "$PREDICT" | jq -r '.result.refs.inference_run_id')"
+check "the inference run carries its fixed id" \
+  [ "$(echo "$PREDICT" | jq -r '.result.refs.inference_run_id')" = "$INFERENCE_RUN_ID" ]
 PREDICTION_CHECKSUM="$(echo "$PREDICT" | jq -r '.result.refs.prediction_manifest_checksum')"
-EVALUATION_RUN_ID="$(task_json "$API_BASE_URL" "$PIPELINE" evaluate_detection | jq -r '.result.refs.evaluation_run_id')"
+check "the evaluation run carries its fixed id" \
+  [ "$(task_json "$API_BASE_URL" "$PIPELINE" evaluate_detection | jq -r '.result.refs.evaluation_run_id')" = "$EVALUATION_RUN_ID" ]
 INFERENCE="$(api_get "$API_BASE_URL" "/inference/runs/$INFERENCE_RUN_ID")"
 EVALUATION="$(api_get "$API_BASE_URL" "/evaluations/runs/$EVALUATION_RUN_ID")"
 echo "  inference sampleCount=$(echo "$INFERENCE" | jq -r '.run.sampleCount') predictionCount=$(echo "$INFERENCE" | jq -r '.run.predictionCount')"
@@ -259,13 +284,26 @@ check "same run id, same inputs: the same prediction revision" \
 echo ""
 
 echo "=== [6/8] atomic EVALUATE: the same pinned inputs reproduce the same metrics ==="
-REEVAL="$(run_job "$API_BASE_URL" evaluate_detection "$DATASET_ID" "$DATASET_VERSION" \
-  "$(jq -cn --arg id "$INFERENCE_RUN_ID" --arg c "$PREDICTION_CHECKSUM" --argjson ls "$LABEL_SET" '{
-    inference_run_id: $id, prediction_manifest_checksum: $c, label_set: $ls, match_distance_m: 2.0}')")"
-assert_job_succeeded "$REEVAL" "re-evaluating the pinned prediction should succeed"
-echo "  $(job_result "$REEVAL" | jq -c '{primary_metric_name, primary_metric_value, ground_truth_count}')"
+# A second evaluation of the same pinned inputs under its own fixed run id. evaluate_detection
+# registers ArtifactRecords under fresh ids on every execution, so re-executing an existing
+# evaluation run would add duplicate records: the evaluation runs once, and a repeated journey
+# reads the run it recorded.
+if RECHECK_RUN="$(api_get "$API_BASE_URL" "/evaluations/runs/$RECHECK_EVALUATION_RUN_ID" 2>/dev/null)" \
+  && [ "$(echo "$RECHECK_RUN" | jq -r '.run.status')" = succeeded ]; then
+  echo "  evaluation run $RECHECK_EVALUATION_RUN_ID exists: read, not re-executed"
+  RECHECK_METRIC="$(echo "$RECHECK_RUN" | jq -c '[.run.primaryMetricName, .run.primaryMetricValue]')"
+else
+  REEVAL="$(run_job "$API_BASE_URL" evaluate_detection "$DATASET_ID" "$DATASET_VERSION" \
+    "$(jq -cn --arg id "$INFERENCE_RUN_ID" --arg c "$PREDICTION_CHECKSUM" --argjson ls "$LABEL_SET" \
+      --arg eval "$RECHECK_EVALUATION_RUN_ID" '{
+      inference_run_id: $id, prediction_manifest_checksum: $c, label_set: $ls, match_distance_m: 2.0,
+      evaluation_run_id: $eval}')")"
+  assert_job_succeeded "$REEVAL" "re-evaluating the pinned prediction should succeed"
+  echo "  $(job_result "$REEVAL" | jq -c '{primary_metric_name, primary_metric_value, ground_truth_count}')"
+  RECHECK_METRIC="$(job_result "$REEVAL" | jq -c '[.primary_metric_name, .primary_metric_value]')"
+fi
 check "the same predictions and labels give the same primary metric" \
-  [ "$(job_result "$REEVAL" | jq -c '[.primary_metric_name, .primary_metric_value]')" = "$(echo "$EVALUATION" | jq -c '[.run.primaryMetricName, .run.primaryMetricValue]')" ]
+  [ "$RECHECK_METRIC" = "$(echo "$EVALUATION" | jq -c '[.run.primaryMetricName, .run.primaryMetricValue]')" ]
 echo ""
 
 echo "=== [7/8] the real lidar payload is the locked recording's PointCloud2 message ==="

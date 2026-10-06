@@ -11,6 +11,10 @@ Each DAG runs every task of one pipeline as its own DockerOperator process,
 recomposing the state transitions of the Celery path (start / finalize). The
 tests prove the canonical pipelines reach the same terminal state and the same
 canonical records through that orchestrator.
+
+The tests own the fixed Dataset `sceneops-test-infra-airflow`, one DatasetVersion per test
+(REFERENCE_DERIVED, docs/development/test-matrix.md). A repeated run reuses them: each
+pipeline is executed again through Airflow and converges on the records already there.
 """
 
 from __future__ import annotations
@@ -19,7 +23,12 @@ import os
 
 import pytest
 
-from infra_support import episode_params, reference_label_document, scene_params
+from infra_support import (
+    INFRA_AIRFLOW_DATASET,
+    episode_params,
+    reference_label_document,
+    scene_params,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SCENEOPS_TEST_AIRFLOW") != "1",
@@ -33,7 +42,7 @@ def _executed_by_airflow(api, run: dict) -> None:
 
 
 def test_recording_scene_building_through_airflow(api, baseline_run):
-    dataset = api.new_dataset_version("airflow-scene")
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "scene")
     run = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
 
     assert run["status"] == "succeeded", run
@@ -42,7 +51,7 @@ def test_recording_scene_building_through_airflow(api, baseline_run):
 
 
 def test_recording_episode_building_through_airflow(api, baseline_run):
-    dataset = api.new_dataset_version("airflow-episode")
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "episode")
     run = api.run(
         "recording_episode_building", dataset, episode_params(baseline_run["robot_run_id"])
     )
@@ -53,9 +62,9 @@ def test_recording_episode_building_through_airflow(api, baseline_run):
 
 
 def test_episode_learning_data_building_through_airflow(api, baseline_run):
-    """The L3 pipeline over one RobotRun's pinned Episodes, built into a DatasetVersion of
-    the test's own: the reference DatasetVersion is never written to."""
-    dataset = api.new_dataset_version("airflow-learning")
+    """The L3 pipeline over one RobotRun's pinned Episodes, built into the test's own
+    DatasetVersion: the reference DatasetVersion is never written to."""
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "learning")
     built = api.run(
         "recording_episode_building", dataset, episode_params(baseline_run["robot_run_id"])
     )
@@ -89,11 +98,13 @@ def test_episode_learning_data_building_through_airflow(api, baseline_run):
 
 
 def test_scene_ml_evaluation_through_airflow(api, baseline, baseline_run):
-    """The L3 Scene ML pipeline over the Scenes of a DatasetVersion of the test's own,
-    with a LabelSet the test itself imports (the fixture's locked reference labels,
-    rendered for the baseline RobotRun). The reference DatasetVersion is never written
-    to; a missing prerequisite (reference labels, the acquisition image) fails."""
-    dataset = api.new_dataset_version("airflow-scene-ml")
+    """The L3 Scene ML pipeline over the Scenes of the test's own DatasetVersion, with a
+    LabelSet the test itself imports (the fixture's locked reference labels, rendered for
+    the baseline RobotRun). The ScenarioSet, inference run and evaluation run carry fixed
+    ids, so a repeated run converges on the same derived records instead of adding new
+    ones. The reference DatasetVersion is never written to; a missing prerequisite
+    (reference labels, the acquisition image) fails."""
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "scene-ml")
     built = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
     assert built["status"] == "succeeded", built
 
@@ -145,10 +156,19 @@ def test_scene_ml_evaluation_through_airflow(api, baseline, baseline_run):
                     "label_set_id": label_set_id,
                     "require_labels": True,
                     "required_channels": [camera, lidar],
+                    "output_scenario_set_id": "scset-infra-airflow",
                 },
                 "score_scenario_readiness": {},
-                "predict_detection": {"inference_backend": "mock", "camera_channel": camera},
-                "evaluate_detection": {"label_set": label_set, "match_distance_m": 2.0},
+                "predict_detection": {
+                    "inference_backend": "mock",
+                    "camera_channel": camera,
+                    "inference_run_id": "infer-infra-airflow",
+                },
+                "evaluate_detection": {
+                    "label_set": label_set,
+                    "match_distance_m": 2.0,
+                    "evaluation_run_id": "eval-infra-airflow",
+                },
             },
         },
     ).json()["pipelineRun"]

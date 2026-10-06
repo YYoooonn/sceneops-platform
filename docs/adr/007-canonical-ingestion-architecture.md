@@ -5869,3 +5869,55 @@ non-contract `BASELINE_ID`. The measured scope is one fixture per run (default
 the equivalence of the other nine fixtures is carried by `make streaming-compare`
 (counts and canonical projections, no payloads) and by running the journey with
 `SCENE=<fixture>`.
+
+### 36.7 Derived workflows converge on fixed identities; one test-state vocabulary
+
+**Decision.** The workflows that consume the golden contract and write state of their
+own (the Scene ML and Episode learning journeys, the model-backend acceptance, the
+pipeline and Airflow infrastructure tests) own a fixed Dataset each and converge on it:
+
+```text
+sceneops-test-scene-ml                   e2e-scene-ml
+sceneops-test-scene-ml-grounding-dino    acceptance-grounding-dino
+sceneops-test-episode-learning           e2e-episode-learning
+sceneops-test-infra-pipelines            test-infrastructure   (one DatasetVersion per test)
+sceneops-test-infra-airflow              test-infrastructure-airflow (one DatasetVersion per test)
+```
+
+No timestamp, counter or UUID is part of a top-level Dataset identity. Derived records
+carry ids derived from it (`scset-<dataset>`, `infer-<dataset>`, `eval-<dataset>`), so a
+repeated run reuses the Dataset, DatasetVersion, Scenes, Episodes, LabelSet, sample views,
+ScenarioSet, InferenceRun, EvaluationRun, aligned Episodes and learning export instead of
+adding new ones. Where a test needs a changed state, it uses the platform's explicit
+replacement; nothing is deleted. `e2e-cleanroom` is unchanged: it resets the runtime
+before it creates its one timestamped DatasetVersion.
+
+The test-state classes are renamed to one vocabulary: `REFERENCE_CONTRACT`,
+`REFERENCE_READ_ONLY`, `REFERENCE_DERIVED`, `MUTATING_ACQUISITION`,
+`CLEANROOM_ACCEPTANCE` and `DISPOSABLE_ENVIRONMENT`. `READ_ONLY_REFERENCE` of §35.3 is
+`REFERENCE_DERIVED` (the workflows that write derived state) or `REFERENCE_READ_ONLY`
+(those that write nothing); `MUTATING_ACQUISITION_TEST` is `MUTATING_ACQUISITION`.
+`REQUIRE_CLEAN` of §35.3 is replaced by `REQUIRE_PRISTINE`:
+`reference-contract-verify` judges the contract alone and reports non-contract RobotRuns,
+derived test datasets and foreign datasets apart, and `REQUIRE_PRISTINE=1` additionally
+fails on any of them. The contract stays valid while derived test datasets exist.
+
+**Why.** Platform state is never deleted piecemeal (§35.3), so a test identity that
+changes per run accumulates until the next reset. A fixed identity bounds the top-level
+state, keeps it recognisable as test-owned and lets the contract verifier tell it from
+the contract.
+
+**Consequences.**
+
+- Execution history is append-only and is not derived state: forced Jobs and PipelineRuns
+  add rows, and a re-executed validation, profile, scenario-mining or readiness stage
+  writes a report keyed by the id of the Job that ran it (no per-stage id override
+  exists). The journeys avoid re-executing the Scene ML pipeline and the first Episode
+  learning pipeline (`force: false`); the infrastructure suites exist to prove
+  re-execution and so append such reports on every run.
+- `evaluate_detection` registers its ArtifactRecords under fresh ids on every execution,
+  so executing it again under an existing evaluation run id duplicates the records of the
+  same objects. The Scene ML journey therefore evaluates its recheck run once and reads it
+  afterwards. Making those registrations idempotent is not decided here.
+- A runtime that ran the previous, timestamped journeys holds `sceneops-test-*` Datasets
+  that the fixed identities do not reuse; they are removed by `make local-reset`.

@@ -38,8 +38,8 @@ ROS2_CMD        ?=
 # scene-0061). RATE: streaming replay rate of streaming-bootstrap (default: the
 # fixture's replay definition). BASELINE_ID: the baseline whose RobotRuns a journey uses (default: the
 # golden reference contract's; a different one registers non-contract RobotRuns and
-# needs DISPOSABLE_RUNTIME=1). DATASET_ID: the DatasetVersion an L3 journey writes
-# into (default: a new sceneops-test-<journey>-<suffix>). DISPOSABLE_RUNTIME=1: this
+# needs DISPOSABLE_RUNTIME=1). DATASET_ID: the Dataset an L3 journey writes into
+# (default: its fixed sceneops-test-<journey> identity, reused by every run). DISPOSABLE_RUNTIME=1: this
 # runtime will be reset afterwards (docs/development/test-matrix.md). BACKEND /
 # MAX_SAMPLES: the detection backend and sample cap of the Scene ML journey.
 SCENE           ?=
@@ -91,9 +91,10 @@ help:
 	@echo "  make e2e-streaming-equivalence [SCENE=..]        [READ-ONLY] the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture: equivalent"
 	@echo "  make e2e-scene-ml [SCENE=scene-0061]             reference RobotRun -> Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)"
 	@echo "  make e2e-episode-learning [SCENE=scene-0061]     reference RobotRun -> Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip"
-	@echo "  make e2e-cleanroom                               [DESTRUCTIVE] local-reset -> images -> canonical-bootstrap (golden identity, scene-0061) -> both L3 journeys -> verification"
-	@echo "  e2e-scene-ml / e2e-episode-learning consume the golden reference RobotRun and write into a DatasetVersion of their own (DATASET_ID=<id>);"
-	@echo "  e2e-streaming-equivalence reads both golden RobotRuns from the ArtifactStore and writes nothing (REFERENCE_READ_ONLY; docs/development/test-matrix.md)."
+	@echo "  make e2e-cleanroom                               [DESTRUCTIVE, CLEANROOM_ACCEPTANCE] local-reset -> images -> canonical-bootstrap (golden identity, scene-0061) -> both L3 journeys -> verification"
+	@echo "  e2e-scene-ml / e2e-episode-learning consume the golden reference RobotRun and write into a fixed, test-owned Dataset (sceneops-test-scene-ml /"
+	@echo "  sceneops-test-episode-learning; DATASET_ID=<id> overrides) that a repeated run reuses (REFERENCE_DERIVED; docs/development/test-matrix.md)."
+	@echo "  e2e-streaming-equivalence reads both golden RobotRuns from the ArtifactStore and writes nothing (REFERENCE_READ_ONLY)."
 	@echo "  make acceptance-grounding-dino                   Model-backend acceptance of e2e-scene-ml (needs an inference server)"
 	@echo ""
 	@echo "=================================================================="

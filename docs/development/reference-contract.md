@@ -80,8 +80,8 @@ under the contract's robot.
 ```text
 make reference-contract-verify      read-only
 make reference-contract-bootstrap   converge on the contract
-make reference-contract-verify REQUIRE_CLEAN=1    ... and nothing but the contract
-python3 scripts/reference/reference_contract.py show|validate|verify|bootstrap [--require-clean]
+make reference-contract-verify REQUIRE_PRISTINE=1    ... and nothing but the contract
+python3 scripts/reference/reference_contract.py show|validate|verify|bootstrap [--require-pristine]
 python3 scripts/reference/reference_contract.py pair [--fixture <id> | --scope <scope>]
 python3 scripts/reference/reference_contract.py fingerprint
 ```
@@ -108,17 +108,28 @@ Read-only. It validates the contract against its sources, then:
    equal `expected_totals`.
 
 By default it does not require the platform to hold exactly the contract's RobotRuns
-(a general development platform may hold any). The report's `state` is the compact
-check (`contract_robot_runs`, `non_contract_robot_runs`, `contract_scenes`,
-`contract_episodes`, `non_contract_datasets`, `clean`), and its `inventory` lists the
-contract RobotRuns and every non-contract one (by kind: `temporary_e2e`,
-`reference_like_baseline`, `unclassified`), the non-contract DatasetVersions, the
-Scenes and Episodes outside the contract DatasetVersions, and orphan Scenes and
-Episodes. The kinds are a naming heuristic for reporting only.
+(a general development platform may hold any), and the contract stays valid while the
+fixed derived test datasets of the `REFERENCE_DERIVED` workflows exist beside it. State
+outside the contract is reported in three separate groups and never fails the default
+check:
 
-`REQUIRE_CLEAN=1` (`--require-clean`) is the check of the dedicated **reference
-environment**: every non-contract RobotRun (`non_contract_robot_run`) and Dataset
-(`non_contract_dataset`) is then a violation.
+| Group | Meaning |
+| --- | --- |
+| non-contract RobotRuns | any RobotRun not named by the contract (by kind: `temporary_e2e`, `reference_like_baseline`, `unclassified`; a naming heuristic for reporting only) |
+| derived test datasets | Datasets in the reserved `sceneops-test-` namespace: the fixed, test-owned state of the derived journeys and infrastructure tests ([test-matrix.md](./test-matrix.md#test-state-classes)), with the number of Scenes and Episodes they hold |
+| foreign datasets | any other non-contract Dataset |
+
+The report's `state` is the compact check (`contract_robot_runs`, `non_contract_robot_runs`,
+`contract_scenes`, `contract_episodes`, `derived_test_datasets`, `foreign_datasets`,
+`pristine`), and its `inventory` lists the contract RobotRuns and every non-contract one,
+the three dataset groups, the Scenes and Episodes outside the contract DatasetVersions,
+and orphan Scenes and Episodes.
+
+`REQUIRE_PRISTINE=1` (`--require-pristine`) is the check of a freshly reset reference
+environment: every non-contract RobotRun (`non_contract_robot_run`), derived test dataset
+(`derived_test_dataset`) and foreign dataset (`foreign_dataset`) is then a violation.
+It is the only flag that treats derived test state as a problem; the contract's own
+validity does not depend on it.
 
 ### `pair` and `fingerprint`
 
@@ -173,18 +184,19 @@ is reconstructed from the locked corpus, which `local-reset` keeps:
 ```text
 make local-reset                              PostgreSQL, Redis, MinIO, Kafka log, capture volume dropped
 make reference-data-verify REFERENCE_SCOPE=nuscenes-mini-full-10     the locked corpus is intact
-make reference-contract-bootstrap REQUIRE_CLEAN=1                    20 RobotRuns, 20 Scenes, 20 Episodes
-make reference-contract-verify REQUIRE_CLEAN=1                       the state check, read-only
+make reference-contract-bootstrap REQUIRE_PRISTINE=1                 20 RobotRuns, 20 Scenes, 20 Episodes
+make reference-contract-verify REQUIRE_PRISTINE=1                    the state check, read-only
 ```
 
-A workflow that registers RobotRuns of its own (`MUTATING_ACQUISITION_TEST`) leaves
+A workflow that registers RobotRuns of its own (`MUTATING_ACQUISITION`) leaves
 non-contract state that nothing removes, so it runs only on a runtime declared
-disposable and the reference environment is rebuilt afterwards; the workflows that
-only consume the contract (`READ_ONLY_REFERENCE`) register no RobotRun and write into
-`sceneops-test-*` DatasetVersions of their own, which `REQUIRE_CLEAN=1` reports as
-residue; those that create nothing (`REFERENCE_READ_ONLY`, `e2e-streaming-equivalence`)
-leave the environment exactly as it was. See [test-matrix.md](./test-matrix.md#test-state-classes) and
-[ADR-007](../adr/007-canonical-ingestion-architecture.md) §35.3.
+disposable and the reference environment is rebuilt afterwards. The workflows that only
+consume the contract (`REFERENCE_DERIVED`) register no RobotRun and write into fixed
+`sceneops-test-*` Datasets of their own that a repeated run reuses; `reference-contract-verify`
+reports them as derived test datasets and `REQUIRE_PRISTINE=1` fails on them until the next
+reset. Those that create nothing (`REFERENCE_READ_ONLY`, `e2e-streaming-equivalence`) leave
+the environment exactly as it was. See [test-matrix.md](./test-matrix.md#test-state-classes)
+and [ADR-007](../adr/007-canonical-ingestion-architecture.md) §35.3, §36.7.
 
 ## Refreshing the contract
 

@@ -10,10 +10,17 @@ each orchestrator.
 The pipelines need a registered RobotRun. The tests consume the golden reference
 contract's Recording Import RobotRuns (`scripts/canonical/canonical_bootstrap.sh`,
 create-or-verify; the smoke-1 selection, scene-0061, unless REFERENCE_SCOPE says
-otherwise), take one of them (`baseline_run`) and build into their own
-`sceneops-test-infra-*` DatasetVersions: no RobotRun is created and the reference
-DatasetVersion is never mutated. Those DatasetVersions are test residue that a runtime
-reset (`make local-reset`) drops.
+otherwise), take one of them (`baseline_run`) and build into DatasetVersions the tests own
+(class REFERENCE_DERIVED, docs/development/test-matrix.md): no RobotRun is created and the
+reference DatasetVersion is never mutated.
+
+Test-owned identity is fixed. `sceneops-test-infra-pipelines` (Celery / default
+orchestrator) and `sceneops-test-infra-airflow` (Airflow) each hold one DatasetVersion per
+test, named after the test, so a repeated run reuses them instead of adding new ones. A test
+therefore starts from whatever state the previous run left and states the transitions it
+proves from there (explicit replacement, never deletion). Execution records (PipelineRuns,
+Jobs) and the job-keyed validation / profile reports of a re-executed pipeline are history
+the platform appends; a runtime reset (`make local-reset`) drops everything.
 """
 
 from __future__ import annotations
@@ -23,7 +30,6 @@ import json
 import os
 import subprocess
 import time
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -43,6 +49,9 @@ WORKER_LABELS_DIR = "/data/inputs/labels"
 def _config(name: str) -> dict:
     return json.loads((REPO_ROOT / "config" / "baselines" / name).read_text())
 
+
+INFRA_PIPELINES_DATASET = "sceneops-test-infra-pipelines"
+INFRA_AIRFLOW_DATASET = "sceneops-test-infra-airflow"
 
 SCENE_BUILD_CONFIG = _config("scene_build_config.json")
 EPISODE_BUILD_CONFIG = _config("episode_build_config.json")
@@ -65,11 +74,12 @@ class Api:
             assert response.status_code == expect, response.text
         return response
 
-    def new_dataset_version(self, prefix: str = "infra") -> tuple[str, str]:
-        dataset_id = f"sceneops-test-infra-{prefix}"
-        version = f"v-{uuid.uuid4().hex[:10]}"
+    def dataset_version(self, dataset_id: str, version: str) -> tuple[str, str]:
+        """The test-owned DatasetVersion ``dataset_id`` / ``version``: created when it does
+        not exist, reused when it does (a repeated run never adds an identity)."""
         self.post("/datasets", {"dataset_id": dataset_id, "name": "Infrastructure tests"})
-        self.post(f"/datasets/{dataset_id}/versions", {"version": version}, expect=201)
+        if self._client.get(f"/datasets/{dataset_id}/versions/{version}").status_code == 404:
+            self.post(f"/datasets/{dataset_id}/versions", {"version": version}, expect=201)
         return dataset_id, version
 
     def create_run(
@@ -104,6 +114,10 @@ class Api:
         self, pipeline_type: str, dataset: tuple[str, str], params: dict, *, force: bool = True
     ) -> dict:
         created = self.create_run(pipeline_type, dataset, params, force=force)
+        if created["status"] == "succeeded":
+            # An identical request returns the run that already holds this result; a
+            # succeeded run is not dispatched again (a failed or blocked one is).
+            return created
         assert self.dispatch(created["pipelineRunId"]).status_code in (200, 202)
         return self.wait(created["pipelineRunId"])
 

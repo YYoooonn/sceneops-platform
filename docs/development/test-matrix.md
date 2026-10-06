@@ -15,12 +15,12 @@ infrastructure semantics are part of the contract.
 | Unit | `make test` | none | pure logic, schemas, state transitions, pipeline-definition and REF-chaining contracts, execution identity, API services over fakes, the Airflow DAG mirror, the disposable-environment safety rules, the golden contract's evaluation and equivalence-pair resolution, the equivalence verifier's decisions |
 | Isolated-environment unit | `make acquisition-test`, `make lerobot-test`, `make ros2-test` | the tool's own uv project / the ROS 2 image (`ros2-test` also Kafka) | the acquisition tool (incl. its import boundary), the LeRobot adapter and container entrypoint, the streaming bridge and capture, including the lifecycle envelope of a run against a real broker |
 | Integration | `make test-integration` | PostgreSQL, MinIO (a disposable database and bucket the command creates and drops) | repositories and the migrated schema (every model column exists; no column a model dropped remains), ArtifactStore semantics, MinIO selective Parquet reads, the registrars, acquisition reconciliation, artifact lifecycle classification, the recording Scene / Episode and derived verticals against real stores. A module is integration when it is named `*_integration.py` (or lives in `sceneops-db` / `sceneops-storage` tests) |
-| Infrastructure acceptance | `make test-infrastructure` | the live stack (+ the canonical baseline) | pipeline execution contracts: dedup / force, convergence, conflict-then-replacement, blocked resumption, failure recovery, concurrent registration, RobotRun registration idempotency, the orchestrator that ran them |
+| Infrastructure acceptance | `make test-infrastructure` | the live stack (+ the canonical baseline) | pipeline execution contracts: dedup / force, convergence, conflict-then-replacement, blocked resumption, failure recovery, concurrent registration, RobotRun registration idempotency, the orchestrator that ran them. `REFERENCE_DERIVED`: its DatasetVersions are the fixed `sceneops-test-infra-pipelines/<test>` |
 | Recovery acceptance | `make test-recovery` | PostgreSQL, MinIO (the same disposable database and bucket) + a throwaway Redis and Celery workers (Docker) | acquisition recovery under injected faults, one per test: finalized capture never published, a Job left queued, a worker killed during registration, a committed registration whose completion is lost, transient failures across replacement Jobs and the attempt budget, Redis down / unresponsive then restored, concurrent reconciliation passes, and that conflicts and integrity incidents are left untouched. And the full-lifecycle acceptance: nine acquisitions, each hit by a different failure between capture and RobotRun, recovered only by the production commands |
-| Orchestrator acceptance | `make test-infrastructure-airflow` | live stack + Airflow | the canonical pipelines, including Scene ML over a test-owned DatasetVersion and LabelSet, through the Airflow per-task DAGs |
+| Orchestrator acceptance | `make test-infrastructure-airflow` | live stack + Airflow | the canonical pipelines, including Scene ML over a test-owned DatasetVersion and LabelSet, through the Airflow per-task DAGs. `REFERENCE_DERIVED`: its DatasetVersions are the fixed `sceneops-test-infra-airflow/<test>` |
 | Smoke | `make smoke-streaming` | Kafka | transport and liveness only; never creates domain data |
 | E2E journey | the four `make e2e-*` ([ADR-007](../adr/007-canonical-ingestion-architecture.md) §36) | live stack + containers | a user journey through production paths (below); the test-state class of each is in [Test-state classes](#test-state-classes) |
-| Clean room | `make e2e-cleanroom` | fresh platform state | the platform reconstructs its baseline and runs its representative workflows from nothing |
+| Clean room | `make e2e-cleanroom` | fresh platform state | the platform reconstructs its baseline and runs its representative workflows from nothing (`CLEANROOM_ACCEPTANCE`) |
 | Model-backend acceptance | `make acceptance-grounding-dino` | inference server | the Scene ML journey with the real detector |
 | Streaming baseline | `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | live stack + Kafka + ROS 2 images | the persistent streamed baseline of a scope (create-or-verify, resumable), its registered per-channel counts against the lock, and its canonical agreement with the Recording Import baseline; not a journey and not a benchmark |
 | Golden reference contract | `make reference-contract-verify`, `make reference-contract-bootstrap` (unit: `scripts/reference/tests` in `make test`) | live stack (+ Kafka and ROS 2 images for the bootstrap) | exactly the contract's 20 RobotRuns (10 fixtures × Recording Import and Streaming Acquisition) with their Scenes and Episodes: identity, provenance, locked message and channel facts, whole-recording shape; reports non-contract RobotRuns; the bootstrap reuses what is complete and never replaces an identity |
@@ -30,18 +30,48 @@ infrastructure semantics are part of the contract.
 ## Test-state classes
 
 Platform state is durable and nothing in the platform removes it, so every workflow is
-classed by what it leaves behind. The local reference environment holds exactly the
-[golden reference contract](./reference-contract.md); anything else is residue of a
-disposable runtime and is dropped by `make local-reset`, never deleted piecemeal
+classed by what it leaves behind. This is the one vocabulary used by the docs, the
+scripts and `make help`. The local reference environment holds the
+[golden reference contract](./reference-contract.md) and, once the derived workflows have
+run, their fixed test-owned state; anything else is residue of a disposable runtime and
+is dropped by `make local-reset`, never deleted piecemeal
 ([ADR-007](../adr/007-canonical-ingestion-architecture.md) §35.3).
 
 | Class | May create | Runs on | Workflows |
 | --- | --- | --- | --- |
-| reference state | the contract's RobotRuns, Scenes and Episodes | the reference environment | `reference-contract-bootstrap`; `canonical-bootstrap` / `streaming-bootstrap` with the contract's identity (`smoke-1` selects `scene-0061` of it) |
-| `REFERENCE_READ_ONLY` | nothing: no PostgreSQL row, no MinIO object, no Kafka record; the journey fingerprints every RobotRun, Dataset, Scene and Episode before and after and fails on any difference | the reference environment | `e2e-streaming-equivalence` (reads the contract's two RobotRuns of one fixture from the ArtifactStore) |
-| `READ_ONLY_REFERENCE` | no RobotRun; derived state only in a `sceneops-test-*` DatasetVersion of its own; never the reference DatasetVersion | the reference environment | `*-verify`, `streaming-compare`, `reference-contract-verify`, `smoke-streaming` (write nothing); `e2e-scene-ml`, `e2e-episode-learning`, `test-infrastructure` (Scenes / Episodes / derived records in `sceneops-test-*`) |
-| `MUTATING_ACQUISITION_TEST` | RobotRuns, captures, Kafka records, their artifacts | a disposable runtime (`DISPOSABLE_RUNTIME=1`; refused otherwise) | any bootstrap with a non-contract `BASELINE_ID` |
-| disposable test environment | anything its tests write | a PostgreSQL database (`sceneops_test`) and a MinIO bucket (`sceneops-test`) created for the run and dropped after it, on the local servers; never the reference database or bucket | `make test-integration`, `make test-recovery` |
+| `REFERENCE_CONTRACT` | the contract's RobotRuns, Scenes and Episodes, under their fixed identities; a repeated run reuses them | the reference environment | `reference-contract-bootstrap`; `canonical-bootstrap` / `streaming-bootstrap` with the contract's identity (`smoke-1` selects `scene-0061` of it) |
+| `REFERENCE_READ_ONLY` | nothing: no PostgreSQL row, no MinIO object, no Kafka record. `e2e-streaming-equivalence` fingerprints every RobotRun, Dataset, Scene and Episode before and after and fails on any difference | the reference environment | `*-verify`, `streaming-compare`, `reference-contract-verify`, `smoke-streaming`, `e2e-streaming-equivalence` (reads the contract's two RobotRuns of one fixture from the ArtifactStore) |
+| `REFERENCE_DERIVED` | no RobotRun and nothing in a contract DatasetVersion; derived state only under a fixed, test-owned Dataset (`sceneops-test-*`) whose identity does not depend on time, a counter or a random value, so a repeated run reuses it | the reference environment | `e2e-scene-ml` (`sceneops-test-scene-ml`), `acceptance-grounding-dino` (`sceneops-test-scene-ml-grounding-dino`), `e2e-episode-learning` (`sceneops-test-episode-learning`), `test-infrastructure` (`sceneops-test-infra-pipelines`), `test-infrastructure-airflow` (`sceneops-test-infra-airflow`) |
+| `MUTATING_ACQUISITION` | RobotRuns, captures, Kafka records, their artifacts | a disposable runtime (`DISPOSABLE_RUNTIME=1`; refused otherwise) | any bootstrap with a non-contract `BASELINE_ID` |
+| `CLEANROOM_ACCEPTANCE` | everything: it resets the runtime first, rebuilds the contract's identity and runs both L3 journeys into one `sceneops-test-cleanroom-<timestamp>` DatasetVersion | a runtime it resets (`make local-reset`, confirmed) | `e2e-cleanroom` |
+| `DISPOSABLE_ENVIRONMENT` | anything its tests write | a PostgreSQL database (`sceneops_test`) and a MinIO bucket (`sceneops-test`) created for the run and dropped after it, on the local servers; never the reference database or bucket | `make test-integration`, `make test-recovery` |
+
+### `REFERENCE_DERIVED` convergence
+
+A derived workflow consumes the golden RobotRun, Scene and Episode and may add state of
+its own. That state has a fixed identity and every record in it is addressed by what it
+consumes, so running the workflow again changes nothing it already holds:
+
+- the Dataset and DatasetVersion are reused (`baseline` for the journeys, one named
+  version per test for the infrastructure suites);
+- Scenes and Episodes are reused by `canonical-bootstrap`'s create-or-verify;
+- the LabelSet, sample views, aligned Episodes and learning export are content-pinned
+  revisions that converge on retry;
+- the ScenarioSet, InferenceRun and EvaluationRuns of Scene ML carry ids derived from the
+  Dataset (`scset-<dataset>`, `infer-<dataset>`, `eval-<dataset>`, `eval-<dataset>-recheck`);
+- where the platform replaces state (a changed Scene configuration), the test uses the
+  platform's explicit replacement (`replace=True`), never deletion.
+
+Execution history is not derived state and is append-only: every forced Job or
+PipelineRun adds a row, and a re-executed validation, profile, mining or readiness
+stage writes a report under the id of the Job that ran it. The journeys keep this
+bounded by not re-executing what is not their subject (the Scene ML pipeline and the
+first Episode learning pipeline are requested without `force`, so an identical request
+returns the run that holds the result). The infrastructure suites exist to prove
+re-execution, so each run of them appends such reports; their Datasets, DatasetVersions,
+Scenes, Episodes and derived manifests stay fixed. Executing `evaluate_detection` again
+under an existing evaluation run id registers duplicate ArtifactRecords for the same
+objects, so the Scene ML journey runs its second evaluation once and reads it afterwards.
 
 `make test-integration` and `make test-recovery` run through
 `tests/infrastructure/disposable_env.py`: it recreates `sceneops_test` (migrated with
@@ -56,21 +86,31 @@ aborts a session whose environment points anywhere else. The tests therefore del
 nothing to restore the environment; the recovery suites still use a Redis container and
 Celery workers of their own.
 
-Temporary identities carry the reserved `test-` namespace: `run-test-*`,
-`robot-test-*`, `sceneops-test-*`. The reference environment is checked with
-`make reference-contract-verify REQUIRE_CLEAN=1` (20 contract RobotRuns, 0 non-contract
-RobotRuns, 20 Scenes, 20 Episodes, 0 non-contract Datasets); after a `READ_ONLY_REFERENCE`
-run it reports the `sceneops-test-*` DatasetVersions as residue while the contract
-itself stays verified.
+Test-owned identities carry the reserved `test-` namespace: `run-test-*` and
+`robot-test-*` for disposable RobotRuns, `sceneops-test-*` for Datasets. The reference
+environment is checked in two strengths:
+
+```text
+make reference-contract-verify
+→ the contract is valid: 20 RobotRuns, 20 Scenes, 20 Episodes
+→ reports non-contract RobotRuns, derived test datasets (`sceneops-test-*`) and foreign
+  datasets, each apart, without failing
+
+make reference-contract-verify REQUIRE_PRISTINE=1
+→ additionally requires zero of all three: a freshly reset and bootstrapped environment
+```
+
+The contract stays valid while the fixed derived datasets exist; only `REQUIRE_PRISTINE`
+treats them as a violation.
 
 ## The journeys
 
 | Journey | Source → result | Proves |
 | --- | --- | --- |
 | `e2e-streaming-equivalence` | the contract's Recording Import RobotRun and Streaming Acquisition RobotRun of one fixture (`smoke-1` → `scene-0061`), each read from the ArtifactStore: its registered recording and manifest, Scenes and Episodes | transport preservation: each RobotRun pins its own recording and carries the locked counts; acquisition equivalence (per-channel payloads and counts, source times, `/tf_static`); canonical Scene / Episode equivalence (I-35); negative controls (a dropped message, a 1 ns source-time shift, a changed payload checksum, a Scene and an Episode semantic change); nothing in the platform changed. It replays, captures, publishes and registers nothing and needs no Kafka or ROS 2 |
-| `e2e-scene-ml` | reference RobotRun → Scenes (own DatasetVersion) → LabelSet → sample views → ScenarioSet → prediction → evaluation | every derived revision pins what it consumed; retries converge; the real lidar payload decodes; canonical Scenes are untouched |
-| `e2e-episode-learning` | reference RobotRun → Episodes (own DatasetVersion) → AlignedEpisodes → learning export → verification + LeRobot round trip | pinned, deterministic alignment and export; shard checksums and `SceneOpsDataset` reads; every LeRobot frame equals the export's dense window; canonical Episodes are untouched |
-| `e2e-cleanroom` | fresh state → canonical-bootstrap (contract identity, `smoke-1`) → both L3 journeys | supported production paths only: no direct SQL, no direct MinIO inspection, no host worker CLI |
+| `e2e-scene-ml` | reference RobotRun → Scenes (`sceneops-test-scene-ml`) → LabelSet → sample views → ScenarioSet → prediction → evaluation | every derived revision pins what it consumed; retries converge; the real lidar payload decodes; canonical Scenes are untouched; a second run adds no Dataset, Scene, artifact or MinIO object |
+| `e2e-episode-learning` | reference RobotRun → Episodes (`sceneops-test-episode-learning`) → AlignedEpisodes → learning export → verification + LeRobot round trip | pinned, deterministic alignment and export; shard checksums and `SceneOpsDataset` reads; every LeRobot frame equals the export's dense window; canonical Episodes are untouched; a second run adds no Dataset, Scene, Episode, artifact or MinIO object |
+| `e2e-cleanroom` | fresh state → canonical-bootstrap (contract identity, `smoke-1`) → both L3 journeys into one `sceneops-test-cleanroom-<timestamp>` DatasetVersion | supported production paths only: no direct SQL, no direct MinIO inspection, no host worker CLI |
 
 ## Where a contract is verified
 
@@ -103,6 +143,9 @@ itself stays verified.
 | Equivalence pair resolution (both golden identities and the lock's facts from the contract) and the platform fingerprint | unit (`scripts/reference/tests`) |
 | Lifecycle envelope of a streamed run: one `RUN_START`, the run's telemetry records, one `RUN_END`, in order and in their own sequence spaces; capture finalized by the explicit `RUN_END`; the receipt's offsets spanning `message_count + 2` records | real Kafka (`ros2/capture/tests/test_lifecycle_integration.py` via `make ros2-test`: the real bridge node publishes, capture consumes); the bridge's emission over a fake producer in `ros2/nodes/tests/test_streaming_bridge_node.py` |
 | Lineage pins, LeRobot round trip | E2E (`e2e-scene-ml`, `e2e-episode-learning`) |
+| Derived test state has a fixed identity and converges: no time / counter / random Dataset id, a repeated journey adds nothing it already holds | unit (`scripts/e2e/tests/test_derived_identities.py`, static); E2E (each journey run twice, state snapshots compared) |
+| The golden contract stays valid beside derived test state; `REQUIRE_PRISTINE` additionally requires none | unit (`scripts/reference/tests`); `make reference-contract-verify` |
+| One test-state vocabulary; retired class names and flags appear nowhere in active docs, scripts or Make | `make check-commands` |
 
 ## Rules
 
@@ -113,6 +156,9 @@ itself stays verified.
   opt-in module with its own target is excluded from the others, not skipped.
 - A workflow that registers RobotRuns of its own never runs on the reference
   environment: it requires `DISPOSABLE_RUNTIME=1`, and the runtime is reset afterwards.
+- A `REFERENCE_DERIVED` workflow names its Dataset with a fixed identity (no timestamp,
+  counter or UUID) and never writes into a contract DatasetVersion. It runs again
+  without adding Datasets, DatasetVersions, Scenes, Episodes or derived manifests.
 - No test removes platform state through SQL or a test-only API to restore an
   environment; disposable state is dropped with the runtime, or, for `test-integration`
   and `test-recovery`, with their disposable database and bucket.

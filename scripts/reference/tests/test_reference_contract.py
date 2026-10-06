@@ -336,7 +336,8 @@ def test_unrelated_temporary_runs_are_reported_and_leave_the_contract_unchanged(
         "reference_like_baseline": 1,
         "temporary_e2e": 1,
     }
-    assert inventory["non_contract_datasets"] == ["sceneops-ref-smoke-1"]
+    assert inventory["foreign_datasets"] == ["sceneops-ref-smoke-1"]
+    assert inventory["derived_test_datasets"] == []
     assert inventory["scenes_outside_contract_datasets"] == 1
     assert inventory["orphan_scenes"] == []
 
@@ -348,8 +349,9 @@ def test_state_summarizes_the_reference_environment():
         "non_contract_robot_runs": 0,
         "contract_scenes": 20,
         "contract_episodes": 20,
-        "non_contract_datasets": 0,
-        "clean": True,
+        "derived_test_datasets": 0,
+        "foreign_datasets": 0,
+        "pristine": True,
     }
 
 
@@ -362,27 +364,90 @@ def _polluted_obs():
     return obs
 
 
-def test_non_contract_state_is_reported_but_only_fails_a_clean_environment():
+def _with_derived_test_state(obs):
+    """The fixed test-owned DatasetVersions the L3 journeys and infrastructure tests keep,
+    holding Scenes / Episodes of a contract RobotRun."""
+    run = rc.run_id(CONTRACT, "recording_import", "scene-0061")
+    for dataset in ("sceneops-test-scene-ml", "sceneops-test-infra-pipelines"):
+        obs["datasets"].append(dataset)
+        obs["scenes"].append(
+            {"sceneId": f"s-{dataset}", "datasetId": dataset, "datasetVersion": "baseline",
+             "robotRunId": run, "unitKey": "recording"}
+        )  # fmt: skip
+        obs["episodes"].append(
+            {"episodeId": f"e-{dataset}", "datasetId": dataset, "datasetVersion": "baseline",
+             "robotRunId": run, "unitKey": "recording"}
+        )  # fmt: skip
+    return obs
+
+
+def test_derived_test_state_is_reported_apart_and_leaves_the_contract_valid():
+    report = evaluate(_with_derived_test_state(build_obs()))
+    assert report["ok"], report["violations"]
+    assert report["state"]["derived_test_datasets"] == 2
+    assert report["state"]["foreign_datasets"] == 0
+    assert report["state"]["pristine"] is False
+    inventory = report["inventory"]
+    assert inventory["derived_test_datasets"] == [
+        "sceneops-test-infra-pipelines",
+        "sceneops-test-scene-ml",
+    ]
+    assert (inventory["derived_test_scenes"], inventory["derived_test_episodes"]) == (
+        2,
+        2,
+    )
+    assert inventory["foreign_datasets"] == []
+    # The contract itself is unaffected: still 20 / 20 / 20.
+    assert report["state"]["contract_robot_runs"] == 20
+    assert report["totals"]["observed"] == report["totals"]["expected"]
+
+
+def test_pristine_additionally_requires_zero_derived_test_state():
+    obs = _with_derived_test_state(build_obs())
+    strict = rc.evaluate(CONTRACT, LOCK, obs, require_pristine=True)
+    assert not strict["ok"]
+    assert codes(strict) == ["derived_test_dataset"]
+    assert len(strict["violations"]) == 2
+    assert strict["state"]["contract_robot_runs"] == 20
+    assert strict["totals"]["observed"]["scenes"] == 20
+
+
+def test_non_contract_state_is_reported_but_only_fails_a_pristine_environment():
     obs = _polluted_obs()
     report = evaluate(obs)
     assert report["ok"], report["violations"]
-    assert report["state"]["clean"] is False
+    assert report["state"]["pristine"] is False
     assert report["state"]["non_contract_robot_runs"] == 1
-    assert report["state"]["non_contract_datasets"] == 1
+    assert report["state"]["derived_test_datasets"] == 1
     assert report["inventory"]["non_contract_robot_runs_by_kind"] == {
         "temporary_e2e": 1
     }
 
-    strict = rc.evaluate(CONTRACT, LOCK, obs, require_clean=True)
+    strict = rc.evaluate(CONTRACT, LOCK, obs, require_pristine=True)
     assert not strict["ok"]
-    assert codes(strict) == ["non_contract_dataset", "non_contract_robot_run"]
+    assert codes(strict) == ["derived_test_dataset", "non_contract_robot_run"]
     # The contract itself is unaffected: still 20 / 20 / 20.
     assert strict["state"]["contract_robot_runs"] == 20
     assert strict["totals"]["observed"]["robot_runs"] == 20
 
 
-def test_a_clean_environment_passes_the_strict_check():
-    assert rc.evaluate(CONTRACT, LOCK, build_obs(), require_clean=True)["ok"]
+def test_a_dataset_that_is_neither_contract_nor_derived_test_state_is_foreign():
+    obs = build_obs()
+    obs["datasets"].append("some-other-dataset")
+    assert evaluate(obs)["state"]["foreign_datasets"] == 1
+    strict = rc.evaluate(CONTRACT, LOCK, obs, require_pristine=True)
+    assert codes(strict) == ["foreign_dataset"]
+
+
+def test_a_pristine_environment_passes_the_strict_check():
+    report = rc.evaluate(CONTRACT, LOCK, build_obs(), require_pristine=True)
+    assert report["ok"]
+    assert report["state"]["pristine"] is True
+
+
+def test_the_former_require_clean_flag_no_longer_exists():
+    with pytest.raises(SystemExit):
+        rc.main(["verify", "--require-clean"])
 
 
 def test_orphan_units_are_inventoried():

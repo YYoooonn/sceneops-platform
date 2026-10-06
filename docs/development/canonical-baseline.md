@@ -259,12 +259,12 @@ fixture by `make e2e-streaming-equivalence`, which reads the two registered Robo
 
 | Consumer | Baseline | Test-state class |
 | --- | --- | --- |
-| `make reference-contract-bootstrap` | both contract baselines, all ten fixtures | the reference state itself |
-| `make canonical-bootstrap`, `streaming-bootstrap`, `*-verify`, `streaming-compare` | the contract's baselines, restricted to the selection (`smoke-1` = `scene-0061`) | the reference state itself / read-only |
-| `make e2e-scene-ml`, `make e2e-episode-learning` | the contract's Recording Import RobotRun of `SOURCE_UNIT` (default `scene-0061`); Scenes, Episodes and everything derived are written to a `sceneops-test-<journey>-<suffix>` DatasetVersion | `READ_ONLY_REFERENCE` |
+| `make reference-contract-bootstrap` | both contract baselines, all ten fixtures | `REFERENCE_CONTRACT` |
+| `make canonical-bootstrap`, `streaming-bootstrap`, `*-verify`, `streaming-compare` | the contract's baselines, restricted to the selection (`smoke-1` = `scene-0061`) | `REFERENCE_CONTRACT` (the bootstraps) / `REFERENCE_READ_ONLY` (the verifiers) |
+| `make e2e-scene-ml`, `make e2e-episode-learning` | the contract's Recording Import RobotRun of `SOURCE_UNIT` (default `scene-0061`); Scenes, Episodes and everything derived are written to the fixed Datasets `sceneops-test-scene-ml` / `sceneops-test-episode-learning` (DatasetVersion `baseline`), which a repeated run reuses | `REFERENCE_DERIVED` |
 | `make e2e-streaming-equivalence` | the contract's Recording Import and Streaming Acquisition RobotRuns of `SOURCE_UNIT` (default `scene-0061`), their recordings and their Scenes and Episodes; it creates nothing | `REFERENCE_READ_ONLY` |
-| `make e2e-cleanroom` | resets the runtime, bootstraps the contract's baseline for `smoke-1`, then both L3 journeys in one DatasetVersion of their own | destructive acceptance |
-| `make test-infrastructure` | the contract's Recording Import RobotRun (create-or-verify, `smoke-1`); the tests build its Scenes / Episodes into `sceneops-test-infra-*` DatasetVersions | `READ_ONLY_REFERENCE` |
+| `make e2e-cleanroom` | resets the runtime, bootstraps the contract's baseline for `smoke-1`, then both L3 journeys in one DatasetVersion of their own | `CLEANROOM_ACCEPTANCE` |
+| `make test-infrastructure` | the contract's Recording Import RobotRun (create-or-verify, `smoke-1`); the tests build its Scenes / Episodes into the fixed `sceneops-test-infra-pipelines` Dataset, one named DatasetVersion per test | `REFERENCE_DERIVED` |
 
 The baseline is independent of `make local-reset`: reset only destroys generated
 state, the bootstrap (re)creates the baseline on top of a running stack, and the

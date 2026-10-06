@@ -24,12 +24,15 @@
 #
 # Selection: SCENE=<nuScenes scene> (default scene-0061). Test-state classes
 # (docs/development/test-matrix.md):
-#   READ_ONLY_REFERENCE         e2e-scene-ml, e2e-episode-learning: the RobotRun is the golden
+#   REFERENCE_DERIVED           e2e-scene-ml, e2e-episode-learning: the RobotRun is the golden
 #                               reference contract's; they register none and write into a
-#                               DatasetVersion of their own (DATASET_ID=<id> names it)
+#                               fixed, test-owned Dataset (sceneops-test-scene-ml,
+#                               sceneops-test-episode-learning; DATASET_ID=<id> names another)
+#                               that a repeated run reuses and converges on
 #   REFERENCE_READ_ONLY         e2e-streaming-equivalence: reads both golden RobotRuns of a
 #                               fixture and creates no durable state at all (it fingerprints
 #                               the platform before and after)
+#   CLEANROOM_ACCEPTANCE        e2e-cleanroom: resets the runtime first
 # ============================================================================
 
 # Baseline identity, target DatasetVersion and scene selection, passed to the scripts
