@@ -60,6 +60,25 @@ services:
     profiles:
       - acquisition
 
+  # Ground-truth labels of a reference fixture, rendered for a target RobotRun
+  # (`reference render-labels`): the locked label artifact in the reference cache
+  # in, a sceneops.label_set/v1 document out. It reads no source dataset and
+  # mounts none: the cache and the lock are read-only, and the only writable
+  # path is the runtime input root that IMPORT_LABELS reads
+  # (SCENEOPS_WORKER_INPUT_SOURCE__ROOT_URI, ./data/inputs).
+  reference-labels:
+    build:
+      context: ./tools/dataset-acquisition
+      target: batch
+    image: sceneops-platform/dataset-acquisition:local
+    network_mode: none
+    volumes:
+      - ./config/reference:/config/reference:ro
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
+      - ./data/inputs:/inputs
+    profiles:
+      - acquisition
+
   # L1 conformance of cached reference recordings: the publisher's `check`
   # command (reads the file only; no ArtifactStore, no database), without the
   # MinIO dependency of recording-publisher.

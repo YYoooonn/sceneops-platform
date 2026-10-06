@@ -10,12 +10,16 @@ definition produced:
     source              fingerprint and counts of every input the fixture reads
     recording           sha256, size, message count and topic counts of the
                         batch MCAP
+    labels              sha256, size and counts of the reference label artifact
+                        (the source's ground truth, with no runtime identity)
 
-A cached recording is reused only when the definition, the source fingerprint,
+A fixture is the sensor recording plus its source-derived labels. A cached
+recording or label artifact is reused only when the definition, the source fingerprint,
 the tool identity and the recording itself all agree with the lock. Every
 disagreement is reported and fails; nothing is regenerated, rewritten or
 deleted unless ``--update-lock`` is given, and the lock is never edited by
-hand.
+hand. Only preparation reads the source: ``resolve`` and ``render-labels``
+work from the lock and the cache alone.
 
 The corpus knows nothing about Scenes, Episodes or any SceneOps build
 configuration: it selects and describes input only.
@@ -36,6 +40,13 @@ from typing import Any
 
 from . import __version__
 from .events import AcquisitionError
+from .labels import (
+    label_counts,
+    parse_reference_labels,
+    reference_labels,
+    render_label_document,
+    serialize_reference_labels,
+)
 from .mcap_sink import RecordingSummary, write_mcap
 from .nuscenes import CHANNEL_GROUPS, NuScenesAdapter, NuScenesSelection
 
@@ -418,6 +429,171 @@ def _recording_entry(summary: RecordingSummary) -> dict[str, Any]:
     }
 
 
+# -- reference labels -----------------------------------------------------------
+#
+# The label artifact is a function of the source's annotation tables and the
+# tool (``tool_identity`` covers the devkit and this package), so the lock
+# holds its content hash: any change of source or extractor shows up as a
+# different hash. The cache file name carries that hash, so a changed artifact
+# is never found under an old name.
+
+
+def labels_dir(cache_root: Path, corpus: Corpus) -> Path:
+    return Path(cache_root) / corpus.corpus_id / "labels"
+
+
+def labels_path(cache_root: Path, corpus: Corpus, fixture_id: str, sha256: str) -> Path:
+    short = sha256.removeprefix("sha256:")[:12]
+    return labels_dir(cache_root, corpus) / f"{fixture_id}-{short}.labels.json"
+
+
+def _labels_entry(data: bytes, artifact: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": artifact["schema"],
+        "sha256": f"sha256:{hashlib.sha256(data).hexdigest()}",
+        "size_bytes": len(data),
+        **label_counts(dict(artifact)),
+    }
+
+
+def compute_labels(
+    corpus: Corpus, fixture_id: str, *, dataroot: Path, nusc: Any
+) -> tuple[bytes, dict[str, Any]]:
+    """The reference label artifact of a fixture, read from the source, and
+    its lock entry."""
+    adapter = NuScenesAdapter(
+        _selection(corpus, corpus.resolve(fixture_id), dataroot), nusc=nusc
+    )
+    data = serialize_reference_labels(reference_labels(adapter))
+    return data, _labels_entry(data, parse_reference_labels(data))
+
+
+def _check_label_file(
+    path: Path, expected: Mapping[str, Any]
+) -> tuple[list[str], dict[str, Any] | None]:
+    """Read a cached label artifact and compare it with ``expected`` (a lock
+    entry). Returns the disagreements and, when the bytes are the expected
+    ones, the parsed artifact."""
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return [f"labels unreadable: {path}: {exc}"], None
+    problems: list[str] = []
+    actual = f"sha256:{hashlib.sha256(data).hexdigest()}"
+    _compare(problems, "labels sha256", expected["sha256"], actual)
+    _compare(problems, "labels size_bytes", expected["size_bytes"], len(data))
+    if problems:
+        return problems, None
+    try:
+        artifact = parse_reference_labels(data)
+    except AcquisitionError as exc:
+        return [str(exc)], None
+    _compare(
+        problems,
+        "labels counts",
+        {k: expected[k] for k in ("sample_count", "label_count")},
+        label_counts(artifact),
+    )
+    return problems, None if problems else artifact
+
+
+def _labels_differences(
+    locked: Mapping[str, Any], actual: Mapping[str, Any]
+) -> list[str]:
+    problems: list[str] = []
+    for field in ("schema", "sha256", "size_bytes", "sample_count", "label_count"):
+        _compare(problems, f"labels {field}", locked.get(field), actual[field])
+    return problems
+
+
+def _write_once(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path``: temporary file, fsync, atomic rename. An
+    existing ``path`` is never overwritten and a leftover ``.partial`` is
+    reported, not adopted."""
+    partial = path.with_name(path.name + ".partial")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        stream = partial.open("xb")
+    except FileExistsError as exc:
+        raise ReferenceDataError(
+            f"{partial} exists (another or an interrupted run); remove it to retry"
+        ) from exc
+    try:
+        with stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.rename(partial, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+
+
+def _prepare_labels(
+    corpus: Corpus,
+    fixture_id: str,
+    *,
+    dataroot: Path,
+    nusc: Any,
+    cache_root: Path,
+    locked: Mapping[str, Any] | None,
+    update_lock: bool,
+) -> tuple[dict[str, Any], str, list[str]]:
+    """Materialize a fixture's label artifact into the cache (write-once).
+    Without ``update_lock`` the artifact the source produces must be the locked
+    one. An existing cache file is verified, never replaced."""
+    data, entry = compute_labels(corpus, fixture_id, dataroot=dataroot, nusc=nusc)
+    if not update_lock:
+        if locked is None:
+            return (
+                entry,
+                "failed",
+                [
+                    f"labels are not in {LOCK_FILE} (run with --update-lock to lock them)"
+                ],
+            )
+        differences = _labels_differences(locked, entry)
+        if differences:
+            return entry, "failed", differences
+    path = labels_path(cache_root, corpus, fixture_id, entry["sha256"])
+    if path.exists():
+        problems, _ = _check_label_file(path, entry)
+        return entry, "failed" if problems else "reused", problems
+    _write_once(path, data)
+    return entry, "materialized", []
+
+
+def _locate_labels(
+    corpus: Corpus, locked: Mapping[str, Any], fixture_id: str, cache_root: Path
+) -> tuple[Path | None, dict[str, Any] | None, list[str]]:
+    """The cached label artifact a lock entry describes, verified. Needs no
+    source."""
+    entry = locked.get("labels")
+    if entry is None:
+        return (
+            None,
+            None,
+            [
+                f"labels are not in {LOCK_FILE} (run reference-data-bootstrap "
+                "with UPDATE_LOCK=1 to lock them)"
+            ],
+        )
+    path = labels_path(cache_root, corpus, fixture_id, entry["sha256"])
+    if not path.is_file():
+        return (
+            path,
+            None,
+            [f"labels not prepared: {path} (run reference-data-bootstrap)"],
+        )
+    problems, artifact = _check_label_file(path, entry)
+    return path, artifact, problems
+
+
 @dataclass
 class FixtureFacts:
     fixture_id: str
@@ -600,6 +776,23 @@ def verify(
                 summary = read_recording_facts(facts.path)
                 problems.extend(check_recording(locked, summary))
                 record = _recording_entry(summary)
+        labels_record: dict[str, Any] = {}
+        if not problems:
+            # The source's annotations must still produce the locked artifact,
+            # and the cached file must be that artifact.
+            if locked.get("labels") is None:
+                problems.append(
+                    f"labels are not in {LOCK_FILE} (run with --update-lock to lock them)"
+                )
+            else:
+                _, labels_record = compute_labels(
+                    corpus, fixture_id, dataroot=dataroot, nusc=nusc
+                )
+                problems.extend(_labels_differences(locked["labels"], labels_record))
+                _, _, label_problems = _locate_labels(
+                    corpus, locked, fixture_id, cache_root
+                )
+                problems.extend(label_problems)
         if problems:
             status, failed = "failed", failed + 1
         _emit(
@@ -610,6 +803,7 @@ def verify(
                 "path": str(facts.path),
                 "source_seconds": round(facts.source_seconds, 3),
                 **({"recording": record} if record else {}),
+                **({"labels": labels_record} if labels_record else {}),
             }
         )
     return 1 if failed else 0
@@ -621,6 +815,7 @@ def resolve(
     *,
     cache_root: Path,
     check_recordings: bool,
+    check_labels: bool = False,
 ) -> int:
     """The locked facts of each fixture, without reading the source. The
     consumer's entry point: it needs the recordings, not the dataset.
@@ -630,7 +825,9 @@ def resolve(
     identity to be the locked one, finds the cached recording by the key the
     lock implies (the lock holds the source fingerprint, so no source access
     is needed) and verifies its bytes, size and counts. It never converts,
-    writes or deletes anything. Exit 1 if any fixture disagrees."""
+    writes or deletes anything. With ``check_labels`` it also finds and verifies
+    the fixture's cached reference label artifact. Exit 1 if any fixture
+    disagrees."""
     corpus = load_corpus(corpus_dir)
     lock = read_lock(corpus_dir, corpus)
     tool = tool_identity() if check_recordings else None
@@ -639,6 +836,7 @@ def resolve(
         locked = lock["fixtures"].get(fixture_id) if lock else None
         problems: list[str] = []
         path: Path | None = None
+        labels_file: Path | None = None
         if locked is None:
             problems.append(
                 f"{fixture_id} is not in {LOCK_FILE} (run reference-data-bootstrap "
@@ -672,6 +870,11 @@ def resolve(
                 )
             else:
                 problems.extend(check_recording(locked, read_recording_facts(path)))
+        if not problems and check_labels and locked is not None:
+            labels_file, _, label_problems = _locate_labels(
+                corpus, locked, fixture_id, cache_root
+            )
+            problems.extend(label_problems)
         if problems:
             failed += 1
         _emit(
@@ -682,6 +885,11 @@ def resolve(
                 "problems": problems,
                 **({"path": str(path)} if path else {}),
                 **({"recording": locked["recording"]} if locked else {}),
+                **(
+                    {"labels": {**locked["labels"], "path": str(labels_file)}}
+                    if labels_file and not problems
+                    else {}
+                ),
             }
         )
     return 1 if failed else 0
@@ -741,6 +949,8 @@ def prepare(
         convert_seconds = 0.0
         action = "reused"
         summary: RecordingSummary | None = None
+        labels_entry: dict[str, Any] | None = None
+        labels_action = ""
         if not problems:
             if facts.path.exists():
                 summary = read_recording_facts(facts.path)
@@ -765,14 +975,26 @@ def prepare(
                     problems.append(
                         "replay plan topic counts differ from the recording's topic counts"
                     )
-                if not problems:
-                    lock["fixtures"][fixture_id] = {
-                        "definition_sha256": facts.definition_sha256,
-                        "source": facts.source,
-                        "recording": _recording_entry(summary),
-                    }
             else:
                 problems.extend(check_recording(locked, summary))
+            if not problems:
+                labels_entry, labels_action, label_problems = _prepare_labels(
+                    corpus,
+                    fixture_id,
+                    dataroot=dataroot,
+                    nusc=nusc,
+                    cache_root=cache_root,
+                    locked=(locked or {}).get("labels"),
+                    update_lock=update_lock,
+                )
+                problems.extend(label_problems)
+            if update_lock and not problems:
+                lock["fixtures"][fixture_id] = {
+                    "definition_sha256": facts.definition_sha256,
+                    "source": facts.source,
+                    "recording": _recording_entry(summary),
+                    "labels": labels_entry,
+                }
         if problems:
             failed += 1
         _emit(
@@ -783,8 +1005,81 @@ def prepare(
                 "conversion_seconds": round(convert_seconds, 3),
                 "source_seconds": round(facts.source_seconds, 3),
                 **({"recording": _recording_entry(summary)} if summary else {}),
+                **(
+                    {"labels": labels_entry, "labels_status": labels_action}
+                    if labels_entry
+                    else {}
+                ),
             }
         )
     if update_lock and not failed:
         write_lock(corpus_dir, lock)
     return 1 if failed else 0
+
+
+def render_labels(
+    corpus_dir: Path,
+    fixture_id: str,
+    *,
+    cache_root: Path,
+    robot_run_id: str,
+    label_set_id: str,
+    output: Path,
+) -> int:
+    """Render a fixture's locked reference label artifact for one RobotRun as
+    a ``sceneops.label_set/v1`` document. Reads no source: the lock and the
+    cached artifact are the only inputs, and the artifact is verified against
+    the lock first. The document is a deterministic function of (artifact,
+    run id, label set id); it is written to ``output`` atomically and
+    replaces an earlier rendering."""
+    corpus = load_corpus(corpus_dir)
+    lock = read_lock(corpus_dir, corpus)
+    locked = lock["fixtures"].get(fixture_id) if lock else None
+    problems: list[str] = []
+    artifact: dict[str, Any] | None = None
+    if locked is None:
+        problems.append(
+            f"{fixture_id} is not in {LOCK_FILE} (run reference-data-bootstrap "
+            "with UPDATE_LOCK=1 to lock it)"
+        )
+    else:
+        _compare(
+            problems,
+            "fixture definition",
+            locked["definition_sha256"],
+            corpus.definition_sha256(fixture_id),
+        )
+        if not problems:
+            _, artifact, problems = _locate_labels(
+                corpus, locked, fixture_id, cache_root
+            )
+    if problems or artifact is None:
+        _emit({"fixture_id": fixture_id, "status": "failed", "problems": problems})
+        return 1
+    document = render_label_document(
+        artifact, robot_run_id=robot_run_id, label_set_id=label_set_id
+    )
+    payload = json.dumps(document, sort_keys=True).encode()
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + ".tmp")
+    with temporary.open("wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, output)
+    _emit(
+        {
+            "fixture_id": fixture_id,
+            "status": "ok",
+            "problems": [],
+            "path": str(output),
+            "label_set_id": label_set_id,
+            "robot_run_id": robot_run_id,
+            "coverage_count": len(document["coverage"]),
+            "label_count": len(document["labels"]),
+            "sha256": f"sha256:{hashlib.sha256(payload).hexdigest()}",
+            "labels_sha256": locked["labels"]["sha256"],
+        }
+    )
+    return 0

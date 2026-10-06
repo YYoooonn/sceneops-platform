@@ -9,7 +9,8 @@ Layout of the synthetic source (timestamps in µs):
         CAM_BACK    key 1_000_000 (same time as CAM_FRONT), key 1_500_000
         LIDAR_TOP   key 1_000_050, sweep 1_200_000, key 1_500_050
         RADAR_FRONT key 1_000_020                      (never converted)
-    scene-0002  sample s3 (t=9_000_000): one CAM_FRONT key frame (excluded)
+    scene-0002  sample s3 (t=9_000_000): CAM_FRONT key 9_000_000, LIDAR_TOP key
+                9_000_050 (excluded; the lidar key frame is the label anchor)
     CAN (scene-0001 only): pose, ms_imu, vehicle_monitor from 990_000 µs
 """
 
@@ -68,6 +69,7 @@ SAMPLE_DATA = [
     SampleData("sd-cb-2", "s2", "CAM_BACK", 1_500_000, True),
     SampleData("sd-lt-2", "s2", "LIDAR_TOP", 1_500_050, True),
     SampleData("sd-cf-3", "s3", "CAM_FRONT", 9_000_000, True),
+    SampleData("sd-lt-3", "s3", "LIDAR_TOP", 9_000_050, True),
 ]
 
 CAN_POSE = [

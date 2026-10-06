@@ -199,22 +199,28 @@ message with the source tables, files and CAN extract. It is skipped when
 
 ## Reference corpus
 
-`dataset-acquisition reference {inspect,verify,prepare,resolve}` works on a versioned
-corpus of fixtures (`config/reference/<corpus>/`, see
-[docs/development/reference-corpus.md](../../docs/development/reference-corpus.md)):
-it fingerprints the source, materializes batch MCAPs into a local cache
-(write-once) and verifies them against `corpus.lock.json`. Only
-`prepare --update-lock` writes the lock; every disagreement fails. L1
-conformance is checked by the platform's publisher `check`, because this tool
-depends on no SceneOps package. Run it through `make reference-data-bootstrap` /
-`make reference-data-verify`. Consumers use `reference resolve`: it needs no source dataset and prints each
-fixture's locked facts and verified recording path.
+`dataset-acquisition reference {inspect,verify,prepare,resolve,render-labels}` works on a
+versioned corpus of fixtures (`config/reference/<corpus>/`, see
+[docs/development/reference-corpus.md](../../docs/development/reference-corpus.md)).
+A fixture is a sensor recording plus its source-derived ground-truth labels:
+preparation fingerprints the source, materializes the batch MCAP and a
+baseline-neutral reference label artifact into a local cache (write-once) and verifies
+both against `corpus.lock.json`. Only `prepare --update-lock` writes the lock; every
+disagreement fails. L1 conformance is checked by the platform's publisher `check`,
+because this tool depends on no SceneOps package. Run it through `make
+reference-data-bootstrap` / `make reference-data-verify`; these are the only commands
+that need the source dataset. Consumers need none: `reference resolve` prints each
+fixture's locked facts and verified recording path (`--with-labels`: and the verified
+label artifact), and `reference render-labels` turns the locked label artifact and a
+target RobotRun id into the `sceneops.label_set/v1` document `IMPORT_LABELS` reads. The
+`reference-labels` compose service runs it without mounting a source dataset.
 
 ## Limitations
 
 - The replay sink needs a ROS 2 runtime (the replay image); `--replay` in the plain
   image fails with a clear error.
-- nuScenes only. Radar, annotations and keyframe groupings are not
-  converted, because labels are not acquisition data (ADR-007 §29.15).
+- nuScenes only. Radar, annotations and keyframe groupings are not part of a
+  recording, because labels are not acquisition data (ADR-007 §29.15); annotations
+  travel as the separate reference label artifact.
 - A whole unit's plan (record metadata, not payloads) is held in memory.
   Payloads are read and serialized one message at a time.

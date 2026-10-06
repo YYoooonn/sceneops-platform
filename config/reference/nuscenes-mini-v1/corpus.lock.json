@@ -3,6 +3,13 @@
   "fixtures": {
     "scene-0061": {
       "definition_sha256": "sha256:226759a3245d9c3bde062cb9c98b90dde2957223f88027b589391be9cccb6791",
+      "labels": {
+        "label_count": 4699,
+        "sample_count": 39,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:074bd9ca6d9794e5366e4477376521518a80eb927917cd6eb135bcc0a73cf8c5",
+        "size_bytes": 1370415
+      },
       "recording": {
         "message_count": 8897,
         "sha256": "sha256:05f96038d59019f8d823685d859b71ebbe2f9f54a7a84e1b2727a0af599779a1",
@@ -48,6 +55,13 @@
     },
     "scene-0103": {
       "definition_sha256": "sha256:916bb1ab1c6a7c103701f05ac341bcf8339dfe8584e03c230913157986470e35",
+      "labels": {
+        "label_count": 2090,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:6df5541d940ce4ab2ea351ce9e584fac0e67eeb430f91421e8b8cb70c86076b3",
+        "size_bytes": 618393
+      },
       "recording": {
         "message_count": 9206,
         "sha256": "sha256:e70fc56e9008c835b1cf23955c39599e7f0be08b87af750bd9a95a15e47c0fff",
@@ -93,6 +107,13 @@
     },
     "scene-0553": {
       "definition_sha256": "sha256:a412507c5d403096343d7a3b6ac927ccb7ede8d9236b8372786e35ff18e770e3",
+      "labels": {
+        "label_count": 1991,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:123b802f0ba8fd3eb365f98657237bf05d5a1e6984ebc910607d0d0e593f34bb",
+        "size_bytes": 583800
+      },
       "recording": {
         "message_count": 9476,
         "sha256": "sha256:69ec4e42cc78efcaa1012e9cb335af9cf36bf6bc414ec0241a30a9d663bee089",
@@ -138,6 +159,13 @@
     },
     "scene-0655": {
       "definition_sha256": "sha256:9f671921d2136fc2f7d37d49b3434c8f4215f2c37b86a30f6793760a9883eba9",
+      "labels": {
+        "label_count": 2373,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:4d6bf50fb29a16a287b212fb59cbd315ceb011e909216629e490cd52948ffeef",
+        "size_bytes": 689309
+      },
       "recording": {
         "message_count": 9400,
         "sha256": "sha256:46b1fa9cf05a523a9f24a5e5f20497831b37776f447b22f48cf981a26edef957",
@@ -183,6 +211,13 @@
     },
     "scene-0757": {
       "definition_sha256": "sha256:4ddf1fe42e4918c5e32d787a2bd21215fc9864c6ece82c1f51b84a8d220fd7cf",
+      "labels": {
+        "label_count": 604,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:f0e4d85b5ac415e0b74d43f8b4b8733917505cb91e8ecf5d520661909ab60886",
+        "size_bytes": 178779
+      },
       "recording": {
         "message_count": 9446,
         "sha256": "sha256:4fb1609aa8435c746851c208f3628fc4a68be58e42e12381a27aa75cd01d6c8b",
@@ -228,6 +263,13 @@
     },
     "scene-0796": {
       "definition_sha256": "sha256:8fc0260b87914929fd0d978c8f865ff0f1b48a6dfa50131e8458936dea3e63b0",
+      "labels": {
+        "label_count": 716,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:7dfd9b03c7fa13190b4fc63e1406930c511100d86c8c4c2eabd26811bd142d5a",
+        "size_bytes": 213430
+      },
       "recording": {
         "message_count": 9323,
         "sha256": "sha256:982a1e9edf51a631c08701b2ccfa020b5b2cc7678ee147f9e149076da9728641",
@@ -273,6 +315,13 @@
     },
     "scene-0916": {
       "definition_sha256": "sha256:363c7250addbd6f4fc6b30c1f75238b428f517fef37848132fe8d36973365d1f",
+      "labels": {
+        "label_count": 2424,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:06fe0e4af2025df419ae14c4ccc990cdfeda82dc599000743635948e647b7396",
+        "size_bytes": 710751
+      },
       "recording": {
         "message_count": 9535,
         "sha256": "sha256:2f4b4c3f79c3c193814e753edf5e7c5badab6246e202c3ab3257e018312d4a0b",
@@ -318,6 +367,13 @@
     },
     "scene-1077": {
       "definition_sha256": "sha256:1ad1832f1079f2459389158472ec3d08559ba0e5e8d889a782ca102df1bf0d95",
+      "labels": {
+        "label_count": 909,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:2ec4c5e18335ba0362482194bfb6e01f2568d93eaca449f9cc6d61c76daf7653",
+        "size_bytes": 264436
+      },
       "recording": {
         "message_count": 9493,
         "sha256": "sha256:8c3c95a4306e95a4422b8a6a4ce663bdc8fcedfdcaea60f517870d38c37b3892",
@@ -363,6 +419,13 @@
     },
     "scene-1094": {
       "definition_sha256": "sha256:bb17fc18f4666683a3e8454271a4f10fe01467fa3e889011f686aee2bd7b74b7",
+      "labels": {
+        "label_count": 1776,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:061973408bc28de61efb46311dd07d4d16fda6528505156701d8f6a360249e94",
+        "size_bytes": 532549
+      },
       "recording": {
         "message_count": 9290,
         "sha256": "sha256:4ddbe0de51236b850289d4f96fa8838377c22d92451616de45066448a66873c7",
@@ -408,6 +471,13 @@
     },
     "scene-1100": {
       "definition_sha256": "sha256:6eb73136db4a4192a05f22541019a14d632e05690c99adc112dc9a2cb2afa9d6",
+      "labels": {
+        "label_count": 956,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:a57bbd2a129392926e5ddbd9b65b99520002e76fe8041c0ea2bda663a4297dd6",
+        "size_bytes": 286540
+      },
       "recording": {
         "message_count": 9307,
         "sha256": "sha256:fb2dcacc6e667bc101e0cce583df0e0015828965586a8be3e40cea44df93a291",

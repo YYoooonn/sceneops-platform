@@ -14,10 +14,10 @@ timed ROS 2 replay (streaming).
         --corpus config/reference/nuscenes-mini-v1 --dataroot data/raw/nuscenes \\
         --cache-root data/reference (--scope smoke-1 | --fixture scene-0061)
 
-    dataset-acquisition nuscenes-labels \\
-        --dataroot data/raw/nuscenes --version v1.0-mini \\
-        --source-unit scene-0061 --robot-run-id run-1 \\
-        --label-set-id nuscenes-v1.0-mini-scene-0061 --output out/labels.json
+    dataset-acquisition reference render-labels \\
+        --corpus config/reference/nuscenes-mini-v1 --cache-root data/reference \\
+        --fixture scene-0061 --robot-run-id run-1 \\
+        --label-set-id labels-scene-0061 --output out/labels.json
 
 ``reference`` works on a versioned corpus of fixtures (``reference.py``):
 ``inspect`` prints a fixture's definition and live source facts, ``verify``
@@ -26,8 +26,11 @@ checks source, definition, tool identity and the cached recording against
 and verifies them, and only ``prepare --update-lock`` writes the lock.
 ``resolve`` is the consumer's entry point: it needs no source, checks the lock
 and the cached recordings (``--lock-only``: the lock alone) and prints each
-fixture's locked facts and recording path. One JSON
-line per fixture goes to stdout; exit 1 if any fixture disagrees.
+fixture's locked facts and recording path (``--with-labels``: also the verified
+reference label artifact). ``render-labels`` is the other no-source command: the
+locked reference label artifact of one fixture and a target RobotRun id become a
+``sceneops.label_set/v1`` document. One JSON line per fixture goes to stdout;
+exit 1 if any fixture disagrees.
 
 Batch prints one JSON summary (path, sha256, size, message and per-topic
 counts) on stdout and exits 0. Replay prints one ``replay_summary`` JSON
@@ -94,32 +97,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=60.0,
         help="replay: fail if a topic has no subscriber after this long",
     )
-    labels = sub.add_parser(
-        "nuscenes-labels",
-        help="nuScenes annotations of one unit as a label set document "
-        "(post-acquisition labels, imported separately from the recording)",
-    )
-    labels.add_argument("--dataroot", required=True, type=Path)
-    labels.add_argument("--version", default="v1.0-mini")
-    labels.add_argument("--source-unit", required=True)
-    labels.add_argument(
-        "--robot-run-id",
-        required=True,
-        help="the RobotRun the unit's recording was registered as; labels anchor on it",
-    )
-    labels.add_argument("--label-set-id", required=True)
-    labels.add_argument("--output", required=True, type=Path)
-    labels.add_argument(
-        "--anchor-channel",
-        default="LIDAR_TOP",
-        help="nuScenes channel whose key frame observation each sample's labels anchor on",
-    )
     reference = sub.add_parser(
         "reference",
         help="versioned reference corpus: fingerprints, cached recordings, lock",
     )
     reference.add_argument(
-        "command", choices=("inspect", "verify", "prepare", "resolve")
+        "command",
+        choices=("inspect", "verify", "prepare", "resolve", "render-labels"),
     )
     reference.add_argument(
         "--corpus", required=True, type=Path, help="corpus directory"
@@ -143,6 +127,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="resolve only: check the corpus against the lock and read no recording",
     )
     reference.add_argument(
+        "--with-labels",
+        action="store_true",
+        help="resolve only: also verify each fixture's reference label artifact",
+    )
+    reference.add_argument(
+        "--robot-run-id",
+        help="render-labels only: the RobotRun the labels anchor on",
+    )
+    reference.add_argument(
+        "--label-set-id", help="render-labels only: the label set's id"
+    )
+    reference.add_argument(
+        "--output", type=Path, help="render-labels only: write the document here"
+    )
+    reference.add_argument(
         "--update-lock",
         action="store_true",
         help="prepare only: record what the current source and tool produce in "
@@ -158,14 +157,37 @@ def _reference(args: argparse.Namespace) -> int:
         raise AcquisitionError("--update-lock applies to `reference prepare` only")
     if args.lock_only and args.command != "resolve":
         raise AcquisitionError("--lock-only applies to `reference resolve` only")
+    if args.with_labels and args.command != "resolve":
+        raise AcquisitionError("--with-labels applies to `reference resolve` only")
+    render_options = (args.robot_run_id, args.label_set_id, args.output)
+    if args.command != "render-labels" and any(render_options):
+        raise AcquisitionError(
+            "--robot-run-id, --label-set-id and --output apply to "
+            "`reference render-labels` only"
+        )
     corpus = reference.load_corpus(args.corpus)
     fixtures = corpus.select(args.scope, args.fixture)
+    if args.command == "render-labels":
+        if len(fixtures) != 1 or not all(render_options):
+            raise AcquisitionError(
+                "`reference render-labels` needs exactly one --fixture, "
+                "--robot-run-id, --label-set-id and --output"
+            )
+        return reference.render_labels(
+            args.corpus,
+            fixtures[0],
+            cache_root=args.cache_root,
+            robot_run_id=args.robot_run_id,
+            label_set_id=args.label_set_id,
+            output=args.output,
+        )
     if args.command == "resolve":
         return reference.resolve(
             args.corpus,
             fixtures,
             cache_root=args.cache_root,
             check_recordings=not args.lock_only,
+            check_labels=args.with_labels,
         )
     if args.dataroot is None:
         raise AcquisitionError(f"`reference {args.command}` needs --dataroot")
@@ -183,47 +205,8 @@ def _reference(args: argparse.Namespace) -> int:
     )
 
 
-def _write_labels(args: argparse.Namespace) -> int:
-    from .labels import label_document
-
-    try:
-        adapter = NuScenesAdapter(
-            NuScenesSelection(
-                dataroot=args.dataroot,
-                version=args.version,
-                source_unit=args.source_unit,
-                channel_groups=frozenset({"lidar"}),
-            )
-        )
-        document = label_document(
-            adapter,
-            robot_run_id=args.robot_run_id,
-            label_set_id=args.label_set_id,
-            anchor_channel=args.anchor_channel,
-        )
-    except AcquisitionError as exc:
-        print(f"label export failed: {exc}", file=sys.stderr)
-        return 1
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(document, sort_keys=True), encoding="utf-8")
-    print(
-        json.dumps(
-            {
-                "path": str(args.output),
-                "label_set_id": args.label_set_id,
-                "coverage_count": len(document["coverage"]),
-                "label_count": len(document["labels"]),
-            },
-            sort_keys=True,
-        )
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    if args.format == "nuscenes-labels":
-        return _write_labels(args)
     if args.format == "reference":
         try:
             return _reference(args)

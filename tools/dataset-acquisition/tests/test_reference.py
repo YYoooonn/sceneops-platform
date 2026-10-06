@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
-from synthetic_nuscenes import UNIT, VERSION
+from synthetic_nuscenes import UNIT, VERSION, write_dataroot
 
 from dataset_acquisition import reference
 from dataset_acquisition.cli import main as cli_main
@@ -631,3 +631,341 @@ def test_lock_only_is_a_resolve_option(
         ]
     )
     assert code == 1 and "--lock-only applies to" in capsys.readouterr().err
+
+
+# -- reference labels: the fixture's source-derived ground truth ---------------------------
+
+
+def label_files(cache_root: Path) -> list[Path]:
+    return sorted((cache_root / CORPUS_ID / "labels").glob("*.labels.json"))
+
+
+def render(capsys, corpus_dir: Path, cache_root: Path, output: Path, *extra: str):
+    args = [
+        "reference",
+        "render-labels",
+        "--corpus",
+        str(corpus_dir),
+        "--cache-root",
+        str(cache_root),
+        "--fixture",
+        "unit-one",
+        "--robot-run-id",
+        "run-1",
+        "--label-set-id",
+        "gt-1",
+        "--output",
+        str(output),
+        *extra,
+    ]
+    code = cli_main(args)
+    out = capsys.readouterr().out
+    return code, [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+@pytest.fixture()
+def annotated(tmp_path: Path) -> Path:
+    return write_dataroot(tmp_path / "annotated", annotations=True)
+
+
+@pytest.fixture()
+def labelled(capsys, corpus_dir: Path, annotated: Path, cache_root: Path) -> Path:
+    code, _ = run(
+        capsys,
+        "prepare",
+        corpus_dir,
+        annotated,
+        cache_root,
+        "--scope",
+        "all",
+        "--update-lock",
+    )
+    assert code == 0
+    return cache_root
+
+
+def test_update_lock_materializes_and_locks_the_label_artifact(
+    capsys, corpus_dir: Path, annotated: Path, cache_root: Path
+) -> None:
+    code, (record, _) = run(
+        capsys,
+        "prepare",
+        corpus_dir,
+        annotated,
+        cache_root,
+        "--scope",
+        "all",
+        "--update-lock",
+    )
+    assert code == 0 and record["labels_status"] == "materialized"
+    entry = json.loads(lock_bytes(corpus_dir))["fixtures"]["unit-one"]["labels"]
+    assert entry["schema"] == "sceneops.reference_labels/1"
+    assert (entry["sample_count"], entry["label_count"]) == (2, 3)
+    assert entry == record["labels"]
+    corpus = reference.load_corpus(corpus_dir)
+    path = reference.labels_path(cache_root, corpus, "unit-one", entry["sha256"])
+    assert path in label_files(cache_root)
+    assert path.stat().st_size == entry["size_bytes"]
+    # A sample without objects is still annotated-as-empty coverage.
+    other = json.loads(lock_bytes(corpus_dir))["fixtures"]["unit-two"]["labels"]
+    assert (other["sample_count"], other["label_count"]) == (1, 0)
+
+
+def test_plain_verify_agrees_and_neither_the_lock_nor_the_cache_changes(
+    capsys, corpus_dir: Path, annotated: Path, labelled: Path
+) -> None:
+    lock_before = lock_bytes(corpus_dir)
+    files = (cached(labelled), label_files(labelled))
+    stats = [p.stat().st_mtime_ns for p in files[0] + files[1]]
+    for command in ("verify", "prepare"):
+        code, records = run(
+            capsys, command, corpus_dir, annotated, labelled, "--scope", "all"
+        )
+        assert code == 0 and all(r["problems"] == [] for r in records)
+    assert lock_bytes(corpus_dir) == lock_before
+    assert (cached(labelled), label_files(labelled)) == files
+    assert [p.stat().st_mtime_ns for p in files[0] + files[1]] == stats
+
+
+def test_adding_labels_to_an_existing_lock_reuses_the_recording(
+    capsys, corpus_dir: Path, annotated: Path, labelled: Path
+) -> None:
+    lock = json.loads(lock_bytes(corpus_dir))
+    recordings = {p: p.stat().st_ino for p in cached(labelled)}
+    for entry in lock["fixtures"].values():
+        del entry["labels"]
+    (corpus_dir / reference.LOCK_FILE).write_text(json.dumps(lock))
+    for p in label_files(labelled):
+        p.unlink()
+
+    code, (record, _) = run(
+        capsys, "verify", corpus_dir, annotated, labelled, "--scope", "all"
+    )
+    assert code == 1 and any("labels are not in" in p for p in record["problems"])
+    code, (record, _) = run(
+        capsys, "prepare", corpus_dir, annotated, labelled, "--scope", "all"
+    )
+    assert code == 1 and any("labels are not in" in p for p in record["problems"])
+    assert label_files(labelled) == []
+
+    code, records = run(
+        capsys,
+        "prepare",
+        corpus_dir,
+        annotated,
+        labelled,
+        "--scope",
+        "all",
+        "--update-lock",
+    )
+    assert code == 0
+    assert [r["status"] for r in records] == ["reused", "reused"]
+    assert [r["labels_status"] for r in records] == ["materialized", "materialized"]
+    relocked = json.loads(lock_bytes(corpus_dir))
+    for fixture_id, entry in relocked["fixtures"].items():
+        # Only the labels block is new: definition, source, recording and the
+        # tool identity are what they were.
+        assert {k: v for k, v in entry.items() if k != "labels"} == {
+            k: v for k, v in lock["fixtures"][fixture_id].items() if k != "labels"
+        }
+        assert entry["labels"]["sample_count"] >= 1
+    assert relocked["tool"] == lock["tool"]
+    assert {p: p.stat().st_ino for p in cached(labelled)} == recordings
+
+
+def test_a_missing_label_file_is_materialized_by_plain_prepare(
+    capsys, corpus_dir: Path, annotated: Path, labelled: Path
+) -> None:
+    lock_before = lock_bytes(corpus_dir)
+    for p in label_files(labelled):
+        p.unlink()
+    code, records = run(
+        capsys, "verify", corpus_dir, annotated, labelled, "--scope", "all"
+    )
+    assert code == 1 and any(
+        "labels not prepared" in p for r in records for p in r["problems"]
+    )
+    code, records = run(
+        capsys, "prepare", corpus_dir, annotated, labelled, "--scope", "all"
+    )
+    assert code == 0 and [r["labels_status"] for r in records] == ["materialized"] * 2
+    assert len(label_files(labelled)) == 2 and lock_bytes(corpus_dir) == lock_before
+
+
+def test_a_changed_annotation_fails_against_the_lock_and_changes_nothing(
+    capsys, corpus_dir: Path, annotated: Path, labelled: Path
+) -> None:
+    lock_before, files = lock_bytes(corpus_dir), label_files(labelled)
+    table = annotated / VERSION / "sample_annotation.json"
+    rows = json.loads(table.read_text())
+    rows[0]["translation"][0] += 1.0
+    table.write_text(json.dumps(rows))
+
+    for command in ("verify", "prepare"):
+        code, (record, _) = run(
+            capsys, command, corpus_dir, annotated, labelled, "--scope", "all"
+        )
+        assert code == 1 and record["status"] == "failed"
+        assert any("labels sha256" in p for p in record["problems"])
+    assert lock_bytes(corpus_dir) == lock_before
+    assert label_files(labelled) == files  # no artifact under a new name
+
+
+def test_a_corrupt_label_file_is_reported_never_replaced(
+    capsys, corpus_dir: Path, annotated: Path, labelled: Path
+) -> None:
+    (path, _) = label_files(labelled)
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0x01
+    path.write_bytes(bytes(data))
+    corrupt, lock_before = path.read_bytes(), lock_bytes(corpus_dir)
+
+    for command in ("verify", "prepare"):
+        code, records = run(
+            capsys, command, corpus_dir, annotated, labelled, "--scope", "all"
+        )
+        assert code == 1, command
+        assert any("labels sha256" in p for r in records for p in r["problems"]), (
+            command
+        )
+    code, (record, _) = resolve(
+        capsys, corpus_dir, labelled, "--scope", "all", "--with-labels"
+    )
+    assert code == 1 and any("labels sha256" in p for p in record["problems"])
+    assert path.read_bytes() == corrupt and lock_bytes(corpus_dir) == lock_before
+
+
+def test_resolve_with_labels_verifies_and_reports_the_artifact_without_the_source(
+    capsys, corpus_dir: Path, labelled: Path
+) -> None:
+    # A label problem does not fail plain resolve: the baseline never reads labels.
+    (first, _) = label_files(labelled)
+    first.unlink()
+    code, records = resolve(capsys, corpus_dir, labelled, "--scope", "all")
+    assert code == 0 and "labels" not in records[0]
+    code, records = resolve(
+        capsys, corpus_dir, labelled, "--scope", "all", "--with-labels"
+    )
+    assert code == 1 and any("labels not prepared" in p for p in records[0]["problems"])
+
+
+def test_resolve_with_labels_returns_the_locked_entry_and_path(
+    capsys, corpus_dir: Path, labelled: Path
+) -> None:
+    code, records = resolve(
+        capsys, corpus_dir, labelled, "--scope", "all", "--with-labels"
+    )
+    assert code == 0
+    lock = json.loads(lock_bytes(corpus_dir))
+    for record in records:
+        locked = lock["fixtures"][record["fixture_id"]]["labels"]
+        assert {k: v for k, v in record["labels"].items() if k != "path"} == locked
+        assert Path(record["labels"]["path"]) in label_files(labelled)
+
+
+def test_render_labels_needs_no_source_and_is_deterministic(
+    capsys, corpus_dir: Path, annotated: Path, labelled: Path, tmp_path: Path
+) -> None:
+    import shutil
+
+    shutil.rmtree(annotated)  # no source dataset exists from here on
+    first, second = tmp_path / "a" / "labels.json", tmp_path / "b" / "labels.json"
+    code, (summary,) = render(capsys, corpus_dir, labelled, first)
+    assert code == 0 and render(capsys, corpus_dir, labelled, second)[0] == 0
+    assert first.read_bytes() == second.read_bytes()
+    document = json.loads(first.read_text())
+    assert document["schema_version"] == "sceneops.label_set/v1"
+    assert document["label_set_id"] == "gt-1"
+    assert {a["robot_run_id"] for a in document["coverage"]} == {"run-1"}
+    assert (summary["coverage_count"], summary["label_count"]) == (2, 3)
+    assert summary["sha256"].startswith("sha256:")
+    lock = json.loads(lock_bytes(corpus_dir))
+    assert summary["labels_sha256"] == lock["fixtures"]["unit-one"]["labels"]["sha256"]
+
+
+def test_render_labels_refuses_what_the_lock_does_not_describe(
+    capsys, corpus_dir: Path, annotated: Path, labelled: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "labels.json"
+    (path, _) = label_files(labelled)
+    path.write_bytes(path.read_bytes() + b" ")
+    code, (record,) = render(capsys, corpus_dir, labelled, out)
+    assert code == 1 and any("labels sha256" in p for p in record["problems"])
+    assert not out.exists()
+
+    document = corpus_document()
+    document["fixtures"][0]["replay"] = {"rate": 4.0}
+    write_corpus(corpus_dir, document)
+    code, (record,) = render(capsys, corpus_dir, labelled, out)
+    assert code == 1 and record["problems"][0].startswith("fixture definition")
+    assert not out.exists()
+
+
+def test_render_labels_needs_one_fixture_and_its_options(
+    capsys, corpus_dir: Path, labelled: Path, tmp_path: Path
+) -> None:
+    base = [
+        "reference",
+        "render-labels",
+        "--corpus",
+        str(corpus_dir),
+        "--cache-root",
+        str(labelled),
+    ]
+    assert (
+        cli_main(
+            [
+                *base,
+                "--scope",
+                "all",
+                "--robot-run-id",
+                "r",
+                "--label-set-id",
+                "l",
+                "--output",
+                str(tmp_path / "x.json"),
+            ]
+        )
+        == 1
+    )
+    assert "exactly one" in capsys.readouterr().err
+    assert cli_main([*base, "--fixture", "unit-one"]) == 1
+    assert "exactly one" in capsys.readouterr().err
+    assert (
+        cli_main(
+            [
+                "reference",
+                "resolve",
+                "--corpus",
+                str(corpus_dir),
+                "--cache-root",
+                str(labelled),
+                "--fixture",
+                "unit-one",
+                "--robot-run-id",
+                "r",
+            ]
+        )
+        == 1
+    )
+    assert "render-labels" in capsys.readouterr().err
+    assert (
+        cli_main(
+            [
+                "reference",
+                "verify",
+                "--corpus",
+                str(corpus_dir),
+                "--dataroot",
+                "x",
+                "--cache-root",
+                str(labelled),
+                "--fixture",
+                "unit-one",
+                "--with-labels",
+            ]
+        )
+        == 1
+    )
+    assert "--with-labels applies to" in capsys.readouterr().err
+    assert not (tmp_path / "x.json").exists()
