@@ -482,3 +482,152 @@ def test_update_lock_is_only_a_prepare_option(
     )
     assert code == 1
     assert "--update-lock applies to" in capsys.readouterr().err
+
+
+# -- resolve: the consumer's view, no source ------------------------------------------
+
+
+def resolve(capsys, corpus_dir: Path, cache_root: Path, *args: str):
+    code = cli_main(
+        [
+            "reference",
+            "resolve",
+            "--corpus",
+            str(corpus_dir),
+            "--cache-root",
+            str(cache_root),
+            *args,
+        ]
+    )
+    out = capsys.readouterr().out
+    return code, [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+@pytest.fixture()
+def prepared(capsys, corpus_dir: Path, dataroot: Path, cache_root: Path) -> Path:
+    code, _ = run(
+        capsys,
+        "prepare",
+        corpus_dir,
+        dataroot,
+        cache_root,
+        "--scope",
+        "all",
+        "--update-lock",
+    )
+    assert code == 0
+    return cache_root
+
+
+def test_resolve_returns_locked_facts_and_the_recording_path_without_the_source(
+    capsys, corpus_dir: Path, prepared: Path
+) -> None:
+    code, records = resolve(capsys, corpus_dir, prepared, "--scope", "all")
+    assert code == 0
+    assert [r["fixture_id"] for r in records] == ["unit-one", "unit-two"]
+    lock = json.loads(lock_bytes(corpus_dir))
+    for record in records:
+        assert record["status"] == "ok" and record["problems"] == []
+        assert (
+            record["recording"] == lock["fixtures"][record["fixture_id"]]["recording"]
+        )
+        assert Path(record["path"]) in cached(prepared)
+    assert records[0]["source_unit"] == UNIT
+
+
+def test_resolve_lock_only_reads_no_recording(
+    capsys, corpus_dir: Path, tmp_path: Path, prepared: Path
+) -> None:
+    code, (record,) = resolve(
+        capsys,
+        corpus_dir,
+        tmp_path / "no-cache",
+        "--fixture",
+        "unit-one",
+        "--lock-only",
+    )
+    assert code == 0 and record["status"] == "ok" and "path" not in record
+
+
+def test_resolve_fails_loudly_for_missing_or_corrupt_recordings_and_changes_nothing(
+    capsys, corpus_dir: Path, prepared: Path
+) -> None:
+    one, two = cached(prepared)
+    two.unlink()
+    data = bytearray(one.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    one.write_bytes(bytes(data))
+    corrupt, lock_before = one.read_bytes(), lock_bytes(corpus_dir)
+
+    code, records = resolve(capsys, corpus_dir, prepared, "--scope", "all")
+    assert code == 1
+    by_id = {r["fixture_id"]: r for r in records}
+    assert any("recording sha256" in p for p in by_id["unit-one"]["problems"])
+    assert any("not prepared" in p for p in by_id["unit-two"]["problems"])
+    assert one.read_bytes() == corrupt and cached(prepared) == [one]
+    assert lock_bytes(corpus_dir) == lock_before
+
+
+def test_resolve_refuses_an_unlocked_fixture_and_a_changed_definition(
+    capsys, corpus_dir: Path, tmp_path: Path, dataroot: Path, cache_root: Path
+) -> None:
+    run(
+        capsys,
+        "prepare",
+        corpus_dir,
+        dataroot,
+        cache_root,
+        "--scope",
+        "smoke",
+        "--update-lock",
+    )
+    code, (_, unlocked) = resolve(
+        capsys, corpus_dir, cache_root, "--scope", "all", "--lock-only"
+    )
+    assert code == 1 and "not in corpus.lock.json" in unlocked["problems"][0]
+
+    document = corpus_document()
+    document["fixtures"][0]["replay"] = {"rate": 4.0}
+    write_corpus(corpus_dir, document)
+    code, (record,) = resolve(
+        capsys, corpus_dir, cache_root, "--scope", "smoke", "--lock-only"
+    )
+    assert code == 1 and record["problems"][0].startswith("fixture definition")
+
+
+def test_resolve_checks_the_tool_identity_unless_lock_only(
+    capsys, monkeypatch, corpus_dir: Path, prepared: Path
+) -> None:
+    real = reference.tool_identity()
+    monkeypatch.setattr(
+        reference,
+        "tool_identity",
+        lambda: {**real, "identity_sha256": "sha256:" + "0" * 64},
+    )
+    code, (record,) = resolve(capsys, corpus_dir, prepared, "--fixture", "unit-one")
+    assert code == 1 and "tool identity" in record["problems"][0]
+    code, _ = resolve(
+        capsys, corpus_dir, prepared, "--fixture", "unit-one", "--lock-only"
+    )
+    assert code == 0
+
+
+def test_lock_only_is_a_resolve_option(
+    capsys, corpus_dir: Path, dataroot: Path, cache_root: Path
+) -> None:
+    code = cli_main(
+        [
+            "reference",
+            "verify",
+            "--corpus",
+            str(corpus_dir),
+            "--dataroot",
+            str(dataroot),
+            "--cache-root",
+            str(cache_root),
+            "--scope",
+            "smoke",
+            "--lock-only",
+        ]
+    )
+    assert code == 1 and "--lock-only applies to" in capsys.readouterr().err

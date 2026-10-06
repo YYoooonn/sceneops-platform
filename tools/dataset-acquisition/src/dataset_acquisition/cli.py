@@ -10,7 +10,7 @@ timed ROS 2 replay (streaming).
 
     dataset-acquisition nuscenes ... --replay [--rate 2.0]
 
-    dataset-acquisition reference {inspect,verify,prepare} \\
+    dataset-acquisition reference {inspect,verify,prepare,resolve} \\
         --corpus config/reference/nuscenes-mini-v1 --dataroot data/raw/nuscenes \\
         --cache-root data/reference (--scope smoke-1 | --fixture scene-0061)
 
@@ -23,7 +23,10 @@ timed ROS 2 replay (streaming).
 ``inspect`` prints a fixture's definition and live source facts, ``verify``
 checks source, definition, tool identity and the cached recording against
 ``corpus.lock.json`` (read-only), ``prepare`` materializes missing recordings
-and verifies them, and only ``prepare --update-lock`` writes the lock. One JSON
+and verifies them, and only ``prepare --update-lock`` writes the lock.
+``resolve`` is the consumer's entry point: it needs no source, checks the lock
+and the cached recordings (``--lock-only``: the lock alone) and prints each
+fixture's locked facts and recording path. One JSON
 line per fixture goes to stdout; exit 1 if any fixture disagrees.
 
 Batch prints one JSON summary (path, sha256, size, message and per-topic
@@ -115,11 +118,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "reference",
         help="versioned reference corpus: fingerprints, cached recordings, lock",
     )
-    reference.add_argument("command", choices=("inspect", "verify", "prepare"))
+    reference.add_argument(
+        "command", choices=("inspect", "verify", "prepare", "resolve")
+    )
     reference.add_argument(
         "--corpus", required=True, type=Path, help="corpus directory"
     )
-    reference.add_argument("--dataroot", required=True, type=Path)
+    reference.add_argument(
+        "--dataroot", type=Path, help="the source dataset (not used by `resolve`)"
+    )
     reference.add_argument(
         "--cache-root",
         required=True,
@@ -129,6 +136,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     reference.add_argument("--scope", help="a scope the corpus defines")
     reference.add_argument(
         "--fixture", action="append", default=[], help="a fixture id (repeatable)"
+    )
+    reference.add_argument(
+        "--lock-only",
+        action="store_true",
+        help="resolve only: check the corpus against the lock and read no recording",
     )
     reference.add_argument(
         "--update-lock",
@@ -144,8 +156,19 @@ def _reference(args: argparse.Namespace) -> int:
 
     if args.update_lock and args.command != "prepare":
         raise AcquisitionError("--update-lock applies to `reference prepare` only")
+    if args.lock_only and args.command != "resolve":
+        raise AcquisitionError("--lock-only applies to `reference resolve` only")
     corpus = reference.load_corpus(args.corpus)
     fixtures = corpus.select(args.scope, args.fixture)
+    if args.command == "resolve":
+        return reference.resolve(
+            args.corpus,
+            fixtures,
+            cache_root=args.cache_root,
+            check_recordings=not args.lock_only,
+        )
+    if args.dataroot is None:
+        raise AcquisitionError(f"`reference {args.command}` needs --dataroot")
     if args.command == "prepare":
         return reference.prepare(
             args.corpus,

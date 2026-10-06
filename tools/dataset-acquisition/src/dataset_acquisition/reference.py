@@ -615,6 +615,78 @@ def verify(
     return 1 if failed else 0
 
 
+def resolve(
+    corpus_dir: Path,
+    fixtures: list[str],
+    *,
+    cache_root: Path,
+    check_recordings: bool,
+) -> int:
+    """The locked facts of each fixture, without reading the source. The
+    consumer's entry point: it needs the recordings, not the dataset.
+
+    Always checks that the fixture is locked and that its resolved definition
+    is the locked one. With ``check_recordings`` it also requires the tool
+    identity to be the locked one, finds the cached recording by the key the
+    lock implies (the lock holds the source fingerprint, so no source access
+    is needed) and verifies its bytes, size and counts. It never converts,
+    writes or deletes anything. Exit 1 if any fixture disagrees."""
+    corpus = load_corpus(corpus_dir)
+    lock = read_lock(corpus_dir, corpus)
+    tool = tool_identity() if check_recordings else None
+    failed = 0
+    for fixture_id in fixtures:
+        locked = lock["fixtures"].get(fixture_id) if lock else None
+        problems: list[str] = []
+        path: Path | None = None
+        if locked is None:
+            problems.append(
+                f"{fixture_id} is not in {LOCK_FILE} (run reference-data-bootstrap "
+                "with UPDATE_LOCK=1 to lock it)"
+            )
+        else:
+            _compare(
+                problems,
+                "fixture definition",
+                locked["definition_sha256"],
+                corpus.definition_sha256(fixture_id),
+            )
+        if not problems and tool is not None:
+            _compare(
+                problems,
+                "tool identity",
+                lock["tool"]["identity_sha256"],
+                tool["identity_sha256"],
+            )
+        if not problems and tool is not None:
+            key = _recording_key(
+                corpus,
+                corpus.resolve(fixture_id),
+                lock["tool"]["identity_sha256"],
+                locked["source"]["fingerprint_sha256"],
+            )
+            path = recording_path(cache_root, corpus, fixture_id, key)
+            if not path.is_file():
+                problems.append(
+                    f"recording not prepared: {path} (run reference-data-bootstrap)"
+                )
+            else:
+                problems.extend(check_recording(locked, read_recording_facts(path)))
+        if problems:
+            failed += 1
+        _emit(
+            {
+                "fixture_id": fixture_id,
+                "source_unit": corpus.fixtures[fixture_id]["source_unit"],
+                "status": "failed" if problems else "ok",
+                "problems": problems,
+                **({"path": str(path)} if path else {}),
+                **({"recording": locked["recording"]} if locked else {}),
+            }
+        )
+    return 1 if failed else 0
+
+
 def prepare(
     corpus_dir: Path,
     fixtures: list[str],

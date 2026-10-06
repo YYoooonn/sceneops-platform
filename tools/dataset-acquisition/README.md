@@ -199,7 +199,7 @@ message with the source tables, files and CAN extract. It is skipped when
 
 ## Reference corpus
 
-`dataset-acquisition reference {inspect,verify,prepare}` works on a versioned
+`dataset-acquisition reference {inspect,verify,prepare,resolve}` works on a versioned
 corpus of fixtures (`config/reference/<corpus>/`, see
 [docs/development/reference-corpus.md](../../docs/development/reference-corpus.md)):
 it fingerprints the source, materializes batch MCAPs into a local cache
@@ -207,7 +207,8 @@ it fingerprints the source, materializes batch MCAPs into a local cache
 `prepare --update-lock` writes the lock; every disagreement fails. L1
 conformance is checked by the platform's publisher `check`, because this tool
 depends on no SceneOps package. Run it through `make reference-data-bootstrap` /
-`make reference-data-verify`.
+`make reference-data-verify`. Consumers use `reference resolve`: it needs no source dataset and prints each
+fixture's locked facts and verified recording path.
 
 ## Limitations
 
