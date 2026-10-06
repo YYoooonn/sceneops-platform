@@ -491,9 +491,8 @@ profile `acquisition`). They are data-plane steps outside the API.
 `recording-publisher` runs the publisher from the worker image with
 ArtifactStore settings only. It receives no database settings. Recording
 bytes never pass through the API. Registration and everything after it go
-through FastAPI. `make e2e-batch-canonical` exercises this path from the
-host with only Docker Compose, curl and jq, and `make canonical-bootstrap`
-runs it as developer orchestration.
+through FastAPI. `make canonical-bootstrap` runs this path as developer
+orchestration from the host with only Docker Compose, curl and jq.
 
 The tool stops at the MCAP. It never publishes, registers or calls
 SceneOps. Its channel mapping, timing policy and calibration representation
@@ -553,8 +552,7 @@ FastAPI control plane:
 
 ```bash
 make local-up
-make e2e-batch-canonical             # nuScenes -> acquisition -> RobotRun -> Scenes + Episodes
-make canonical-bootstrap             # the same path as a reusable L1/L2 baseline
+make canonical-bootstrap             # prepared recordings -> RobotRun -> Scenes + Episodes (reusable L1/L2 baseline)
 make e2e-episode-learning            # Episodes -> AlignedEpisodes -> learning export -> LeRobot round trip
 ```
 

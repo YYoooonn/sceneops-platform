@@ -70,8 +70,9 @@ the v1 builder:
   still reads its own fixed topic set and `RobotStateRecord` columns
   (`steering` / `throttle` / `brake`, ...) — a derived table, not canonical
   Episode data;
-- `make e2e-batch-canonical` is the Episode (and Scene) canonicalization
-  journey and `make e2e-episode-learning` the aligned / export journey.
+- Episode (and Scene) canonicalization is verified by the golden reference
+  contract and the recording verticals; `make e2e-episode-learning` is the
+  aligned / export journey.
 
 ## 3. `DatasetVersionStatus`: intentionally minimal
 

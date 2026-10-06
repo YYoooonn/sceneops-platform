@@ -97,8 +97,8 @@ def test_matrix_row_f_duplicate_after_later_records() -> None:
 def test_matrix_row_g_non_zero_first_sequence() -> None:
     """5,6,7 -- a capture attempt whose very first observed message is
     not sequence 0 is rejected immediately; this is the same guarantee
-    the real end-to-end capture E2E depends on
-    (make e2e-streaming-capture asserts first_sequence == 0)."""
+    the real streaming capture depends on (a captured run starts at
+    first_sequence == 0)."""
     tracker = _SequenceTracker()
     with pytest.raises(SequenceIntegrityError, match="expected 0"):
         tracker.accept(sequence_number=5, payload=b"p5")

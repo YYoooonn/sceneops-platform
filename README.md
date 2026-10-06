@@ -145,24 +145,23 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | Command | Description |
 | --- | --- |
 | `make test` | Unit suites (worker, api, inference-server, core, analytics, integrations, streaming) — no infrastructure |
-| `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, registrars, recording Scene / Episode verticals — needs `make local-up` |
-| `make test-infrastructure` | Pipeline contracts on the live stack: the four-pipeline surface, dedup / force / convergence / replacement / blocked resumption / failure recovery / concurrent registration, Celery, MinIO selective reads |
+| `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, every `*_integration.py` module (registrars, recording Scene / Episode and derived verticals, selective Parquet reads) — needs `make local-up`; a skipped test fails the run |
+| `make test-infrastructure` | Pipeline contracts on the live stack: dedup / force / convergence / replacement / blocked resumption / failure recovery / concurrent registration, the configured orchestrator |
 | `make test-infrastructure-airflow` | The same pipelines through the Airflow per-task DAGs (needs `make airflow-up` and the API on the Airflow backend) |
 | `make test-recovery` | Acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance: real Postgres + MinIO, a throwaway Redis and Celery workers (needs `make local-up` and Docker) |
 | `make acquisition-test` / `make lerobot-test` / `make ros2-test` | Isolated-environment suites: dataset-acquisition, LeRobot adapter, ROS 2 bridge + capture |
-| `make smoke-api` / `make smoke-streaming` | Transport / liveness only — never create persistent domain data |
+| `make smoke-streaming` | Transport / liveness only — never create persistent domain data |
 | `make lint` / `make format` | Ruff check / format |
 
 ### Baseline and E2E journeys
 
-There are exactly five E2E journeys. Platform operations go through FastAPI and bulk data through one-shot containers; the host needs only Docker Compose, curl and jq. There is no bare `make e2e` aggregate — the journeys need different infrastructure.
+There are four E2E journeys. Platform operations go through FastAPI and bulk data through one-shot containers; the host needs only Docker Compose, curl and jq. There is no bare `make e2e` aggregate — the journeys need different infrastructure.
 
 | Command | Journey |
 | --- | --- |
 | `make canonical-bootstrap` / `make canonical-verify` | Developer orchestration, not a pipeline: prepared reference-corpus recordings → one RobotRun per fixture → Scenes → Episodes → validate / profile, then read-only verification. Builds nothing derived. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make streaming-bootstrap` / `make streaming-verify` / `make streaming-compare` | Developer orchestration, not a pipeline: each fixture's locked reference MCAP → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → one streamed RobotRun → Scene → Episode (`stream-ref-<scope>`), then read-only verification and a corpus-level comparison with the Recording Import baseline. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make reference-contract-bootstrap` / `make reference-contract-verify` | Developer orchestration, not a pipeline: the golden reference contract — each corpus fixture ingested once by Recording Import and once by Streaming Acquisition under a fixed identity (20 RobotRuns, 20 whole-recording Scenes, 20 Episodes); the bootstrap composes the two baseline bootstraps, the verifier is read-only and reports contract vs non-contract RobotRuns. See [`docs/development/reference-contract.md`](docs/development/reference-contract.md) |
-| `make e2e-batch-canonical` | dataset fixture → MCAP → RobotRun (Recording Import) → Scenes + Episodes |
 | `make e2e-streaming-equivalence` | One locked reference MCAP reaches Scenes and Episodes via the Recording Import baseline and via replay → ROS 2 → Kafka → capture → publish-pending → reconcile; the two are semantically equivalent (needs Kafka) |
 | `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend) |
 | `make e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → export verification + LeRobot round trip |
@@ -239,11 +238,11 @@ sceneops-platform/
 ├── config/baselines/               # Scene / Episode build configurations of the canonical baseline
 ├── migrations/                     # Alembic versions
 ├── scripts/
-│   ├── e2e/                        # the five journeys, shared helpers, container-run verifiers
+│   ├── e2e/                        # the four journeys, shared helpers, container-run verifiers
 │   ├── canonical/                  # canonical-bootstrap / canonical-verify
 │   ├── streaming/                  # streaming-bootstrap / -verify / -compare, shared streaming acquisition path
 │   └── checks/                     # environment checks, command-surface consistency
-├── tests/infrastructure/           # pipeline-contract / orchestrator / MinIO acceptance tests
+├── tests/infrastructure/           # pipeline-contract / orchestrator / acquisition-recovery acceptance tests
 ├── docs/                           # architecture/, adr/, development/, workflows/
 ├── compose.yaml, compose/          # Compose entrypoint and core, workers, inference, airflow, ros2,
 │                                   #   tools, streaming, acquisition, lerobot

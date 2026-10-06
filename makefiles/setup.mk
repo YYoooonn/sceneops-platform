@@ -50,50 +50,57 @@ test:
 		uv run pytest $$suite -q || exit 1; \
 	done
 
+# Real-infrastructure commands run with `-p require_infrastructure`
+# (tests/infrastructure/require_infrastructure.py): a skipped test -- stack not
+# running, MinIO unreachable -- fails the run instead of passing silently.
+REAL_INFRA_PYTEST := uv run pytest -p require_infrastructure
+
 .PHONY: test-integration
 # Real-infrastructure tests of one subsystem each. Prerequisite: `make
-# local-up` (Postgres + MinIO). sceneops-db/storage tests need a database and
-# object store; the worker tests drive the registrars and the recording
-# Scene / Episode verticals against them. Never part of `make test`: they
-# are separated by directory/file alone (see docs/development/test-matrix.md).
+# local-up` (Postgres + MinIO). sceneops-db/storage tests are integration by
+# directory; everywhere else a module is integration when its file is named
+# `*_integration.py` (discovered, not listed), so a new one cannot be forgotten.
+# Never part of `make test` (those files skip there without the variables set
+# below); a skip here is a failure (see REAL_INFRA_PYTEST).
 test-integration:
 	SCENEOPS_DATABASE_URL="postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$${POSTGRES_PORT:-5432}/$(POSTGRES_DB)" \
 	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
 	MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
 	MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
 	MINIO_BUCKET=$(MINIO_BUCKET) \
-	uv run pytest packages/sceneops-db/tests/ packages/sceneops-storage/tests/ -v
+	$(REAL_INFRA_PYTEST) packages/sceneops-db/tests/ packages/sceneops-storage/tests/ -v
 	SCENEOPS_DATABASE_URL="postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$${POSTGRES_PORT:-5432}/$(POSTGRES_DB)" \
 	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
 	MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
 	MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
 	MINIO_BUCKET=$(MINIO_BUCKET) \
-	uv run pytest apps/worker/tests/robots/test_registration_integration.py apps/worker/tests/robots/test_resolver_integration.py apps/worker/tests/robots/test_reconciliation_vertical_integration.py apps/worker/tests/robots/test_artifact_lifecycle_vertical_integration.py apps/worker/tests/episodes/test_recording_episode_vertical_integration.py apps/worker/tests/scenes/test_scene_registration_integration.py apps/worker/tests/scenes/test_recording_scene_vertical_integration.py -v
+	$(REAL_INFRA_PYTEST) -o python_files='*_integration.py' apps/worker/tests packages/sceneops-analytics/tests -v
 
 .PHONY: test-infrastructure
 # Infrastructure acceptance of the pipeline contracts below the E2E journeys:
-# the four-pipeline surface, dedup / force / convergence / replacement /
-# blocked resumption / failure recovery / concurrent registration, the
-# orchestrator that ran them, and MinIO selective reads. Runs against the
-# live stack (`make local-up`); builds on the canonical baseline
-# (canonical-bootstrap) and writes only into throwaway DatasetVersions.
+# dedup / force / convergence / replacement / blocked resumption / failure
+# recovery / concurrent registration. Runs against the live stack (`make
+# local-up`); builds on the canonical baseline (canonical-bootstrap) and writes
+# only into throwaway DatasetVersions. The Airflow and acquisition-recovery
+# modules are their own targets (test-infrastructure-airflow, test-recovery); a
+# skip here is a failure.
 test-infrastructure: canonical-bootstrap
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_FILE) \
-	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
-	MINIO_ROOT_USER=$(MINIO_ROOT_USER) \
-	MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD) \
-	MINIO_BUCKET=$(MINIO_BUCKET) \
-	uv run pytest tests/infrastructure -v
+	$(REAL_INFRA_PYTEST) tests/infrastructure \
+		--ignore=tests/infrastructure/test_airflow_backend.py \
+		--ignore=tests/infrastructure/test_acquisition_recovery.py \
+		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py -v
 
 .PHONY: test-infrastructure-airflow
 # The same canonical pipelines through the Airflow per-task DAGs. Requires:
 # `make airflow-up`, and the api service restarted with
 # SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow (a process-startup
-# setting, not automatable from here).
+# setting, not automatable from here). Fails -- never skips -- when the API,
+# Airflow backend or prerequisites are missing.
 test-infrastructure-airflow: canonical-bootstrap
 	SCENEOPS_TEST_AIRFLOW=1 EXPECTED_PIPELINE_BACKEND=airflow \
 	API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_FILE) \
-	uv run pytest tests/infrastructure/test_airflow_backend.py -v
+	$(REAL_INFRA_PYTEST) tests/infrastructure/test_airflow_backend.py -v
 
 .PHONY: lint
 lint:

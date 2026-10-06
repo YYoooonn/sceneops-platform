@@ -120,7 +120,7 @@ make test-integration              real Postgres + MinIO, needs `make local-up`
 make test-infrastructure           pipeline contracts on the live stack, needs `make local-up`
 make test-infrastructure-airflow   the same pipelines through Airflow (opt-in, see below)
 make test-recovery                 acquisition recovery under injected faults + the full-lifecycle acceptance (Docker, needs `make local-up`)
-make e2e-batch-canonical | e2e-streaming-equivalence | e2e-scene-ml | e2e-episode-learning
+make e2e-streaming-equivalence | e2e-scene-ml | e2e-episode-learning
 make e2e-cleanroom                 the full-platform acceptance (DESTRUCTIVE: runs `make local-reset`)
 make check-commands                the command surface is consistent (no pytest, no stack)
 ```
@@ -133,22 +133,32 @@ make check-commands                the command surface is consistent (no pytest,
   weights or a running inference server.
 - `make test-integration` covers `packages/sceneops-db/tests` (real Postgres,
   including a check that the migrated schema has no column the models dropped),
-  `packages/sceneops-storage/tests` (real MinIO), and the worker's registrar and
-  recording Scene / Episode vertical tests against both. No pytest marker selects
-  them: they live in files that `make test`'s suites never touch. Each
-  `sceneops-db`/`sceneops-storage` test either rolls back or deletes what it
-  wrote, so they are safe on the persistent local stack.
+  `packages/sceneops-storage/tests` (real MinIO), and every module named
+  `*_integration.py` under `apps/worker/tests` and `packages/sceneops-analytics/tests`
+  (registrars, reconciliation, recording Scene / Episode and derived verticals,
+  selective Parquet reads) against both. A new `*_integration.py` is picked up without
+  editing the Makefile; `make test` collects the same files but they skip without
+  `SCENEOPS_DATABASE_URL` / `MINIO_ENDPOINT_URL`. The real-infrastructure commands run
+  with `-p require_infrastructure` (`tests/infrastructure/require_infrastructure.py`):
+  a skipped test, such as an unreachable Postgres or MinIO, fails the command. Each
+  test either rolls back or deletes what it wrote, so they are safe on the persistent
+  local stack.
 - `make test-infrastructure` runs `tests/infrastructure` against the live stack:
-  the four-pipeline surface, execution-key dedup / force, convergence of an
-  unchanged rebuild, conflict-then-explicit-replacement, resumption of a blocked
-  pipeline, recovery of a failed one, concurrent runs over one scope, the
-  orchestrator that executed them, and MinIO selective Parquet reads. It builds on
+  execution-key dedup / force, convergence of an unchanged rebuild,
+  conflict-then-explicit-replacement, resumption of a blocked pipeline, recovery
+  of a failed one, concurrent runs over one scope and the orchestrator that
+  executed them (the Airflow and acquisition-recovery modules have their own
+  targets). It builds on
   the canonical baseline (`canonical-bootstrap`, create-or-verify) and writes only
   into throwaway DatasetVersions, so the baseline's scope is never mutated.
   `make test-infrastructure-airflow` runs the same canonical pipelines through the
   Airflow per-task DAGs; it needs `make airflow-up` and the `api` service
   restarted with `SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow` (a
-  process-startup setting).
+  process-startup setting), and fails rather than skips when they are missing. Its
+  Scene ML test builds Scenes and imports a LabelSet (the fixture's locked
+  reference labels, rendered by the `reference-labels` container) in a
+  DatasetVersion of its own, so it also needs `make acquisition-image` and
+  `make reference-data-bootstrap`.
 - `make test-recovery` runs the two acquisition-recovery suites against the live
   PostgreSQL and MinIO with a Redis container and Celery workers of its own, so
   killing a worker or stopping the broker never touches the dev stack. Each test
@@ -163,13 +173,12 @@ make check-commands                the command surface is consistent (no pytest,
 
 ## E2E journeys
 
-Exactly five, each a user journey through production paths. Platform operations
+Four journeys, each a user journey through production paths. Platform operations
 go through FastAPI; bulk data moves through one-shot containers and the
 ArtifactStore. The host needs Docker Compose, curl and jq — no uv, no PostgreSQL
 or MinIO access, no worker CLI.
 
 ```
-make e2e-batch-canonical [SCENE=...]         dataset fixture -> MCAP -> RobotRun (Recording Import) -> Scenes -> Episodes
 make e2e-streaming-equivalence [SCENE=...]   the locked reference MCAP via the Recording Import baseline and via replay -> ROS2 -> Kafka -> capture: equivalent (needs Kafka)
 make e2e-scene-ml [SCENE=...]                Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)
 make e2e-episode-learning [SCENE=...]        Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip
@@ -181,12 +190,6 @@ There is no bare `make e2e` aggregate: the journeys differ in what they need
 which one a failure needed. `make e2e-cleanroom` is the only full-platform
 acceptance entry point.
 
-- `e2e-batch-canonical` acquires a recording, registers the RobotRun, runs
-  `canonical-bootstrap` (Scene and Episode building over that one RobotRun) and
-  checks the canonical records against the recording they came from: windows on
-  the declared clocks, source-faithful streams, pinned manifest revisions, shared
-  payloads, validated and profiled units, and that re-running the bootstrap
-  changes no record.
 - `e2e-scene-ml` and `e2e-episode-learning` start from a baseline built by
   `canonical-bootstrap`. They derive everything else (labels, sample views,
   ScenarioSets, predictions, evaluations, aligned episodes, exports) and prove
@@ -205,8 +208,8 @@ acceptance entry point.
   `e2e-episode-learning` on that baseline, and a final verification through the
   API. It needs no GPU, Airflow or Kafka. Requires confirmation unless `FORCE=1`.
 
-`make smoke-api` and `make smoke-streaming` are liveness / transport checks, not
-journeys: they never create persistent domain data.
+`make smoke-streaming` is a liveness / transport check, not a journey: it never
+creates persistent domain data.
 
 ### Canonical baseline
 

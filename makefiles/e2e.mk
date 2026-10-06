@@ -1,9 +1,7 @@
 # ============================================================================
-# End-to-end journeys -- exactly five, each a user journey through production
-# paths from a real source to a persisted result:
+# End-to-end journeys -- each a user journey through production paths from a
+# real source to a persisted result (ADR-007 §36):
 #
-#   e2e-batch-canonical          dataset fixture -> batch MCAP -> RobotRun
-#                                -> Scenes + Episodes
 #   e2e-streaming-equivalence    one source acquired in batch and by ROS 2 ->
 #                                Kafka -> capture, canonically equivalent
 #                                (makefiles/streaming.mk)
@@ -28,9 +26,9 @@
 #   READ_ONLY_REFERENCE         e2e-scene-ml, e2e-episode-learning: the RobotRun is the golden
 #                               reference contract's; they register none and write into a
 #                               DatasetVersion of their own (DATASET_ID=<id> names it)
-#   MUTATING_ACQUISITION_TEST   e2e-batch-canonical, e2e-streaming-equivalence: they register
-#                               RobotRuns of their own and refuse to run unless
-#                               DISPOSABLE_RUNTIME=1 says the runtime will be reset afterwards
+#   MUTATING_ACQUISITION_TEST   e2e-streaming-equivalence: it registers RobotRuns of its own
+#                               and refuses to run unless DISPOSABLE_RUNTIME=1 says the
+#                               runtime will be reset afterwards
 # ============================================================================
 
 # Baseline identity, target DatasetVersion and scene selection, passed to the scripts
@@ -38,17 +36,6 @@
 E2E_ENV = API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_FILE) \
 	$(if $(SCENE),SOURCE_UNIT=$(SCENE)) $(if $(BASELINE_ID),BASELINE_ID=$(BASELINE_ID)) \
 	$(if $(DATASET_ID),DATASET_ID=$(DATASET_ID)) $(if $(DISPOSABLE_RUNTIME),DISPOSABLE_RUNTIME=$(DISPOSABLE_RUNTIME))
-
-.PHONY: e2e-batch-canonical
-# prepared reference recording (make reference-data-bootstrap) -> recording-
-# publisher container -> POST /robot-runs:register -> RobotRun -> canonical-bootstrap
-# (recording_scene_building + recording_episode_building) -> canonical Scenes
-# and Episodes, checked against the recording they came from.
-# Prerequisites: `make local-up` with images built from the current tree, and the
-# fixture's recording prepared by `make reference-data-bootstrap`.
-e2e-batch-canonical: acquisition-image
-	chmod +x scripts/e2e/e2e_batch_canonical.sh scripts/canonical/*.sh
-	$(E2E_ENV) scripts/e2e/e2e_batch_canonical.sh
 
 .PHONY: e2e-scene-ml
 # canonical Scenes -> IMPORT_LABELS -> BUILD_SCENE_SAMPLE_VIEWS ->
@@ -87,15 +74,3 @@ e2e-episode-learning: acquisition-image lerobot-image
 e2e-cleanroom:
 	chmod +x scripts/e2e/e2e_cleanroom.sh scripts/canonical/*.sh
 	$(E2E_ENV) scripts/e2e/e2e_cleanroom.sh
-
-# ============================================================================
-# Smoke -- transport/liveness checks only. STRICT RULE: a smoke-* target
-# must never create or leave behind persistent application-domain data.
-# ============================================================================
-
-.PHONY: smoke-api
-# Read-only API liveness/transport check -- creates no persistent
-# Dataset/DatasetVersion/Model/PipelineRun.
-smoke-api:
-	chmod +x scripts/e2e/smoke_api.sh
-	API_BASE_URL=$(API_BASE_URL) scripts/e2e/smoke_api.sh

@@ -7,7 +7,7 @@ packages there, not importable from the main workspace venv. Invoke via:
     docker compose --profile ros2 run --rm ros2 \\
         python3 -m pytest /workspace/nodes/tests/ -v
 
-(or `make e2e-ros2-streaming`, which runs this suite as its first stage).
+(or `make ros2-test`, which runs this suite with the capture tests).
 
 No Kafka broker and no live ROS graph (no discovery, no other
 participants) -- a FakeProducerBridge stands in for

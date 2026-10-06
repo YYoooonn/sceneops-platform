@@ -213,7 +213,6 @@ only. Canonicalization, RobotRun identity and registration never read it
 ```bash
 make acquisition-test        # synthetic dataroot + replay scheduling + import boundary + real nuScenes mini
 make acquisition-image-check # boundary check inside both built images
-make e2e-batch-canonical     # containers + FastAPI: acquire -> check -> publish -> register -> Scenes + Episodes
 make e2e-streaming-equivalence # locked MCAP replay -> ROS 2 -> bridge -> Kafka -> capture, equivalent to the batch baseline
 ```
 

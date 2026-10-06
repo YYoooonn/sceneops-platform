@@ -6,10 +6,11 @@ fetch) works against a real S3-compatible backend, not only
 test_s3_artifact_store.py``'s raw ``read_range`` byte-slice coverage with
 the actual selective-Parquet-read use case this primitive exists for.
 
-Requires a reachable MinIO instance (`make local-up`); skips (not fails)
-if unreachable, matching sceneops-storage's own integration-test
-convention. Part of `make test-infrastructure`: real-infrastructure tests stay
-out of the fast tier by directory placement alone.
+Owns only the storage contract: it builds its own scaled dataset under a unique
+`_test-integration/` prefix and needs no platform baseline. Run by `make
+test-integration` (which sets MINIO_ENDPOINT_URL); under plain `make test` it skips,
+like the other real-infrastructure tests, and the integration command fails on a
+skip.
 """
 
 from __future__ import annotations
@@ -47,10 +48,13 @@ TIGHT_POLICY = ShardPolicy(max_episodes_per_shard=2, max_rows_per_shard=10_000)
 
 @pytest_asyncio.fixture()
 async def minio_store():
+    endpoint_url = os.environ.get("MINIO_ENDPOINT_URL")
+    if not endpoint_url:
+        pytest.skip("MINIO_ENDPOINT_URL not set -- run via `make test-integration`")
     settings = StorageSettings(
         backend=ArtifactBackend.MINIO,
         root_uri=f"s3://{BUCKET}",
-        endpoint_url=os.environ.get("MINIO_ENDPOINT_URL", "http://localhost:9000"),
+        endpoint_url=endpoint_url,
         region=None,
         access_key_id=os.environ.get("MINIO_ROOT_USER", "minioadmin"),
         secret_access_key=os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),

@@ -14,12 +14,12 @@ infrastructure semantics are part of the contract.
 | --- | --- | --- | --- |
 | Unit | `make test` | none | pure logic, schemas, state transitions, pipeline-definition and REF-chaining contracts, execution identity, API services over fakes, the Airflow DAG mirror |
 | Isolated-environment unit | `make acquisition-test`, `make lerobot-test`, `make ros2-test` | the tool's own uv project / the ROS 2 image (`ros2-test` also Kafka) | the acquisition tool (incl. its import boundary), the LeRobot adapter and container entrypoint, the streaming bridge and capture |
-| Integration | `make test-integration` | PostgreSQL, MinIO | repositories and the migrated schema (every model column exists; no column a model dropped remains), ArtifactStore semantics, the registrars, acquisition reconciliation, artifact lifecycle classification, the recording Scene / Episode verticals against real stores |
-| Infrastructure acceptance | `make test-infrastructure` | the live stack (+ the canonical baseline) | pipeline execution contracts: the four-pipeline surface, dedup / force, convergence, conflict-then-replacement, blocked resumption, failure recovery, concurrent registration, RobotRun registration idempotency, the orchestrator that ran them, MinIO selective Parquet reads |
+| Integration | `make test-integration` | PostgreSQL, MinIO | repositories and the migrated schema (every model column exists; no column a model dropped remains), ArtifactStore semantics, MinIO selective Parquet reads, the registrars, acquisition reconciliation, artifact lifecycle classification, the recording Scene / Episode and derived verticals against real stores. A module is integration when it is named `*_integration.py` (or lives in `sceneops-db` / `sceneops-storage` tests) |
+| Infrastructure acceptance | `make test-infrastructure` | the live stack (+ the canonical baseline) | pipeline execution contracts: dedup / force, convergence, conflict-then-replacement, blocked resumption, failure recovery, concurrent registration, RobotRun registration idempotency, the orchestrator that ran them |
 | Recovery acceptance | `make test-recovery` | PostgreSQL, MinIO + a throwaway Redis and Celery workers (Docker) | acquisition recovery under injected faults, one per test: finalized capture never published, a Job left queued, a worker killed during registration, a committed registration whose completion is lost, transient failures across replacement Jobs and the attempt budget, Redis down / unresponsive then restored, concurrent reconciliation passes, and that conflicts and integrity incidents are left untouched. And the full-lifecycle acceptance: nine acquisitions, each hit by a different failure between capture and RobotRun, recovered only by the production commands |
-| Orchestrator acceptance | `make test-infrastructure-airflow` | live stack + Airflow | the canonical pipelines through the Airflow per-task DAGs |
-| Smoke | `make smoke-api`, `make smoke-streaming` | the API / Kafka | transport and liveness only; never creates domain data |
-| E2E journey | the five `make e2e-*` | live stack + containers | a user journey through production paths (below); the test-state class of each is in [Test-state classes](#test-state-classes) |
+| Orchestrator acceptance | `make test-infrastructure-airflow` | live stack + Airflow | the canonical pipelines, including Scene ML over a test-owned DatasetVersion and LabelSet, through the Airflow per-task DAGs |
+| Smoke | `make smoke-streaming` | Kafka | transport and liveness only; never creates domain data |
+| E2E journey | the four `make e2e-*` ([ADR-007](../adr/007-canonical-ingestion-architecture.md) §36) | live stack + containers | a user journey through production paths (below); the test-state class of each is in [Test-state classes](#test-state-classes) |
 | Clean room | `make e2e-cleanroom` | fresh platform state | the platform reconstructs its baseline and runs its representative workflows from nothing |
 | Model-backend acceptance | `make acceptance-grounding-dino` | inference server | the Scene ML journey with the real detector |
 | Streaming baseline | `make streaming-bootstrap`, `streaming-verify`, `streaming-compare` | live stack + Kafka + ROS 2 images | the persistent streamed baseline of a scope (create-or-verify, resumable), its registered per-channel counts against the lock, and its canonical agreement with the Recording Import baseline; not a journey and not a benchmark |
@@ -38,8 +38,8 @@ disposable runtime and is dropped by `make local-reset`, never deleted piecemeal
 | Class | May create | Runs on | Workflows |
 | --- | --- | --- | --- |
 | reference state | the contract's RobotRuns, Scenes and Episodes | the reference environment | `reference-contract-bootstrap`; `canonical-bootstrap` / `streaming-bootstrap` with the contract's identity (`smoke-1` selects `scene-0061` of it) |
-| `READ_ONLY_REFERENCE` | no RobotRun; derived state only in a `sceneops-test-*` DatasetVersion of its own; never the reference DatasetVersion | the reference environment | `*-verify`, `streaming-compare`, `reference-contract-verify`, `smoke-api`, `smoke-streaming` (write nothing); `e2e-scene-ml`, `e2e-episode-learning`, `test-infrastructure` (Scenes / Episodes / derived records in `sceneops-test-*`) |
-| `MUTATING_ACQUISITION_TEST` | RobotRuns, captures, Kafka records, their artifacts | a disposable runtime (`DISPOSABLE_RUNTIME=1`; refused otherwise) | `e2e-batch-canonical`, `e2e-streaming-equivalence`, any bootstrap with a non-contract `BASELINE_ID` |
+| `READ_ONLY_REFERENCE` | no RobotRun; derived state only in a `sceneops-test-*` DatasetVersion of its own; never the reference DatasetVersion | the reference environment | `*-verify`, `streaming-compare`, `reference-contract-verify`, `smoke-streaming` (write nothing); `e2e-scene-ml`, `e2e-episode-learning`, `test-infrastructure` (Scenes / Episodes / derived records in `sceneops-test-*`) |
+| `MUTATING_ACQUISITION_TEST` | RobotRuns, captures, Kafka records, their artifacts | a disposable runtime (`DISPOSABLE_RUNTIME=1`; refused otherwise) | `e2e-streaming-equivalence`, any bootstrap with a non-contract `BASELINE_ID` |
 | self-cleaning fixtures | rows keyed by a per-test unique id | any runtime with PostgreSQL / MinIO | `make test-integration`, `make test-recovery` (their own teardown removes their rows) |
 
 Temporary identities carry the reserved `test-` namespace: `run-test-*`,
@@ -53,7 +53,6 @@ itself stays verified.
 
 | Journey | Source → result | Proves |
 | --- | --- | --- |
-| `e2e-batch-canonical` | prepared reference MCAP → RobotRun (Recording Import) → Scenes + Episodes | L1 → L2 canonicalization from one recording: windows on declared clocks, source-faithful streams, pinned manifest revisions, shared payloads, validated and profiled units, and that re-running the bootstrap changes no record |
 | `e2e-streaming-equivalence` | locked reference MCAP → the contract's Recording Import RobotRun (read as it is), and → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → streamed RobotRun; both → Scenes + Episodes | transport preservation: acquisition equivalence (per-channel payloads, source times, `/tf_static`), the run's Kafka control records, canonical Scene / Episode equivalence (I-35), negative controls, baseline untouched |
 | `e2e-scene-ml` | reference RobotRun → Scenes (own DatasetVersion) → LabelSet → sample views → ScenarioSet → prediction → evaluation | every derived revision pins what it consumed; retries converge; the real lidar payload decodes; canonical Scenes are untouched |
 | `e2e-episode-learning` | reference RobotRun → Episodes (own DatasetVersion) → AlignedEpisodes → learning export → verification + LeRobot round trip | pinned, deterministic alignment and export; shard checksums and `SceneOpsDataset` reads; every LeRobot frame equals the export's dense window; canonical Episodes are untouched |
@@ -78,14 +77,23 @@ itself stays verified.
 | Structured recovery records: one line per action with state before / after, retry-budget evidence and outcome, a pass line, stdout kept the JSON report, a failed second observation never failing a pass | unit (`apps/api/tests/robots/test_recovery_logging.py`, `packages/sceneops-integrations/tests/test_publish_pending.py`); parsed from the commands' stderr in the full-lifecycle acceptance |
 | The whole lifecycle under failure: finalized capture without operator metadata, publisher killed between recording and manifest, a failed publish, a broker outage, concurrent recovery, a killed worker, a spent attempt budget, a forged manifest and a deleted recording left untouched, one RobotRun per acquisition | infrastructure (`tests/infrastructure/test_acquisition_lifecycle_acceptance.py`); fault points in `recovery_worker.py` and `recovery_publisher.py` |
 | `ArtifactStore.list_objects` (recursive, paginated, atomic-write temp files excluded) | unit (`test_local_artifact_store.py`) + integration (`test_s3_artifact_store.py`) |
-| Retry, dedup, force, replacement, blocked / failed resumption, concurrency | infrastructure (`tests/infrastructure/test_pipeline_execution.py`) |
+| Retry, dedup, force, replacement, blocked / failed resumption, concurrency, re-running a bootstrap or a registration changes no record | infrastructure (`tests/infrastructure/test_pipeline_execution.py`); the contract's snapshot diff; `created_payload_count == 0` on a repeated build in the recording verticals |
 | Celery / Airflow execution | infrastructure (`test_pipeline_execution.py`, `test_airflow_backend.py`) |
+| Recording Import golden contract: the RobotRun pins the locked recording and its message / channel facts, one whole-recording Scene and Episode per run, validated, profiled and ready | `make reference-contract-verify` / `canonical-verify`; evaluator over synthetic state in `scripts/reference/tests` |
+| Whole-recording Scene / Episode shape: declared source clocks, `[running marker, completed marker + 1)`, source-faithful asynchronous streams, no outcome / annotation field | unit over a synthetic ROS 2 recording (`apps/worker/tests/{scenes,episodes}/test_recording_*_builder.py`, `packages/sceneops-core/tests/test_{scene_manifest,episodes}.py`) |
+| Scene / Episode independence and payload sharing: one payload set per RobotRun, reused by the Episode build, ids independent of build configuration | unit (`test_scene_and_episode_builders_are_independent_siblings`); integration (`test_recording_episode_vertical_integration.py`, `test_recording_scene_vertical_integration.py`) |
+| Four-pipeline surface and task chains | unit (`apps/worker/tests/pipelines/test_pipeline_definitions.py`) |
+| MinIO selective Parquet reads | integration (`packages/sceneops-analytics/tests/test_selective_reads_minio_integration.py`) |
 | Recording Import / Streaming Acquisition equivalence | E2E (`e2e-streaming-equivalence`) |
 | Lineage pins, LeRobot round trip | E2E (`e2e-scene-ml`, `e2e-episode-learning`) |
 
 ## Rules
 
 - A smoke target never creates persistent application-domain data.
+- A real-infrastructure command (`test-integration`, `test-infrastructure`,
+  `test-infrastructure-airflow`, `test-recovery`) fails when any test is skipped,
+  so an unreachable PostgreSQL, MinIO, API or Docker is never a green run. An
+  opt-in module with its own target is excluded from the others, not skipped.
 - A workflow that registers RobotRuns of its own never runs on the reference
   environment: it requires `DISPOSABLE_RUNTIME=1`, and the runtime is reset afterwards.
 - No test removes platform state through SQL or a test-only API; disposable state is

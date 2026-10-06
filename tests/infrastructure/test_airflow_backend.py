@@ -19,7 +19,7 @@ import os
 
 import pytest
 
-from infra_support import episode_params, scene_params
+from infra_support import episode_params, reference_label_document, scene_params
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SCENEOPS_TEST_AIRFLOW") != "1",
@@ -89,22 +89,26 @@ def test_episode_learning_data_building_through_airflow(api, baseline_run):
 
 
 def test_scene_ml_evaluation_through_airflow(api, baseline, baseline_run):
-    """The L3 Scene ML pipeline over the baseline, with the label set
-    `make e2e-scene-ml` imported for it (on this baseline). A label
-    document reaches the platform only through that journey, so the test is
-    skipped on a baseline that has none."""
-    dataset = (baseline["dataset_id"], baseline["dataset_version"])
-    label_set_id = f"labels-{baseline['baseline_id']}-{baseline_run['source_unit']}"
-    revisions = api.get(
-        "/artifacts", kind="label_set_manifest", owner_type="label_set", owner_id=label_set_id, limit=1
-    )["artifacts"]
-    if not revisions:
-        pytest.skip(f"label set {label_set_id} is not imported; run `make e2e-scene-ml BASELINE_ID={baseline['baseline_id']}`")
-    label_set = {
-        "label_set_id": label_set_id,
-        "manifest_artifact_id": revisions[0]["artifactId"],
-        "manifest_checksum": revisions[0]["checksum"],
-    }
+    """The L3 Scene ML pipeline over the Scenes of a DatasetVersion of the test's own,
+    with a LabelSet the test itself imports (the fixture's locked reference labels,
+    rendered for the baseline RobotRun). The reference DatasetVersion is never written
+    to; a missing prerequisite (reference labels, the acquisition image) fails."""
+    dataset = api.new_dataset_version("airflow-scene-ml")
+    built = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
+    assert built["status"] == "succeeded", built
+
+    label_set_id = f"labels-{dataset[0]}-{baseline_run['source_unit']}"
+    with reference_label_document(
+        baseline["reference"]["corpus"],
+        baseline_run["fixture_id"],
+        baseline_run["robot_run_id"],
+        label_set_id,
+    ) as document_uri:
+        imported = api.run_job("import_labels", dataset, {"document_uri": document_uri})
+    assert imported["status"] == "succeeded", imported
+    label_set = imported["result"]["label_set"]
+    assert label_set["label_set_id"] == label_set_id, label_set
+
     camera, lidar = "/camera/front/image/compressed", "/lidar/top/points"
     views = {
         "policy": {

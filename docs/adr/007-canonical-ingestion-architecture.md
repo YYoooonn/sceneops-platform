@@ -5742,3 +5742,75 @@ byte-identical, so reconstruction is reproducible by construction and costs only
 - Isolating the mutating workflows on a runtime of their own (separate Compose project
   and network) is a separate piece of work; until then the guard and the reset are the
   mechanism.
+
+## 36. Amendment A11: acceptance surface after test consolidation
+
+### 36.0 Scope
+
+A11 changes the acceptance surface, not the architecture: it decides no ingestion,
+canonicalization or derived-layer question. The "exactly five E2E journeys" of §34.0
+and §34.5 and the `e2e-batch-canonical` rows of §34 and §35 are point-in-time
+statements and are not rewritten; this section supersedes them.
+
+### 36.1 The journeys
+
+```text
+e2e-streaming-equivalence    the locked reference MCAP in the contract's Recording Import
+                             RobotRun and streamed through ROS 2 -> Kafka -> capture: equivalent
+e2e-scene-ml                 Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation
+e2e-episode-learning         Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip
+e2e-cleanroom                fresh state -> canonical-bootstrap -> both L3 journeys -> verification
+```
+
+The acceptance surface is these four plus the opt-in model-backend acceptance
+(`acceptance-grounding-dino`). The number of journeys is not itself a contract;
+`make check-commands` pins the set.
+
+### 36.2 `e2e-batch-canonical` is removed
+
+**Decision.** The former batch-canonical journey registered a RobotRun of its own from
+one fixture and asserted the Scenes and Episodes built from it. Every claim it made is
+now carried by a surviving check, and it is deleted rather than kept beside them:
+
+| Claim | Where it is verified now |
+| --- | --- |
+| Recording Import produces the registered RobotRun, Scene and Episode of a real recording: the run pins exactly the locked recording, the locked message and channel facts, one whole-recording Scene and one Episode, validated, profiled and ready, DatasetVersion summaries agree | the golden reference contract (`make reference-contract-verify`, `canonical-verify`; `scripts/reference/tests`) |
+| Whole-recording Scene / Episode shape: windows on the declared source clocks, `[running marker, completed marker + 1)`, observed channels verbatim, streams kept asynchronous and unresampled, values selected by configuration, no outcome or annotation field | unit over a synthetic ROS 2 CDR recording (`apps/worker/tests/{scenes,episodes}/test_recording_*_builder.py`, `test_scene_manifest.py`, `packages/sceneops-core/tests/test_episodes.py`); the contract's shape check on the real corpus |
+| Retry and convergence: re-running the bootstrap, a repeated build and a repeated registration change no record | `canonical-bootstrap` create-or-verify and the contract's snapshot diff; `tests/infrastructure/test_pipeline_execution.py`; `again.created_payload_count == 0` in the recording verticals |
+| Scene and Episode independence | `test_scene_and_episode_builders_are_independent_siblings`; the recording Episode vertical builds both domains over one RobotRun on real PostgreSQL / MinIO |
+| Payload sharing and canonical semantics: one observation payload set on the RobotRun, reused by the Episode build, ids independent of build configuration, manifests checksum-pinned | `test_recording_episode_vertical_integration.py`, `test_recording_scene_vertical_integration.py`, `test_scene_registration_integration.py` |
+
+The journey's `MUTATING_ACQUISITION_TEST` class shrinks to `e2e-streaming-equivalence`
+and any bootstrap with a non-contract `BASELINE_ID`.
+
+**Residual gap.** No check compares the per-topic occurrence counts of the real
+recording's Episode manifest (actions, states, observations) with the lock's
+`topic_counts`; the real-recording check is the lock's counts on the registered
+RobotRun plus Scene / Episode equivalence in `e2e-streaming-equivalence`, and the
+unresampled-streams property is proven on the synthetic recording. It is recorded, not
+recreated as another journey.
+
+### 36.3 Other changes to the surface
+
+- `smoke-api` (an API liveness probe), `check-minio`, the GroundingDINO endpoint check
+  and `tests/infrastructure/test_pipeline_surface.py` are removed. The four-pipeline
+  surface is proven by the unit tests over the pipeline definitions
+  (`apps/worker/tests/pipelines/test_pipeline_definitions.py`).
+- `make test-integration` discovers modules named `*_integration.py` instead of
+  listing them, plus the `sceneops-db` and `sceneops-storage` suites by directory.
+  The MinIO selective-read test lives with the package it exercises
+  (`sceneops-analytics`), owns only the storage contract and needs no baseline.
+- A real-infrastructure command (`test-integration`, `test-infrastructure`,
+  `test-infrastructure-airflow`, `test-recovery`) fails if any test is skipped:
+  a stopped stack must not read as green. Opt-in modules with their own target are
+  excluded from the others' scope, not skipped.
+- The Airflow Scene ML test builds Scenes into a DatasetVersion of its own and imports
+  its own LabelSet from the fixture's locked reference labels; it never writes into the
+  reference DatasetVersion.
+
+### 36.4 Not decided here
+
+Making `e2e-streaming-equivalence` read-only over the contract's two RobotRuns,
+isolating integration and recovery tests in a disposable `sceneops_test` database,
+and giving each L3 journey one fixed, converging `sceneops-test-*` identity are
+accepted directions, implemented separately; until then the behavior of §35.3 stands.

@@ -3,8 +3,8 @@
 
 Checks, without running any workflow:
 
-  * the E2E surface is exactly the five journeys (plus the opt-in model-backend
-    acceptance of one of them);
+  * the E2E surface is exactly the supported journeys (plus the opt-in
+    model-backend acceptance of one of them);
   * every `make <target>` that `make help` advertises is a real target, and
     every journey / baseline / test target is advertised;
   * no Makefile, makefile fragment or script under scripts/ references a
@@ -23,7 +23,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 E2E_JOURNEYS = {
-    "e2e-batch-canonical",
     "e2e-streaming-equivalence",
     "e2e-scene-ml",
     "e2e-episode-learning",
@@ -62,6 +61,9 @@ DELETED = [
     "e2e-episode-curation",
     "e2e-scene-analytics-export",
     "e2e-batch-acquisition",
+    "e2e-batch-canonical",
+    "smoke-api",
+    "check-minio",
     "e2e-interop",
     "e2e-lerobot-container",
     "e2e-bootstrap",

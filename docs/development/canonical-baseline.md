@@ -263,7 +263,6 @@ fixture by `make e2e-streaming-equivalence`.
 | `make canonical-bootstrap`, `streaming-bootstrap`, `*-verify`, `streaming-compare` | the contract's baselines, restricted to the selection (`smoke-1` = `scene-0061`) | the reference state itself / read-only |
 | `make e2e-scene-ml`, `make e2e-episode-learning` | the contract's Recording Import RobotRun of `SOURCE_UNIT` (default `scene-0061`); Scenes, Episodes and everything derived are written to a `sceneops-test-<journey>-<suffix>` DatasetVersion | `READ_ONLY_REFERENCE` |
 | `make e2e-streaming-equivalence` | arm A is the contract's Recording Import RobotRun, read as it is; arm B streams and registers a RobotRun of its own in its own DatasetVersion | `MUTATING_ACQUISITION_TEST` |
-| `make e2e-batch-canonical` | its own unique `test-e2e-batch-<timestamp>-<pid>` baseline of one fixture; also proves bootstrap re-runs change nothing | `MUTATING_ACQUISITION_TEST` |
 | `make e2e-cleanroom` | resets the runtime, bootstraps the contract's baseline for `smoke-1`, then both L3 journeys in one DatasetVersion of their own | destructive acceptance |
 | `make test-infrastructure` | the contract's Recording Import RobotRun (create-or-verify, `smoke-1`); the tests build its Scenes / Episodes into `sceneops-test-infra-*` DatasetVersions | `READ_ONLY_REFERENCE` |
 
