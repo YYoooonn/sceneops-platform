@@ -427,9 +427,9 @@ from the recording itself; the source time of a locked batch MCAP is its
 MCAP `log_time`, and messages with equal `log_time` keep their file order.
 `reference replay` resolves the recording through the reference corpus lock
 and verifies it before the first message is published (see
-`docs/development/reference-corpus.md`). It reads no source dataset, and the
-streaming acceptance runs it with the replay container's raw-dataset mount
-shadowed by an empty volume.
+`docs/development/reference-corpus.md`). It reads no source dataset: the
+`dataset-replay` service mounts only the corpus and the reference cache, and the
+streaming acceptance probes that no raw-dataset path exists in the container.
 
 ## 11. Channel registry and source-timestamp contract
 
@@ -703,7 +703,7 @@ batch      the persistent reference baseline (`ref-<selection>`, canonical-basel
              locked MCAP -> RobotRun A -> Scene / Episode. Read as it is
              (canonical-verify); created by canonical-bootstrap only when absent;
              never rebuilt. Its RobotRun pins the lock's recording sha256.
-streaming  locked MCAP -> `reference replay` (raw dataset mount shadowed) -> ROS 2
+streaming  locked MCAP -> `reference replay` (no raw dataset mounted) -> ROS 2
              -> bridge -> Kafka -> capture (until RUN_END; receipt)
              -> publish-pending -> reconcile --apply (REGISTER_ROBOT_RUN) -> RobotRun B
              -> recording_scene_building + recording_episode_building, with the

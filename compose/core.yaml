@@ -70,7 +70,8 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
-      - ./data:/data
+      # Local ArtifactStore backend only; no source dataset is reachable.
+      - ./data/artifacts:/data/artifacts
     depends_on:
       postgres:
         condition: service_healthy

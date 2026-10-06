@@ -93,7 +93,7 @@ Two readers consume a resolved recording (§3.1):
   [Scene domain](../architecture/scene-domain.md) §6.
 
 Storage: external inputs follow `InputSourceSettings`' independent-root
-convention (`/data/raw/...`); a published recording lives under
+convention (`/data/inputs/...`); a published recording lives under
 `{artifact root}/robot_runs/{run_id}/` (see
 [Storage layout](../architecture/storage-layout.md) §3).
 

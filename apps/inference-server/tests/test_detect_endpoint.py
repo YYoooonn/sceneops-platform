@@ -40,10 +40,10 @@ def test_resolver_receives_image_uri():
         with TestClient(app) as client:
             client.post(
                 "/v1/detect",
-                json={"image_uri": "file:///data/raw/img.jpg"},
+                json={"image_uri": "file:///data/artifacts/img.jpg"},
             )
 
-    mock_resolver.resolve.assert_called_once_with("file:///data/raw/img.jpg")
+    mock_resolver.resolve.assert_called_once_with("file:///data/artifacts/img.jpg")
 
 
 def test_image_path_key_not_accepted():
@@ -60,7 +60,7 @@ def test_image_path_key_not_accepted():
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.post(
                 "/v1/detect",
-                json={"image_path": "/data/raw/img.jpg"},
+                json={"image_path": "/data/artifacts/img.jpg"},
             )
 
     assert resp.status_code == 422
@@ -83,7 +83,7 @@ def test_resolver_image_forwarded_to_detect_image():
         with TestClient(app) as client:
             client.post(
                 "/v1/detect",
-                json={"image_uri": "file:///data/raw/img.jpg"},
+                json={"image_uri": "file:///data/artifacts/img.jpg"},
             )
 
     called_with = mock_model.detect_image.call_args
@@ -106,7 +106,7 @@ def test_file_not_found_returns_422():
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.post(
                 "/v1/detect",
-                json={"image_uri": "file:///data/raw/missing.jpg"},
+                json={"image_uri": "file:///data/artifacts/missing.jpg"},
             )
 
     assert resp.status_code == 422
@@ -167,7 +167,7 @@ def test_model_runtime_error_returns_500():
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.post(
                 "/v1/detect",
-                json={"image_uri": "file:///data/raw/img.jpg"},
+                json={"image_uri": "file:///data/artifacts/img.jpg"},
             )
 
     assert resp.status_code == 500
@@ -207,7 +207,9 @@ def test_server_default_thresholds_applied_when_not_in_request():
         patch("inference_server.main.get_settings", return_value=settings),
     ):
         with TestClient(app) as client:
-            client.post("/v1/detect", json={"image_uri": "file:///data/raw/img.jpg"})
+            client.post(
+                "/v1/detect", json={"image_uri": "file:///data/artifacts/img.jpg"}
+            )
 
     kwargs = mock_model.detect_image.call_args.kwargs
     assert kwargs["box_threshold"] == 0.5
@@ -228,7 +230,10 @@ def test_per_request_thresholds_override_server_defaults():
         with TestClient(app) as client:
             client.post(
                 "/v1/detect",
-                json={"image_uri": "file:///data/raw/img.jpg", "box_threshold": 0.6},
+                json={
+                    "image_uri": "file:///data/artifacts/img.jpg",
+                    "box_threshold": 0.6,
+                },
             )
 
     kwargs = mock_model.detect_image.call_args.kwargs

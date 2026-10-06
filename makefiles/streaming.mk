@@ -49,7 +49,7 @@ ros2-test:
 # reconcile --apply -> RobotRun -> Scenes + Episodes with the same build configs,
 # through FastAPI. Equivalence is proven on acquisition and on canonical Scene /
 # Episode content, with negative controls. No raw source dataset is read: the
-# replay container's raw mount is shadowed. Containers + FastAPI only: no host
+# replay container mounts no raw dataset. Containers + FastAPI only: no host
 # uv, no PostgreSQL/MinIO access, no worker CLI.
 #
 # Selection: REFERENCE_SCOPE (default smoke-1) or SCENE=<fixture> (one fixture is

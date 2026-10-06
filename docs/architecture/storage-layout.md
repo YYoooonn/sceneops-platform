@@ -179,19 +179,24 @@ still used by the frozen golden-fixture/regression path only; see
 [Robot learning data layer](./robot-learning-data.md) and
 [Scalable learning data](./scalable-learning-data.md).
 
-### Raw source data
+### External inputs and the raw-source boundary
 
-Raw dataset input is fully separate, via its own `InputSourceSettings`
-(read-only, independent root):
+Runtime input that is not produced by the platform (for example a rendered
+label document read by `IMPORT_LABELS`) is read through its own
+`InputSourceSettings` (read-only, independent root):
 
 ```text
-Local: /data/raw/nuscenes
-S3:    s3://sceneops/raw/nuscenes
+Local: /data/inputs
 ```
 
-Rosbag/MCAP recordings used for robot ingestion and Episode building follow
-the same independent-root pattern: `/data/raw/rosbag/{robot_id}/{run_id}.mcap`
-locally (see [Robot data ingestion](../workflows/robot-run-and-mcap.md)).
+Raw source datasets (`./data/raw/nuscenes`) are not a runtime input. They are
+read only by the acquisition and reference-preparation containers
+(`dataset-acquisition`, `reference-data`), which turn them into locked reference
+MCAPs and labels. No API, worker, inference, replay, ROS 2 or LeRobot service
+mounts `./data/raw`, and the object store holds no raw mirror: platform objects
+live under `s3://sceneops/artifacts/`. Recordings enter
+the platform through the Recording Publisher (see
+[Robot data ingestion](../workflows/robot-run-and-mcap.md)).
 
 ## 4. What the layout does *not* encode
 

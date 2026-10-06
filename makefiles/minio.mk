@@ -15,8 +15,8 @@ minio-down:
 
 .PHONY: minio-init
 # Idempotent bucket bootstrap (mc mb --ignore-existing). Invoked
-# automatically by `make local-up` — run standalone to re-sync
-# ./data/raw into MinIO or recreate a bucket without a full local-up.
+# automatically by `make local-up` — run standalone to recreate the bucket
+# without a full local-up.
 minio-init:
 	$(COMPOSE) --profile tools run --rm minio-init
 

@@ -37,9 +37,8 @@ services:
       target: replay
     image: sceneops-platform/dataset-replay:local
     volumes:
-      - ${ACQUISITION_NUSCENES_ROOT:-./data/raw/nuscenes}:/input/nuscenes:ro
       # `reference replay` reads a fixture's locked recording: the corpus and
-      # its lock, and the verified cache. It reads no source dataset.
+      # its lock, and the verified cache. It mounts no source dataset.
       - ./config/reference:/config/reference:ro
       - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
     profiles:

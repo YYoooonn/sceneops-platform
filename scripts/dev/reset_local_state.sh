@@ -29,7 +29,7 @@ echo "--- stopping stack and removing volumes (postgres, redis, minio) ---"
 
 echo "--- clearing generated artifacts under ./data ---"
 rm -rf data/datasets data/runs data/models data/artifacts
-mkdir -p data/raw data/datasets data/runs data/models data/artifacts cache/hf
+mkdir -p data/raw data/datasets data/runs data/models data/artifacts data/inputs cache/hf
 
 echo "--- rebuilding clean stack ---"
 make local-up ENV_FILE="$ENV_FILE"

@@ -17,8 +17,8 @@ make local-up                # idempotent: infra -> health -> MinIO buckets -> m
 
 1. `postgres`, `redis`, `minio` — started and waited on until healthy (Compose
    `up -d --wait`, not just "container started").
-2. `minio-init` — idempotent bucket bootstrap (`mc mb --ignore-existing`,
-   then mirrors `./data/raw` into the bucket). Safe to re-run.
+2. `minio-init` — idempotent bucket bootstrap (`mc mb --ignore-existing`).
+   Copies no data into the bucket. Safe to re-run.
 3. `db-migrate` — `alembic upgrade head`. Safe to re-run (Alembic no-ops at
    head).
 4. `api`, `worker-pipeline`, `worker-jobs` — started once their

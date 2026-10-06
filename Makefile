@@ -131,7 +131,7 @@ help:
 	@echo "  make inference-gpu-build / inference-gpu-up / inference-gpu-down / inference-gpu-logs           (GPU, opt-in)"
 	@echo "  make check-inference-server / check-inference-server-ready"
 	@echo "  make airflow-up / airflow-down / airflow-logs   (opt-in orchestrator, not part of local-up)"
-	@echo "  make check-env / check-imports / check-celery / check-minio / check-commands"
+	@echo "  make check-env / check-imports / check-celery / check-minio / check-commands / check-runtime-boundary"
 	@echo "  make ros2-up / ros2-down / ros2-shell / ros2-check / ros2-logs / ros2-run ROS2_CMD='ros2 topic list'"
 	@echo "  make streaming-up / streaming-down   Local Kafka broker (opt-in)"
 	@echo "  make reconcile-once / reconcile-apply   Acquisition reconciliation: observe only / bounded registration recovery (ADR-008)"

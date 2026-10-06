@@ -33,21 +33,21 @@ def test_file_uri_parsed_to_path(tmp_path):
 
 
 def test_unsupported_scheme_raises_value_error():
-    resolver = _resolver("/data/raw")
+    resolver = _resolver("/data/artifacts")
     with pytest.raises(ValueError, match="Unsupported image URI scheme"):
         resolver.resolve("s3://bucket/key/img.jpg")
 
 
 def test_http_scheme_raises_value_error():
-    resolver = _resolver("/data/raw")
+    resolver = _resolver("/data/artifacts")
     with pytest.raises(ValueError, match="Unsupported image URI scheme"):
         resolver.resolve("https://example.com/img.jpg")
 
 
 def test_bare_path_raises_value_error():
-    resolver = _resolver("/data/raw")
+    resolver = _resolver("/data/artifacts")
     with pytest.raises(ValueError, match="Unsupported image URI scheme"):
-        resolver.resolve("/data/raw/nuscenes/img.jpg")
+        resolver.resolve("/data/artifacts/img.jpg")
 
 
 # ── allowed roots ──────────────────────────────────────────────────────────────
@@ -79,13 +79,13 @@ def test_path_outside_allowed_root_raises_permission_error(tmp_path):
 
 
 def test_etc_passwd_is_rejected():
-    resolver = _resolver("/data/raw", "/data/artifacts")
+    resolver = _resolver("/data/artifacts")
     with pytest.raises(PermissionError, match="outside allowed roots"):
         resolver.resolve("file:///etc/passwd")
 
 
 def test_multiple_allowed_roots(tmp_path):
-    root_a = tmp_path / "raw"
+    root_a = tmp_path / "inputs"
     root_b = tmp_path / "artifacts"
     root_a.mkdir()
     root_b.mkdir()
@@ -174,3 +174,17 @@ def test_detect_request_accepts_all_fields():
     assert req.image_uri == "file:///data/img.jpg"
     assert req.box_threshold == 0.4
     assert req.trace_id == "scene-001/sample-001/CAM_FRONT"
+
+
+# ── default configuration ──────────────────────────────────────────────────────
+
+
+def test_default_allowed_roots_exclude_raw_source():
+    from inference_server.config import InferenceServerSettings
+
+    roots = InferenceServerSettings().allowed_file_roots
+
+    assert roots == ["/data/artifacts"]
+    resolver = _resolver(*roots)
+    with pytest.raises(PermissionError, match="outside allowed roots"):
+        resolver.resolve("file:///data/raw/nuscenes/samples/CAM_FRONT/img.jpg")

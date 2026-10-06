@@ -4,7 +4,7 @@
 
 .PHONY: prepare-data
 prepare-data:
-	mkdir -p data/raw data/datasets data/runs data/models data/artifacts cache/hf
+	mkdir -p data/raw data/datasets data/runs data/models data/artifacts data/inputs cache/hf
 
 .PHONY: clean-artifacts
 clean-artifacts:

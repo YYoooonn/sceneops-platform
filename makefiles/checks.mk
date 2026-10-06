@@ -29,3 +29,10 @@ check-minio:
 # deleted architecture.
 check-commands:
 	python3 scripts/checks/command_surface.py
+
+.PHONY: check-runtime-boundary
+# Raw source is mounted only by the acquisition / reference-preparation
+# services: probes every normal runtime service for /data/raw and
+# /input/nuscenes and for the paths it genuinely needs. Starts no service.
+check-runtime-boundary:
+	ENV_FILE=$(ENV_FILE) scripts/checks/runtime_source_boundary.sh

@@ -28,7 +28,7 @@ def make_settings(**overrides) -> InferenceServerSettings:
         warmup_image_size=64,
         warmup_text_prompt="car.",
         max_concurrent_inference_requests=1,
-        allowed_file_roots=["/data/raw", "/data/artifacts"],
+        allowed_file_roots=["/data/artifacts"],
     )
     defaults.update(overrides)
     return InferenceServerSettings.model_construct(**defaults)

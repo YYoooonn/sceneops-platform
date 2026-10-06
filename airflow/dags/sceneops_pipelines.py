@@ -39,12 +39,20 @@ PIPELINE_RUN_ID = "{{ dag_run.conf['pipeline_run_id'] }}"
 DAG_ID_PREFIX = "sceneops"
 
 # DockerOperator spawns sibling containers via the host docker daemon, so
-# compose's own `./data:/data` mount (on worker-pipeline/worker-jobs) does
-# not apply here — mount the same host directory explicitly by absolute
-# path. HOST_DATA_DIR is set on the scheduler container via compose
-# (`${PWD}/data` at `docker compose up` time).
+# compose's own bind mounts (on worker-pipeline/worker-jobs) do not apply
+# here -- mount the same host directories explicitly by absolute path, and
+# only those the workers get: never ./data/raw. HOST_DATA_DIR is set on the
+# scheduler container via compose (`${PWD}/data` at `docker compose up` time).
 HOST_DATA_DIR = os.environ["HOST_DATA_DIR"]
-DATA_MOUNT = Mount(source=HOST_DATA_DIR, target="/data", type="bind")
+DATA_MOUNTS = [
+    Mount(source=f"{HOST_DATA_DIR}/artifacts", target="/data/artifacts", type="bind"),
+    Mount(
+        source=f"{HOST_DATA_DIR}/inputs",
+        target="/data/inputs",
+        type="bind",
+        read_only=True,
+    ),
+]
 
 PIPELINE_TASK_IDS = {
     "recording_scene_building": [
@@ -81,7 +89,7 @@ def worker_task(task_id: str, *cli_args: str) -> DockerOperator:
         docker_url="unix://var/run/docker.sock",
         network_mode="sceneops-network",
         environment=WORKER_ENV,
-        mounts=[DATA_MOUNT],
+        mounts=DATA_MOUNTS,
         auto_remove="success",
         mount_tmp_dir=False,
     )

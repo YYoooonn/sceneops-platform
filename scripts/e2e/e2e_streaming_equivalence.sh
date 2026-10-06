@@ -25,8 +25,8 @@
 # is a statement about the transport (ROS 2 -> bridge -> Kafka -> capture ->
 # publication), not about two conversions of a source dataset.
 #
-# The replay container runs with its raw-dataset mount shadowed by an empty
-# volume: the replay can only have read the locked MCAP.
+# The replay service mounts no raw dataset, and the run probes that none is
+# visible in the container: the replay can only have read the locked MCAP.
 #
 # Bulk data moves between containers (the reference cache, the
 # acquisition-recordings volume, DDS, Kafka); platform operations go through
@@ -80,10 +80,9 @@ CHANNELS_FILE="${CHANNELS_FILE:-/workspace/channels/surround-camera-lidar.json}"
 CAPTURE_ROOT="/recordings/capture-$SUFFIX"
 
 COMPOSE=(docker compose --env-file "$ENV_FILE" --profile acquisition --profile ros2 --profile streaming)
-# The raw-dataset mount of the replay service is shadowed by an anonymous empty
-# volume: the replay cannot read the source dataset, only the locked recording.
-REPLAY=("${COMPOSE[@]}" run --rm -T -v /input/nuscenes dataset-replay)
-REPLAY_PROBE=("${COMPOSE[@]}" run --rm -T -v /input/nuscenes --entrypoint sh dataset-replay)
+# The replay service mounts no source dataset: it can read only the locked recording.
+REPLAY=("${COMPOSE[@]}" run --rm -T dataset-replay)
+REPLAY_PROBE=("${COMPOSE[@]}" run --rm -T --entrypoint sh dataset-replay)
 PUBLISHER=("${COMPOSE[@]}" run --rm -T recording-publisher)
 ROS2=("${COMPOSE[@]}" run --rm -T ros2)
 API_EXEC=("${COMPOSE[@]}" exec -T api)
@@ -195,9 +194,9 @@ EPISODES_A="$(manifest_uris episodes "$DATASET_ID" "$DATASET_VERSION")"
 echo ""
 
 echo "=== [3/9] B — streaming arm: locked MCAP -> replay -> ROS 2 -> bridge -> Kafka -> capture ==="
-PROBE="$("${REPLAY_PROBE[@]}" -c 'ls -A /input/nuscenes | wc -l' </dev/null)"
-[ "$(echo "$PROBE" | tr -d '[:space:]')" = 0 ] || fail "the replay container can still see a raw dataset at /input/nuscenes"
-echo "  ✅  raw nuScenes is unavailable to the replay container (/input/nuscenes is an empty volume)"
+PROBE="$("${REPLAY_PROBE[@]}" -c 'for p in /input/nuscenes /data/raw; do [ -e "$p" ] && echo "visible:$p"; done; [ -r /reference ] && [ -r /config/reference ] && echo ok' </dev/null)"
+[ "$(echo "$PROBE" | tr -d '[:space:]')" = ok ] || fail "the replay container sees a raw dataset or lacks the reference mounts: $PROBE"
+echo "  ✅  raw nuScenes is unavailable to the replay container (no /input/nuscenes, no /data/raw); the reference cache and corpus are mounted"
 "${COMPOSE[@]}" run -d --name "$BRIDGE" -T ros2 python3 /workspace/nodes/streaming_bridge_node.py \
   --robot-id "$STREAM_ROBOT_ID" --robot-run-id "$RUN_B" --channels-file "$CHANNELS_FILE" \
   --exit-after-idle-seconds 10 >/dev/null

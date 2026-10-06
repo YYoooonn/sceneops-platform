@@ -11,7 +11,6 @@ services:
     env_file:
       - .env.local
     volumes:
-      - ./data:/data
       - ./ros2/nodes:/workspace/nodes:ro
       # Read-only, matching compose/workers.yaml's identical mount for the
       # worker service -- lets scripts/e2e/ros2_streaming_verify.py run

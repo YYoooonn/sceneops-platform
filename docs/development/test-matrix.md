@@ -23,6 +23,7 @@ infrastructure semantics are part of the contract.
 | Clean room | `make e2e-cleanroom` | fresh platform state | the platform reconstructs its baseline and runs its representative workflows from nothing |
 | Model-backend acceptance | `make acceptance-grounding-dino` | inference server | the Scene ML journey with the real detector |
 | Command surface | `make check-commands` | none | the advertised commands exist and nothing references removed architecture |
+| Runtime source boundary | `make check-runtime-boundary` | Docker (starts no platform service) | only the acquisition / reference-preparation services mount the raw dataset; every normal runtime service sees neither `/data/raw` nor `/input/nuscenes` and keeps the paths it needs |
 
 ## The journeys
 
