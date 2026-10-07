@@ -177,7 +177,7 @@ async def test_an_insert_waits_for_an_uncommitted_holder_of_the_key(
         assert isinstance(outcome, JobManifest) and outcome.execution_key == key
 
 
-async def test_putting_a_failed_job_back_in_flight_beside_another_is_refused(
+async def test_retrying_a_failed_job_beside_an_in_flight_one_is_refused(
     db_session, unique_id
 ):
     repository = PostgresJobRepository(db_session)
@@ -186,4 +186,4 @@ async def test_putting_a_failed_job_back_in_flight_beside_another_is_refused(
     await repository.create(_job(unique_id("job"), key, JobStatus.RUNNING))
 
     with pytest.raises(JobExecutionKeyInFlightError):
-        await repository.update(failed.model_copy(update={"status": JobStatus.QUEUED}))
+        await repository.queue_if_unchanged(failed)

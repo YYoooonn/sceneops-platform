@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from app.domains.robots.registration import RobotRunRegistrationService
-from app.platform.jobs.service import JobService
+from app.platform.jobs.service import JobDispatchConflictError, JobService
 from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,
@@ -27,6 +27,9 @@ class _FakeJobRepository:
     async def create(self, job: JobManifest) -> JobManifest:
         self.jobs[job.job_id] = job
         return job
+
+    async def get(self, job_id: str) -> JobManifest | None:
+        return self.jobs.get(job_id)
 
     async def find_by_execution_key(self, execution_key, *, statuses):
         for job in self.jobs.values():
@@ -51,8 +54,15 @@ class _Session:
 class _FakeDispatchFacade:
     def __init__(self, log: list[str]) -> None:
         self._log = log
+        self.expected: list[JobStatus | None] = []
+        self.conflict_with: JobManifest | None = None
 
-    async def dispatch(self, job_id: str) -> ExecutionDispatchResult:
+    async def dispatch(
+        self, job_id: str, *, expected_status: JobStatus | None = None
+    ) -> ExecutionDispatchResult:
+        self.expected.append(expected_status)
+        if self.conflict_with is not None:
+            raise JobDispatchConflictError(self.conflict_with)
         self._log.append(f"dispatch:{job_id}")
         return ExecutionDispatchResult(
             execution_id="exec-1",
@@ -79,11 +89,13 @@ def harness():
             artifact_repository=object(),
         )
 
+    facade = _FakeDispatchFacade(log)
     service = RobotRunRegistrationService(
         session_factory=_session_factory,
         job_service_factory=_job_service,
-        dispatch_facade=_FakeDispatchFacade(log),
+        dispatch_facade=facade,
     )
+    service.facade = facade
     return service, repository, log
 
 
@@ -103,6 +115,37 @@ async def test_creates_commits_then_dispatches_register_job(harness) -> None:
     assert log == ["commit", f"dispatch:{job.job_id}"]
     assert response.execution is not None
     assert response.execution.resource_id == job.job_id
+    # Dispatched only as the PENDING Job this submission decided on.
+    assert service.facade.expected == [JobStatus.PENDING]
+
+
+async def test_a_job_another_actor_dispatched_first_is_not_sent_again(
+    harness,
+) -> None:
+    """Two submissions of one manifest share one PENDING Job (execution-key
+    dedup) and both decide to dispatch it; the one whose conditional QUEUED write
+    loses sends nothing and answers with the Job as it is now."""
+    service, repository, log = harness
+
+    def _queued_by_the_other_submission(job: JobManifest) -> JobManifest:
+        queued = job.model_copy(update={"status": JobStatus.QUEUED})
+        repository.jobs[job.job_id] = queued
+        return job
+
+    original_create = repository.create
+
+    async def _create(job: JobManifest) -> JobManifest:
+        created = await original_create(job)
+        service.facade.conflict_with = _queued_by_the_other_submission(created)
+        return created
+
+    repository.create = _create
+
+    response = await service.submit("s3://b/m.json")
+
+    assert response.execution is None
+    assert response.job.status == JobStatus.QUEUED
+    assert log == ["commit"]
 
 
 async def test_existing_equivalent_job_is_not_redispatched(harness) -> None:

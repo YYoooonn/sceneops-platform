@@ -31,16 +31,16 @@ Failure semantics
 * **Replacement is single-winner.** Abandoning is one conditional UPDATE
   (``abandon_if_inactive``); only the pass that changed the row creates the
   replacement, so concurrent passes do not both replace one stalled Job. Plain
-  submission (first Job, transient retry) can still race and create two Jobs;
-  that is harmless by construction (W11): registration converges on one
-  RobotRunRecord.
+  submissions (first Job, transient retry) that race converge on one in-flight
+  Job (one in-flight Job per execution key) and dispatch it once.
 * **Dispatch failure.** The Job is committed before dispatch. If the broker
   refuses it, the Job is preserved as PENDING / QUEUED, the outcome is recorded
   as ``dispatch_failed`` and a later pass recovers it as a stalled Job. Nothing
   is rolled back and no success is reported.
-* **Late completion.** A stalled Job that was abandoned may still finish; its
-  worker overwrites the row, and the idempotent registration it ran is
-  reconciled as ``registered`` whatever any Job says (W9).
+* **Late completion.** A stalled Job that was abandoned may still finish its
+  handler; its worker no longer owns the Job and cannot write it, and the
+  idempotent registration it ran is reconciled as ``registered`` whatever any Job
+  says (W9).
 * **One run never blocks another.** An action that raises is recorded as
   ``error`` and the pass continues. At most ``max_actions`` mutating actions run
   per pass; the rest wait for the next one.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.platform.jobs.service import JobService
+from app.platform.jobs.service import JobDispatchConflictError, JobService
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
@@ -37,6 +37,24 @@ class FakeJobRepository:
     async def update(self, job: JobManifest) -> JobManifest:
         self.jobs[job.job_id] = job
         return job
+
+    async def queue_if_unchanged(self, job: JobManifest) -> JobManifest | None:
+        stored = self.jobs.get(job.job_id)
+        if (
+            stored is None
+            or stored.status != job.status
+            or stored.retry_count != job.retry_count
+        ):
+            return None
+        retry = 1 if stored.status == JobStatus.FAILED else 0
+        queued = stored.model_copy(
+            update={
+                "status": JobStatus.QUEUED,
+                "retry_count": stored.retry_count + retry,
+            }
+        )
+        self.jobs[job.job_id] = queued
+        return queued
 
     async def list(self, **kwargs) -> list[JobManifest]:
         return list(self.jobs.values())
@@ -230,3 +248,43 @@ async def test_mark_queued_from_pending_does_not_touch_retry_count():
 
     assert queued.status == JobStatus.QUEUED
     assert queued.retry_count == 0
+
+
+async def test_mark_queued_refuses_a_job_that_changed_after_it_was_read():
+    """The write is conditional on the state the checks judged: a Job that a
+    worker claimed between the read and the write is not queued."""
+    service, repo = _service()
+    created = await service.create_job(_request())
+
+    class _ClaimedAfterRead(FakeJobRepository):
+        async def get(self, job_id):
+            read = await super().get(job_id)
+            self.jobs[job_id] = read.model_copy(
+                update={"status": JobStatus.RUNNING, "worker_id": "worker-1"}
+            )
+            return read
+
+    raced = _ClaimedAfterRead()
+    raced.jobs = repo.jobs
+    service = JobService(
+        repository=raced,
+        event_repository=FakeJobEventRepository(),
+        artifact_repository=FakeArtifactRepository(),
+    )
+
+    with pytest.raises(JobDispatchConflictError):
+        await service.mark_queued(created.job_id)
+
+    assert repo.jobs[created.job_id].status == JobStatus.RUNNING
+    assert repo.jobs[created.job_id].worker_id == "worker-1"
+
+
+async def test_mark_queued_refuses_a_job_not_in_the_state_the_caller_decided_on():
+    service, repo = _service()
+    created = await service.create_job(_request())
+    await repo.update(created.model_copy(update={"status": JobStatus.QUEUED}))
+
+    with pytest.raises(JobDispatchConflictError):
+        await service.mark_queued(created.job_id, expected_status=JobStatus.PENDING)
+
+    assert repo.jobs[created.job_id].status == JobStatus.QUEUED

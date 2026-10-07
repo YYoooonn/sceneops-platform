@@ -30,6 +30,8 @@ from sceneops_db.repositories.jobs import JobExecutionKeyInFlightError
 from ._utils import IN_CLAUSE_CHUNK, apply_pagination, apply_values, enum_value
 
 _ACTIVE_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+# A first dispatch, a redispatch of a Job whose message may be lost, a retry.
+_QUEUEABLE_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.FAILED)
 _IN_FLIGHT_INDEX = "uq_jobs_execution_key_in_flight"
 
 
@@ -94,22 +96,59 @@ class PostgresJobRepository:
         return job_model_to_manifest(model) if model is not None else None
 
     async def update(self, job: JobManifest) -> JobManifest:
+        """Write every field of ``job`` over the stored row, whatever it holds now.
+        Not a lifecycle transition: those are the conditional methods below, which
+        a writer holding a stale copy cannot use to undo another actor's write."""
         stmt = select(JobModel).where(JobModel.job_id == job.job_id)
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
         if model is None:
             raise ValueError(f"Job not found: {job.job_id}")
         apply_values(model, job_manifest_to_values(job))
+        await self._session.flush()
+        await self._session.refresh(model)
+        return job_model_to_manifest(model)
+
+    async def queue_if_unchanged(self, job: JobManifest) -> JobManifest | None:
+        """Move ``job`` to QUEUED iff its row still has the status and retry_count
+        ``job`` was read with; returns the stored Job, or None when this call
+        wrote nothing. Queueing a FAILED Job is a retry and increments
+        retry_count. Raises ``JobExecutionKeyInFlightError`` when a retry would
+        put a second Job of its execution key in flight.
+
+        One conditional UPDATE evaluated by PostgreSQL against the row as it is
+        now, writing only the queueing columns. A dispatcher whose read is stale
+        (a worker claimed or finished the Job, reconciliation abandoned it,
+        another dispatcher retried it first) therefore changes nothing: it can
+        neither move the Job backward nor erase another actor's columns.
+        retry_count is compared because FAILED -> QUEUED is the only way back to
+        an earlier status and each pass increments it, so a recurring status
+        never recurs with the same count. Does not commit."""
+        retry = job.status == JobStatus.FAILED
+        now = func.now()
+        stmt = (
+            update(JobModel)
+            .where(JobModel.job_id == job.job_id)
+            .where(JobModel.status.in_([enum_value(s) for s in _QUEUEABLE_STATUSES]))
+            .where(JobModel.status == enum_value(job.status))
+            .where(JobModel.retry_count == job.retry_count)
+            .values(
+                status=enum_value(JobStatus.QUEUED),
+                retry_count=JobModel.retry_count + (1 if retry else 0),
+                queued_at=now,
+                updated_at=now,
+            )
+            .returning(JobModel)
+            .execution_options(populate_existing=True)
+        )
         try:
-            await self._session.flush()
+            result = await self._session.execute(stmt)
         except IntegrityError as exc:
-            # Putting a finished Job back in flight (a retry of a FAILED Job) while
-            # another Job with its key is in flight.
             if _constraint_name(exc) == _IN_FLIGHT_INDEX:
                 raise JobExecutionKeyInFlightError(job.execution_key) from exc
             raise
-        await self._session.refresh(model)
-        return job_model_to_manifest(model)
+        model = result.scalar_one_or_none()
+        return job_model_to_manifest(model) if model is not None else None
 
     async def list(
         self,

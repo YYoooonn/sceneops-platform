@@ -36,6 +36,20 @@ _DEDUP_STATUSES = _IN_FLIGHT_STATUSES | {JobStatus.SUCCEEDED}
 _CREATE_ATTEMPTS = 3
 
 
+class JobDispatchConflictError(ValueError):
+    """The Job left the state it was read in before it could be queued: a worker
+    claimed or finished it, reconciliation abandoned it, or another dispatch
+    queued it first. It was not queued and must not be dispatched."""
+
+    def __init__(self, job: JobManifest) -> None:
+        super().__init__(
+            f"Job {job.job_id} changed while being dispatched (read as "
+            f"status={job.status.value}, retry_count={job.retry_count}); "
+            "it was not dispatched"
+        )
+        self.job_id = job.job_id
+
+
 class JobService:
     def __init__(
         self,
@@ -403,29 +417,31 @@ class JobService:
             )
         return job
 
-    async def mark_queued(self, job_id: str) -> JobManifest:
+    async def mark_queued(
+        self, job_id: str, *, expected_status: JobStatus | None = None
+    ) -> JobManifest:
+        """Queue the Job for a dispatch. Raises ``JobDispatchConflictError`` when
+        the Job changed after it was read here, or is not in ``expected_status``
+        (the state a caller decided on); then nothing is written and the caller
+        must not send a message."""
         job = await self.validate_executable(job_id)
+        if expected_status is not None and job.status != expected_status:
+            raise JobDispatchConflictError(job)
 
-        update: dict[str, object] = {}
-        if job.status == JobStatus.FAILED:
-            if job.retry_count >= job.max_retries:
-                raise ValueError(
-                    f"Job has exhausted retries: job_id={job_id}, "
-                    f"retry_count={job.retry_count}, max_retries={job.max_retries}"
-                )
-            update["retry_count"] = job.retry_count + 1
+        if job.status == JobStatus.FAILED and job.retry_count >= job.max_retries:
+            raise ValueError(
+                f"Job has exhausted retries: job_id={job_id}, "
+                f"retry_count={job.retry_count}, max_retries={job.max_retries}"
+            )
+
+        # The checks above judged the Job as read; the write applies only to that
+        # same state, so a decision made on a stale read cannot take effect.
+        queued = await self._repository.queue_if_unchanged(job)
+        if queued is None:
+            raise JobDispatchConflictError(job)
+        job = queued
 
         now = utc_now()
-        job = job.model_copy(
-            update={
-                **update,
-                "status": JobStatus.QUEUED,
-                "queued_at": now,
-                "updated_at": now,
-            }
-        )
-        await self._repository.update(job)
-
         await self._event_repository.append(
             JobEvent(
                 event_id=generate_job_event_id(),

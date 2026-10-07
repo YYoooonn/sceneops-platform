@@ -38,8 +38,14 @@ class JobRepository(Protocol):
     async def get(self, job_id: str) -> JobManifest | None: ...
 
     async def update(self, job: JobManifest) -> JobManifest:
-        """Raises ``JobExecutionKeyInFlightError`` like ``create``; the caller's
-        transaction is then unusable and must be rolled back."""
+        """An unconditional whole-row write; never a lifecycle transition."""
+        ...
+
+    async def queue_if_unchanged(self, job: JobManifest) -> JobManifest | None:
+        """Move the Job to QUEUED iff it still has ``job.status`` and
+        ``job.retry_count``; None when it changed. A FAILED Job is retried
+        (retry_count + 1). Raises ``JobExecutionKeyInFlightError`` like
+        ``create``; the caller's transaction is then unusable."""
         ...
 
     async def list(

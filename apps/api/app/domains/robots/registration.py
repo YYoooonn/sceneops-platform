@@ -13,7 +13,7 @@ from sceneops_core.jobs.schemas import (
 
 from app.domains.robots.schemas import RegisterRobotRunResponse
 from app.platform.jobs.dispatch_facade import JobDispatchFacade
-from app.platform.jobs.service import JobService
+from app.platform.jobs.service import JobDispatchConflictError, JobService
 
 
 class RegistrationDispatchError(RuntimeError):
@@ -72,7 +72,18 @@ class RobotRunRegistrationService:
         execution = None
         if job.status == JobStatus.PENDING:
             try:
-                execution = await self._dispatch_facade.dispatch(job.job_id)
+                execution = await self._dispatch_facade.dispatch(
+                    job.job_id, expected_status=JobStatus.PENDING
+                )
+            except JobDispatchConflictError:
+                # A concurrent submission of the same manifest dispatched this
+                # Job first (or it has moved on since): it is not sent twice.
+                job = await self._current(job)
             except Exception as exc:
                 raise RegistrationDispatchError(job) from exc
         return RegisterRobotRunResponse(job=job, execution=execution)
+
+    async def _current(self, job: JobManifest) -> JobManifest:
+        async with self._session_factory() as session:
+            current = await self._job_service_factory(session).get_job(job.job_id)
+        return current or job

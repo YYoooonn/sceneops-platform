@@ -180,6 +180,32 @@ re-executed once the cause is fixed.
 
 ## 5. Job execution and reliability
 
+### Job state transitions
+
+Every change of a Job's status is one PostgreSQL statement whose `WHERE` clause
+states the row it applies to, so an actor holding a stale copy of the Job writes
+nothing instead of moving it backward or erasing another actor's columns
+(`sceneops_db/postgres/jobs.py`).
+
+| Transition | Writer | Guard |
+| --- | --- | --- |
+| (none) → `PENDING` | `create_job` (API) | `INSERT ... ON CONFLICT DO NOTHING` on `uq_jobs_execution_key_in_flight` |
+| (none) → `QUEUED` | the orchestrator, for a task's Job | insert (task Jobs carry no execution key) |
+| `PENDING` / `QUEUED` / `FAILED` → `QUEUED` | a dispatch (`mark_queued`): first dispatch, redispatch, retry | `queue_if_unchanged`: `WHERE status = <as read> AND retry_count = <as read>`; a retry increments `retry_count` and is refused past `max_retries` or beside another in-flight Job of its key |
+| `PENDING` / `QUEUED` → `RUNNING` | `JobRunner` | `claim_for_run`: `WHERE status IN (PENDING, QUEUED)`; sets `worker_id` |
+| `RUNNING` → `RUNNING` / `SUCCEEDED` / `FAILED` | `JobRunner`, the claiming worker | `update_owned_run`: `WHERE status = RUNNING AND worker_id = <this worker>` |
+| `PENDING` / `QUEUED` / `RUNNING` → `FAILED` | reconciliation (`JobAbandoned`) | `abandon_if_inactive`: `WHERE status IN (...) AND <no activity since the threshold>` |
+
+`FAILED` → `QUEUED` is the only way back to an earlier status and it increments
+`retry_count`, so `(status, retry_count)` identifies a point in a Job's history and a
+dispatch decided on an older one cannot apply. A dispatch whose conditional write
+matches nothing raises `JobDispatchConflictError`: nothing is committed and no message
+is sent (`POST /jobs/{id}/execute` answers 400). A caller may also state the status its
+decision was based on: robot-run registration dispatches only a Job it saw `PENDING`,
+so two submissions sharing one Job send one message, and the one that loses answers
+with the Job as it is now. `SKIPPED` and `CANCELLED` exist in `JobStatus`, but no
+Job transition currently produces them.
+
 ### JobRunner (`sceneops_worker/jobs/runner.py`)
 
 1. `claim_for_run` is one atomic `UPDATE ... WHERE status IN (PENDING, QUEUED)
@@ -205,7 +231,7 @@ redispatch of durable state.
 | --- | --- |
 | Request identity | `execution_key = sha256(kind, type, dataset_id, dataset_version, model_id, model_version, params)` (`sceneops_core.executions.compute_execution_key`). Creating a Job or PipelineRun whose key already has a `PENDING` / `QUEUED` / `RUNNING` / `SUCCEEDED` record returns that record. `force: true` skips the reuse of a succeeded record: a PipelineRun is always new, a Job is new unless one of its key is still in flight, which is returned. Some job types normalize their params first so equivalent requests share a key (`params_for_execution_key`). |
 | Concurrent Job creation | At most one Job per execution key is `PENDING` / `QUEUED` / `RUNNING`: the partial unique index `uq_jobs_execution_key_in_flight` enforces it in PostgreSQL. `create_job` inserts with `ON CONFLICT DO NOTHING` against that index, so concurrent requests for one key converge on one Job and one `CREATED` event; a loser waits for the winner's transaction and returns its Job. Finished Jobs are outside the index, so a key keeps any number of succeeded and failed Jobs. The reuse of a succeeded Job is a read, not a constraint: a request whose lookup preceded a Job's whole run can start one more. PipelineRun creation has no such index; concurrent identical PipelineRun requests can each create a run. |
-| Standalone Job retry | Redispatching a `FAILED` Job (`POST /jobs/{id}/execute`) increments `retry_count`; past `max_retries` it is refused, and so is a retry while another Job of its key is in flight. |
+| Standalone Job retry | Redispatching a `FAILED` Job (`POST /jobs/{id}/execute`) increments `retry_count`; past `max_retries` it is refused, and so is a retry while another Job of its key is in flight. Concurrent retries of one failure spend one retry: one of them queues the Job, the others are refused. |
 | Pipeline retry | Re-executing a `FAILED` or `BLOCKED` run resumes at its first unfinished task; succeeded and skipped tasks are not re-run. |
 | Duplicate delivery | The atomic Job claim and the row-locked, idempotent orchestration step make a duplicated message harmless. |
 | Duplicate output | Derived artifacts are write-once and content-pinned, so a Job that re-runs converges on the same objects and records (§7). |
@@ -213,7 +239,7 @@ redispatch of durable state.
 
 Implementation: `packages/sceneops-core/sceneops_core/executions/key.py`,
 `apps/api/app/platform/jobs/service.py` (`create_job`, `mark_queued`),
-`packages/sceneops-db/sceneops_db/postgres/jobs.py` (`create`),
+`packages/sceneops-db/sceneops_db/postgres/jobs.py` (`create`, `queue_if_unchanged`),
 `apps/api/app/platform/pipelines/service.py` (`create_pipeline_run`, `validate_executable`).
 
 ### Durable-state-first boundaries and failure windows
