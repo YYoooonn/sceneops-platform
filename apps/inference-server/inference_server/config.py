@@ -39,9 +39,8 @@ class InferenceServerSettings(BaseSettings):
     max_concurrent_inference_requests: int = Field(default=1, ge=1)
 
     # Image URI security: file:// paths must be under one of these roots.
-    allowed_file_roots: list[str] = Field(
-        default_factory=lambda: ["/data/raw", "/data/artifacts"]
-    )
+    # Only the local ArtifactStore payload root: no source dataset is readable.
+    allowed_file_roots: list[str] = Field(default_factory=lambda: ["/data/artifacts"])
 
     @field_validator("allowed_file_roots", mode="before")
     @classmethod

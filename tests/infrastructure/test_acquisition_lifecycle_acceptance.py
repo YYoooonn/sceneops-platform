@@ -35,7 +35,7 @@ the captures (the Kafka consumption that feeds it is ``make ros2-test`` and the
 streaming equivalence journey); the object store is real MinIO, the database real
 PostgreSQL, the broker a throwaway Redis, the workers real Celery subprocesses,
 and times are real (the stall threshold is 5 s here). It is infrastructure
-acceptance, not a product journey. Run: ``make test-recovery``.
+acceptance, not a product journey. Run: ``make test-infrastructure SUITE=recovery``.
 """
 
 from __future__ import annotations
@@ -300,7 +300,6 @@ async def test_full_acquisition_lifecycle_recovers_through_the_production_comman
     }
     ids = {key: f"{RUN_PREFIX}-acc-{label}-{tag}" for key, label in labels.items()}
     robots = {key: f"{RUN_PREFIX}-robot-{label}-{tag}" for key, label in labels.items()}
-    env.run_ids.extend(ids.values())
     all_ids = list(ids.values())
     store = env.store()
     capture_root = tmp_path / "capture"

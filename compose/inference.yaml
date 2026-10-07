@@ -15,7 +15,8 @@ x-inference-common: &inference-common
   ports:
     - "${INFERENCE_PORT:-8001}:8001"
   volumes:
-    - ./data:/data:ro
+    # Local ArtifactStore payloads only; no source dataset is reachable.
+    - ./data/artifacts:/data/artifacts:ro
     - ./cache/hf:/cache/hf
   networks:
     default:

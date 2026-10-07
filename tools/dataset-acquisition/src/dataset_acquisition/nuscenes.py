@@ -44,7 +44,9 @@ source order within the topic. Each topic numbers its messages 1, 2, ...
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +64,11 @@ POSE = "pose"
 CAN = "can"
 MISSION = "mission"
 CHANNEL_GROUPS = (CAMERA, LIDAR, POSE, CAN, MISSION)
+
+CAMERA_MODALITY = "camera"
+LIDAR_MODALITY = "lidar"
+# CAN bus extracts the CAN group converts (can_bus/<unit>_<name>.json).
+CAN_MESSAGES = ("pose", "ms_imu", "vehicle_monitor")
 
 BASE_FRAME = "base_link"
 MAP_FRAME = "map"
@@ -348,6 +355,27 @@ class KeyframeAnnotations:
 
 
 @dataclass(frozen=True)
+class SourceFingerprint:
+    sha256: str
+    counts: dict[str, Any]
+    blob_bytes: int
+
+
+def _file_identity(path: Path) -> tuple[int, str]:
+    """(size in bytes, ``sha256:`` of the content), streamed."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(block)
+                size += len(block)
+    except OSError as exc:
+        raise AcquisitionError(f"source file unreadable: {path}: {exc}") from exc
+    return size, f"sha256:{digest.hexdigest()}"
+
+
+@dataclass(frozen=True)
 class NuScenesSelection:
     dataroot: Path
     version: str
@@ -547,6 +575,107 @@ class NuScenesAdapter:
             )
 
         return sorted(plan, key=lambda p: (p.time_ns, p.rank, p.topic, p.order))
+
+    def plan_topic_counts(self) -> dict[str, int]:
+        """Messages per topic the selection publishes, from the plan alone (no
+        payload is read). Batch and replay sinks consume the same plan."""
+        return dict(sorted(Counter(p.topic for p in self._plan()).items()))
+
+    def source_fingerprint(self) -> SourceFingerprint:
+        """Content identity of every source input the selection reads: the
+        unit's table rows, the bytes of each converted image and point-cloud
+        file, and the CAN bus extracts. It is independent of the tool, so a
+        changed source is detected before any conversion."""
+        groups = self.selection.channel_groups
+        nusc = self._nusc
+        records = self._unit_sample_data()
+        converted = {
+            modality
+            for modality, group in ((CAMERA_MODALITY, CAMERA), (LIDAR_MODALITY, LIDAR))
+            if group in groups
+        }
+
+        sample_rows, token = [], self._scene["first_sample_token"]
+        while token:
+            row = nusc.get("sample", token)
+            sample_rows.append(row)
+            token = row["next"]
+
+        blobs = []
+        for sd in records:
+            if sd["sensor_modality"] not in converted:
+                continue
+            blobs.append(
+                [
+                    sd["filename"],
+                    *_file_identity(self.selection.dataroot / sd["filename"]),
+                ]
+            )
+        calibration_tokens = sorted(
+            {
+                sd["calibrated_sensor_token"]
+                for sd in records
+                if sd["sensor_modality"] in converted
+            }
+        )
+        calibrations = [nusc.get("calibrated_sensor", t) for t in calibration_tokens]
+        sensors = [
+            nusc.get("sensor", t)
+            for t in sorted({c["sensor_token"] for c in calibrations})
+        ]
+        ego_poses = []
+        if POSE in groups:
+            ego_tokens = sorted({sd["ego_pose_token"] for sd in records})
+            ego_poses = [nusc.get("ego_pose", t) for t in ego_tokens]
+
+        can_files: dict[str, list[Any]] = {}
+        if CAN in groups:
+            for name in CAN_MESSAGES:
+                path = (
+                    self.selection.dataroot
+                    / "can_bus"
+                    / f"{self.selection.source_unit}_{name}.json"
+                )
+                size, digest = _file_identity(path)
+                can_files[name] = [
+                    path.name,
+                    size,
+                    digest,
+                    len(self._can_messages(name)),
+                ]
+
+        body = {
+            "scene": self._scene,
+            "log": nusc.get("log", self._scene["log_token"]),
+            "samples": sample_rows,
+            "sample_data": [sd for sd in records if sd["sensor_modality"] in converted],
+            "calibrated_sensors": calibrations,
+            "sensors": sensors,
+            "ego_poses": ego_poses,
+            "blobs": blobs,
+            "can": can_files,
+        }
+        encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+        counts: dict[str, Any] = {
+            "samples": len(sample_rows),
+            "camera_frames": sum(
+                1
+                for sd in records
+                if sd["sensor_modality"] == CAMERA_MODALITY and CAMERA in groups
+            ),
+            "lidar_sweeps": sum(
+                1
+                for sd in records
+                if sd["sensor_modality"] == LIDAR_MODALITY and LIDAR in groups
+            ),
+            "ego_poses": len(ego_poses),
+            "can_messages": {name: row[3] for name, row in can_files.items()},
+        }
+        return SourceFingerprint(
+            sha256=f"sha256:{hashlib.sha256(encoded).hexdigest()}",
+            counts=counts,
+            blob_bytes=sum(b[1] for b in blobs),
+        )
 
     def channels(self) -> dict[str, MessageType]:
         """Topic -> message type for every topic the selection publishes

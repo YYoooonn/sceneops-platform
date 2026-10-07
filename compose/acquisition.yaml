@@ -37,7 +37,63 @@ services:
       target: replay
     image: sceneops-platform/dataset-replay:local
     volumes:
+      # `reference replay` reads a fixture's locked recording: the corpus and
+      # its lock, and the verified cache. It mounts no source dataset.
+      - ./config/reference:/config/reference:ro
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
+    profiles:
+      - acquisition
+
+  # Reference corpus (config/reference/<corpus>): the same tool and image as
+  # dataset-acquisition, run to fingerprint, materialize and verify the corpus
+  # fixtures. Recordings land in the local cache ./data/reference (not a
+  # Docker volume: it survives `make local-reset`); the lock is written into
+  # ./config/reference only by `reference prepare --update-lock`. Run with
+  # `--no-deps`: it needs and touches no platform service.
+  reference-data:
+    build:
+      context: ./tools/dataset-acquisition
+      target: batch
+    image: sceneops-platform/dataset-acquisition:local
+    network_mode: none
+    volumes:
       - ${ACQUISITION_NUSCENES_ROOT:-./data/raw/nuscenes}:/input/nuscenes:ro
+      - ./config/reference:/config/reference
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference
+    profiles:
+      - acquisition
+
+  # Ground-truth labels of a reference fixture, rendered for a target RobotRun
+  # (`reference render-labels`): the locked label artifact in the reference cache
+  # in, a sceneops.label_set/v1 document out. It reads no source dataset and
+  # mounts none: the cache and the lock are read-only, and the only writable
+  # path is the runtime input root that IMPORT_LABELS reads
+  # (SCENEOPS_WORKER_INPUT_SOURCE__ROOT_URI, ./data/inputs).
+  reference-labels:
+    build:
+      context: ./tools/dataset-acquisition
+      target: batch
+    image: sceneops-platform/dataset-acquisition:local
+    network_mode: none
+    volumes:
+      - ./config/reference:/config/reference:ro
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
+      - ./data/inputs:/inputs
+    profiles:
+      - acquisition
+
+  # L1 conformance of cached reference recordings: the publisher's `check`
+  # command (reads the file only; no ArtifactStore, no database), without the
+  # MinIO dependency of recording-publisher.
+  reference-conformance:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: sceneops-platform/worker:local
+    entrypoint: ["python", "-m", "sceneops_integrations.recording"]
+    command: ["--help"]
+    volumes:
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
     profiles:
       - acquisition
 
@@ -60,6 +116,8 @@ services:
       SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY: ${SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY:-}
     volumes:
       - acquisition-recordings:/recordings:ro
+      # Prepared reference-corpus recordings are published in place.
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
     depends_on:
       minio:
         condition: service_healthy

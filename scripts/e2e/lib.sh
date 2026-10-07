@@ -31,6 +31,28 @@ check() {
   fi
 }
 
+# ── Runtime role ─────────────────────────────────────────────────────────────
+#
+# The local runtime is either the reference environment (exactly the golden
+# reference contract's RobotRuns; docs/development/reference-contract.md) or a
+# disposable one. A workflow that registers RobotRuns, or captures a stream, of
+# its own leaves durable non-contract state: PostgreSQL rows and MinIO objects
+# that no production API removes. Such a workflow must not run on the reference
+# environment; it runs on a runtime that is dropped afterwards (`make local-reset`
+# and, for the reference environment, `make reference-contract-bootstrap` again).
+# DISPOSABLE_RUNTIME=1 states that this runtime is one.
+
+# require_disposable_runtime <what-would-be-created>
+require_disposable_runtime() {
+  [ "${DISPOSABLE_RUNTIME:-0}" = 1 ] && return 0
+  echo "❌ $1." >&2
+  echo "   This creates RobotRuns that outlive the run and are not part of the reference contract," >&2
+  echo "   and nothing in the platform removes them. Run it on a disposable runtime and say so:" >&2
+  echo "     make local-reset && make <target> DISPOSABLE_RUNTIME=1" >&2
+  echo "   then restore the reference environment with \`make local-reset && make reference-contract-bootstrap\`." >&2
+  exit 1
+}
+
 # ── Canonical build configurations ───────────────────────────────────────────
 #
 # The Scene / Episode build configurations of the canonical baseline are the
@@ -39,13 +61,9 @@ check() {
 
 BASELINE_CONFIG_DIR="${BASELINE_CONFIG_DIR:-$REPO_ROOT/config/baselines}"
 
-# scene_build_config [segment-duration-ns]
+# scene_build_config
 scene_build_config() {
-  if [ -n "${1:-}" ]; then
-    jq -c --argjson d "$1" '.segmentation.duration_ns = $d' "$BASELINE_CONFIG_DIR/scene_build_config.json"
-  else
-    jq -c . "$BASELINE_CONFIG_DIR/scene_build_config.json"
-  fi
+  jq -c . "$BASELINE_CONFIG_DIR/scene_build_config.json"
 }
 
 # episode_build_config [segmentation-json]
@@ -253,6 +271,22 @@ register_robot_run() {
   poll_job_terminal "$1" "$job_id" 60 2
 }
 
+# register_recording <api> <mcap-path> <run-id> <robot-id> [source-kind=file]
+# Publishes a finalized MCAP (a path inside the recording-publisher container,
+# e.g. a prepared reference recording under /reference) and registers it:
+# publish -> POST /robot-runs:register -> REGISTER_ROBOT_RUN. Prints the
+# publication JSON; fails unless the registration Job succeeded.
+register_recording() {
+  local api="$1" path="$2" run_id="$3" robot_id="$4" kind="${5:-file}"
+  local publication registration
+  publication="$(compose run --rm -T recording-publisher publish --mcap-path "$path" \
+    --run-id "$run_id" --robot-id "$robot_id" --source-kind "$kind" </dev/null)" \
+    || fail "publishing $path as $run_id failed"
+  registration="$(register_robot_run "$api" "$(echo "$publication" | jq -r '.manifest_uri')")"
+  assert_job_succeeded "$registration" "REGISTER_ROBOT_RUN for $run_id should succeed" >&2
+  echo "$publication"
+}
+
 # ── Datasets and models ──────────────────────────────────────────────────────
 
 upsert_dataset() {
@@ -336,33 +370,6 @@ assert_artifact_kind_present() {
 
 compose() {
   docker compose --env-file "$ENV_FILE" --profile acquisition "$@"
-}
-
-# acquire_recording <source-version> <source-unit> <run-id>
-# nuScenes scene -> finalized MCAP in the acquisition-recordings volume at
-# /recordings/<run-id>.mcap. Prints the tool's summary JSON.
-acquire_recording() {
-  compose run --rm -T dataset-acquisition nuscenes --dataroot /input/nuscenes \
-    --version "$1" --source-unit "$2" --output "/recordings/$3.mcap"
-}
-
-# check_recording <run-id> — L1 conformance of /recordings/<run-id>.mcap.
-check_recording() {
-  compose run --rm -T recording-publisher check --mcap-path "/recordings/$1.mcap" \
-    | jq -e '.conforms' >/dev/null
-}
-
-# publish_recording <run-id> <robot-id> [source-kind=file] — prints the publication JSON.
-publish_recording() {
-  compose run --rm -T recording-publisher publish --mcap-path "/recordings/$1.mcap" \
-    --run-id "$1" --robot-id "$2" --source-kind "${3:-file}"
-}
-
-# remove_recording <run-id> — the MCAP lives in a Docker volume; publication
-# copied it to the ArtifactStore, so the volume copy is scratch.
-remove_recording() {
-  compose run --rm -T --entrypoint rm dataset-acquisition -f "/recordings/$1.mcap" \
-    >/dev/null 2>&1 || true
 }
 
 # worker_python <args...> — run Python inside the worker image, with the

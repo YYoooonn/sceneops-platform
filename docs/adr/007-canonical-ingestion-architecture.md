@@ -4847,6 +4847,16 @@ Kafka address; it meets the platform only over DDS. Pacing schedules `source_tim
 reliable keep-all delivery with `/tf_static` latched, and fails unless every sample is acknowledged
 after the last message.
 
+**Amendment note (reference streaming acceptance, after A9).** The decision above stands as
+written for the source adapter → replay sink design of step 9, and as history: the sink
+consumed the nuScenes adapter's events (`nuscenes --replay`) and the original acceptance
+replayed a source scene. That runtime path has since been removed: the replay sink now has
+one source, a finalized MCAP, and the current streaming acceptance replays the *locked L1
+reference MCAP* of a reference-corpus fixture (`reference replay`, which reads no source
+dataset) through the same sink. The sink, its payload-exactness, pacing and delivery rules
+and I-47 are unchanged; only the origin of the events differs. The consequence for the
+acceptance is stated in §32.9.
+
 ### 32.7 Q3 decided: Kafka transport of large sensor messages
 
 Stock broker, producer and consumer limits (~1 MB message size) are sufficient for the measured
@@ -4888,6 +4898,29 @@ L1-conformant and every channel sequenced; both RobotRuns register; 3 Scenes (60
 recording equivalence holds; every Scene's and the Episode's semantic content is equal. RobotRun B's
 extent is wall-clock receive time, RobotRun A's the source timeline. This is one scene at one rate,
 a measurement and not a general proof.
+
+**Amendment note (reference streaming acceptance, after A9).** The result above was
+measured when the batch arm was a fresh conversion of a source scene and the streaming arm a
+replay of the adapter's events, so the comparison covered two conversions as well as the
+transport. `make e2e-streaming-equivalence` now uses one shared acquisition fixture: the locked
+reference MCAP is both the batch arm (the persistent reference baseline's RobotRun, read as
+it is and verified against the corpus lock) and the replay source of the streaming arm
+(replay → ROS 2 → bridge → Kafka → capture → `publish-pending` → `reconcile --apply` →
+RobotRun → Scene / Episode, with the baseline's build configuration files). Equivalence is
+therefore a transport-preservation test, not a conversion test, and §29.12's relation is
+checked over the locked and the captured recording: channels, message types and encodings,
+per-channel payload sequences and counts, every `Header.stamp` and the mission event times,
+and `/tf_static`; then I-35 over the Scene and Episode. Not compared: container bytes,
+capture `log_time`, schema-definition text, cross-channel write order. The negative controls
+are minimal perturbations of the loaded data (a dropped message, a 1 ns time shift, a changed
+payload checksum), each of which the verifier must report. The run's Kafka records are asserted
+as `RUN_START`, `message_count` telemetry records and `RUN_END`; the two lifecycle control
+records are why a capture receipt's offset range spans `message_count + 2` offsets (see
+`docs/architecture/streaming-transport.md` §16). Measured once on the local stack for the
+smoke fixture (`scene-0061`, 8,897 messages, 20 channels, rate 2×, two executions, a persistent
+baseline reused unchanged): 1 RobotRun, 1 Scene (606 observations) and 1 Episode (224
+observations) per arm, every comparison equal, every negative control detected. That is one
+fixture at one rate, not a general proof.
 
 ### 32.10 Invariants
 
@@ -5635,3 +5668,442 @@ scripts). §16's DatasetVersion table is now fully implemented. §13.7's allowan
 embedded source annotations is withdrawn by I-60. Active documentation
 (`docs/architecture/*`, `docs/development/*`, `README.md`) describes the system as
 of A9.
+
+---
+
+## 35. Amendment A10: ingestion-mode terminology and the golden reference contract
+
+### 35.0 Scope and result
+
+A10 decides no ingestion or canonicalization question. RobotRun, registration,
+identity, Scene / Episode canonicalization and the derived layer are unchanged. It
+records two things about how the reference baselines are named and promoted.
+
+### 35.1 Terminology
+
+```text
+Source preparation      nuScenes -> locked MCAP                         (reference-data-bootstrap)
+Recording Import        existing MCAP -> RobotRun                       (the `ref-<scope>` baseline)
+Streaming Acquisition   ROS 2 -> Kafka -> capture -> RobotRun           (the `stream-ref-<scope>` baseline)
+RobotRun boundary       the immutable recording + manifest both modes end at
+Canonical platform      RobotRun -> Scenes -> Episodes -> derived layers
+```
+
+Source preparation is not an ingestion mode. "Batch" in earlier sections of this
+ADR (the "batch" baseline, the `e2e-batch-canonical` journey, "batch MCAP") names
+Recording Import; the earlier text is not rewritten, and command names are unchanged.
+
+### 35.2 Golden reference contract
+
+The full-corpus baselines of both modes are promoted to an explicit, versioned
+contract (`config/reference/<corpus>/reference_contract.json`): every fixture of
+the corpus scope, ingested once through each mode under a deterministic identity
+(20 RobotRuns, 20 whole-recording Scenes and 20 Episodes for `nuscenes-mini-v1`).
+The restriction to one Scene and one Episode per RobotRun belongs to the contract and
+the baseline build configuration only; the platform keeps supporting any recording
+count, any Scene segmentation policy and several Scenes per RobotRun. The contract
+is verified read-only and converged by composing the existing baseline bootstraps;
+it never replaces a registered RobotRun. See
+[`docs/development/reference-contract.md`](../development/reference-contract.md).
+
+### 35.3 The reference environment and disposable test state
+
+**Decision.** The local reference environment holds exactly the golden reference
+contract. Generated runtime state is disposable and is reconstructed, never
+selectively deleted:
+
+```text
+make local-reset                       drops PostgreSQL, Redis, MinIO, the Kafka log, the capture volume
+make reference-contract-bootstrap      rebuilds the 20 RobotRuns from the locked corpus (data/reference)
+make reference-contract-verify REQUIRE_CLEAN=1   20 RobotRuns / 20 Scenes / 20 Episodes, nothing else
+```
+
+`smoke-1` is a fixture selection (`scene-0061` of the contract's baselines), not a
+baseline: no `ref-smoke-1` or `stream-ref-smoke-1` RobotRun or DatasetVersion exists.
+
+**Why.** Canonical identity is immutable and the platform removes none of it (no
+delete API for RobotRuns, Scenes, Episodes, Datasets, Jobs or ArtifactRecords; nothing
+under `robot_runs/` is deleted, ADR-008 §6). A test-only deletion lifecycle, whether
+direct SQL or a purpose-built API, would bypass the semantics every other consumer
+relies on (RESTRICT foreign keys, write-once pinned artifacts, lineage) and would be a
+second, untested implementation of removal. The reference corpus is locked and
+byte-identical, so reconstruction is reproducible by construction and costs only time.
+
+**Consequences.**
+
+- Workflows are classed by what they leave behind (`READ_ONLY_REFERENCE` or
+  `MUTATING_ACQUISITION_TEST`, [test-matrix.md](../development/test-matrix.md)). The first
+  consume the contract's RobotRuns, register none and write only into
+  `sceneops-test-*` DatasetVersions of their own; the second register RobotRuns of
+  their own and refuse to run without `DISPOSABLE_RUNTIME=1`.
+- A runtime that ran a mutating workflow is not the reference environment until it is
+  reset and rebuilt; `REQUIRE_CLEAN=1` is the check, and it applies to the dedicated
+  reference environment only (a general development platform may hold any RobotRun).
+- Isolating the mutating workflows on a runtime of their own (separate Compose project
+  and network) is a separate piece of work; until then the guard and the reset are the
+  mechanism.
+
+## 36. Amendment A11: acceptance surface after test consolidation
+
+### 36.0 Scope
+
+A11 changes the acceptance surface, not the architecture: it decides no ingestion,
+canonicalization or derived-layer question. The "exactly five E2E journeys" of §34.0
+and §34.5 and the `e2e-batch-canonical` rows of §34 and §35 are point-in-time
+statements and are not rewritten; this section supersedes them.
+
+### 36.1 The journeys
+
+```text
+e2e-streaming-equivalence    the locked reference MCAP in the contract's Recording Import
+                             RobotRun and streamed through ROS 2 -> Kafka -> capture: equivalent
+e2e-scene-ml                 Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation
+e2e-episode-learning         Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip
+e2e-cleanroom                fresh state -> canonical-bootstrap -> both L3 journeys -> verification
+```
+
+The acceptance surface is these four plus the opt-in model-backend acceptance
+(`acceptance-grounding-dino`). The number of journeys is not itself a contract;
+`make check-commands` pins the set.
+
+### 36.2 `e2e-batch-canonical` is removed
+
+**Decision.** The former batch-canonical journey registered a RobotRun of its own from
+one fixture and asserted the Scenes and Episodes built from it. Every claim it made is
+now carried by a surviving check, and it is deleted rather than kept beside them:
+
+| Claim | Where it is verified now |
+| --- | --- |
+| Recording Import produces the registered RobotRun, Scene and Episode of a real recording: the run pins exactly the locked recording, the locked message and channel facts, one whole-recording Scene and one Episode, validated, profiled and ready, DatasetVersion summaries agree | the golden reference contract (`make reference-contract-verify`, `canonical-verify`; `scripts/reference/tests`) |
+| Whole-recording Scene / Episode shape: windows on the declared source clocks, `[running marker, completed marker + 1)`, observed channels verbatim, streams kept asynchronous and unresampled, values selected by configuration, no outcome or annotation field | unit over a synthetic ROS 2 CDR recording (`apps/worker/tests/{scenes,episodes}/test_recording_*_builder.py`, `test_scene_manifest.py`, `packages/sceneops-core/tests/test_episodes.py`); the contract's shape check on the real corpus |
+| Retry and convergence: re-running the bootstrap, a repeated build and a repeated registration change no record | `canonical-bootstrap` create-or-verify and the contract's snapshot diff; `tests/infrastructure/test_pipeline_execution.py`; `again.created_payload_count == 0` in the recording verticals |
+| Scene and Episode independence | `test_scene_and_episode_builders_are_independent_siblings`; the recording Episode vertical builds both domains over one RobotRun on real PostgreSQL / MinIO |
+| Payload sharing and canonical semantics: one observation payload set on the RobotRun, reused by the Episode build, ids independent of build configuration, manifests checksum-pinned | `test_recording_episode_vertical_integration.py`, `test_recording_scene_vertical_integration.py`, `test_scene_registration_integration.py` |
+
+The journey's `MUTATING_ACQUISITION_TEST` class shrinks to `e2e-streaming-equivalence`
+and any bootstrap with a non-contract `BASELINE_ID`.
+
+**Residual gap.** No check compares the per-topic occurrence counts of the real
+recording's Episode manifest (actions, states, observations) with the lock's
+`topic_counts`; the real-recording check is the lock's counts on the registered
+RobotRun plus Scene / Episode equivalence in `e2e-streaming-equivalence`, and the
+unresampled-streams property is proven on the synthetic recording. It is recorded, not
+recreated as another journey.
+
+### 36.3 Other changes to the surface
+
+- `smoke-api` (an API liveness probe), `check-minio`, the GroundingDINO endpoint check
+  and `tests/infrastructure/test_pipeline_surface.py` are removed. The four-pipeline
+  surface is proven by the unit tests over the pipeline definitions
+  (`apps/worker/tests/pipelines/test_pipeline_definitions.py`).
+- `make test-integration` discovers modules named `*_integration.py` instead of
+  listing them, plus the `sceneops-db` and `sceneops-storage` suites by directory.
+  The MinIO selective-read test lives with the package it exercises
+  (`sceneops-analytics`), owns only the storage contract and needs no baseline.
+- A real-infrastructure command (`test-integration`, `test-infrastructure`,
+  `test-infrastructure-airflow`, `test-recovery`) fails if any test is skipped:
+  a stopped stack must not read as green. Opt-in modules with their own target are
+  excluded from the others' scope, not skipped.
+- The Airflow Scene ML test builds Scenes into a DatasetVersion of its own and imports
+  its own LabelSet from the fixture's locked reference labels; it never writes into the
+  reference DatasetVersion.
+
+### 36.4 Not decided here
+
+Making `e2e-streaming-equivalence` read-only over the contract's two RobotRuns and
+giving each L3 journey one fixed, converging `sceneops-test-*` identity are accepted
+directions, implemented separately; until then the behavior of §35.3 stands for them.
+
+### 36.5 Integration and recovery tests run in a disposable database and bucket
+
+**Decision.** `make test-integration` and `make test-recovery` run in a PostgreSQL
+database (`sceneops_test`, migrated with the repository's migrations) and a MinIO
+bucket (`sceneops-test`) that exist only for the run: created first, dropped after it,
+recreated by the next run if an interrupted one left them behind. They never connect
+to the reference database or bucket, and no fixture deletes rows or objects to restore
+shared state.
+
+**Why.** Each integration run registered RobotRuns of its own into the reference
+database and left them there, and the platform has no removal path to undo that
+(§35.3). Dropping an environment that was created for the run needs no deletion
+semantics at all; per-row cleanup was a second, untested removal implementation that
+also had to be kept in step with every foreign key. The disposable names are the only
+ones the runner will act on, so the destructive step cannot be pointed at the reference
+environment.
+
+**Consequences.** §35.3 and §36.4 stay in force for every workflow that runs on the
+reference environment. The recovery suites keep their own Redis container and Celery
+workers; only their PostgreSQL and MinIO moved. See
+[test-matrix.md](../development/test-matrix.md).
+
+### 36.6 `e2e-streaming-equivalence` is read-only over the contract's two RobotRuns
+
+**Decision.** `e2e-streaming-equivalence` implements the first accepted direction of
+§36.4. For one fixture it reads the golden reference contract's Recording Import
+RobotRun and Streaming Acquisition RobotRun (both identities resolved from the
+contract) and compares what is registered: each RobotRun's recording is read from the
+ArtifactStore and checked against its registered checksum and manifest, and the two are
+compared on acquisition (§29.12), on canonical Scene / Episode content (I-35) and by
+negative controls. It replays, captures, publishes, registers and builds nothing,
+needs no Kafka, ROS 2, replay container, capture volume or reference cache, and
+creates no durable state: it fingerprints every RobotRun, Dataset, Scene and Episode
+before and after and fails on any difference. Its class is `REFERENCE_READ_ONLY`; it
+needs no `DISPOSABLE_RUNTIME`.
+
+**Why.** The contract already holds the same acquisition twice, once per ingestion
+mode. Streaming a third time into non-contract RobotRuns proved nothing the registered
+pair does not, and left state that nothing removes (§35.3). The streaming path itself is
+exercised, and its output registered, by the streaming baseline.
+
+**Where the rest of the old journey's claims live.** The Kafka lifecycle of a streamed
+run (one `RUN_START`, the run's telemetry records, one `RUN_END`, capture finalized by the
+explicit `RUN_END`, the receipt's offsets spanning `message_count + 2` records) is
+a property of the live transport, so it is pinned against a real broker in
+`ros2/capture/tests/test_lifecycle_integration.py` with the real bridge node
+(`make ros2-test`). The streaming baseline checks per fixture that replay, bridge,
+capture and receipt carry the locked per-channel counts.
+
+**Consequences.** `MUTATING_ACQUISITION_TEST` now covers only a bootstrap with a
+non-contract `BASELINE_ID`. The measured scope is one fixture per run (default
+`scene-0061`) against the registered recordings of the local reference environment;
+the equivalence of the other nine fixtures is carried by `make streaming-compare`
+(counts and canonical projections, no payloads) and by running the journey with
+`SCENE=<fixture>`.
+
+### 36.7 Derived workflows converge on fixed identities; one test-state vocabulary
+
+**Decision.** The workflows that consume the golden contract and write state of their
+own (the Scene ML and Episode learning journeys, the model-backend acceptance, the
+pipeline and Airflow infrastructure tests) own a fixed Dataset each and converge on it:
+
+```text
+sceneops-test-scene-ml                   e2e-scene-ml
+sceneops-test-scene-ml-grounding-dino    acceptance-grounding-dino
+sceneops-test-episode-learning           e2e-episode-learning
+sceneops-test-infra-pipelines            test-infrastructure   (one DatasetVersion per test)
+sceneops-test-infra-airflow              test-infrastructure-airflow (one DatasetVersion per test)
+```
+
+No timestamp, counter or UUID is part of a top-level Dataset identity. Derived records
+carry ids derived from it (`scset-<dataset>`, `infer-<dataset>`, `eval-<dataset>`), so a
+repeated run reuses the Dataset, DatasetVersion, Scenes, Episodes, LabelSet, sample views,
+ScenarioSet, InferenceRun, EvaluationRun, aligned Episodes and learning export instead of
+adding new ones. Where a test needs a changed state, it uses the platform's explicit
+replacement; nothing is deleted. `e2e-cleanroom` is unchanged: it resets the runtime
+before it creates its one timestamped DatasetVersion.
+
+The test-state classes are renamed to one vocabulary: `REFERENCE_CONTRACT`,
+`REFERENCE_READ_ONLY`, `REFERENCE_DERIVED`, `MUTATING_ACQUISITION`,
+`CLEANROOM_ACCEPTANCE` and `DISPOSABLE_ENVIRONMENT`. `READ_ONLY_REFERENCE` of §35.3 is
+`REFERENCE_DERIVED` (the workflows that write derived state) or `REFERENCE_READ_ONLY`
+(those that write nothing); `MUTATING_ACQUISITION_TEST` is `MUTATING_ACQUISITION`.
+`REQUIRE_CLEAN` of §35.3 is replaced by `REQUIRE_PRISTINE`:
+`reference-contract-verify` judges the contract alone and reports non-contract RobotRuns,
+derived test datasets and foreign datasets apart, and `REQUIRE_PRISTINE=1` additionally
+fails on any of them. The contract stays valid while derived test datasets exist.
+
+**Why.** Platform state is never deleted piecemeal (§35.3), so a test identity that
+changes per run accumulates until the next reset. A fixed identity bounds the top-level
+state, keeps it recognisable as test-owned and lets the contract verifier tell it from
+the contract.
+
+**Consequences.**
+
+- Execution history is append-only and is not derived state: forced Jobs and PipelineRuns
+  add rows, and a re-executed validation, profile, scenario-mining or readiness stage
+  writes a report keyed by the id of the Job that ran it (no per-stage id override
+  exists). The journeys avoid re-executing the Scene ML pipeline and the first Episode
+  learning pipeline (`force: false`); the infrastructure suites exist to prove
+  re-execution and so append such reports on every run.
+- `evaluate_detection` registers its ArtifactRecords under fresh ids on every execution,
+  so executing it again under an existing evaluation run id duplicates the records of the
+  same objects. The Scene ML journey therefore evaluates its recheck run once and reads it
+  afterwards. Making those registrations idempotent is not decided here.
+- A runtime that ran the previous, timestamped journeys holds `sceneops-test-*` Datasets
+  that the fixed identities do not reuse; they are removed by `make local-reset`.
+
+### 36.8 Infrastructure suites run on a disposable execution runtime
+
+**Decision.** `make test-infrastructure` and `make test-infrastructure-airflow` leave the
+reference environment. Each runs in the disposable PostgreSQL database and MinIO bucket of
+§36.5 and starts an execution runtime of its own on them: an API, the Celery workers and a
+Redis (the compose project `sceneops-test`, `compose/test-runtime.yaml`), and for the
+Airflow command a private Airflow with the API started on the `airflow` pipeline backend.
+The suite's `baseline` fixture seeds the one RobotRun of the golden contract it consumes by
+the production create-or-verify path, publishing the locked recording into the disposable
+bucket. The runtime and the database and bucket are removed after the run. The reference
+environment's api, workers, Redis, Airflow, database and bucket are neither used nor
+reconfigured; only the PostgreSQL and MinIO servers are shared. The two commands move from
+`REFERENCE_DERIVED` to `DISPOSABLE_ENVIRONMENT`; their fixed `sceneops-test-infra-*` Dataset
+names (§36.7) are kept, now inside the disposable database. Execution history stays
+append-only by platform design and no delete API, SQL cleanup or production semantics
+change was introduced for the tests.
+
+**Why.** The infrastructure suites exist to prove force, retry, resumption, conflict and
+orchestration, so every run appended Jobs, PipelineRuns and job-keyed reports to the
+reference environment, unboundedly, and nothing removes them (§35.3). A fixed Dataset
+identity bounds the semantic state (§36.7) but cannot bound execution history that the
+tests generate on purpose. Seeding a disposable runtime from the same locked recording
+needs one RobotRun and no copy of the contract's twenty, and reuses the bootstrap path
+instead of adding a second one.
+
+**Consequences.** The reference environment's stale `sceneops-test-infra-*` Datasets and
+history from earlier runs are not removed (there is no removal path); `make local-reset`
+drops them. Each run starts from empty state, so the tests state their transitions from
+there; the concurrency test covers a first registration race and an explicit-replacement
+race in one run instead of alternating between them across runs. A run costs the runtime's
+start-up plus one RobotRun seeding. Airflow's per-task containers are started by the
+Docker daemon outside the compose project; one that failed stays until removed
+(`auto_remove` is `success`).
+
+### 36.9 `e2e-cleanroom` proves reconstruction of the golden runtime
+
+**Decision.** `e2e-cleanroom` answers one question: can an empty generated SceneOps
+runtime be reconstructed deterministically from the locked reference inputs into the
+golden contract, and can the primary journeys consume it without mutating it.
+
+```text
+preserved                      data/raw, data/reference, config/reference
+make local-reset               PostgreSQL, Redis, MinIO, Kafka log, acquisition-recordings, generated ./data
+read-back proof                every generated store empty; the preserved inputs byte-identical
+reference-data-verify          the locked corpus (all fixtures); no MCAP is regenerated
+reference-contract-bootstrap   20 RobotRuns, 20 Scenes, 20 Episodes from nothing
+reference-contract-verify      REQUIRE_PRISTINE=1: nothing but the contract
+reference-contract-bootstrap   again: converges, re-executes nothing
+e2e-scene-ml, e2e-episode-learning   on scene-0061, each twice; the contract's records unchanged,
+                               the two fixed Datasets the only addition
+reference-contract-verify      the contract is valid beside the derived state
+```
+
+The reconstruction is the production path: the contract bootstrap composes Recording Import
+and Streaming Acquisition; the cleanroom adds no ingestion, no smoke baseline and no
+verifier of its own. `cleanroom_verify.sh` is removed: its claims (the canonical records are
+those the bootstrap registered; the journeys' pipelines and jobs succeeded and their
+artifacts exist) are owned by `reference-contract-verify` with a before/after golden
+fingerprint (`reference_contract.py fingerprint --golden`, the contract's own records, equal
+across a derived workflow exactly when the contract is untouched) and by the journeys'
+own assertions. The journeys no longer write into a timestamped
+`sceneops-test-cleanroom-<epoch>` DatasetVersion: they run on their fixed `sceneops-test-*`
+identities (§36.7), so the cleanroom ends in the state of a bootstrapped reference
+environment plus those two Datasets and leaves nothing that grows with time.
+
+The convergence of the second bootstrap is proved from state, not from log text: no
+RobotRun, Job, PipelineRun, execution or artifact was added, the MinIO object count is
+unchanged, no record of the platform changed, and, from Docker's event stream recorded
+during the run, no `kafka`, `ros2` or `dataset-replay` container was created or started
+and the Kafka broker was not restarted.
+
+**Why.** The cleanroom was a third copy of the baseline bootstrap on a smaller selection
+(`smoke-1`) with a verifier that restated what the contract verifier and the journeys
+assert, and its timestamped Dataset was the one test identity that depended on time.
+Reconstruction reproducibility is the one property no other acceptance proves, because
+every other one starts from a runtime that already holds the contract.
+
+**Consequences.**
+
+- The cleanroom takes as long as a full contract reconstruction (each fixture replayed
+  through ROS 2 and Kafka once, 40 Scene / Episode builds) plus four journey runs. It is not
+  a routine check; it is run for reproducibility and release claims.
+- It needs the Kafka and ROS 2 images and, unlike the previous cleanroom, leaves the Kafka
+  broker running, as the contract bootstrap does.
+- Execution history (Jobs, PipelineRuns, reports) that the second journey runs append is
+  reported, not asserted: it is append-only by platform design (§36.7). What is asserted is
+  that no Dataset, Scene, Episode, RobotRun, artifact or MinIO object is added.
+- Timing and storage figures it prints are diagnostics of one local run, not a benchmark.
+
+**Verification (point-in-time, one local run, 2026-10-07, branch
+`refactor/reference-data-baseline` at `c459ad8` plus the uncommitted change of this
+section; macOS host, Docker Desktop VM, `FORCE=1 make e2e-cleanroom`, exit 0).**
+
+- Reset: PostgreSQL (13 API collections), MinIO (0 objects), Redis (no queued task, no key
+  but the broker bindings), the Kafka log and capture volumes and the generated `./data`
+  directories were empty; 39,083 preserved input files had an identical path / size / mtime
+  digest after the reset and after the run. `reference-data-verify`: 10 of 10 fixtures.
+- Reconstruction: 20 RobotRuns, 40 Scenes and Episodes created, none reused;
+  `reference-contract-verify REQUIRE_PRISTINE=1`: 20 / 20 / 20, 0 non-contract RobotRuns,
+  0 derived or foreign Datasets.
+- Second bootstrap: 20 RobotRuns found complete; Jobs (180), PipelineRuns (40), artifacts
+  (12,794) and MinIO objects (12,794) unchanged; no record changed; only the
+  `recording-publisher` and `reference-data` one-shot containers started; the Kafka broker
+  was not restarted.
+- Journeys on `scene-0061`: no RobotRun added, golden fingerprint unchanged, Datasets exactly
+  the contract's two plus `sceneops-test-scene-ml` and `sceneops-test-episode-learning`
+  (2 Scenes, 2 Episodes). A second run of each added no Dataset, Scene, Episode, RobotRun,
+  artifact or MinIO object, and appended 8 Jobs, 1 PipelineRun and 7 executions.
+- Final `reference-contract-verify` (without `REQUIRE_PRISTINE`): valid.
+- Wall time, diagnostic only: 22,844 s in total, of which contract reconstruction 18,437 s,
+  second bootstrap 83 s, Scene ML 82 s and 49 s (second run), Episode learning 123 s and
+  1,051 s (second run). The same stages varied several-fold between runs of this machine
+  (the first streamed fixture took about an hour of stage time, the later ones about two
+  minutes; `reference-data-verify` took 2,588 s here and about three minutes in an earlier
+  run), so these durations are not a performance claim. Final sizes: MinIO 13,982 MiB,
+  Kafka 5,061 MiB, PostgreSQL 75 MiB, Docker local volumes 21.04 GB, 7.6 GiB free on the host
+  and 5.4 GiB in the Docker VM.
+
+### 36.10 The validation surface is reduced; benchmarks and diagnostics are separated
+
+**Decision.** The human-facing validation surface is eight commands, one per class of
+claim:
+
+```text
+make test                       unit
+make test-integration           real PostgreSQL / MinIO in the disposable database + bucket
+make test-infrastructure        SUITE = pipelines (default) | recovery | airflow | kafka | boundaries
+make reference-contract-verify  the golden contract, read-only
+make e2e-streaming-equivalence  Recording Import ≡ Streaming Acquisition, read-only
+make e2e-scene-ml               derived journey
+make e2e-episode-learning       derived journey
+make e2e-cleanroom              reconstruction, destructive
+```
+
+Environment commands stay separate (`reference-data-bootstrap`, `reference-contract-bootstrap`,
+`local-reset`). Each suite of `test-infrastructure` keeps the isolation of the command it
+replaces (§36.5, §36.8): `pipelines` and `airflow` are the former `test-infrastructure` and
+`test-infrastructure-airflow`, `recovery` is the former `test-recovery`, `kafka` runs
+`ros2-test` and `smoke-streaming`, `boundaries` runs the acquisition-tool and LeRobot-adapter
+tests, `acquisition-image-check` and `check-runtime-boundary`. `test-recovery` and
+`test-infrastructure-airflow` no longer exist; the older sections of this ADR that name them
+(§34.5, §36.5, §36.8) describe the commands as decided then. The building blocks the surface
+composes (`canonical-bootstrap`, `streaming-bootstrap`, their `*-verify`, `streaming-compare`,
+`reference-data-verify`, `ros2-test`, `smoke-streaming`, `acquisition-test`, `lerobot-test`)
+remain callable and are no longer advertised by `make help`; `make check-commands` enforces
+the advertised set.
+
+Benchmarks move out of `scripts/` into `benchmarks/` (`benchmarks/README.md`); no Make
+command runs one and none is acceptance. Benchmark and prototype scripts whose decision was
+taken or whose workload a later script covers are deleted: the Phase 5 layout-candidate and
+pre-redesign baseline benchmarks, and the Phase 7 baseline runner, router prototype,
+poll-batch-size and rescan benchmarks. Their results stay in the study documents that
+recorded them. Diagnostics (`check-*`, `ros2-check`, `disk-report`, the `show-*` and
+`worker-*` commands) are operator tools, not acceptance gates; `worker-imports` is removed as a
+duplicate of `check-imports`.
+
+**Why.** Overlapping test and acceptance commands, baseline helpers advertised beside the
+journeys, and a `scripts/dev` directory that mixed benchmarks with a destructive reset made
+it unclear which command proved what and which result could be cited as acceptance. The
+reduction changes what is advertised, not what is proved.
+
+**Consequences.** `test-infrastructure SUITE=kafka` and `SUITE=boundaries` are not
+disposable-environment suites: they run the tools' own pytest sessions and checks, need
+`make streaming-up` and Docker respectively, and skip (rather than fail) the real-nuScenes
+test of the acquisition tool when `data/raw/nuscenes` is absent. Study documents written
+earlier cite the benchmarks under `scripts/dev/`.
+
+### 36.11 Handed off to the next phase: measured questions
+
+Questions, not decisions, observed at `5f3b523` on one macOS host with the local Docker
+stack. Nothing here was optimized or changed by this step; each needs a measurement before
+a mechanism is chosen (testing instructions §5: isolate implementation overhead from
+architectural overhead).
+
+| Question | Evidence so far | What to measure |
+| --- | --- | --- |
+| Why does reconstruction and verification time vary several-fold between runs? | One cleanroom: 22,844 s, of which contract reconstruction 18,437 s; the first streamed fixture ~1 h of stage time, later ones ~2 min; `reference-data-verify` 2,588 s there and ~3 min earlier (§36.9). Docker VM free space was 5.4 GiB at the end | per-stage wall time with host / VM CPU, memory and free-space sampling; the same stage on a roomy and on a tight disk |
+| Where does publish / register latency go at contract scale? | ADR-008 measured registration up to 1.07 GB at 5.4 s on an idle host (stall threshold 900 s); no measurement exists under 20 runs of load | `REGISTER_ROBOT_RUN` queue and execution time per recording size with the contract's 20 runs, separated from capture and replay time |
+| How does Scene / Episode build time behave? | 40 builds in the reconstruction; the second `e2e-episode-learning` run took 1,051 s against 123 s for the first although it converges and adds nothing durable (§36.9) | build and export time per stage on repeated runs; what the second run re-reads |
+| How fast do Kafka and MinIO grow, and what is the right retention? | After the contract: MinIO 13,982 MiB over 12,794 objects (~0.7 GiB per RobotRun averaged over everything in the bucket), Kafka 5,061 MiB; 24 GiB free on the host (95% used). The telemetry topic reports 7-day retention that the repository does not set | bytes per RobotRun by artifact class (recording, extracted payloads, derived); what Kafka must retain for resume versus what is only history |
+| What does object-store I/O cost? | Many small objects per RobotRun; reconciliation and lifecycle classification list `robot_runs/` | requests and bytes per stage from the MinIO side; list cost against object count |
+| What does process and container start cost? | Every fixture uses one-shot `dataset-replay`, `ros2` and `recording-publisher` containers; each infrastructure run starts and drops a compose project and re-seeds one RobotRun (~80 s) | start-up time separated from the work each one does |
+| What does reconciliation polling cost? | `recovery-up` repeats `publish-pending` and `reconcile --once --apply` every `RECOVERY_POLL_INTERVAL_SECONDS` (default 60) | per-pass time and requests against the number of RobotRuns and objects; whether a pass can be bounded by what changed |
+| Can `POST /pipelines/runs/{id}/execute` return 404 right after the run is created? | The API commits its session after the response has started (FastAPI ≥ 0.118); pinned as an `xfail` in `apps/api/tests/platform/test_session_commit_timing.py`; not reproduced over HTTP in ~1,500 create / execute pairs | reproduction under load; if confirmed, commit before the response is sent |
+| Why does repeating `evaluate_detection` under an existing evaluation run id register duplicate ArtifactRecords for the same objects? | Known platform behavior; the Scene ML journey runs its second evaluation once because of it (test-matrix.md, Execution history) | which identity the evaluation's artifact registration should converge on when it is retried |

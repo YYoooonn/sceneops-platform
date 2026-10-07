@@ -15,7 +15,7 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import update
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactOwnerType, ArtifactRef
 from sceneops_core.common.ids import (
@@ -31,9 +31,6 @@ from sceneops_core.scenes.testing import (
     recording_source,
 )
 from sceneops_db.models.artifacts import ArtifactModel
-from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
-from sceneops_db.models.robots import RobotModel, RobotRunModel
-from sceneops_db.models.scenes import SceneModel
 from sceneops_db.postgres.datasets import PostgresDatasetVersionRepository
 from sceneops_db.postgres.scenes import PostgresSceneRepository
 from sceneops_db.session import get_async_sessionmaker
@@ -44,8 +41,6 @@ from sceneops_worker.scenes.registration import (
     register_scenes,
 )
 
-pytestmark = pytest.mark.usefixtures("cleanup_minio_prefix")
-
 RECORDING_CHECKSUM = "sha256:" + "1" * 64
 
 
@@ -53,8 +48,6 @@ class _Env:
     def __init__(self, settings, dataset_id: str) -> None:
         self.settings = settings
         self.dataset_id = dataset_id
-        self.run_ids: list[str] = []
-        self.robot_ids: list[str] = []
         # The RobotRun every default manifest of this environment is built from.
         self.run_id = f"run-{dataset_id}"
 
@@ -150,8 +143,6 @@ class _Env:
 
     async def seed_robot_run(self, run_id: str) -> None:
         robot_id = f"robot-{run_id}"
-        self.run_ids.append(run_id)
-        self.robot_ids.append(robot_id)
         async with get_async_sessionmaker()() as session:
             ctx = self.context(session)
             await ctx.robot_store.create_robot_if_absent(RobotRecord(robot_id=robot_id))
@@ -215,33 +206,6 @@ class _Env:
             )
         return {s.scene_id: s for s in scenes}, dv
 
-    async def cleanup(self) -> None:
-        async with get_async_sessionmaker()() as session:
-            await session.execute(
-                delete(SceneModel).where(SceneModel.dataset_id == self.dataset_id)
-            )
-            await session.execute(
-                delete(RobotRunModel).where(RobotRunModel.run_id.in_(self.run_ids))
-            )
-            await session.execute(
-                delete(ArtifactModel).where(
-                    (ArtifactModel.dataset_id == self.dataset_id)
-                    | ArtifactModel.owner_id.in_(self.run_ids)
-                )
-            )
-            await session.execute(
-                delete(RobotModel).where(RobotModel.robot_id.in_(self.robot_ids))
-            )
-            await session.execute(
-                delete(DatasetVersionModel).where(
-                    DatasetVersionModel.dataset_id == self.dataset_id
-                )
-            )
-            await session.execute(
-                delete(DatasetModel).where(DatasetModel.dataset_id == self.dataset_id)
-            )
-            await session.commit()
-
 
 @pytest.fixture()
 async def env(_fresh_database_connection, _minio_reachable, worker_settings, unique_id):
@@ -252,7 +216,6 @@ async def env(_fresh_database_connection, _minio_reachable, worker_settings, uni
     await environment.seed_dataset_version()
     await environment.seed_robot_run(environment.run_id)
     yield environment
-    await environment.cleanup()
     dependencies_module._artifact_store = None
 
 

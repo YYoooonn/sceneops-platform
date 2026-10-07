@@ -32,7 +32,7 @@ Identity rules (frozen by ``semantics_version`` 1):
                      of the channel carries one, then per-channel file order)
     pose_id          pose-<source index>-<rank>, same ordering per pose source
     calibration_id   cal-<topic slug>
-    unit_key         segment-<window index>
+    unit_key         recording (whole_recording) | segment-<window index>
     payload artifact payload-<sha256(robot_run_id, topic, channel_index,
                      extraction)[:32]>. ``channel_index`` is the message's
                      occurrence index among the messages of its own topic, in
@@ -71,6 +71,7 @@ from sceneops_core.scenes.recording_build import (
     RecordingSceneBuildConfig,
     SceneChannelConfig,
     TimeSource,
+    WholeRecordingSegmentation,
 )
 from sceneops_core.scenes.schemas import (
     FrameTransform,
@@ -104,6 +105,7 @@ from sceneops_worker.recordings.payloads import (
 )
 
 RECORDING_SCENE_PRODUCER_ID: Final = "sceneops.recording_scene_builder"
+WHOLE_RECORDING_UNIT_KEY: Final = "recording"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration: it enters the producer fingerprint, so a
 # changed builder is a different producer and replacing registered Scenes
@@ -585,11 +587,36 @@ def plan_recording_scenes(
 
     # Segmentation (Q4): half-open windows on the one declared clock.
     segmentation = config.segmentation
-    origin = min(item.segment_ns for item, _ in observations)
-    duration = segmentation.duration_ns
+    if isinstance(segmentation, WholeRecordingSegmentation):
+        # One window over every included observation and pose, so a pose
+        # recorded before the first observation is not dropped.
+        times = [item.segment_ns for item, _ in observations] + [
+            item.segment_ns for item, _ in poses
+        ]
+        whole = (min(times), max(times) + 1)
 
-    def window_index(segment_ns: int) -> int:
-        return (segment_ns - origin) // duration
+        def window_index(segment_ns: int) -> int:
+            return 0
+
+        def window_bounds(index: int) -> tuple[int, int]:
+            return whole
+
+        def window_unit_key(index: int) -> str:
+            return WHOLE_RECORDING_UNIT_KEY
+
+    else:
+        origin = min(item.segment_ns for item, _ in observations)
+        duration = segmentation.duration_ns
+
+        def window_index(segment_ns: int) -> int:
+            return (segment_ns - origin) // duration
+
+        def window_bounds(index: int) -> tuple[int, int]:
+            start = origin + index * duration
+            return start, start + duration
+
+        def window_unit_key(index: int) -> str:
+            return f"segment-{index:06d}"
 
     by_window: dict[int, list[SceneObservation]] = {}
     for item, observation in observations:
@@ -621,13 +648,12 @@ def plan_recording_scenes(
 
     scenes: list[PlannedScene] = []
     for index in sorted(by_window):
-        start = origin + index * duration
-        end = start + duration
+        start, end = window_bounds(index)
         if start < 0 or end > INT64_MAX:
             raise RecordingSceneBuildError(
                 f"segment window [{start}, {end}) is outside the int64 time range"
             )
-        unit_key = f"segment-{index:06d}"
+        unit_key = window_unit_key(index)
         source = RecordingSegmentSource(
             robot_run_id=revision.robot_run_id,
             recording_artifact_id=robot_run_recording_artifact_id(
@@ -703,6 +729,7 @@ __all__ = [
     "OBSERVATION_PAYLOAD_ID_SCHEMA_V1",
     "RECORDING_SCENE_PRODUCER_ID",
     "RECORDING_SCENE_SEMANTICS_VERSION",
+    "WHOLE_RECORDING_UNIT_KEY",
     "PlannedPayload",
     "PlannedScene",
     "RecordingRevision",

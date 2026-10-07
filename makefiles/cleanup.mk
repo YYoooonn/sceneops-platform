@@ -2,9 +2,16 @@
 # Cleanup
 # --------------------
 
+.PHONY: disk-report
+# Read-only: host headroom, ./data and cache/, SceneOps volumes, Kafka log, disposable
+# test leftovers and what Docker could reclaim. Removes nothing; the cleanup policy is
+# docs/development/local-development.md#disk-hygiene.
+disk-report:
+	@ENV_FILE=$(ENV_FILE) scripts/ops/disk_report.sh
+
 .PHONY: prepare-data
 prepare-data:
-	mkdir -p data/raw data/datasets data/runs data/models data/artifacts cache/hf
+	mkdir -p data/raw data/datasets data/runs data/models data/artifacts data/inputs cache/hf
 
 .PHONY: clean-artifacts
 clean-artifacts:

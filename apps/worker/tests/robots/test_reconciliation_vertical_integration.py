@@ -21,7 +21,6 @@ import json
 import os
 import subprocess
 import sys
-import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -70,8 +69,6 @@ _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "rosbag"
 _VALID_MCAP = _FIXTURES_DIR / "can_replay_scene_0061.mcap"
 _OTHER_MCAP = _FIXTURES_DIR / "nav_msgs_odometry.mcap"
 _T0 = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
-
-pytestmark = pytest.mark.usefixtures("cleanup_minio_prefix")
 
 
 # ── construction helpers ──────────────────────────────────────────────────────
@@ -210,65 +207,8 @@ async def _durable_snapshot(
 # ── the vertical ──────────────────────────────────────────────────────────────
 
 
-@pytest.fixture()
-def _cleanup_database():
-    """Removes what the vertical committed (rows are keyed by unique ids), so
-    a RUNNING Job or a RobotRun fixture never lingers in the local stack."""
-    robot_ids: list[str] = []
-    run_id_sets: list[list[str]] = []
-    yield robot_ids, run_id_sets
-
-    async def _cleanup() -> None:
-        from sceneops_db.session import dispose_async_engine, reset_async_engine_cache
-
-        reset_async_engine_cache()
-        factory = get_async_sessionmaker()
-        async with factory() as session:
-            for run_ids in run_id_sets:
-                keys = [
-                    register_robot_run_execution_key(
-                        f"{_cleanup_root[0]}/{run_id}/robot_run_manifest.json"
-                    )
-                    for run_id in run_ids
-                ]
-                await session.execute(
-                    text(
-                        "DELETE FROM job_events WHERE job_id IN "
-                        "(SELECT job_id FROM jobs WHERE execution_key = ANY(:k))"
-                    ),
-                    {"k": keys},
-                )
-                await session.execute(
-                    text("DELETE FROM jobs WHERE execution_key = ANY(:k)"), {"k": keys}
-                )
-                await session.execute(
-                    text("DELETE FROM robot_runs WHERE run_id = ANY(:ids)"),
-                    {"ids": run_ids},
-                )
-                await session.execute(
-                    text("DELETE FROM artifacts WHERE owner_id = ANY(:ids)"),
-                    {"ids": run_ids},
-                )
-            for robot_id in robot_ids:
-                await session.execute(
-                    text("DELETE FROM robots WHERE robot_id = :r"), {"r": robot_id}
-                )
-            await session.commit()
-        await dispose_async_engine()
-
-    import asyncio
-
-    try:
-        asyncio.run(_cleanup())
-    except Exception as exc:  # noqa: BLE001 - cleanup must never mask the test result
-        warnings.warn(f"vertical cleanup failed: {exc!r}", stacklevel=1)
-
-
-_cleanup_root: list[str] = [""]
-
-
 async def test_reconcile_once_classifies_known_durable_states_and_changes_nothing(
-    worker_context, worker_settings, db_session, unique_id, tmp_path, _cleanup_database
+    worker_context, worker_settings, db_session, unique_id, tmp_path
 ) -> None:
     from sceneops_integrations.recording import publish_recording
 
@@ -276,7 +216,6 @@ async def test_reconcile_once_classifies_known_durable_states_and_changes_nothin
     store = S3ArtifactStore(settings=worker_settings.artifact)
     root = worker_settings.artifact.robot_run_root_uri
     robot_id = unique_id("robot")
-    _cleanup_root[0] = root
     capture_root = tmp_path / "capture"
     capture_root.mkdir()
 
@@ -432,8 +371,6 @@ async def test_reconcile_once_classifies_known_durable_states_and_changes_nothin
 
     capture_report = scan_capture_volume(capture_root)
     run_ids = sorted(names.values())
-    _cleanup_database[0].append(robot_id)
-    _cleanup_database[1].append(run_ids)
 
     # ── reconcile twice around a snapshot of everything durable ──────────────
     before = await _durable_snapshot(session_factory, store, root, run_ids, robot_id)

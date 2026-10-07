@@ -18,7 +18,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from sqlalchemy import delete
 
 from sceneops_core.jobs.schemas import (
     BuildSceneSampleViewsJobParams,
@@ -34,11 +33,7 @@ from sceneops_core.sample_views import (
     SampleAnchorPolicy,
     SampleViewPolicy,
 )
-from sceneops_db.models.artifacts import ArtifactModel
-from sceneops_db.models.evaluations import EvaluationRunModel
-from sceneops_db.models.inference import InferenceRunModel
 from sceneops_db.models.model_registry import ModelModel, ModelVersionModel
-from sceneops_db.models.scenarios import ScenarioRunRecordModel, ScenarioSetModel
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.jobs.dataset.build_recording_scenes import (
@@ -63,8 +58,6 @@ from recording_fixture import (  # noqa: E402
     build_config,
     default_recording,
 )
-
-pytestmark = pytest.mark.usefixtures("cleanup_minio_prefix")
 
 CLOCK = "sensor.header_stamp"
 # The fixture's lidar header stamps lead the camera by 7 ns.
@@ -148,41 +141,6 @@ class _DerivedVertical(_Vertical):
             label_sets=label_sets,
         )
 
-    async def cleanup(self) -> None:
-        async with get_async_sessionmaker()() as session:
-            for model, column in (
-                (EvaluationRunModel, EvaluationRunModel.dataset_id),
-                (InferenceRunModel, InferenceRunModel.dataset_id),
-                (ScenarioRunRecordModel, ScenarioRunRecordModel.dataset_id),
-                (ScenarioSetModel, ScenarioSetModel.dataset_id),
-            ):
-                await session.execute(delete(model).where(column == self.dataset_id))
-            # Only the derived artifacts: the parent cleanup removes the Scene
-            # manifests and payloads after the Scenes that reference them.
-            await session.execute(
-                delete(ArtifactModel).where(
-                    ArtifactModel.kind.in_(
-                        [
-                            "label_set_manifest",
-                            "scene_sample_view_manifest",
-                            "scenario_set_manifest",
-                            "scenario_mining_report",
-                            "prediction_manifest",
-                            "predictions_root",
-                            "evaluation_manifest",
-                            "metrics",
-                        ]
-                    ),
-                    (ArtifactModel.owner_id == self.label_set_id)
-                    | (ArtifactModel.dataset_id == self.dataset_id),
-                )
-            )
-            await session.execute(
-                delete(ModelModel).where(ModelModel.model_id == self.model_id)
-            )
-            await session.commit()
-        await super().cleanup()
-
 
 @pytest.fixture()
 async def derived(
@@ -194,7 +152,6 @@ async def derived(
     await env.seed(default_recording().write(tmp_path / "r.mcap").read_bytes())
     await env.seed_model()
     yield env
-    await env.cleanup()
     dependencies_module._artifact_store = None
     dependencies_module._input_store = None
 

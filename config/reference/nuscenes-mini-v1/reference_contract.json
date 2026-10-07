@@ -1,0 +1,113 @@
+{
+  "schema": "sceneops.reference_contract/1",
+  "contract_version": 1,
+  "corpus": {
+    "corpus_id": "nuscenes-mini-v1",
+    "scope": "nuscenes-mini-full-10"
+  },
+  "fixtures": [
+    {
+      "fixture_id": "scene-0061",
+      "recording_sha256": "sha256:05f96038d59019f8d823685d859b71ebbe2f9f54a7a84e1b2727a0af599779a1",
+      "message_count": 8897,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-0103",
+      "recording_sha256": "sha256:e70fc56e9008c835b1cf23955c39599e7f0be08b87af750bd9a95a15e47c0fff",
+      "message_count": 9206,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-0553",
+      "recording_sha256": "sha256:69ec4e42cc78efcaa1012e9cb335af9cf36bf6bc414ec0241a30a9d663bee089",
+      "message_count": 9476,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-0655",
+      "recording_sha256": "sha256:46b1fa9cf05a523a9f24a5e5f20497831b37776f447b22f48cf981a26edef957",
+      "message_count": 9400,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-0757",
+      "recording_sha256": "sha256:4fb1609aa8435c746851c208f3628fc4a68be58e42e12381a27aa75cd01d6c8b",
+      "message_count": 9446,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-0796",
+      "recording_sha256": "sha256:982a1e9edf51a631c08701b2ccfa020b5b2cc7678ee147f9e149076da9728641",
+      "message_count": 9323,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-0916",
+      "recording_sha256": "sha256:2f4b4c3f79c3c193814e753edf5e7c5badab6246e202c3ab3257e018312d4a0b",
+      "message_count": 9535,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-1077",
+      "recording_sha256": "sha256:8c3c95a4306e95a4422b8a6a4ce663bdc8fcedfdcaea60f517870d38c37b3892",
+      "message_count": 9493,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-1094",
+      "recording_sha256": "sha256:4ddbe0de51236b850289d4f96fa8838377c22d92451616de45066448a66873c7",
+      "message_count": 9290,
+      "channel_count": 20
+    },
+    {
+      "fixture_id": "scene-1100",
+      "recording_sha256": "sha256:fb2dcacc6e667bc101e0cce583df0e0015828965586a8be3e40cea44df93a291",
+      "message_count": 9307,
+      "channel_count": 20
+    }
+  ],
+  "ingestion_modes": {
+    "recording_import": {
+      "role": "platform_ml_reference",
+      "baseline_id": "ref-nuscenes-mini-full-10",
+      "robot_id": "robot-ref-nuscenes-mini-full-10",
+      "dataset_id": "sceneops-ref-nuscenes-mini-full-10",
+      "dataset_version": "baseline",
+      "run_id_template": "run-{baseline_id}-{fixture_id}",
+      "recording": "locked",
+      "capture_source": {
+        "kind": "file",
+        "topics": null
+      }
+    },
+    "streaming_acquisition": {
+      "role": "acquisition_equivalence_reference",
+      "baseline_id": "stream-ref-nuscenes-mini-full-10",
+      "robot_id": "robot-stream-ref-nuscenes-mini-full-10",
+      "dataset_id": "sceneops-stream-ref-nuscenes-mini-full-10",
+      "dataset_version": "baseline",
+      "run_id_template": "run-{baseline_id}-{fixture_id}",
+      "recording": "captured",
+      "transport": "ros2_kafka_capture",
+      "capture_source": {
+        "kind": "kafka",
+        "topics": [
+          "sceneops.robot.telemetry.v1"
+        ]
+      }
+    }
+  },
+  "units": {
+    "scene_policy": "whole_recording",
+    "scene_unit_key": "recording",
+    "scenes_per_robot_run": 1,
+    "episodes_per_robot_run": 1
+  },
+  "expected_totals": {
+    "fixtures": 10,
+    "robot_runs": 20,
+    "scenes": 20,
+    "episodes": 20
+  }
+}

@@ -1,16 +1,19 @@
 """Pipelines through the Airflow per-task DAGs (airflow/dags/sceneops_pipelines.py).
 
 Opt-in: the Airflow stack is not part of `make local-up`, and the API picks its
-pipeline backend at process start, so this module needs
-
-    make airflow-up
-    SCENEOPS_API_EXECUTION__PIPELINE_BACKEND=airflow  (api restarted with it)
-    SCENEOPS_TEST_AIRFLOW=1 make test-infrastructure-airflow
+pipeline backend at process start, so `make test-infrastructure SUITE=airflow` starts a
+private Airflow and an API on the airflow backend in the disposable execution runtime
+(execution_runtime.py); the reference environment's API and Airflow are not used or
+reconfigured. Run any other way, the module is skipped (and a skip fails the command).
 
 Each DAG runs every task of one pipeline as its own DockerOperator process,
 recomposing the state transitions of the Celery path (start / finalize). The
 tests prove the canonical pipelines reach the same terminal state and the same
 canonical records through that orchestrator.
+
+The tests own the fixed Dataset `sceneops-test-infra-airflow`, one DatasetVersion per test,
+in the disposable database (DISPOSABLE_ENVIRONMENT, docs/development/test-matrix.md);
+the Jobs, PipelineRuns and reports the executions append are dropped with it.
 """
 
 from __future__ import annotations
@@ -19,11 +22,16 @@ import os
 
 import pytest
 
-from infra_support import episode_params, scene_params
+from infra_support import (
+    INFRA_AIRFLOW_DATASET,
+    episode_params,
+    reference_label_document,
+    scene_params,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SCENEOPS_TEST_AIRFLOW") != "1",
-    reason="Airflow acceptance is opt-in: make test-infrastructure-airflow",
+    reason="Airflow acceptance is opt-in: make test-infrastructure SUITE=airflow",
 )
 
 
@@ -32,29 +40,34 @@ def _executed_by_airflow(api, run: dict) -> None:
     assert {e["executionBackend"] for e in executions} == {"airflow"}
 
 
-def test_recording_scene_building_through_airflow(api, baseline):
-    dataset = api.new_dataset_version("airflow-scene")
-    run = api.run("recording_scene_building", dataset, scene_params(baseline["robot_run_ids"][0]))
+def test_recording_scene_building_through_airflow(api, baseline_run):
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "scene")
+    run = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
 
     assert run["status"] == "succeeded", run
     _executed_by_airflow(api, run)
-    assert len(api.scenes(dataset)) == baseline["scene_count"]
+    assert len(api.scenes(dataset)) == baseline_run["scene_count"]
 
 
-def test_recording_episode_building_through_airflow(api, baseline):
-    dataset = api.new_dataset_version("airflow-episode")
+def test_recording_episode_building_through_airflow(api, baseline_run):
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "episode")
     run = api.run(
-        "recording_episode_building", dataset, episode_params(baseline["robot_run_ids"][0])
+        "recording_episode_building", dataset, episode_params(baseline_run["robot_run_id"])
     )
 
     assert run["status"] == "succeeded", run
     _executed_by_airflow(api, run)
-    assert len(api.episodes(dataset)) == baseline["episode_count"]
+    assert len(api.episodes(dataset)) == baseline_run["episode_count"]
 
 
-def test_episode_learning_data_building_through_airflow(api, baseline):
-    """The L3 pipeline over the baseline's pinned Episodes."""
-    dataset = (baseline["dataset_id"], baseline["dataset_version"])
+def test_episode_learning_data_building_through_airflow(api, baseline_run):
+    """The L3 pipeline over one RobotRun's pinned Episodes, built into the test's own
+    DatasetVersion: the reference DatasetVersion is never written to."""
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "learning")
+    built = api.run(
+        "recording_episode_building", dataset, episode_params(baseline_run["robot_run_id"])
+    )
+    assert built["status"] == "succeeded", built
     pins = [
         {
             "episode_id": e["episodeId"],
@@ -62,6 +75,7 @@ def test_episode_learning_data_building_through_airflow(api, baseline):
             "source_manifest_sha256": e["manifestChecksum"].removeprefix("sha256:"),
         }
         for e in api.episodes(dataset)
+        if e["robotRunId"] == baseline_run["robot_run_id"]
     ]
     run = api.run(
         "episode_learning_data_building",
@@ -82,25 +96,28 @@ def test_episode_learning_data_building_through_airflow(api, baseline):
     _executed_by_airflow(api, run)
 
 
-def test_scene_ml_evaluation_through_airflow(api, baseline):
-    """The L3 Scene ML pipeline over the baseline, with the label set
-    `make e2e-scene-ml` imported for it (`BASELINE_ID=canonical`). A label
-    document reaches the platform only through that journey, so the test is
-    skipped on a baseline that has none."""
-    dataset = (baseline["dataset_id"], baseline["dataset_version"])
-    run_id = baseline["robot_run_ids"][0]
-    unit = "scene-" + run_id.rsplit("-scene-", 1)[-1]
-    label_set_id = f"labels-{baseline['baseline_id']}-{unit}"
-    revisions = api.get(
-        "/artifacts", kind="label_set_manifest", owner_type="label_set", owner_id=label_set_id, limit=1
-    )["artifacts"]
-    if not revisions:
-        pytest.skip(f"label set {label_set_id} is not imported; run `make e2e-scene-ml BASELINE_ID=canonical`")
-    label_set = {
-        "label_set_id": label_set_id,
-        "manifest_artifact_id": revisions[0]["artifactId"],
-        "manifest_checksum": revisions[0]["checksum"],
-    }
+def test_scene_ml_evaluation_through_airflow(api, baseline, baseline_run):
+    """The L3 Scene ML pipeline over the Scenes of the test's own DatasetVersion, with a
+    LabelSet the test itself imports (the fixture's locked reference labels, rendered for
+    the baseline RobotRun). The ScenarioSet, inference run and evaluation run carry fixed
+    ids. The reference environment is never written to; a missing prerequisite
+    (reference labels, the acquisition image) fails."""
+    dataset = api.dataset_version(INFRA_AIRFLOW_DATASET, "scene-ml")
+    built = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
+    assert built["status"] == "succeeded", built
+
+    label_set_id = f"labels-{dataset[0]}-{baseline_run['source_unit']}"
+    with reference_label_document(
+        baseline["reference"]["corpus"],
+        baseline_run["fixture_id"],
+        baseline_run["robot_run_id"],
+        label_set_id,
+    ) as document_uri:
+        imported = api.run_job("import_labels", dataset, {"document_uri": document_uri})
+    assert imported["status"] == "succeeded", imported
+    label_set = imported["result"]["label_set"]
+    assert label_set["label_set_id"] == label_set_id, label_set
+
     camera, lidar = "/camera/front/image/compressed", "/lidar/top/points"
     views = {
         "policy": {
@@ -137,14 +154,23 @@ def test_scene_ml_evaluation_through_airflow(api, baseline):
                     "label_set_id": label_set_id,
                     "require_labels": True,
                     "required_channels": [camera, lidar],
+                    "output_scenario_set_id": "scset-infra-airflow",
                 },
                 "score_scenario_readiness": {},
-                "predict_detection": {"inference_backend": "mock", "camera_channel": camera},
-                "evaluate_detection": {"label_set": label_set, "match_distance_m": 2.0},
+                "predict_detection": {
+                    "inference_backend": "mock",
+                    "camera_channel": camera,
+                    "inference_run_id": "infer-infra-airflow",
+                },
+                "evaluate_detection": {
+                    "label_set": label_set,
+                    "match_distance_m": 2.0,
+                    "evaluation_run_id": "eval-infra-airflow",
+                },
             },
         },
     ).json()["pipelineRun"]
-    api.dispatch(created["pipelineRunId"])
+    api.dispatched(created["pipelineRunId"])
     run = api.wait(created["pipelineRunId"])
 
     assert run["status"] == "succeeded", run

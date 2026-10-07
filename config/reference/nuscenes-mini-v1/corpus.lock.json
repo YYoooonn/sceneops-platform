@@ -1,0 +1,540 @@
+{
+  "corpus_id": "nuscenes-mini-v1",
+  "fixtures": {
+    "scene-0061": {
+      "definition_sha256": "sha256:226759a3245d9c3bde062cb9c98b90dde2957223f88027b589391be9cccb6791",
+      "labels": {
+        "label_count": 4699,
+        "sample_count": 39,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:074bd9ca6d9794e5366e4477376521518a80eb927917cd6eb135bcc0a73cf8c5",
+        "size_bytes": 1370415
+      },
+      "recording": {
+        "message_count": 8897,
+        "sha256": "sha256:05f96038d59019f8d823685d859b71ebbe2f9f54a7a84e1b2727a0af599779a1",
+        "size_bytes": 355793127,
+        "topic_counts": {
+          "/camera/back/camera_info": 216,
+          "/camera/back/image/compressed": 216,
+          "/camera/back_left/camera_info": 219,
+          "/camera/back_left/image/compressed": 219,
+          "/camera/back_right/camera_info": 218,
+          "/camera/back_right/image/compressed": 218,
+          "/camera/front/camera_info": 224,
+          "/camera/front/image/compressed": 224,
+          "/camera/front_left/camera_info": 224,
+          "/camera/front_left/image/compressed": 224,
+          "/camera/front_right/camera_info": 217,
+          "/camera/front_right/image/compressed": 217,
+          "/lidar/top/points": 382,
+          "/mission/status": 2,
+          "/tf": 2963,
+          "/tf_static": 1,
+          "/vehicle/control": 38,
+          "/vehicle/imu": 1899,
+          "/vehicle/odom": 938,
+          "/vehicle/status": 38
+        }
+      },
+      "source": {
+        "blob_bytes": 465200525,
+        "counts": {
+          "camera_frames": 1318,
+          "can_messages": {
+            "ms_imu": 1899,
+            "pose": 938,
+            "vehicle_monitor": 38
+          },
+          "ego_poses": 2963,
+          "lidar_sweeps": 382,
+          "samples": 39
+        },
+        "fingerprint_sha256": "sha256:1d0c2e99f603a527b9938f9da115bb1fb9db93c784dac9a6f861edc0924134f6"
+      }
+    },
+    "scene-0103": {
+      "definition_sha256": "sha256:916bb1ab1c6a7c103701f05ac341bcf8339dfe8584e03c230913157986470e35",
+      "labels": {
+        "label_count": 2090,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:6df5541d940ce4ab2ea351ce9e584fac0e67eeb430f91421e8b8cb70c86076b3",
+        "size_bytes": 618393
+      },
+      "recording": {
+        "message_count": 9206,
+        "sha256": "sha256:e70fc56e9008c835b1cf23955c39599e7f0be08b87af750bd9a95a15e47c0fff",
+        "size_bytes": 345676680,
+        "topic_counts": {
+          "/camera/back/camera_info": 229,
+          "/camera/back/image/compressed": 229,
+          "/camera/back_left/camera_info": 228,
+          "/camera/back_left/image/compressed": 228,
+          "/camera/back_right/camera_info": 234,
+          "/camera/back_right/image/compressed": 234,
+          "/camera/front/camera_info": 229,
+          "/camera/front/image/compressed": 229,
+          "/camera/front_left/camera_info": 231,
+          "/camera/front_left/image/compressed": 231,
+          "/camera/front_right/camera_info": 233,
+          "/camera/front_right/image/compressed": 233,
+          "/lidar/top/points": 389,
+          "/mission/status": 2,
+          "/tf": 3063,
+          "/tf_static": 1,
+          "/vehicle/control": 40,
+          "/vehicle/imu": 1934,
+          "/vehicle/odom": 969,
+          "/vehicle/status": 40
+        }
+      },
+      "source": {
+        "blob_bytes": 464393238,
+        "counts": {
+          "camera_frames": 1384,
+          "can_messages": {
+            "ms_imu": 1934,
+            "pose": 969,
+            "vehicle_monitor": 40
+          },
+          "ego_poses": 3063,
+          "lidar_sweeps": 389,
+          "samples": 40
+        },
+        "fingerprint_sha256": "sha256:88a6a8bfca626132e84cc770bdf575ae8f4646af43c6db208a2d6d4aacd9e001"
+      }
+    },
+    "scene-0553": {
+      "definition_sha256": "sha256:a412507c5d403096343d7a3b6ac927ccb7ede8d9236b8372786e35ff18e770e3",
+      "labels": {
+        "label_count": 1991,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:123b802f0ba8fd3eb365f98657237bf05d5a1e6984ebc910607d0d0e593f34bb",
+        "size_bytes": 583800
+      },
+      "recording": {
+        "message_count": 9476,
+        "sha256": "sha256:69ec4e42cc78efcaa1012e9cb335af9cf36bf6bc414ec0241a30a9d663bee089",
+        "size_bytes": 311632194,
+        "topic_counts": {
+          "/camera/back/camera_info": 235,
+          "/camera/back/image/compressed": 235,
+          "/camera/back_left/camera_info": 237,
+          "/camera/back_left/image/compressed": 237,
+          "/camera/back_right/camera_info": 236,
+          "/camera/back_right/image/compressed": 236,
+          "/camera/front/camera_info": 237,
+          "/camera/front/image/compressed": 237,
+          "/camera/front_left/camera_info": 239,
+          "/camera/front_left/image/compressed": 239,
+          "/camera/front_right/camera_info": 239,
+          "/camera/front_right/image/compressed": 239,
+          "/lidar/top/points": 398,
+          "/mission/status": 2,
+          "/tf": 3171,
+          "/tf_static": 1,
+          "/vehicle/control": 40,
+          "/vehicle/imu": 1986,
+          "/vehicle/odom": 992,
+          "/vehicle/status": 40
+        }
+      },
+      "source": {
+        "blob_bytes": 448076420,
+        "counts": {
+          "camera_frames": 1423,
+          "can_messages": {
+            "ms_imu": 1986,
+            "pose": 992,
+            "vehicle_monitor": 40
+          },
+          "ego_poses": 3171,
+          "lidar_sweeps": 398,
+          "samples": 41
+        },
+        "fingerprint_sha256": "sha256:4b358256eec7bebdf926fe30b6b5a2e2a2a7c0355435e08193e5737cab735438"
+      }
+    },
+    "scene-0655": {
+      "definition_sha256": "sha256:9f671921d2136fc2f7d37d49b3434c8f4215f2c37b86a30f6793760a9883eba9",
+      "labels": {
+        "label_count": 2373,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:4d6bf50fb29a16a287b212fb59cbd315ceb011e909216629e490cd52948ffeef",
+        "size_bytes": 689309
+      },
+      "recording": {
+        "message_count": 9400,
+        "sha256": "sha256:46b1fa9cf05a523a9f24a5e5f20497831b37776f447b22f48cf981a26edef957",
+        "size_bytes": 332901701,
+        "topic_counts": {
+          "/camera/back/camera_info": 230,
+          "/camera/back/image/compressed": 230,
+          "/camera/back_left/camera_info": 235,
+          "/camera/back_left/image/compressed": 235,
+          "/camera/back_right/camera_info": 237,
+          "/camera/back_right/image/compressed": 237,
+          "/camera/front/camera_info": 237,
+          "/camera/front/image/compressed": 237,
+          "/camera/front_left/camera_info": 237,
+          "/camera/front_left/image/compressed": 237,
+          "/camera/front_right/camera_info": 236,
+          "/camera/front_right/image/compressed": 236,
+          "/lidar/top/points": 396,
+          "/mission/status": 2,
+          "/tf": 3136,
+          "/tf_static": 1,
+          "/vehicle/control": 40,
+          "/vehicle/imu": 1976,
+          "/vehicle/odom": 985,
+          "/vehicle/status": 40
+        }
+      },
+      "source": {
+        "blob_bytes": 453124461,
+        "counts": {
+          "camera_frames": 1412,
+          "can_messages": {
+            "ms_imu": 1976,
+            "pose": 985,
+            "vehicle_monitor": 40
+          },
+          "ego_poses": 3136,
+          "lidar_sweeps": 396,
+          "samples": 41
+        },
+        "fingerprint_sha256": "sha256:588b71319668506ebd85b1d2e428d0ef77686f7cb8f55bcf0f89e8dc5b5d30d5"
+      }
+    },
+    "scene-0757": {
+      "definition_sha256": "sha256:4ddf1fe42e4918c5e32d787a2bd21215fc9864c6ece82c1f51b84a8d220fd7cf",
+      "labels": {
+        "label_count": 604,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:f0e4d85b5ac415e0b74d43f8b4b8733917505cb91e8ecf5d520661909ab60886",
+        "size_bytes": 178779
+      },
+      "recording": {
+        "message_count": 9446,
+        "sha256": "sha256:4fb1609aa8435c746851c208f3628fc4a68be58e42e12381a27aa75cd01d6c8b",
+        "size_bytes": 354735847,
+        "topic_counts": {
+          "/camera/back/camera_info": 235,
+          "/camera/back/image/compressed": 235,
+          "/camera/back_left/camera_info": 238,
+          "/camera/back_left/image/compressed": 238,
+          "/camera/back_right/camera_info": 238,
+          "/camera/back_right/image/compressed": 238,
+          "/camera/front/camera_info": 237,
+          "/camera/front/image/compressed": 237,
+          "/camera/front_left/camera_info": 236,
+          "/camera/front_left/image/compressed": 236,
+          "/camera/front_right/camera_info": 236,
+          "/camera/front_right/image/compressed": 236,
+          "/lidar/top/points": 397,
+          "/mission/status": 2,
+          "/tf": 3155,
+          "/tf_static": 1,
+          "/vehicle/control": 39,
+          "/vehicle/imu": 1981,
+          "/vehicle/odom": 992,
+          "/vehicle/status": 39
+        }
+      },
+      "source": {
+        "blob_bytes": 473078540,
+        "counts": {
+          "camera_frames": 1420,
+          "can_messages": {
+            "ms_imu": 1981,
+            "pose": 992,
+            "vehicle_monitor": 39
+          },
+          "ego_poses": 3155,
+          "lidar_sweeps": 397,
+          "samples": 41
+        },
+        "fingerprint_sha256": "sha256:65d4774128d7ae21145eb772f89813f63ff0b01627da2eacd3fa8e976bb24b14"
+      }
+    },
+    "scene-0796": {
+      "definition_sha256": "sha256:8fc0260b87914929fd0d978c8f865ff0f1b48a6dfa50131e8458936dea3e63b0",
+      "labels": {
+        "label_count": 716,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:7dfd9b03c7fa13190b4fc63e1406930c511100d86c8c4c2eabd26811bd142d5a",
+        "size_bytes": 213430
+      },
+      "recording": {
+        "message_count": 9323,
+        "sha256": "sha256:982a1e9edf51a631c08701b2ccfa020b5b2cc7678ee147f9e149076da9728641",
+        "size_bytes": 420397185,
+        "topic_counts": {
+          "/camera/back/camera_info": 231,
+          "/camera/back/image/compressed": 231,
+          "/camera/back_left/camera_info": 234,
+          "/camera/back_left/image/compressed": 234,
+          "/camera/back_right/camera_info": 231,
+          "/camera/back_right/image/compressed": 231,
+          "/camera/front/camera_info": 234,
+          "/camera/front/image/compressed": 234,
+          "/camera/front_left/camera_info": 235,
+          "/camera/front_left/image/compressed": 235,
+          "/camera/front_right/camera_info": 234,
+          "/camera/front_right/image/compressed": 234,
+          "/lidar/top/points": 392,
+          "/mission/status": 2,
+          "/tf": 3115,
+          "/tf_static": 1,
+          "/vehicle/control": 40,
+          "/vehicle/imu": 1959,
+          "/vehicle/odom": 976,
+          "/vehicle/status": 40
+        }
+      },
+      "source": {
+        "blob_bytes": 528241786,
+        "counts": {
+          "camera_frames": 1399,
+          "can_messages": {
+            "ms_imu": 1959,
+            "pose": 976,
+            "vehicle_monitor": 40
+          },
+          "ego_poses": 3115,
+          "lidar_sweeps": 392,
+          "samples": 40
+        },
+        "fingerprint_sha256": "sha256:4b5a7b4e9ea7fecd0ab2ed4e6edf7e2fc13a30f4164cc0ed384899ad99448306"
+      }
+    },
+    "scene-0916": {
+      "definition_sha256": "sha256:363c7250addbd6f4fc6b30c1f75238b428f517fef37848132fe8d36973365d1f",
+      "labels": {
+        "label_count": 2424,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:06fe0e4af2025df419ae14c4ccc990cdfeda82dc599000743635948e647b7396",
+        "size_bytes": 710751
+      },
+      "recording": {
+        "message_count": 9535,
+        "sha256": "sha256:2f4b4c3f79c3c193814e753edf5e7c5badab6246e202c3ab3257e018312d4a0b",
+        "size_bytes": 381579450,
+        "topic_counts": {
+          "/camera/back/camera_info": 239,
+          "/camera/back/image/compressed": 239,
+          "/camera/back_left/camera_info": 238,
+          "/camera/back_left/image/compressed": 238,
+          "/camera/back_right/camera_info": 240,
+          "/camera/back_right/image/compressed": 240,
+          "/camera/front/camera_info": 240,
+          "/camera/front/image/compressed": 240,
+          "/camera/front_left/camera_info": 240,
+          "/camera/front_left/image/compressed": 240,
+          "/camera/front_right/camera_info": 239,
+          "/camera/front_right/image/compressed": 239,
+          "/lidar/top/points": 399,
+          "/mission/status": 2,
+          "/tf": 3197,
+          "/tf_static": 1,
+          "/vehicle/control": 41,
+          "/vehicle/imu": 1987,
+          "/vehicle/odom": 995,
+          "/vehicle/status": 41
+        }
+      },
+      "source": {
+        "blob_bytes": 494649909,
+        "counts": {
+          "camera_frames": 1436,
+          "can_messages": {
+            "ms_imu": 1987,
+            "pose": 995,
+            "vehicle_monitor": 41
+          },
+          "ego_poses": 3197,
+          "lidar_sweeps": 399,
+          "samples": 41
+        },
+        "fingerprint_sha256": "sha256:452daf61a8e99cf0187b0e2db6fb32c2ff3ddd37afb572b56772d9c05fa5e338"
+      }
+    },
+    "scene-1077": {
+      "definition_sha256": "sha256:1ad1832f1079f2459389158472ec3d08559ba0e5e8d889a782ca102df1bf0d95",
+      "labels": {
+        "label_count": 909,
+        "sample_count": 41,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:2ec4c5e18335ba0362482194bfb6e01f2568d93eaca449f9cc6d61c76daf7653",
+        "size_bytes": 264436
+      },
+      "recording": {
+        "message_count": 9493,
+        "sha256": "sha256:8c3c95a4306e95a4422b8a6a4ce663bdc8fcedfdcaea60f517870d38c37b3892",
+        "size_bytes": 493268068,
+        "topic_counts": {
+          "/camera/back/camera_info": 233,
+          "/camera/back/image/compressed": 233,
+          "/camera/back_left/camera_info": 238,
+          "/camera/back_left/image/compressed": 238,
+          "/camera/back_right/camera_info": 239,
+          "/camera/back_right/image/compressed": 239,
+          "/camera/front/camera_info": 240,
+          "/camera/front/image/compressed": 240,
+          "/camera/front_left/camera_info": 237,
+          "/camera/front_left/image/compressed": 237,
+          "/camera/front_right/camera_info": 237,
+          "/camera/front_right/image/compressed": 237,
+          "/lidar/top/points": 400,
+          "/mission/status": 2,
+          "/tf": 3177,
+          "/tf_static": 1,
+          "/vehicle/control": 41,
+          "/vehicle/imu": 1991,
+          "/vehicle/odom": 992,
+          "/vehicle/status": 41
+        }
+      },
+      "source": {
+        "blob_bytes": 608723964,
+        "counts": {
+          "camera_frames": 1424,
+          "can_messages": {
+            "ms_imu": 1991,
+            "pose": 992,
+            "vehicle_monitor": 41
+          },
+          "ego_poses": 3177,
+          "lidar_sweeps": 400,
+          "samples": 41
+        },
+        "fingerprint_sha256": "sha256:5eee31f6bf5a9b73065abab3cd7722668a73182e4cfb0d30abb5bac5805a5f91"
+      }
+    },
+    "scene-1094": {
+      "definition_sha256": "sha256:bb17fc18f4666683a3e8454271a4f10fe01467fa3e889011f686aee2bd7b74b7",
+      "labels": {
+        "label_count": 1776,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:061973408bc28de61efb46311dd07d4d16fda6528505156701d8f6a360249e94",
+        "size_bytes": 532549
+      },
+      "recording": {
+        "message_count": 9290,
+        "sha256": "sha256:4ddbe0de51236b850289d4f96fa8838377c22d92451616de45066448a66873c7",
+        "size_bytes": 516203707,
+        "topic_counts": {
+          "/camera/back/camera_info": 233,
+          "/camera/back/image/compressed": 233,
+          "/camera/back_left/camera_info": 229,
+          "/camera/back_left/image/compressed": 229,
+          "/camera/back_right/camera_info": 235,
+          "/camera/back_right/image/compressed": 235,
+          "/camera/front/camera_info": 232,
+          "/camera/front/image/compressed": 232,
+          "/camera/front_left/camera_info": 232,
+          "/camera/front_left/image/compressed": 232,
+          "/camera/front_right/camera_info": 234,
+          "/camera/front_right/image/compressed": 234,
+          "/lidar/top/points": 391,
+          "/mission/status": 2,
+          "/tf": 3111,
+          "/tf_static": 1,
+          "/vehicle/control": 40,
+          "/vehicle/imu": 1948,
+          "/vehicle/odom": 967,
+          "/vehicle/status": 40
+        }
+      },
+      "source": {
+        "blob_bytes": 627963701,
+        "counts": {
+          "camera_frames": 1395,
+          "can_messages": {
+            "ms_imu": 1948,
+            "pose": 967,
+            "vehicle_monitor": 40
+          },
+          "ego_poses": 3111,
+          "lidar_sweeps": 391,
+          "samples": 40
+        },
+        "fingerprint_sha256": "sha256:d3a6644d70236ff7117d92045b4cd763bbabb7100dd3337bfecc75f0548c9737"
+      }
+    },
+    "scene-1100": {
+      "definition_sha256": "sha256:6eb73136db4a4192a05f22541019a14d632e05690c99adc112dc9a2cb2afa9d6",
+      "labels": {
+        "label_count": 956,
+        "sample_count": 40,
+        "schema": "sceneops.reference_labels/1",
+        "sha256": "sha256:a57bbd2a129392926e5ddbd9b65b99520002e76fe8041c0ea2bda663a4297dd6",
+        "size_bytes": 286540
+      },
+      "recording": {
+        "message_count": 9307,
+        "sha256": "sha256:fb2dcacc6e667bc101e0cce583df0e0015828965586a8be3e40cea44df93a291",
+        "size_bytes": 555970139,
+        "topic_counts": {
+          "/camera/back/camera_info": 234,
+          "/camera/back/image/compressed": 234,
+          "/camera/back_left/camera_info": 231,
+          "/camera/back_left/image/compressed": 231,
+          "/camera/back_right/camera_info": 234,
+          "/camera/back_right/image/compressed": 234,
+          "/camera/front/camera_info": 232,
+          "/camera/front/image/compressed": 232,
+          "/camera/front_left/camera_info": 233,
+          "/camera/front_left/image/compressed": 233,
+          "/camera/front_right/camera_info": 233,
+          "/camera/front_right/image/compressed": 233,
+          "/lidar/top/points": 391,
+          "/mission/status": 2,
+          "/tf": 3118,
+          "/tf_static": 1,
+          "/vehicle/control": 40,
+          "/vehicle/imu": 1947,
+          "/vehicle/odom": 974,
+          "/vehicle/status": 40
+        }
+      },
+      "source": {
+        "blob_bytes": 670175047,
+        "counts": {
+          "camera_frames": 1397,
+          "can_messages": {
+            "ms_imu": 1947,
+            "pose": 974,
+            "vehicle_monitor": 40
+          },
+          "ego_poses": 3118,
+          "lidar_sweeps": 391,
+          "samples": 40
+        },
+        "fingerprint_sha256": "sha256:93469935ddbd483cd9ae5ae2d6c1da173eaf347d2b06e5a26fcea14199e0367d"
+      }
+    }
+  },
+  "schema": "sceneops.reference_corpus_lock/1",
+  "tool": {
+    "identity_sha256": "sha256:f495de9b9fe220f5b31c4e40838ddadd9dc51b40a73216ce4b7444d0b561e524",
+    "name": "sceneops-dataset-acquisition",
+    "packages": {
+      "mcap": "1.5.0",
+      "numpy": "1.26.4",
+      "nuscenes-devkit": "1.2.0",
+      "rosbags": "0.10.11",
+      "sceneops-dataset-acquisition": "0.1.0",
+      "zstandard": "0.25.0"
+    },
+    "python": "3.11",
+    "version": "0.1.0"
+  }
+}

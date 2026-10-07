@@ -27,8 +27,7 @@
     }
   ],
   "segmentation": {
-    "policy": "fixed_duration",
-    "clock": "sensor.header_stamp",
-    "duration_ns": 8000000000
+    "policy": "whole_recording",
+    "clock": "sensor.header_stamp"
   }
 }

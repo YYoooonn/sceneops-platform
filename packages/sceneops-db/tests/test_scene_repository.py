@@ -11,9 +11,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from sceneops_core.scenes.testing import recording_source
-from sceneops_db.models.artifacts import ArtifactModel
-from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
-from sceneops_db.models.scenes import SceneModel
+from sceneops_db.models.datasets import DatasetVersionModel
 from sceneops_db.postgres.datasets import PostgresDatasetVersionRepository
 from sceneops_db.postgres.scenes import PostgresSceneRepository
 from sceneops_db.session import get_async_sessionmaker
@@ -224,51 +222,33 @@ async def test_scenes_persist_across_sessions_and_block_dataset_version_deletion
     sessionmaker = get_async_sessionmaker()
     dataset_id = unique_id("ds")
     source = recording_source(robot_run_id=unique_id("run"), unit_key="segment-000000")
-    try:
-        async with sessionmaker() as session:
-            await seed_dataset_version(session, dataset_id=dataset_id, version="v1")
-            await seed_dataset_version(session, dataset_id=dataset_id, version="v2")
-            repo = PostgresSceneRepository(session)
-            a = await scene_record_for(session, dataset_id=dataset_id, source=source)
-            b = await scene_record_for(
-                session, dataset_id=dataset_id, dataset_version="v2", source=source
-            )
-            await repo.insert(a)
-            await repo.insert(b)
-            await session.commit()
-        assert a.scene_id != b.scene_id
+    async with sessionmaker() as session:
+        await seed_dataset_version(session, dataset_id=dataset_id, version="v1")
+        await seed_dataset_version(session, dataset_id=dataset_id, version="v2")
+        repo = PostgresSceneRepository(session)
+        a = await scene_record_for(session, dataset_id=dataset_id, source=source)
+        b = await scene_record_for(
+            session, dataset_id=dataset_id, dataset_version="v2", source=source
+        )
+        await repo.insert(a)
+        await repo.insert(b)
+        await session.commit()
+    assert a.scene_id != b.scene_id
 
-        async with sessionmaker() as session:
-            repo = PostgresSceneRepository(session)
-            assert (await repo.get(a.scene_id)).dataset_version == "v1"
-            assert (await repo.get(b.scene_id)).dataset_version == "v2"
+    async with sessionmaker() as session:
+        repo = PostgresSceneRepository(session)
+        assert (await repo.get(a.scene_id)).dataset_version == "v1"
+        assert (await repo.get(b.scene_id)).dataset_version == "v2"
 
-        async with sessionmaker() as session:
-            with pytest.raises(IntegrityError, match="fk_scenes_dataset_version"):
-                await session.execute(
-                    delete(DatasetVersionModel).where(
-                        DatasetVersionModel.dataset_id == dataset_id
-                    )
-                )
-                await session.flush()
-            await session.rollback()
-    finally:
-        async with sessionmaker() as session:
-            await session.execute(
-                delete(SceneModel).where(SceneModel.dataset_id == dataset_id)
-            )
-            await session.execute(
-                delete(ArtifactModel).where(ArtifactModel.dataset_id == dataset_id)
-            )
+    async with sessionmaker() as session:
+        with pytest.raises(IntegrityError, match="fk_scenes_dataset_version"):
             await session.execute(
                 delete(DatasetVersionModel).where(
                     DatasetVersionModel.dataset_id == dataset_id
                 )
             )
-            await session.execute(
-                delete(DatasetModel).where(DatasetModel.dataset_id == dataset_id)
-            )
-            await session.commit()
+            await session.flush()
+        await session.rollback()
 
 
 @pytest.mark.asyncio

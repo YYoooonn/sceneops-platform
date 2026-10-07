@@ -69,7 +69,6 @@ async def _publish_and_register(worker_context, publish, unique_id):
     return robot_id, run_id, registration
 
 
-@pytest.mark.usefixtures("cleanup_minio_prefix")
 async def test_resolves_registered_minio_recording_to_verified_local_copy(
     worker_context, publish, unique_id
 ) -> None:
@@ -103,7 +102,6 @@ async def test_resolves_registered_minio_recording_to_verified_local_copy(
     assert _sha256(stored) == recording_artifact.checksum
 
 
-@pytest.mark.usefixtures("cleanup_minio_prefix")
 async def test_concurrent_resolutions_of_same_run_do_not_collide(
     worker_context, worker_settings, publish, unique_id
 ) -> None:
@@ -133,7 +131,6 @@ async def test_concurrent_resolutions_of_same_run_do_not_collide(
     assert not path_b.exists()
 
 
-@pytest.mark.usefixtures("cleanup_minio_prefix")
 async def test_tampered_minio_object_fails_checksum_verification(
     worker_context, publish, unique_id
 ) -> None:
@@ -152,7 +149,6 @@ async def test_tampered_minio_object_fails_checksum_verification(
             pytest.fail("must not yield unverified bytes")
 
 
-@pytest.mark.usefixtures("cleanup_minio_prefix")
 async def test_deleted_minio_object_fails_as_missing_bytes(
     worker_context, publish, unique_id
 ) -> None:
@@ -168,7 +164,6 @@ async def test_deleted_minio_object_fails_as_missing_bytes(
             pytest.fail("must not yield")
 
 
-@pytest.mark.usefixtures("cleanup_minio_prefix")
 async def test_ingest_robot_states_consumes_minio_backed_run_by_id(
     worker_context, publish, unique_id
 ) -> None:

@@ -70,8 +70,9 @@ the v1 builder:
   still reads its own fixed topic set and `RobotStateRecord` columns
   (`steering` / `throttle` / `brake`, ...) — a derived table, not canonical
   Episode data;
-- `make e2e-batch-canonical` is the Episode (and Scene) canonicalization
-  journey and `make e2e-episode-learning` the aligned / export journey.
+- Episode (and Scene) canonicalization is verified by the golden reference
+  contract and the recording verticals; `make e2e-episode-learning` is the
+  aligned / export journey.
 
 ## 3. `DatasetVersionStatus`: intentionally minimal
 
@@ -111,9 +112,18 @@ presence doesn't imply an export or deprecation workflow exists.
 - Scene comparison, auto-labeling, scene package export and dataset export
   are not implemented.
 - Operations and leaderboard APIs exist; there's no dedicated web UI.
+- The API commits a control-plane write in the exit code of its request-scoped session
+  dependency, which FastAPI runs after the response has started. A client that acts on a
+  response immediately (`POST /pipelines/runs`, then `POST .../execute`) can in principle
+  read before that commit and get a 404. The ordering is pinned as an expected failure
+  (`apps/api/tests/platform/test_session_commit_timing.py`); about 1,500 create-then-execute
+  pairs against a real runtime did not provoke the failure, so a 404 seen by the
+  infrastructure tests is reported together with a re-read of the run
+  (`Api.dispatched`).
 - The Airflow pipeline backend is a per-task DAG proof of concept: one DAG per
   pipeline type, serial tasks, the API backend chosen at process start. Its
-  acceptance (`make test-infrastructure-airflow`) is opt-in.
+  acceptance (`make test-infrastructure SUITE=airflow`) is opt-in and runs on a private
+  Airflow in a disposable runtime.
 - `export_analytics_snapshot` covers Scene only; aligned Episode revisions have their own Parquet export
   (`EXPORT_LEARNING_DATA` -> `learning_episodes/steps/signals.parquet`,
   scoped by `(dataset_id, dataset_version, export_id)`, not by
@@ -170,8 +180,8 @@ implements or half-implements them, so there's nothing to document as
 - Durable recovery of in-flight capture sessions across a restart, and Kafka
   message sizes beyond the stock ~1 MB limit (streaming-transport §14, §26,
   §33). Nothing supervises or restarts one-shot capture: a capture killed before
-  finalize is re-run by an operator while Kafka still retains its records, and the
-  repository configures no broker retention.
+  finalize is re-run by an operator while Kafka still retains its records (the repository
+  configures no broker retention; the local broker's telemetry topic reports 7 days).
 - A capture that triggers its own publication and registration. The hand-off is
   recoverable, not triggered by capture: a finalized capture with a receipt is
   published by `publish-pending`, and a published manifest is registered,

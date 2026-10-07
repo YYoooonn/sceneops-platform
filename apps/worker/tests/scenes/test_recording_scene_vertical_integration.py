@@ -17,7 +17,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import delete
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactOwnerType, ArtifactRef
 from sceneops_core.common.ids import (
@@ -32,10 +31,6 @@ from sceneops_core.jobs.schemas import (
     ValidateSceneJobParams,
 )
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
-from sceneops_db.models.artifacts import ArtifactModel
-from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
-from sceneops_db.models.robots import RobotModel, RobotRunModel
-from sceneops_db.models.scenes import SceneModel, SceneRunRecordModel
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
@@ -50,8 +45,6 @@ from sceneops_worker.scenes.registration import SceneRegistrationConflictError
 
 sys.path.insert(0, str(Path(__file__).parent))
 from recording_fixture import build_config, default_recording  # noqa: E402
-
-pytestmark = pytest.mark.usefixtures("cleanup_minio_prefix")
 
 
 def _job(job_id: str):
@@ -157,38 +150,6 @@ class _Vertical:
             replace=replace,
         )
 
-    async def cleanup(self) -> None:
-        async with get_async_sessionmaker()() as session:
-            await session.execute(
-                delete(SceneRunRecordModel).where(
-                    SceneRunRecordModel.dataset_id == self.dataset_id
-                )
-            )
-            await session.execute(
-                delete(SceneModel).where(SceneModel.dataset_id == self.dataset_id)
-            )
-            await session.execute(
-                delete(RobotRunModel).where(RobotRunModel.run_id == self.run_id)
-            )
-            await session.execute(
-                delete(ArtifactModel).where(
-                    (ArtifactModel.dataset_id == self.dataset_id)
-                    | (ArtifactModel.owner_id == self.run_id)
-                )
-            )
-            await session.execute(
-                delete(RobotModel).where(RobotModel.robot_id == self.robot_id)
-            )
-            await session.execute(
-                delete(DatasetVersionModel).where(
-                    DatasetVersionModel.dataset_id == self.dataset_id
-                )
-            )
-            await session.execute(
-                delete(DatasetModel).where(DatasetModel.dataset_id == self.dataset_id)
-            )
-            await session.commit()
-
 
 @pytest.fixture()
 async def vertical(
@@ -198,7 +159,6 @@ async def vertical(
     env = _Vertical(worker_settings, unique_id)
     await env.seed(default_recording().write(tmp_path / "r.mcap").read_bytes())
     yield env
-    await env.cleanup()
     dependencies_module._artifact_store = None
 
 

@@ -29,9 +29,11 @@ either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + Robo
            +-> recording reader -> build_recording_scenes -> ... (RECORDING_SCENE_BUILDING)
 ```
 
-The same source acquired either way yields semantically equivalent recordings
-and, with source-timestamp build configurations, equivalent canonical Scenes
-and Episodes (ADR-007 §29.12, §32; `make e2e-streaming-equivalence`).
+A recording replayed through the streaming path yields a semantically equivalent
+recording and, with source-timestamp build configurations, equivalent canonical
+Scenes and Episodes (ADR-007 §29.12, §32; `make e2e-streaming-equivalence`
+compares the reference contract's streamed RobotRun of a locked MCAP with the
+imported one, read-only).
 
 The telemetry projection and canonical Episode / Scene building read the
 same resolved recording independently. Canonical Episodes never read the
@@ -92,7 +94,7 @@ Two readers consume a resolved recording (§3.1):
   [Scene domain](../architecture/scene-domain.md) §6.
 
 Storage: external inputs follow `InputSourceSettings`' independent-root
-convention (`/data/raw/...`); a published recording lives under
+convention (`/data/inputs/...`); a published recording lives under
 `{artifact root}/robot_runs/{run_id}/` (see
 [Storage layout](../architecture/storage-layout.md) §3).
 
@@ -490,9 +492,8 @@ profile `acquisition`). They are data-plane steps outside the API.
 `recording-publisher` runs the publisher from the worker image with
 ArtifactStore settings only. It receives no database settings. Recording
 bytes never pass through the API. Registration and everything after it go
-through FastAPI. `make e2e-batch-canonical` exercises this path from the
-host with only Docker Compose, curl and jq, and `make canonical-bootstrap`
-runs it as developer orchestration.
+through FastAPI. `make canonical-bootstrap` runs this path as developer
+orchestration from the host with only Docker Compose, curl and jq.
 
 The tool stops at the MCAP. It never publishes, registers or calls
 SceneOps. Its channel mapping, timing policy and calibration representation
@@ -552,18 +553,20 @@ FastAPI control plane:
 
 ```bash
 make local-up
-make e2e-batch-canonical             # nuScenes -> acquisition -> RobotRun -> Scenes + Episodes
-make canonical-bootstrap             # the same path as a reusable L1/L2 baseline
+make canonical-bootstrap             # prepared recordings -> RobotRun -> Scenes + Episodes (reusable L1/L2 baseline)
 make e2e-episode-learning            # Episodes -> AlignedEpisodes -> learning export -> LeRobot round trip
 ```
 
-The streaming vertical (replay -> ROS2 -> bridge -> Kafka -> capture ->
-RobotRun, then Scenes and Episodes equivalent to the batch acquisition):
+The streaming vertical (locked reference MCAP -> replay -> ROS2 -> bridge -> Kafka
+-> capture -> publish-pending -> reconcile -> RobotRun, then Scenes and Episodes
+equivalent to the Recording Import baseline's; needs `make reference-data-bootstrap` once) is the
+reference contract's Streaming Acquisition baseline, and its equivalence with Recording
+Import is checked read-only:
 
 ```bash
 make local-up
-make streaming-up
-make e2e-streaming-equivalence       # containers + FastAPI only; no host uv, PostgreSQL or MinIO access
+make reference-contract-bootstrap    # (once) both baselines; replays through ROS 2 -> Kafka -> capture
+make e2e-streaming-equivalence       # reads the two registered RobotRuns of a fixture; creates nothing
 ```
 
 Or fully manually (batch):

@@ -144,3 +144,40 @@ def test_cli_converts_and_reports(dataroot: Path, tmp_path: Path, capsys) -> Non
 
     assert cli_main(argv) == 1  # write-once
     assert "refusing to overwrite" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--replay"],
+        ["--rate", "2"],
+        ["--wait-subscribers-seconds", "5"],
+    ],
+)
+def test_nuscenes_command_has_no_replay_surface(
+    dataroot: Path, extra: list[str], capsys
+) -> None:
+    """The only runtime replay source is a locked reference MCAP; a raw dataset
+    converts to an MCAP and never replays directly."""
+    argv = [
+        "nuscenes",
+        "--dataroot",
+        str(dataroot),
+        "--source-unit",
+        "scene-0001",
+        "--output",
+        "unused.mcap",
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main([*argv, *extra])
+    assert excinfo.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
+
+
+def test_nuscenes_command_requires_an_output(dataroot: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main(
+            ["nuscenes", "--dataroot", str(dataroot), "--source-unit", "scene-0001"]
+        )
+    assert excinfo.value.code == 2
+    assert "--output" in capsys.readouterr().err

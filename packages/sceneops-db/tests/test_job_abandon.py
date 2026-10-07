@@ -3,7 +3,8 @@ UPDATE that makes abandoning a stalled Job single-winner. Real PostgreSQL.
 
 The single-session tests live in the test's own rolled-back transaction. The
 concurrency test needs two connections that each see the other's commit, so it
-commits its own uniquely-identified rows and deletes them afterwards.
+commits its own uniquely-identified row into the disposable database of
+`make test-integration`.
 """
 
 from __future__ import annotations
@@ -12,11 +13,9 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import delete
 
 from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
-from sceneops_db.models.jobs import JobModel
 from sceneops_db.postgres.jobs import PostgresJobRepository
 from sceneops_db.session import get_async_sessionmaker
 
@@ -162,13 +161,8 @@ async def test_concurrent_abandoners_have_exactly_one_winner(unique_id):
             await session.commit()
             return won is not None
 
-    try:
-        results = await asyncio.gather(*(attempt() for _ in range(10)))
-        assert results.count(True) == 1
-        async with sessionmaker() as session:
-            stored = await PostgresJobRepository(session).get(job_id)
-        assert stored.status == JobStatus.FAILED
-    finally:
-        async with sessionmaker() as session:
-            await session.execute(delete(JobModel).where(JobModel.job_id == job_id))
-            await session.commit()
+    results = await asyncio.gather(*(attempt() for _ in range(10)))
+    assert results.count(True) == 1
+    async with sessionmaker() as session:
+        stored = await PostgresJobRepository(session).get(job_id)
+    assert stored.status == JobStatus.FAILED

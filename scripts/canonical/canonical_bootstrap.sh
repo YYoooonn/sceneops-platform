@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # canonical_bootstrap.sh — developer/test orchestration (not a Pipeline) that
-# builds the reproducible L1/L2 baseline on a fresh or existing stack:
+# builds the reproducible L1/L2 baseline of a reference-corpus selection on a
+# fresh or existing stack:
 #
-#   dataset fixture (nuScenes mini, read-only)
-#     -> dataset-acquisition container      finalized sensor-bearing MCAP
-#     -> recording-publisher container      L1 conformance + publication
-#     -> POST /robot-runs:register          RobotRun
+#   reference corpus (corpus.json + corpus.lock.json), prepared recordings
+#     -> reference resolve                  fixtures + their verified, locked
+#                                           recordings (nothing is converted)
+#     -> recording-publisher container      publish, read in place from the
+#                                           read-only reference mount
+#     -> POST /robot-runs:register          one RobotRun per fixture, each pinning
+#                                           exactly the locked recording sha256
 #     -> recording_scene_building           canonical Scenes, validated, profiled
 #     -> recording_episode_building         canonical Episodes, validated, profiled
 #     -> baseline_verify                    read-only check through the API
@@ -14,23 +18,36 @@
 # predictions, evaluations or learning exports. Those are L3 workflows
 # (make e2e-scene-ml / e2e-episode-learning) that run on top of a baseline.
 #
-# create-or-verify: a RobotRun that is already registered is reused (not
-# re-acquired); a Scene / Episode build over an unchanged scope converges on
-# the registered revisions; a changed producer or configuration fails loudly at
-# registration instead of replacing canonical membership. Recovery from a
-# mismatched baseline is an explicit `make local-reset` + rebuild.
+# Selection: REFERENCE_SCOPE (default smoke-1; nuscenes-mini-full-10) or FIXTURE
+# (one fixture) chooses which fixtures are acted on. Scene and Episode builds run
+# independently per RobotRun with the build configurations of config/baselines/;
+# output counts are whatever each fixture yields.
 #
-# Identity (all overridable): BASELINE_ID (default `canonical`) names the
-# robot, the RobotRuns (run-<BASELINE_ID>-<unit>) and the DatasetVersion
-# (sceneops-<BASELINE_ID>/baseline). The journeys that mutate their scope use a
-# unique BASELINE_ID per run; the default baseline is the persistent one.
+# create-or-verify: a RobotRun that is already registered is reused (and must pin
+# the locked recording); a RobotRun whose Scenes and Episodes are all there,
+# validated, profiled and ready is reused as it is, with no build pipeline run
+# over it; an incomplete one converges on the registered revisions; a changed
+# producer or configuration fails loudly at registration instead of replacing
+# canonical membership. The cached recordings are hashed against the lock only
+# when a RobotRun has to be published. Recovery from a mismatched baseline is an
+# explicit `make local-reset` + rebuild.
+#
+# Identity: the golden reference contract's recording_import baseline
+# (`ref-nuscenes-mini-full-10`: robot, RobotRuns run-<BASELINE_ID>-<fixture>,
+# DatasetVersion sceneops-<BASELINE_ID>/baseline) whatever the selection: smoke-1
+# is scene-0061 of that baseline, not another one. A different BASELINE_ID names
+# a baseline of non-contract RobotRuns and needs a disposable runtime
+# (DISPOSABLE_RUNTIME=1). DATASET_ID may name another DatasetVersion: the
+# Scenes and Episodes of the (contract) RobotRuns are then built into it and no
+# RobotRun is created.
 #
 # stdout: one JSON summary (baseline_verify). Progress goes to stderr, so
 #   BASELINE="$(scripts/canonical/canonical_bootstrap.sh)"
 # captures the summary.
 #
-# Prerequisites: `make local-up`; `make acquisition-image`; data/raw/nuscenes
-# with v1.0-mini and can_bus (ACQUISITION_NUSCENES_ROOT overrides).
+# Prerequisites: `make local-up`; the reference recordings prepared by
+# `make reference-data-bootstrap REFERENCE_SCOPE=<scope>`; the dataset-acquisition
+# image (the resolver) and the worker image (the publisher).
 
 set -euo pipefail
 
@@ -42,55 +59,39 @@ source "$SCRIPT_DIR/baseline_lib.sh"
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 
-log() { echo "$@" >&2; }
-
-# build_scope <pipeline-type> <build-task> <register-task> <profile-task> <config>
-# One pipeline run over one RobotRun's recording scope.
-build_scope() {
-  local type="$1" build_task="$2" register_task="$3" profile_task="$4" run_id="$5" config="$6"
-  local params pipeline
-  params="$(jq -cn --arg b "$build_task" --arg r "$register_task" --arg p "$profile_task" \
-    --arg run "$run_id" --argjson config "$config" '{
-      ($b): {robot_run_id: $run, build_config: $config},
-      ($r): {replace: false},
-      ($p): {triggered: true}}')"
-  pipeline="$(run_pipeline "$API_BASE_URL" "$type" "$DATASET_ID" "$DATASET_VERSION" "$params")"
-  assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$pipeline")" \
-    "$type for $run_id should succeed" "$API_BASE_URL" "$pipeline" >&2
-  log "  ✅  $type ($run_id): $pipeline"
-}
-
-log "=== canonical baseline '$BASELINE_ID': $DATASET_ID/$DATASET_VERSION from $SOURCE_UNITS ==="
+log "=== canonical baseline '$BASELINE_ID': $DATASET_ID/$DATASET_VERSION from $REFERENCE_CORPUS (${FIXTURE:-$REFERENCE_SCOPE}) ==="
 require_api "$API_BASE_URL"
+baseline_guard_identity
 
-for unit in $SOURCE_UNITS; do
-  run_id="$(baseline_run_id "$unit")"
-  if api_get "$API_BASE_URL" "/robot-runs/$run_id" >/dev/null 2>&1; then
-    log "--- RobotRun $run_id is registered: reused"
-    continue
-  fi
-  log "--- $unit -> acquisition container -> MCAP -> L1 conformance -> publish -> register"
-  trap 'remove_recording "$run_id"' EXIT
-  summary="$(acquire_recording "$SOURCE_VERSION" "$unit" "$run_id")"
-  log "  $(echo "$summary" | jq -c '{sha256, size_bytes, message_count}')"
-  check_recording "$run_id" || fail "recording of $unit is not L1-conformant"
-  publication="$(publish_recording "$run_id" "$ROBOT_ID" file)"
-  registration="$(register_robot_run "$API_BASE_URL" "$(echo "$publication" | jq -r '.manifest_uri')")"
-  assert_job_succeeded "$registration" "REGISTER_ROBOT_RUN for $run_id should succeed" >&2
-  remove_recording "$run_id"
-  trap - EXIT
-  log "  ✅  RobotRun $run_id registered"
+log "--- reference corpus: locked facts of the selection"
+baseline_resolve lock-only
+if ! baseline_all_registered; then
+  log "--- a RobotRun has to be published: cached recordings verified against the lock"
+  baseline_resolve full
+fi
+log "  $(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id]')"
+
+# Collected into an array first: a docker container inside a `while read` loop
+# would consume the remaining fixtures from stdin. (No mapfile: the host bash may
+# be 3.2.)
+fixtures=()
+while IFS= read -r fixture; do fixtures+=("$fixture"); done < <(echo "$BASELINE_FIXTURES" | jq -c '.[]')
+for fixture in "${fixtures[@]}"; do
+  baseline_register_fixture "$fixture"
 done
 
-upsert_dataset "$API_BASE_URL" "$DATASET_ID" "Canonical baseline $BASELINE_ID" >/dev/null
-upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" >/dev/null
+baseline_ensure_dataset "Canonical baseline $BASELINE_ID"
 
-for unit in $SOURCE_UNITS; do
-  run_id="$(baseline_run_id "$unit")"
+for id in $(echo "$BASELINE_FIXTURES" | jq -r '.[].fixture_id'); do
+  run_id="$(baseline_run_id "$id")"
+  if baseline_fixture_complete "$run_id"; then
+    log "--- Scenes and Episodes of $run_id are built and ready: reused"
+    continue
+  fi
   log "--- canonical Scenes and Episodes of $run_id"
-  build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
+  baseline_build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
     "$run_id" "$(scene_build_config)"
-  build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
+  baseline_build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
     "$run_id" "$(episode_build_config)"
 done
 

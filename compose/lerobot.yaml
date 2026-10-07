@@ -3,7 +3,7 @@
 # IntegrationResult contract for operation=EXPORT/format=lerobot. It has its
 # own dependency lock (lerobot needs numpy>=2), no database client and no
 # SceneOps worker code; ArtifactStore settings come from the environment and
-# the request is passed as a file under ./data.
+# the request is passed as a file under ./data/runs.
 #
 #   docker compose --env-file .env.local --profile lerobot run --rm lerobot-integration \
 #     --request-file /data/runs/<run>/request.json --output-file /data/runs/<run>/result.json
@@ -18,7 +18,9 @@ services:
     env_file:
       - .env.local
     volumes:
-      - ./data:/data
+      - ./data/artifacts:/data/artifacts
+      # IntegrationRequest / IntegrationResult files and the export root.
+      - ./data/runs:/data/runs
       - ./scripts:/workspace/scripts:ro
     profiles:
       - lerobot

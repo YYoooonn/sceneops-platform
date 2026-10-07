@@ -118,3 +118,34 @@ def test_cli_compare_exit_status(tmp_path: Path, capsys) -> None:
     assert cli_main(["compare", "--first", str(a), "--second", str(same)]) == 0
     assert json.loads(capsys.readouterr().out)["equivalent"] is True
     assert cli_main(["compare", "--first", str(a), "--second", str(other)]) == 1
+
+
+def test_contents_compare_without_files_so_perturbations_are_detected(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from collections import Counter
+
+    from sceneops_integrations.recording import (
+        compare_recording_contents,
+        semantic_recording_content,
+    )
+
+    path = write(tmp_path / "a.mcap", [("/a", b"1", 10, 1), ("/a", b"2", 20, 2)])
+    content = semantic_recording_content(path)
+    assert compare_recording_contents(content, content).equivalent
+
+    channel = content.channels["/a"]
+    dropped = replace(
+        content,
+        channels={
+            "/a": replace(
+                channel,
+                message_count=1,
+                payloads=Counter(list(channel.payloads.elements())[:1]),
+            )
+        },
+    )
+    report = compare_recording_contents(content, dropped)
+    assert not report.equivalent
+    assert "message multisets differ" in report.differences[0]

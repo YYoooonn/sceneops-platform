@@ -40,7 +40,7 @@ class TestArtifactSettings:
 class TestInputSourceSettings:
     def test_root_uri_default(self):
         s = InputSourceSettings()
-        assert s.root_uri == "/data/raw"
+        assert s.root_uri == "/data/inputs"
 
     def test_backend_default(self):
         s = InputSourceSettings()

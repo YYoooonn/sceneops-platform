@@ -21,6 +21,7 @@ from .conformance import (
 )
 from .equivalence import (
     EquivalenceReport,
+    compare_recording_contents,
     compare_recordings,
     semantic_recording_content,
 )
@@ -72,6 +73,7 @@ __all__ = [
     "CaptureReceiptMissingError",
     "ChannelReport",
     "EquivalenceReport",
+    "compare_recording_contents",
     "compare_recordings",
     "semantic_recording_content",
     "ConformanceReport",

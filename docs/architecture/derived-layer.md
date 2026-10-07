@@ -38,10 +38,10 @@ the record's kind, owner and checksum and hashing the bytes
 `Box3DLabel`s. An `ObservationAnchor` is
 `(robot_run_id, channel, source_clock, timestamp_ns)`.
 
-`IMPORT_LABELS` reads an adapter-produced document from the raw-source store,
+`IMPORT_LABELS` reads an adapter-produced document from the input store,
 checks that the anchored RobotRuns are registered, and registers a revision.
 Labels never enter a Scene, Episode or recording. Source-format adapters live
-outside the platform (`dataset-acquisition nuscenes-labels`).
+outside the platform (`dataset-acquisition reference render-labels`).
 
 ## 3. Scene sample views
 

@@ -23,11 +23,11 @@ Usage:
         --until-run-end --idle-timeout-seconds 60
     python3 /workspace/capture/cli.py \\
         --robot-id ROBOT --robot-run-id RUN \\
-        --output-root /data/captured/mcap \\
+        --output-root /recordings/capture \\
         --max-messages 2915
     python3 /workspace/capture/cli.py \\
         --robot-id ROBOT --robot-run-id RUN \\
-        --output-root /data/captured/mcap \\
+        --output-root /recordings/capture \\
         --idle-timeout-seconds 10.0
 """
 

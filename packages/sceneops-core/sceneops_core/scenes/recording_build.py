@@ -9,7 +9,8 @@ recording means as canonical Scenes, and nothing else:
     frames         which source frames play the canonical world / ego roles
     calibration    which topics carry static transforms
     poses          which source transforms are poses
-    segmentation   how the recording is cut into Scenes, on one declared clock
+    segmentation   how the recording is cut into Scenes, on one declared clock:
+                   one Scene for the whole recording, or fixed-duration windows
 
 It names topics, frames and clocks verbatim and never a source format: the
 same configuration applies to a recording from a real robot, a replayed
@@ -163,14 +164,28 @@ class PoseSourceConfig(_ConfigModel):
     time: ObservationTimePolicy
 
 
+class WholeRecordingSegmentation(_ConfigModel):
+    """One Scene: ``[earliest, latest + 1)`` of every included observation and
+    pose on ``clock``. ``unit_key`` is ``recording``."""
+
+    policy: Literal["whole_recording"]
+    clock: SourceClock
+
+
 class FixedDurationSegmentation(_ConfigModel):
     """Half-open windows of ``duration_ns`` on ``clock``, starting at the
     earliest included observation's timestamp on that clock. A window with
     no observation is not a Scene. ``unit_key`` is ``segment-<index>``."""
 
-    policy: Literal["fixed_duration"] = "fixed_duration"
+    policy: Literal["fixed_duration"]
     clock: SourceClock
     duration_ns: StrictInt = Field(ge=1)
+
+
+SceneSegmentation = Annotated[
+    WholeRecordingSegmentation | FixedDurationSegmentation,
+    Field(discriminator="policy"),
+]
 
 
 class RecordingSceneBuildConfig(_ConfigModel):
@@ -178,7 +193,7 @@ class RecordingSceneBuildConfig(_ConfigModel):
     frames: CoordinateFrameRoles
     calibration: CalibrationSources = Field(default_factory=CalibrationSources)
     poses: list[PoseSourceConfig] = Field(default_factory=list)
-    segmentation: FixedDurationSegmentation
+    segmentation: SceneSegmentation
 
     @model_validator(mode="after")
     def _check_consistency(self) -> RecordingSceneBuildConfig:
@@ -240,5 +255,7 @@ __all__ = [
     "PoseSourceConfig",
     "RecordingSceneBuildConfig",
     "SceneChannelConfig",
+    "SceneSegmentation",
     "TimeSource",
+    "WholeRecordingSegmentation",
 ]

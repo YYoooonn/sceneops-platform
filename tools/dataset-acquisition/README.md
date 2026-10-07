@@ -1,7 +1,7 @@
 # dataset-acquisition
 
 Converts an external dataset into **L1 acquisition input** (ADR-007
-§29.13), in two modes that share one event stream. It produces no canonical
+§29.13) and replays the resulting recordings. It produces no canonical
 data.
 
 ```text
@@ -10,6 +10,9 @@ dataset adapter (nuScenes)
                           · CDR payload, serialized once · source time · per-topic sequence
   -> MCAP sink            finalized local MCAP, as the robot's own recorder would
                           have written it (batch mode)
+
+finalized reference MCAP (locked)
+  -> MCAP source          the recording's own channels, payload bytes and source time
   -> ROS 2 replay sink    the same payload bytes published on ROS 2 topics at the source's
                           pace (streaming mode); the platform's bridge, Kafka and capture
                           record them
@@ -33,33 +36,54 @@ curl -X POST localhost:8000/api/v1/robot-runs:register \
 
 ## Replay (streaming mode)
 
-```bash
-COMPOSE="docker compose --env-file .env.local --profile acquisition --profile ros2 --profile streaming"
-# bridge and capture run in the platform's ros2 container (see
-# docs/architecture/streaming-transport.md); then:
-$COMPOSE run --rm dataset-replay nuscenes --dataroot /input/nuscenes \
-    --source-unit scene-0061 --replay --rate 2
-```
+The only runtime replay source is a locked reference MCAP (`reference replay`, below).
+A raw dataset is converted to an MCAP first (`nuscenes --output`, normally through
+`reference prepare`) and the recording is what replays; there is no direct
+raw-dataset-to-ROS 2 path.
 
-`--replay` replaces `--output`. The replay image (`sceneops-platform/dataset-replay:local`,
-target `replay` of this Dockerfile) is ROS 2 Jazzy plus this tool, built from the
-same `uv.lock`; it contains no SceneOps package and no credentials, and meets the
-platform only over DDS on the compose network. `make acquisition-image-check`
-verifies that for both images.
+The replay image (`sceneops-platform/dataset-replay:local`, target `replay` of this
+Dockerfile) is ROS 2 Jazzy plus this tool, built from the same `uv.lock`; it contains
+no SceneOps package and no credentials, and meets the platform only over DDS on the
+compose network. `make acquisition-image-check` verifies that for both images.
 
-The sink publishes each event's CDR payload as raw bytes (`publisher.publish(bytes)`):
-nothing is deserialized or reserialized and no timestamp is touched, so the bytes on
-the wire are the bytes the MCAP sink writes. Pacing uses `source_time_ns` only as a
-schedule: an event is published `(source_time - first_source_time) / rate` after the
-start (`--rate 0` publishes without pacing). Before the first message every topic must
-have a matched subscriber (`--wait-subscribers-seconds`, default 60) or the replay fails;
-delivery is reliable with unbounded sender history, `/tf_static` is latched, and after
-the last message the sink waits for every sample to be acknowledged and fails if any is
-not. It prints one `replay_summary` JSON line (counts per topic, elapsed time, the
-largest lag behind schedule, the largest payload).
+The sink (`ros2_replay.py`) publishes each event's CDR payload as raw bytes
+(`publisher.publish(bytes)`): nothing is deserialized or reserialized and no timestamp
+is touched, so the bytes on the wire are the bytes the recording holds. Pacing uses
+`source_time_ns` only as a schedule: an event is published
+`(source_time - first_source_time) / rate` after the start (`--rate 0` publishes
+without pacing). Before the first message every topic must have a matched subscriber
+(`--wait-subscribers-seconds`) or the replay fails; delivery is reliable with unbounded
+sender history, `/tf_static` is latched, and after the last message the sink waits for
+every sample to be acknowledged and fails if any is not. It prints one `replay_summary`
+JSON line (counts per topic, elapsed time, the largest lag behind schedule, the largest
+payload).
 
 A ROS 2 topic carries no per-topic publisher counter, so the replay sink drops the
 event's `sequence`; the bridge assigns a transport sequence on arrival.
+
+### Replaying a reference fixture
+
+```bash
+# bridge and capture run in the platform's ros2 container (see
+# docs/architecture/streaming-transport.md); then:
+$COMPOSE run --rm dataset-replay reference replay \
+    --corpus /config/reference/nuscenes-mini-v1 --cache-root /reference --fixture scene-0061
+```
+
+`reference replay` publishes a fixture's locked batch MCAP through the same replay sink,
+and reads no source dataset. It first checks the cached recording against
+`corpus.lock.json` (the fixture's definition, then the recording's sha256, size and
+counts; the tool identity is not compared, because the replay image is a different
+interpreter from the one that wrote the recording), prints one `replay_source` line
+with the locked facts, and then replays. Exactly one fixture is replayed per run. `--rate` and
+`--wait-subscribers-seconds` default to the fixture's `replay` definition.
+
+The events come from the MCAP itself (`mcap_source.py`): topics, ROS 2 schema name and
+definition and message encoding from the summary, payload bytes unchanged, source time
+= the message's MCAP `log_time`. Messages are ordered by `log_time`; equal `log_time`
+keeps file order, so `/tf_static` and the other messages of one instant replay in the
+order the batch sink wrote them. Reading streams one chunk at a time; an MCAP without a
+chunk index is refused.
 
 ## Boundary
 
@@ -189,19 +213,37 @@ only. Canonicalization, RobotRun identity and registration never read it
 ```bash
 make acquisition-test        # synthetic dataroot + replay scheduling + import boundary + real nuScenes mini
 make acquisition-image-check # boundary check inside both built images
-make e2e-batch-canonical     # containers + FastAPI: acquire -> check -> publish -> register -> Scenes + Episodes
-make e2e-streaming-equivalence # replay -> ROS 2 -> bridge -> Kafka -> capture, equivalent to batch
+make e2e-streaming-equivalence # read-only: the streamed RobotRun of a locked MCAP is equivalent to the imported one
 ```
 
 `tests/test_nuscenes_mini.py` converts a full real scene and compares every
 message with the source tables, files and CAN extract. It is skipped when
 `data/raw/nuscenes` (or `NUSCENES_DATAROOT`) is absent.
 
+## Reference corpus
+
+`dataset-acquisition reference {inspect,verify,prepare,resolve,render-labels}` works on a
+versioned corpus of fixtures (`config/reference/<corpus>/`, see
+[docs/development/reference-corpus.md](../../docs/development/reference-corpus.md)).
+A fixture is a sensor recording plus its source-derived ground-truth labels:
+preparation fingerprints the source, materializes the batch MCAP and a
+baseline-neutral reference label artifact into a local cache (write-once) and verifies
+both against `corpus.lock.json`. Only `prepare --update-lock` writes the lock; every
+disagreement fails. L1 conformance is checked by the platform's publisher `check`,
+because this tool depends on no SceneOps package. Run it through `make
+reference-data-bootstrap` / `make reference-data-verify`; these are the only commands
+that need the source dataset. Consumers need none: `reference resolve` prints each
+fixture's locked facts and verified recording path (`--with-labels`: and the verified
+label artifact), and `reference render-labels` turns the locked label artifact and a
+target RobotRun id into the `sceneops.label_set/v1` document `IMPORT_LABELS` reads. The
+`reference-labels` compose service runs it without mounting a source dataset.
+
 ## Limitations
 
-- The replay sink needs a ROS 2 runtime (the replay image); `--replay` in the plain
-  image fails with a clear error.
-- nuScenes only. Radar, annotations and keyframe groupings are not
-  converted, because labels are not acquisition data (ADR-007 §29.15).
+- The replay sink needs a ROS 2 runtime (the replay image); `reference replay` in the
+  plain image fails with a clear error.
+- nuScenes only. Radar, annotations and keyframe groupings are not part of a
+  recording, because labels are not acquisition data (ADR-007 §29.15); annotations
+  travel as the separate reference label artifact.
 - A whole unit's plan (record metadata, not payloads) is held in memory.
   Payloads are read and serialized one message at a time.
