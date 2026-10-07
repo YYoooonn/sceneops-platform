@@ -61,7 +61,7 @@ MUST_BE_ADVERTISED = (
 )
 
 # `make test-infrastructure SUITE=<name>`: each name has an `infra-suite-<name>` target.
-INFRA_SUITES = {"pipelines", "recovery", "airflow", "kafka", "boundaries"}
+INFRA_SUITES = {"pipelines", "recovery", "kafka", "boundaries"}
 
 # Callable building blocks that the surface composes (the contract bootstrap runs the
 # baseline bootstraps, the cleanroom runs the corpus verifier, the kafka / boundaries
@@ -114,6 +114,12 @@ DELETED = [
     "test-recovery",
     "test-infrastructure-airflow",
     "worker-imports",
+    "infra-suite-airflow",
+    "airflow-up",
+    "run-pipeline-task",
+    "worker-run-pipeline",
+    "worker-register-robot-run",
+    "PIPELINE_RUN_TASK",
 ]
 
 # Measurement tooling lives in benchmarks/ and is never part of a command or of scripts/.

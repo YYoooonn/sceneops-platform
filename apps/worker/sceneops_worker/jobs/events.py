@@ -20,6 +20,15 @@ class JobEventPublisher:
         self.event_store = event_store
         self.worker_id = worker_id
 
+    async def job_queued(self, job: JobManifest) -> None:
+        await self._append(
+            job=job,
+            event_type=JobEventType.QUEUED,
+            status=JobStatus.QUEUED,
+            message="Job queued by its pipeline",
+            data={"job_type": job.type.value},
+        )
+
     async def job_locked(self, job: JobManifest) -> None:
         await self._append(
             job=job,

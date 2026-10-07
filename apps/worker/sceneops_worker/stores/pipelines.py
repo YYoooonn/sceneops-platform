@@ -22,6 +22,10 @@ class PipelineStore:
     async def get(self, pipeline_run_id: str) -> PipelineRunManifest | None:
         return await self._runs.get(pipeline_run_id)
 
+    async def get_for_update(self, pipeline_run_id: str) -> PipelineRunManifest | None:
+        """The run, row-locked until the current transaction commits or rolls back."""
+        return await self._runs.get_for_update(pipeline_run_id)
+
     async def create(self, run: PipelineRunManifest) -> PipelineRunManifest:
         return await self._runs.create(run)
 

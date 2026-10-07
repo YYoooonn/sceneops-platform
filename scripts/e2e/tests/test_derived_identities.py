@@ -74,14 +74,12 @@ def test_infrastructure_tests_own_fixed_datasets():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.INFRA_PIPELINES_DATASET == "sceneops-test-infra-pipelines"
-    assert module.INFRA_AIRFLOW_DATASET == "sceneops-test-infra-airflow"
 
 
 def test_infrastructure_tests_derive_no_identity_from_randomness():
     for name in (
         "infra_support.py",
         "test_pipeline_execution.py",
-        "test_airflow_backend.py",
     ):
         text = (INFRASTRUCTURE / name).read_text()
         assert "uuid" not in text.lower(), f"{name} derives an identity from a UUID"

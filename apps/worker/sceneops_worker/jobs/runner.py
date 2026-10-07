@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 from pydantic import ValidationError
 
 from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.jobs.schemas import JobManifest, JobStatus
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.execution.dispatcher import ExecutionDispatcher
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.events import JobEventPublisher
 from sceneops_worker.jobs.execution import JobExecution
@@ -14,22 +17,38 @@ from sceneops_worker.jobs.registry import (
 )
 from sceneops_worker.jobs.result_recorder import JobResultRecorder
 
+logger = logging.getLogger(__name__)
 
 _RUNNABLE_STATUSES = {
     JobStatus.PENDING,
     JobStatus.QUEUED,
-    # JobStatus.FAILED,
 }
 
 
 class JobRunner:
+    """The single runtime entry point that executes a Job.
+
+    Claims the Job, runs its domain handler and persists the terminal state.
+    A handler failure is a persisted ``FAILED`` Job, not an exception: the
+    returned Job is the outcome. Only a Job that cannot be claimed (missing,
+    already running, already terminal) raises.
+
+    A Job that belongs to a PipelineRun is reported to the dispatcher once its
+    terminal state is committed, so the pipeline's orchestrator observes it and
+    takes the next step. Whatever backend runs JobRunner therefore keeps the
+    pipeline contract.
+    """
+
     def __init__(
         self,
         context: WorkerContext,
+        *,
+        dispatcher: ExecutionDispatcher,
         handler_registry: JobHandlerRegistry | None = None,
     ) -> None:
         self.context = context
         self.worker_id = context.worker_id
+        self.dispatcher = dispatcher
         self.handler_registry = (
             handler_registry or create_default_job_handler_registry()
         )
@@ -47,12 +66,18 @@ class JobRunner:
             await self._start_step(execution)
             await self._execute_handler(execution)
             await self._complete_job(execution)
-            return execution.job
 
         except Exception as error:
+            logger.exception(
+                "job %s (%s) failed", execution.job.job_id, execution.job.type.value
+            )
             await self.context.rollback()
             await self._fail_execution(execution, error)
-            raise
+
+        job = execution.job
+        if job.pipeline_run_id is not None:
+            self.dispatcher.advance_pipeline(job.pipeline_run_id)
+        return job
 
     # ── preparation ───────────────────────────────────────────────────────────
 

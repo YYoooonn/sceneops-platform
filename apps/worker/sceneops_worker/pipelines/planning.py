@@ -46,7 +46,8 @@ class PipelineJobPlanner:
         return JobManifest(
             job_id=generate_job_id(),
             type=task.job_type,
-            status=JobStatus.PENDING,
+            # Submitted by the orchestrator as soon as it is created.
+            status=JobStatus.QUEUED,
             dataset_id=pipeline_run.dataset_id,
             dataset_version=pipeline_run.dataset_version,
             params=params,

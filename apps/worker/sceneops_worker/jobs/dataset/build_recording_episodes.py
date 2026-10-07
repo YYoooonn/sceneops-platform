@@ -180,18 +180,25 @@ class BuildRecordingEpisodesJobHandler(
             )
             ref = _payload_ref(planned, uri)
             record = existing.get(planned.artifact_id)
-            if record is not None:
-                _require_same(record, ref)
-                continue
-            await context.artifact_record_store.create(
-                artifact_id=planned.artifact_id,
-                ref=ref,
-                owner_type=ArtifactOwnerType.ROBOT_RUN,
-                owner_id=request.params.robot_run_id,
-                job_id=request.job.job_id,
-                pipeline_run_id=request.job.pipeline_run_id,
-            )
-            created += 1
+            if record is None:
+                # Builds of one RobotRun run concurrently (its Scene and Episode
+                # builds, two runs of one scope): a payload another build registered
+                # first is reused, and compared, below.
+                (
+                    record,
+                    registered,
+                ) = await context.artifact_record_store.create_if_absent(
+                    artifact_id=planned.artifact_id,
+                    ref=ref,
+                    owner_type=ArtifactOwnerType.ROBOT_RUN,
+                    owner_id=request.params.robot_run_id,
+                    job_id=request.job.job_id,
+                    pipeline_run_id=request.job.pipeline_run_id,
+                )
+                if registered:
+                    created += 1
+                    continue
+            _require_same(record, ref)
         return created
 
     async def _publish_manifests(
@@ -224,20 +231,18 @@ class BuildRecordingEpisodesJobHandler(
                 checksum=published.checksum,
                 size_bytes=published.size_bytes,
             )
-            existing = await context.artifact_record_store.get(artifact_id)
-            if existing is not None:
-                _require_same(existing, ref)
-            else:
-                await context.artifact_record_store.create(
-                    artifact_id=artifact_id,
-                    ref=ref,
-                    owner_type=ArtifactOwnerType.EPISODE,
-                    owner_id=episode_id,
-                    dataset_id=params.dataset_id,
-                    dataset_version=params.dataset_version,
-                    job_id=request.job.job_id,
-                    pipeline_run_id=request.job.pipeline_run_id,
-                )
+            record, registered = await context.artifact_record_store.create_if_absent(
+                artifact_id=artifact_id,
+                ref=ref,
+                owner_type=ArtifactOwnerType.EPISODE,
+                owner_id=episode_id,
+                dataset_id=params.dataset_id,
+                dataset_version=params.dataset_version,
+                job_id=request.job.job_id,
+                pipeline_run_id=request.job.pipeline_run_id,
+            )
+            if not registered:
+                _require_same(record, ref)
             artifact_ids.append(artifact_id)
         return artifact_ids
 

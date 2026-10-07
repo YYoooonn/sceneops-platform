@@ -80,7 +80,7 @@ e2e-episode-learning: acquisition-image lerobot-image
 # reference-data-verify, reference-contract-bootstrap + verify REQUIRE_PRISTINE=1, a second
 # bootstrap that must converge without re-executing anything, e2e-scene-ml and
 # e2e-episode-learning on one fixture (each twice), and reference-contract-verify.
-# Needs ROS 2 and Kafka (the contract's Streaming Acquisition RobotRuns); no GPU or Airflow.
+# Needs ROS 2 and Kafka (the contract's Streaming Acquisition RobotRuns); no GPU.
 # Requires interactive confirmation (same as local-reset) unless FORCE=1.
 e2e-cleanroom:
 	chmod +x scripts/e2e/e2e_cleanroom.sh

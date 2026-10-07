@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -361,7 +362,9 @@ async def test_register_job_is_independent_of_job_dataset_envelope(
             )
         )
         await worker_context.commit()
-        return job, await JobRunner(worker_context).run(job.job_id)
+        # A standalone Job: it belongs to no pipeline, so nothing is dispatched.
+        runner = JobRunner(worker_context, dispatcher=MagicMock())
+        return job, await runner.run(job.job_id)
 
     first_job, first = await _run_job("default", "v0")
     runs_after_first, artifacts_after_first = await _state(robot_id, run_id)

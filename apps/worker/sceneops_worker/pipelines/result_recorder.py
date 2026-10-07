@@ -76,11 +76,12 @@ def normalize_task_outputs(
 
 
 class PipelineTaskResultRecorder:
-    """Persists a finished pipeline task run result to the DB.
+    """Records a succeeded Job's result on its pipeline task run.
 
-    Called by PipelineTaskRunner after JobRunner completes.
-    Uses task_definition.outputs to normalize the raw job result into
-    pipeline-level refs/summary/metrics/artifacts buckets.
+    Called by the PipelineOrchestrator when it observes the task's Job as
+    succeeded. Uses task_definition.outputs to normalize the raw job result into
+    pipeline-level refs/summary/metrics/artifacts buckets. The caller owns the
+    transaction.
     """
 
     def __init__(self, context: WorkerContext) -> None:
@@ -124,9 +125,7 @@ class PipelineTaskResultRecorder:
         task_run.finished_at = now
         task_run.updated_at = now
 
-        saved = await self._context.pipeline_store.save_task(task_run)
-        await self._context.commit()
-        return saved
+        return await self._context.pipeline_store.save_task(task_run)
 
     def _validate_recording_contract(
         self,

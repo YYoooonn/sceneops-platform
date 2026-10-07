@@ -4,14 +4,13 @@ from dataclasses import dataclass
 
 from celery import Celery
 
-from sceneops_core.constants.tasks import JOB_RUN_TASK, PIPELINE_RUN_TASK
+from sceneops_core.constants.tasks import JOB_RUN_TASK, PIPELINE_ADVANCE_TASK
 from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,
     ExecutionKind,
     ExecutionStatus,
 )
-from sceneops_core.pipelines.schemas import PipelineType
 
 
 @dataclass(frozen=True)
@@ -41,13 +40,11 @@ class CeleryPipelineExecutionBackend:
     app: Celery
     pipeline_queue: str
 
-    async def dispatch_pipeline(
-        self, pipeline_run_id: str, pipeline_type: PipelineType
-    ) -> ExecutionDispatchResult:
-        # One Celery task runs every pipeline type; the type matters only to
-        # backends that route per type.
+    async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
+        # The first orchestration step of the run; every later step is sent by
+        # the worker that finished the run's current Job.
         result = self.app.send_task(
-            PIPELINE_RUN_TASK,
+            PIPELINE_ADVANCE_TASK,
             args=[pipeline_run_id],
             queue=self.pipeline_queue,
             routing_key=self.pipeline_queue,

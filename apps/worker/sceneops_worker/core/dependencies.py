@@ -14,6 +14,7 @@ from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 from sceneops_worker.stores.datasets import DatasetStore
 from sceneops_worker.stores.episodes import EpisodeStore
+from sceneops_worker.stores.executions import ExecutionRecordStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
@@ -90,6 +91,7 @@ def create_worker_context(
         job_store=JobStore(session),
         job_event_store=JobEventStore(session),
         pipeline_store=PipelineStore(session),
+        execution_store=ExecutionRecordStore(session),
         dataset_store=DatasetStore(session),
         robot_store=RobotStore(session),
         scene_store=SceneStore(session),

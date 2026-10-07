@@ -1,4 +1,3 @@
-from app.platform.executions.backends.airflow import AirflowPipelineExecutionBackend
 from app.platform.executions.backends.base import (
     JobExecutionBackend,
     PipelineExecutionBackend,
@@ -13,5 +12,4 @@ __all__ = [
     "PipelineExecutionBackend",
     "CeleryJobExecutionBackend",
     "CeleryPipelineExecutionBackend",
-    "AirflowPipelineExecutionBackend",
 ]

@@ -1,8 +1,7 @@
 """Unit tests of the disposable execution runtime's wiring (no Docker, PostgreSQL or MinIO).
 
 Starting the runtime and running the suites on it is what `make test-infrastructure`
-and `make test-infrastructure SUITE=airflow` do; these tests pin the rules that keep it
-isolated from the reference environment.
+does; these tests pin the rules that keep it isolated from the reference environment.
 """
 
 from __future__ import annotations
@@ -22,11 +21,11 @@ SERVER = de.Server.from_environ({})
 COMPOSE = yaml.safe_load(er.COMPOSE_FILE.read_text())
 
 
-def _runtime(backend="celery") -> er.ExecutionRuntime:
+def _runtime() -> er.ExecutionRuntime:
     environment = de.DisposableEnvironment.checked(
         database="sceneops_test", bucket="sceneops-test", server=SERVER
     )
-    return er.ExecutionRuntime(environment, backend, api_port=18000, airflow_port=18080)
+    return er.ExecutionRuntime(environment, api_port=18000)
 
 
 def test_the_runtime_addresses_the_disposable_database_as_the_containers_see_it():
@@ -57,24 +56,8 @@ def test_the_suite_sees_the_runtimes_api_and_the_disposable_artifact_root():
     child = _runtime().child_environment({})
     assert child["API_BASE_URL"] == "http://127.0.0.1:18000"
     assert child["SCENEOPS_EXECUTION_RUNTIME"] == "disposable"
-    assert child["EXPECTED_PIPELINE_BACKEND"] == "celery"
     # The compose-run publisher of the baseline fixture reads this variable.
     assert child["SCENEOPS_WORKER_ARTIFACT__ROOT_URI"] == "s3://sceneops-test/artifacts"
-    assert "SCENEOPS_TEST_AIRFLOW" not in child
-
-
-def test_the_airflow_runtime_requests_the_airflow_module_and_backend():
-    runtime = _runtime("airflow")
-    child = runtime.child_environment({})
-    assert child["SCENEOPS_TEST_AIRFLOW"] == "1"
-    assert child["EXPECTED_PIPELINE_BACKEND"] == "airflow"
-    assert runtime.profiles == ["airflow"]
-    assert runtime.compose_environment({})["TEST_PIPELINE_BACKEND"] == "airflow"
-
-
-def test_an_unknown_pipeline_backend_is_refused():
-    with pytest.raises(ValueError):
-        _runtime("kubernetes")
 
 
 def test_a_publisher_aimed_at_the_reference_bucket_is_refused():
@@ -109,9 +92,6 @@ def test_every_service_is_named_apart_from_the_reference_stack():
         "test-api",
         "test-worker-jobs",
         "test-worker-pipeline",
-        "test-airflow-scheduler",
-        "test-airflow-webserver",
-        "test-airflow-init",
     ],
 )
 def test_every_service_that_touches_state_takes_its_database_and_bucket_from_the_runner(
@@ -156,16 +136,13 @@ def test_the_compose_file_names_no_reference_database_bucket_or_service():
         assert f"redis://{reference}:" not in text
 
 
-def test_the_pipeline_worker_exists_only_for_the_celery_orchestrator():
+def test_the_runtime_orchestrates_and_executes_jobs_in_separate_workers():
+    """Pipeline orchestration and Job execution are separate queues and workers, and
+    every service always starts: there is no orchestrator variant to select."""
     services = COMPOSE["services"]
-    assert services["test-worker-pipeline"]["profiles"] == ["celery"]
-    assert all(
-        services[name]["profiles"] == ["airflow"]
-        for name in services
-        if name.startswith("test-airflow-")
-    )
-    assert "profiles" not in services["test-api"]
-    assert "profiles" not in services["test-worker-jobs"]
+    assert "--queues=sceneops.pipeline_runs" in services["test-worker-pipeline"]["command"]
+    assert "--queues=sceneops.jobs" in services["test-worker-jobs"]["command"]
+    assert not any("profiles" in service for service in services.values())
 
 
 def test_the_runtime_joins_the_reference_network_to_reach_the_shared_servers():
@@ -187,15 +164,10 @@ def _recipe(target: str) -> str:
     return match.group(0)
 
 
-@pytest.mark.parametrize(
-    "target, backend",
-    [("infra-suite-pipelines", "celery"), ("infra-suite-airflow", "airflow")],
-)
-def test_the_infrastructure_targets_run_on_the_disposable_execution_runtime(
-    target, backend
-):
+def test_the_pipelines_suite_runs_on_the_disposable_execution_runtime():
+    target = "infra-suite-pipelines"
     recipe = _recipe(target)
-    assert f"$(DISPOSABLE_ENV_RUNTIME) {backend} --" in recipe
+    assert "$(DISPOSABLE_ENV_RUNTIME) --" in recipe
     assert "$(DISPOSABLE_PYTEST)" in recipe
     assert "SCENEOPS_DATABASE_URL" not in recipe
     # Neither bootstraps nor addresses the reference environment.
@@ -214,7 +186,7 @@ def _make(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.parametrize(
-    "suite", ["pipelines", "recovery", "airflow", "kafka", "boundaries"]
+    "suite", ["pipelines", "recovery", "kafka", "boundaries"]
 )
 def test_test_infrastructure_dispatches_each_suite_to_its_own_target(suite):
     """`SUITE=` only selects; the isolation of a suite is its own recipe's."""

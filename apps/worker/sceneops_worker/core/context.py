@@ -15,6 +15,7 @@ from sceneops_worker.scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 from sceneops_worker.stores.datasets import DatasetStore
 from sceneops_worker.stores.episodes import EpisodeStore
+from sceneops_worker.stores.executions import ExecutionRecordStore
 from sceneops_worker.stores.jobs import JobEventStore, JobStore
 from sceneops_worker.stores.models import ModelStore
 from sceneops_worker.stores.pipelines import PipelineStore
@@ -54,6 +55,7 @@ class WorkerContext:
     job_store: JobStore
     job_event_store: JobEventStore
     pipeline_store: PipelineStore
+    execution_store: ExecutionRecordStore
 
     dataset_store: DatasetStore
     robot_store: RobotStore

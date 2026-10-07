@@ -40,6 +40,19 @@ class PostgresPipelineRunRepository:
         model = result.scalar_one_or_none()
         return pipeline_run_model_to_manifest(model) if model is not None else None
 
+    async def get_for_update(self, pipeline_run_id: str) -> PipelineRunManifest | None:
+        """The run, row-locked until the session's transaction ends: concurrent
+        orchestration steps of one run are serialized on it."""
+        stmt = (
+            select(PipelineRunModel)
+            .where(PipelineRunModel.pipeline_run_id == pipeline_run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return pipeline_run_model_to_manifest(model) if model is not None else None
+
     async def update(self, run: PipelineRunManifest) -> PipelineRunManifest:
         stmt = select(PipelineRunModel).where(
             PipelineRunModel.pipeline_run_id == run.pipeline_run_id

@@ -4,7 +4,7 @@ from typing import Any
 
 from celery.utils.log import get_task_logger
 
-from sceneops_core.constants.tasks import PIPELINE_RUN_TASK
+from sceneops_core.constants.tasks import PIPELINE_ADVANCE_TASK
 from sceneops_db.session import (
     async_session_scope,
     dispose_async_engine,
@@ -12,21 +12,18 @@ from sceneops_db.session import (
 )
 from sceneops_worker.celery_app import celery_app
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.pipelines.runner import PipelineRunner
+from sceneops_worker.execution.dispatcher import create_execution_dispatcher
+from sceneops_worker.pipelines.orchestrator import PipelineOrchestrator
 from sceneops_worker.runtime.async_runner import AsyncRuntimeRunner
 
 logger = get_task_logger(__name__)
 
 
-@celery_app.task(
-    name=PIPELINE_RUN_TASK,
-    bind=True,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_jitter=True,
-    retry_kwargs={"max_retries": 3},
-)
-def run_pipeline_task(
+# One orchestration step: short, idempotent and never executing a Job. No
+# Celery-level retry: the next Job report or an explicit re-execution advances
+# the run again.
+@celery_app.task(name=PIPELINE_ADVANCE_TASK, bind=True)
+def advance_pipeline_task(
     self,
     pipeline_run_id: str,
 ) -> dict[str, Any]:
@@ -34,7 +31,7 @@ def run_pipeline_task(
     worker_id = f"celery:{celery_task_id}"
 
     logger.info(
-        "Starting pipeline task",
+        "Advancing pipeline run",
         extra={"pipeline_run_id": pipeline_run_id, "celery_task_id": celery_task_id},
     )
 
@@ -44,9 +41,12 @@ def run_pipeline_task(
         try:
             async with async_session_scope() as session:
                 context = create_worker_context(session, worker_id=worker_id)
-                result = await PipelineRunner(context).run(pipeline_run_id)
+                dispatcher = create_execution_dispatcher(context.settings.execution)
+                run = await PipelineOrchestrator(
+                    context, dispatcher=dispatcher
+                ).advance(pipeline_run_id)
 
-            return {"pipeline_run_id": pipeline_run_id, "status": result.status.value}
+            return {"pipeline_run_id": pipeline_run_id, "status": run.status.value}
         finally:
             await dispose_async_engine()
 

@@ -215,6 +215,17 @@ class SceneWorld:
         ctx.artifact_record_store.get_many = AsyncMock(side_effect=get_artifacts)
         ctx.artifact_record_store.create = AsyncMock(side_effect=create_artifact)
 
+        async def create_artifact_if_absent(*, artifact_id, ref, **kwargs):
+            if artifact_id in self.artifacts:
+                return self.artifacts[artifact_id], False
+            return await create_artifact(
+                artifact_id=artifact_id, ref=ref, **kwargs
+            ), True
+
+        ctx.artifact_record_store.create_if_absent = AsyncMock(
+            side_effect=create_artifact_if_absent
+        )
+
         async def lock(*, dataset_id, version):
             if (dataset_id, version) not in self.versions:
                 raise ValueError(f"DatasetVersion not found: {dataset_id}/{version}")

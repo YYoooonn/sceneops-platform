@@ -6,6 +6,7 @@ from rich import print
 from sceneops_db.session import async_session_scope
 from sceneops_worker.cli.async_utils import run_cli_async
 from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.execution.dispatcher import create_execution_dispatcher
 from sceneops_worker.jobs.runner import JobRunner
 
 app = typer.Typer(
@@ -24,7 +25,8 @@ def run_job_command(
     async def _run() -> object:
         async with async_session_scope() as session:
             context = create_worker_context(session, worker_id="cli")
-            return await JobRunner(context).run(job_id)
+            dispatcher = create_execution_dispatcher(context.settings.execution)
+            return await JobRunner(context, dispatcher=dispatcher).run(job_id)
 
     job = run_cli_async(_run)
 

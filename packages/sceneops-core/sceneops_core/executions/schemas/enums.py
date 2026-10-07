@@ -4,9 +4,7 @@ from enum import StrEnum
 
 
 class ExecutionBackend(StrEnum):
-    LOCAL = "local"
     CELERY = "celery"
-    AIRFLOW = "airflow"
 
 
 class ExecutionKind(StrEnum):

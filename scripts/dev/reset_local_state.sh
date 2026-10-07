@@ -7,9 +7,9 @@
 # clean via `make local-up`. Preserved: the source dataset (data/raw), the
 # reference corpus cache (data/reference) and everything under config/, so the
 # reference environment is rebuilt from the locked corpus alone
-# (`make reference-contract-bootstrap`). Airflow's own Postgres volume and
-# ROS2/inference images are untouched — they're opt-in stacks with their own
-# lifecycle, not part of "the local stack" this resets.
+# (`make reference-contract-bootstrap`). The ROS2/inference images are
+# untouched — they're opt-in stacks with their own lifecycle, not part of "the
+# local stack" this resets.
 #
 # Set FORCE=1 to skip the interactive confirmation (used by controlled
 # verification steps, not for casual use).

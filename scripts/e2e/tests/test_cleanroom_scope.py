@@ -22,7 +22,6 @@ OTHER_SURFACES = (
     "test-infrastructure",
     "acceptance-grounding-dino",
     "benchmark",
-    "airflow",
 )
 
 

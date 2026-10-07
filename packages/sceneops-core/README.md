@@ -15,7 +15,7 @@ sceneops_core/
   datasets/           ← dataset domain (Record, Manifest, Run, Validation schema)
   episodes/           ← Episode domain (v2 — Record, Manifest, segmentation config, Run schema)
   evaluations/        ← evaluation comain (Metric, Leaderboard, History schema)
-  executions/         ← Execution Backend schema (Celery / Airflow)
+  executions/         ← Execution Backend schema (Celery)
   inference/          ← Inference domain (Detection 스키마, 백엔드 타입)
   jobs/               ← Job domain (JobManifest, JobEvent, 파라미터, 스텝 레지스트리)
   labels/             ← AutoLabel domain schema

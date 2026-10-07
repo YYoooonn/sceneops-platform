@@ -3,7 +3,7 @@ from __future__ import annotations
 from celery import Celery
 
 from sceneops_core.config import CelerySettings
-from sceneops_core.constants.tasks import JOB_RUN_TASK, PIPELINE_RUN_TASK
+from sceneops_core.constants.tasks import JOB_RUN_TASK, PIPELINE_ADVANCE_TASK
 
 
 def create_celery_app(
@@ -47,7 +47,7 @@ def configure_celery_app(
         task_default_exchange_type="direct",
         task_default_routing_key=settings.task_default_queue,
         task_routes={
-            PIPELINE_RUN_TASK: {
+            PIPELINE_ADVANCE_TASK: {
                 "queue": settings.pipeline_queue,
                 "routing_key": settings.pipeline_queue,
             },

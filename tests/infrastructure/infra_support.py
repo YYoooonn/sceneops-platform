@@ -1,12 +1,11 @@
 """Helpers for the infrastructure acceptance tests (client, params builders).
 
 These run against the disposable execution runtime that `make test-infrastructure`
-(Celery) and `make test-infrastructure SUITE=airflow` start on a disposable PostgreSQL
-database and MinIO bucket (execution_runtime.py): the FastAPI control plane, the
-Celery workers, Redis, PostgreSQL, MinIO and (for the Airflow module) Airflow. They
-exercise the contracts of the pipelines that no single user journey proves: dedup,
-force, retry, replacement, blocked resumption, failure recovery, concurrent
-registration and execution through each orchestrator.
+starts on a disposable PostgreSQL database and MinIO bucket (execution_runtime.py): the
+FastAPI control plane, the pipeline and job Celery workers, Redis, PostgreSQL and
+MinIO. They exercise the contracts of the pipelines that no single user journey
+proves: dedup, force, retry, replacement, blocked resumption, failure recovery,
+concurrent registration, and every pipeline task running as a Job on the job workers.
 
 The pipelines need a registered RobotRun. The runtime starts empty, so the suite's
 `baseline` fixture seeds the one it consumes: the golden reference contract's Recording
@@ -17,8 +16,7 @@ the tests build into DatasetVersions they own: the reference environment is neve
 or written.
 
 Test-owned identity is still fixed and named after the test: `sceneops-test-infra-pipelines`
-(Celery / default orchestrator) and `sceneops-test-infra-airflow` (Airflow) each hold one
-DatasetVersion per test. Everything the tests append (PipelineRuns, Jobs, the job-keyed
+holds one DatasetVersion per test. Everything the tests append (PipelineRuns, Jobs, the job-keyed
 validation / profile reports of a re-executed pipeline, duplicate ArtifactRecords of a
 re-executed evaluation) is execution history the platform keeps by design; it lives in the
 disposable database and bucket and is dropped with them. No test deletes anything.
@@ -52,7 +50,6 @@ def _config(name: str) -> dict:
 
 
 INFRA_PIPELINES_DATASET = "sceneops-test-infra-pipelines"
-INFRA_AIRFLOW_DATASET = "sceneops-test-infra-airflow"
 
 SCENE_BUILD_CONFIG = _config("scene_build_config.json")
 EPISODE_BUILD_CONFIG = _config("episode_build_config.json")

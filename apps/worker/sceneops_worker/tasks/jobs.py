@@ -12,20 +12,17 @@ from sceneops_db.session import (
 )
 from sceneops_worker.celery_app import celery_app
 from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.execution.dispatcher import create_execution_dispatcher
 from sceneops_worker.jobs.runner import JobRunner
 from sceneops_worker.runtime.async_runner import AsyncRuntimeRunner
 
 logger = get_task_logger(__name__)
 
 
-@celery_app.task(
-    name=JOB_RUN_TASK,
-    bind=True,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_jitter=True,
-    retry_kwargs={"max_retries": 3},
-)
+# No Celery-level retry: a Job's outcome, failure included, is persisted by
+# JobRunner, and running a Job again is an explicit redispatch (POST
+# /jobs/{id}/execute, a pipeline re-execution), never a replay of this message.
+@celery_app.task(name=JOB_RUN_TASK, bind=True)
 def run_job_task(
     self,
     job_id: str,
@@ -44,9 +41,10 @@ def run_job_task(
         try:
             async with async_session_scope() as session:
                 context = create_worker_context(session, worker_id=worker_id)
-                result = await JobRunner(context).run(job_id)
+                dispatcher = create_execution_dispatcher(context.settings.execution)
+                job = await JobRunner(context, dispatcher=dispatcher).run(job_id)
 
-            return {"job_id": job_id, "status": result.status.value}
+            return {"job_id": job_id, "status": job.status.value}
         finally:
             await dispose_async_engine()
 

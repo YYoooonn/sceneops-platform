@@ -8,7 +8,6 @@ from fastapi import Depends
 from app.core.dependencies import ApiSettingsDep
 from app.core.repositories import ExecutionRecordRepositoryDep
 from app.platform.executions.backends import (
-    AirflowPipelineExecutionBackend,
     CeleryJobExecutionBackend,
     CeleryPipelineExecutionBackend,
     JobExecutionBackend,
@@ -52,14 +51,6 @@ def get_pipeline_execution_backend(
         c = settings.execution.celery
         return CeleryPipelineExecutionBackend(
             app=celery_app, pipeline_queue=c.pipeline_queue
-        )
-    if backend == ExecutionBackend.AIRFLOW:
-        a = settings.execution.airflow
-        return AirflowPipelineExecutionBackend(
-            base_url=a.base_url,
-            pipeline_dag_prefix=a.pipeline_dag_prefix,
-            username=a.username,
-            password=a.password,
         )
     raise ValueError(f"Unsupported pipeline execution backend: {backend}")
 

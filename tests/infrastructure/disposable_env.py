@@ -322,7 +322,7 @@ class DisposableEnvironment:
         self,
         command: list[str],
         *,
-        runtime: str | None = None,
+        runtime: bool = False,
         env_file: str = ".env.local",
     ) -> int:
         """create -> [start the execution runtime] -> command -> [stop it] -> drop.
@@ -330,15 +330,15 @@ class DisposableEnvironment:
         or start that fails halfway; a run that cannot tear down (SIGKILL) is
         recovered by the next create / start.
 
-        ``runtime`` names the pipeline orchestrator of an execution runtime
-        (execution_runtime.py) started on the disposable database and bucket for
-        suites that generate execution history; the suite sees its API."""
+        ``runtime`` also starts an execution runtime (execution_runtime.py) on the
+        disposable database and bucket, for suites that generate execution
+        history; the suite sees its API."""
         process: subprocess.Popen | None = None
         execution = None
-        if runtime is not None:
+        if runtime:
             from execution_runtime import ExecutionRuntime
 
-            execution = ExecutionRuntime(self, runtime, env_file=env_file)
+            execution = ExecutionRuntime(self, env_file=env_file)
         child_base = self.child_environment(dict(os.environ))
 
         def _forward_sigterm(signum, _frame):
@@ -396,9 +396,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("action", choices=["run", "create", "drop", "status"])
     parser.add_argument(
         "--runtime",
-        choices=["celery", "airflow"],
-        help="run: also start the disposable execution runtime with this pipeline "
-        "orchestrator (execution_runtime.py)",
+        action="store_true",
+        help="run: also start the disposable execution runtime (execution_runtime.py)",
     )
     parser.add_argument("--env-file", default=os.environ.get("ENV_FILE", ".env.local"))
     parser.add_argument("--database", default=DEFAULT_DATABASE)

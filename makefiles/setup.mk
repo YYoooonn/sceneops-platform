@@ -74,8 +74,8 @@ DISPOSABLE_ENV_FLAGS := --database $(TEST_POSTGRES_DB) --bucket $(TEST_MINIO_BUC
 	--reference-database $(POSTGRES_DB) --reference-bucket $(MINIO_BUCKET)
 DISPOSABLE_ENV_RUN := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --
 # The same, plus a disposable execution runtime (compose/test-runtime.yaml: API,
-# Celery workers, Redis and optionally Airflow on that database and bucket) for the
-# suites whose subject is orchestration. Usage: $(DISPOSABLE_ENV_RUNTIME) <celery|airflow> -- <cmd>
+# Celery workers and Redis on that database and bucket) for the suites whose subject
+# is orchestration. Usage: $(DISPOSABLE_ENV_RUNTIME) -- <cmd>
 DISPOSABLE_ENV_RUNTIME := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --env-file $(ENV_FILE) --runtime
 
 INTEGRATION_COMMAND := $(DISPOSABLE_PYTEST) packages/sceneops-db/tests/ packages/sceneops-storage/tests/ -v \
@@ -101,13 +101,12 @@ test-integration:
 #   pipelines   (default) pipeline execution contracts on a disposable execution runtime
 #   recovery    acquisition-recovery fault injection + full-lifecycle acceptance
 #               (makefiles/recovery.mk), same disposable database + bucket, own Redis/workers
-#   airflow     the same pipelines through a private Airflow, same disposable environment
 #   kafka       real-Kafka transport: bridge + capture tests in the ros2 image, then the
 #               transport smoke (makefiles/streaming.mk); needs `make streaming-up`
 #   boundaries  isolation boundaries: the acquisition tool (own uv project, I-36 import
 #               boundary), the LeRobot adapter (own uv project), the acquisition images
 #               and the raw-source mount boundary of the runtime services
-INFRA_SUITES := pipelines recovery airflow kafka boundaries
+INFRA_SUITES := pipelines recovery kafka boundaries
 SUITE ?= pipelines
 
 .PHONY: test-infrastructure
@@ -119,7 +118,8 @@ test-infrastructure:
 .PHONY: infra-suite-pipelines
 # Infrastructure acceptance of the pipeline contracts below the E2E journeys:
 # dedup / force / convergence / replacement / blocked resumption / failure
-# recovery / concurrent registration, on the Celery orchestrator. These tests
+# recovery / concurrent registration: the native orchestrator, with every task's Job
+# on the Celery job workers. These tests
 # re-execute pipelines on purpose, and every Job, PipelineRun and report the platform
 # appends stays, so they never run on the reference environment: the command
 # creates a disposable PostgreSQL database and MinIO bucket, starts an execution
@@ -128,25 +128,13 @@ test-infrastructure:
 # create-or-verify path, runs the suite and drops everything (DISPOSABLE_ENVIRONMENT).
 # Prerequisite: `make local-up` (the PostgreSQL / MinIO servers and the images) and
 # `make reference-data-bootstrap` (the locked recording); the reference database,
-# bucket, api, workers and Redis are neither read nor written. The Airflow and
-# acquisition-recovery modules are their own suites; a skip here is a failure.
+# bucket, api, workers and Redis are neither read nor written. The acquisition-recovery
+# modules are their own suite; a skip here is a failure.
 infra-suite-pipelines:
-	$(DISPOSABLE_ENV_RUNTIME) celery -- $(DISPOSABLE_PYTEST) tests/infrastructure \
-		--ignore=tests/infrastructure/test_airflow_backend.py \
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) tests/infrastructure \
 		--ignore=tests/infrastructure/test_acquisition_recovery.py \
 		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
-
-.PHONY: infra-suite-airflow
-# The canonical pipelines through the Airflow per-task DAGs, in the same disposable
-# environment as the pipelines suite plus a private Airflow (its own metadata
-# database, scheduler and webserver; the reference environment's Airflow is not used
-# and `airflow-up` is not required). The API of the runtime is started on the
-# airflow pipeline backend, so nothing is reconfigured in place. Needs the Docker
-# socket (the DAGs start the worker image per task) and builds the Airflow image on
-# first use. Fails -- never skips -- when a prerequisite is missing.
-infra-suite-airflow:
-	$(DISPOSABLE_ENV_RUNTIME) airflow -- $(DISPOSABLE_PYTEST) tests/infrastructure/test_airflow_backend.py -v
 
 .PHONY: infra-suite-kafka
 infra-suite-kafka: ros2-test smoke-streaming

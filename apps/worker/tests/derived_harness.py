@@ -79,6 +79,13 @@ class FakeArtifactRepo:
         self.records[artifact_id] = record
         return record
 
+    async def create_if_absent(
+        self, *, artifact_id: str, ref: ArtifactRef, **fields: Any
+    ) -> tuple[ArtifactRecord, bool]:
+        if artifact_id in self.records:
+            return self.records[artifact_id], False
+        return await self.create(artifact_id=artifact_id, ref=ref, **fields), True
+
     async def list(self, **filters: Any) -> list[ArtifactRecord]:
         out = []
         for record in self.records.values():

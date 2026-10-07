@@ -6,7 +6,6 @@ from sceneops_core.executions.schemas import (
     ExecutionKind,
     ExecutionStatus,
 )
-from sceneops_core.pipelines.schemas import PipelineType
 from sceneops_db.repositories.executions import ExecutionRecordRepository
 
 from app.platform.executions.backends.base import (
@@ -35,16 +34,12 @@ class ExecutionService:
         result = await self._job_backend.dispatch_job(job_id)
         return await self._record_repository.create(result)
 
-    async def dispatch_pipeline(
-        self, pipeline_run_id: str, pipeline_type: PipelineType
-    ) -> ExecutionDispatchResult:
+    async def dispatch_pipeline(self, pipeline_run_id: str) -> ExecutionDispatchResult:
         if self._pipeline_backend is None:
             raise RuntimeError(
                 "Pipeline execution backend is not configured on this service instance"
             )
-        result = await self._pipeline_backend.dispatch_pipeline(
-            pipeline_run_id, pipeline_type
-        )
+        result = await self._pipeline_backend.dispatch_pipeline(pipeline_run_id)
         return await self._record_repository.create(result)
 
     async def get_execution(self, execution_id: str) -> ExecutionDispatchResult | None:

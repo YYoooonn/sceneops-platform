@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord, ArtifactRef
@@ -53,6 +54,55 @@ class PostgresArtifactRefRepository:
         await self._session.flush()
         await self._session.refresh(model)
         return artifact_ref_model_to_record(model)
+
+    async def create_if_absent(
+        self,
+        *,
+        artifact_id: str,
+        ref: ArtifactRef,
+        owner_type: str | None = None,
+        owner_id: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        scene_id: str | None = None,
+        scenario_set_id: str | None = None,
+        run_id: str | None = None,
+        job_id: str | None = None,
+        pipeline_run_id: str | None = None,
+    ) -> tuple[ArtifactRecord, bool]:
+        """Insert the record unless its id exists; returns ``(record, created)``.
+
+        One ``INSERT ... ON CONFLICT DO NOTHING``: of concurrent writers of one
+        deterministic id exactly one inserts; the others wait for its transaction
+        and then read its row instead of failing on the primary key. The caller
+        compares content; this never overwrites."""
+        values = artifact_ref_to_values_with_owner(
+            ref,
+            artifact_id=artifact_id,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            scene_id=scene_id,
+            scenario_set_id=scenario_set_id,
+            run_id=run_id,
+            job_id=job_id,
+            pipeline_run_id=pipeline_run_id,
+        )
+        stmt = (
+            insert(ArtifactModel)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[ArtifactModel.artifact_id])
+            .returning(ArtifactModel)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        if model is not None:
+            return artifact_ref_model_to_record(model), True
+        existing = await self.get(artifact_id)
+        if existing is None:  # pragma: no cover - the conflicting row exists
+            raise RuntimeError(f"artifact {artifact_id} conflicted but is unreadable")
+        return existing, False
 
     async def get(self, artifact_id: str) -> ArtifactRecord | None:
         stmt = select(ArtifactModel).where(ArtifactModel.artifact_id == artifact_id)

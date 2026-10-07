@@ -1,6 +1,6 @@
 """Pipeline execution contracts: dedup, force, convergence, replacement,
-blocked resumption, failure recovery, concurrent registration and the
-orchestrator that ran them.
+blocked resumption, failure recovery, concurrent registration, and that every task
+of a pipeline runs as a Job through the job execution backend.
 
 Each test builds one baseline RobotRun's Scenes or Episodes into a DatasetVersion it
 owns under the fixed Dataset `sceneops-test-infra-pipelines`, named after the test. The
@@ -14,7 +14,6 @@ pipelines, rather than inside every user journey.
 
 from __future__ import annotations
 
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,9 +26,6 @@ from infra_support import (
     episode_params,
     scene_params,
 )
-
-EXPECTED_BACKEND = os.environ.get("EXPECTED_PIPELINE_BACKEND", "celery")
-
 
 def _dataset(api, version: str) -> tuple[str, str]:
     return api.dataset_version(INFRA_PIPELINES_DATASET, version)
@@ -283,11 +279,28 @@ def test_concurrent_runs_over_one_scope_converge_on_one_canonical_membership(api
     )
 
 
-def test_pipeline_runs_execute_on_the_configured_orchestrator(api, baseline_run):
+def test_every_pipeline_task_runs_as_a_job_on_the_job_backend(api, baseline_run):
+    """The orchestrator submits each task's Job to the job backend and never runs it:
+    the run is dispatched once to the orchestrator, and every task that ran has a
+    Job of the run with exactly one job dispatch of its own."""
     dataset = _dataset(api, "orchestrator")
     run = api.run("recording_scene_building", dataset, scene_params(baseline_run["robot_run_id"]))
     assert run["status"] == "succeeded"
+    run_id = run["pipelineRunId"]
 
-    executions = api.get("/executions", resource_id=run["pipelineRunId"])["executions"]
-    assert executions, "dispatch must leave an execution record"
-    assert {e["executionBackend"] for e in executions} == {EXPECTED_BACKEND}
+    def dispatches(resource_id: str) -> list[tuple[str, str]]:
+        executions = api.get("/executions", resource_id=resource_id)["executions"]
+        return [(e["executionKind"], e["executionBackend"]) for e in executions]
+
+    assert dispatches(run_id) == [("pipeline_run", "celery")]
+
+    executed = [t for t in api.tasks(run_id).values() if t["status"] != "skipped"]
+    assert executed
+    for task in executed:
+        job = api.get(f"/jobs/{task['jobId']}")["job"]
+        assert job["status"] == "succeeded", job
+        assert (job["pipelineRunId"], job["pipelineTaskRunId"]) == (
+            run_id,
+            task["pipelineTaskRunId"],
+        )
+        assert dispatches(task["jobId"]) == [("job_run", "celery")]

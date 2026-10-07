@@ -82,10 +82,6 @@ class InputSourceSettings(StorageSettings):
 
 class WorkerRuntimeSettings(BaseModel):
     worker_id: str = "local-worker"
-    poll_interval_seconds: float = 2.0
-    heartbeat_interval_seconds: float = 10.0
-    job_poll_interval_seconds: float = 1.0
-    job_wait_timeout_seconds: float = 3600.0
 
 
 class CelerySettings(BaseModel):
@@ -101,20 +97,12 @@ class CelerySettings(BaseModel):
     task_reject_on_worker_lost: bool = True
 
 
-class AirflowSettings(BaseModel):
-    base_url: str = "http://airflow-webserver:8080"
-    username: str | None = None
-    password: str | None = None
-
-    # Pipeline DAGs are named ``<prefix>_<pipeline type>``.
-    pipeline_dag_prefix: str = "sceneops"
-
-
 class ExecutionSettings(BaseModel):
+    # job_backend executes Jobs; pipeline_backend carries the orchestration steps
+    # of PipelineRuns, which only ever submit Jobs to the job backend.
     job_backend: ExecutionBackend = ExecutionBackend.CELERY
     pipeline_backend: ExecutionBackend = ExecutionBackend.CELERY
     celery: CelerySettings = Field(default_factory=CelerySettings)
-    airflow: AirflowSettings = Field(default_factory=AirflowSettings)
 
 
 def join_uri(root: str, *parts: str) -> str:

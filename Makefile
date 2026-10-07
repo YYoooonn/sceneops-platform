@@ -29,7 +29,6 @@ TEST_MINIO_BUCKET ?= sceneops-test
 
 JOB_ID          ?=
 PIPELINE_RUN_ID ?=
-TASK_ID         ?=
 MSG             ?=
 ROS2_CMD        ?=
 
@@ -75,10 +74,9 @@ help:
 	@echo "=================================================================="
 	@echo "  make test                          Unit suites, no infrastructure"
 	@echo "  make test-integration              Real Postgres/MinIO in a disposable database + bucket (needs local-up); a skipped test fails the run"
-	@echo "  make test-infrastructure [SUITE=pipelines|recovery|airflow|kafka|boundaries]   Real-infrastructure suites (pipelines / recovery / airflow: a skipped test fails the run)"
+	@echo "  make test-infrastructure [SUITE=pipelines|recovery|kafka|boundaries]   Real-infrastructure suites (pipelines / recovery: a skipped test fails the run)"
 	@echo "      pipelines   (default) execution contracts -- dedup/force/convergence/replacement/resumption/concurrency -- on a disposable execution runtime (needs local-up + reference-data-bootstrap)"
 	@echo "      recovery    acquisition-recovery fault injection + the full-lifecycle acceptance, in the disposable database + bucket with a throwaway Redis and workers (Docker; needs local-up)"
-	@echo "      airflow     the same pipelines through a private Airflow in that runtime (Docker; needs local-up)"
 	@echo "      kafka       ROS 2 bridge + capture tests in the ros2 image, then the transport smoke (needs streaming-up)"
 	@echo "      boundaries  tool isolation: acquisition tool + LeRobot adapter (own uv projects), acquisition images, raw-source mount of the runtime services"
 	@echo "  make reference-contract-verify     READ-ONLY: exactly the golden contract's 20 RobotRuns / Scenes / Episodes; REQUIRE_PRISTINE=1 also requires no other state"
@@ -122,7 +120,6 @@ help:
 	@echo "  make db-shell"
 	@echo "  make inference-local-build / inference-local-up / inference-local-down / inference-local-logs   (CPU, opt-in)"
 	@echo "  make inference-gpu-build / inference-gpu-up / inference-gpu-down / inference-gpu-logs           (GPU, opt-in)"
-	@echo "  make airflow-up / airflow-down / airflow-logs   (opt-in orchestrator, not part of local-up)"
 	@echo "  make ros2-up / ros2-down / ros2-shell / ros2-logs / ros2-run ROS2_CMD='ros2 topic list'"
 	@echo "  make streaming-up / streaming-down   Local Kafka broker (opt-in)"
 	@echo "  make recovery-up / recovery-down / recovery-logs   Opt-in polling loops: publish-pending + reconcile --apply (compose/recovery.yaml)"
@@ -138,9 +135,7 @@ help:
 	@echo "  make api-logs / api-shell / api-health / api-openapi"
 	@echo "  make worker-logs / worker-shell / worker-python / worker-cli"
 	@echo "  make worker-run-job JOB_ID=job-xxx"
-	@echo "  make worker-run-pipeline PIPELINE_RUN_ID=pipe-xxx"
-	@echo "  make worker-run-pipeline-task PIPELINE_RUN_ID=pipe-xxx TASK_ID=task-xxx"
-	@echo "  make worker-register-robot-run MANIFEST_URI=..   REGISTER_ROBOT_RUN for a published RobotRunManifest"
+	@echo "  make worker-advance-pipeline PIPELINE_RUN_ID=pipe-xxx   One orchestration step of a queued / running pipeline run"
 	@echo "  make show-runs / show-pipeline PIPELINE_RUN_ID=pipe-xxx / show-job-events JOB_ID=job-xxx"
 	@echo "  make reconcile-once / reconcile-apply   Acquisition reconciliation: observe only / bounded registration recovery (ADR-008)"
 	@echo "  make artifact-lifecycle-once [ARGS=..]  Read-only lifecycle classification of robot_runs/ objects (ADR-008 §6; deletes nothing)"
@@ -166,7 +161,6 @@ help:
 include makefiles/setup.mk
 include makefiles/cleanup.mk
 include makefiles/local.mk
-include makefiles/airflow.mk
 include makefiles/ros2.mk
 include makefiles/compose.mk
 include makefiles/db.mk

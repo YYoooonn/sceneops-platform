@@ -50,43 +50,40 @@ class ArtifactRecordStore:
             pipeline_run_id=pipeline_run_id,
         )
 
+    async def create_if_absent(
+        self,
+        *,
+        artifact_id: str,
+        ref: ArtifactRef,
+        **owner: str | None,
+    ) -> tuple[ArtifactRecord, bool]:
+        """The record of a deterministic id: inserted, or the one that exists
+        (``(record, created)``). Concurrent Jobs writing one id converge on one
+        row instead of failing; comparing an existing record's content is the
+        caller's."""
+        return await self._repo.create_if_absent(
+            artifact_id=artifact_id, ref=ref, **owner
+        )
+
     async def register(
         self,
         *,
         artifact_id: str,
         ref: ArtifactRef,
-        owner_type: str | None = None,
-        owner_id: str | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
-        scene_id: str | None = None,
-        scenario_set_id: str | None = None,
-        run_id: str | None = None,
-        job_id: str | None = None,
-        pipeline_run_id: str | None = None,
+        **owner: str | None,
     ) -> tuple[ArtifactRecord, bool]:
         """Idempotent registration of a deterministic ArtifactRecord.
 
         Returns ``(record, created)``. An existing record with the same
         kind, location, checksum and size is the retry of an earlier
-        attempt and is reused unchanged; one that differs is a conflicting
-        duplicate and fails loudly (ArtifactRecordConflictError)."""
-        existing = await self._repo.get(artifact_id)
-        if existing is None:
-            created = await self._repo.create(
-                artifact_id=artifact_id,
-                ref=ref,
-                owner_type=owner_type,
-                owner_id=owner_id,
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
-                scene_id=scene_id,
-                scenario_set_id=scenario_set_id,
-                run_id=run_id,
-                job_id=job_id,
-                pipeline_run_id=pipeline_run_id,
-            )
-            return created, True
+        attempt, or the write of a concurrent Job, and is reused unchanged;
+        one that differs is a conflicting duplicate and fails loudly
+        (ArtifactRecordConflictError)."""
+        existing, created = await self.create_if_absent(
+            artifact_id=artifact_id, ref=ref, **owner
+        )
+        if created:
+            return existing, True
         if (
             existing.kind != ref.kind.value
             or existing.uri != ref.uri

@@ -1,5 +1,5 @@
-# The disposable execution runtime of `make test-infrastructure` and
-# `make test-infrastructure SUITE=airflow` (tests/infrastructure/execution_runtime.py).
+# The disposable execution runtime of `make test-infrastructure` (SUITE=pipelines;
+# tests/infrastructure/execution_runtime.py).
 #
 # A compose project of its own (`sceneops-test`), deliberately not included from
 # compose.yaml: an API, Celery workers and a Redis wired to the disposable
@@ -15,10 +15,8 @@
 # Services carry a `test-` prefix because the project joins the reference network
 # (to reach its PostgreSQL and MinIO) and service names are network aliases.
 #
-# Profiles select the pipeline orchestrator under test:
-#   celery   test-worker-pipeline: pipelines run on Celery (the default backend)
-#   airflow  a private Airflow (own metadata database) that runs the per-task DAGs
-# Jobs always run on Celery (test-worker-jobs).
+# test-worker-pipeline takes the orchestration steps of PipelineRuns; every Job, a
+# pipeline task's included, runs on test-worker-jobs.
 x-test-settings: &test-settings
   # Overrides of .env.local, which every service below also loads.
   SCENEOPS_DATABASE_URL: ${TEST_DATABASE_URL:?}
@@ -44,32 +42,6 @@ x-test-worker: &test-worker
     # The runtime input root IMPORT_LABELS reads; never the raw source dataset.
     - ./data/inputs:/data/inputs:ro
 
-x-test-airflow: &test-airflow
-  image: sceneops-platform/airflow:local
-  build:
-    context: ./airflow
-    dockerfile: Dockerfile
-  env_file:
-    - .env.local
-    - .env.airflow.local
-  environment:
-    <<: *test-settings
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@test-airflow-postgres:5432/airflow
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
-    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-    # The DAG mounts the worker's data directories by host path (DockerOperator
-    # starts siblings through the host daemon).
-    HOST_DATA_DIR: ${HOST_DATA_DIR:?}
-  volumes:
-    - ./airflow/dags:/opt/airflow/dags
-  depends_on:
-    test-airflow-postgres:
-      condition: service_healthy
-  profiles:
-    - airflow
-
 services:
   test-redis:
     image: redis:7-alpine
@@ -87,10 +59,7 @@ services:
     pull_policy: never
     env_file:
       - .env.local
-    environment:
-      <<: *test-settings
-      SCENEOPS_API_EXECUTION__PIPELINE_BACKEND: ${TEST_PIPELINE_BACKEND:-celery}
-      SCENEOPS_API_EXECUTION__AIRFLOW__BASE_URL: http://test-airflow-webserver:8080
+    environment: *test-settings
     ports:
       - "127.0.0.1:${TEST_API_PORT:?}:8000"
     depends_on:
@@ -123,64 +92,10 @@ services:
       --queues=sceneops.pipeline_runs
       --concurrency=${SCENEOPS_WORKER_PIPELINE_CONCURRENCY:-1}
       --hostname=sceneops-test-pipeline@%h
-    profiles:
-      - celery
-
-  test-airflow-postgres:
-    image: postgres:16
-    pull_policy: never
-    env_file:
-      - .env.airflow.local
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
-      interval: 3s
-      timeout: 3s
-      retries: 20
-    profiles:
-      - airflow
-
-  test-airflow-init:
-    <<: *test-airflow
-    entrypoint: /bin/bash
-    command:
-      - -c
-      - >-
-        airflow db migrate &&
-        airflow users create
-        --username "$$AIRFLOW_ADMIN_USERNAME"
-        --password "$$AIRFLOW_ADMIN_PASSWORD"
-        --firstname Scene
-        --lastname Ops
-        --role Admin
-        --email airflow@sceneops.local
-
-  test-airflow-webserver:
-    <<: *test-airflow
-    ports:
-      - "127.0.0.1:${TEST_AIRFLOW_PORT:?}:8080"
-    depends_on:
-      test-airflow-postgres:
-        condition: service_healthy
-      test-airflow-init:
-        condition: service_completed_successfully
-    command: webserver
-
-  test-airflow-scheduler:
-    <<: *test-airflow
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      test-airflow-postgres:
-        condition: service_healthy
-      test-airflow-init:
-        condition: service_completed_successfully
-    command: scheduler
 
 networks:
   # The reference network: how the project reaches the shared PostgreSQL and MinIO
-  # servers (`postgres`, `minio`) and the Docker daemon's sibling task containers of
-  # the Airflow DAGs (`network_mode: sceneops-network`).
+  # servers (`postgres`, `minio`).
   default:
     name: sceneops-network
     external: true

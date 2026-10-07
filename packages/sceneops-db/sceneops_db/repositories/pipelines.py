@@ -16,6 +16,10 @@ class PipelineRunRepository(Protocol):
 
     async def get(self, pipeline_run_id: str) -> PipelineRunManifest | None: ...
 
+    async def get_for_update(
+        self, pipeline_run_id: str
+    ) -> PipelineRunManifest | None: ...
+
     async def update(self, run: PipelineRunManifest) -> PipelineRunManifest: ...
 
     async def list(

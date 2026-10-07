@@ -7,16 +7,15 @@ from .enums import JobType
 
 
 class CreateJobRequest(SceneOpsBaseModel):
+    """An atomic Job. A Job that belongs to a pipeline task is created by the
+    pipeline's orchestrator only, so this request carries no pipeline linkage."""
+
     type: JobType
 
     dataset_id: str | None = None
     dataset_version: str | None = None
 
     params: JsonDict = Field(default_factory=dict)
-
-    pipeline_run_id: str | None = None
-    pipeline_task_run_id: str | None = None
-    pipeline_task_id: str | None = None
 
     max_retries: int = 0
 
