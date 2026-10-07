@@ -20,7 +20,7 @@ TELEMETRY_HEADER_PREFIX = "sceneops.envelope."
 # sees it. Carried on the SAME Kafka topic as telemetry, under the SAME
 # robot_run_id key, specifically so it orders consistently with that
 # run's own telemetry within one partition -- see
-# docs/architecture/streaming-multirun-phase7-study.md's Phase 7.2
+# docs/history/streaming-multirun-phase7-study.md's Phase 7.2
 # section for the full "why the existing topic, not a separate one"
 # reasoning.
 SESSION_CONTROL_CHANNEL = "/session/control"

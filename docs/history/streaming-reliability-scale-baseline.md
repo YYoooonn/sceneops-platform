@@ -1,11 +1,19 @@
 # Streaming Reliability & Scale Baseline (Phase 6.6)
 
+> **History — point-in-time record, not current architecture.** The failure-injection
+> matrix and measurements below were taken at the date and commit shown. The commands
+> named in its regression section (`make e2e-ros2-streaming`, `e2e-streaming-capture`,
+> `e2e-robot-run-registration`, `e2e-robot-run-learning`) no longer exist; the supported
+> surface is `make help`. The current contracts are
+> [Streaming transport](../architecture/streaming-transport.md) and
+> [Current limitations](../architecture/limitations.md).
+
 > Point-in-time record (category C — historical evidence, per this repo's
 > documentation taxonomy) of the streaming pipeline's operational
 > guarantees and measured limits, established by real failure-injection
 > tests and real benchmarks against the local Kafka/Postgres/MinIO stack.
 > Not a living architecture doc — see
-> [Streaming transport](./streaming-transport.md) and
+> [Streaming transport](../architecture/streaming-transport.md) and
 > [Robot run / MCAP](../workflows/robot-run-and-mcap.md) for the current,
 > maintained contracts this record validates. Numbers here are frozen to
 > the date/commit/environment below; re-run the referenced

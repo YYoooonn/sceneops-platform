@@ -1,312 +1,293 @@
 # SceneOps Architecture
 
-> Describes the platform as it exists today on `feat/episode-domain` (post
-> Stabilization Requests 1–5). This is a "what's actually built" document,
-> not a roadmap — see [Reserved architecture and current limitations](./reserved-and-limitations.md)
-> for what's intentionally deferred.
+> The authoritative map of the platform as implemented. It describes the current
+> system only; decision rationale lives in [`../adr/`](../adr/), point-in-time
+> studies in [`../history/`](../history/), and what the platform does not do in
+> [Current limitations](./limitations.md).
 
 ## 1. System overview
 
-SceneOps is three independently deployable layers, connected through shared
-libraries under `packages/`:
+SceneOps is a control plane, an execution plane and a storage layer, connected
+through shared libraries under `packages/`:
 
 ```text
-Control Plane (apps/api)
-        |
-        v
-Execution (apps/worker, apps/inference-server)
-        |
-        v
-Storage (PostgreSQL + ArtifactStore)
+Control plane   apps/api              FastAPI: resources, Job / Pipeline create + dispatch
+      |
+      v   Redis (Celery broker)
+Execution       apps/worker           Celery workers: PipelineOrchestrator, JobRunner, handlers
+                apps/inference-server optional GroundingDINO HTTP server (called by predict_detection)
+      |
+      v
+Storage         PostgreSQL            identity, metadata, execution state, lineage references
+                ArtifactStore         immutable bytes: recordings, manifests, reports, Parquet
 ```
 
 ```text
 packages/
-  sceneops-core       domain schemas, Protocol contracts, pipeline/job definitions
-                       — pure Python, no I/O
-  sceneops-db         SQLAlchemy models, repositories, converters, Alembic migrations
-  sceneops-storage    ArtifactStore implementations (Local/S3)
-  sceneops-analytics  Parquet table builders + DuckDB query helper, plus the
-                       native learning-data read/access layer
-                       (SceneOpsDataset/SequenceSampler/consumer adapters)
+  sceneops-core          domain schemas, Protocol contracts, pipeline / job definitions (no I/O)
+  sceneops-db            SQLAlchemy models, repositories, converters; Alembic migrations live in migrations/
+  sceneops-storage       ArtifactStore implementations: LocalArtifactStore, S3ArtifactStore (MinIO included)
+  sceneops-analytics     Parquet table builders, DuckDB helper, learning-data read layer, external adapters
+  sceneops-integrations  recording Publisher / reader / conformance (database-free)
+  sceneops-streaming     Kafka client and wire mapping of the TelemetryEnvelope
+ros2/                    ROS 2 streaming bridge node and run-scoped MCAP capture
+tools/                   isolated uv projects: dataset-acquisition, lerobot-integration
 ```
 
-`sceneops-core` never touches a database or object store directly — it only
-defines the `ArtifactStore` Protocol and Pydantic schemas. `sceneops-db` and
-`sceneops-storage` provide the real implementations; API and worker inject
-them. This is a port/adapter split, and it's why swapping storage backends
-(local filesystem <-> MinIO/S3) needs no call-site changes — see
-[ADR-002](../adr/002-object-storage-for-assets.md).
+`sceneops-core` never touches a database or object store: it defines the
+`ArtifactStore` Protocol and the Pydantic schemas, and `sceneops-db` /
+`sceneops-storage` supply the implementations that the API and worker inject.
+This port/adapter split is why the storage backend (local filesystem or
+MinIO / S3) changes without call-site changes ([ADR-002](../adr/002-object-storage-for-assets.md)).
 
-## 2. Control plane — `apps/api`
+## 2. Domain structure
 
-FastAPI application, split into resource CRUD/query APIs and dispatch APIs
-that enqueue execution.
+```text
+Acquisition -> RobotRun (ingestion boundary)
+RobotRun    -> Scene     (canonical, source-faithful)
+RobotRun    -> Episode   (canonical, task-oriented)
+Scene       -> labels / sample views / ScenarioSets / predictions / evaluations
+Episode     -> AlignedEpisode -> LearningDataExport
+```
+
+- **RobotRun** is the single ingestion boundary: one finalized, published,
+  verified recording, created only by `REGISTER_ROBOT_RUN`. Nothing downstream of it
+  knows whether the recording arrived by batch import or by streaming acquisition.
+- **Scene** and **Episode** are sibling derived domains over the same RobotRun, each
+  with its own build, registration, validation and quality contract. They share
+  platform infrastructure (Jobs, Pipelines, ArtifactStore), not a model: there is no
+  generic "data unit" type. See [Scene domain](./scene-domain.md) and
+  [Episode domain](./episode-domain.md).
+- Derived L3 objects are immutable, checksum-pinned revisions that record the
+  revisions they consumed. See [Derived layer](./derived-layer.md).
+
+## 3. Acquisition
+
+Two acquisition paths end at the same RobotRun boundary:
+
+```text
+Batch / reference
+  MCAP -> Publisher -> published RobotRun objects -> registration / reconciliation -> RobotRun
+
+Streaming
+  replay / ROS 2 -> bridge -> Kafka -> run-scoped capture -> MCAP + capture receipt
+    -> Publisher -> registration / reconciliation -> RobotRun
+```
+
+ROS 2, Kafka and capture are transport and acquisition concerns. Kafka is bounded
+replay, never canonical storage. Capture is one one-shot process per `robot_run_id`;
+a capture that expects a lifecycle-complete run finalizes only after the run's
+`RUN_END`. Publication and registration are recoverable one-shot commands, not
+triggered by capture. See [Streaming transport](./streaming-transport.md) and
+[Robot data ingestion](../workflows/robot-run-and-mcap.md).
+
+## 4. Control plane — `apps/api`
 
 ```text
 apps/api/app/
   domains/            resource-centric domain APIs
-    datasets/         Dataset, DatasetVersion, quality
-    scenes/           SceneRecord, quality
-    episodes/         EpisodeRecord, quality
-    scenarios/        ScenarioSet
-    robots/           Robot, RobotRun, Mission, RobotState
-    inference/        PredictionRun (InferenceRun)
-    evaluations/       EvaluationRun
-    labels/             labeling
-    models/             model registry
+    datasets/ scenes/ episodes/ scenarios/ robots/ inference/ evaluations/ models/
   platform/           execution infrastructure API
-    jobs/             Job create/query/dispatch
-    pipelines/        PipelineRun create/query/dispatch, built-in pipeline definitions
-    executions/       dispatch facade routing Job/Pipeline to a real backend (Celery/Airflow)
+    jobs/             Job create / query, dispatch facade
+    pipelines/        PipelineRun create / query, dispatch facade, built-in definitions
+    executions/       Celery dispatch backends + ExecutionRecord service
     artifacts/        artifact metadata query
-  views/              aggregate/cross-domain APIs
-    leaderboards/     model comparison leaderboards
-    operations/       operator-facing dashboards
+  views/              aggregate / cross-domain APIs (leaderboards, operations)
 ```
 
-Each domain is layered `router.py` -> `service.py` -> (`sceneops-db`
-repository). `dependencies.py` wires session + repository via FastAPI DI.
+Each domain is layered `router.py` -> `service.py` -> `sceneops-db` repository,
+wired by FastAPI dependencies.
 
 ### Transaction model
 
-A mutating API request is one PostgreSQL transaction, and a success response
-means that transaction has committed. `DbSessionDep` (`apps/api/app/core/dependencies.py`)
+A mutating API request is one PostgreSQL transaction, and a success response means
+that transaction has committed. `get_db_session` (`apps/api/app/core/dependencies.py`)
 is a function-scoped dependency: the session commits when the path operation
 returns, before the response is sent, and rolls back on any exception
-(`HTTPException` included). A failed commit is therefore an error response, and a
-client may act on a 2xx at once (create, then read or execute). Services and
-repositories flush but never commit.
+(`HTTPException` included). A failed commit is an error response, so a client may
+act on a 2xx at once. Services and repositories flush but never commit.
 
-Operations that commit and then call an external system (the dispatch facades and
-`RobotRunRegistrationService`) do not use the request session. They open short
-sessions of their own and commit explicitly before dispatching, so no transaction
-is open while talking to Celery and a worker never receives a reference to a row
-that is not yet durable. Workers do not auto-commit: `JobRunner` and
-`PipelineOrchestrator` commit at their own checkpoints.
+Operations that must reach an external system follow a durable-state-first
+boundary: persist and commit, then dispatch. The dispatch facades and
+`RobotRunRegistrationService` open short sessions of their own and commit
+explicitly before sending to Celery, so no transaction is open while talking to the
+broker and a worker never receives a reference to a row that is not yet durable.
+Workers do not auto-commit: `JobRunner` and `PipelineOrchestrator` commit at their
+own checkpoints. [Jobs and pipelines](./jobs-and-pipelines.md) §5 gives the failure
+windows this leaves.
 
-### Dispatch flow
+### Dispatch
 
-The API never executes anything itself. `JobDispatchFacade` /
-`PipelineDispatchFacade` (`apps/api/app/platform/jobs/dispatch_facade.py`,
-`.../pipelines/dispatch_facade.py`) always: 1) commit the record as `QUEUED`
-in Postgres, 2) send it to the execution backend via `ExecutionService`.
+The API never executes work. `POST /jobs` and `POST /pipelines/runs` create a
+durable record; `POST /jobs/{id}/execute` and `POST /pipelines/runs/{id}/execute`
+go through `JobDispatchFacade` / `PipelineDispatchFacade`, which (1) mark the record
+`QUEUED` and commit, (2) send one Celery message through `ExecutionService`, and (3)
+commit the resulting `ExecutionRecord`. Committing first prevents a delayed `QUEUED`
+commit from overwriting a state a fast worker already advanced. If the send fails,
+the record stays `QUEUED` and can be dispatched again.
 
-Commit happens before dispatch deliberately: if the worker races ahead and
-already moves the record to `RUNNING`/`SUCCEEDED`, a late `QUEUED` commit
-from the API must not overwrite that. If dispatch itself fails, the record
-stays `QUEUED` and can be redispatched.
+## 5. Execution — `apps/worker`
 
-`ExecutionService` already supports choosing a backend per job/pipeline
-(`apps/api/app/platform/executions/dependencies.py`'s
-`get_pipeline_execution_backend` reads `settings.execution.pipeline_backend`
-to pick `CeleryPipelineExecutionBackend` or `AirflowPipelineExecutionBackend`).
-What's actually implemented today:
+Celery is the only execution backend. Exactly two tasks exist
+(`sceneops_worker/tasks/`), on two queues:
 
 ```text
-Job      -> Celery only (job_backend is fixed to celery)
-Pipeline -> Celery or Airflow (switchable via pipeline_backend)
+sceneops.jobs           run_job_task(job_id)                   -> JobRunner.run(job_id)
+sceneops.pipeline_runs  advance_pipeline_task(pipeline_run_id) -> PipelineOrchestrator.advance(id)
 ```
 
-When a pipeline is sent to Airflow, `AirflowPipelineExecutionBackend.dispatch_pipeline`
-calls the Airflow REST API for the DAG of the run's pipeline type
-(`POST /api/v1/dags/<prefix>_<pipeline type>/dagRuns`), setting
-`dag_run_id` equal to SceneOps' own `pipeline_run_id` for 1:1 traceability.
-Both backends write the same `ExecutionRecord` shape (distinguished by
-`execution_backend`), so query paths don't care which backend ran a given
-execution.
-
-## 3. Execution — `apps/worker`, `apps/inference-server`
-
-### Worker
-
-Celery-based. Exactly two task types exist (`sceneops_worker/tasks/`):
+The canonical execution path is:
 
 ```text
-run_job_task(job_id)               -> JobRunner.run(job_id)
-run_pipeline_task(pipeline_run_id) -> PipelineRunner.run(pipeline_run_id)
+PipelineRun -> PipelineTaskRun -> durable Job -> asynchronous dispatch
+            -> Celery worker -> JobRunner -> domain handler
 ```
 
-- `JobRunner` (`sceneops_worker/jobs/runner.py`): claims a single job ->
-  transitions it to running -> runs the registered handler -> records the
-  result. Handlers are registered per `JobType` in `JobHandlerRegistry` —
-  see [Jobs and pipelines](./jobs-and-pipelines.md) for the full list.
-- `PipelineRunner` (`sceneops_worker/pipelines/runner.py`): runs a
-  `PipelineDefinition`'s tasks **sequentially** in one process. If a task is
-  judged `BLOCKED` by a quality gate, the whole pipeline ends `BLOCKED`.
+- **JobRunner** (`sceneops_worker/jobs/runner.py`) is the sole runtime entry point
+  for a Job: it claims the Job, runs the registered handler, and persists the
+  terminal state. A Job that belongs to a PipelineRun is then reported to the
+  pipeline queue.
+- **PipelineOrchestrator** (`sceneops_worker/pipelines/orchestrator.py`) never runs
+  a handler or a JobRunner. Each `advance` is one short, repeatable step over durable
+  state: it settles the finished task's Job, applies the quality gate, or creates,
+  commits and dispatches the next task's Job, then returns.
+- Handlers are registered per `JobType` in `JobHandlerRegistry`.
 
-Idempotency (`execution_key`) and partial retry (an already-`SUCCEEDED` task
-is skipped on redispatch) are both implemented — see
-[Jobs and pipelines](./jobs-and-pipelines.md) and
-[ADR-004](../adr/004-airflow-vs-celery.md).
+Details, retry semantics and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md).
 
-### Airflow (pipeline-only, proof of concept)
+The inference server (`apps/inference-server`) is a separate FastAPI process that
+runs GroundingDINO; the worker's `predict_detection` handler calls it over HTTP, which
+keeps torch / transformers out of the worker image.
 
-When `pipeline_backend=airflow`, `PipelineRunner.run()` does not run the
-whole pipeline in one process. Instead, each task in the Airflow DAG
-(`airflow/dags/sceneops_pipelines.py`, one DAG per pipeline type) runs in its own `DockerOperator`
-container (the existing worker image, `apps/worker/Dockerfile`), invoking
-`sceneops-worker run-pipeline-task --task-id <id>` — which calls
-`PipelineTaskRunner.run()` directly. Quality-gate evaluation and per-task
-state recording are exactly the same code path as Celery; only the process
-boundary differs.
+## 6. Storage
 
 ```text
-start -> build_recording_scenes -> register_scenes -> validate_scene -> profile_scene -> finalize
+PostgreSQL                          ArtifactStore (object storage)
+  canonical identity                  raw recordings, RobotRunManifests
+  metadata, membership                Scene / Episode manifests, payloads
+  transactional + execution state     label sets, sample views, ScenarioSets
+  lineage references (ArtifactRecord) predictions, evaluations, reports
+                                      Parquet analytical tables, learning exports
+
+Redis    Celery broker / result backend only
+Kafka    streaming transport only
 ```
 
-Pipeline-level status transitions (`RUNNING`/`SUCCEEDED`/`BLOCKED`/`FAILED`),
-which used to only happen inside `PipelineRunner.run()`'s sequential loop,
-are handled by two new entry points that reuse the same private
-state-transition methods (`_start_pipeline`/`_succeed_pipeline`/
-`_block_pipeline`/`_fail_pipeline`):
+- PostgreSQL is authoritative for durable identity, metadata, execution state and
+  lineage references. It stores no payloads, only ArtifactStore URIs and checksums.
+- The ArtifactStore is authoritative for immutable recording and artifact bytes and
+  for manifests. Derived artifacts are write-once at checksum-qualified keys and an
+  `ArtifactRecord` names those exact bytes ([Storage layout](./storage-layout.md)).
+- Manifests, indexes, profile summaries and exports are derived and reproducible
+  from canonical state plus durable source artifacts; none of them is identity.
+- `create_artifact_store(settings)` selects `LocalArtifactStore` or
+  `S3ArtifactStore` (MinIO included) from the `ArtifactBackend` setting (`local`,
+  `minio`, `s3`).
 
-```text
-start()     : validate the run is executable, then status=RUNNING
-finalize()  : read back all task-run statuses, resolve final status as
-              BLOCKED > FAILED > SUCCEEDED (trigger_rule=all_done, so it
-              always runs regardless of upstream outcome)
-```
+## 7. Not part of the runtime
 
-Current scope is one pipeline type only — `recording_scene_building` has a
-hardcoded DAG task chain. Other pipeline types still only run through
-Celery. Extending the Airflow path to other pipelines means generalizing the
-DAG (or adding one per type) — out of scope for this PoC.
+SceneOps has no other execution backend and no alternative orchestrator: pipelines
+are not run inline in a worker process, and no external workflow engine (Airflow)
+dispatches them. A Pipeline is durable state advanced by the orchestrator, and every
+unit of domain work is a Job. There is no multi-run capture router; capture is one
+process per run. The rationale and the superseded decisions are in
+[ADR-009](../adr/009-job-centric-execution-and-durable-boundaries.md),
+[ADR-004](../adr/004-airflow-vs-celery.md) (superseded) and
+[ADR-008](../adr/008-acquisition-lifecycle-reliability.md).
 
-### Inference server
+## 8. Documentation map
 
-`apps/inference-server` is a separate FastAPI process that only does
-GroundingDINO (torch/transformers) inference. The worker's
-`predict_detection` job calls it over HTTP. This keeps heavy ML dependencies
-out of the worker process.
+| Tier | Location | Answers |
+| --- | --- | --- |
+| Orientation | [`README.md`](../../README.md) | What is SceneOps, how do I start |
+| Architecture | `docs/architecture/` | How the system works now |
+| Workflows | `docs/workflows/` | End-to-end data flows as implemented |
+| Development | `docs/development/` | Commands, test surface, reference environment |
+| Decisions | `docs/adr/` | Why a decision was made |
+| History | `docs/history/` | What was measured or studied at a point in time (not current) |
+| Roadmap | none maintained | Future work lives in issues and PRs, not in this tree |
 
-## 4. Storage
-
-```text
-                 SceneOps
-                    |
-      +-------------+-------------+
-      v                           v
- PostgreSQL                 ArtifactStore
- (sceneops-db)              (sceneops-storage)
-
- operational / relational   binary / JSON artifacts
- - datasets, scenes,        - scene/episode manifests
-   episodes                 - label sets, sample views,
-                              ScenarioSets
- - pipeline/job runs        - prediction/evaluation outputs
- - prediction/eval runs     - validation/profile reports
- - artifact metadata        - Parquet analytics tables
-```
-
-- PostgreSQL is the system of record for every entity's status, metadata,
-  and statistics. It never stores the real payload (manifest, report,
-  prediction result) — only the ArtifactStore URI (the `*_uri` columns).
-- ArtifactStore has two implementations, `LocalArtifactStore` and
-  `S3ArtifactStore` (MinIO included), chosen by `create_artifact_store(settings)`
-  from an `ArtifactBackend` setting. See
-  [Storage layout](./storage-layout.md) for the full URI structure.
-
-See [Data model](./data-model.md) for entity-level detail, and the
-domain-specific docs below for Scene/Episode flow.
-
-## 5. Documentation map
-
-| Topic | Doc |
+| Topic | Document |
 | --- | --- |
 | Entities and relationships | [data-model.md](./data-model.md) |
-| Scene domain (build -> quality -> API) | [scene-domain.md](./scene-domain.md) |
-| Episode domain (build -> quality -> API) | [episode-domain.md](./episode-domain.md) |
-| Robot learning data layer (alignment -> curation -> native dataset -> consumer adapters) | [robot-learning-data.md](./robot-learning-data.md) |
-| **Scalable learning data (Phase 5, frozen/authoritative)** -- production architecture, frozen contracts, performance summary, distributed-processing boundary | [scalable-learning-data.md](./scalable-learning-data.md) |
-| Learning data scaling -- full chronological per-request record (Phase 5: audit/benchmark, sharded layout, selective reads, bounded cache/bulk access, incremental export, final scale validation + distributed-processing boundary) | [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md) |
-| Dataset interoperability (external adapter contract, LeRobot semantic mapping, E2E) | [dataset-interoperability.md](./dataset-interoperability.md) |
-| External integration runtime (IntegrationRequest/Result, isolated LeRobot EXPORT runtime) | [external-integration-runtime.md](./external-integration-runtime.md) |
-| **Streaming transport (Phase 6.1 + 6.2)** -- TelemetryEnvelope contract, Kafka wire/topic/partitioning contract, local Kafka dev stack, smoke test, real ROS2 -> Kafka bridge + E2E | [streaming-transport.md](./streaming-transport.md) |
-| Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
-| Artifact storage layout and URI conventions | [storage-layout.md](./storage-layout.md) |
-| Run records and derived quality/readiness | [quality-and-runs.md](./quality-and-runs.md) |
+| Scene domain | [scene-domain.md](./scene-domain.md) |
+| Episode domain | [episode-domain.md](./episode-domain.md) |
 | Labels, sample views, ScenarioSets, predictions, evaluation, aligned episodes | [derived-layer.md](./derived-layer.md) |
-| Reserved architecture and current limitations | [reserved-and-limitations.md](./reserved-and-limitations.md) |
-| Robot data ingestion (ROS2 -> MCAP -> RobotRun) | [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) |
-| Local development, testing, E2E | [../development/local-development.md](../development/local-development.md) |
-| Verified test coverage per capability | [../development/test-matrix.md](../development/test-matrix.md) |
-| Architecture decisions | [../adr/](../adr/) |
+| Robot learning data layer | [robot-learning-data.md](./robot-learning-data.md) |
+| Scalable learning data (production layout, frozen contracts) | [scalable-learning-data.md](./scalable-learning-data.md) |
+| Dataset interoperability (adapter contract, LeRobot) | [dataset-interoperability.md](./dataset-interoperability.md) |
+| External integration runtime | [external-integration-runtime.md](./external-integration-runtime.md) |
+| Streaming transport, bridge, capture, run lifecycle | [streaming-transport.md](./streaming-transport.md) |
+| Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
+| Artifact layout, URI conventions, publication | [storage-layout.md](./storage-layout.md) |
+| Run records, quality and readiness | [quality-and-runs.md](./quality-and-runs.md) |
+| Current limitations | [limitations.md](./limitations.md) |
+| Robot data ingestion (MCAP -> RobotRun) | [../workflows/robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) |
+| Local development, test matrix | [../development/local-development.md](../development/local-development.md), [../development/test-matrix.md](../development/test-matrix.md) |
 
-## 6. Source-of-truth map
+## 9. Source-of-truth map
 
-Where to look first when you need ground truth on a topic — code over docs
-when the two disagree; file an issue/PR to fix the doc rather than trusting
-the doc over the code.
+Where to look first when you need ground truth; code and tests win over any
+document.
 
-**DATA** — Dataset/DatasetVersion model, config precedence
-- Schema: `packages/sceneops-core/sceneops_core/datasets/schemas/`
-- DB models: `packages/sceneops-db/sceneops_db/models/dataset*.py`
-- API: `apps/api/app/domains/datasets/`
-- Doc: [data-model.md](./data-model.md) §2
+**DATA** — Dataset / DatasetVersion
+- Schema `packages/sceneops-core/sceneops_core/datasets/schemas/`; DB models
+  `packages/sceneops-db/sceneops_db/models/dataset*.py`; API `apps/api/app/domains/datasets/`
+- Doc: [data-model.md](./data-model.md)
 
-**SCENE** — canonical SceneManifest, registration, validate/profile/quality
-- Schema: `packages/sceneops-core/sceneops_core/scenes/` (build configuration
-  in `scenes/recording_build.py`)
-- Builder / registration / resolution: `apps/worker/sceneops_worker/scenes/`
-  (`recording_builder.py`, `registration.py`)
-- Recording reader: `packages/sceneops-integrations/sceneops_integrations/recording/reader.py`
-- Pipeline definition: `RECORDING_SCENE_BUILDING_PIPELINE` in
+**SCENE** — canonical SceneManifest, registration, validate / profile / quality
+- Schema `packages/sceneops-core/sceneops_core/scenes/`; builder / registration
+  `apps/worker/sceneops_worker/scenes/`; recording reader
+  `packages/sceneops-integrations/sceneops_integrations/recording/reader.py`
+- Pipeline definition `RECORDING_SCENE_BUILDING_PIPELINE` in
   `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
-- Job handlers: `apps/worker/sceneops_worker/jobs/dataset/`
-- Quality: `apps/api/app/domains/scenes/quality.py`
+- Handlers `apps/worker/sceneops_worker/jobs/dataset/`; quality `apps/api/app/domains/scenes/quality.py`
 - Doc: [scene-domain.md](./scene-domain.md)
 
-**EPISODE** — Episode build/register/validate/profile/quality
-- Pipeline definition: `RECORDING_EPISODE_BUILDING_PIPELINE` in
-  `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
-- Builder / registrar: `apps/worker/sceneops_worker/episodes/`
-  (`recording_builder.py`, `registration.py`, `resolver.py`); shared
-  recording-builder code in `apps/worker/sceneops_worker/recordings/`
-- Job handlers: `apps/worker/sceneops_worker/jobs/dataset/`
-  (`build_recording_episodes`, `register_episodes`, `validate_episode`,
-  `profile_episode`)
-- Quality: `apps/api/app/domains/episodes/quality.py`
+**EPISODE** — build / register / validate / profile / quality
+- Pipeline definition `RECORDING_EPISODE_BUILDING_PIPELINE` (same file); builder /
+  registrar `apps/worker/sceneops_worker/episodes/`; shared recording-builder code
+  `apps/worker/sceneops_worker/recordings/`; quality `apps/api/app/domains/episodes/quality.py`
 - Doc: [episode-domain.md](./episode-domain.md)
 
-**LEARNING DATA** — temporal alignment, validation/profiling, columnar
-export, curation, native dataset/sampler/consumer adapters (Phase 2,
-dispatched as standalone Jobs, no dedicated pipeline or API domain)
-- Alignment/curation/native-contract: `packages/sceneops-core/sceneops_core/episodes/{alignment,curation,learning}/`
-- `SceneOpsDataset`/`SequenceSampler`/adapters: `packages/sceneops-analytics/sceneops_analytics/learning_dataset/`
-- Job handlers: `apps/worker/sceneops_worker/jobs/dataset/{align_episode,validate_aligned_episode,profile_aligned_episode,export_learning_data,curate_episodes}.py`
-- Doc: [robot-learning-data.md](./robot-learning-data.md)
+**LEARNING DATA** — alignment, validation / profiling, columnar export, curation, native dataset
+- `packages/sceneops-core/sceneops_core/episodes/{alignment,curation,learning}/`,
+  `packages/sceneops-analytics/sceneops_analytics/learning_dataset/`,
+  handlers `apps/worker/sceneops_worker/jobs/dataset/{align_episode,validate_aligned_episode,profile_aligned_episode,export_learning_data,curate_episodes}.py`
+- Docs: [robot-learning-data.md](./robot-learning-data.md), [scalable-learning-data.md](./scalable-learning-data.md)
 
-**DATASET INTEROPERABILITY** — external adapter contract, LeRobot export
-semantic mapping, real Postgres/MinIO round-trip E2E (Phase 3, complete)
-- Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/`
-- Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
-- Adapter tests (isolated environment): `make test-infrastructure SUITE=boundaries`
-- Doc: [dataset-interoperability.md](./dataset-interoperability.md)
+**DATASET INTEROPERABILITY / EXTERNAL RUNTIME**
+- `packages/sceneops-analytics/sceneops_analytics/external_adapters/` (shared contract,
+  `lerobot/` adapter); `packages/sceneops-core/sceneops_core/integration_runtime/`;
+  isolated environment `tools/lerobot-integration/`
+- Docs: [dataset-interoperability.md](./dataset-interoperability.md),
+  [external-integration-runtime.md](./external-integration-runtime.md)
 
-**EXTERNAL INTEGRATION RUNTIME** — IntegrationRequest/IntegrationResult
-contract for the isolated LeRobot EXPORT runtime
-- Reference/runtime contract: `packages/sceneops-core/sceneops_core/integration_runtime/`
-- Isolated LeRobot environment/container: `tools/lerobot-integration/`
-- E2E: the LeRobot round trip of `make e2e-episode-learning` (`compose/lerobot.yaml`, `scripts/e2e/lerobot_{build_request,verify_export}.py`)
-- Doc: [external-integration-runtime.md](./external-integration-runtime.md)
+**EXECUTION** — Jobs, Pipelines, dispatch, execution records
+- API: `apps/api/app/platform/{jobs,pipelines,executions}/`
+- Worker: `apps/worker/sceneops_worker/jobs/runner.py`,
+  `apps/worker/sceneops_worker/pipelines/orchestrator.py`,
+  `apps/worker/sceneops_worker/execution/dispatcher.py`,
+  `apps/worker/sceneops_worker/tasks/`
+- Task / queue names `packages/sceneops-core/sceneops_core/constants/tasks.py`;
+  execution key `packages/sceneops-core/sceneops_core/executions/key.py`
+- Doc: [jobs-and-pipelines.md](./jobs-and-pipelines.md)
 
-**PLATFORM** — Jobs, Pipelines, Artifacts, Executions, run records
-- Job/Pipeline runners: `apps/worker/sceneops_worker/jobs/runner.py`,
-  `apps/worker/sceneops_worker/pipelines/runner.py`
-- Execution key/idempotency: `packages/sceneops-core/sceneops_core/executions/key.py`
-- Artifact model: `packages/sceneops-db/sceneops_db/models/artifact.py`
-- Docs: [jobs-and-pipelines.md](./jobs-and-pipelines.md), [quality-and-runs.md](./quality-and-runs.md)
+**ARTIFACTS** — publication, records, layout
+- `apps/worker/sceneops_worker/derived/publication.py`,
+  `packages/sceneops-db/sceneops_db/models/artifacts.py`,
+  `packages/sceneops-storage/sceneops_storage/backends/`
+- Doc: [storage-layout.md](./storage-layout.md)
+
+**ACQUISITION / STREAMING**
+- `ros2/` (bridge `nodes/streaming_bridge_node.py`, capture `capture/`),
+  `packages/sceneops-streaming/`, `packages/sceneops-integrations/sceneops_integrations/recording/`,
+  `apps/api/app/domains/robots/{registration.py,reconciliation/,acquisition_status/,artifact_lifecycle/}`
+- Docs: [streaming-transport.md](./streaming-transport.md),
+  [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md),
+  [ADR-005](../adr/005-ros2-vs-kafka-boundary.md), [ADR-008](../adr/008-acquisition-lifecycle-reliability.md)
 
 **INFRA** — Postgres, MinIO, Redis, Celery, Docker Compose
-- `compose.yaml` + `compose/*.yaml`, `Makefile` + `makefiles/*.mk`
-- `packages/sceneops-db/sceneops_db/session.py` (async engine/session)
-- `packages/sceneops-storage/sceneops_storage/backends/`
-- Doc: [../development/local-development.md](../development/local-development.md), [storage-layout.md](./storage-layout.md)
-
-**OPTIONAL** — Airflow backend, ROS2/robot sandbox, inference server
-- Airflow: `airflow/dags/sceneops_pipelines.py` (one DAG per pipeline type), [ADR-004](../adr/004-airflow-vs-celery.md)
-- ROS2/robots: `ros2/`, `apps/worker/sceneops_worker/robots/telemetry.py`,
-  [ADR-005](../adr/005-ros2-vs-kafka-boundary.md), [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md)
-- Inference server: `apps/inference-server/`
-- Scenario curation: `apps/worker/sceneops_worker/jobs/scenarios/`, [quality-and-runs.md](./quality-and-runs.md) §4
+- `compose.yaml` + `compose/*.yaml`, `Makefile` + `makefiles/*.mk`,
+  `packages/sceneops-db/sceneops_db/session.py`, `packages/sceneops-storage/sceneops_storage/backends/`
+- Docs: [local-development.md](../development/local-development.md), [storage-layout.md](./storage-layout.md)

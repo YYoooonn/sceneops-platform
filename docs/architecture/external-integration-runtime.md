@@ -88,5 +88,5 @@ pulls in `sceneops-db`, Celery or the worker's dependencies.
 - Contract: `packages/sceneops-core/sceneops_core/integration_runtime/`, `packages/sceneops-core/tests/test_integration_runtime.py`
 - LeRobot entrypoint: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/entrypoint.py`
 - Isolated LeRobot environment/container: `tools/lerobot-integration/`
-- E2E: `scripts/e2e/e2e_lerobot_container_roundtrip.sh`, `scripts/e2e/smoke_lerobot_container.sh`
+- E2E: the LeRobot round trip of `make e2e-episode-learning` (`scripts/e2e/lerobot_build_request.py`, `scripts/e2e/lerobot_verify_export.py`)
 - Make targets: `makefiles/lerobot.mk` (`lerobot-sync`, `lerobot-test`, `lerobot-image`); the container is the `lerobot-integration` compose service (`compose/lerobot.yaml`), driven by `make e2e-episode-learning`

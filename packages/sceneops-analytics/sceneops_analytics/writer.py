@@ -236,7 +236,7 @@ class AnalyticsTableWriter:
         # ParquetWriter defaults to "snappy" at an effective level-1 zstd
         # equivalent, which measurably under-compresses this schema's
         # low-cardinality string/categorical columns; see
-        # docs/architecture/learning-data-scaling-baseline.md's shard
+        # docs/history/learning-data-scaling-baseline.md's shard
         # size-distribution measurements.
         with pq.ParquetWriter(
             sink, arrow_table.schema, compression="zstd", compression_level=3

@@ -4,6 +4,15 @@
 
 **Accepted — implemented. Closed by Amendment A9 (§34).**
 
+**Later change.** Several amendments below (A9 §34 and A11 §36 in particular) describe
+the Airflow pipeline backend, its per-task DAGs, `make test-infrastructure
+SUITE=airflow` and the inline `PipelineRunner` as live. Those components were removed:
+the execution architecture is now [ADR-009](./009-job-centric-execution-and-durable-boundaries.md),
+and the continuous multi-run capture router is gone too
+([ADR-008](./008-acquisition-lifecycle-reliability.md), amendment). The text below
+remains the record of what was decided and verified at the time; for current behavior
+read [Jobs and pipelines](../architecture/jobs-and-pipelines.md).
+
 This ADR froze the *target* ingestion architecture for SceneOps. At the time
 of acceptance almost none of the target contract was implemented; the amendments
 below record each implementation step, and A9 records the final workflow surface

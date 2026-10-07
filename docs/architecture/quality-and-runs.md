@@ -87,8 +87,8 @@ samples from pinned sample views by explicit criteria into an immutable
 use. It is two stages of `scene_ml_evaluation` and is exercised by
 `make e2e-scene-ml`. See [Derived layer](./derived-layer.md) §4.
 
-`ScenarioStatus` exists in the enum, but no job writes it and there is no
-per-scenario DB row or repository (see [Data model](./data-model.md) §6).
+There is no per-scenario status, DB row or repository: members live in the
+ScenarioSet manifest (see [Data model](./data-model.md) §6).
 
 `scenario_run_records` (mining/readiness) follow the same append-only
 run-record pattern as §1. The readiness run carries dedicated aggregate

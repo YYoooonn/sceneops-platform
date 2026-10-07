@@ -28,10 +28,9 @@ Every step is idempotent, so `make local-up` is safe to run repeatedly —
 against an already-running stack it just confirms everything is healthy and
 re-applies nothing destructive.
 
-`inference-server` and `airflow` are **not** part of the default stack —
-they're genuinely optional (a separate detection backend and an alternate
-pipeline-execution backend, respectively). Start them explicitly:
-`make inference-local-up` / `make airflow-up`.
+`inference-server` is **not** part of the default stack — it is a genuinely
+optional detection backend. Start it explicitly: `make inference-local-up`
+(CPU) or `make inference-gpu-up`.
 
 ## Stopping vs. resetting
 
@@ -39,7 +38,7 @@ pipeline-execution backend, respectively). Start them explicitly:
   Postgres/Redis/MinIO volumes. Your data survives; `make local-up` picks
   up where you left off.
 - `make local-reset` — **destructive**. Deletes the Postgres/Redis/MinIO
-  volumes and everything under `./data/{datasets,runs,models,artifacts}`,
+  volumes and everything under `./data/{runs,artifacts}`,
   then runs `make local-up` again against a clean state. This does **not**
   rebuild any Docker image — it reuses whatever `api`/`worker`/integration
   images are already built (`docker compose up`, not `--build`). If you've
@@ -81,9 +80,6 @@ shell environment                              (highest precedence)
     `apps/worker/sceneops_worker/config.py`) also load `.env.local` directly
     (for host-side/non-Docker runs); real environment variables always win
     over anything loaded from a file.
-- `.env.airflow.local` / `.env.airflow.example` are deliberately separate —
-  Airflow runs its own, entirely independent Postgres instance with its own
-  credentials, not SceneOps'.
 - `.env.test` (if present under `apps/*/tests`) governs test-time config
   only; it has no bearing on `make local-up`.
 
@@ -104,7 +100,7 @@ repo root — that's what `$(COMPOSE)` in the Makefile and the scripts under
 `scripts/` rely on.
 
 `minio` is intentionally **not** profile-gated, unlike `inference`/
-`airflow`/`ros2`/`gpu`/`debug` — it's required infrastructure (the artifact
+`ros2`/`gpu`/`debug` — it's required infrastructure (the artifact
 store backend), not an optional extra, so `api`/`worker-*` can
 `depends_on: minio: condition: service_healthy` directly, and a plain
 `docker compose down -v` actually reaches `minio-data`.
@@ -117,7 +113,7 @@ layer a given contract belongs to; this section is the command surface.
 ```
 make test                          unit suites, no infrastructure (run anywhere)
 make test-integration              real Postgres + MinIO in a disposable database + bucket, needs `make local-up`
-make test-infrastructure [SUITE=pipelines|recovery|airflow|kafka|boundaries]
+make test-infrastructure [SUITE=pipelines|recovery|kafka|boundaries]
                                    real-infrastructure suites; `pipelines` is the default (see below)
 make reference-contract-verify     the golden contract is valid (read-only)
 make e2e-streaming-equivalence | e2e-scene-ml | e2e-episode-learning
@@ -127,7 +123,7 @@ make check-commands                the command surface is consistent (no pytest,
 
 - `make test` runs each unit suite in its own pytest process (`apps/worker`,
   `apps/api`, `apps/inference-server`, `packages/sceneops-{core,analytics,
-  integrations,streaming}`): several suites ship their own `tests/__init__.py`
+  integrations,streaming}`): several suites ship their own test-package `__init__.py`
   and conftest, which pytest cannot register together. Every `inference-server`
   test mocks `GroundingDinoModel`/`ImageResolver` — none needs a GPU, model
   weights or a running inference server.
@@ -151,7 +147,7 @@ make check-commands                the command surface is consistent (no pytest,
   them; names outside `sceneops_test*` / `sceneops-test*`, or equal to `POSTGRES_DB` /
   `MINIO_BUCKET`, are refused.
 - `make test-infrastructure SUITE=<name>` selects one real-infrastructure suite (default
-  `pipelines`). `pipelines`, `recovery` and `airflow` fail, never skip, when their infrastructure
+  `pipelines`). `pipelines` and `recovery` fail, never skip, when their infrastructure
   is missing, and the selection changes no suite's isolation:
   - `pipelines` runs `tests/infrastructure` on a disposable execution runtime:
     execution-key dedup / force, convergence of an unchanged rebuild,
@@ -168,14 +164,6 @@ make check-commands                the command surface is consistent (no pytest,
     `sceneops-test-infra-pipelines`, one DatasetVersion per test, inside the disposable
     database. It needs `make local-up` (the PostgreSQL / MinIO servers and the images) and
     `make reference-data-bootstrap`, and takes its ports from the free ones on the host.
-  - `airflow` runs the same canonical pipelines through the Airflow per-task DAGs in the same
-    kind of runtime plus a private Airflow (own metadata database, webserver and scheduler,
-    the Docker socket for the per-task worker containers) and an API started on the
-    `airflow` pipeline backend; it needs neither `make airflow-up` nor a restarted reference
-    `api`, and builds the Airflow image on first use. Its Scene ML test builds Scenes and
-    imports a LabelSet (the fixture's locked reference labels, rendered by the
-    `reference-labels` container) in a DatasetVersion of the fixed Dataset
-    `sceneops-test-infra-airflow`, so it also needs `make acquisition-image`.
   - `recovery` runs the two acquisition-recovery suites against PostgreSQL and MinIO in the
     same disposable database and bucket as `make test-integration`, with a Redis container
     and Celery workers of its own, so killing a worker or stopping the broker never touches
@@ -242,7 +230,7 @@ reconstruction.
   each run twice; and a final `reference-contract-verify` that shows the contract
   valid and unchanged beside the two fixed derived Datasets. It ends with timing
   and storage diagnostics (not a benchmark). It needs ROS 2 and Kafka (the
-  contract's Streaming Acquisition RobotRuns) but no GPU or Airflow, and runs
+  contract's Streaming Acquisition RobotRuns) but no GPU, and runs
   none of the other acceptance surfaces. Requires confirmation unless `FORCE=1`.
 
 The transport smoke (`SUITE=kafka`) is a liveness / transport check, not a journey: it never
@@ -299,7 +287,7 @@ SceneOps contract, and a green result proves nothing about correctness. Correctn
 | `make check-inference-server` / `check-inference-server-ready` | the inference server is alive / has loaded its model |
 | `make ros2-check` | `rclpy` and the MCAP storage plugin exist in the `ros2` image |
 | `make api-health` / `api-openapi` / `show-runs` / `show-pipeline` / `show-job-events` | the API answers; a run, pipeline or job as the API reports it |
-| `make worker-run-job` / `worker-run-pipeline` / `worker-run-pipeline-task` / `worker-register-robot-run` | run one Job, pipeline or registration by hand through the worker CLI |
+| `make worker-run-job JOB_ID=…` / `worker-advance-pipeline PIPELINE_RUN_ID=…` | run one Job through `JobRunner`, or take one `PipelineOrchestrator` step, by hand through the worker CLI (`sceneops-worker jobs run`, `sceneops-worker pipelines advance`) |
 | `make reconcile-once` / `reconcile-apply` / `artifact-lifecycle-once` / `acquisition-status` | one acquisition-reconciliation pass; read-only lifecycle and status reports ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)) |
 | `make disk-report` | disk headroom and what could be reclaimed (below) |
 
@@ -330,7 +318,7 @@ what Docker could reclaim. Reclaim in this order, stopping when there is room:
 | Docker build cache | yes; the next image build is slower | `docker builder prune` (`--filter until=168h` keeps the recent layers) |
 | Generated `./data` output, Python caches | yes; `data/raw` and `data/reference` are untouched | `make clean-artifacts`, `make clean-python` |
 | `cache/hf` (model weights) | yes if no inference server is used; re-downloaded on next use | `rm -rf cache/hf/*` |
-| Unused images (`docker image prune -a`) | **costly, not unsafe**: it also removes the opt-in `ros2`, `dataset-replay`, `dataset-acquisition`, `lerobot-integration` and `airflow` images, which the journeys and the contract bootstrap rebuild (GBs of build time) | only when the room is needed |
+| Unused images (`docker image prune -a`) | **costly, not unsafe**: it also removes the opt-in `ros2`, `dataset-replay`, `dataset-acquisition`, and `lerobot-integration` images, which the journeys and the contract bootstrap rebuild (GBs of build time) | only when the room is needed |
 | Kafka log | not selectively. The telemetry topic reports `retention.ms` = 7 days and 1 GiB segments (the repository sets neither): the broker deletes rolled segments once their newest record is that old, so the log drains by itself after the last streamed run. Every streamed run owns its offset range and a capture can only resume from what the topic still holds, so truncating by hand is not supported | wait, or `make local-reset` |
 | Acquisition scratch (`sceneops_acquisition-recordings`) | transient MCAPs are removed once their recording is provably registered; a capture that is not provably published is kept on purpose and is recovered with `publish-pending` / `reconcile`, not deleted | `make acquisition-status` |
 

@@ -1,7 +1,7 @@
 """A minimal bounded LRU cache (SceneOps V2 Request 5.4 §2) -- deliberately
 plain (``collections.OrderedDict``, no third-party dependency, no
 size-weighted/TTL/generational policy): the measured per-episode memory
-footprint (see ``docs/architecture/learning-data-scaling-baseline.md``
+footprint (see ``docs/history/learning-data-scaling-baseline.md``
 §42/§43) varies by episode width, not in a way that justifies more than a
 simple entry-count bound, and the task instructions prefer the simplest
 policy the evidence supports.

@@ -1,39 +1,26 @@
-# Scalable Learning Data Architecture (Phase 5, frozen)
+# Scalable Learning Data Architecture
 
-> Authoritative, "what's actually built" reference for SceneOps's
-> production learning-data storage/access architecture, as it stands after
-> Phase 5 (Requests 5.1-5.6). Like
-> [robot-learning-data.md](./robot-learning-data.md) and
-> [overview.md](./overview.md), this describes what was checked against
-> the code, not aspirational design. The full, chronological per-request
-> record (every measurement, every design decision, every bug found and
-> fixed) lives in
-> [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md)
-> (§1-78) and is not reproduced here — this document freezes the
-> conclusions; that one is the evidence.
+> The production learning-data storage and access architecture as implemented, with
+> its frozen contracts. Like [robot-learning-data.md](./robot-learning-data.md) and
+> [overview.md](./overview.md), it describes what was checked against the code. The
+> measurements and design record behind it is a point-in-time document,
+> [learning-data-scaling-baseline.md](../history/learning-data-scaling-baseline.md);
+> this document states the conclusions and that one is the evidence.
 
 ## 1. Purpose
 
-[Robot learning data layer](./robot-learning-data.md) (Phase 2) built
-SceneOps's own canonical learning-data representation:
-`AlignedEpisode` -> columnar Parquet export -> `SceneOpsDataset` ->
-`SequenceSampler` -> consumer adapters. It was built and verified correct
-at small scale — one Parquet file per logical table, one whole-table
-fetch per `SceneOpsDataset` instance, unbounded per-instance caches, and
-export-by-full-rebuild only.
-
-Phase 5 took that same logical architecture and made it scale: bounded
-physical shards, selective and shard-aware bulk reads, bounded caches,
-and immutable incremental exports — without changing one bit of Phase
-2's logical semantics (`EpisodeRef`, ABSENT/MISSING, `FeatureProjection`/
-`FeatureSchema`, `SequenceSampler` window semantics). Every claim in this
-document was true against the code at the time of Request 5.6's
-verification pass (`make test`: 1,333 passed; see §12).
+[Robot learning data layer](./robot-learning-data.md) defines SceneOps's canonical
+learning-data representation: `AlignedEpisode` -> columnar Parquet export ->
+`SceneOpsDataset` -> `SequenceSampler` -> consumer adapters. This architecture makes
+that same logical model scale: bounded physical shards, selective and shard-aware
+bulk reads, bounded caches, and immutable incremental exports, without changing the
+logical semantics (`EpisodeRef`, ABSENT/MISSING, `FeatureProjection` /
+`FeatureSchema`, `SequenceSampler` window semantics).
 
 ## 2. Final production flow
 
 ```text
-Canonical Episode / AlignedEpisode        (Phase 2, unchanged)
+Canonical Episode / AlignedEpisode        (unchanged)
         |
         v
 Learning Data Export (EXPORT_LEARNING_DATA)
@@ -53,7 +40,7 @@ SceneOpsDataset.open()                    (semantic access boundary, §3)
 selective single-EpisodeRef reads   <-or->   shard-aware bulk access   (§5)
         |
         v
-SequenceSampler -> NumPy / Torch / external adapters   (Phase 2/3, unchanged)
+SequenceSampler -> NumPy / Torch / external adapters   (unchanged)
 ```
 
 Every arrow above is a real, tested, currently-production code path — not
@@ -71,7 +58,7 @@ shard index are the only physical-layout source of truth it reads.
 ```text
 EpisodeRef
 = episode_id + aligned_artifact_checksum
-  The read-side identity for one aligned revision (Phase 2, Request 2.7A).
+  The read-side identity for one aligned revision.
   Never episode_id alone -- two EpisodeRefs with the same episode_id but
   different checksums are distinct, independently-indexed data. A second
   aligned revision of an already-exported episode_id (added via an
@@ -79,7 +66,7 @@ EpisodeRef
   casing anywhere in the read path.
 
 Shard
-= object-count / physical-write granularity (Request 5.2)
+= object-count / physical-write granularity
   One physical Parquet object holding a bounded, ordered subset of
   EpisodeRefs for one logical table (learning_steps or learning_signals).
   Bounded by ShardPolicy (max_episodes_per_shard / max_rows_per_shard,
@@ -89,23 +76,23 @@ Shard
   partially rewritten.
 
 Row group
-= EpisodeRef read-locality granularity (Request 5.2)
+= EpisodeRef read-locality granularity
   Exactly one Parquet row group per episode, within its shard. This is
   what makes a single-EpisodeRef selective read (§5) possible at all --
   it is the finest-grained unit PyArrow can address without reading
   neighboring episodes' bytes.
 
 Manifest
-= physical layout / index source of truth (Request 2.5, extended 5.2/5.5)
+= physical layout / index source of truth
   LearningDataExportManifest is the only place physical layout is
   recorded: table_uris (learning_episodes), shard_index
   (LearningDataShardIndex, learning_steps/learning_signals), inputs (the
-  full exposed EpisodeRef set), and (since Request 5.5) base_export_id
+  full exposed EpisodeRef set), and base_export_id
   (lineage only, §6). A reader never infers layout from listing an
   ArtifactStore prefix or from any row-level column (§6).
 
 SceneOpsDataset
-= semantic access boundary (Request 2.7B, extended 5.3/5.4)
+= semantic access boundary
   The only object anything downstream (SequenceSampler, external
   adapters, ad hoc consumers) ever talks to. Dispatches once, at open(),
   on manifest.shard_index's presence (v2-sharded vs v1-single-file, §11)
@@ -120,7 +107,7 @@ SceneOpsDataset
 - **`learning_episodes`** stays single-file, always — one row per exposed
   EpisodeRef, always metadata-scale (never more than a few hundred KB
   even at 10,000+ episodes, §9). Sharding it would add manifest/read
-  complexity for no locality benefit (Request 5.2).
+  complexity for no locality benefit.
 - **`learning_steps`/`learning_signals`** are sharded: bounded,
   multi-episode Parquet objects, one row group per episode
   (`ShardEpisodeMember.row_group_index`), written with explicit
@@ -132,7 +119,7 @@ SceneOpsDataset
   aligned_artifact_checksum)`-sorted entries, keyed on each episode's
   `step_count` as the sizing proxy for both tables (a documented
   approximation for `learning_signals`, whose actual row count also
-  depends on channel count — Request 5.2 §16).
+  depends on channel count — see the scaling record).
 - Object naming embeds `export_id`/`table_name`/`shard_index` for human
   debuggability, but **the manifest, never the URI, is the source of
   truth** a reader relies on.
@@ -142,7 +129,7 @@ SceneOpsDataset
 Two access modes exist, both scoped inside `SceneOpsDataset` — nothing
 above it chooses between them:
 
-- **Selective single-EpisodeRef reads** (Request 5.3): one episode's own
+- **Selective single-EpisodeRef reads**: one episode's own
   shard + row group is looked up in an in-memory index built once at
   `open()` (`_build_shard_lookup`, no ArtifactStore listing, no Parquet
   scanning) and fetched via targeted `ArtifactStore.read_range` calls
@@ -151,7 +138,7 @@ above it chooses between them:
   is pre-guessed). Measured: **121.6x fewer bytes** than a whole-table
   fetch for one episode at 10,000-episode scale, and the reduction factor
   *grows* with scale (§9).
-- **Shard-aware bulk access** (Request 5.4): for workloads needing
+- **Shard-aware bulk access**: for workloads needing
   most/all of a large contributing set at once (`SequenceSampler.create()`'s
   schema resolution, `preload_episodes`), contributing EpisodeRefs are
   grouped by shard (`group_by_shard`) and each shard's needed row groups
@@ -161,14 +148,14 @@ above it chooses between them:
   episode count — measured **58x fewer calls** (2,035 -> 35) at
   1,000-episode/6-shard scale, reconfirmed unchanged in shape at
   10,000-episode/51-shard scale (§9).
-- `ArtifactStore.read_range(uri, offset, length)` (Request 5.3) is the
+- `ArtifactStore.read_range(uri, offset, length)` is the
   one new capability both modes are built on — implemented for both
   `LocalArtifactStore` and `S3ArtifactStore`; every other `ArtifactStore`
   method is unchanged.
 
 ## 6. Cache policy
 
-Three bounded, per-`SceneOpsDataset`-instance caches (Request 5.4),
+Three bounded, per-`SceneOpsDataset`-instance caches,
 governed by `CachePolicy` (`max_episode_steps=64`, `max_schemas=128`,
 `max_shard_metadata=256` by default; `0` disables, `None` means
 unbounded, `DISABLED_CACHE_POLICY` exists for raw-cost benchmarking):
@@ -185,14 +172,14 @@ different `CachePolicy` values return identical data from every method;
 only what gets re-fetched vs. reused differs. Verified directly: after
 exhaustively touching all 10,050 EpisodeRefs at 10,000-episode scale, all
 three caches sat exactly at their configured bound (64 / 128 / 102 of
-256), never grew unbounded (Request 5.6 §71).
+256), never grew unbounded.
 
 ## 7. Incremental export semantics
 
-`EXPORT_LEARNING_DATA` supports two modes (Request 5.5), coexisting —
+`EXPORT_LEARNING_DATA` supports two modes, coexisting —
 incremental is not a replacement for full export:
 
-- **Full export** (`base_export_id` unset, unchanged since Request 2.5):
+- **Full export** (`base_export_id` unset):
   builds and writes every requested table from scratch over the complete
   target EpisodeRef set.
 - **Incremental export** (`base_export_id` set): pure *addition* only —
@@ -230,9 +217,9 @@ incremental is not a replacement for full export:
   `episodes()`/`get_step()` results through the same, unmodified reader
   — proven directly by
   `test_full_build_and_incremental_export_expose_identical_logical_data`
-  (Request 5.5 §65).
+ .
 
-## 8. Provenance semantics (frozen, Request 5.6)
+## 8. Provenance semantics (frozen)
 
 `learning_episodes.export_id`, `.dataset_id`, and `.dataset_version` (the
 per-row columns, not the manifest's own fields) mean **first-write
@@ -261,17 +248,16 @@ likewise stays permanently owned by the export that first wrote it.
 
 The strongest results from each request, all measured against real
 Parquet/`AlignedEpisodeArtifact` contracts (no mocked I/O), reconfirmed
-at up to 10,000 episodes in Request 5.6's final pass:
+at up to 10,000 episodes in the final scale validation:
 
-| Dimension | Before (Phase 2 / Request 5.1 baseline) | After (Phase 5, frozen) |
+| Dimension | Single-file baseline | Sharded layout (frozen) |
 |---|---|---|
 | **Read granularity** | One EpisodeRef access reads 100% of `learning_steps`+`learning_signals`, every scale | One EpisodeRef access reads only its own shard's row group — **121.6x fewer bytes** at 10,000-episode scale; the reduction factor *grows* with scale (1.4x -> 3.6x -> 15.1x -> 121.6x) |
 | **Bulk I/O scaling** | 1 selective fetch per contributing episode (2,035 calls at 1,000-episode/6-shard scale) | 1 combined fetch per contributing *shard* (35 calls, **58x fewer**); reconfirmed unchanged in shape at 10,000-episode/51-shard scale |
 | **Cache growth** | `_episode_steps_cache`/`_schema_cache` grow with every distinct episode ever touched, no eviction | Bounded by `CachePolicy` (64/128/256 default) regardless of episodes touched — confirmed still exactly at-bound after touching **10,050** episodes (157x the cache's own size) |
 | **Export cost model** | Any new/changed EpisodeRef rewrites 100% of `learning_steps`/`learning_signals` shards | Write amplification **0.010-0.092** (1-9% of full-rebuild bytes) for representative deltas at 1,000-episode scale; new-shard count stays flat regardless of base size |
 
-**Current dominant bottlenecks** (Request 5.6, measured directly, not
-inferred):
+**Current dominant bottlenecks**:
 
 - **Read side**: pure Python/Pydantic `LearningStep` object-graph
   construction — **80-92% of per-episode cost** at every measured scale
@@ -279,8 +265,7 @@ inferred):
   (1.7-2.9ms/episode) via a dedicated measurement. I/O is never more than
   ~2% of total wall time for any read workload measured, at any scale.
 - **Write side**: per-row, unvectorized Python table construction
-  (`build_learning_steps_table`/`build_learning_signals_table`, Request
-  2.5, unchanged since first flagged in Request 5.1).
+  (`build_learning_steps_table`/`build_learning_signals_table`; unchanged since first measured).
 
 **Storage, network round trips, and Spark/distributed processing are not
 the current bottleneck for anything measured** — every workload's cost
@@ -290,11 +275,11 @@ resolved to a specific, already-understood Python/PyArrow/Polars call
 ## 10. Distributed-processing boundary
 
 - **Single-node PyArrow/Polars remains the production architecture.**
-  Every workload measured through Request 5.6 (open, selective read,
+  Every workload measured in the scale validation (open, selective read,
   bulk read, full/exhaustive iteration, full export, incremental export)
   at up to 10,000 episodes / 94 MB / 104 objects resolved to a specific
   single-node bottleneck (§9) — never to "too much data for one machine."
-- **Spark is not currently justified.** The one place Request 5.6's own
+- **Spark is not currently justified.** The one place the scale validation's own
   benchmark harness ran out of practical execution headroom (generating
   a 25,000-episode synthetic fixture) was traced to an already-known,
   unvectorized single-node Python loop (the *benchmark harness's* fixture
@@ -313,7 +298,7 @@ resolved to a specific, already-understood Python/PyArrow/Polars call
   decouples those, §6) exceeding single-machine RAM for a required
   access pattern; or object/shard count growing enough to make the
   in-memory shard-lookup index or per-shard metadata caching itself the
-  bottleneck (not observed at any scale measured through Request 5.6).
+  bottleneck (not observed at any scale measured in the scale validation).
 
 No Spark dependency, scaffolding, or planning artifact exists anywhere in
 this repository as of this freeze.
@@ -321,7 +306,7 @@ this repository as of this freeze.
 ## 11. Production vs. legacy path status
 
 **Production: v2-sharded is the only layout `EXPORT_LEARNING_DATA`
-produces**, full or incremental, unconditionally, since Request 5.2 —
+produces**, full or incremental, unconditionally —
 verified directly against the job handler source (no params/branch
 selects v1 output). `SceneOpsDataset.open()` dispatches to the v2
 selective/bulk access path (§5) whenever `manifest.shard_index` is
@@ -332,7 +317,7 @@ writes today.
 correctness/golden-fixture compatibility only** — it is not a second,
 equally-current production architecture. It is exercised by the frozen
 interop golden fixture (`interop_dataset.py`) and the adapter / entrypoint
-tests built on it (`make lerobot-test`), which predate Request 5.2's sharded
+tests built on it (`make lerobot-test`), which predate the sharded
 layout and are deliberately kept on the v1 path as regression coverage — not
 because any current production code path still writes v1 output. No
 production job, API endpoint, or worker task other than tests/fixtures
@@ -343,11 +328,11 @@ would drop real regression coverage for the golden fixture path for no
 production benefit, and this request's own scope excludes production
 architecture changes.
 
-## 12. Verification (Request 5.6 freeze pass)
+## 12. Verification
 
 - `make test`, `make lint`, `make test-integration`, `make lerobot-test` and
   the LeRobot container round trip of that time — all passing at freeze time (see
-  [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md)
+  [learning-data-scaling-baseline.md](../history/learning-data-scaling-baseline.md)
   §76 for the exact counts from the request that produced them; this
   freeze re-ran the same suite with zero production-code changes since).
 - Architecture greps confirmed: no production code path writes a v2
@@ -358,28 +343,26 @@ architecture changes.
   reader-equivalence test (§7) proves the reader needs no
   incremental-specific code.
 
-## 13. Intentional limitations (not Phase 5 incompleteness)
+## 13. Intentional limitations
 
 Deliberate boundaries, each with an explicit reason, not gaps that
 "should" have been closed:
 
 - **No compaction.** Append-only incremental export (§7) leaves many
   small trailing shards after many small increments — a purely
-  quantitative, not correctness, concern (confirmed directly, Request
-  5.6 §73); no correctness issue was ever found to justify building it.
+  quantitative, not correctness, concern; no correctness issue was ever found to justify building it.
 - **No deletion/tombstones.** An EpisodeRef, once exposed by any export,
   cannot be removed via this architecture — by design; a "supersede/
   retract an episode" requirement needs new, not-yet-designed machinery.
 - **No wide `learning_signals` redesign.** The long/tall
   (one-row-per-channel) layout means column projection narrows the final
-  dense-vector assembly only, never what's fetched/parsed (Request 5.1
-  §6) — unchanged; a wide-columnar redesign was never attempted.
+  dense-vector assembly only, never what's fetched/parsed — unchanged; a wide-columnar redesign was never attempted.
 - **No generic access-pattern optimizer.** Selective vs. bulk (§5) is a
   caller-chosen strategy, not auto-detected — deliberately not built,
-  per Request 5.4's own constraint.
+  per the bridge's own constraint.
 - **No distributed execution.** See §10.
 - **No async-native PyArrow path.** The `run_coroutine_threadsafe`
-  bridge (Request 5.4) reduced but did not eliminate a residual
+  bridge reduced but did not eliminate a residual
   ~220-285us/call overhead against real MinIO; a fully async-native
   PyArrow integration would remove it further but was out of every
   request's scope (`ArtifactStore` staying a synchronous-call-friendly
@@ -412,5 +395,5 @@ Deliberate boundaries, each with an explicit reason, not gaps that
 - `ArtifactStore.read_range`: `packages/sceneops-core/sceneops_core/artifacts/contracts.py`, `packages/sceneops-storage/sceneops_storage/backends/{local,s3}.py`
 - `EXPORT_LEARNING_DATA` job handler: `apps/worker/sceneops_worker/jobs/dataset/export_learning_data.py`
 - Full chronological record (every measurement, every bug found and
-  fixed, Requests 5.1-5.6): [learning-data-scaling-baseline.md](./learning-data-scaling-baseline.md)
-- Phase 2 logical semantics this architecture never changed: [robot-learning-data.md](./robot-learning-data.md)
+  fixed): [learning-data-scaling-baseline.md](../history/learning-data-scaling-baseline.md)
+- Logical semantics this architecture does not change: [robot-learning-data.md](./robot-learning-data.md)

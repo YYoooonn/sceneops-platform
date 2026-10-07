@@ -270,7 +270,7 @@ class SceneOpsDataset:
         # CachePolicy's own docstring). Defaults are small relative to
         # realistic dataset sizes because a cached episode's reconstructed
         # step list is the dominant memory cost (measured 0.6-2.7 MB/entry
-        # across the scale ladder, see learning-data-scaling-baseline.md
+        # across the scale ladder, see docs/history/learning-data-scaling-baseline.md
         # §42) -- schema/shard-metadata entries are comparatively tiny.
         self._cache_policy = cache_policy or DEFAULT_CACHE_POLICY
 
@@ -557,7 +557,7 @@ class SceneOpsDataset:
         bounded ``_episode_steps_cache`` from evicting one shard's
         entries to make room for another before they are ever read (see
         ``CachePolicy``'s own docstring and
-        ``docs/architecture/learning-data-scaling-baseline.md`` §44 for
+        ``docs/history/learning-data-scaling-baseline.md`` §44 for
         the measured reasoning)."""
         if not self._is_sharded:
             return [list(refs)] if refs else []

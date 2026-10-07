@@ -102,7 +102,7 @@ def default_shard_policy() -> ShardPolicy:
     this policy tops out around 50 shards per table, never one file per
     episode), while keeping each shard small enough that "read one
     episode's own shard" stays a small, cheap object relative to the
-    whole export -- see docs/architecture/learning-data-scaling-baseline.md
+    whole export -- see docs/history/learning-data-scaling-baseline.md
     for the measurements this default is based on. ``max_rows_per_shard``
     is generous relative to a typical per-episode step_count specifically
     so short/typical episodes are bounded by episode count, not row count,

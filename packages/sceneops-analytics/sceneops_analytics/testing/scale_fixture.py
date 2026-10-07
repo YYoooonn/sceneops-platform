@@ -175,7 +175,7 @@ class ScaleSpec:
 # steps_per_episode/channel-count small (not "steps_per_episode=200 again")
 # because the physical-layout question this tier exists to stress is
 # EPISODE COUNT (small-file risk at 10,000+ EpisodeRefs), not total byte
-# volume -- see docs/architecture/learning-data-scaling-baseline.md for why
+# volume -- see docs/history/learning-data-scaling-baseline.md for why
 # a naive steps_per_episode=200 * 10_000 episodes tier was impractical to
 # build with today's per-row Python table builders (out of this request's
 # scope to vectorize; see that doc's "remaining limitations").

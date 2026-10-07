@@ -1,32 +1,25 @@
-# Dataset Interoperability (Phase 3)
+# Dataset Interoperability
 
-> Describes Phase 3 as it exists today on `feat/dataset-interoperability`.
-> Like [robot-learning-data.md](./robot-learning-data.md), this is a "what's
-> actually built" document, not aspirational — every claim below was
-> checked against the code and against a real, live run of
-> `make e2e-episode-learning` against Postgres/MinIO, not against the original
-> request planning documents.
+> Describes the external-format interoperability layer as implemented: the
+> framework-neutral adapter contract over `SceneOpsDataset` and its one concrete
+> implementation, `SceneOpsDataset -> LeRobot`. Every claim was checked against the
+> code and against a real run of `make e2e-episode-learning` on Postgres / MinIO.
+> Like [robot-learning-data.md](./robot-learning-data.md), it describes what is
+> built.
 
 ## 1. Purpose
 
-Phase 2 ([Robot learning data layer](./robot-learning-data.md)) ended at
-SceneOps' own native training-consumer layer
-(`SequenceSampler`/`NumPySequenceSample`/`SceneOpsTorchDataset`) and
-explicitly deferred external ecosystem integration (§9 of that doc). Phase
-3 builds that deferred path: a framework-neutral external-adapter contract
-over `SceneOpsDataset`, and one concrete implementation of it —
-`SceneOpsDataset -> LeRobot`.
-
-SceneOps' own learning-data representation (`AlignedEpisode`,
-`SceneOpsDataset`, `FeatureSchema`, ...) remains canonical and
-untouched by this phase. Phase 3 only adds a *projection* out of it into an
-external format, and — symmetrically — a shared vocabulary
-(`ExternalDatasetRef`) for describing a dataset that lives outside
+SceneOps' own learning-data representation (`AlignedEpisode`, `SceneOpsDataset`,
+`FeatureSchema`, ...; see [Robot learning data layer](./robot-learning-data.md)) is
+canonical. This layer adds a *projection* out of it into an external format through
+a framework-neutral external-adapter contract over `SceneOpsDataset`, with one
+concrete implementation, `SceneOpsDataset -> LeRobot`, and — symmetrically — a shared
+vocabulary (`ExternalDatasetRef`) for describing a dataset that lives outside
 SceneOps' model at all, on either the import or export side.
 
 ## 2. Identity model
 
-Three identities recur through Phase 3 and must never be collapsed into
+Three identities recur through this layer and must never be collapsed into
 each other:
 
 ```text
@@ -88,11 +81,11 @@ constructor args), and nothing persists it (§9).
 ## 3. Final export architecture
 
 ```text
-SceneOpsDataset                              (Phase 2, unchanged)
+SceneOpsDataset
       |
       v
-FeatureProjection                            (Phase 2's 2.7A contract, reused
-      |                                        unchanged -- channel order,
+FeatureProjection                            (the native projection contract,
+      |                                        reused unchanged -- channel order,
       |                                        namespace, dense-shape rules)
       v
 ExternalDatasetAdapter.export(dataset, config)
@@ -109,21 +102,21 @@ ExternalDatasetRef                           (describes the export target;
                                                never a SceneOps DatasetVersion)
 ```
 
-`sceneops_analytics.external_adapters` (Request 3.1/3.1A) is the shared,
+`sceneops_analytics.external_adapters` is the shared,
 framework-neutral contract; `sceneops_analytics.external_adapters.lerobot`
-(Request 3.3) is the one concrete implementation of it that exists today.
+is the one concrete implementation of it that exists today.
 
 ### Interoperability path vs. training path
 
 ```text
 SceneOpsDataset
       |
-      +-- Training path (Phase 2)
+      +-- Training path
       |     SequenceSampler -> NumPy / Torch
       |     fixed-horizon, overlapping, stride-based windows;
       |     shuffled/sampled by the training consumer
       |
-      +-- Interoperability path (Phase 3)
+      +-- Interoperability path
             ExternalDatasetAdapter -> ExternalDatasetWriter
             whole Episodes, export order, one step each, exactly once
 ```
@@ -138,9 +131,9 @@ no overlap, and no shuffling anywhere in the export path — an external
 adapter's output is one row per SceneOps step, never a
 resampled/duplicated/shuffled view of it.
 
-## 4. Adapter / writer contract (frozen, Request 3.1/3.1A)
+## 4. Adapter / writer contract (frozen)
 
-- `EpisodeRef = episode_id + aligned_artifact_checksum` (Phase 2's own
+- `EpisodeRef = episode_id + aligned_artifact_checksum` (the native
   coordinate, reused unchanged) is the only Episode identity the export
   path ever uses — never `episode_id` alone, never an `ArtifactRecord` id.
   Two revisions of the same `episode_id` remain distinct, independently
@@ -151,12 +144,12 @@ resampled/duplicated/shuffled view of it.
   `step_index` runs exactly `0..n-1` and `timestamp_us` strictly
   increases (`validate_step_ordering`).
 - Feature projection is always explicit (`ExternalExportConfig.projection`,
-  Phase 2's `FeatureProjection` reused unchanged) — channel order directly
+  the native `FeatureProjection` reused unchanged) — channel order directly
   determines dense output order, never auto-sorted.
 - One export requires one compatible dense `FeatureSchema` across every
   Episode it writes (checked once per Episode against the first resolved
   schema) — `ExternalFeatureSchemaMismatchError` otherwise, mirroring
-  `SequenceSampler`'s own `SamplerSchemaMismatchError` (Phase 2).
+  `SequenceSampler`'s own `SamplerSchemaMismatchError`.
 - Every SemanticField (`EPISODE_IDENTITY`, `STEP_ORDERING`, `TIMESTAMPS`,
   `OBSERVATION_ACTION_NAMESPACE`, `FEATURE_ORDERING`,
   `TASK_OUTCOME_METADATA`, `SIGNAL_STATUS`,
@@ -177,7 +170,7 @@ resampled/duplicated/shuffled view of it.
 - Output stays an `ExternalDatasetRef`, never a new SceneOps
   `DatasetVersion` (§9).
 
-## 5. The LeRobot implementation (Request 3.3)
+## 5. The LeRobot implementation
 
 ### Proven v1 mapping
 
@@ -214,45 +207,23 @@ rejected outright (`NonUniformTimelineError`/`NonIntegerFrequencyError`/
 | `EPISODE_IDENTITY` | `LOSSY_EXPLICIT` | LeRobot's `episode_index` is a bare, sequential integer with no native slot for `(episode_id, aligned_artifact_checksum)`. Full traceability still exists — export order is exactly `ExternalExportReport.source_episode_refs`' order — but recovering it requires keeping that report alongside the LeRobot dataset. |
 | `SOURCE_REVISION_TRACEABILITY` | `LOSSY_EXPLICIT` | Same reasoning at the dataset level: LeRobot's `info.json` has no field for SceneOps' `dataset_id`/`dataset_version`/`export_id`; `ExternalExportReport.source_dataset_id`/`source_dataset_version`/`source_export_id` is the explicit record. |
 | `TASK_OUTCOME_METADATA` | `LOSSY_EXPLICIT` | Task string carries `EpisodeMetadata.task` unchanged (an Episode with `task=None` is rejected, never substituted). `EpisodeOutcome` has no LeRobot-native field at all. |
-| `SIGNAL_STATUS` | `UNSUPPORTED` | Already collapsed before this layer ever sees a step — Phase 2's dense projection (`MissingFeaturePolicy.ERROR`) forecloses `RESOLVED`/`INTERPOLATED` distinction unconditionally, independent of target format. Not a LeRobot-specific limitation. |
+| `SIGNAL_STATUS` | `UNSUPPORTED` | Already collapsed before this layer ever sees a step — the native dense projection (`MissingFeaturePolicy.ERROR`) forecloses `RESOLVED`/`INTERPOLATED` distinction unconditionally, independent of target format. Not a LeRobot-specific limitation. |
 
-### Isolated runtime — the current contract, not a temporary workaround
+### Isolated runtime
 
-`lerobot` is **not** declared as an optional extra of `sceneops-analytics`
-(even though the adapter code lives inside that package, at
-`sceneops_analytics.external_adapters.lerobot`). `sceneops-analytics` is a
-`[tool.uv.workspace]` member, and uv resolves every declared extra of
-every workspace member into one universal `uv.lock` regardless of whether
-anything requests it — lerobot 0.4.4's dependency graph needs `numpy>=2`,
-which is permanently incompatible with `apps/worker`'s `nuscenes-devkit`
-pin (its only `numpy<2`-compatible fallback needs a `matplotlib` release
-with no Python 3.11 wheels on PyPI at all). `[tool.uv.conflicts]` was
-tried first and does not cleanly fix this — for a third-party package
-pulled in through a workspace member that isn't part of the declared
-conflict pair (`nuscenes-devkit`, via `apps/worker`), the generated marker
-for its degraded fallback still matched "no extra requested at all",
-verified by `uv sync --all-packages --group dev --dry-run` silently
-downgrading `matplotlib`/`nuscenes-devkit` with zero flags passed.
+`lerobot` is **not** declared as an optional extra of `sceneops-analytics`, even
+though the adapter code lives inside that package at
+`sceneops_analytics.external_adapters.lerobot`. `sceneops-analytics` is a
+`[tool.uv.workspace]` member, and uv resolves every declared extra of every workspace
+member into the one universal `uv.lock`, so a declared `lerobot` extra would pull the
+LeRobot dependency graph (it needs `numpy>=2`) into the platform lock.
 
-The shipped, permanent answer: `tools/lerobot-integration/` is a small,
-standalone uv project — deliberately **not** a `[tool.uv.workspace]`
-member — with its own independent, committed `uv.lock`. It depends on the
-*existing* `sceneops-core`/`sceneops-storage`/`sceneops-analytics` code via
-editable path sources (`{ path = "../../packages/...", editable = true }`)
-plus `lerobot` directly. No adapter code is duplicated there; only the
-dependency resolution is isolated. Its lockfile's dependency graph never
-includes `apps/worker` or `nuscenes-devkit`, so the conflict structurally
-cannot occur inside it.
-
-> **Update (Phase 4/Request 4.6B):** `apps/worker` no longer declares
-> `nuscenes-devkit` at all, so the specific `numpy<2` pin described above
-> no longer lives in the root workspace's `uv.lock` either — this doesn't
-> undo the isolation this section describes, it just means the *original*
-> trigger for building it this way is now historical, not a live
-> constraint. See
-> [External integration runtime](./external-integration-runtime.md) §6 for
-> the full current-state explanation and the accurate reason
-> `tools/lerobot-integration` stays isolated today.
+`tools/lerobot-integration/` is instead a standalone uv project, deliberately **not**
+a workspace member, with its own committed `uv.lock`. It depends on the existing
+`sceneops-core` / `sceneops-storage` / `sceneops-analytics` code through editable
+path sources plus `lerobot` directly; no adapter code is duplicated there, only the
+dependency resolution is isolated. See
+[External integration runtime](./external-integration-runtime.md) §3.
 
 ```bash
 make lerobot-sync    # cd tools/lerobot-integration && uv sync --group dev --locked
@@ -270,11 +241,9 @@ analytics/tests/test_lerobot_adapter.py` uses `pytest.importorskip
 ("lerobot")`, so `make test` skips it cleanly (1 skipped) in the normal
 workspace venv where `lerobot` is never installed.
 
-This split — one shared workspace lock for the platform, one small
-isolated lock for a permanently version-incompatible optional
-integration — is the durable runtime contract this phase closes on, not a
-placeholder pending a future fix. Phase 4 may containerize it; Phase 4
-does not need to re-decide *whether* to isolate it.
+This split — one shared workspace lock for the platform, one small isolated lock for
+the optional integration — is the runtime contract; the isolated project is also
+packaged as the `lerobot-integration` image (`compose/lerobot.yaml`).
 
 ## 6. Interoperability verification
 
@@ -325,7 +294,7 @@ removed.
 
 `sceneops_analytics.testing.interop_dataset` is a deterministic, in-memory
 golden learning export (`EPISODE_A_REV1` / `EPISODE_A_REV2` / `EPISODE_B`) built
-from the real Phase-2 contracts and written through the real
+from the real learning-data contracts and written through the real
 `AnalyticsTableWriter` to a local ArtifactStore. It backs the adapter and
 container-entrypoint unit tests (`make lerobot-test`) with fully known values; it
 is test-support code, never imported by production code, and nothing persists it
@@ -344,14 +313,14 @@ into PostgreSQL or MinIO.
 
 ## 9. Persisted vs. runtime-only representations
 
-**Persisted** (unchanged from Phase 2 — Phase 3 adds no new `ArtifactKind`,
+**Persisted** (this layer adds no new `ArtifactKind`,
 DB table, or Job/API endpoint):
 
 ```text
 (all of robot-learning-data.md §6's list, untouched)
 ```
 
-**Runtime-only** (Phase 3 additions, never written back to ArtifactStore
+**Runtime-only** (never written back to ArtifactStore
 or Postgres):
 
 ```text
@@ -364,86 +333,26 @@ real LeRobot v3 dataset directory
          a SceneOps Dataset/DatasetVersion, not given an ArtifactRecord
 ```
 
-## 10. Current intentional limitations
+## 10. Current limitations
 
-These are deliberate Phase 3 v1 boundaries, verified against the code —
-not correctness failures to fix before closing the phase:
+Deliberate v1 boundaries, verified against the code:
 
-- Numeric scalar/vector interoperability only — the same v1 dense-
-  projection scope Phase 2 already established
-  (`AlignedValueKind.NUMERIC_SCALAR`/`NUMERIC_VECTOR`); no image/video
-  export exists or was attempted.
-- `SIGNAL_STATUS` (`RESOLVED` vs `INTERPOLATED`) is unavailable to any
-  adapter after Phase 2's dense projection — not something a better
-  LeRobot mapping could recover; classified `UNSUPPORTED` for exactly
-  that reason (§5).
-- No persistent SceneOps record exists for an external export — no
-  `ArtifactRecord`, no DB row, no API endpoint. `ExternalExportReport` is
-  returned directly to the caller and never persisted by this phase.
-- LeRobot output is never a SceneOps `DatasetVersion` — it is described
-  only as an `ExternalDatasetRef`, by design (§4/§9).
-- The LeRobot runtime is isolated from the main workspace by a real
-  structural dependency conflict at the time this phase closed —
-  `lerobot`'s `numpy>=2` vs. `apps/worker`'s then-`nuscenes-devkit` pin
-  (`numpy<2`), not a temporary inconvenience (§5). **Historical as of
-  Phase 4/Request 4.6B**: `apps/worker` no longer depends on
-  `nuscenes-devkit` at all, so this specific conflict no longer exists in
-  the root workspace lock — see
-  [External integration runtime](./external-integration-runtime.md) §6 for
-  the current, accurate isolation rationale (general SDK/runtime
-  isolation, not an active NumPy conflict).
-- The LeRobot round trip needs the LeRobot image (`make lerobot-image`); it is
-  part of `make e2e-episode-learning` and therefore of `make e2e-cleanroom`.
-- RLDS is not implemented — `ExternalDatasetAdapter`/`ExternalDatasetWriter`
-  are format-neutral and already support a second concrete adapter, but
-  none exists yet.
-- Integration runtime packaging/containerization was deferred to Phase 4
-  at the time this document closed (§11) — now done: see
-  [External integration runtime](./external-integration-runtime.md) §6
-  (`tools/lerobot-integration` packaged as a container, Request 4.2/4.3).
-
-## 11. Phase 3 close-out and Phase 4 boundary
-
-```text
-Phase 3 -- Dataset Interoperability          COMPLETE
-
-  3.1   External adapter contract (ExternalDatasetAdapter/Writer,
-        semantic-loss model)
-  3.1A  Write lifecycle refinement (initialize/write_episode/finalize)
-  3.2   Deterministic interoperability golden fixture
-        (sceneops_analytics.testing.interop_dataset)
-  3.2A  E2E fixture catalog v1 (per-workflow derived identities)
-        -- 3.2A-3.2C: fixture catalog and persistent fixture bootstrap, removed
-        by ADR-007 step 11 (the round trip runs on a real export)
-  3.2B  E2E fixture catalog v2 (shared core/interop/raw-log identities,
-        canonical vs. source identity separation)
-  3.2C  Persistent E2E fixture bootstrap (real Postgres/MinIO)
-  3.2C.1 Bootstrap hardening (create/reuse/verify contract,
-        sceneops-db dependency moved out of sceneops-analytics)
-  3.3   LeRobotDatasetAdapter / LeRobotDatasetWriter (concrete
-        implementation, v1 numeric mapping, semantic classification)
-  3.3A  Dependency isolation (tools/lerobot-integration, independent
-        uv.lock, [tool.uv.conflicts] evaluated and rejected)
-  3.4   LeRobot round-trip E2E against real persistent infrastructure
-        (now the LeRobot round trip of make e2e-episode-learning)
-  3.5   Architecture/documentation freeze (this document)
-```
-
-Phase 3 ends at "one concrete external adapter, proven end-to-end against
-real infrastructure, running in a permanently isolated but fully
-reproducible environment." It does not attempt runtime packaging,
-containerization, a second (RLDS) adapter, or persistent SceneOps records
-for external exports — those are explicitly out of scope, not gaps.
-
-**Phase 4 ("External Integration Runtime") is now COMPLETE** — see
-[External integration runtime](./external-integration-runtime.md) for its
-full closure document (reference/runtime contract, ownership boundaries,
-`IntegrationExecutor`/HTTP transport, final nuScenes and LeRobot
-architecture, package layout, intentional limitations, and next-phase
-candidates). It did not redesign Phase 3's semantic adapter contracts
-(§3/§4), the LeRobot mapping or semantic-loss classification (§5), or
-`ExternalDatasetRef`/`Dataset`/`DatasetVersion` identity ownership (§2) —
-those remain frozen by this document, unchanged.
+- Numeric scalar / vector interoperability only — the dense-projection scope of
+  `AlignedValueKind.NUMERIC_SCALAR` / `NUMERIC_VECTOR`; no image / video export.
+- `SIGNAL_STATUS` (`RESOLVED` vs `INTERPOLATED`) is unavailable to any adapter after
+  the dense projection, so the LeRobot mapping classifies it `UNSUPPORTED` (§5).
+- No persistent SceneOps record exists for an external export — no `ArtifactRecord`,
+  no DB row, no API endpoint. `ExternalExportReport` is returned to the caller and
+  never persisted.
+- LeRobot output is never a SceneOps `DatasetVersion`; it is described only as an
+  `ExternalDatasetRef`, by design (§4/§9).
+- The LeRobot runtime is isolated in `tools/lerobot-integration/` (own uv project and
+  lock) as SDK / runtime isolation; see
+  [External integration runtime](./external-integration-runtime.md) §3.
+- The LeRobot round trip needs the LeRobot image (`make lerobot-image`); it is part of
+  `make e2e-episode-learning` and therefore of `make e2e-cleanroom`.
+- LeRobot is the only adapter. `ExternalDatasetAdapter` / `ExternalDatasetWriter` are
+  format-neutral, but no second format is implemented.
 
 ## 12. Source-of-truth map
 
@@ -453,4 +362,4 @@ those remain frozen by this document, unchanged.
 - Isolated LeRobot environment: `tools/lerobot-integration/` (`pyproject.toml`, `uv.lock`, `README.md`)
 - LeRobot round trip: `scripts/e2e/e2e_episode_learning.sh`, `scripts/e2e/lerobot_build_request.py`, `scripts/e2e/lerobot_verify_export.py`, `compose/lerobot.yaml`
 - Makefile targets: `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-lock`/`lerobot-test`/`lerobot-image`), `makefiles/e2e.mk` (`e2e-episode-learning`)
-- `ExternalDatasetRef`: `packages/sceneops-core/sceneops_core/datasets/schemas/external.py`
+- `ExternalDatasetRef`: `packages/sceneops-core/sceneops_core/integration_runtime/external.py`

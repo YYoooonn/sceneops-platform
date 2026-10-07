@@ -33,18 +33,17 @@ models/         ←  SQLAlchemy ORM 모델
 | domain | Protocol | PostgreSQL 구현체 |
 |--------|----------|-----------------|
 | job | `JobRepository`, `JobEventRepository` | `PostgresJobRepository`, `PostgresJobEventRepository` |
-| pipeline | `PipelineRunRepository`, `PipelineStepRunRepository` | `PostgresPipelineRunRepository`, `PostgresPipelineStepRunRepository` |
+| pipeline | `PipelineRunRepository`, `PipelineTaskRunRepository` | `PostgresPipelineRunRepository`, `PostgresPipelineTaskRunRepository` |
 | execution | `ExecutionRecordRepository` | `PostgresExecutionRecordRepository` |
-| dataset | `DatasetRepository`, `DatasetVersionRepository`, `DatasetRunRepository` | `PostgresDatasetRepository`, ... |
+| dataset | `DatasetRepository`, `DatasetVersionRepository` | `PostgresDatasetRepository`, `PostgresDatasetVersionRepository` |
 | scene | `SceneRepository`, `SceneRunRepository` | `PostgresSceneRepository`, `PostgresSceneRunRepository` |
 | episode (v2) | `EpisodeRepository`, `EpisodeRunRepository` | `PostgresEpisodeRepository`, `PostgresEpisodeRunRepository` |
 | robot (v2) | `RobotRepository`, `RobotRunRepository`, `MissionRepository`, `RobotStateRepository` | `PostgresRobotRepository`, `PostgresRobotRunRepository`, `PostgresMissionRepository`, `PostgresRobotStateRepository` |
 | scenario | `ScenarioSetRepository`, `ScenarioRunRepository` | `PostgresScenarioSetRepository`, `PostgresScenarioRunRepository` |
 | inference | `InferenceRunRepository` | `PostgresInferenceRunRepository` |
 | evaluation | `EvaluationRunRepository` | `PostgresEvaluationRunRepository` |
-| label | `LabelRunRepository` | `PostgresLabelRunRepository` |
 | model registry | `ModelRepository`, `ModelVersionRepository` | `PostgresModelRepository`, `PostgresModelVersionRepository` |
-| artifact | `ArtifactRefRepository` | `PostgresArtifactRefRepository` |
+| artifact | `ArtifactRepository` | `PostgresArtifactRefRepository` |
 
 ## Usage
 
@@ -63,12 +62,15 @@ async with async_session_scope() as session:
 ### FastAPI DI pattern
 
 ```python
-from sceneops_db.session import get_db_session
+from app.core.dependencies import get_db_session   # apps/api: the request's single transaction
 from sqlalchemy.ext.asyncio import AsyncSession
 
 async def get_job_repo(session: AsyncSession = Depends(get_db_session)):
     return PostgresJobRepository(session)
 ```
+
+Repositories flush but never commit. The API's `get_db_session` commits before the
+response is sent; workers use `async_session_scope()` and commit at their own checkpoints.
 
 ### Protocol type hints
 

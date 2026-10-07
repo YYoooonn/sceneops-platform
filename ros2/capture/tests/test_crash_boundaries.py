@@ -1,5 +1,5 @@
 """Phase 6.6 reliability matrix, capture crash boundaries C and D
-(docs: streaming-reliability-scale-baseline.md):
+(docs/history/streaming-reliability-scale-baseline.md):
 
   C. process dies BEFORE finalize -- no valid final MCAP, offsets never
      committed, a retry must discard the stale partial and rebuild from

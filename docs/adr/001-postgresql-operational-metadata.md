@@ -4,6 +4,8 @@
 
 Accepted
 
+*(Celery→Airflow 등 실행 백엔드 교체에 대한 아래 서술은 당시의 추론이다. Airflow 백엔드는 제거되었고 Celery가 유일한 실행 백엔드이다 — [ADR-009](./009-job-centric-execution-and-durable-boundaries.md). `ExecutionRecord`는 현재 `execution_backend=celery`만 기록한다.)*
+
 ## Context
 
 SceneOps가 관리하는 엔티티(`Dataset`/`DatasetVersion`, `SceneRecord`, `ScenarioSet`,

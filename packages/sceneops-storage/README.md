@@ -10,6 +10,7 @@ sceneops_storage/
   exceptions.py       ← exceptions
   factory.py          ← registry 기반 ArtifactStore 생성
   uri.py              ← URI join util
+  write_once.py       ← write-once publication of immutable bytes (convergent retry, loud conflict)
   backends/
     local.py          ← LocalArtifactStore (local fs)
     s3.py             ← S3ArtifactStore (AWS S3 / MinIO)
@@ -64,8 +65,12 @@ await store.delete_prefix(uri)  # 파일 또는 디렉토리(prefix) 삭제
 # URI join
 child_uri = store.join_uri(root_uri, "subdir", "file.json")
 
-# JSON list (single depth only)
+# JSON list (single depth only) / recursive object listing
 uris = await store.list_json(prefix_uri)
+objects = await store.list_objects(prefix_uri)
+
+# ranged read (selective Parquet reads)
+chunk = await store.read_range(uri, offset, length)
 ```
 
 ### exception handling

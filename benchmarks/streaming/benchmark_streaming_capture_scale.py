@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Streaming capture scale/backpressure/large-payload benchmark (Phase
-6.6, docs/architecture/streaming-reliability-scale-baseline.md).
+6.6, docs/history/streaming-reliability-scale-baseline.md).
 
 Runs INSIDE the ros2 container (needs rosbag2_py + real Kafka). Two
 phases, run as SEPARATE invocations (so the orchestrating shell script,

@@ -8,15 +8,17 @@ CDR 인코딩을 디코딩해 `RobotState`/`Mission`/`EpisodeRecord`로 적재�
 [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md) 참고. Kafka 쪽(ROS2 Data Gateway)도
 이제 구현되었다: `streaming_bridge_node.py`가 이 ADR이 설계한 바로 그 경계에서 ROS2 토픽을
 구독해 real Kafka 토픽(`robot.telemetry.v1` 등)으로 발행하고, 그 위에 durable MCAP capture
-(단일 run 및 continuous multi-run 모두), capture-session lifecycle, canonical `RobotRun`
+(run별 one-shot capture), capture-session lifecycle, canonical `RobotRun`
 등록까지 이어진다 — 자세한 내용은
 [streaming-transport.md](../architecture/streaming-transport.md) 참고. 이 ADR이 설계한 경계
 (로봇 내부 통신=ROS2, 데이터 플랫폼 이벤트 스트림=Kafka, 그 경계를 넘는 유일한 컴포넌트=Data
 Gateway)는 실제 구현을 통해 검증되었다: ROS2 DDS ↔ Kafka 프로토콜을 모두 이해하는 코드는
 `streaming_bridge_node.py` 하나뿐이고, partitioning(`robot_run_id` 기준)·순서 보장·중복 전달
 문제는 실제로 제기되었으나 이 경계 설계와 충돌하지 않았다(`streaming-transport.md` §6, §21).
-남은 한계는 continuous multi-run capture의 프로세스 재시작/Kafka rebalance 복구가 아직
-구현되지 않았다는 점이며, 이는 이 ADR의 경계 설계 자체와는 무관한 별도의 신뢰성 과제다.
+남은 한계는 capture 프로세스를 감독·재시작하는 메커니즘이 없다는 점이며(capture는 `robot_run_id`당
+one-shot 프로세스이고 `RUN_END`에서만 finalize된다), 이는 이 ADR의 경계 설계 자체와는 무관한 별도의
+신뢰성 과제다 — [limitations](../architecture/limitations.md). 한때 존재했던 continuous multi-run
+capture router는 제거되었다 ([ADR-008](./008-acquisition-lifecycle-reliability.md) amendment).
 
 *(아래 "로드맵"과 그 섹션 번호(§4.3/§13 등) 참조는 이 ADR 작성 당시 존재했던 기획 문서를
 가리키는 역사적 기록이다 — 그 문서는 현재 저장소에 보존되어 있지 않다.)*

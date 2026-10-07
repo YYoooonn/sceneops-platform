@@ -10,7 +10,7 @@ The validation surface is deliberately small:
 ```text
 make test                       unit
 make test-integration           real PostgreSQL / MinIO, disposable database + bucket
-make test-infrastructure        real infrastructure beyond those, SUITE = pipelines | recovery | airflow | kafka | boundaries
+make test-infrastructure        real infrastructure beyond those, SUITE = pipelines | recovery | kafka | boundaries
 make reference-contract-verify  the golden contract (read-only)
 make e2e-streaming-equivalence  Recording Import ≡ Streaming Acquisition (read-only)
 make e2e-scene-ml               derived journey
@@ -37,7 +37,7 @@ The terms the commands, scripts and documents share:
 | RobotRun boundary | both modes end at a registered RobotRun; Scenes, Episodes and everything derived start from it and do not depend on the mode | `e2e-streaming-equivalence` proves the two RobotRuns of a fixture are equivalent |
 | Golden Reference Contract | the 20 RobotRuns (10 fixtures × both modes) with their Scenes and Episodes, under fixed identities, in the reference environment ([reference-contract.md](./reference-contract.md)) | `reference-contract-bootstrap`, `reference-contract-verify` |
 | Derived test workspace | the fixed, test-owned Datasets `sceneops-test-scene-ml` and `sceneops-test-episode-learning` that hold the derived test state of the `REFERENCE_DERIVED` journeys; a repeated run reuses them | `e2e-scene-ml`, `e2e-episode-learning` |
-| Disposable test runtime | a PostgreSQL database (`sceneops_test`) and MinIO bucket (`sceneops-test`) created for one run and dropped after it, plus, for `pipelines` and `airflow`, an execution runtime of its own (compose project `sceneops-test`); never the reference database, bucket, api or workers | `test-integration`, `test-infrastructure` (`pipelines`, `recovery`, `airflow`) |
+| Disposable test runtime | a PostgreSQL database (`sceneops_test`) and MinIO bucket (`sceneops-test`) created for one run and dropped after it, plus, for `pipelines`, an execution runtime of its own (compose project `sceneops-test`); never the reference database, bucket, api or workers | `test-integration`, `test-infrastructure` (`pipelines`, `recovery`) |
 
 `DISPOSABLE_RUNTIME=1` is a different thing: it declares that the *reference* runtime will be
 reset afterwards, which a workflow that registers RobotRuns of its own requires.
@@ -46,12 +46,11 @@ reset afterwards, which a workflow that registers RobotRuns of its own requires.
 
 | Layer | Command | Infrastructure | Proves |
 | --- | --- | --- | --- |
-| Unit | `make test` | none | pure logic, schemas, state transitions, pipeline-definition and REF-chaining contracts, execution identity, API services over fakes, the Airflow DAG mirror, the disposable-environment safety rules, the golden contract's evaluation and equivalence-pair resolution, the equivalence verifier's decisions |
+| Unit | `make test` | none | pure logic, schemas, state transitions, pipeline-definition and REF-chaining contracts, execution identity, API services over fakes, the orchestrator's state machine over fakes, the disposable-environment safety rules, the golden contract's evaluation and equivalence-pair resolution, the equivalence verifier's decisions |
 | Isolated-environment unit | `make test-infrastructure SUITE=boundaries` (acquisition tool, LeRobot adapter), `SUITE=kafka` (ROS 2 bridge and capture) | the tool's own uv project / the ROS 2 image (`kafka` also needs the broker) | the acquisition tool (incl. its import boundary), the LeRobot adapter and container entrypoint, the streaming bridge and capture, including the lifecycle envelope of a run against a real broker |
 | Integration | `make test-integration` | PostgreSQL, MinIO (a disposable database and bucket the command creates and drops) | repositories and the migrated schema (every model column exists; no column a model dropped remains), ArtifactStore semantics, MinIO selective Parquet reads, the registrars, acquisition reconciliation, artifact lifecycle classification, the recording Scene / Episode and derived verticals against real stores. A module is integration when it is named `*_integration.py` (or lives in `sceneops-db` / `sceneops-storage` tests) |
-| Infrastructure acceptance | `make test-infrastructure` (`SUITE=pipelines`, the default) | PostgreSQL, MinIO (a disposable database and bucket) + a disposable execution runtime: API, Celery workers and Redis of its own on them | pipeline execution contracts: dedup / force, convergence, conflict-then-replacement, blocked resumption, failure recovery, concurrent registration, RobotRun registration idempotency, the orchestrator that ran them. `DISPOSABLE_ENVIRONMENT`: its DatasetVersions are the fixed `sceneops-test-infra-pipelines/<test>`, in the disposable database |
+| Infrastructure acceptance | `make test-infrastructure` (`SUITE=pipelines`, the default) | PostgreSQL, MinIO (a disposable database and bucket) + a disposable execution runtime: API, Celery workers and Redis of its own on them | pipeline execution contracts: dedup / force, convergence, conflict-then-replacement, blocked resumption, failure recovery, concurrent registration, RobotRun registration idempotency, the orchestrator that ran them (PipelineRun -> PipelineTaskRun -> Job -> Celery -> JobRunner). `DISPOSABLE_ENVIRONMENT`: its DatasetVersions are the fixed `sceneops-test-infra-pipelines/<test>`, in the disposable database |
 | Recovery acceptance | `make test-infrastructure SUITE=recovery` | PostgreSQL, MinIO (the same disposable database and bucket) + a throwaway Redis and Celery workers (Docker) | acquisition recovery under injected faults, one per test: finalized capture never published, a Job left queued, a worker killed during registration, a committed registration whose completion is lost, transient failures across replacement Jobs and the attempt budget, Redis down / unresponsive then restored, concurrent reconciliation passes, and that conflicts and integrity incidents are left untouched. And the full-lifecycle acceptance: nine acquisitions, each hit by a different failure between capture and RobotRun, recovered only by the production commands |
-| Orchestrator acceptance | `make test-infrastructure SUITE=airflow` | the same disposable environment + a private Airflow and an API on the Airflow pipeline backend | the canonical pipelines, including Scene ML over a test-owned DatasetVersion and LabelSet, through the Airflow per-task DAGs. `DISPOSABLE_ENVIRONMENT`: its DatasetVersions are the fixed `sceneops-test-infra-airflow/<test>`, in the disposable database |
 | Smoke | `make test-infrastructure SUITE=kafka` (after the bridge and capture tests) | Kafka | transport and liveness only; never creates domain data |
 | E2E journey | the four `make e2e-*` ([ADR-007](../adr/007-canonical-ingestion-architecture.md) §36) | live stack + containers | a user journey through production paths (below); the test-state class of each is in [Test-state classes](#test-state-classes) |
 | Clean room | `make e2e-cleanroom` | an empty generated runtime (it resets one) + Kafka and ROS 2 | the golden contract is reconstructed from the preserved reference inputs alone and the primary journeys consume it without changing it (`CLEANROOM_ACCEPTANCE`) |
@@ -90,7 +89,7 @@ is dropped by `make local-reset`, never deleted piecemeal
 | `REFERENCE_DERIVED` | no RobotRun and nothing in a contract DatasetVersion; derived state only under a fixed, test-owned Dataset (`sceneops-test-*`) whose identity does not depend on time, a counter or a random value, so a repeated run reuses it | the reference environment | `e2e-scene-ml` (`sceneops-test-scene-ml`), `acceptance-grounding-dino` (`sceneops-test-scene-ml-grounding-dino`), `e2e-episode-learning` (`sceneops-test-episode-learning`) |
 | `MUTATING_ACQUISITION` | RobotRuns, captures, Kafka records, their artifacts | a disposable runtime (`DISPOSABLE_RUNTIME=1`; refused otherwise) | any bootstrap with a non-contract `BASELINE_ID` |
 | `CLEANROOM_ACCEPTANCE` | everything: it resets the runtime first, reconstructs the whole contract, and runs both L3 journeys into their fixed `sceneops-test-*` Datasets, so it ends in the state of a bootstrapped reference environment plus those two Datasets | a runtime it resets (`make local-reset`, confirmed) | `e2e-cleanroom` |
-| `DISPOSABLE_ENVIRONMENT` | anything its tests write, including the execution history they generate | a PostgreSQL database (`sceneops_test`) and a MinIO bucket (`sceneops-test`) created for the run and dropped after it, on the local servers; never the reference database or bucket. the `pipelines` and `airflow` suites also run their own execution runtime on them ([below](#the-disposable-execution-runtime)) | `make test-integration`, `make test-infrastructure` (`SUITE=pipelines`, `recovery`, `airflow`) |
+| `DISPOSABLE_ENVIRONMENT` | anything its tests write, including the execution history they generate | a PostgreSQL database (`sceneops_test`) and a MinIO bucket (`sceneops-test`) created for the run and dropped after it, on the local servers; never the reference database or bucket. the `pipelines` suite also runs its own execution runtime on them ([below](#the-disposable-execution-runtime)) | `make test-integration`, `make test-infrastructure` (`SUITE=pipelines`, `recovery`) |
 
 ### `REFERENCE_DERIVED` convergence
 
@@ -134,7 +133,7 @@ Scene ML journey runs its second evaluation once and reads it afterwards.
 
 ### The disposable environment
 
-`make test-integration` and the `pipelines`, `recovery` and `airflow` suites of
+`make test-integration` and the `pipelines` and `recovery` suites of
 `make test-infrastructure` run
 through `tests/infrastructure/disposable_env.py`: it recreates `sceneops_test` (migrated with
 the repository's alembic migrations) and `sceneops-test` from scratch, runs the suite
@@ -150,8 +149,8 @@ Celery workers of their own, and the infrastructure suites the execution runtime
 
 ### The disposable execution runtime
 
-The `pipelines` and `airflow` suites of `make test-infrastructure` run through
-`tests/infrastructure/disposable_env.py run --runtime <celery|airflow>`:
+The `pipelines` suite of `make test-infrastructure` runs through
+`tests/infrastructure/disposable_env.py run --runtime`:
 
 ```text
 create the database + bucket
@@ -163,12 +162,10 @@ create the database + bucket
 
 The project runs the same `api` and `worker` images and the same settings as the
 reference environment, with the database, the ArtifactStore root and the Celery broker
-replaced: an API on a free loopback port, `sceneops.jobs` workers, a Redis of its own
-(and the `sceneops.pipeline_runs` worker for Celery, or a private Airflow with its own
-metadata database for the Airflow backend, started with the API on the `airflow`
-pipeline backend). Only the PostgreSQL and MinIO *servers* are shared with the reference
-environment, as for `test-integration`; its api, workers, Redis and Airflow are neither
-used nor reconfigured, and the reference database and bucket are not opened.
+replaced: an API on a free loopback port, `sceneops.jobs` and `sceneops.pipeline_runs`
+workers, and a Redis of its own. Only the PostgreSQL and MinIO *servers* are shared with
+the reference environment, as for `test-integration`; its api, workers and Redis are
+neither used nor reconfigured, and the reference database and bucket are not opened.
 
 The suite needs one RobotRun of the golden contract. Nothing is copied from the reference
 environment: the `baseline` fixture runs the production create-or-verify path
@@ -180,7 +177,7 @@ Isolation is enforced rather than assumed. The runner refuses names outside
 `sceneops_test*` / `sceneops-test*` or equal to the reference's, the compose file takes the
 database and bucket only from variables the runner supplies (a missing one fails the
 interpolation), the runner reads the settings the running API, worker and scheduler hold
-and aborts if any names another database, bucket or orchestrator, and the `api` fixture
+and aborts if any names another database or bucket, and the `api` fixture
 refuses to run against an API that a make target did not start. A run killed before it
 could tear down leaves containers; the next start removes them first (the project name is
 fixed), like the database and bucket.
@@ -219,7 +216,6 @@ treats them as a violation.
 | --- | --- |
 | Pipeline task chains, REF hand-offs, no defaulted source vocabulary | unit (`apps/worker/tests/pipelines/`) |
 | A stage takes its pinned input from the upstream REF; explicit params win | unit (`test_pipeline_contracts.py`) |
-| Airflow DAG mirrors the definitions | unit (`test_airflow_dag_mirror.py`) |
 | Alignment of several pinned Episodes; execution-key identity of `align_episode` | unit (`test_align_episode_handler.py`, `apps/api/tests/platform/test_job_service_align_episode.py`) |
 | SceneManifest v2 has no annotation structure; v1 bytes are refused | unit (`packages/sceneops-core/tests/test_scene_manifest.py`) |
 | DatasetVersion carries no channel requirements or metadata | unit + integration (`test_dataset_version_*`, `test_migration_schema.py`) |
@@ -233,13 +229,13 @@ treats them as a violation.
 | The whole lifecycle under failure: finalized capture without operator metadata, publisher killed between recording and manifest, a failed publish, a broker outage, concurrent recovery, a killed worker, a spent attempt budget, a forged manifest and a deleted recording left untouched, one RobotRun per acquisition | infrastructure (`tests/infrastructure/test_acquisition_lifecycle_acceptance.py`); fault points in `recovery_worker.py` and `recovery_publisher.py` |
 | `ArtifactStore.list_objects` (recursive, paginated, atomic-write temp files excluded) | unit (`test_local_artifact_store.py`) + integration (`test_s3_artifact_store.py`) |
 | Retry, dedup, force, replacement, blocked / failed resumption, concurrency, re-running a bootstrap or a registration changes no record | infrastructure (`tests/infrastructure/test_pipeline_execution.py`); the contract's snapshot diff; `created_payload_count == 0` on a repeated build in the recording verticals |
-| Celery / Airflow execution | infrastructure (`test_pipeline_execution.py`, `test_airflow_backend.py`) |
+| Execution through the durable Job path: the orchestrator submits Jobs, `JobRunner` runs them and reports back | infrastructure (`test_pipeline_execution.py`) |
 | Reconstruction of the golden runtime from the preserved inputs, and the convergence of a repeated bootstrap | E2E (`e2e-cleanroom`) |
 | Recording Import golden contract: the RobotRun pins the locked recording and its message / channel facts, one whole-recording Scene and Episode per run, validated, profiled and ready | `make reference-contract-verify` / `canonical-verify`; evaluator over synthetic state in `scripts/reference/tests` |
 | Whole-recording Scene / Episode shape: declared source clocks, `[running marker, completed marker + 1)`, source-faithful asynchronous streams, no outcome / annotation field | unit over a synthetic ROS 2 recording (`apps/worker/tests/{scenes,episodes}/test_recording_*_builder.py`, `packages/sceneops-core/tests/test_{scene_manifest,episodes}.py`) |
 | Scene / Episode independence and payload sharing: one payload set per RobotRun, reused by the Episode build, ids independent of build configuration | unit (`test_scene_and_episode_builders_are_independent_siblings`); integration (`test_recording_episode_vertical_integration.py`, `test_recording_scene_vertical_integration.py`) |
 | Disposable test environment: only `sceneops_test*` / `sceneops-test*` accepted, the reference names refused by the runner and by the pytest plugin, `test-integration` and the `recovery` suite wired through the runner | unit (`tests/infrastructure/unit/test_disposable_env.py`); create, migrate, drop and rerun after an interruption are exercised by the two commands themselves |
-| Disposable execution runtime: every service of `compose/test-runtime.yaml` takes its database, ArtifactStore root and broker from the runner (own Redis, loopback ports, no reference service name), a publisher aimed at the reference bucket is refused, the `pipelines` and `airflow` suites wired through the runner, `SUITE=` dispatch; the running processes hold the disposable settings | unit (`tests/infrastructure/unit/test_execution_runtime.py`); the running API, worker and scheduler are read back by the runner on every start (`verify_isolation`) |
+| Disposable execution runtime: every service of `compose/test-runtime.yaml` takes its database, ArtifactStore root and broker from the runner (own Redis, loopback ports, no reference service name), a publisher aimed at the reference bucket is refused, the `pipelines` suite wired through the runner, `SUITE=` dispatch; the running processes hold the disposable settings | unit (`tests/infrastructure/unit/test_execution_runtime.py`); the running API and workers are read back by the runner on every start (`verify_isolation`) |
 | Four-pipeline surface and task chains | unit (`apps/worker/tests/pipelines/test_pipeline_definitions.py`) |
 | MinIO selective Parquet reads | integration (`packages/sceneops-analytics/tests/test_selective_reads_minio_integration.py`) |
 | Recording Import / Streaming Acquisition equivalence of the registered RobotRuns | E2E (`e2e-streaming-equivalence`, read-only); the verifier's identity, timing, canonical and negative-control decisions in `scripts/e2e/tests` |
@@ -253,8 +249,8 @@ treats them as a violation.
 ## Rules
 
 - A smoke target never creates persistent application-domain data.
-- A real-infrastructure command (`test-integration` and the `pipelines`, `recovery` and
-  `airflow` suites of `test-infrastructure`) fails when any test is skipped,
+- A real-infrastructure command (`test-integration` and the `pipelines` and `recovery`
+  suites of `test-infrastructure`) fails when any test is skipped,
   so an unreachable PostgreSQL, MinIO, API or Docker is never a green run. A
   module that belongs to another suite is excluded from the others, not skipped. The
   `kafka` and `boundaries` suites run their tools' own pytest sessions and checks and
@@ -267,11 +263,11 @@ treats them as a violation.
   without adding Datasets, DatasetVersions, Scenes, Episodes or derived manifests.
 - No test removes platform state through SQL or a test-only API to restore an
   environment; disposable state is dropped with the runtime, or, for `test-integration`
-  and the `pipelines`, `recovery` and `airflow` suites, with their disposable database
+  and the `pipelines` and `recovery` suites, with their disposable database
   and bucket (and execution runtime).
-- `test-integration` and the `pipelines`, `recovery` and `airflow` suites never touch the
-  reference database or bucket; `pipelines` and `airflow` also use none of the reference
-  environment's api, workers, Redis or Airflow.
+- `test-integration` and the `pipelines` and `recovery` suites never touch the
+  reference database or bucket; `pipelines` also uses none of the reference
+  environment's api, workers or Redis.
 - A workflow whose subject is re-execution (force, retry, resumption, concurrency,
   orchestration) generates execution history on purpose and therefore runs on a
   disposable execution runtime, never on the reference environment.

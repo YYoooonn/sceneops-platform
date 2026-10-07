@@ -25,7 +25,7 @@ class CachePolicy:
 
     Defaults were chosen from measured per-entry memory footprint across
     the Request 5.1/5.2 scale ladder (see
-    ``docs/architecture/learning-data-scaling-baseline.md`` §42): a
+    ``docs/history/learning-data-scaling-baseline.md`` §42): a
     reconstructed episode's full step list is by far the dominant cost
     (0.6-2.7 MB/episode observed, scaling with step_count x channel
     count) -- ``max_episode_steps`` is deliberately small relative to

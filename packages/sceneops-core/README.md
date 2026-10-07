@@ -8,26 +8,28 @@ SceneOps 플랫폼의 핵심 도메인 라이브러리. 모든 다른 패키지�
 
 ```
 sceneops_core/
-  artifacts/          ← artifact type (ArtifactStore contract, ArtifactKind, ArtifactRef)
-  common/             ← common type (SceneOpsBaseModel, type alias, ID utils)
-  config.py           ← runtime settings (ArtifactSettings, ExecutionSettings .etc)
-  constants/          ← platform constants (sensor name, queue name)
-  datasets/           ← dataset domain (Record, Manifest, Run, Validation schema)
-  episodes/           ← Episode domain (v2 — Record, Manifest, segmentation config, Run schema)
-  evaluations/        ← evaluation comain (Metric, Leaderboard, History schema)
-  executions/         ← Execution Backend schema (Celery)
-  inference/          ← Inference domain (Detection 스키마, 백엔드 타입)
-  jobs/               ← Job domain (JobManifest, JobEvent, 파라미터, 스텝 레지스트리)
-  labels/             ← AutoLabel domain schema
-  models/             ← Model Registry Schema (Record, Artifact)
-  observations/       ← Raw Observation domain (RawLog, frame, sensor frame)
-  operations/         ← Operations schema
-  pipelines/          ← Pipeline domain (definitions, manifests, pipeline steps)
-  robots/             ← Robot domain (v2 — Robot, RobotRun, Mission, RobotState schema)
-  runs/               ← Common Run Schema (RunStatus, RunType, RunRef)
-  scenarios/          ← Scenario Domain (Candidates, Predicates, Mining schema)
-  scenes/             ← Scene Domain (canonical SceneManifest, SceneRecord, readiness; legacy/ producers)
-  sensors/            ← Sensor enums (camera, LiDAR .etc)
+  artifacts/          ← ArtifactStore contract, ArtifactKind, ArtifactOwnerType, ArtifactRef
+  common/             ← SceneOpsBaseModel, ID utilities, checksums, derived artifact ids
+  config.py           ← runtime settings (ArtifactSettings, ExecutionSettings, ...)
+  constants/          ← platform constants (task and queue names, streaming constants)
+  datasets/           ← Dataset / DatasetVersion schemas
+  episodes/           ← Episode domain (manifest, recording build config, alignment, curation, learning export)
+  evaluations/        ← evaluation run schemas and contracts
+  executions/         ← execution key, ExecutionBackend / ExecutionDispatchResult schemas (Celery)
+  inference/          ← inference (detection) schemas
+  integration_runtime/← IntegrationRequest / IntegrationResult, ExternalDatasetRef
+  jobs/               ← Job domain (JobManifest, JobEvent, params, step registry)
+  labels/             ← label set schemas
+  models/             ← model registry schemas
+  pipelines/          ← pipeline definitions (builtin.py), manifests, registry
+  provenance/         ← source / producer provenance and identity
+  robots/             ← Robot / RobotRun / Mission / RobotState schemas, RobotRunManifest, capture receipt
+  runs/               ← common run schemas (RunStatus, RunType, RunRef)
+  sample_views/       ← sample view policy, build and resolution
+  scenarios/          ← ScenarioSet schemas
+  scenes/             ← Scene domain (canonical SceneManifest, readiness, recording build config)
+  sensors/            ← sensor modality enum
+  streaming/          ← TelemetryEnvelope, channel registry, run lifecycle control events
 ```
 
 ## Core Concepts

@@ -24,7 +24,7 @@ The local dev topic has exactly one partition
 interleaving on one partition the realistic default, not a rare edge
 case -- and confirms this fix is about consumer-group isolation, not
 Kafka partition scaling (see group_id.py's own docstring and
-docs/architecture/streaming-reliability-scale-baseline.md's Phase 6.6.1
+docs/history/streaming-reliability-scale-baseline.md's Phase 6.6.1
 addendum for the historical-rescan tradeoff this isolation trades for).
 """
 

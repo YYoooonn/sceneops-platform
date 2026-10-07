@@ -60,7 +60,7 @@ class KafkaTelemetryConsumer:
     per UP-TO-``poll_batch_size`` messages) and serves the results out
     of a small in-process buffer, one per ``poll()`` call, in the exact
     order Kafka returned them. This was measured (Phase 7.0's study,
-    ``docs/architecture/streaming-multirun-phase7-study.md`` §4.1) to
+    ``docs/history/streaming-multirun-phase7-study.md`` §4.1) to
     account for ~85-90% of run-scoped capture's apparent rescan cost at
     1M-message topic history -- an implementation detail of this
     wrapper, not the run-scoped-consumer-group architecture itself.

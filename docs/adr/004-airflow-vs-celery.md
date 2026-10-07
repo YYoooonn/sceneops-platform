@@ -2,7 +2,17 @@
 
 ## Status
 
-Accepted
+**Superseded by [ADR-009](./009-job-centric-execution-and-durable-boundaries.md).**
+
+The Airflow backend, the per-task DAGs, `pipeline_backend` and the inline
+`PipelineRunner` / `PipelineTaskRunner` described below were removed. Celery is the only
+execution backend: a Pipeline is durable state advanced by `PipelineOrchestrator`, and
+every task is a durable Job run by `JobRunner`. The current design is documented in
+[Jobs and pipelines](../architecture/jobs-and-pipelines.md). The text below is preserved
+as the reasoning of the time; its statements about the architecture, its file paths and
+its commands are not current. The reliability primitives it lists (`execution_key`,
+partial retry by resuming at the first unfinished task, Job `retry_count` /
+`max_retries`) still exist.
 
 ## Context
 

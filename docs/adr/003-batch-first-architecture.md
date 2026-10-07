@@ -4,6 +4,8 @@
 
 Accepted
 
+*(아래의 `PipelineRunner`와 Airflow PoC에 대한 서술은 당시의 구현이다. 둘 다 제거되었다 — 현재의 실행 구조는 [ADR-009](./009-job-centric-execution-and-durable-boundaries.md)와 [jobs and pipelines](../architecture/jobs-and-pipelines.md) 참고.)*
+
 *(아래 "로드맵"과 그 섹션 번호(§4.1/§4.2 등) 참조는 이 ADR 작성 당시 존재했던 기획 문서를
 가리키는 역사적 기록이다 — 그 문서는 현재 저장소에 보존되어 있지 않다.)*
 

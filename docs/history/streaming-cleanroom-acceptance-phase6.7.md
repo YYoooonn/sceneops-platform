@@ -1,12 +1,19 @@
 # Streaming Clean-Room Acceptance (Phase 6.7)
 
+> **History — point-in-time record, not current architecture.** The `make e2e-*`
+> commands, services and acceptance flow named below were consolidated: the supported
+> command surface is `make help` and [Test matrix](../development/test-matrix.md), and the
+> streaming contract is [Streaming transport](../architecture/streaming-transport.md).
+> References to Airflow describe a component that is no longer part of the platform
+> ([ADR-009](../adr/009-job-centric-execution-and-durable-boundaries.md)).
+
 > Point-in-time record (category C — historical evidence, per this repo's
 > documentation taxonomy) of the final Phase 6 acceptance pass: the full
 > streaming pipeline (real nuScenes CAN → ROS2 → Kafka → durable MCAP
 > capture → ArtifactStore → canonical RobotRun → Episode → learning
 > export → `SceneOpsDataset`) run end to end from a freshly reset local
 > stack, with real source data. Not a living architecture doc — see
-> [Streaming transport](./streaming-transport.md),
+> [Streaming transport](../architecture/streaming-transport.md),
 > [Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md),
 > and [Robot run / MCAP](../workflows/robot-run-and-mcap.md) for the
 > current, maintained contracts this record validates. Numbers here are

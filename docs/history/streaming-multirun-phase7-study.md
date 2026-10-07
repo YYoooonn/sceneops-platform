@@ -1,12 +1,22 @@
 # Phase 7.0 — Multi-Run Streaming Architecture Study
 
+> **History — superseded study, not current architecture.** This study prototyped and
+> benchmarked a Continuous Capture Router and a partition-aware alternative. Neither is
+> part of the platform: the router and its benchmark were removed, and capture is one
+> one-shot process per `robot_run_id` that finalizes only on `RUN_END`
+> ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md), amendment;
+> [Streaming transport](../architecture/streaming-transport.md) §26). The tooling under
+> `scripts/dev/phase7/` no longer exists. Its measurements of full-topic replay cost
+> remain evidence for the limitation recorded in
+> [Current limitations](../architecture/limitations.md) §2.
+
 > Point-in-time record (category C — historical evidence, per this
 > repo's documentation taxonomy) of the Phase 7.0 architecture/benchmark
 > study: current run-scoped capture audited, benchmarked against
 > growing topic history and a multi-run workload, and compared against
 > two prototyped alternatives (partition-aware capture, a Continuous
 > Capture Router). Not a living architecture contract — see
-> [Streaming transport](./streaming-transport.md) and
+> [Streaming transport](../architecture/streaming-transport.md) and
 > [Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md)
 > for the frozen contracts this study builds on and does not change.
 > Numbers here are frozen to the date/commit/environment below.
@@ -39,7 +49,7 @@ self-contained and reproducible regardless of what came before.
 
 Audited directly against the current code (all paths below, `HEAD`
 `531f743`), cross-checked against `docs/architecture/streaming-transport.md`
-(Part 3) and `docs/architecture/streaming-reliability-scale-baseline.md`
+(Part 3) and `docs/history/streaming-reliability-scale-baseline.md`
 (§14), which this study treats as authoritative background, not
 re-derived from scratch:
 
@@ -718,7 +728,7 @@ The topic-history reset noted in §0 means this study's own checkpoints
 
 ```text
 New (this study only, no production code touched):
-  docs/architecture/streaming-multirun-phase7-study.md   (this file)
+  docs/history/streaming-multirun-phase7-study.md   (this file)
   scripts/dev/phase7/producer.py
   scripts/dev/phase7/capture_runner.py
   scripts/dev/phase7/router_prototype.py

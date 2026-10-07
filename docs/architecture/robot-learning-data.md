@@ -1,28 +1,27 @@
-# Robot Learning Data Layer (Phase 2)
+# Robot Learning Data Layer
 
-> Describes Phase 2 as it exists today on `feat/robot-learning-data-layer`.
-> Like [overview.md](./overview.md), this is a "what's actually built"
-> document, not aspirational — every claim below was checked against the
-> code, not against the original request planning documents. Where the two
-> disagreed, this doc follows the code (see §7 for the mismatches found).
+> Describes the robot learning-data layer as implemented: temporal alignment,
+> validation and profiling, the columnar learning export, curation, and the native
+> `SceneOpsDataset` / `SequenceSampler` / consumer-adapter stack. Every claim was
+> checked against the code. Scale-oriented storage and access contracts are in
+> [Scalable learning data](./scalable-learning-data.md); external formats are in
+> [Dataset interoperability](./dataset-interoperability.md).
 
 ## 1. Purpose
 
-Phase 1 (Scene/Episode foundation, `v0.2.0-scene-episode-foundation`) gave
-SceneOps registered, quality-scored `EpisodeRecord`s built from raw robot
-recordings. It stopped at "here is a segmented observation+action window" —
-nothing downstream understood *training* semantics: no fixed-frequency
-timeline, no dense feature tensors, no notion of a trajectory window.
+A registered, quality-scored `EpisodeRecord` is a segmented observation + action
+window; it has no fixed-frequency timeline, no dense feature tensors and no notion
+of a trajectory window. This layer adds those training semantics on top of
+registered Episodes: temporal alignment, structural validation and profiling, a
+columnar Parquet export, revision-level curation, and a native read-side
+dataset / sampler / consumer-adapter stack.
 
-Phase 2 builds that layer on top of registered Episodes: temporal
-alignment, structural validation/profiling, a columnar Parquet export,
-revision-level curation, and a native read-side dataset/sampler/consumer-
-adapter stack. SceneOps now owns its **own** learning-data representation
-end to end — an `AlignedEpisode`, its columnar projection, and the
-`SceneOpsDataset`/`SequenceSampler` access layer are first-class SceneOps
-concepts, not a thin wrapper around an external format. External training
-formats (LeRobot, RLDS, ...) are explicitly **not** part of this canonical
-model — see §9 (Phase 3 boundary).
+SceneOps owns its **own** learning-data representation end to end: an
+`AlignedEpisode`, its columnar projection, and the `SceneOpsDataset` /
+`SequenceSampler` access layer are first-class SceneOps concepts, not a wrapper
+around an external format. External training formats (LeRobot, RLDS, ...) are not
+part of this canonical model; they are projections out of it (see
+[Dataset interoperability](./dataset-interoperability.md)).
 
 ## 2. Final canonical flow
 
@@ -46,8 +45,8 @@ Learning Data Export                     (2.5)
         |
         v
 learning_episodes.parquet
-learning_steps / learning_signals        (bounded shards in production since
-                                           Phase 5 -- see scalable-learning-data.md)
+learning_steps / learning_signals        (bounded shards in production --
+                                           see scalable-learning-data.md)
         |
         v
 Episode Curation                         (2.6, selection over aligned revisions)
@@ -73,7 +72,7 @@ locations), not a target architecture.
 
 ## 3. Frozen semantic identities
 
-Three distinct identities recur through every Phase 2 layer. They must
+Three distinct identities recur through every layer of this stack. They must
 never be collapsed into each other:
 
 ```text
@@ -95,14 +94,14 @@ producer lineage         artifact_id
                          Minted fresh on every write, even when content is
                          byte-identical to a previous write. Lineage only
                          -- never used as a stand-in for revision identity
-                         anywhere in Phase 2 (see AlignedArtifactRevision,
+                         anywhere in this layer (see AlignedArtifactRevision,
                          SourceLearningExportRef, EpisodeCurationManifest
                          .decisions -- every one of these keys off checksum,
                          never off artifact_id).
 ```
 
 For native dataset access, this collapses to one frozen coordinate
-(`sceneops_core.episodes.learning.EpisodeRef`, Request 2.7A):
+(`sceneops_core.episodes.learning.EpisodeRef`):
 
 ```text
 EpisodeRef = episode_id + aligned_artifact_checksum
@@ -116,7 +115,7 @@ dedicated tests at every layer: `test_learning_projection.py`,
 
 ## 4. Frozen data semantics
 
-Future phases (and any Phase 3 external-format adapter) must preserve
+Consumers (including any external-format adapter) must preserve
 these exactly.
 
 ### Temporal (2.1-2.2)
@@ -258,43 +257,14 @@ This request introduces no new persistence for any runtime-only object
 above -- confirmed by the audit; none of 2.7A-2.7D added an `ArtifactKind`,
 DB table, or Job/API endpoint.
 
-## 7. Implementation/documentation mismatches found during this audit
+## 7. Current limitations
 
-Two other architecture docs contained claims that predate Phase 2 and are
-now false. Fixed as part of this closure (not new features):
-
-- [reserved-and-limitations.md](./reserved-and-limitations.md) §6 said
-  "Episode has no Parquet analytics table" and "Episode has no
-  `selectable_for_*` concept" -- both were true before Phase 2 and are
-  false now (`learning_*.parquet` + `EpisodeCurationManifest.selected_
-  aligned_artifact_checksums` are exactly those two things, scoped to
-  aligned revisions rather than raw Episodes).
-- [storage-layout.md](./storage-layout.md) §3 said "Episode has no Parquet
-  analytics table yet" in the Analytics section -- same fix, plus the
-  `learning/`/`curation/` URI scopes were undocumented there entirely.
-
-No other mismatch was found: the 2.7A-2.7D code matches the request
-sequence's intended architecture (verified directly against
-`sceneops_core/episodes/{alignment,curation,learning,learning_export}` and
-`sceneops_analytics/learning_dataset/` during this audit), and none of the
-prior five requests' own "frozen contracts" sections have been violated by
-a later one.
-
-## 8. Current intentional limitations
-
-These are deliberate Phase 2 boundaries, not correctness bugs. **Updated by
-Phase 5** (Requests 5.1-5.6, see
-[scalable-learning-data.md](./scalable-learning-data.md)): the first two
-bullets below described every `SceneOpsDataset` instance when this section
-was written, but now describe only the legacy, single-file physical
-layout (still used by the frozen golden fixture/regression path, see
-[scalable-learning-data.md](./scalable-learning-data.md) §11) -- not
-production. Production (`v2-sharded`, always produced by
-`EXPORT_LEARNING_DATA` since Request 5.2) does have a partial/range-read
-primitive (`ArtifactStore.read_range`, Request 5.3) and reads selectively
-or shard-aware-bulk rather than fetching a whole table, with bounded
-per-instance caches (Request 5.4) rather than the whole table staying
-resident for the instance's lifetime.
+These are deliberate boundaries, not correctness bugs. The first two bullets
+describe the legacy, single-file physical layout only (used by the frozen golden
+fixture / regression path, see [scalable-learning-data.md](./scalable-learning-data.md)
+§11). The production `v2-sharded` layout produced by `EXPORT_LEARNING_DATA` reads
+selectively or shard-aware-bulk through `ArtifactStore.read_range`, with bounded
+per-instance caches.
 
 - `SceneOpsDataset`, on the legacy single-file layout only, lazy-loads
   `learning_steps`/`learning_signals` tables (fetched at most once each,
@@ -318,8 +288,7 @@ resident for the instance's lifetime.
   2.5); only `reference_uri`/`reference_modality` round-trip.
 - No missing-value filling/masking/drop policy exists --
   `MissingFeaturePolicy.ERROR` is the only implemented member.
-- A LeRobot external dataset format adapter exists (Phase 3); RLDS does
-  not -- see §9 and [dataset-interoperability.md](./dataset-interoperability.md).
+- LeRobot is the only external dataset format adapter -- see [dataset-interoperability.md](./dataset-interoperability.md).
 - `ALIGN_EPISODE` (several pinned Episodes in one job) and `EXPORT_LEARNING_DATA`
   are the two stages of the `EPISODE_LEARNING_DATA_BUILDING` pipeline;
   `VALIDATE_ALIGNED_EPISODE`/`PROFILE_ALIGNED_EPISODE`/`CURATE_EPISODES` are
@@ -327,56 +296,12 @@ resident for the instance's lifetime.
   the pipeline has no separate validation stage. See
   [jobs-and-pipelines.md](./jobs-and-pipelines.md) §2.
 - No dedicated API domain exists for alignment/learning-data/curation --
-  `apps/api/app/domains/episodes/` only covers the Phase 1 raw-Episode
-  surface (build/register/validate/profile/quality). Phase 2 jobs are
-  reachable only through the generic Jobs API, not resource-specific
-  routes.
+  `apps/api/app/domains/episodes/` only covers the canonical Episode
+  surface (build/register/validate/profile/quality). The alignment,
+  export and curation jobs are reachable only through the generic Jobs
+  API, not resource-specific routes.
 
-## 9. Phase 2 close-out and Phase 3 boundary
-
-```text
-Phase 2 -- Robot Learning Data Layer        COMPLETE
-
-  2.1  Temporal Contract / Alignment Config
-  2.2  Temporal Alignment Engine
-  2.3  Alignment Artifact & Revision Identity
-  2.4  Validation / Profiling
-  2.5  Columnar Learning Data
-  2.6  Episode Curation
-  2.7  Native Learning Dataset
-       2.7A  Contract (EpisodeRef/FeatureProjection/StepSample/SequenceSample)
-       2.7B  SceneOpsDataset
-       2.7C  Sequence Sampling
-       2.7D  Training Consumer Adapter
-```
-
-Phase 2 ends at the native training-consumer layer
-(`NumPySequenceSample`/`SceneOpsTorchDataset`). External ecosystem
-integration was explicitly out of scope for Phase 2 and moved to Phase 3,
-now complete — see
-[Dataset interoperability](./dataset-interoperability.md) for the full,
-verified architecture (`ExternalDatasetAdapter`/`ExternalDatasetWriter`
-contract, the concrete LeRobot adapter, its isolated runtime, and the
-real Postgres/MinIO round-trip E2E).
-
-```text
-SceneOpsDataset
-      |
-      +-- Training path (Phase 2, complete)
-      |     SequenceSampler -> NumPy / Torch
-      |
-      +-- Interoperability path (Phase 3, complete)
-            ExternalDatasetAdapter -> ExternalDatasetWriter
-              -> LeRobot (implemented, Request 3.3)
-              -> RLDS (not implemented -- see dataset-interoperability.md §10)
-```
-
-Nothing in Phase 2 blocked this: `SceneOpsDataset.get_step()`/
-`get_window()` and the 2.7A pure projection functions turned out to be
-exactly the seam the Phase 3 external-format adapter reads through,
-without any change to `SceneOpsDataset`/`SequenceSampler` themselves.
-
-## 10. Source-of-truth map
+## 8. Source-of-truth map
 
 - Alignment engine + persistence: `packages/sceneops-core/sceneops_core/episodes/alignment/`
 - Curation: `packages/sceneops-core/sceneops_core/episodes/curation/`

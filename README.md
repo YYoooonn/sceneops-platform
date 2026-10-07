@@ -2,11 +2,11 @@
 
 SceneOps Platform is a local-first robotics data and MLOps platform. A robot's (or an external dataset's) sensor data enters as an immutable raw recording, is canonicalized into source-faithful Scenes and Episodes, and feeds derived workflows — labels, sample views, ScenarioSets, detection evaluation, and learning-data export — where every derived result pins the exact revisions it consumed.
 
-It uses nuScenes mini as a realistic autonomous-driving fixture and implements production-shaped components: a FastAPI control plane, PostgreSQL metadata, object-storage artifacts, Celery (or Airflow) execution, and pipeline/job orchestration.
+It uses nuScenes mini as a realistic autonomous-driving fixture and implements production-shaped components: a FastAPI control plane, PostgreSQL metadata, object-storage artifacts, Celery job execution, and durable pipeline/job orchestration.
 
 > Modern robotics AI systems need more than model inference: reliable sensor-data ingestion, scene-level quality control, reproducible evaluation, artifact lineage, and data-selection workflows. SceneOps explores that problem as a small but production-shaped platform.
 
-Start at [`docs/architecture/overview.md`](docs/architecture/overview.md) for the full documentation set; [ADR-007](docs/adr/007-canonical-ingestion-architecture.md) is the decision record for the ingestion and workflow architecture described below.
+Start at [`docs/architecture/overview.md`](docs/architecture/overview.md) for the full documentation set; [ADR-007](docs/adr/007-canonical-ingestion-architecture.md) and [ADR-009](docs/adr/009-job-centric-execution-and-durable-boundaries.md) are the decision records for the ingestion, workflow and execution architecture described below.
 
 ---
 
@@ -66,12 +66,14 @@ A Pipeline exists only where multi-stage orchestration, retry and lineage justif
 Single operations are atomic Jobs (`POST /jobs`): `register_robot_run`, `import_labels`, `build_scene_sample_views`, `mine_scenarios`, `predict_detection`, `evaluate_detection`, `align_episode`, `validate_aligned_episode`, `profile_aligned_episode`, `export_learning_data`, `curate_episodes`, and the robot-telemetry and analytics-snapshot jobs. A job that is a pipeline stage is the same handler as the atomic job. Details: [`docs/architecture/jobs-and-pipelines.md`](docs/architecture/jobs-and-pipelines.md).
 
 ```text
-Pipeline → PipelineTask → Job → domain run / artifact
+PipelineRun → PipelineTaskRun → durable Job → asynchronous dispatch → Celery worker → JobRunner → domain handler
 ```
 
 ### Execution model
 
-Pipelines and jobs run through Celery + Redis by default; the Airflow backend runs each pipeline type as its own per-task DAG. Execution identity is `execution_key` (idempotent create; `force` always creates a fresh run), a redispatch resumes at the first failed or blocked task, and a task can block its pipeline through a quality gate. Task results are normalized into `outputs` (downstream refs), `metrics`, `lineage.artifacts`, and per-task `summary` / `rawResult`.
+Celery + Redis is the only execution backend. A Pipeline is durable state: the `PipelineOrchestrator` advances it one short step at a time and never runs a handler; every task is a durable Job that `JobRunner` — the sole runtime entry point for Jobs — executes on a job worker. Execution identity is `execution_key` (idempotent create; `force` always creates a fresh run), a redispatch resumes at the first failed or blocked task, and a task can block its pipeline through a quality gate. Task results are normalized into `outputs` (downstream refs), `metrics`, `lineage.artifacts`, and per-task `summary` / `rawResult`.
+
+A successful mutating API response means PostgreSQL has committed; operations that dispatch work commit first and send second. Derived artifacts are immutable and content-pinned: bytes are written once at a checksum-qualified key, so identical retries converge and changed content becomes a new revision. See [Jobs and pipelines](docs/architecture/jobs-and-pipelines.md) and [Storage layout](docs/architecture/storage-layout.md).
 
 ---
 
@@ -147,7 +149,7 @@ The whole acceptance surface is the commands below; [`docs/development/test-matr
 | --- | --- |
 | `make test` | Unit suites (worker, api, inference-server, core, analytics, integrations, streaming, reference contract, e2e verifiers, test-infrastructure) — no infrastructure |
 | `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, every `*_integration.py` module (registrars, recording Scene / Episode and derived verticals, selective Parquet reads) — in a disposable database and bucket, needs `make local-up`; a skipped test fails the run |
-| `make test-infrastructure [SUITE=…]` | Real-infrastructure suites; `pipelines`, `recovery` and `airflow` fail instead of skipping. `pipelines` (default): pipeline contracts on a disposable execution runtime (own API, workers, Redis, database and bucket). `recovery`: acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance. `airflow`: the same pipelines through a private Airflow. `kafka`: ROS 2 bridge + capture tests and the transport smoke (needs `make streaming-up`). `boundaries`: acquisition tool and LeRobot adapter in their own uv projects, acquisition images, raw-source mount of the runtime services |
+| `make test-infrastructure [SUITE=…]` | Real-infrastructure suites; `pipelines` and `recovery` fail instead of skipping. `pipelines` (default): pipeline contracts on a disposable execution runtime (own API, workers, Redis, database and bucket). `recovery`: acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance. `kafka`: ROS 2 bridge + capture tests and the transport smoke (needs `make streaming-up`). `boundaries`: acquisition tool and LeRobot adapter in their own uv projects, acquisition images, raw-source mount of the runtime services |
 | `make reference-contract-verify` | Read-only: exactly the golden contract's 20 RobotRuns, Scenes and Episodes; reports non-contract state (`REQUIRE_PRISTINE=1` fails on it) |
 | `make e2e-streaming-equivalence` | Read-only: the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture are equivalent (see below) |
 | `make e2e-scene-ml` / `make e2e-episode-learning` | The two derived journeys on the golden RobotRun, into fixed test-owned Datasets (see below) |
@@ -173,7 +175,21 @@ There are four E2E journeys. Platform operations go through FastAPI and bulk dat
 | Command | Description |
 | --- | --- |
 | `make ros2-up` / `ros2-down` / `ros2-shell` / `ros2-check` | ROS 2 Jazzy sandbox container |
-| `make worker-register-robot-run MANIFEST_URI=..` | `REGISTER_ROBOT_RUN` for a RobotRunManifest published by `python -m sceneops_integrations.recording publish`; see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) |
+| `POST /api/v1/robot-runs:register` | `REGISTER_ROBOT_RUN` for a RobotRunManifest published by `python -m sceneops_integrations.recording publish` (`reconcile --apply` submits it for unregistered manifests); see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) |
+
+---
+
+## Documentation
+
+| Tier | Where | Answers |
+| --- | --- | --- |
+| README | this file | what SceneOps is and how to start |
+| Architecture | [`docs/architecture/`](docs/architecture/overview.md) | how the system works now (current implementation only) |
+| Workflows, development | [`docs/workflows/`](docs/workflows/robot-run-and-mcap.md), [`docs/development/`](docs/development/local-development.md) | data flows, commands and the test surface |
+| ADRs | [`docs/adr/`](docs/adr/) | why a decision was made (history of decisions) |
+| History | [`docs/history/`](docs/history/) | point-in-time studies and benchmarks; not current truth |
+
+No roadmap is maintained in the repository.
 
 ---
 
@@ -234,7 +250,6 @@ sceneops-platform/
 │   └── sceneops-streaming/         # Kafka wire contracts
 ├── tools/                          # isolated uv projects: dataset-acquisition, lerobot-integration
 ├── ros2/                           # ROS 2 Jazzy sandbox: streaming bridge node, MCAP capture
-├── airflow/dags/                   # one per-task DAG per pipeline type
 ├── config/baselines/               # Scene / Episode build configurations of the canonical baseline
 ├── migrations/                     # Alembic versions
 ├── scripts/
@@ -246,9 +261,9 @@ sceneops-platform/
 │   └── ops/, dev/                  # operator tools: polling loop, disk report, local reset
 ├── tests/infrastructure/           # pipeline-contract / orchestrator / acquisition-recovery acceptance tests
 ├── benchmarks/                     # measurement tooling (learning data, streaming, acquisition); not acceptance
-├── docs/                           # architecture/, adr/, development/, workflows/
-├── compose.yaml, compose/          # Compose entrypoint and core, workers, inference, airflow, ros2,
-│                                   #   tools, streaming, acquisition, lerobot
+├── docs/                           # architecture/, workflows/, development/, adr/, history/
+├── compose.yaml, compose/          # Compose entrypoint and core, workers, inference, ros2, tools,
+│                                   #   streaming, acquisition, recovery, lerobot, test-runtime
 ├── Makefile, makefiles/
 └── pyproject.toml                  # uv workspace (Python 3.11–3.12)
 ```
@@ -257,7 +272,7 @@ sceneops-platform/
 
 ## Limitations
 
-The code-verified list is in [`docs/architecture/reserved-and-limitations.md`](docs/architecture/reserved-and-limitations.md). Current constraints:
+The code-verified list is in [`docs/architecture/limitations.md`](docs/architecture/limitations.md). Current constraints:
 
 * The default fixture is nuScenes mini; the journeys are validated on one scene (`scene-0061`).
 * The platform is local-first and optimized for architecture validation, not large-scale throughput.
@@ -266,6 +281,7 @@ The code-verified list is in [`docs/architecture/reserved-and-limitations.md`](d
 * Sample views associate by nearest / previous only (no pose interpolation); evaluation applies no frame transform between a prediction and a label.
 * Episodes have no label sets; learning export is numeric scalar / vector only.
 * Streamed capture reaches a canonical `RobotRun` through recoverable one-shot commands (`publish-pending`, `reconcile --once --apply`; `make recovery-up` loops them locally), not through a trigger in capture itself; nothing supervises capture, and there is no live robot control.
+* Jobs and Pipelines have no stall or worker-loss recovery, and pipeline tasks run strictly serially; capture replays the whole Kafka topic; artifacts are never deleted by the platform.
 * DuckDB queries only work against locally downloaded Parquet files.
 * Operations and leaderboard APIs exist, but there is no web UI.
 
@@ -279,7 +295,6 @@ The code-verified list is in [`docs/architecture/reserved-and-limitations.md`](d
 | Task queue           | Celery, Redis 7                                       |
 | Database             | PostgreSQL 16, SQLAlchemy 2.0 async, Alembic          |
 | Artifact storage     | MinIO (S3 API), boto3                                 |
-| Orchestration (opt.) | Airflow 2.10 (per-task DAGs, `DockerOperator`)        |
 | Analytics            | Polars, PyArrow, DuckDB                               |
 | Inference (optional) | GroundingDINO, HuggingFace Transformers               |
 | Robot data           | ROS 2 Jazzy, rclpy, MCAP (`mcap`, `mcap-ros2-support`), Kafka |

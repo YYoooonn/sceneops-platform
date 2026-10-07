@@ -560,6 +560,9 @@ one finding the audit recorded.
   productionization item of §9 is withdrawn. Multi-run routing is a question for the
   later Kafka reliability study, not a deferred ADR-008 deliverable. The audit text
   below describes the repository as it was audited and still mentions the router.
+- **Airflow is removed.** Statements below that call Airflow an opt-in proof of concept
+  describe the repository as it was audited; the Airflow backend no longer exists
+  ([ADR-009](./009-job-centric-execution-and-durable-boundaries.md)).
 - **F7 is closed for the deployed capture path.** `capture/cli.py` finalizes a capture
   only on the run's `RUN_END`; `--idle-timeout-seconds` is an abort guard, and an
   aborted capture (`RunEndNotObservedError`) finalizes and commits nothing, leaving a

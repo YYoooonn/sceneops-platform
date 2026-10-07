@@ -1,5 +1,11 @@
 # Learning Data Scaling Baseline (Phase 5, Requests 5.1-5.4)
 
+> **History — point-in-time record, not current architecture.** It records the audit,
+> measurements and design decisions that produced the sharded learning-data layout.
+> The current contract is [Scalable learning data](../architecture/scalable-learning-data.md)
+> and [Robot learning data](../architecture/robot-learning-data.md). Phase and request
+> numbers, file paths, commands and counts below describe the repository as it was then.
+
 > Request 5.1: audit + measured baseline for `SceneOpsDataset`'s physical
 > storage/query path (§1 below). Request 5.2: the sharded physical layout
 > built on that baseline (§14 below). Request 5.3: selective
@@ -7,9 +13,9 @@
 > measured and Request 5.2 made possible, finally exploited (§27 below).
 > Request 5.4: bounded caches and a shard-aware bulk-access strategy on
 > top of that selective path (§42 below). See
-> [Robot learning data layer](./robot-learning-data.md) for the frozen
+> [Robot learning data layer](../architecture/robot-learning-data.md) for the frozen
 > Phase 2 domain contracts none of these requests touch, and
-> [Storage layout](./storage-layout.md) for `ArtifactStore`/Parquet URI
+> [Storage layout](../architecture/storage-layout.md) for `ArtifactStore`/Parquet URI
 > conventions.
 
 ## 1. End-to-end access path (as built, verified against source)
@@ -105,7 +111,7 @@ on this path.
 - A general-purpose local DuckDB-over-Parquet helper already exists
   (`sceneops_analytics/query.py`'s `query_parquet`) but is unused by
   `SceneOpsDataset` and is explicitly local-filesystem-only (no S3/MinIO
-  httpfs wiring) -- see [Storage layout](./storage-layout.md) §"Analytics
+  httpfs wiring) -- see [Storage layout](../architecture/storage-layout.md) §"Analytics
   (Parquet)".
 
 ## 3. Primary workloads identified
@@ -2156,7 +2162,7 @@ covered directly and pass:
   `BaseLearningExportNotFoundError`), revision merge, table-set
   consistency validation (§61), `learning_episodes` merge (§57),
   incremental shard writing, reused-shard ArtifactRecord skip (§62).
-- `docs/architecture/learning-data-scaling-baseline.md` -- this section.
+- `docs/history/learning-data-scaling-baseline.md` -- this section.
 
 ## 61. Table-set consistency guard
 

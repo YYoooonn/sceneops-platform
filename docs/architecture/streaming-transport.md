@@ -245,7 +245,7 @@ make smoke-streaming   # publishes a deterministic run-A/run-B binary
                         # partitioning against the real broker
 make streaming-down    # stops/removes only the kafka service; every
                         # other service (postgres/redis/minio/api/
-                        # worker/airflow) is untouched
+                        # worker) is untouched
 ```
 
 `compose/streaming.yaml`'s `kafka` service uses `apache/kafka:3.9.2` in
@@ -506,7 +506,7 @@ never renamed or reinterpreted by the bridge.
 one responsibility: `ROS2 message -> TelemetryEnvelope -> TelemetryProducer`.
 Verified by construction -- the file imports only `rclpy`/ROS2 message
 packages, `sceneops_core.streaming`, and `sceneops_streaming`. It never
-imports `sceneops-db`, `sceneops-storage`, Celery, Airflow, or anything
+imports `sceneops-db`, `sceneops-storage`, Celery, or anything
 API/worker-side.
 
 **Process boundary:** the bridge is a standalone ROS2 node, run inside the
@@ -1075,7 +1075,7 @@ consumer group with no committed offset, so `auto.offset.reset = earliest`
 means it may scan the topic's entire historical record before reaching its
 own messages (measured: ~3.4s against a lightly-used topic vs ~44s once it
 held ~150,000 prior messages; see
-[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md)).
+[Streaming reliability & scale baseline](../history/streaming-reliability-scale-baseline.md)).
 Redesigning topic layout to bound this cost is out of scope here.
 
 None of these are `SCENEOPS_STREAMING_KAFKA_*` settings and none are
@@ -1167,7 +1167,7 @@ MCAP and never raises `UnsupportedChannelError` (reserved for a genuinely
 unsupported channel). Its offset still belongs to the receipt's Kafka offset
 range.
 
-## 30. What comes next
+## 30. From capture to canonical Scenes and Episodes
 
 The full chain from live telemetry through to a readable learning
 dataset is built: durable capture (Part 3) closes `Kafka -> MCAP`; the database-free Recording
@@ -1210,9 +1210,10 @@ Reliability and scale characteristics of everything above -- crash
 boundaries, duplicate/gap/out-of-order handling, multi-RobotRun
 isolation, Kafka-outage behavior, backpressure, throughput/memory at
 scale, practical payload limits -- are measured and frozen in
-[Streaming reliability & scale baseline](./streaming-reliability-scale-baseline.md)
-and [Multi-run streaming architecture study](./streaming-multirun-phase7-study.md),
-point-in-time records, not living contracts.
+[Streaming reliability & scale baseline](../history/streaming-reliability-scale-baseline.md)
+and [Multi-run streaming architecture study](../history/streaming-multirun-phase7-study.md),
+point-in-time records, not living contracts. The study evaluated a continuous
+multi-run capture router that is not part of the platform.
 
 ## 31. Non-goals
 
@@ -1243,7 +1244,7 @@ Capture crash/restart reliability beyond the single-invocation,
 Multi-partition-per-robot_run_id support (Part 3 fails loudly instead,
   §23) or dynamic capture topic/channel configuration (the channel set is a
   static registry, §11, §22)
-Multi-run capture from one shared consumer (capture is run-scoped, §26)
+Capture of several runs from one shared consumer (capture is one process per run, §26)
 Capture-triggered publish hand-off (a finalized capture is published by
   publish-pending, not by Capture; Capture imports no ArtifactStore code)
 Kafka message-size configuration beyond the stock ~1 MB limit (§14)
@@ -1296,6 +1297,6 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - Bridge lifecycle-event publishing: `ros2/nodes/streaming_bridge_node.py`, `ros2/nodes/tests/test_streaming_bridge_node.py`
 - Control-envelope handling and RUN_END finalization in capture (`control_tracker`, `RunEndNotObservedError`): `ros2/capture/capture_consumer.py`, `ros2/capture/tests/test_capture_consumer.py`
 - Real-Kafka lifecycle integration (solo and interleaved runs): `ros2/capture/tests/test_lifecycle_integration.py`
-- Point-in-time design/benchmark record: [Multi-run streaming architecture study](./streaming-multirun-phase7-study.md)
+- Point-in-time design/benchmark record: [Multi-run streaming architecture study](../history/streaming-multirun-phase7-study.md)
 
 **Related ADRs:** [ADR-005](../adr/005-ros2-vs-kafka-boundary.md) (ROS2 vs. Kafka boundary), [ADR-003](../adr/003-batch-first-architecture.md) (why streaming waited until now)

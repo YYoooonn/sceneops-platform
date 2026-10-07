@@ -271,7 +271,7 @@ The readiness run carries dedicated aggregate columns
 (`ready_count`/`blocked_count`/`warning_count`/`average_score`).
 
 There is no per-scenario DB row; members live in the manifest
-(see [Reserved architecture and current limitations](./reserved-and-limitations.md)).
+(see [Current limitations](./limitations.md)).
 
 ## 7. PipelineRun / PipelineTaskRun
 
@@ -280,11 +280,11 @@ There is no per-scenario DB row; members live in the manifest
 `scene_ml_evaluation`, `episode_learning_data_building`.
 
 `pipeline_task_runs` — individual tasks inside a run. `task_order` gives
-sequence; `depends_on_task_ids` (JSONB) declares dependencies but the
-current `PipelineRunner` doesn't use that graph for scheduling — execution
-is always strictly `task_order` sequential (see
-[Jobs and pipelines](./jobs-and-pipelines.md)). `job_type`/`job_id` delegate
-actual execution to a Job.
+sequence; `depends_on_task_ids` (JSONB) names the upstream tasks whose outputs
+feed a task, but `PipelineOrchestrator` does not schedule from that graph —
+tasks run strictly one at a time in `task_order` (see
+[Jobs and pipelines](./jobs-and-pipelines.md) §4). `job_type`/`job_id` point at
+the durable Job that does the task's work; the task run never executes it.
 
 `PipelineRunStatus`: `pending -> queued -> running -> (blocked | succeeded
 | failed | cancelled)`. `blocked` is what a quality gate produces when it
@@ -309,12 +309,11 @@ BUILD_RECORDING_EPISODES, REGISTER_EPISODES            # RobotRun recording -> c
 VALIDATE_EPISODE, PROFILE_EPISODE                       # episode-level
 ```
 
-`retry_count`/`max_retries`/`worker_id`/`queued_at`/`locked_at`/
-`heartbeat_at` exist as columns, but `JobRunner` doesn't build its own
-retry/backfill logic on top of them — only Celery-level retry runs today.
-`JobService.mark_queued` does enforce `max_retries` for explicit
-redispatch, returning a `ValueError` past the cap (see
-[Jobs and pipelines](./jobs-and-pipelines.md) §5).
+`retry_count`/`max_retries` are enforced by `JobService.mark_queued` when a
+`FAILED` Job is explicitly redispatched, which fails with a `ValueError` past the
+cap. `worker_id`/`locked_at`/`heartbeat_at` are written when `JobRunner` claims
+and finishes a Job; nothing refreshes or inspects them while the handler runs
+(see [Jobs and pipelines](./jobs-and-pipelines.md) §5, §8).
 
 `job_events` — execution log/event stream for a job (`level`, `attempt`,
 `job_step_id`, etc.).
@@ -344,18 +343,21 @@ platform. `kind` (`ArtifactKind`), `uri`, `backend` identify what and
 where; ownership is either the polymorphic `owner_type`/`owner_id` pair, or
 one of the direct FK-style columns (`dataset_id`/`scene_id`/
 `scenario_set_id`/`run_id`/`job_id`/`pipeline_run_id`). `size_bytes`/
-`checksum` exist as columns but most writers don't populate them — see
-[Storage layout](./storage-layout.md) §6.
+`checksum` are nullable columns. Recording registration, observation payloads,
+analytics tables and every derived artifact populate them, and a derived
+record's id is derived from its checksum — see
+[Storage layout](./storage-layout.md).
 
-See [Artifact ownership and lineage](./jobs-and-pipelines.md#7-artifact-ownership-invariant)
+See [Artifact ownership and publication](./jobs-and-pipelines.md#7-artifact-ownership-and-publication)
 for the "producer owns the ArtifactRecord" invariant and how Scene/Episode
 apply it.
 
 ## 11. ExecutionRecord
 
-`execution_records` — the record of a Job/Pipeline actually sent to a real
-execution backend (Celery today, Airflow for pipelines). `execution_backend`,
-`execution_kind`, `resource_id` (a `job_id` or `pipeline_run_id`),
-`external_id` (the Celery task id) separate the control plane's logical
-resource from the physical execution. This is the abstraction point future
-backends attach to — see [ADR-004](../adr/004-airflow-vs-celery.md).
+`execution_records` — the record of a Job or an orchestration step sent to Celery.
+`execution_backend` (`celery`), `execution_kind` (`job_run` / `pipeline_run`),
+`resource_id` (a `job_id` or `pipeline_run_id`) and `external_id` (the Celery task
+id) separate the logical resource from the physical dispatch. It is written after
+the message is sent, by the API dispatch facades and by the orchestrator when it
+dispatches a task's Job; see [Jobs and pipelines](./jobs-and-pipelines.md) §5 for
+the window this leaves.
