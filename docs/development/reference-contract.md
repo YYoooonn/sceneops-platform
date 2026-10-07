@@ -83,7 +83,7 @@ make reference-contract-bootstrap   converge on the contract
 make reference-contract-verify REQUIRE_PRISTINE=1    ... and nothing but the contract
 python3 scripts/reference/reference_contract.py show|validate|verify|bootstrap [--require-pristine]
 python3 scripts/reference/reference_contract.py pair [--fixture <id> | --scope <scope>]
-python3 scripts/reference/reference_contract.py fingerprint
+python3 scripts/reference/reference_contract.py fingerprint [--golden]
 ```
 
 Both print one JSON report on stdout (`sceneops.reference_contract_report/1`);
@@ -145,7 +145,10 @@ takes both identities from it, so no journey states a RobotRun id of its own.
 platform holds, through FastAPI: identities plus the registration, manifest-checksum and
 update fields that change when a record is rewritten. Two fingerprints are equal exactly
 when no record was added, removed or changed; a workflow that must create no state
-compares one taken before and after.
+compares one taken before and after. `--golden` restricts it to the contract's own
+records (its RobotRuns and the Scenes and Episodes of its DatasetVersions): it stays
+equal across a derived workflow, which adds Datasets of its own over the same RobotRuns,
+exactly when that workflow left the contract untouched.
 
 ### `reference-contract-bootstrap`
 
@@ -187,6 +190,11 @@ make reference-data-verify REFERENCE_SCOPE=nuscenes-mini-full-10     the locked 
 make reference-contract-bootstrap REQUIRE_PRISTINE=1                 20 RobotRuns, 20 Scenes, 20 Episodes
 make reference-contract-verify REQUIRE_PRISTINE=1                    the state check, read-only
 ```
+
+`make e2e-cleanroom` runs this sequence from a reset runtime (the only automated one),
+proves the runtime empty and the preserved inputs untouched, repeats the bootstrap to show
+it converges without re-executing anything, and runs the two derived journeys on one
+fixture.
 
 A workflow that registers RobotRuns of its own (`MUTATING_ACQUISITION`) leaves
 non-contract state that nothing removes, so it runs only on a runtime declared

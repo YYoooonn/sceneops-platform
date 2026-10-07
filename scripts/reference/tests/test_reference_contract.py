@@ -787,3 +787,71 @@ def test_fingerprint_detects_any_added_removed_or_rewritten_record(mutate):
     after = copy.deepcopy(before)
     mutate(after)
     assert rc.platform_fingerprint(before) != rc.platform_fingerprint(after)
+
+
+# ── Golden fingerprint ───────────────────────────────────────────────────────
+
+
+def _with_derived_state(state):
+    """The same platform after a derived workflow: a Dataset of its own holding a Scene and
+    an Episode built from a contract RobotRun."""
+    state = copy.deepcopy(state)
+    rid = state["robot_runs"][0]["runId"]
+    derived = {
+        "datasetId": "sceneops-test-scene-ml",
+        "datasetVersion": "baseline",
+        "robotRunId": rid,
+        "manifestChecksum": "sha256:derived",
+        "updatedAt": "t1",
+    }
+    state["datasets"].append("sceneops-test-scene-ml")
+    state["scenes"].append({**derived, "sceneId": "scene-derived"})
+    state["episodes"].append({**derived, "episodeId": "episode-derived"})
+    return state
+
+
+def test_golden_fingerprint_covers_exactly_the_contracts_records():
+    golden = rc.golden_fingerprint(CONTRACT, build_obs())
+    assert golden["counts"] == {"robot_runs": 20, "scenes": 20, "episodes": 20}
+    assert len(golden["robot_runs"]) == 20
+
+
+def test_golden_fingerprint_ignores_derived_state_consuming_the_contract():
+    before = build_obs()
+    after = _with_derived_state(before)
+    assert rc.platform_fingerprint(before) != rc.platform_fingerprint(after)
+    assert rc.golden_fingerprint(CONTRACT, before) == rc.golden_fingerprint(
+        CONTRACT, after
+    )
+
+
+def test_golden_fingerprint_excludes_non_contract_robot_runs():
+    state = build_obs()
+    state["robot_runs"].append({"runId": "run-test-x", "robotId": "robot-test-x"})
+    assert "run-test-x" not in rc.golden_fingerprint(CONTRACT, state)["robot_runs"]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda s: s["robot_runs"].pop(),
+        lambda s: s["robot_runs"][0].update(manifestChecksum="sha256:other"),
+        lambda s: s["scenes"][0].update(updatedAt="t1"),
+        lambda s: s["episodes"][0].update(manifestChecksum="sha256:other"),
+        lambda s: s["scenes"].pop(),
+    ],
+    ids=[
+        "run removed",
+        "run re-pinned",
+        "scene rewritten",
+        "episode re-pinned",
+        "scene removed",
+    ],
+)
+def test_golden_fingerprint_detects_a_changed_contract_record(mutate):
+    before = build_obs()
+    after = copy.deepcopy(before)
+    mutate(after)
+    assert rc.golden_fingerprint(CONTRACT, before) != rc.golden_fingerprint(
+        CONTRACT, after
+    )

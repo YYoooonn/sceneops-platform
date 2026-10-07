@@ -5955,3 +5955,87 @@ race in one run instead of alternating between them across runs. A run costs the
 start-up plus one RobotRun seeding. Airflow's per-task containers are started by the
 Docker daemon outside the compose project; one that failed stays until removed
 (`auto_remove` is `success`).
+
+### 36.9 `e2e-cleanroom` proves reconstruction of the golden runtime
+
+**Decision.** `e2e-cleanroom` answers one question: can an empty generated SceneOps
+runtime be reconstructed deterministically from the locked reference inputs into the
+golden contract, and can the primary journeys consume it without mutating it.
+
+```text
+preserved                      data/raw, data/reference, config/reference
+make local-reset               PostgreSQL, Redis, MinIO, Kafka log, acquisition-recordings, generated ./data
+read-back proof                every generated store empty; the preserved inputs byte-identical
+reference-data-verify          the locked corpus (all fixtures); no MCAP is regenerated
+reference-contract-bootstrap   20 RobotRuns, 20 Scenes, 20 Episodes from nothing
+reference-contract-verify      REQUIRE_PRISTINE=1: nothing but the contract
+reference-contract-bootstrap   again: converges, re-executes nothing
+e2e-scene-ml, e2e-episode-learning   on scene-0061, each twice; the contract's records unchanged,
+                               the two fixed Datasets the only addition
+reference-contract-verify      the contract is valid beside the derived state
+```
+
+The reconstruction is the production path: the contract bootstrap composes Recording Import
+and Streaming Acquisition; the cleanroom adds no ingestion, no smoke baseline and no
+verifier of its own. `cleanroom_verify.sh` is removed: its claims (the canonical records are
+those the bootstrap registered; the journeys' pipelines and jobs succeeded and their
+artifacts exist) are owned by `reference-contract-verify` with a before/after golden
+fingerprint (`reference_contract.py fingerprint --golden`, the contract's own records, equal
+across a derived workflow exactly when the contract is untouched) and by the journeys'
+own assertions. The journeys no longer write into a timestamped
+`sceneops-test-cleanroom-<epoch>` DatasetVersion: they run on their fixed `sceneops-test-*`
+identities (§36.7), so the cleanroom ends in the state of a bootstrapped reference
+environment plus those two Datasets and leaves nothing that grows with time.
+
+The convergence of the second bootstrap is proved from state, not from log text: no
+RobotRun, Job, PipelineRun, execution or artifact was added, the MinIO object count is
+unchanged, no record of the platform changed, and, from Docker's event stream recorded
+during the run, no `kafka`, `ros2` or `dataset-replay` container was created or started
+and the Kafka broker was not restarted.
+
+**Why.** The cleanroom was a third copy of the baseline bootstrap on a smaller selection
+(`smoke-1`) with a verifier that restated what the contract verifier and the journeys
+assert, and its timestamped Dataset was the one test identity that depended on time.
+Reconstruction reproducibility is the one property no other acceptance proves, because
+every other one starts from a runtime that already holds the contract.
+
+**Consequences.**
+
+- The cleanroom takes as long as a full contract reconstruction (each fixture replayed
+  through ROS 2 and Kafka once, 40 Scene / Episode builds) plus four journey runs. It is not
+  a routine check; it is run for reproducibility and release claims.
+- It needs the Kafka and ROS 2 images and, unlike the previous cleanroom, leaves the Kafka
+  broker running, as the contract bootstrap does.
+- Execution history (Jobs, PipelineRuns, reports) that the second journey runs append is
+  reported, not asserted: it is append-only by platform design (§36.7). What is asserted is
+  that no Dataset, Scene, Episode, RobotRun, artifact or MinIO object is added.
+- Timing and storage figures it prints are diagnostics of one local run, not a benchmark.
+
+**Verification (point-in-time, one local run, 2026-10-07, branch
+`refactor/reference-data-baseline` at `c459ad8` plus the uncommitted change of this
+section; macOS host, Docker Desktop VM, `FORCE=1 make e2e-cleanroom`, exit 0).**
+
+- Reset: PostgreSQL (13 API collections), MinIO (0 objects), Redis (no queued task, no key
+  but the broker bindings), the Kafka log and capture volumes and the generated `./data`
+  directories were empty; 39,083 preserved input files had an identical path / size / mtime
+  digest after the reset and after the run. `reference-data-verify`: 10 of 10 fixtures.
+- Reconstruction: 20 RobotRuns, 40 Scenes and Episodes created, none reused;
+  `reference-contract-verify REQUIRE_PRISTINE=1`: 20 / 20 / 20, 0 non-contract RobotRuns,
+  0 derived or foreign Datasets.
+- Second bootstrap: 20 RobotRuns found complete; Jobs (180), PipelineRuns (40), artifacts
+  (12,794) and MinIO objects (12,794) unchanged; no record changed; only the
+  `recording-publisher` and `reference-data` one-shot containers started; the Kafka broker
+  was not restarted.
+- Journeys on `scene-0061`: no RobotRun added, golden fingerprint unchanged, Datasets exactly
+  the contract's two plus `sceneops-test-scene-ml` and `sceneops-test-episode-learning`
+  (2 Scenes, 2 Episodes). A second run of each added no Dataset, Scene, Episode, RobotRun,
+  artifact or MinIO object, and appended 8 Jobs, 1 PipelineRun and 7 executions.
+- Final `reference-contract-verify` (without `REQUIRE_PRISTINE`): valid.
+- Wall time, diagnostic only: 22,844 s in total, of which contract reconstruction 18,437 s,
+  second bootstrap 83 s, Scene ML 82 s and 49 s (second run), Episode learning 123 s and
+  1,051 s (second run). The same stages varied several-fold between runs of this machine
+  (the first streamed fixture took about an hour of stage time, the later ones about two
+  minutes; `reference-data-verify` took 2,588 s here and about three minutes in an earlier
+  run), so these durations are not a performance claim. Final sizes: MinIO 13,982 MiB,
+  Kafka 5,061 MiB, PostgreSQL 75 MiB, Docker local volumes 21.04 GB, 7.6 GiB free on the host
+  and 5.4 GiB in the Docker VM.

@@ -830,6 +830,44 @@ def platform_fingerprint(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def golden_fingerprint(
+    contract: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """The contract's own records: its RobotRuns and the Scenes and Episodes of its
+    DatasetVersions, in the shape of `platform_fingerprint`. Derived test state, which
+    consumes the same RobotRuns from Datasets of its own, is not part of it, so the
+    fingerprint is equal before and after a derived workflow exactly when that workflow
+    left the contract untouched."""
+    contract_ids = {e["robot_run_id"] for e in expand(contract)}
+    fingerprint = platform_fingerprint(state)
+    in_contract = {
+        key: {
+            u[key_name]
+            for mode in MODES
+            for u in _contract_units(contract, mode, state[key])
+        }
+        for key, key_name in (("scenes", "sceneId"), ("episodes", "episodeId"))
+    }
+    return {
+        "counts": {
+            "robot_runs": len(contract_ids & set(fingerprint["robot_runs"])),
+            "scenes": len(in_contract["scenes"]),
+            "episodes": len(in_contract["episodes"]),
+        },
+        "robot_runs": {
+            k: v for k, v in fingerprint["robot_runs"].items() if k in contract_ids
+        },
+        "scenes": {
+            k: v for k, v in fingerprint["scenes"].items() if k in in_contract["scenes"]
+        },
+        "episodes": {
+            k: v
+            for k, v in fingerprint["episodes"].items()
+            if k in in_contract["episodes"]
+        },
+    }
+
+
 def plan(contract: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any]]:
     """Per contract RobotRun, what the platform holds now (before a bootstrap)."""
     by_id = {r["runId"] for r in obs["robot_runs"]}
@@ -1066,9 +1104,16 @@ def cmd_pair(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_fingerprint(_: argparse.Namespace) -> int:
-    """The platform's records through FastAPI, one compact JSON line; read-only."""
-    print(json.dumps(platform_fingerprint(collect_state()), sort_keys=True))
+def cmd_fingerprint(args: argparse.Namespace) -> int:
+    """The platform's records through FastAPI, one compact JSON line; read-only.
+    `--golden` restricts it to the contract's own records."""
+    state = collect_state()
+    document = (
+        golden_fingerprint(_require_valid()[0], state)
+        if args.golden
+        else platform_fingerprint(state)
+    )
+    print(json.dumps(document, sort_keys=True))
     return 0
 
 
@@ -1180,6 +1225,12 @@ def main(argv: list[str] | None = None) -> int:
                 "--require-pristine",
                 action="store_true",
                 help="also fail on any non-contract RobotRun, derived test dataset or foreign dataset",
+            )
+        if name == "fingerprint":
+            command.add_argument(
+                "--golden",
+                action="store_true",
+                help="only the contract's RobotRuns and the Scenes / Episodes of its DatasetVersions",
             )
         if name == "pair":
             command.add_argument("--fixture", help="a fixture of the contract")

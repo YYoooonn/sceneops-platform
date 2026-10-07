@@ -165,7 +165,7 @@ There are four E2E journeys. Platform operations go through FastAPI and bulk dat
 | `make e2e-streaming-equivalence` | Read-only: the reference contract's Recording Import and Streaming Acquisition RobotRuns of one fixture, read from the ArtifactStore, are semantically equivalent in acquisition and in canonical Scenes and Episodes (creates no state; needs neither Kafka nor ROS 2) |
 | `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend) |
 | `make e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → export verification + LeRobot round trip |
-| `make e2e-cleanroom` | **The full-platform acceptance**: fresh platform state → canonical-bootstrap → both L3 journeys → final verification. **Destructive** (preserves `data/raw`) |
+| `make e2e-cleanroom` | **The acceptance of reconstruction**: reset the generated runtime → rebuild the golden contract from the preserved reference inputs (verified pristine, then a second bootstrap that converges) → `e2e-scene-ml` and `e2e-episode-learning` on one fixture → the contract is still valid and unchanged. **Destructive** (preserves `data/raw`, `data/reference`, `config/reference`) |
 | `make acceptance-grounding-dino` | Model-backend acceptance of `e2e-scene-ml` with the GroundingDINO backend (needs an inference server) |
 
 ### Robot sandbox

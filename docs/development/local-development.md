@@ -121,7 +121,7 @@ make test-infrastructure           pipeline contracts on a disposable execution 
 make test-infrastructure-airflow   the same pipelines through a private Airflow (Docker, see below)
 make test-recovery                 acquisition recovery under injected faults + the full-lifecycle acceptance (Docker, needs `make local-up`)
 make e2e-streaming-equivalence | e2e-scene-ml | e2e-episode-learning
-make e2e-cleanroom                 the full-platform acceptance (DESTRUCTIVE: runs `make local-reset`)
+make e2e-cleanroom                 the acceptance of reconstruction (DESTRUCTIVE: runs `make local-reset`)
 make check-commands                the command surface is consistent (no pytest, no stack)
 ```
 
@@ -201,13 +201,13 @@ or MinIO access, no worker CLI.
 make e2e-streaming-equivalence [SCENE=...]   the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture, read-only: equivalent (needs neither Kafka nor ROS 2)
 make e2e-scene-ml [SCENE=...]                Scenes -> labels -> sample views -> ScenarioSet -> prediction -> evaluation (mock backend)
 make e2e-episode-learning [SCENE=...]        Episodes -> AlignedEpisodes -> learning export -> verification + LeRobot round trip
-make e2e-cleanroom                           fresh state -> canonical-bootstrap -> both L3 journeys -> final verification
+make e2e-cleanroom                           reset -> golden contract from the preserved inputs -> both L3 journeys -> contract unchanged
 ```
 
 There is no bare `make e2e` aggregate: the journeys differ in what they need
 (default stack / ROS 2 + Kafka / the LeRobot image), and an aggregate would hide
-which one a failure needed. `make e2e-cleanroom` is the only full-platform
-acceptance entry point.
+which one a failure needed. `make e2e-cleanroom` is the acceptance of
+reconstruction.
 
 - `e2e-scene-ml` and `e2e-episode-learning` start from a baseline built by
   `canonical-bootstrap`. They derive everything else (labels, sample views,
@@ -221,11 +221,20 @@ acceptance entry point.
 - `acceptance-grounding-dino` runs the Scene ML journey with the GroundingDINO
   backend (needs `make inference-local-up` or `inference-gpu-up`): the model-backend
   acceptance, separate from the default mock-backend journey.
-- **`make e2e-cleanroom`**: `make local-reset` (destructive — fresh
-  Postgres/Redis/MinIO, preserves `data/raw`), images from the current tree,
-  `canonical-bootstrap`, `canonical-verify`, `e2e-scene-ml` and
-  `e2e-episode-learning` on that baseline, and a final verification through the
-  API. It needs no GPU, Airflow or Kafka. Requires confirmation unless `FORCE=1`.
+- **`make e2e-cleanroom`**: images from the current tree, then `make local-reset`
+  (destructive — PostgreSQL, Redis, MinIO, the Kafka log, the capture volume and
+  the generated `./data` artifacts; preserves `data/raw`, `data/reference` and
+  `config/reference`) and a read-back proof that the runtime is empty;
+  `reference-data-verify`; `reference-contract-bootstrap` and
+  `reference-contract-verify REQUIRE_PRISTINE=1` (20 RobotRuns, 20 Scenes, 20
+  Episodes, nothing else); a second `reference-contract-bootstrap` that must
+  converge without importing, replaying, starting Kafka, building or changing a
+  record or object; `e2e-scene-ml` and `e2e-episode-learning` on `scene-0061`,
+  each run twice; and a final `reference-contract-verify` that shows the contract
+  valid and unchanged beside the two fixed derived Datasets. It ends with timing
+  and storage diagnostics (not a benchmark). It needs ROS 2 and Kafka (the
+  contract's Streaming Acquisition RobotRuns) but no GPU or Airflow, and runs
+  none of the other acceptance surfaces. Requires confirmation unless `FORCE=1`.
 
 `make smoke-streaming` is a liveness / transport check, not a journey: it never
 creates persistent domain data.

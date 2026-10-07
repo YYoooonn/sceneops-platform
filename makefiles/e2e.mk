@@ -10,8 +10,10 @@
 #                                -> prediction -> evaluation
 #   e2e-episode-learning         Episodes -> AlignedEpisodes -> learning export
 #                                -> export verification + LeRobot round trip
-#   e2e-cleanroom                fresh platform state -> canonical-bootstrap
-#                                -> both L3 journeys -> final verification
+#   e2e-cleanroom                reset generated runtime -> golden contract
+#                                reconstructed from the preserved reference inputs
+#                                -> both L3 journeys on one fixture -> contract
+#                                verified unchanged
 #
 # Platform operations go through FastAPI; bulk data moves through one-shot
 # containers and the ArtifactStore. The host needs Docker Compose, curl and jq
@@ -70,11 +72,16 @@ e2e-episode-learning: acquisition-image lerobot-image
 	$(E2E_ENV) scripts/e2e/e2e_episode_learning.sh
 
 .PHONY: e2e-cleanroom
-# THE full-platform acceptance workflow. DESTRUCTIVE: `make local-reset`
-# (fresh Postgres/Redis/MinIO; PRESERVES data/raw), images from the current
-# tree, canonical-bootstrap, e2e-scene-ml and e2e-episode-learning on that
-# baseline, final verification through the API. Needs no GPU, Airflow or Kafka.
+# The acceptance of reconstruction: can an empty generated runtime be rebuilt from the
+# preserved reference inputs into the golden contract, and do the primary journeys
+# consume it without changing it. DESTRUCTIVE: images from the current tree, then
+# `make local-reset` (PostgreSQL, Redis, MinIO, Kafka log, capture volume, generated
+# ./data; PRESERVES data/raw, data/reference, config/reference), proof that it is empty,
+# reference-data-verify, reference-contract-bootstrap + verify REQUIRE_PRISTINE=1, a second
+# bootstrap that must converge without re-executing anything, e2e-scene-ml and
+# e2e-episode-learning on one fixture (each twice), and reference-contract-verify.
+# Needs ROS 2 and Kafka (the contract's Streaming Acquisition RobotRuns); no GPU or Airflow.
 # Requires interactive confirmation (same as local-reset) unless FORCE=1.
 e2e-cleanroom:
-	chmod +x scripts/e2e/e2e_cleanroom.sh scripts/canonical/*.sh
+	chmod +x scripts/e2e/e2e_cleanroom.sh
 	$(E2E_ENV) scripts/e2e/e2e_cleanroom.sh
