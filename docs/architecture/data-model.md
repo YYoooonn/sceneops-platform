@@ -354,10 +354,11 @@ apply it.
 
 ## 11. ExecutionRecord
 
-`execution_records` — the record of a Job or an orchestration step sent to Celery.
-`execution_backend` (`celery`), `execution_kind` (`job_run` / `pipeline_run`),
-`resource_id` (a `job_id` or `pipeline_run_id`) and `external_id` (the Celery task
-id) separate the logical resource from the physical dispatch. It is written after
-the message is sent, by the API dispatch facades and by the orchestrator when it
-dispatches a task's Job; see [Jobs and pipelines](./jobs-and-pipelines.md) §5 for
-the window this leaves.
+`execution_records` — the audit record of a message sent to Celery: a Job to run or
+a PipelineRun to advance. `execution_backend` (`celery`), `execution_kind` (`job_run` /
+`pipeline_run`), `resource_id` (a `job_id` or `pipeline_run_id`) and `external_id` (the
+Celery task id) separate the logical resource from the physical dispatch. It is written
+once, after the message is sent, by the API dispatch facades and by the orchestrator
+when it dispatches a task's Job, and is never updated: it records the send, not what
+became of the work. The state of the work is the Job's and the PipelineRun's own. See
+[Jobs and pipelines](./jobs-and-pipelines.md) §5 for the window this leaves.

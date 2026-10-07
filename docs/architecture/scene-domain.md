@@ -19,10 +19,10 @@ payloads        observation bytes, one OBSERVATION_PAYLOAD ArtifactRecord each (
 The manifest is authoritative; the record is an index over exactly one
 registered manifest revision.
 
-## 1. SceneManifest v1
+## 1. SceneManifest v2
 
 Schema: `sceneops_core.scenes.schemas.manifests` (`schema_version =
-"sceneops.scene_manifest/v1"`). Strict: unknown fields are rejected at every
+"sceneops.scene_manifest/v2"`). Strict: unknown fields are rejected at every
 level, and there is no free-form metadata. A source fact the schema cannot
 express is a contract amendment.
 
@@ -45,10 +45,6 @@ SceneManifest
                        each with its source_clock
   groups[]             source-defined groupings: kind = keyframe, timestamp_ns,
                        source_clock, observation_ids (at most one per channel)
-  annotations[]        source boxes: timestamp_ns, source_clock,
-                       category (verbatim), instance_id?,
-                       box (frame, center, size, rotation, velocity?),
-                       attributes, group_id?
 ```
 
 Rules the schema enforces:
@@ -63,7 +59,7 @@ Rules the schema enforces:
   never synchronized or converted. An observation's clock is its channel's
   `source_clock` (observation → channel → clock), so channels of one Scene
   may use different clocks. A timestamped structure no channel owns — a
-  pose, a keyframe group's reference time, an annotation — declares its own
+  pose, a keyframe group's reference time — declares its own
   `source_clock`. A keyframe may group observations whose channels use
   different clocks; each member keeps its own.
 - **Boundaries.** A Scene's boundary is its segment's half-open window
@@ -86,10 +82,10 @@ Rules the schema enforces:
   `artifact_id → ArtifactRecord → uri → ArtifactStore`. Moving payload bytes
   updates ArtifactRecords and never changes a manifest or its checksum. A
   reader requires the ArtifactRecord's checksum, size and media type to
-  equal the reference's (`sceneops_worker.scenes.payloads`) and dispatches
+  equal the reference's (`sceneops_worker.recordings.payload_refs`) and dispatches
   on `media_type`.
 - **References resolve** (channel frames, calibration channel/frame,
-  ego-pose role, group members, annotation group and box frame), and every
+  ego-pose role, group members), and every
   list has one canonical order, with unique ids. Timestamped lists other than
   observations are ordered by `(source_clock, timestamp_ns, id)`, so the
   order never interleaves clocks.
@@ -200,8 +196,8 @@ Everything downstream of registration reads canonical Scenes through a pin:
   payloads through their ArtifactRecords, and refuse a view whose Scene
   revision blocked downstream use. See
   [Derived layer](./derived-layer.md).
-- `EXPORT_ANALYTICS_SNAPSHOT` writes `scenes`, `observations`, `keyframes`
-  and `annotations` tables from verified current revisions. Every timestamp
+- `EXPORT_ANALYTICS_SNAPSHOT` writes `scenes`, `observations` and `keyframes`
+  tables from verified current revisions. Every timestamp
   column is paired with its `source_clock`; observations carry
   `payload_artifact_id`, not a location.
 
@@ -264,7 +260,7 @@ segmentation   whole_recording { clock } | fixed_duration { clock, duration_ns }
   position, extraction), so rebuilds with other segmentation reuse it.
 - **Calibration** comes from static transforms relative to the ego frame and
   from CameraInfo intrinsics. Both must be constant for the recording.
-  Distortion or rectification SceneManifest v1 cannot express fails the
+  Distortion or rectification SceneManifest v2 cannot express fails the
   build.
 - **Poses** are the configured source transforms at their own stamps,
   without interpolation or per-observation association.

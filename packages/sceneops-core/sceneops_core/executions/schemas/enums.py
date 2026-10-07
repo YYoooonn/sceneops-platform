@@ -10,11 +10,3 @@ class ExecutionBackend(StrEnum):
 class ExecutionKind(StrEnum):
     PIPELINE_RUN = "pipeline_run"
     JOB_RUN = "job_run"
-
-
-class ExecutionStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELED = "canceled"

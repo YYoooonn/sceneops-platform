@@ -15,7 +15,6 @@ def execution_model_to_result(model: ExecutionRecordModel) -> ExecutionDispatchR
         execution_backend=model.execution_backend,
         execution_kind=model.execution_kind,
         resource_id=model.resource_id,
-        status=model.status,
         external_id=model.external_id,
         created_at=model.created_at,
         updated_at=model.updated_at,
@@ -29,7 +28,6 @@ def execution_result_to_values(result: ExecutionDispatchResult) -> dict[str, Any
         "execution_backend": result.execution_backend,
         "execution_kind": result.execution_kind,
         "resource_id": result.resource_id,
-        "status": result.status,
         "external_id": result.external_id,
         "metadata_": result.metadata or {},
     }

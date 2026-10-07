@@ -26,7 +26,6 @@ from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,
     ExecutionKind,
-    ExecutionStatus,
 )
 
 
@@ -55,7 +54,6 @@ class CeleryExecutionDispatcher:
             execution_backend=ExecutionBackend.CELERY,
             execution_kind=ExecutionKind.JOB_RUN,
             resource_id=job_id,
-            status=ExecutionStatus.QUEUED,
         )
 
     def advance_pipeline(self, pipeline_run_id: str) -> None:

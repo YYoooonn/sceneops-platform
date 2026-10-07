@@ -6,15 +6,19 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 
-from .enums import ExecutionBackend, ExecutionKind, ExecutionStatus
+from .enums import ExecutionBackend, ExecutionKind
 
 
 class ExecutionDispatchResult(SceneOpsBaseModel):
+    """The audit record of one message sent to an execution backend: which
+    resource (a Job to run, or a PipelineRun to advance) went where, and the
+    backend's id for the message. It records the send and nothing after it; the
+    state of the work is the Job's and the PipelineRun's own."""
+
     execution_id: str
     execution_backend: ExecutionBackend
     execution_kind: ExecutionKind
     resource_id: str
-    status: ExecutionStatus = ExecutionStatus.QUEUED
 
     external_id: str | None = Field(default=None)
 

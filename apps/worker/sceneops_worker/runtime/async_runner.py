@@ -32,7 +32,3 @@ class AsyncRuntimeRunner:
             raise exc[0]
 
         return result[0]
-
-
-def shutdown_async_runtime_runner() -> None:
-    """No-op — runner no longer holds a persistent thread."""

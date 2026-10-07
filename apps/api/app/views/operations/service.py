@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from sceneops_core.executions.schemas import ExecutionStatus
 from sceneops_core.jobs.schemas import JobStatus
 from sceneops_core.pipelines.schemas import PipelineRunStatus
 from sceneops_db.repositories.executions import ExecutionRecordRepository
@@ -21,7 +20,6 @@ from app.views.operations.schemas import (
 
 _EXPECTED_JOB_STATUSES = {s.value for s in JobStatus}
 _EXPECTED_PIPE_STATUSES = {s.value for s in PipelineRunStatus}
-_EXPECTED_EXEC_STATUSES = {s.value for s in ExecutionStatus}
 
 
 class OperationsService:
@@ -39,7 +37,6 @@ class OperationsService:
     async def get_summary(self) -> OperationSummaryResponse:
         job_counts = await self._jobs.count_by_status()
         pipe_counts = await self._pipelines.count_by_status()
-        exec_counts = await self._executions.count_by_status()
 
         return OperationSummaryResponse(
             jobs=OperationCountSummary(
@@ -53,12 +50,6 @@ class OperationsService:
                 failed=pipe_counts.get(PipelineRunStatus.FAILED, 0),
                 succeeded=pipe_counts.get(PipelineRunStatus.SUCCEEDED, 0),
                 pending=pipe_counts.get(PipelineRunStatus.PENDING, 0),
-            ),
-            executions=OperationCountSummary(
-                running=exec_counts.get(ExecutionStatus.RUNNING, 0),
-                failed=exec_counts.get(ExecutionStatus.FAILED, 0),
-                succeeded=exec_counts.get(ExecutionStatus.SUCCEEDED, 0),
-                pending=0,
             ),
         )
 
@@ -125,9 +116,6 @@ class OperationsService:
         failed_pipelines = await self._pipelines.list(
             status=PipelineRunStatus.FAILED, limit=limit, offset=offset
         )
-        failed_executions = await self._executions.list(
-            status=ExecutionStatus.FAILED, limit=limit, offset=offset
-        )
 
         failures: list[OperationFailure] = []
 
@@ -152,17 +140,6 @@ class OperationsService:
                     error=run.error.model_dump() if run.error else None,
                     created_at=run.created_at,
                     updated_at=run.updated_at,
-                )
-            )
-
-        for exc in failed_executions:
-            failures.append(
-                OperationFailure(
-                    resource_type="execution",
-                    resource_id=exc.execution_id,
-                    status=exc.status,
-                    created_at=exc.created_at,
-                    updated_at=exc.updated_at,
                 )
             )
 

@@ -4,7 +4,6 @@ from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,
     ExecutionKind,
-    ExecutionStatus,
 )
 from sceneops_db.repositories.executions import ExecutionRecordRepository
 
@@ -51,7 +50,6 @@ class ExecutionService:
         execution_backend: ExecutionBackend | None = None,
         execution_kind: ExecutionKind | None = None,
         resource_id: str | None = None,
-        status: ExecutionStatus | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[ExecutionDispatchResult]:
@@ -59,7 +57,6 @@ class ExecutionService:
             execution_backend=execution_backend,
             execution_kind=execution_kind,
             resource_id=resource_id,
-            status=status,
             limit=limit,
             offset=offset,
         )

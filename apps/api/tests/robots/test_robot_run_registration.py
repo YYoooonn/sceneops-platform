@@ -16,7 +16,6 @@ from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,
     ExecutionKind,
-    ExecutionStatus,
 )
 from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
 
@@ -61,7 +60,6 @@ class _FakeDispatchFacade:
             execution_backend=ExecutionBackend.CELERY,
             execution_kind=ExecutionKind.JOB_RUN,
             resource_id=job_id,
-            status=ExecutionStatus.QUEUED,
         )
 
 

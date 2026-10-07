@@ -22,7 +22,6 @@ class OperationCountSummary(SceneOpsBaseModel):
 class OperationSummaryResponse(SceneOpsBaseModel):
     jobs: OperationCountSummary
     pipelines: OperationCountSummary
-    executions: OperationCountSummary
 
 
 class OperationTimelineEvent(SceneOpsBaseModel):

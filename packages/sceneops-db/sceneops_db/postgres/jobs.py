@@ -28,6 +28,21 @@ from ._utils import IN_CLAUSE_CHUNK, apply_pagination, apply_values, enum_value
 
 _ACTIVE_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
 
+# The columns the claiming worker writes while it owns a RUNNING Job (its start
+# bookkeeping and its terminal state); identity, params and request-side columns
+# are never part of a run's write.
+_RUN_OWNED_COLUMNS = (
+    "status",
+    "locked_at",
+    "heartbeat_at",
+    "started_at",
+    "finished_at",
+    "result",
+    "error",
+    "steps",
+    "updated_at",
+)
+
 
 class PostgresJobRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -202,6 +217,36 @@ class PostgresJobRepository:
             .returning(JobModel)
         )
 
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        return job_model_to_manifest(model) if model is not None else None
+
+    async def update_owned_run(
+        self,
+        job: JobManifest,
+        *,
+        worker_id: str,
+    ) -> JobManifest | None:
+        """Persist the run-owned fields of ``job`` iff it is still RUNNING and
+        claimed by ``worker_id``; returns the stored Job, or None when this call
+        wrote nothing.
+
+        One conditional UPDATE evaluated by PostgreSQL against the row as it is
+        now. A Job leaves RUNNING exactly once: the worker that claimed it makes
+        that transition, and a terminal Job is never rewritten. A worker that
+        lost the Job (abandoned by recovery, already terminal) therefore cannot
+        overwrite whatever state replaced its claim. Does not commit."""
+        values = job_manifest_to_values(job)
+        stmt = (
+            update(JobModel)
+            .where(JobModel.job_id == job.job_id)
+            .where(JobModel.status == enum_value(JobStatus.RUNNING))
+            .where(JobModel.worker_id == worker_id)
+            .values(**{column: values[column] for column in _RUN_OWNED_COLUMNS})
+            .returning(JobModel)
+            .execution_options(populate_existing=True)
+        )
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
 

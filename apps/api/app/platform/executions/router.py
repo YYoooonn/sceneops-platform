@@ -9,7 +9,6 @@ from app.platform.executions.schemas import ExecutionListResponse, ExecutionResp
 from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionKind,
-    ExecutionStatus,
 )
 
 router = APIRouter()
@@ -23,13 +22,11 @@ async def list_executions(
     execution_backend: ExecutionBackend | None = None,
     execution_kind: ExecutionKind | None = None,
     resource_id: str | None = None,
-    status: ExecutionStatus | None = None,
 ) -> ExecutionListResponse:
     executions = await service.list_executions(
         execution_backend=execution_backend,
         execution_kind=execution_kind,
         resource_id=resource_id,
-        status=status,
         limit=pagination.limit,
         offset=pagination.offset,
     )

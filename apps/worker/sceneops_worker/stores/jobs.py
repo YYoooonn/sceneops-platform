@@ -23,8 +23,12 @@ class JobStore:
     async def create(self, job: JobManifest) -> JobManifest:
         return await self._repo.create(job)
 
-    async def save(self, job: JobManifest) -> JobManifest:
-        return await self._repo.update(job)
+    async def save_owned(
+        self, job: JobManifest, *, worker_id: str
+    ) -> JobManifest | None:
+        """Write a running Job's state as the worker that claimed it; None when
+        the Job is no longer RUNNING under ``worker_id``."""
+        return await self._repo.update_owned_run(job, worker_id=worker_id)
 
     async def list(
         self,

@@ -5,7 +5,6 @@ from celery.signals import worker_process_init, worker_process_shutdown
 from sceneops_db.session import reset_async_engine_cache
 from sceneops_worker.config import get_settings
 from sceneops_worker.execution import create_celery_app
-from sceneops_worker.runtime.async_runner import shutdown_async_runtime_runner
 
 settings = get_settings()
 
@@ -32,7 +31,6 @@ def on_worker_process_init(**_: object) -> None:
 
 @worker_process_shutdown.connect
 def on_worker_process_shutdown(**_: object) -> None:
-    """Clean up async runtime resources before the worker child exits."""
+    """Drop the child's DB singletons before it exits."""
 
-    shutdown_async_runtime_runner()
     reset_async_engine_cache()

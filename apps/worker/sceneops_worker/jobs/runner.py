@@ -25,13 +25,24 @@ _RUNNABLE_STATUSES = {
 }
 
 
+class JobOwnershipLostError(RuntimeError):
+    """The Job is no longer RUNNING under this worker: it was abandoned or
+    finished by someone else. The worker writes nothing more for it."""
+
+
 class JobRunner:
     """The single runtime entry point that executes a Job.
 
     Claims the Job, runs its domain handler and persists the terminal state.
     A handler failure is a persisted ``FAILED`` Job, not an exception: the
     returned Job is the outcome. Only a Job that cannot be claimed (missing,
-    already running, already terminal) raises.
+    already running, already terminal) or that this worker no longer owns
+    raises.
+
+    A Job leaves RUNNING exactly once, written by the worker that claimed it
+    (``JobStore.save_owned``). Once that terminal state is committed it is final:
+    the JobEvents recorded afterwards are bookkeeping, and a failure to write
+    them is logged without touching the Job.
 
     A Job that belongs to a PipelineRun is reported to the dispatcher once its
     terminal state is committed, so the pipeline's orchestrator observes it and
@@ -67,12 +78,24 @@ class JobRunner:
             await self._execute_handler(execution)
             await self._complete_job(execution)
 
+        except JobOwnershipLostError:
+            logger.error(
+                "job %s (%s) is no longer owned by %s; nothing more is written",
+                execution.job.job_id,
+                execution.job.type.value,
+                self.worker_id,
+            )
+            await self.context.rollback()
+            raise
+
         except Exception as error:
             logger.exception(
                 "job %s (%s) failed", execution.job.job_id, execution.job.type.value
             )
             await self.context.rollback()
             await self._fail_execution(execution, error)
+
+        await self._record_terminal_events(execution)
 
         job = execution.job
         if job.pipeline_run_id is not None:
@@ -140,7 +163,7 @@ class JobRunner:
             worker_id=self.worker_id,
         )
 
-        saved_job = await self.context.job_store.save(execution.job)
+        saved_job = await self._save_owned(execution)
         await self.context.commit()
 
         execution.update_job(saved_job)
@@ -189,17 +212,10 @@ class JobRunner:
             result=execution.result_payload or {},
         )
 
-        saved_job = await self.context.job_store.save(execution.job)
+        saved_job = await self._save_owned(execution)
         await self.context.commit()
 
         execution.update_job(saved_job)
-        await self.events.step_succeeded(
-            execution.job,
-            step_id=execution.running_step_id,
-            step_name=execution.running_step_name,
-        )
-        await self.events.job_succeeded(execution.job)
-        await self.context.commit()
 
     async def _fail_execution(
         self,
@@ -210,19 +226,56 @@ class JobRunner:
 
         self.result_recorder.mark_job_failed(execution.job, error=error_info)
 
-        failed_job = await self.context.job_store.save(execution.job)
+        failed_job = await self._save_owned(execution)
         await self.context.commit()
 
         execution.update_job(failed_job)
 
-        await self.events.step_failed(
-            execution.job,
-            step_id=execution.running_step_id,
-            step_name=execution.running_step_name,
-            error=error_info,
+    async def _save_owned(self, execution: JobExecution) -> JobManifest:
+        saved = await self.context.job_store.save_owned(
+            execution.job, worker_id=self.worker_id
         )
-        await self.events.job_failed(execution.job, error=error_info)
-        await self.context.commit()
+        if saved is None:
+            raise JobOwnershipLostError(
+                f"Job {execution.job.job_id} is no longer RUNNING under "
+                f"{self.worker_id}; refusing to write {execution.job.status.value}"
+            )
+        return saved
+
+    async def _record_terminal_events(self, execution: JobExecution) -> None:
+        """Log the committed terminal state. Best effort: the Job is already
+        final, so a failure here is reported and never changes it."""
+        job = execution.job
+        try:
+            if job.status == JobStatus.SUCCEEDED:
+                await self.events.step_succeeded(
+                    job,
+                    step_id=execution.running_step_id,
+                    step_name=execution.running_step_name,
+                )
+                await self.events.job_succeeded(job)
+            else:
+                error = job.error or ErrorInfo(type="JobFailed", message="")
+                await self.events.step_failed(
+                    job,
+                    step_id=execution.running_step_id,
+                    step_name=execution.running_step_name,
+                    error=error,
+                )
+                await self.events.job_failed(job, error=error)
+            await self.context.commit()
+        except Exception:
+            logger.exception(
+                "job %s is %s but its terminal events could not be recorded",
+                job.job_id,
+                job.status.value,
+            )
+            try:
+                await self.context.rollback()
+            except Exception:
+                logger.exception(
+                    "job %s: rollback after event failure failed", job.job_id
+                )
 
     # ── internal helpers ──────────────────────────────────────────────────────
 

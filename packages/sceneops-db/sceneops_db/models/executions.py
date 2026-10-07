@@ -19,7 +19,6 @@ class ExecutionRecordModel(Base):
     execution_kind: Mapped[str] = mapped_column(String(64), nullable=False)
 
     resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
 
     external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -48,8 +47,4 @@ Index(
     ExecutionRecordModel.execution_backend,
     ExecutionRecordModel.external_id,
 )
-Index(
-    "ix_execution_records_status_created_at",
-    ExecutionRecordModel.status,
-    ExecutionRecordModel.created_at,
-)
+Index("ix_execution_records_created_at", ExecutionRecordModel.created_at)

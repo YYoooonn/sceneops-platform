@@ -151,7 +151,7 @@ def build_keyframes_table(
 TABLE_BUILDERS = ("scenes", "observations", "keyframes")
 
 
-# ── Robot analytics tables (roadmap §7.4: robot_telemetry.parquet, missions.parquet) ──
+# ── Robot analytics tables ──
 
 ROBOT_TELEMETRY_SCHEMA: dict[str, pl.PolarsDataType] = {
     "robot_id": pl.Utf8,

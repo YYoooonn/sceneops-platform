@@ -9,7 +9,6 @@ from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,
     ExecutionKind,
-    ExecutionStatus,
 )
 
 
@@ -31,7 +30,6 @@ class CeleryJobExecutionBackend:
             execution_backend=ExecutionBackend.CELERY,
             execution_kind=ExecutionKind.JOB_RUN,
             resource_id=job_id,
-            status=ExecutionStatus.QUEUED,
         )
 
 
@@ -55,5 +53,4 @@ class CeleryPipelineExecutionBackend:
             execution_backend=ExecutionBackend.CELERY,
             execution_kind=ExecutionKind.PIPELINE_RUN,
             resource_id=pipeline_run_id,
-            status=ExecutionStatus.QUEUED,
         )

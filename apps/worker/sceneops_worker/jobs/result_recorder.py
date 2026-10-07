@@ -71,6 +71,7 @@ class JobResultRecorder:
                 step.finished_at = now
 
         job.status = JobStatus.FAILED
+        job.result = None
         job.error = error
         job.heartbeat_at = now
         job.finished_at = now

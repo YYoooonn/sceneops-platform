@@ -187,7 +187,13 @@ re-executed once the cause is fixed.
    that cannot be claimed (missing, running, terminal) makes `run` raise.
 2. The Job is committed as `RUNNING`, the handler runs, and the terminal state is
    committed. A handler failure is a persisted `FAILED` Job (with its error), not an
-   exception: the returned Job is the outcome.
+   exception: the returned Job is the outcome. Every write of a running Job is one
+   conditional `UPDATE ... WHERE status = RUNNING AND worker_id = <this worker>`
+   (`update_owned_run`), so a Job leaves `RUNNING` exactly once and a terminal Job is
+   never rewritten. A worker that no longer owns its Job raises
+   `JobOwnershipLostError` and writes nothing more. The JobEvents of the terminal
+   state are recorded after its commit and are best effort: a failure to write them is
+   logged and cannot change the Job.
 3. If the Job belongs to a PipelineRun, `JobRunner` then sends one `advance` message.
 
 There is no Celery-level retry on either task. Retrying is always an explicit

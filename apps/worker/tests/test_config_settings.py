@@ -20,10 +20,6 @@ class TestArtifactSettings:
         s = ArtifactSettings()
         assert s.run_root_uri == "/data/artifacts/runs"
 
-    def test_model_root_uri(self):
-        s = ArtifactSettings()
-        assert s.model_root_uri == "/data/artifacts/models"
-
     def test_backend_default(self):
         s = ArtifactSettings()
         assert s.backend == ArtifactBackend.LOCAL
@@ -57,7 +53,6 @@ class TestInputSourceSettings:
         s = InputSourceSettings()
         assert not hasattr(s, "dataset_prefix")
         assert not hasattr(s, "run_prefix")
-        assert not hasattr(s, "model_prefix")
 
 
 class TestWorkerSettingsInputSource:

@@ -17,7 +17,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.jobs.schemas.steps import JobStep
 from sceneops_worker.jobs.registry import JobHandlerRegistry
-from sceneops_worker.jobs.runner import JobRunner
+from sceneops_worker.jobs.runner import JobOwnershipLostError, JobRunner
 
 
 class _SimpleResult(BaseModel):
@@ -66,7 +66,7 @@ def _make_context(job: JobManifest) -> MagicMock:
     ctx.rollback = AsyncMock()
     ctx.job_store = MagicMock()
     ctx.job_store.get = AsyncMock(return_value=job)
-    ctx.job_store.save = AsyncMock(side_effect=lambda j: j)
+    ctx.job_store.save_owned = AsyncMock(side_effect=lambda j, *, worker_id: j)
 
     async def _claim_for_run(
         job_id: str, *, worker_id: str, runnable_statuses: set[JobStatus]
@@ -292,6 +292,146 @@ class TestJobRunnerFailurePath:
         ]
         assert len(failed_events) == 1
         assert failed_events[0].job_id == "job-001"
+
+
+# ── terminal state ────────────────────────────────────────────────────────────
+
+
+class _Ledger:
+    """What PostgreSQL would hold: a job write becomes durable only at commit,
+    and a rollback discards the uncommitted ones. ``save_owned`` fences like the
+    repository: it writes only while the durable Job is RUNNING."""
+
+    def __init__(self, ctx: MagicMock) -> None:
+        self.durable: list[JobStatus] = []
+        self._uncommitted: list[JobStatus] = []
+        self.attempted: list[JobStatus] = []
+        self.lose_ownership_from: JobStatus | None = None
+
+        async def commit() -> None:
+            self.durable.extend(self._uncommitted)
+            self._uncommitted.clear()
+
+        async def rollback() -> None:
+            self._uncommitted.clear()
+
+        async def save_owned(job: JobManifest, *, worker_id: str) -> JobManifest | None:
+            self.attempted.append(job.status)
+            if self.lose_ownership_from == job.status:
+                return None
+            terminal = {JobStatus.SUCCEEDED, JobStatus.FAILED}
+            assert not (
+                self.durable and self.durable[-1] in terminal
+            ), f"{job.status} written over a terminal Job: {self.durable}"
+            self._uncommitted.append(job.status)
+            return job
+
+        ctx.commit = AsyncMock(side_effect=commit)
+        ctx.rollback = AsyncMock(side_effect=rollback)
+        ctx.job_store.save_owned = AsyncMock(side_effect=save_owned)
+
+
+def _fail_events(ctx: MagicMock, *event_types: JobEventType) -> None:
+    async def append(event) -> None:
+        if event.type in event_types:
+            raise RuntimeError("event store unavailable")
+
+    ctx.job_event_store.append = AsyncMock(side_effect=append)
+
+
+class TestJobRunnerTerminalState:
+    """A Job leaves RUNNING once, written by its owner; what is recorded after
+    the terminal commit cannot change it."""
+
+    async def test_an_event_failure_after_committed_success_keeps_the_job_succeeded(
+        self,
+    ) -> None:
+        job = _make_job().model_copy(update={"pipeline_run_id": "pipe-001"})
+        ctx = _make_context(job)
+        ledger = _Ledger(ctx)
+        _fail_events(ctx, JobEventType.SUCCEEDED)
+        dispatcher = MagicMock()
+
+        finished = await JobRunner(
+            ctx,
+            dispatcher=dispatcher,
+            handler_registry=_make_registry(_SimpleResult(value="done")),
+        ).run("job-001")
+
+        assert ledger.durable == [JobStatus.RUNNING, JobStatus.SUCCEEDED]
+        assert ledger.attempted == [JobStatus.RUNNING, JobStatus.SUCCEEDED]
+        assert finished.status == JobStatus.SUCCEEDED
+        # The pipeline still observes the committed terminal Job.
+        dispatcher.advance_pipeline.assert_called_once_with("pipe-001")
+
+    async def test_an_event_failure_after_committed_failure_keeps_the_job_failed(
+        self,
+    ) -> None:
+        job = _make_job()
+        ctx = _make_context(job)
+        ledger = _Ledger(ctx)
+        _fail_events(ctx, JobEventType.FAILED)
+
+        finished = await JobRunner(
+            ctx,
+            dispatcher=MagicMock(),
+            handler_registry=_make_failing_registry(RuntimeError("boom")),
+        ).run("job-001")
+
+        assert ledger.durable == [JobStatus.RUNNING, JobStatus.FAILED]
+        assert finished.status == JobStatus.FAILED
+        assert finished.error.message == "boom"
+
+    async def test_success_is_written_exactly_once(self) -> None:
+        job = _make_job()
+        ctx = _make_context(job)
+        ledger = _Ledger(ctx)
+
+        await JobRunner(
+            ctx,
+            dispatcher=MagicMock(),
+            handler_registry=_make_registry(_SimpleResult(value="ok")),
+        ).run("job-001")
+
+        assert ledger.attempted == [JobStatus.RUNNING, JobStatus.SUCCEEDED]
+
+    async def test_a_worker_that_lost_the_job_writes_no_terminal_state(self) -> None:
+        job = _make_job().model_copy(update={"pipeline_run_id": "pipe-001"})
+        ctx = _make_context(job)
+        ledger = _Ledger(ctx)
+        ledger.lose_ownership_from = JobStatus.SUCCEEDED
+        dispatcher = MagicMock()
+
+        with pytest.raises(JobOwnershipLostError):
+            await JobRunner(
+                ctx,
+                dispatcher=dispatcher,
+                handler_registry=_make_registry(_SimpleResult(value="done")),
+            ).run("job-001")
+
+        # No FAILED fallback over the Job another party now owns, no events and
+        # no pipeline report from a worker that no longer owns the Job.
+        assert ledger.attempted == [JobStatus.RUNNING, JobStatus.SUCCEEDED]
+        assert ledger.durable == [JobStatus.RUNNING]
+        assert JobEventType.SUCCEEDED not in _emitted_event_types(ctx)
+        dispatcher.advance_pipeline.assert_not_called()
+
+    async def test_a_worker_that_lost_the_job_before_the_handler_does_not_run_it(
+        self,
+    ) -> None:
+        job = _make_job()
+        ctx = _make_context(job)
+        ledger = _Ledger(ctx)
+        ledger.lose_ownership_from = JobStatus.RUNNING
+        registry = _make_registry(_SimpleResult(value="done"))
+
+        with pytest.raises(JobOwnershipLostError):
+            await JobRunner(ctx, dispatcher=MagicMock(), handler_registry=registry).run(
+                "job-001"
+            )
+
+        registry.get.return_value.run.assert_not_awaited()
+        assert ledger.durable == []
 
 
 # ── pipeline report ───────────────────────────────────────────────────────────

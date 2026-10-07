@@ -51,10 +51,6 @@ class WorkerSettings(BaseSettings):
         return self.artifact.label_root_uri
 
     @property
-    def model_root_uri(self) -> str:
-        return self.artifact.model_root_uri
-
-    @property
     def analytics_root_uri(self) -> str:
         return self.artifact.analytics_root_uri
 
