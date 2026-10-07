@@ -13,10 +13,12 @@ line and links there instead of repeating the contract.
 
 Details and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md) §5, §8.
 
-- **No stall or worker-loss recovery** for Jobs and Pipelines. A Job whose worker dies
-  stays `RUNNING`, and so does its PipelineRun. `locked_at` / `heartbeat_at` are written
-  at claim and completion only. The one exception is `REGISTER_ROBOT_RUN`, whose
-  stalled Jobs the acquisition reconciler replaces.
+- **Worker loss is recovered by a command, not by the workers.** A Job whose worker
+  died is requeued by job lease recovery (`sceneops-worker jobs recover-leases`, looped
+  by `make recovery-up`) once its lease passes; without that loop it stays `RUNNING`,
+  and so does its PipelineRun. A lease detects a dead or unreachable worker, not a
+  handler that hangs in a live process, and a reclaimed handler's own domain writes are
+  not fenced (they rely on idempotent publication).
 - **A lost `advance` message, or a Job dispatch that fails after its commit, is not
   re-sent.** The run waits until a person takes an `advance` step
   (`make worker-advance-pipeline`) or dispatches the Job.

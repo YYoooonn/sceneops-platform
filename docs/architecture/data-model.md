@@ -311,9 +311,12 @@ VALIDATE_EPISODE, PROFILE_EPISODE                       # episode-level
 
 `retry_count`/`max_retries` are enforced by `JobService.mark_queued` when a
 `FAILED` Job is explicitly redispatched, which fails with a `ValueError` past the
-cap. `worker_id`/`locked_at`/`heartbeat_at` are written when `JobRunner` claims
-and finishes a Job; nothing refreshes or inspects them while the handler runs
-(see [Jobs and pipelines](./jobs-and-pipelines.md) §5, §8).
+cap. `lease_generation` numbers the claims of a Job and fences every write of the
+current one; `lease_expires_at` is the time (PostgreSQL's clock) until which that
+claim holds the Job, renewed with `heartbeat_at` while the worker runs and checked by
+job lease recovery. `worker_id` (`celery:<task id>`) and `locked_at` record who
+claimed it and when; a redelivered message repeats its `worker_id`, so it never
+decides ownership (see [Jobs and pipelines](./jobs-and-pipelines.md) §5, §8).
 
 `job_events` — execution log/event stream for a job (`level`, `attempt`,
 `job_step_id`, etc.).

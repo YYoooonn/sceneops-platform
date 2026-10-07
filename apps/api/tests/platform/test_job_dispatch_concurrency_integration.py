@@ -138,7 +138,7 @@ async def _stale_dispatch(job_id: str, meanwhile) -> JobManifest | BaseException
 async def _claim(job_id: str, worker_id: str) -> JobManifest | None:
     async with get_async_sessionmaker()() as session:
         claimed = await PostgresJobRepository(session).claim_for_run(
-            job_id, worker_id=worker_id, runnable_statuses=_RUNNABLE
+            job_id, worker_id=worker_id, runnable_statuses=_RUNNABLE, lease_seconds=60
         )
         await session.commit()
         return claimed
@@ -148,7 +148,7 @@ async def _finish(job: JobManifest, status: JobStatus) -> JobManifest | None:
     async with get_async_sessionmaker()() as session:
         saved = await PostgresJobRepository(session).update_owned_run(
             job.model_copy(update={"status": status, "finished_at": utc_now()}),
-            worker_id=job.worker_id,
+            lease_generation=job.lease_generation,
         )
         await session.commit()
         return saved

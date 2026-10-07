@@ -24,11 +24,11 @@ class JobStore:
         return await self._repo.create(job)
 
     async def save_owned(
-        self, job: JobManifest, *, worker_id: str
+        self, job: JobManifest, *, lease_generation: int
     ) -> JobManifest | None:
-        """Write a running Job's state as the worker that claimed it; None when
-        the Job is no longer RUNNING under ``worker_id``."""
-        return await self._repo.update_owned_run(job, worker_id=worker_id)
+        """Write a running Job's state as the claim ``lease_generation``; None
+        when the Job is no longer RUNNING under that claim."""
+        return await self._repo.update_owned_run(job, lease_generation=lease_generation)
 
     async def list(
         self,
@@ -59,11 +59,13 @@ class JobStore:
         *,
         worker_id: str,
         runnable_statuses: set[JobStatus],
+        lease_seconds: float,
     ) -> JobManifest | None:
         return await self._repo.claim_for_run(
             job_id,
             worker_id=worker_id,
             runnable_statuses=runnable_statuses,
+            lease_seconds=lease_seconds,
         )
 
 

@@ -300,10 +300,14 @@ The stall threshold (`--stall-threshold-seconds`, or
 ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md) Amendment 12.4 gives
 the measurements it comes from). If the broker refuses a dispatch the Job stays
 committed as `pending` / `queued` and is recovered as a stalled Job once it has
-been inactive for the threshold; classification never needs Redis.
+been inactive for the threshold; classification never needs Redis. A running
+registration renews its Job's heartbeat, so a live worker is never a stall
+candidate; a `running` Job whose worker died is usually requeued first by job lease
+recovery ([Jobs and pipelines](../architecture/jobs-and-pipelines.md) §5), the same
+Job, and the reconciler then sees it active again.
 
-Locally, `make recovery-up` starts two loops (`compose/recovery.yaml`) that only
-repeat `publish-pending` and `reconcile --once --apply` every
+Locally, `make recovery-up` starts the recovery loops (`compose/recovery.yaml`); the
+two of acquisition only repeat `publish-pending` and `reconcile --once --apply` every
 `RECOVERY_POLL_INTERVAL_SECONDS` (default 60); `make recovery-logs` follows them,
 and `make reconcile-once` and `make reconcile-apply` run one pass by hand. A
 Kubernetes deployment would run the same two commands from CronJobs. The platform

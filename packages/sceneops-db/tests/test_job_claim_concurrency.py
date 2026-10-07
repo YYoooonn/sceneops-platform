@@ -50,7 +50,10 @@ async def test_concurrent_claimers_have_exactly_one_owner(unique_id):
         async with get_async_sessionmaker()() as session:
             await ready.wait()
             claimed = await PostgresJobRepository(session).claim_for_run(
-                job_id, worker_id=worker_id, runnable_statuses=_RUNNABLE
+                job_id,
+                worker_id=worker_id,
+                runnable_statuses=_RUNNABLE,
+                lease_seconds=60,
             )
             await session.commit()
             return claimed.worker_id if claimed is not None else None
@@ -75,7 +78,10 @@ async def test_a_second_claim_waits_for_the_first_and_rechecks_the_row(unique_id
     async def first() -> JobManifest | None:
         async with get_async_sessionmaker()() as session:
             claimed = await PostgresJobRepository(session).claim_for_run(
-                job_id, worker_id="worker-a", runnable_statuses=_RUNNABLE
+                job_id,
+                worker_id="worker-a",
+                runnable_statuses=_RUNNABLE,
+                lease_seconds=60,
             )
             first_claimed.set()
             await release_first.wait()
@@ -86,7 +92,10 @@ async def test_a_second_claim_waits_for_the_first_and_rechecks_the_row(unique_id
         await first_claimed.wait()
         async with get_async_sessionmaker()() as session:
             claimed = await PostgresJobRepository(session).claim_for_run(
-                job_id, worker_id="worker-b", runnable_statuses=_RUNNABLE
+                job_id,
+                worker_id="worker-b",
+                runnable_statuses=_RUNNABLE,
+                lease_seconds=60,
             )
             await session.commit()
             return claimed

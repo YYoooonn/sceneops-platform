@@ -40,6 +40,12 @@ def _constraint_name(exc: IntegrityError) -> str | None:
     return getattr(exc.orig.__cause__, "constraint_name", None)
 
 
+def _seconds(seconds: float):
+    # An interval computed by PostgreSQL, so a lease is measured on the database
+    # clock that recovery compares it with, never on a worker's clock.
+    return func.make_interval(0, 0, 0, 0, 0, 0, seconds)
+
+
 # The columns the claiming worker writes while it owns a RUNNING Job (its start
 # bookkeeping and its terminal state); identity, params and request-side columns
 # are never part of a run's write.
@@ -110,20 +116,21 @@ class PostgresJobRepository:
         return job_model_to_manifest(model)
 
     async def queue_if_unchanged(self, job: JobManifest) -> JobManifest | None:
-        """Move ``job`` to QUEUED iff its row still has the status and retry_count
-        ``job`` was read with; returns the stored Job, or None when this call
-        wrote nothing. Queueing a FAILED Job is a retry and increments
-        retry_count. Raises ``JobExecutionKeyInFlightError`` when a retry would
-        put a second Job of its execution key in flight.
+        """Move ``job`` to QUEUED iff its row still has the status, retry_count and
+        lease_generation ``job`` was read with; returns the stored Job, or None
+        when this call wrote nothing. Queueing a FAILED Job is a retry and
+        increments retry_count. Raises ``JobExecutionKeyInFlightError`` when a
+        retry would put a second Job of its execution key in flight.
 
         One conditional UPDATE evaluated by PostgreSQL against the row as it is
         now, writing only the queueing columns. A dispatcher whose read is stale
         (a worker claimed or finished the Job, reconciliation abandoned it,
         another dispatcher retried it first) therefore changes nothing: it can
         neither move the Job backward nor erase another actor's columns.
-        retry_count is compared because FAILED -> QUEUED is the only way back to
-        an earlier status and each pass increments it, so a recurring status
-        never recurs with the same count. Does not commit."""
+        A status recurs only through a way back to an earlier one -- a retry
+        (FAILED -> QUEUED, increments retry_count) or lease recovery (RUNNING ->
+        QUEUED, after a claim that incremented lease_generation) -- so the three
+        columns together never recur. Does not commit."""
         retry = job.status == JobStatus.FAILED
         now = func.now()
         stmt = (
@@ -132,6 +139,7 @@ class PostgresJobRepository:
             .where(JobModel.status.in_([enum_value(s) for s in _QUEUEABLE_STATUSES]))
             .where(JobModel.status == enum_value(job.status))
             .where(JobModel.retry_count == job.retry_count)
+            .where(JobModel.lease_generation == job.lease_generation)
             .values(
                 status=enum_value(JobStatus.QUEUED),
                 retry_count=JobModel.retry_count + (1 if retry else 0),
@@ -275,7 +283,16 @@ class PostgresJobRepository:
         *,
         worker_id: str,
         runnable_statuses: set[JobStatus],
+        lease_seconds: float,
     ) -> JobManifest | None:
+        """Claim a runnable Job for one execution: RUNNING, a new lease
+        generation, and a lease of ``lease_seconds`` from PostgreSQL's clock.
+        Returns the claimed Job, or None when it is not runnable (another
+        claim won, or it is terminal). Does not commit.
+
+        The returned ``lease_generation`` identifies this claim and nothing
+        else: ``worker_id`` names the Celery message, which a redelivery repeats,
+        so it cannot tell two claims apart."""
         now = func.now()
 
         stmt = (
@@ -285,6 +302,8 @@ class PostgresJobRepository:
             .values(
                 status=enum_value(JobStatus.RUNNING),
                 worker_id=worker_id,
+                lease_generation=JobModel.lease_generation + 1,
+                lease_expires_at=now + _seconds(lease_seconds),
                 locked_at=now,
                 heartbeat_at=now,
                 started_at=func.coalesce(JobModel.started_at, now),
@@ -304,23 +323,26 @@ class PostgresJobRepository:
         self,
         job: JobManifest,
         *,
-        worker_id: str,
+        lease_generation: int,
     ) -> JobManifest | None:
-        """Persist the run-owned fields of ``job`` iff it is still RUNNING and
-        claimed by ``worker_id``; returns the stored Job, or None when this call
-        wrote nothing.
+        """Persist the run-owned fields of ``job`` iff it is still RUNNING under
+        the claim ``lease_generation``; returns the stored Job, or None when this
+        call wrote nothing.
 
         One conditional UPDATE evaluated by PostgreSQL against the row as it is
-        now. A Job leaves RUNNING exactly once: the worker that claimed it makes
-        that transition, and a terminal Job is never rewritten. A worker that
-        lost the Job (abandoned by recovery, already terminal) therefore cannot
-        overwrite whatever state replaced its claim. Does not commit."""
+        now. A Job leaves RUNNING exactly once per claim: the worker holding the
+        claim makes that transition, and a terminal Job is never rewritten. A
+        worker that lost its claim (abandoned, reclaimed after its lease expired
+        and claimed again, already terminal) therefore cannot overwrite whatever
+        state replaced it. The lease's expiry alone does not end the claim: until
+        recovery reclaims the Job, its owner may still finish it. Does not
+        commit."""
         values = job_manifest_to_values(job)
         stmt = (
             update(JobModel)
             .where(JobModel.job_id == job.job_id)
             .where(JobModel.status == enum_value(JobStatus.RUNNING))
-            .where(JobModel.worker_id == worker_id)
+            .where(JobModel.lease_generation == lease_generation)
             .values(**{column: values[column] for column in _RUN_OWNED_COLUMNS})
             .returning(JobModel)
             .execution_options(populate_existing=True)
@@ -328,6 +350,97 @@ class PostgresJobRepository:
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()
 
+        return job_model_to_manifest(model) if model is not None else None
+
+    async def renew_lease(
+        self,
+        job_id: str,
+        *,
+        lease_generation: int,
+        lease_seconds: float,
+    ) -> datetime | None:
+        """Extend the lease of the claim ``lease_generation`` to ``lease_seconds``
+        from now and record the heartbeat; returns the new expiry, or None when
+        the Job is no longer RUNNING under that claim (the caller has lost it).
+
+        Conditional on the claim, not on the expiry: a lease that has passed but
+        was not yet reclaimed is still held, and whichever of this renewal and
+        recovery's reclaim reaches the row first decides. Does not commit."""
+        now = func.now()
+        stmt = (
+            update(JobModel)
+            .where(JobModel.job_id == job_id)
+            .where(JobModel.status == enum_value(JobStatus.RUNNING))
+            .where(JobModel.lease_generation == lease_generation)
+            .values(
+                heartbeat_at=now,
+                lease_expires_at=now + _seconds(lease_seconds),
+            )
+            .returning(JobModel.lease_expires_at)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def list_expired_leases(self, *, limit: int) -> list[JobManifest]:
+        """RUNNING Jobs whose lease passed by PostgreSQL's clock, longest expired
+        first. Read-only; acting on one is ``reclaim_expired_lease``."""
+        stmt = (
+            select(JobModel)
+            .where(JobModel.status == enum_value(JobStatus.RUNNING))
+            .where(JobModel.lease_expires_at < func.now())
+            .order_by(JobModel.lease_expires_at)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [job_model_to_manifest(m) for m in result.scalars().all()]
+
+    async def reclaim_expired_lease(
+        self,
+        job_id: str,
+        *,
+        claim_budget: int,
+        error: ErrorInfo,
+    ) -> JobManifest | None:
+        """End the claim of one RUNNING Job whose lease has passed: back to QUEUED
+        while it has been claimed fewer than ``claim_budget`` times, otherwise
+        FAILED with ``error``. Returns the Job as written, or None when this call
+        changed nothing (not RUNNING, or the lease is held again: renewed, or
+        already reclaimed and claimed anew).
+
+        Each branch is one conditional UPDATE re-evaluated by PostgreSQL against
+        the row as it is now, and the two predicates exclude each other, so of
+        any number of concurrent callers exactly one changes the Job, and a
+        renewal that reached the row first wins. ``retry_count`` is untouched:
+        it counts retries after failures, not lost workers. Does not commit."""
+        now = func.now()
+        expired = (
+            update(JobModel)
+            .where(JobModel.job_id == job_id)
+            .where(JobModel.status == enum_value(JobStatus.RUNNING))
+            .where(JobModel.lease_expires_at < now)
+        )
+        result = await self._session.execute(
+            expired.where(JobModel.lease_generation < claim_budget)
+            .values(
+                status=enum_value(JobStatus.QUEUED),
+                queued_at=now,
+                updated_at=now,
+            )
+            .returning(JobModel)
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            result = await self._session.execute(
+                expired.where(JobModel.lease_generation >= claim_budget)
+                .values(
+                    status=enum_value(JobStatus.FAILED),
+                    error=error.model_dump(mode="json"),
+                    finished_at=now,
+                    updated_at=now,
+                )
+                .returning(JobModel)
+            )
+            model = result.scalar_one_or_none()
         return job_model_to_manifest(model) if model is not None else None
 
 

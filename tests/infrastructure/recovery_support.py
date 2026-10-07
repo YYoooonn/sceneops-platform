@@ -317,12 +317,24 @@ class Published:
 
 
 class WorkerProcess:
-    """A Celery worker (``recovery_worker``) on the test's own broker and queue.
-    ``kill`` is SIGKILL of the whole process group: no cleanup, no ack."""
+    """A Celery worker (``recovery_worker`` unless ``app`` names another worker
+    module of this directory) on the test's own broker and queue. ``kill`` is
+    SIGKILL of the whole process group: no cleanup, no ack."""
 
-    def __init__(self, env: RecoveryEnv, name: str) -> None:
+    def __init__(
+        self,
+        env: RecoveryEnv,
+        name: str,
+        *,
+        app: str = "recovery_worker.celery_app",
+        concurrency: int = 2,
+        extra_env: dict[str, str] | None = None,
+    ) -> None:
         self.env = env
         self.name = name
+        self.app = app
+        self.concurrency = concurrency
+        self.extra_env = extra_env or {}
         self.log_path = env.tmp / f"worker-{name}.log"
         self._proc: subprocess.Popen | None = None
 
@@ -348,6 +360,7 @@ class WorkerProcess:
             "SCENEOPS_WORKER_EXECUTION__CELERY__RESULT_BACKEND": self.env.redis.result_url,
             "SCENEOPS_WORKER_EXECUTION__CELERY__JOB_QUEUE": self.env.queue,
             "SCENEOPS_WORKER_EXECUTION__CELERY__TASK_DEFAULT_QUEUE": self.env.queue,
+            **self.extra_env,
         }
         return environment
 
@@ -359,11 +372,11 @@ class WorkerProcess:
                 "-m",
                 "celery",
                 "-A",
-                "recovery_worker.celery_app",
+                self.app,
                 "worker",
                 "--loglevel=INFO",
                 f"--queues={self.env.queue}",
-                "--concurrency=2",
+                f"--concurrency={self.concurrency}",
                 f"--hostname={self.name}@%h",
             ],
             stdout=log,
@@ -388,6 +401,12 @@ class WorkerProcess:
             self.log_path.read_text(errors="replace") if self.log_path.exists() else ""
         )
 
+    def signal(self, sig: int) -> None:
+        """Send ``sig`` to the worker and its pool children (SIGSTOP pauses the
+        whole worker: alive, holding its claims, doing nothing)."""
+        assert self._proc is not None
+        os.killpg(self._proc.pid, sig)
+
     def kill(self) -> None:
         """SIGKILL the worker and its pool children."""
         assert self._proc is not None
@@ -397,6 +416,7 @@ class WorkerProcess:
     def stop(self) -> None:
         if self._proc is None or self._proc.poll() is not None:
             return
+        os.killpg(self._proc.pid, signal.SIGCONT)  # a paused worker cannot stop
         os.killpg(self._proc.pid, signal.SIGTERM)
         try:
             self._proc.wait(timeout=20)

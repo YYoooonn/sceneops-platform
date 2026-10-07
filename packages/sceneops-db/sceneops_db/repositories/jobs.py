@@ -42,8 +42,9 @@ class JobRepository(Protocol):
         ...
 
     async def queue_if_unchanged(self, job: JobManifest) -> JobManifest | None:
-        """Move the Job to QUEUED iff it still has ``job.status`` and
-        ``job.retry_count``; None when it changed. A FAILED Job is retried
+        """Move the Job to QUEUED iff it still has ``job.status``,
+        ``job.retry_count`` and ``job.lease_generation``; None when it changed.
+        A FAILED Job is retried
         (retry_count + 1). Raises ``JobExecutionKeyInFlightError`` like
         ``create``; the caller's transaction is then unusable."""
         ...

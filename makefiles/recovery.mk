@@ -1,12 +1,14 @@
 # --------------------
-# Acquisition recovery (ADR-008 §3.2, §8 steps 12.4-12.6)
+# Acquisition recovery (ADR-008 §3.2, §8 steps 12.4-12.6) and job lease recovery
 #
-# Both commands are stateless one-shots. `reconcile-once` only observes;
+# Every command is a stateless one-shot. `reconcile-once` only observes;
 # `reconcile-apply` performs the bounded registration recovery (submit, retry
 # within the attempt budget, replace stalled Jobs) through the API's own Job
-# path. `recovery-up` runs the two loops (compose/recovery.yaml) that merely
-# repeat `publish-pending` and `reconcile --once --apply` -- opt-in, never part
-# of local-up, and holding no state of their own.
+# path; `job-lease-recovery` requeues the RUNNING Jobs whose worker stopped
+# renewing its lease. `recovery-up` runs the three loops (compose/recovery.yaml)
+# that merely repeat `publish-pending`, `reconcile --once --apply` and
+# `jobs recover-leases` -- opt-in, never part of local-up, and holding no state
+# of their own.
 # --------------------
 
 .PHONY: reconcile-once
@@ -16,6 +18,12 @@ reconcile-once:
 .PHONY: reconcile-apply
 reconcile-apply:
 	$(COMPOSE) exec -T api python -m app.domains.robots.reconciliation --once --apply
+
+.PHONY: job-lease-recovery
+# One job lease recovery pass (sceneops-worker jobs recover-leases): requeue each
+# RUNNING Job whose lease has passed, or fail it once its claim budget is spent.
+job-lease-recovery:
+	$(COMPOSE) exec -T worker-jobs sceneops-worker jobs recover-leases
 
 .PHONY: artifact-lifecycle-once
 # Read-only artifact lifecycle report of the robot_runs/ root (ADR-008 §6):
@@ -38,22 +46,25 @@ acquisition-status:
 
 .PHONY: recovery-up
 recovery-up:
-	$(COMPOSE) --profile recovery up -d publication-recovery registration-recovery
+	$(COMPOSE) --profile recovery up -d publication-recovery registration-recovery job-lease-recovery
 
 .PHONY: recovery-down
 # Named services, not `--profile recovery down` bare (see ros2-down).
 recovery-down:
-	$(COMPOSE) --profile recovery stop publication-recovery registration-recovery
-	$(COMPOSE) --profile recovery rm -f publication-recovery registration-recovery
+	$(COMPOSE) --profile recovery stop publication-recovery registration-recovery job-lease-recovery
+	$(COMPOSE) --profile recovery rm -f publication-recovery registration-recovery job-lease-recovery
 
 .PHONY: recovery-logs
 recovery-logs:
-	$(COMPOSE) --profile recovery logs -f publication-recovery registration-recovery
+	$(COMPOSE) --profile recovery logs -f publication-recovery registration-recovery job-lease-recovery
 
-# Both recovery suites: one fault per test (test_acquisition_recovery.py) and the
-# full-lifecycle acceptance (test_acquisition_lifecycle_acceptance.py).
+# The recovery suites: acquisition recovery, one fault per test
+# (test_acquisition_recovery.py), its full-lifecycle acceptance
+# (test_acquisition_lifecycle_acceptance.py), and worker loss under the Job
+# ownership lease (test_job_lease_recovery.py).
 RECOVERY_TESTS ?= tests/infrastructure/test_acquisition_recovery.py \
-	tests/infrastructure/test_acquisition_lifecycle_acceptance.py
+	tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
+	tests/infrastructure/test_job_lease_recovery.py
 
 .PHONY: infra-suite-recovery
 # Fault-injection acceptance of acquisition recovery (`make test-infrastructure

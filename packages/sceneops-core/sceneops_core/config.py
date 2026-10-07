@@ -72,6 +72,11 @@ class InputSourceSettings(StorageSettings):
 
 class WorkerRuntimeSettings(BaseModel):
     worker_id: str = "local-worker"
+    # How long a claim holds a Job without a renewal; the worker renews every
+    # third of it. Lost workers are noticed after at most this long (plus the
+    # job lease recovery interval), and a live worker that cannot reach
+    # PostgreSQL for this long loses its Job.
+    job_lease_seconds: float = Field(default=60.0, gt=0)
 
 
 class CelerySettings(BaseModel):

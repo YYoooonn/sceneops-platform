@@ -102,6 +102,7 @@ mode ([ADR-007](./007-canonical-ingestion-architecture.md)).
   `advance` message or a failed post-commit dispatch leaves a run waiting.
 - There is no stall detection, worker-loss recovery, lease or heartbeat for Jobs and
   Pipelines; only `REGISTER_ROBOT_RUN` has stall handling, in the acquisition reconciler.
+  Worker-loss recovery is decided in [ADR-010](./010-job-ownership-lease-and-fencing.md).
 - Dispatch and the database are not one atomic unit, and `Celery.send_task` blocks the
   event loop where it is called from `async` code.
 - There is no latest-revision lookup for a logical artifact and no artifact garbage

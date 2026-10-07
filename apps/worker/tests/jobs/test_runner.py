@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -59,23 +61,31 @@ def _make_step(
     )
 
 
-def _make_context(job: JobManifest) -> MagicMock:
+def _make_context(job: JobManifest, *, lease_seconds: float = 60.0) -> MagicMock:
     ctx = MagicMock()
     ctx.worker_id = "worker-001"
+    ctx.settings.runtime.job_lease_seconds = lease_seconds
     ctx.commit = AsyncMock()
     ctx.rollback = AsyncMock()
     ctx.job_store = MagicMock()
     ctx.job_store.get = AsyncMock(return_value=job)
-    ctx.job_store.save_owned = AsyncMock(side_effect=lambda j, *, worker_id: j)
+    ctx.job_store.save_owned = AsyncMock(side_effect=lambda j, *, lease_generation: j)
 
     async def _claim_for_run(
-        job_id: str, *, worker_id: str, runnable_statuses: set[JobStatus]
+        job_id: str,
+        *,
+        worker_id: str,
+        runnable_statuses: set[JobStatus],
+        lease_seconds: float,
     ) -> JobManifest | None:
         # Mirrors the real repository contract: a claim only succeeds when the
         # job's current status is one of the runnable statuses; otherwise the
         # runner falls back to _load_job()/_validate_runnable() for the
         # specific "already succeeded/running/cancelled" error.
-        return job if job.status in runnable_statuses else None
+        if job.status not in runnable_statuses:
+            return None
+        job.lease_generation += 1
+        return job
 
     ctx.job_store.claim_for_run = AsyncMock(side_effect=_claim_for_run)
     ctx.job_event_store = MagicMock()
@@ -315,7 +325,9 @@ class _Ledger:
         async def rollback() -> None:
             self._uncommitted.clear()
 
-        async def save_owned(job: JobManifest, *, worker_id: str) -> JobManifest | None:
+        async def save_owned(
+            job: JobManifest, *, lease_generation: int
+        ) -> JobManifest | None:
             self.attempted.append(job.status)
             if self.lose_ownership_from == job.status:
                 return None
@@ -551,3 +563,157 @@ class TestJobRunnerValidation:
 
         with pytest.raises(FileNotFoundError, match="job-001"):
             await runner.run("job-001")
+
+
+# ── claim lease ───────────────────────────────────────────────────────────────
+
+
+class _Renewal:
+    """A LeaseRenewal whose answers the test scripts: True (renewed), False
+    (the claim is gone) or an exception (could not tell)."""
+
+    def __init__(self, *answers: bool | Exception, then: bool | Exception = True):
+        self.answers = list(answers)
+        self.then = then
+        self.calls: list[tuple[str, int]] = []
+
+    async def renew(self, job_id, *, lease_generation, lease_seconds) -> bool:
+        self.calls.append((job_id, lease_generation))
+        answer = self.answers.pop(0) if self.answers else self.then
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    async def close(self) -> None:
+        pass
+
+
+def _make_handler_registry(run) -> JobHandlerRegistry:
+    handler = MagicMock()
+    handler.job_type = JobType.PROFILE_SCENE
+    handler.params_model = MagicMock()
+    handler.params_model.model_validate = MagicMock(return_value=MagicMock())
+    handler.run = run
+    registry = MagicMock(spec=JobHandlerRegistry)
+    registry.get = MagicMock(return_value=handler)
+    return registry
+
+
+class TestJobRunnerLease:
+    """The claim's lease is renewed while the Job runs; every write is fenced by
+    the claim's generation; a lost claim cancels the handler."""
+
+    async def test_every_write_is_fenced_by_the_claims_generation(self) -> None:
+        job = _make_job().model_copy(update={"lease_generation": 4})
+        ctx = _make_context(job)
+
+        await JobRunner(
+            ctx,
+            dispatcher=MagicMock(),
+            handler_registry=_make_registry(_SimpleResult(value="ok")),
+            lease_renewal=_Renewal,
+        ).run("job-001")
+
+        generations = {
+            c.kwargs["lease_generation"]
+            for c in ctx.job_store.save_owned.await_args_list
+        }
+        assert generations == {5}
+        assert ctx.job_store.claim_for_run.await_args.kwargs["lease_seconds"] == 60.0
+
+    async def test_a_lost_lease_cancels_the_handler_and_writes_nothing(self) -> None:
+        job = _make_job().model_copy(update={"pipeline_run_id": "pipe-001"})
+        ctx = _make_context(job, lease_seconds=0.06)
+        ledger = _Ledger(ctx)
+        renewal = _Renewal(True, False)
+        dispatcher = MagicMock()
+        cancelled = asyncio.Event()
+
+        async def run_forever(request):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        with pytest.raises(JobOwnershipLostError, match="handler was cancelled"):
+            await JobRunner(
+                ctx,
+                dispatcher=dispatcher,
+                handler_registry=_make_handler_registry(run_forever),
+                lease_renewal=lambda: renewal,
+            ).run("job-001")
+
+        assert cancelled.is_set()
+        assert len(renewal.calls) == 2
+        # No terminal write, no FAILED fallback and no pipeline report from a
+        # worker whose claim is gone.
+        assert ledger.attempted == [JobStatus.RUNNING]
+        assert ledger.durable == [JobStatus.RUNNING]
+        dispatcher.advance_pipeline.assert_not_called()
+
+    async def test_a_renewal_that_cannot_tell_is_not_a_lost_lease(self) -> None:
+        job = _make_job()
+        ctx = _make_context(job, lease_seconds=0.03)
+        renewal = _Renewal(OSError("connection refused"), OSError("timeout"))
+
+        async def run_briefly(request):
+            await asyncio.sleep(0.15)
+            return _SimpleResult(value="ok")
+
+        finished = await JobRunner(
+            ctx,
+            dispatcher=MagicMock(),
+            handler_registry=_make_handler_registry(run_briefly),
+            lease_renewal=lambda: renewal,
+        ).run("job-001")
+
+        assert finished.status == JobStatus.SUCCEEDED
+        assert len(renewal.calls) > 2  # kept renewing after the two errors
+
+    async def test_the_lease_is_renewed_while_a_handler_blocks_the_event_loop(
+        self,
+    ) -> None:
+        job = _make_job()
+        ctx = _make_context(job, lease_seconds=0.06)
+        renewal = _Renewal()
+
+        async def block_the_loop(request):
+            time.sleep(0.3)  # synchronous work on the worker's event loop
+            return _SimpleResult(value="ok")
+
+        finished = await JobRunner(
+            ctx,
+            dispatcher=MagicMock(),
+            handler_registry=_make_handler_registry(block_the_loop),
+            lease_renewal=lambda: renewal,
+        ).run("job-001")
+
+        assert finished.status == JobStatus.SUCCEEDED
+        # ~0.3 s / 0.02 s renewal interval while the loop could not run a task.
+        assert len(renewal.calls) >= 5
+
+    async def test_a_lease_lost_before_the_handler_skips_it(self) -> None:
+        job = _make_job()
+        ctx = _make_context(job, lease_seconds=0.03)
+        _Ledger(ctx)
+        renewal = _Renewal(then=False)
+        registry = _make_registry(_SimpleResult(value="ok"))
+        start_step = JobRunner._start_step
+
+        async def slow_start_step(self, execution):
+            await asyncio.sleep(0.1)  # the keeper reports the loss meanwhile
+            await start_step(self, execution)
+
+        runner = JobRunner(
+            ctx,
+            dispatcher=MagicMock(),
+            handler_registry=registry,
+            lease_renewal=lambda: renewal,
+        )
+        runner._start_step = slow_start_step.__get__(runner)
+
+        with pytest.raises(JobOwnershipLostError, match="before its handler ran"):
+            await runner.run("job-001")
+
+        registry.get.return_value.run.assert_not_called()

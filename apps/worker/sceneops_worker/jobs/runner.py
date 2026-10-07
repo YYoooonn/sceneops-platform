@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 
 from pydantic import ValidationError
 
@@ -11,6 +13,11 @@ from sceneops_worker.execution.dispatcher import ExecutionDispatcher
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.events import JobEventPublisher
 from sceneops_worker.jobs.execution import JobExecution
+from sceneops_worker.jobs.lease import (
+    JobLeaseKeeper,
+    LeaseRenewal,
+    PostgresLeaseRenewal,
+)
 from sceneops_worker.jobs.registry import (
     JobHandlerRegistry,
     create_default_job_handler_registry,
@@ -26,8 +33,9 @@ _RUNNABLE_STATUSES = {
 
 
 class JobOwnershipLostError(RuntimeError):
-    """The Job is no longer RUNNING under this worker: it was abandoned or
-    finished by someone else. The worker writes nothing more for it."""
+    """The Job is no longer RUNNING under this worker's claim: it was abandoned,
+    reclaimed after its lease expired, or finished by someone else. The worker
+    writes nothing more for it."""
 
 
 class JobRunner:
@@ -39,10 +47,13 @@ class JobRunner:
     already running, already terminal) or that this worker no longer owns
     raises.
 
-    A Job leaves RUNNING exactly once, written by the worker that claimed it
-    (``JobStore.save_owned``). Once that terminal state is committed it is final:
-    the JobEvents recorded afterwards are bookkeeping, and a failure to write
-    them is logged without touching the Job.
+    A claim is one ``lease_generation`` of the Job, held by a lease that a
+    ``JobLeaseKeeper`` renews until the terminal state is written. A Job leaves
+    RUNNING exactly once per claim, written by the worker holding it
+    (``JobStore.save_owned``, fenced by the generation). A worker whose claim is
+    gone has its handler cancelled and writes nothing more. Once the terminal
+    state is committed it is final: the JobEvents recorded afterwards are
+    bookkeeping, and a failure to write them is logged without touching the Job.
 
     A Job that belongs to a PipelineRun is reported to the dispatcher once its
     terminal state is committed, so the pipeline's orchestrator observes it and
@@ -56,6 +67,7 @@ class JobRunner:
         *,
         dispatcher: ExecutionDispatcher,
         handler_registry: JobHandlerRegistry | None = None,
+        lease_renewal: Callable[[], LeaseRenewal] = PostgresLeaseRenewal,
     ) -> None:
         self.context = context
         self.worker_id = context.worker_id
@@ -63,6 +75,7 @@ class JobRunner:
         self.handler_registry = (
             handler_registry or create_default_job_handler_registry()
         )
+        self.lease_renewal = lease_renewal
         self.events = JobEventPublisher(
             context.job_event_store,
             worker_id=self.worker_id,
@@ -71,11 +84,12 @@ class JobRunner:
 
     async def run(self, job_id: str) -> JobManifest:
         execution = await self._prepare_execution(job_id)
+        lease = self._keep_lease(execution)
 
         try:
             await self._start_job(execution)
             await self._start_step(execution)
-            await self._execute_handler(execution)
+            await self._execute_handler(execution, lease)
             await self._complete_job(execution)
 
         except JobOwnershipLostError:
@@ -95,6 +109,9 @@ class JobRunner:
             await self.context.rollback()
             await self._fail_execution(execution, error)
 
+        finally:
+            lease.stop()
+
         await self._record_terminal_events(execution)
 
         job = execution.job
@@ -107,18 +124,48 @@ class JobRunner:
     async def _prepare_execution(self, job_id: str) -> JobExecution:
         job = await self._claim_job(job_id)
         await self.context.commit()
-        execution = JobExecution(job=job, worker_id=self.worker_id)
+        execution = JobExecution(
+            job=job, worker_id=self.worker_id, lease_generation=job.lease_generation
+        )
 
         await self.events.job_locked(execution.job)
         await self.context.commit()
 
         return execution
 
+    def _keep_lease(self, execution: JobExecution) -> JobLeaseKeeper:
+        loop = asyncio.get_running_loop()
+
+        def cancel_handler() -> None:
+            task = execution.handler_task
+            if task is not None and not task.done():
+                task.cancel()
+
+        def on_lost() -> None:
+            # Called from the keeper's thread; the handler runs on this loop.
+            try:
+                loop.call_soon_threadsafe(cancel_handler)
+            except RuntimeError:  # the loop is closed: the run is over
+                pass
+
+        return JobLeaseKeeper(
+            job_id=execution.job.job_id,
+            lease_generation=execution.lease_generation,
+            lease_seconds=self._lease_seconds,
+            renewal_factory=self.lease_renewal,
+            on_lost=on_lost,
+        ).start()
+
+    @property
+    def _lease_seconds(self) -> float:
+        return self.context.settings.runtime.job_lease_seconds
+
     async def _claim_job(self, job_id: str) -> JobManifest:
         claimed = await self.context.job_store.claim_for_run(
             job_id,
             worker_id=self.worker_id,
             runnable_statuses=_RUNNABLE_STATUSES,
+            lease_seconds=self._lease_seconds,
         )
 
         if claimed is not None:
@@ -183,7 +230,9 @@ class JobRunner:
         )
         await self.context.commit()
 
-    async def _execute_handler(self, execution: JobExecution) -> None:
+    async def _execute_handler(
+        self, execution: JobExecution, lease: JobLeaseKeeper
+    ) -> None:
         handler = self.handler_registry.get(execution.job.type)
 
         try:
@@ -194,13 +243,28 @@ class JobRunner:
                 f"{execution.job.type}: {exc}"
             ) from exc
 
-        result = await handler.run(
-            JobHandlerRequest(
-                job=execution.job,
-                params=params,
-                context=self.context,
+        if lease.lost:
+            raise self._ownership_lost(execution, "lost before its handler ran")
+        # A task of its own, so losing the lease cancels the handler and nothing
+        # else: the claim's own writes are fenced, never interrupted.
+        execution.handler_task = asyncio.ensure_future(
+            handler.run(
+                JobHandlerRequest(
+                    job=execution.job,
+                    params=params,
+                    context=self.context,
+                )
             )
         )
+        try:
+            result = await execution.handler_task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if lease.lost and not (current is not None and current.cancelling()):
+                raise self._ownership_lost(
+                    execution, "lost while its handler ran; the handler was cancelled"
+                ) from None
+            raise
         execution.update_handler_result(
             result,
             self.result_recorder.to_payload(result),
@@ -233,14 +297,21 @@ class JobRunner:
 
     async def _save_owned(self, execution: JobExecution) -> JobManifest:
         saved = await self.context.job_store.save_owned(
-            execution.job, worker_id=self.worker_id
+            execution.job, lease_generation=execution.lease_generation
         )
         if saved is None:
-            raise JobOwnershipLostError(
-                f"Job {execution.job.job_id} is no longer RUNNING under "
-                f"{self.worker_id}; refusing to write {execution.job.status.value}"
+            raise self._ownership_lost(
+                execution, f"refusing to write {execution.job.status.value}"
             )
         return saved
+
+    def _ownership_lost(
+        self, execution: JobExecution, detail: str
+    ) -> JobOwnershipLostError:
+        return JobOwnershipLostError(
+            f"Job {execution.job.job_id} is no longer RUNNING under claim "
+            f"{execution.lease_generation} of {self.worker_id}: {detail}"
+        )
 
     async def _record_terminal_events(self, execution: JobExecution) -> None:
         """Log the committed terminal state. Best effort: the Job is already

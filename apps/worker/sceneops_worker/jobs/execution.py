@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +13,9 @@ from sceneops_core.jobs.schemas import JobManifest
 class JobExecution:
     job: JobManifest
     worker_id: str | None
+    # The claim this execution holds; every write of the Job is fenced by it.
+    lease_generation: int = 0
+    handler_task: asyncio.Task | None = None
     running_step_id: str | None = None
     running_step_name: str | None = None
     handler_result: BaseModel | dict[str, Any] | None = None

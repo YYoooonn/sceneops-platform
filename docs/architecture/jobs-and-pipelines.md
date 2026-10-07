@@ -2,8 +2,9 @@
 
 > Based on `packages/sceneops-core/sceneops_core/pipelines/builtin.py`,
 > `apps/worker/sceneops_worker/{pipelines,jobs,execution,tasks}/` and
-> `apps/api/app/platform/`. Decision record:
-> [ADR-009](../adr/009-job-centric-execution-and-durable-boundaries.md).
+> `apps/api/app/platform/`. Decision records:
+> [ADR-009](../adr/009-job-centric-execution-and-durable-boundaries.md),
+> [ADR-010](../adr/010-job-ownership-lease-and-fencing.md) (ownership lease).
 
 ## 1. Two units, one execution path
 
@@ -191,14 +192,18 @@ nothing instead of moving it backward or erasing another actor's columns
 | --- | --- | --- |
 | (none) → `PENDING` | `create_job` (API) | `INSERT ... ON CONFLICT DO NOTHING` on `uq_jobs_execution_key_in_flight` |
 | (none) → `QUEUED` | the orchestrator, for a task's Job | insert (task Jobs carry no execution key) |
-| `PENDING` / `QUEUED` / `FAILED` → `QUEUED` | a dispatch (`mark_queued`): first dispatch, redispatch, retry | `queue_if_unchanged`: `WHERE status = <as read> AND retry_count = <as read>`; a retry increments `retry_count` and is refused past `max_retries` or beside another in-flight Job of its key |
-| `PENDING` / `QUEUED` → `RUNNING` | `JobRunner` | `claim_for_run`: `WHERE status IN (PENDING, QUEUED)`; sets `worker_id` |
-| `RUNNING` → `RUNNING` / `SUCCEEDED` / `FAILED` | `JobRunner`, the claiming worker | `update_owned_run`: `WHERE status = RUNNING AND worker_id = <this worker>` |
+| `PENDING` / `QUEUED` / `FAILED` → `QUEUED` | a dispatch (`mark_queued`): first dispatch, redispatch, retry | `queue_if_unchanged`: `WHERE status = <as read> AND retry_count = <as read> AND lease_generation = <as read>`; a retry increments `retry_count` and is refused past `max_retries` or beside another in-flight Job of its key |
+| `PENDING` / `QUEUED` → `RUNNING` | `JobRunner` | `claim_for_run`: `WHERE status IN (PENDING, QUEUED)`; increments `lease_generation`, sets `worker_id` and `lease_expires_at = now() + lease` |
+| `RUNNING` → `RUNNING` / `SUCCEEDED` / `FAILED` | `JobRunner`, the claim holding the Job | `update_owned_run`: `WHERE status = RUNNING AND lease_generation = <its claim>` |
+| `RUNNING` → `RUNNING` (lease renewal) | the claim's `JobLeaseKeeper` | `renew_lease`: `WHERE status = RUNNING AND lease_generation = <its claim>`; sets `heartbeat_at`, `lease_expires_at` |
+| `RUNNING` → `QUEUED`, or `FAILED` (`JobLeaseExpired`) once the claim budget is spent | job lease recovery | `reclaim_expired_lease`: `WHERE status = RUNNING AND lease_expires_at < now()` and `lease_generation <` (or `>=`) the budget |
 | `PENDING` / `QUEUED` / `RUNNING` → `FAILED` | reconciliation (`JobAbandoned`) | `abandon_if_inactive`: `WHERE status IN (...) AND <no activity since the threshold>` |
 
-`FAILED` → `QUEUED` is the only way back to an earlier status and it increments
-`retry_count`, so `(status, retry_count)` identifies a point in a Job's history and a
-dispatch decided on an older one cannot apply. A dispatch whose conditional write
+A status recurs only through a way back to an earlier one: a retry (`FAILED` →
+`QUEUED`, which increments `retry_count`) or lease recovery (`RUNNING` → `QUEUED`,
+after a claim that incremented `lease_generation`). `(status, retry_count,
+lease_generation)` therefore identifies a point in a Job's history and a dispatch
+decided on an older one cannot apply. A dispatch whose conditional write
 matches nothing raises `JobDispatchConflictError`: nothing is committed and no message
 is sent (`POST /jobs/{id}/execute` answers 400). A caller may also state the status its
 decision was based on: robot-run registration dispatches only a Job it saw `PENDING`,
@@ -210,20 +215,58 @@ Job transition currently produces them.
 
 1. `claim_for_run` is one atomic `UPDATE ... WHERE status IN (PENDING, QUEUED)
    RETURNING`, so a duplicated or late Celery message cannot run a Job twice. A Job
-   that cannot be claimed (missing, running, terminal) makes `run` raise.
+   that cannot be claimed (missing, running, terminal) makes `run` raise. The claim
+   takes the next `lease_generation` and a lease (below).
 2. The Job is committed as `RUNNING`, the handler runs, and the terminal state is
    committed. A handler failure is a persisted `FAILED` Job (with its error), not an
    exception: the returned Job is the outcome. Every write of a running Job is one
-   conditional `UPDATE ... WHERE status = RUNNING AND worker_id = <this worker>`
-   (`update_owned_run`), so a Job leaves `RUNNING` exactly once and a terminal Job is
-   never rewritten. A worker that no longer owns its Job raises
+   conditional `UPDATE ... WHERE status = RUNNING AND lease_generation = <its claim>`
+   (`update_owned_run`), so a Job leaves `RUNNING` exactly once per claim and a
+   terminal Job is never rewritten. A worker whose claim is gone raises
    `JobOwnershipLostError` and writes nothing more. The JobEvents of the terminal
    state are recorded after its commit and are best effort: a failure to write them is
    logged and cannot change the Job.
 3. If the Job belongs to a PipelineRun, `JobRunner` then sends one `advance` message.
 
 There is no Celery-level retry on either task. Retrying is always an explicit
-redispatch of durable state.
+redispatch of durable state, or lease recovery's requeue of a Job whose worker is gone.
+
+### Ownership: claim, lease, fencing (`jobs/lease.py`, `jobs/lease_recovery.py`)
+
+A claim owns a `RUNNING` Job. Three separate mechanisms keep that ownership correct:
+
+| Mechanism | Column | Answers | Written by |
+| --- | --- | --- | --- |
+| Fencing token | `lease_generation` | *which* claim may write the Job | incremented by every claim; required by every write of the claim |
+| Lease | `lease_expires_at` | *until when* the claim holds the Job without news from its worker | the claim (`now() + lease`), each renewal |
+| Heartbeat | `heartbeat_at` | *when* the worker last reached PostgreSQL | the claim, each renewal, the terminal write |
+
+`worker_id` is `celery:<task id>`, the Celery message, and a redelivery of the message
+carries the same id; it names the worker for diagnosis and never decides ownership.
+
+- **Renewal.** `JobLeaseKeeper` renews the lease every third of
+  `SCENEOPS_WORKER_RUNTIME__JOB_LEASE_SECONDS` (60 s) from a thread with its own event
+  loop and connection, so a handler that blocks the worker's event loop keeps its lease.
+  A renewal proves that the process is alive and reaches PostgreSQL, not that the
+  handler makes progress. A renewal that finds the claim gone cancels the handler; a
+  renewal that fails (connection error) is retried and is not a loss.
+- **Recovery.** `sceneops-worker jobs recover-leases` (`make job-lease-recovery`; looped
+  by `make recovery-up`) reclaims every `RUNNING` Job whose lease passed by PostgreSQL's
+  clock: the same Job goes back to `QUEUED` and a new job message is sent, until the Job
+  has been claimed `JOB_CLAIM_BUDGET` (3) times; then it is `FAILED` with
+  `JobLeaseExpired` and, if pipeline-owned, its run is advanced to observe the failure.
+  `retry_count` is not touched: it counts retries after failures. A requeued pipeline
+  Job is the same Job its task run waits on, so the run continues when it finishes.
+- **Expiry is not revocation.** Until recovery reclaims the Job, its claim may still
+  renew and finish it; whichever of a renewal and the reclaim reaches the row first
+  decides, and PostgreSQL re-evaluates the loser's `WHERE` clause.
+- **What fencing covers.** Job writes only. Domain writes a reclaimed handler already
+  made (objects, records) are not fenced; they are safe because artifacts are
+  write-once and content-pinned and registrations converge (§7), so the next claim's
+  execution converges on them.
+
+A recovery pass is stateless, safe at any frequency and concurrently: of concurrent
+passes exactly one reclaims a Job and sends its message.
 
 ### Idempotency and retry
 
@@ -233,7 +276,8 @@ redispatch of durable state.
 | Concurrent Job creation | At most one Job per execution key is `PENDING` / `QUEUED` / `RUNNING`: the partial unique index `uq_jobs_execution_key_in_flight` enforces it in PostgreSQL. `create_job` inserts with `ON CONFLICT DO NOTHING` against that index, so concurrent requests for one key converge on one Job and one `CREATED` event; a loser waits for the winner's transaction and returns its Job. Finished Jobs are outside the index, so a key keeps any number of succeeded and failed Jobs. The reuse of a succeeded Job is a read, not a constraint: a request whose lookup preceded a Job's whole run can start one more. PipelineRun creation has no such index; concurrent identical PipelineRun requests can each create a run. |
 | Standalone Job retry | Redispatching a `FAILED` Job (`POST /jobs/{id}/execute`) increments `retry_count`; past `max_retries` it is refused, and so is a retry while another Job of its key is in flight. Concurrent retries of one failure spend one retry: one of them queues the Job, the others are refused. |
 | Pipeline retry | Re-executing a `FAILED` or `BLOCKED` run resumes at its first unfinished task; succeeded and skipped tasks are not re-run. |
-| Duplicate delivery | The atomic Job claim and the row-locked, idempotent orchestration step make a duplicated message harmless. |
+| Duplicate delivery | The atomic Job claim and the row-locked, idempotent orchestration step make a duplicated message harmless. Celery delivers at least once: with `task_acks_late`, a message whose worker died unacknowledged is delivered again with the same task id (immediately when only a pool child died, `task_reject_on_worker_lost`; when the whole worker died, only once another running worker restores it after the Redis `visibility_timeout`, 1 h). A redelivery that finds the Job `RUNNING` or terminal is refused; one that finds it `QUEUED` after lease recovery may run it, under a new claim. |
+| Worker loss | The lease passes and lease recovery requeues the Job (see Ownership above); the old claim is fenced by `lease_generation`. |
 | Duplicate output | Derived artifacts are write-once and content-pinned, so a Job that re-runs converges on the same objects and records (§7). |
 | Backfill | None: there is no time-partitioned execution; one more PipelineRun is dispatched for the scope. |
 
@@ -258,9 +302,14 @@ Orchestrator     create Job + task RUNNING, commit | send_task | commit Executio
                                        re-sends it automatically
 
 JobRunner        claim + RUNNING | handler | terminal state commit | send advance
-                   worker dies in the handler   the Job stays RUNNING (§8)
+                   worker dies after the claim  the lease passes; lease recovery requeues the
+                                                Job and sends it again
                    advance message lost         the run stays RUNNING with a terminal Job;
                                                 one `advance` step observes it
+
+Lease recovery   reclaim (QUEUED) + commit | send_task | commit ExecutionRecord
+                   send fails          the Job stays QUEUED; nothing re-sends it, though
+                                       a broker redelivery of its old message can claim it
 ```
 
 `make worker-advance-pipeline PIPELINE_RUN_ID=…` takes that single `advance` step by
@@ -325,15 +374,18 @@ artifact table; Episode does not and is reachable through `owner_type=episode` /
 
 ## 8. Current limitations of execution
 
-These are the verified gaps of the current design; none has a mechanism today.
+These are the verified gaps and bounds of the current design.
 
-- **No stall or worker-loss recovery for Jobs and Pipelines.** `claim_for_run`
-  sets `locked_at` / `heartbeat_at` once; nothing refreshes or inspects them. With
-  `task_acks_late` and `task_reject_on_worker_lost`, Celery redelivers the message of a
-  lost worker, but the Job is `RUNNING` and cannot be claimed again, so it stays
-  `RUNNING` and its run stays `RUNNING`. Only `REGISTER_ROBOT_RUN` has stall handling,
-  in the acquisition reconciler
-  ([Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2).
+- **Worker loss is recovered only while lease recovery runs.** It is a command
+  (`make recovery-up` loops it), not part of the workers; without it a Job whose worker
+  died stays `RUNNING`. Detection takes up to one lease (60 s) plus the loop interval.
+- **A lease detects a dead or unreachable worker, not a stuck handler.** A handler that
+  hangs in a live process keeps renewing its lease. A worker paused or cut off from
+  PostgreSQL for longer than the lease loses its Job although it is alive; it is fenced
+  and its work runs again.
+- **Domain writes are not fenced.** A reclaimed handler that is still running may
+  write objects and records until it notices the loss (at its next renewal, then its
+  handler is cancelled); correctness rests on those writes being idempotent (§7).
 - **Lost or unsent messages are not re-sent.** An `advance` message that is lost, or a
   Job dispatch that fails after its commit (§5), leaves durable state that waits for
   an event that does not come.

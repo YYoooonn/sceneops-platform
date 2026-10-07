@@ -42,6 +42,11 @@ class JobModel(Base):
     execution_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The fencing token of the current claim: incremented by every claim, required
+    # by every write of the claiming worker (see PostgresJobRepository).
+    lease_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
 
     queued_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -50,6 +55,10 @@ class JobModel(Base):
         DateTime(timezone=True), nullable=True
     )
     heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # PostgreSQL time until which the claim of a RUNNING Job is held.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     started_at: Mapped[datetime | None] = mapped_column(
@@ -128,6 +137,12 @@ Index("ix_jobs_pipeline_task_run_id", JobModel.pipeline_task_run_id)
 Index("ix_jobs_status_queued_at", JobModel.status, JobModel.queued_at)
 Index("ix_jobs_status_locked_at", JobModel.status, JobModel.locked_at)
 Index("ix_jobs_execution_key", JobModel.execution_key)
+# Job lease recovery scans the RUNNING Jobs whose lease has passed.
+Index(
+    "ix_jobs_running_lease_expires_at",
+    JobModel.lease_expires_at,
+    postgresql_where=text("status = 'running'"),
+)
 # At most one Job per execution key is in flight. Finished Jobs are outside the
 # index: a forced rerun of a succeeded Job and the replacement of a failed one share
 # its key. The predicate is literal SQL, never bound parameters: an ON CONFLICT

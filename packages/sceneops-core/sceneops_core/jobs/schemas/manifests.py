@@ -35,10 +35,13 @@ class JobManifest(SceneOpsBaseModel):
     execution_key: str | None = None
 
     worker_id: str | None = None
+    # Claim generation: the fencing token of the current claim (one per claim).
+    lease_generation: int = 0
 
     queued_at: datetime | None = None
     locked_at: datetime | None = None
     heartbeat_at: datetime | None = None
+    lease_expires_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 

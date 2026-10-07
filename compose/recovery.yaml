@@ -1,10 +1,10 @@
-# Unattended acquisition recovery for local operation (ADR-008 §3.2, §8 step 12.4).
-# Opt-in (`make recovery-up`); not part of local-up.
+# Unattended recovery for local operation: acquisition (ADR-008 §3.2, §8 step 12.4)
+# and Job worker loss. Opt-in (`make recovery-up`); not part of local-up.
 #
 # Each service only loops a stateless one-shot command (scripts/ops/poll_loop.sh):
-# it keeps no lifecycle state, and stopping or restarting it loses nothing. Both
-# commands are safe at any frequency, concurrently and after any crash. This is
-# the local deployment choice; a Kubernetes deployment would run the same two
+# it keeps no lifecycle state, and stopping or restarting it loses nothing. Every
+# command is safe at any frequency, concurrently and after any crash. This is
+# the local deployment choice; a Kubernetes deployment would run the same
 # commands from CronJobs. There is no scheduler (no Celery Beat) in the platform.
 #
 #   publication-recovery   capture volume (read-only) -> ArtifactStore:
@@ -16,6 +16,11 @@
 #                          attempt budget) and replaces stalled registrations.
 #                          Needs no Redis to classify; only submission does, and a
 #                          broker outage just leaves the Job for a later pass.
+#   job-lease-recovery     PostgreSQL + Redis -> any Job: `jobs recover-leases`
+#                          requeues each RUNNING Job whose worker stopped renewing
+#                          its lease (failed once its claim budget is spent) and
+#                          sends it again. A Job is noticed at most one lease
+#                          (60 s) plus one interval after its worker stopped.
 #
 # RECOVERY_POLL_INTERVAL_SECONDS (default 60) is the pause between invocations.
 services:
@@ -67,6 +72,27 @@ services:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - recovery
+
+  job-lease-recovery:
+    image: sceneops-platform/worker:local
+    env_file:
+      - .env.local
+    entrypoint: ["/workspace/ops/poll_loop.sh"]
+    command:
+      - "${RECOVERY_POLL_INTERVAL_SECONDS:-60}"
+      - sceneops-worker
+      - jobs
+      - recover-leases
+    volumes:
+      - ./scripts/ops:/workspace/ops:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     profiles:
