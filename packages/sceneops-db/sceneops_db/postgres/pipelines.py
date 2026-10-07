@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.pipelines.schemas import (
     PipelineRunManifest,
     PipelineRunStatus,
     PipelineTaskRunManifest,
+    PipelineTaskRunStatus,
     PipelineType,
 )
 
@@ -16,6 +17,7 @@ from sceneops_db.converters.pipelines import (
     pipeline_task_run_manifest_to_values,
     pipeline_task_run_model_to_manifest,
 )
+from sceneops_db.models.jobs import JOB_IN_FLIGHT_STATUSES, JobModel
 from sceneops_db.models.pipelines import PipelineRunModel, PipelineTaskRunModel
 
 from ._utils import apply_pagination, apply_values, enum_value
@@ -118,6 +120,79 @@ class PostgresPipelineRunRepository:
             .where(PipelineRunModel.status.in_([enum_value(s) for s in statuses]))
             .order_by(PipelineRunModel.created_at.desc())
             .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return pipeline_run_model_to_manifest(model) if model is not None else None
+
+    async def list_advance_overdue(
+        self, *, older_than_seconds: float, limit: int
+    ) -> list[PipelineRunManifest]:
+        """Runs waiting for an orchestration step that has not come for longer
+        than ``older_than_seconds`` (PostgreSQL's clock), oldest first:
+
+        - QUEUED, last dispatched (``updated_at``) before the threshold: the start
+          step;
+        - RUNNING, not stepped or re-sent (``updated_at``) since the threshold,
+          with a RUNNING task whose Job finished before it or no longer exists:
+          the step that observes that Job.
+
+        After every committed step a run is terminal, or RUNNING with exactly
+        one RUNNING task whose Job is in flight, so these are the only states in
+        which a run waits on an ``advance`` message. Read-only."""
+        stale = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, older_than_seconds)
+        task, job = PipelineTaskRunModel, JobModel
+        waits_on_finished_job = (
+            select(task.pipeline_task_run_id)
+            .outerjoin(job, job.job_id == task.job_id)
+            .where(task.pipeline_run_id == PipelineRunModel.pipeline_run_id)
+            .where(task.status == enum_value(PipelineTaskRunStatus.RUNNING))
+            .where(
+                or_(
+                    job.job_id.is_(None),
+                    and_(
+                        job.status.not_in(JOB_IN_FLIGHT_STATUSES),
+                        func.coalesce(job.finished_at, job.updated_at) < stale,
+                    ),
+                )
+            )
+            .exists()
+        )
+        stmt = (
+            select(PipelineRunModel)
+            .where(PipelineRunModel.updated_at < stale)
+            .where(
+                or_(
+                    PipelineRunModel.status == enum_value(PipelineRunStatus.QUEUED),
+                    and_(
+                        PipelineRunModel.status
+                        == enum_value(PipelineRunStatus.RUNNING),
+                        waits_on_finished_job,
+                    ),
+                )
+            )
+            .order_by(PipelineRunModel.updated_at)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [pipeline_run_model_to_manifest(m) for m in result.scalars().all()]
+
+    async def claim_advance(
+        self, run: PipelineRunManifest
+    ) -> PipelineRunManifest | None:
+        """Record that an orchestration step is being requested for ``run`` iff
+        it still has the status and ``updated_at`` it was read with:
+        ``updated_at`` becomes now. None when it changed (a step ran, or another
+        recovery pass requested one). One conditional UPDATE: of concurrent
+        passes exactly one sends the message. Does not commit."""
+        stmt = (
+            update(PipelineRunModel)
+            .where(PipelineRunModel.pipeline_run_id == run.pipeline_run_id)
+            .where(PipelineRunModel.status == enum_value(run.status))
+            .where(PipelineRunModel.updated_at == run.updated_at)
+            .values(updated_at=func.now())
+            .returning(PipelineRunModel)
+            .execution_options(populate_existing=True)
         )
         result = await self._session.execute(stmt)
         model = result.scalar_one_or_none()

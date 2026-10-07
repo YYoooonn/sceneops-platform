@@ -41,7 +41,7 @@ conditional on `status = RUNNING AND worker_id = <this worker>`. They were not l
    the event loop cannot starve it. A renewal that finds its claim gone cancels the
    handler.
 3. **Recovery reclaims expired leases.** A stateless one-shot command
-   (`sceneops-worker jobs recover-leases`) moves a `RUNNING` Job whose lease has passed
+   (lease recovery, run by `sceneops-worker recover`) moves a `RUNNING` Job whose lease has passed
    back to `QUEUED` and sends a new message — the same Job, so a pipeline task keeps
    waiting on it. After `JOB_CLAIM_BUDGET` (3) claims an expired lease fails the Job
    (`JobLeaseExpired`) and advances its pipeline. Recovery is one conditional UPDATE
@@ -87,4 +87,5 @@ conditional on `status = RUNNING AND worker_id = <this worker>`. They were not l
 - A lease proves the process is alive, not that the handler progresses: a hung
   handler in a live process keeps its Job.
 - A Job reclaimed but whose new message is lost stays `QUEUED`; resending lost
-  dispatches is not part of this decision.
+  dispatches is not part of this decision (it is decided in
+  [ADR-011](./011-state-derived-redispatch.md)).

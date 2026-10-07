@@ -233,6 +233,45 @@ class PostgresJobRepository:
         jobs.sort(key=lambda job: (job.created_at, job.job_id))
         return jobs
 
+    async def list_dispatch_overdue(
+        self, *, older_than_seconds: float, limit: int
+    ) -> list[JobManifest]:
+        """QUEUED Jobs whose last dispatch (``queued_at``, set by every dispatch
+        and redispatch) is older than ``older_than_seconds`` by PostgreSQL's clock,
+        oldest first. A QUEUED Job is waiting for a job message; read-only, so it
+        cannot tell a lost message from one still waiting in the queue."""
+        last_dispatch = func.coalesce(JobModel.queued_at, JobModel.updated_at)
+        stmt = (
+            select(JobModel)
+            .where(JobModel.status == enum_value(JobStatus.QUEUED))
+            .where(last_dispatch < func.now() - _seconds(older_than_seconds))
+            .order_by(last_dispatch)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [job_model_to_manifest(m) for m in result.scalars().all()]
+
+    async def claim_redispatch(self, job: JobManifest) -> JobManifest | None:
+        """Record a new dispatch of a QUEUED Job iff it is still QUEUED with the
+        ``queued_at`` it was read with: ``queued_at`` becomes now. Returns the Job,
+        or None when it changed (claimed by a worker, dispatched again by someone
+        else). One conditional UPDATE, so of concurrent recovery passes exactly
+        one sends the message, and the next resend waits a full interval from
+        this one. Does not commit."""
+        now = func.now()
+        stmt = (
+            update(JobModel)
+            .where(JobModel.job_id == job.job_id)
+            .where(JobModel.status == enum_value(JobStatus.QUEUED))
+            .where(JobModel.queued_at.is_not_distinct_from(job.queued_at))
+            .values(queued_at=now, updated_at=now)
+            .returning(JobModel)
+            .execution_options(populate_existing=True)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return job_model_to_manifest(model) if model is not None else None
+
     async def abandon_if_inactive(
         self,
         job_id: str,

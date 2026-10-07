@@ -13,17 +13,20 @@ line and links there instead of repeating the contract.
 
 Details and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md) §5, §8.
 
-- **Worker loss is recovered by a command, not by the workers.** A Job whose worker
-  died is requeued by job lease recovery (`sceneops-worker jobs recover-leases`, looped
-  by `make recovery-up`) once its lease passes; without that loop it stays `RUNNING`,
-  and so does its PipelineRun. A lease detects a dead or unreachable worker, not a
-  handler that hangs in a live process, and a reclaimed handler's own domain writes are
-  not fenced (they rely on idempotent publication).
-- **A lost `advance` message, or a Job dispatch that fails after its commit, is not
-  re-sent.** The run waits until a person takes an `advance` step
-  (`make worker-advance-pipeline`) or dispatches the Job.
+- **Worker loss and lost messages are recovered by a command, not by the workers.**
+  Execution recovery (`sceneops-worker recover`, looped by `make recovery-up`) requeues
+  a Job whose worker died once its lease passes (60 s), and re-sends a `run_job` or
+  `advance` message that durable state has waited on for longer than its threshold
+  (300 s); without that loop such a Job or PipelineRun waits indefinitely. A lease
+  detects a dead or unreachable worker, not a handler that hangs in a live process, and
+  a reclaimed handler's own domain writes are not fenced (they rely on idempotent
+  publication).
+- **Delivery is at least once.** Recovery cannot tell a lost message from one waiting
+  behind a backlog, so waiting Jobs receive one more message per threshold; consumers
+  refuse the duplicates.
 - **Dispatch and PostgreSQL are not one atomic unit**: a message can be sent without
-  its `ExecutionRecord` committing.
+  its `ExecutionRecord` committing, and an `ExecutionRecord` records a send, not a
+  delivery.
 - **`Celery.send_task` blocks the event loop** in the API's dispatch backends and in
   the worker's dispatcher, which both call it from `async` code.
 - **Pipeline tasks run strictly serially**, one Job in flight per run, in definition

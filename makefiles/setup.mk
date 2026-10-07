@@ -101,7 +101,7 @@ test-integration:
 #
 #   pipelines   (default) pipeline execution contracts on a disposable execution runtime
 #   recovery    acquisition-recovery fault injection + full-lifecycle acceptance + Job
-#               worker loss under the ownership lease
+#               worker loss under the ownership lease + lost broker messages
 #               (makefiles/recovery.mk), same disposable database + bucket, own Redis/workers
 #   kafka       real-Kafka transport: bridge + capture tests in the ros2 image, then the
 #               transport smoke (makefiles/streaming.mk); needs `make streaming-up`

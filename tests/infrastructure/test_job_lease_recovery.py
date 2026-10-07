@@ -5,7 +5,7 @@ SUITE=recovery`), real MinIO (its disposable bucket), a throwaway Redis and Cele
 worker subprocesses running the production worker (``lease_worker``: the real
 JobRunner, lease keeper and fencing; only the handler of the probe Job type is a
 probe). Workers are killed with SIGKILL, paused with SIGSTOP, or lose a pool
-child; recovery is the production command ``sceneops-worker jobs recover-leases``.
+child; recovery is the production command ``sceneops-worker recover``.
 
 Workers run with a 2 s lease (renewed every 0.67 s) so the tests wait seconds,
 not minutes. Waits poll for an observable fact (an event the probe wrote, a row
@@ -89,9 +89,9 @@ def send(env, job_id: str) -> str:
 
 
 def recover(env, *, broker_url: str | None = None) -> list[dict]:
-    """``sceneops-worker jobs recover-leases``: one pass; its actions."""
+    """``sceneops-worker recover``: one pass; the lease sweep's actions."""
     result = subprocess.run(
-        [sys.executable, "-m", "sceneops_worker.main", "jobs", "recover-leases"],
+        [sys.executable, "-m", "sceneops_worker.main", "recover"],
         capture_output=True,
         text=True,
         timeout=120,
@@ -105,7 +105,7 @@ def recover(env, *, broker_url: str | None = None) -> list[dict]:
         },
     )
     assert result.returncode == 0, result.stderr[-4000:]
-    return json.loads(result.stdout.strip().splitlines()[-1])["actions"]
+    return json.loads(result.stdout.strip().splitlines()[-1])["leases"]
 
 
 def outcomes(actions: list[dict], job_id: str) -> list[str]:

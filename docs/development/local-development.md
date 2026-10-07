@@ -164,16 +164,17 @@ make check-commands                the command surface is consistent (no pytest,
     `sceneops-test-infra-pipelines`, one DatasetVersion per test, inside the disposable
     database. It needs `make local-up` (the PostgreSQL / MinIO servers and the images) and
     `make reference-data-bootstrap`, and takes its ports from the free ones on the host.
-  - `recovery` runs the two acquisition-recovery suites and the job-lease suite against
-    PostgreSQL and MinIO in the same disposable database and bucket as
-    `make test-integration`, with a Redis container and Celery workers of its own, so
-    killing, pausing or starving a worker or stopping the broker never touches the dev
-    stack. Each test uses its own MinIO RobotRun root and `rec124-` / `job-lease-` rows; the
-    database and bucket are dropped as a whole. The production commands run as subprocesses
-    (`publish-pending`, `reconcile --once --apply`, `acquisition_status`,
-    `sceneops-worker jobs recover-leases`); only `recovery_worker`, `recovery_publisher` and
-    `lease_worker` (a probe handler for one Job type, 2 s leases) add a fault point. It needs no canonical
-    baseline. The suites share one harness (`tests/infrastructure/recovery_support.py`);
+  - `recovery` runs the two acquisition-recovery suites, the job-lease suite and the
+    lost-dispatch suite against PostgreSQL and MinIO in the same disposable database and
+    bucket as `make test-integration`, with a Redis container and Celery workers of its
+    own, so killing, pausing or starving a worker or stopping the broker never touches the
+    dev stack. Each test uses its own MinIO RobotRun root and `rec124-` / `job-lease-` /
+    `job-lost-` rows; the database and bucket are dropped as a whole. The production
+    commands run as subprocesses (`publish-pending`, `reconcile --once --apply`,
+    `acquisition_status`, `sceneops-worker recover`); only `recovery_worker`,
+    `recovery_publisher`, `lease_worker` (a probe handler for one Job type, 2 s leases)
+    and `dispatch_worker` (probe handlers for every Job type, failable sends) add a fault
+    point. It needs no canonical baseline. The suites share one harness (`tests/infrastructure/recovery_support.py`);
     `RECOVERY_TESTS=<path>` runs one module.
   - `kafka` runs the ROS 2 bridge and capture tests in the `ros2` image (real-Kafka
     integration included) and then the transport smoke, which publishes a deterministic

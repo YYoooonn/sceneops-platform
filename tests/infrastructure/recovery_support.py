@@ -329,10 +329,12 @@ class WorkerProcess:
         app: str = "recovery_worker.celery_app",
         concurrency: int = 2,
         extra_env: dict[str, str] | None = None,
+        queue: str | None = None,
     ) -> None:
         self.env = env
         self.name = name
         self.app = app
+        self.queue = queue or env.queue
         self.concurrency = concurrency
         self.extra_env = extra_env or {}
         self.log_path = env.tmp / f"worker-{name}.log"
@@ -375,7 +377,7 @@ class WorkerProcess:
                 self.app,
                 "worker",
                 "--loglevel=INFO",
-                f"--queues={self.env.queue}",
+                f"--queues={self.queue}",
                 f"--concurrency={self.concurrency}",
                 f"--hostname={self.name}@%h",
             ],

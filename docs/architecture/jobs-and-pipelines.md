@@ -4,7 +4,8 @@
 > `apps/worker/sceneops_worker/{pipelines,jobs,execution,tasks}/` and
 > `apps/api/app/platform/`. Decision records:
 > [ADR-009](../adr/009-job-centric-execution-and-durable-boundaries.md),
-> [ADR-010](../adr/010-job-ownership-lease-and-fencing.md) (ownership lease).
+> [ADR-010](../adr/010-job-ownership-lease-and-fencing.md) (ownership lease),
+> [ADR-011](../adr/011-state-derived-redispatch.md) (lost messages).
 
 ## 1. Two units, one execution path
 
@@ -250,8 +251,8 @@ carries the same id; it names the worker for diagnosis and never decides ownersh
   A renewal proves that the process is alive and reaches PostgreSQL, not that the
   handler makes progress. A renewal that finds the claim gone cancels the handler; a
   renewal that fails (connection error) is retried and is not a loss.
-- **Recovery.** `sceneops-worker jobs recover-leases` (`make job-lease-recovery`; looped
-  by `make recovery-up`) reclaims every `RUNNING` Job whose lease passed by PostgreSQL's
+- **Recovery.** The lease sweep of execution recovery (below) reclaims every `RUNNING`
+  Job whose lease passed by PostgreSQL's
   clock: the same Job goes back to `QUEUED` and a new job message is sent, until the Job
   has been claimed `JOB_CLAIM_BUDGET` (3) times; then it is `FAILED` with
   `JobLeaseExpired` and, if pipeline-owned, its run is advanced to observe the failure.
@@ -268,6 +269,39 @@ carries the same id; it names the worker for diagnosis and never decides ownersh
 A recovery pass is stateless, safe at any frequency and concurrently: of concurrent
 passes exactly one reclaims a Job and sends its message.
 
+### Messages are wake-ups; execution recovery re-sends lost ones (`execution/recovery.py`)
+
+The two Celery messages carry an identifier and nothing else: `run_job(job_id)` and
+`advance(pipeline_run_id)` tell a worker to act on state PostgreSQL already holds. A
+lost message loses no information, only the wake-up, and the state says which wake-up
+it waits for:
+
+| Durable state | Waits on | Re-sent when |
+| --- | --- | --- |
+| Job `QUEUED` | `run_job(job_id)` | `queued_at` (its last dispatch) is older than the resend threshold |
+| PipelineRun `QUEUED` | `advance(run_id)` (start) | `updated_at` (its last dispatch) is older than the threshold |
+| PipelineRun `RUNNING` whose `RUNNING` task's Job is terminal or missing | `advance(run_id)` (observe the Job) | the Job finished, and the run was last stepped or re-sent, longer ago than the threshold |
+
+These are all the states that need a message to progress: every dispatch (API,
+orchestrator, lease recovery) leaves its Job `QUEUED`; after every committed
+orchestration step a run is terminal or waits on exactly one in-flight Job; a
+`RUNNING` Job waits on its worker, whose loss the lease sweep turns into a `QUEUED`
+Job. A `PENDING` Job has not been asked to run and waits on nothing.
+
+`sceneops-worker recover` (`make execution-recovery`; looped by `make recovery-up`) is
+one pass: the lease sweep, then the `run_job` sweep, then the `advance` sweep. The
+threshold is `--resend-after-seconds` (300 s). Before sending, a pass moves the row's
+`queued_at` / `updated_at` to now with a conditional `UPDATE` on the value it read and
+commits; of concurrent passes exactly one wins, no lock is held during the send, and the
+next resend is due one threshold later. A pass that dies before its send leaves a row
+that is due again; one that dies after it causes at most one more message.
+
+The sweep cannot see the broker, so a message still waiting behind a backlog looks lost
+and is sent again once per threshold: delivery is at least once. Duplicates are
+harmless because the consumers are idempotent (one claim per Job, one row-locked step
+per run). A dispatch is complete when the state stops waiting (the Job is claimed, the
+run steps); there is no outbox and no delivered marker.
+
 ### Idempotency and retry
 
 | Concern | Current implementation |
@@ -278,6 +312,7 @@ passes exactly one reclaims a Job and sends its message.
 | Pipeline retry | Re-executing a `FAILED` or `BLOCKED` run resumes at its first unfinished task; succeeded and skipped tasks are not re-run. |
 | Duplicate delivery | The atomic Job claim and the row-locked, idempotent orchestration step make a duplicated message harmless. Celery delivers at least once: with `task_acks_late`, a message whose worker died unacknowledged is delivered again with the same task id (immediately when only a pool child died, `task_reject_on_worker_lost`; when the whole worker died, only once another running worker restores it after the Redis `visibility_timeout`, 1 h). A redelivery that finds the Job `RUNNING` or terminal is refused; one that finds it `QUEUED` after lease recovery may run it, under a new claim. |
 | Worker loss | The lease passes and lease recovery requeues the Job (see Ownership above); the old claim is fenced by `lease_generation`. |
+| Lost message | Execution recovery re-sends `run_job` / `advance` from the waiting state (see above), at least once per resend threshold while the state waits. |
 | Duplicate output | Derived artifacts are write-once and content-pinned, so a Job that re-runs converges on the same objects and records (§7). |
 | Backfill | None: there is no time-partitioned execution; one more PipelineRun is dispatched for the scope. |
 
@@ -289,31 +324,31 @@ Implementation: `packages/sceneops-core/sceneops_core/executions/key.py`,
 ### Durable-state-first boundaries and failure windows
 
 Every dispatch commits durable state first and sends the message second, so a
-message never refers to a row that is not committed. The remaining windows are
-consequences of that order:
+message never refers to a row that is not committed. A send that fails, a process that
+dies between the commit and the send, and a message the broker accepted and then lost
+all leave state that waits; execution recovery re-sends the message (above):
 
 ```text
 API dispatch     mark QUEUED + commit | send_task | commit ExecutionRecord
-                   send fails          record stays QUEUED, nothing in flight; dispatch again
-                   record commit fails message is in flight with no ExecutionRecord
+                   send fails          the API answers 500; the Job stays QUEUED and is
+                                       re-sent after the threshold
+                   record commit fails message in flight with no ExecutionRecord (audit only)
 
 Orchestrator     create Job + task RUNNING, commit | send_task | commit ExecutionRecord
-                   send fails          the Job stays QUEUED and the run waits on it; nothing
-                                       re-sends it automatically
+                   send fails          the step raises; the Job stays QUEUED and is re-sent
 
 JobRunner        claim + RUNNING | handler | terminal state commit | send advance
-                   worker dies after the claim  the lease passes; lease recovery requeues the
-                                                Job and sends it again
-                   advance message lost         the run stays RUNNING with a terminal Job;
-                                                one `advance` step observes it
+                   worker dies after the claim  lease recovery requeues the Job
+                   advance not sent             the run waits on a terminal Job; the
+                                                advance is re-sent
 
 Lease recovery   reclaim (QUEUED) + commit | send_task | commit ExecutionRecord
-                   send fails          the Job stays QUEUED; nothing re-sends it, though
-                                       a broker redelivery of its old message can claim it
+                   send fails          the Job stays QUEUED and is re-sent
 ```
 
-`make worker-advance-pipeline PIPELINE_RUN_ID=…` takes that single `advance` step by
-hand, and a `QUEUED` Job can be dispatched through `POST /jobs/{id}/execute`.
+`make worker-advance-pipeline PIPELINE_RUN_ID=…` takes a single `advance` step by hand,
+and a `QUEUED` Job can be dispatched through `POST /jobs/{id}/execute`; both are the same
+idempotent operations recovery performs.
 
 ## 6. Job steps: `JOB_STEP_DEFINITIONS_BY_TYPE`
 
@@ -376,9 +411,15 @@ artifact table; Episode does not and is reachable through `owner_type=episode` /
 
 These are the verified gaps and bounds of the current design.
 
-- **Worker loss is recovered only while lease recovery runs.** It is a command
-  (`make recovery-up` loops it), not part of the workers; without it a Job whose worker
-  died stays `RUNNING`. Detection takes up to one lease (60 s) plus the loop interval.
+- **Worker loss and lost messages are recovered only while execution recovery runs.**
+  It is a command (`make recovery-up` loops it), not part of the workers; without it a
+  Job whose worker died stays `RUNNING` and state whose message was lost waits. A lost
+  worker is noticed within one lease (60 s), a lost message within the resend threshold
+  (300 s), each plus the loop interval.
+- **Waiting messages are re-sent too.** Recovery cannot tell a lost message from one
+  waiting behind a backlog: while Jobs wait longer than the threshold (no worker, a long
+  queue), each gets one more message per threshold. Each costs a worker one refused
+  claim.
 - **A lease detects a dead or unreachable worker, not a stuck handler.** A handler that
   hangs in a live process keeps renewing its lease. A worker paused or cut off from
   PostgreSQL for longer than the lease loses its Job although it is alive; it is fenced
@@ -386,11 +427,9 @@ These are the verified gaps and bounds of the current design.
 - **Domain writes are not fenced.** A reclaimed handler that is still running may
   write objects and records until it notices the loss (at its next renewal, then its
   handler is cancelled); correctness rests on those writes being idempotent (§7).
-- **Lost or unsent messages are not re-sent.** An `advance` message that is lost, or a
-  Job dispatch that fails after its commit (§5), leaves durable state that waits for
-  an event that does not come.
 - **Dispatch and database are not one atomic unit.** A message can be sent without its
-  `ExecutionRecord` being committed, and a record can be committed without a message.
+  `ExecutionRecord` being committed, and a record can be committed for a message the
+  broker then lost; `ExecutionRecord` is an audit of sends, not of deliveries.
 - **Blocking broker sends in async code.** `Celery.send_task` is synchronous; the API's
   `dispatch_job` / `dispatch_pipeline` and the worker's `ExecutionDispatcher` call it
   from `async` code, so the event loop waits for the broker round trip.

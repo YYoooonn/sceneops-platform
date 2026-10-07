@@ -288,7 +288,9 @@ the durable Job that does the task's work; the task run never executes it.
 
 `PipelineRunStatus`: `pending -> queued -> running -> (blocked | succeeded
 | failed | cancelled)`. `blocked` is what a quality gate produces when it
-stops a pipeline mid-run.
+stops a pipeline mid-run. A run's `updated_at` is also when an `advance` was last
+requested for it: execution recovery re-sends `advance` for a run waiting on one
+longer than its threshold and moves `updated_at` to that resend.
 
 ## 8. Job / JobEvent
 
@@ -316,7 +318,10 @@ current one; `lease_expires_at` is the time (PostgreSQL's clock) until which tha
 claim holds the Job, renewed with `heartbeat_at` while the worker runs and checked by
 job lease recovery. `worker_id` (`celery:<task id>`) and `locked_at` record who
 claimed it and when; a redelivered message repeats its `worker_id`, so it never
-decides ownership (see [Jobs and pipelines](./jobs-and-pipelines.md) §5, §8).
+decides ownership. `queued_at` is the Job's last dispatch: every dispatch, lease
+reclaim and resend of a lost message sets it, and execution recovery re-sends the
+message of a `QUEUED` Job whose `queued_at` is older than its threshold (see
+[Jobs and pipelines](./jobs-and-pipelines.md) §5, §8).
 
 `job_events` — execution log/event stream for a job (`level`, `attempt`,
 `job_step_id`, etc.).

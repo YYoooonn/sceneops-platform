@@ -16,11 +16,14 @@
 #                          attempt budget) and replaces stalled registrations.
 #                          Needs no Redis to classify; only submission does, and a
 #                          broker outage just leaves the Job for a later pass.
-#   job-lease-recovery     PostgreSQL + Redis -> any Job: `jobs recover-leases`
-#                          requeues each RUNNING Job whose worker stopped renewing
-#                          its lease (failed once its claim budget is spent) and
-#                          sends it again. A Job is noticed at most one lease
-#                          (60 s) plus one interval after its worker stopped.
+#   execution-recovery     PostgreSQL + Redis -> Jobs and PipelineRuns:
+#                          `sceneops-worker recover` requeues each RUNNING Job
+#                          whose worker stopped renewing its lease (failed once
+#                          its claim budget is spent), then re-sends run_job /
+#                          advance for QUEUED Jobs and waiting PipelineRuns whose
+#                          message is overdue (300 s). A lost worker is noticed
+#                          within one lease (60 s), a lost message within 300 s,
+#                          each plus one interval.
 #
 # RECOVERY_POLL_INTERVAL_SECONDS (default 60) is the pause between invocations.
 services:
@@ -77,7 +80,7 @@ services:
     profiles:
       - recovery
 
-  job-lease-recovery:
+  execution-recovery:
     image: sceneops-platform/worker:local
     env_file:
       - .env.local
@@ -85,8 +88,7 @@ services:
     command:
       - "${RECOVERY_POLL_INTERVAL_SECONDS:-60}"
       - sceneops-worker
-      - jobs
-      - recover-leases
+      - recover
     volumes:
       - ./scripts/ops:/workspace/ops:ro
     depends_on:

@@ -299,8 +299,11 @@ The stall threshold (`--stall-threshold-seconds`, or
 `SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS`) is 900 s by default
 ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md) Amendment 12.4 gives
 the measurements it comes from). If the broker refuses a dispatch the Job stays
-committed as `pending` / `queued` and is recovered as a stalled Job once it has
-been inactive for the threshold; classification never needs Redis. A running
+committed as `queued` and execution recovery re-sends its message after 300 s
+([Jobs and pipelines](../architecture/jobs-and-pipelines.md) §5), which counts as
+activity; a Job left `pending` (the submission died before queueing it) is recovered
+as a stalled Job once it has been inactive for the threshold. Classification never
+needs Redis. A running
 registration renews its Job's heartbeat, so a live worker is never a stall
 candidate; a `running` Job whose worker died is usually requeued first by job lease
 recovery ([Jobs and pipelines](../architecture/jobs-and-pipelines.md) §5), the same
