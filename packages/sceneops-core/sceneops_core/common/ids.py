@@ -55,12 +55,12 @@ def generate_scenario_id() -> str:
     return generate_prefixed_id("scenario")
 
 
-def generate_scenario_set_id() -> str:
-    return generate_prefixed_id("scset")
-
-
-def generate_artifact_id() -> str:
-    return generate_prefixed_id("art")
+def default_scenario_set_id(job_id: str) -> str:
+    """The ScenarioSet a mining Job produces when the caller names none: a
+    function of the Job, so a retry of that Job converges on the same set
+    instead of forking a new one."""
+    suffix = job_id.removeprefix("job-")
+    return f"scset-{suffix}"
 
 
 def generate_robot_id() -> str:
@@ -80,8 +80,7 @@ def generate_robot_state_id() -> str:
 
 
 def robot_run_recording_artifact_id(robot_run_id: str) -> str:
-    """Deterministic (not random, unlike ``generate_artifact_id``) --
-    one RobotRun has exactly one raw recording artifact, and giving that
+    """Deterministic -- one RobotRun has exactly one raw recording artifact, and giving that
     artifact's id a stable, derivable value lets a second registration
     attempt for the same ``robot_run_id`` collide with the ``artifacts``
     table's own primary key instead of silently creating a duplicate row,

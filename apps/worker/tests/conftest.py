@@ -225,6 +225,20 @@ class SceneWorld:
         ctx.artifact_record_store.create_if_absent = AsyncMock(
             side_effect=create_artifact_if_absent
         )
+        # The production idempotent-registration logic over the in-memory
+        # records, so a test sees convergence and conflict as the platform does.
+        from sceneops_worker.derived import DerivedManifestStore
+        from sceneops_worker.stores.artifacts import ArtifactRecordStore
+
+        records = ArtifactRecordStore.__new__(ArtifactRecordStore)
+        records.create_if_absent = ctx.artifact_record_store.create_if_absent
+        ctx.artifact_record_store.register = records.register
+        ctx.derived_store = DerivedManifestStore(
+            artifact_store=self.artifact_store,
+            dataset_root_uri=f"{self.root}/datasets",
+            runs_root_uri=f"{self.root}/runs",
+            label_root_uri=f"{self.root}/labels",
+        )
 
         async def lock(*, dataset_id, version):
             if (dataset_id, version) not in self.versions:

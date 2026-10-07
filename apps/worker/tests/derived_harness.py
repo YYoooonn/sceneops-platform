@@ -200,6 +200,7 @@ class Harness:
     evaluation_runs: FakeRunStore = field(default_factory=FakeRunStore)
     scene_runs: FakeSceneRunStore = field(default_factory=FakeSceneRunStore)
     commits: int = 0
+    jobs: int = 0
 
     def __post_init__(self) -> None:
         self.settings = SimpleNamespace(run_root_uri=f"{self.root}/runs")
@@ -332,9 +333,16 @@ class Harness:
 
     # ── handler invocation ─────────────────────────────────────────────────
 
-    def request(self, job_type: JobType, params) -> JobHandlerRequest:
+    def request(
+        self, job_type: JobType, params, *, job_id: str | None = None
+    ) -> JobHandlerRequest:
+        """One request is one Job: a fresh id unless the test names one to
+        model a retry of the same Job."""
+        if job_id is None:
+            self.jobs += 1
+            job_id = f"job-{self.jobs}"
         job = JobManifest(
-            job_id="job-1",
+            job_id=job_id,
             type=job_type,
             status=JobStatus.RUNNING,
             params=params.model_dump(mode="json"),

@@ -20,8 +20,8 @@ from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import default_readiness_run_id, generate_artifact_id
+from sceneops_core.common.canonical_json import canonical_json_bytes
+from sceneops_core.common.ids import default_readiness_run_id
 from sceneops_core.common.time import utc_now
 from sceneops_core.jobs.schemas import (
     JobType,
@@ -33,6 +33,7 @@ from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenarios import ScenarioMember
 from sceneops_core.scenarios.schemas.runs import ScenarioReadinessRunRecord
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.derived.resolution import resolve_scenario_set
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
@@ -211,37 +212,35 @@ class ScoreScenarioReadinessJobHandler(
             )[:5]
         ]
 
-        report_uri = context.artifact_store.join_uri(
-            context.settings.run_root_uri, "scenario_readiness", run_id, "report.json"
-        )
-        await context.artifact_store.write_json(
-            report_uri,
-            {
-                "scenario_set": resolved.ref.model_dump(mode="json"),
-                "dataset_id": dataset_id,
-                "dataset_version": dataset_version,
-                "score_profile": params.score_profile,
-                "created_at": utc_now().isoformat(),
-                "pipeline_run_id": job.pipeline_run_id,
-                "job_id": job.job_id,
-                "scored_scene_count": scored_scene_count,
-                "summary": {
-                    "ready_count": counts["ready"],
-                    "warning_count": counts["warning"],
-                    "blocked_count": counts["blocked"],
-                    "average_score": average_score,
-                    "top_scene_ids": top_scene_ids,
-                },
-                "scenes": scored,
-            },
-        )
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.SCENARIO_READINESS_REPORT,
-                uri=report_uri,
-                media_type="application/json",
+        report = await publish_registered(
+            context,
+            kind=ArtifactKind.SCENARIO_READINESS_REPORT,
+            prefix="readinessreport",
+            logical_id=run_id,
+            directory=context.artifact_store.join_uri(
+                context.settings.run_root_uri, "scenario_readiness", run_id
             ),
+            stem="report",
+            data=canonical_json_bytes(
+                {
+                    "scenario_set": resolved.ref.model_dump(mode="json"),
+                    "dataset_id": dataset_id,
+                    "dataset_version": dataset_version,
+                    "score_profile": params.score_profile,
+                    "pipeline_run_id": job.pipeline_run_id,
+                    "job_id": job.job_id,
+                    "scored_scene_count": scored_scene_count,
+                    "summary": {
+                        "ready_count": counts["ready"],
+                        "warning_count": counts["warning"],
+                        "blocked_count": counts["blocked"],
+                        "average_score": average_score,
+                        "top_scene_ids": top_scene_ids,
+                    },
+                    "scenes": scored,
+                }
+            ),
+            media_type="application/json",
             owner_type=ArtifactOwnerType.SCENARIO_READINESS_RUN,
             owner_id=run_id,
             scenario_set_id=scenario_set_id,
@@ -251,6 +250,7 @@ class ScoreScenarioReadinessJobHandler(
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
         )
+        report_uri = report.uri
 
         summary = {
             "score_profile": params.score_profile,

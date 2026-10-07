@@ -1,11 +1,19 @@
-"""Evaluation artifact writers: the manifest records the exact pins it
-consumed and always names the artifacts it wrote."""
+"""Evaluation manifest assembly: the manifest records the exact pins it
+consumed and the checksum-pinned sample results it scored, and is a pure
+function of them (no location, no timestamp), so its bytes are reproducible."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
-from sceneops_core.evaluations.schemas import EvaluationInputs
+import pytest
+
+from sceneops_core.evaluations.schemas import (
+    EvaluationInputs,
+    EvaluationManifestError,
+    EvaluationSampleShardRef,
+    load_canonical_evaluation_manifest,
+)
 from sceneops_core.inference.schemas import (
     DetectionPredictionManifest,
     PredictionRevisionRef,
@@ -13,25 +21,14 @@ from sceneops_core.inference.schemas import (
 from sceneops_core.labels import LabelSetRef
 from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.artifacts import (
-    write_final_evaluation_manifest,
-    write_skipped_evaluation_manifest,
+    build_final_evaluation_manifest,
+    build_skipped_evaluation_manifest,
 )
 from sceneops_worker.evaluation.detection.base import DetectionEvaluationRequest
 from tests.derived.labels_support import label_document
 
-EVAL_MANIFEST_URI = "file:///runs/evaluations/eval-001/evaluation.json"
-METRICS_URI = "file:///runs/evaluations/eval-001/metrics.json"
-SAMPLES_ROOT_URI = "file:///runs/evaluations/eval-001/samples/"
 CHECKSUM = "sha256:" + "a" * 64
-
-
-def _run_store() -> MagicMock:
-    store = MagicMock()
-    store.evaluation_run_manifest_uri = MagicMock(return_value=EVAL_MANIFEST_URI)
-    store.evaluation_run_metrics_uri = MagicMock(return_value=METRICS_URI)
-    store.evaluation_samples_root_uri = MagicMock(return_value=SAMPLES_ROOT_URI)
-    store.write_evaluation_run_manifest = AsyncMock(return_value=EVAL_MANIFEST_URI)
-    return store
+SHARD_CHECKSUM = "sha256:" + "b" * 64
 
 
 def _request() -> DetectionEvaluationRequest:
@@ -70,26 +67,12 @@ def _request() -> DetectionEvaluationRequest:
         prediction=prediction,
         label_set=label_document("gt", covered=[1]),
         views={},
-        run_artifact_store=_run_store(),
+        run_artifact_store=MagicMock(),
         match_distance_m=2.0,
     )
 
 
-async def test_skipped_manifest_records_inputs_reason_and_location():
-    request = _request()
-    manifest = await write_skipped_evaluation_manifest(
-        request=request, reason="no covered samples", metadata={"x": 1}
-    )
-    assert manifest.status == "skipped"
-    assert manifest.evaluation_manifest_uri == EVAL_MANIFEST_URI
-    assert manifest.inputs == request.inputs
-    assert manifest.metadata == {"x": 1, "reason": "no covered samples"}
-    assert (manifest.model_id, manifest.model_version) == ("dummy", "v1")
-    request.run_artifact_store.write_evaluation_run_manifest.assert_awaited_once()
-
-
-async def test_final_manifest_records_inputs_locations_and_metrics():
-    request = _request()
+def _accumulator() -> EvaluationAccumulator:
     accumulator = EvaluationAccumulator()
     accumulator.add(
         {
@@ -103,18 +86,86 @@ async def test_final_manifest_records_inputs_locations_and_metrics():
             "not_localized_prediction_count": 1,
         }
     )
-    manifest = await write_final_evaluation_manifest(
-        request=request, accumulator=accumulator, evaluated_sample_count=2
+    return accumulator
+
+
+def _shards() -> list[EvaluationSampleShardRef]:
+    return [
+        EvaluationSampleShardRef(
+            scene_id="scene-a",
+            sample_id=sample_id,
+            uri=f"file:///runs/evaluations/eval-001/samples/scene-a/{sample_id}.json",
+            checksum=SHARD_CHECKSUM,
+        )
+        for sample_id in ("s2", "s1")
+    ]
+
+
+def test_skipped_manifest_records_inputs_and_reason():
+    request = _request()
+    manifest = build_skipped_evaluation_manifest(
+        request=request, reason="no covered samples", metadata={"x": 1}
+    )
+    assert manifest.status == "skipped"
+    assert manifest.inputs == request.inputs
+    assert manifest.metadata == {"x": 1, "reason": "no covered samples"}
+    assert (manifest.model_id, manifest.model_version) == ("dummy", "v1")
+    assert manifest.sample_shards == []
+
+
+def test_final_manifest_records_inputs_pinned_shards_and_metrics():
+    request = _request()
+    manifest = build_final_evaluation_manifest(
+        request=request, accumulator=_accumulator(), sample_shards=_shards()
     )
     assert manifest.status == "succeeded"
     assert manifest.inputs == request.inputs
-    assert (manifest.evaluation_manifest_uri, manifest.metrics_uri) == (
-        EVAL_MANIFEST_URI,
-        METRICS_URI,
-    )
-    assert manifest.samples_root_uri == SAMPLES_ROOT_URI
+    assert manifest.sample_count == 2
+    # Shards are ordered by (scene_id, sample_id), whatever order they arrived in.
+    assert [s.sample_id for s in manifest.sample_shards] == ["s1", "s2"]
     assert manifest.evaluation_unit == "label"
     assert manifest.ground_truth_count == 4
     assert manifest.metrics["not_localized_prediction_count"] == 1
     assert manifest.primary_metric_name == "precision"
     assert manifest.primary_metric_value == 0.75
+
+
+def test_manifest_bytes_are_a_pure_function_of_what_was_scored():
+    request = _request()
+    one = build_final_evaluation_manifest(
+        request=request, accumulator=_accumulator(), sample_shards=_shards()
+    )
+    two = build_final_evaluation_manifest(
+        request=request,
+        accumulator=_accumulator(),
+        sample_shards=list(reversed(_shards())),
+    )
+    assert one.to_canonical_bytes() == two.to_canonical_bytes()
+    assert one.checksum() == two.checksum()
+    # No self-location and no clock: nothing in the bytes depends on when or
+    # where the manifest was written.
+    document = one.model_dump(mode="json")
+    assert not {"created_at", "evaluation_manifest_uri", "metrics_uri"} & set(document)
+
+
+def test_a_different_result_is_a_different_revision():
+    request = _request()
+    one = build_final_evaluation_manifest(
+        request=request, accumulator=_accumulator(), sample_shards=_shards()
+    )
+    changed = _shards()
+    changed[0] = changed[0].model_copy(update={"checksum": "sha256:" + "c" * 64})
+    two = build_final_evaluation_manifest(
+        request=request, accumulator=_accumulator(), sample_shards=changed
+    )
+    assert one.checksum() != two.checksum()
+
+
+def test_canonical_bytes_round_trip_and_reject_anything_else():
+    manifest = build_final_evaluation_manifest(
+        request=_request(), accumulator=_accumulator(), sample_shards=_shards()
+    )
+    data = manifest.to_canonical_bytes()
+    assert load_canonical_evaluation_manifest(data) == manifest
+    with pytest.raises(EvaluationManifestError, match="canonical"):
+        load_canonical_evaluation_manifest(data.replace(b",", b", ", 1))

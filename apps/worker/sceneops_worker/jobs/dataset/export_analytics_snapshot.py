@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from sceneops_analytics import (
     TABLE_BUILDERS,
+    AnalyticsTableWriteResult,
     build_keyframes_table,
     build_observations_table,
     build_scenes_table,
 )
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import (
     ExportAnalyticsSnapshotJobParams,
@@ -18,6 +17,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.scenes.schemas import SceneManifest
+from sceneops_worker.derived.publication import register_published
 from sceneops_worker.scenes.resolver import list_dataset_version_scenes
 from sceneops_worker.scenes.resolver import resolve_registered_scene
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
@@ -81,15 +81,14 @@ class ExportAnalyticsSnapshotJobHandler(
                 resolved = await resolve_registered_scene(context, scene)
                 manifests.append((scene.scene_id, resolved.manifest))
 
-        table_uris: dict[str, str] = {}
+        tables: dict[str, AnalyticsTableWriteResult] = {}
         row_counts: dict[str, int] = {}
 
         if "scenes" in requested_tables:
             df = build_scenes_table(all_scene_records)
-            uri = await context.analytics_writer.write_table(
+            tables["scenes"] = await context.analytics_writer.write_table(
                 "scenes", df, dataset_id=dataset_id, dataset_version=dataset_version
             )
-            table_uris["scenes"] = uri
             row_counts["scenes"] = df.height
 
         for table_name, builder in _MANIFEST_TABLE_BUILDERS.items():
@@ -100,20 +99,22 @@ class ExportAnalyticsSnapshotJobHandler(
                 dataset_version=dataset_version,
                 manifests=manifests,
             )
-            uri = await context.analytics_writer.write_table(
+            tables[table_name] = await context.analytics_writer.write_table(
                 table_name, df, dataset_id=dataset_id, dataset_version=dataset_version
             )
-            table_uris[table_name] = uri
             row_counts[table_name] = df.height
 
-        for table_name, uri in table_uris.items():
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.ANALYTICS_TABLE,
-                    uri=uri,
-                    media_type="application/vnd.apache.parquet",
-                ),
+        for table_name, table in tables.items():
+            await register_published(
+                context,
+                kind=ArtifactKind.ANALYTICS_TABLE,
+                prefix="analyticstable",
+                logical_id=f"{dataset_id}:{dataset_version}:{table_name}",
+                uri=table.uri,
+                checksum=table.checksum,
+                size_bytes=table.size_bytes,
+                media_type="application/vnd.apache.parquet",
+                metadata={"table_name": table_name},
                 owner_type=ArtifactOwnerType.DATASET_VERSION,
                 owner_id=f"{dataset_id}:{dataset_version}",
                 dataset_id=dataset_id,
@@ -125,7 +126,7 @@ class ExportAnalyticsSnapshotJobHandler(
         return ExportAnalyticsSnapshotJobResult(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
-            table_uris=table_uris,
+            table_uris={name: table.uri for name, table in tables.items()},
             row_counts=row_counts,
             scene_count=len(all_scene_records),
         )

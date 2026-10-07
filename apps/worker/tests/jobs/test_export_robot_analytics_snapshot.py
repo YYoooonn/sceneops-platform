@@ -15,6 +15,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from sceneops_analytics import AnalyticsTableWriter
+from sceneops_storage import LocalArtifactStore
+
 from sceneops_core.robots.schemas import (
     MissionRecord,
     MissionStatus,
@@ -24,6 +27,8 @@ from sceneops_core.robots.schemas import (
 from sceneops_worker.jobs.robots.export_robot_analytics_snapshot import (
     ExportRobotAnalyticsSnapshotJobHandler,
 )
+from sceneops_worker.stores.artifacts import ArtifactRecordStore
+from tests.derived_harness import FakeArtifactRepo
 
 ROBOT_RUN_ID = "run-1"
 
@@ -80,6 +85,7 @@ def _context(
     robot_run: RobotRunRecord | None,
     states: list[RobotStateRecord],
     missions: list[MissionRecord],
+    root: str = "/unused",
 ) -> MagicMock:
     ctx = MagicMock()
 
@@ -88,21 +94,16 @@ def _context(
     ctx.robot_store.list_states = AsyncMock(return_value=states)
     ctx.robot_store.list_missions = AsyncMock(return_value=missions)
 
-    written: dict[str, tuple] = {}
-
-    async def write_robot_run_table(table_name, df, *, robot_run_id):
-        uri = f"file:///analytical/robot_runs/{robot_run_id}/{table_name}.parquet"
-        written[table_name] = (df, uri)
-        return uri
-
-    ctx.analytics_writer = MagicMock()
-    ctx.analytics_writer.write_robot_run_table = AsyncMock(
-        side_effect=write_robot_run_table
+    # The real writer over a local store and the real registration logic over
+    # an in-memory repository: what is registered is what was written.
+    ctx.artifact_store = LocalArtifactStore(root_uri=root)
+    ctx.analytics_writer = AnalyticsTableWriter(
+        artifact_store=ctx.artifact_store, root_uri=f"{root}/analytical"
     )
-    ctx._written = written
-
-    ctx.artifact_record_store = MagicMock()
-    ctx.artifact_record_store.create = AsyncMock(return_value=MagicMock())
+    ctx.repo = FakeArtifactRepo()
+    records = ArtifactRecordStore.__new__(ArtifactRecordStore)
+    records._repo = ctx.repo
+    ctx.artifact_record_store = records
 
     return ctx
 
@@ -119,11 +120,13 @@ async def test_raises_if_robot_run_not_found():
         await handler.run(request)
 
 
-async def test_exports_both_tables_by_default():
+async def test_exports_both_tables_by_default(tmp_path):
     robot_run = _robot_run()
     states = [_state("s1", timestamp_us=1_000), _state("s2", timestamp_us=2_000)]
     missions = [_mission("mission-1")]
-    ctx = _context(robot_run=robot_run, states=states, missions=missions)
+    ctx = _context(
+        robot_run=robot_run, states=states, missions=missions, root=str(tmp_path)
+    )
 
     handler = ExportRobotAnalyticsSnapshotJobHandler()
     request = MagicMock()
@@ -137,15 +140,16 @@ async def test_exports_both_tables_by_default():
     assert result.row_counts["robot_telemetry"] == 2
     assert result.row_counts["missions"] == 1
     assert result.robot_run_id == ROBOT_RUN_ID
-    assert ctx.artifact_record_store.create.call_count == 2
+    assert len(ctx.repo.records) == 2
 
 
-async def test_respects_requested_table_subset():
+async def test_respects_requested_table_subset(tmp_path):
     robot_run = _robot_run()
     ctx = _context(
         robot_run=robot_run,
         states=[_state("s1", timestamp_us=1_000)],
         missions=[_mission("mission-1")],
+        root=str(tmp_path),
     )
 
     handler = ExportRobotAnalyticsSnapshotJobHandler()
@@ -158,12 +162,12 @@ async def test_respects_requested_table_subset():
 
     assert set(result.table_uris) == {"robot_telemetry"}
     ctx.robot_store.list_missions.assert_not_called()
-    assert ctx.artifact_record_store.create.call_count == 1
+    assert len(ctx.repo.records) == 1
 
 
-async def test_empty_states_and_missions_produce_empty_but_valid_tables():
+async def test_empty_states_and_missions_produce_empty_but_valid_tables(tmp_path):
     robot_run = _robot_run()
-    ctx = _context(robot_run=robot_run, states=[], missions=[])
+    ctx = _context(robot_run=robot_run, states=[], missions=[], root=str(tmp_path))
 
     handler = ExportRobotAnalyticsSnapshotJobHandler()
     request = MagicMock()

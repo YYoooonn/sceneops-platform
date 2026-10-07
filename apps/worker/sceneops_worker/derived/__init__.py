@@ -4,12 +4,10 @@ from .manifests import (
     DerivedManifestConflictError,
     DerivedManifestIntegrityError,
     DerivedManifestStore,
-    PublishedManifest,
 )
 
 __all__ = [
     "DerivedManifestConflictError",
     "DerivedManifestIntegrityError",
     "DerivedManifestStore",
-    "PublishedManifest",
 ]

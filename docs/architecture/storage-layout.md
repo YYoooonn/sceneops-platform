@@ -130,14 +130,19 @@ an Episode build of the same RobotRun share every payload they both extract.
 
 ### Analytics (Parquet)
 
-`analytical/{dataset_id}/{dataset_version}/{table_name}.parquet` —
-`scenes`/`observations`/`keyframes`/`annotations`, written by the
+`analytical/{dataset_id}/{dataset_version}/snapshots/{table_name}-{sha256}.parquet` —
+`scenes`/`observations`/`keyframes`, written by the
 `export_analytics_snapshot` job via `sceneops-analytics`'
-`AnalyticsTableWriter`. Re-running overwrites the same URI (a derived
-projection, rebuilt from canonical Scenes).
+`AnalyticsTableWriter` (a derived projection, rebuilt from canonical
+Scenes). The key embeds the checksum of the table's bytes, so rebuilding
+from unchanged data converges on the same object and rebuilding from
+changed data adds a revision beside the old one; nothing is overwritten.
+Each table is registered as an `ANALYTICS_TABLE` ArtifactRecord whose id
+derives from the table and that checksum.
 
 Robot data is a separate scope from Dataset, so the same writer uses a
-second path scheme: `analytical/robot_runs/{robot_run_id}/{table_name}.parquet`
+second path scheme:
+`analytical/robot_runs/{robot_run_id}/{table_name}-{sha256}.parquet`
 (`robot_telemetry`/`missions`, written by `export_robot_analytics_snapshot`
 — see [Robot data ingestion](../workflows/robot-run-and-mcap.md) §4).
 
@@ -148,16 +153,19 @@ can't be queried directly without DuckDB's httpfs/S3 extension (not wired
 up); the supported path downloads to local disk first, then queries.
 
 `export_analytics_snapshot` only covers Scene-domain tables — Episode has
-no equivalent flat, overwrite-in-place export. Aligned Episode revisions
+no equivalent flat export. Aligned Episode revisions
 do have their own Parquet export under a different scheme; see below.
 
 ### Learning data & curation (Phase 2)
 
-Scoped by `export_id`/`curation_id` rather than overwriting a single
-per-dataset-version URI the way `export_analytics_snapshot` does —
-multiple learning-data export snapshots and curation runs must coexist per
-`DatasetVersion`, each identified by its own deterministic id
-(`learning_data_export_id`/`episode_curation_id`):
+Scoped by `export_id`/`curation_id` — multiple learning-data export
+snapshots and curation runs must coexist per `DatasetVersion`, each
+identified by its own deterministic id
+(`learning_data_export_id`/`episode_curation_id`). An id names one content:
+every object below is write-once, rewriting identical bytes is a no-op and
+different bytes under an id are a conflict. An incremental export (one with
+a `base_export_id`) reuses its base's shards and rows, so the base is part of
+its id and it never shares one with a full export over the same episodes:
 
 ```text
 {dataset_id}/{dataset_version}/learning/{export_id[:16]}/learning_episodes.parquet
@@ -178,6 +186,31 @@ still used by the frozen golden-fixture/regression path only; see
 `write_learning_export_manifest`/`write_curation_manifest` — see
 [Robot learning data layer](./robot-learning-data.md) and
 [Scalable learning data](./scalable-learning-data.md).
+
+### Run outputs: reports, evaluation, predictions
+
+Every derived output of a run is write-once at a checksum-qualified key and
+registered under an id derived from its content:
+
+```text
+{run_root}/{scene_validations|scene_profiles|episode_validations|episode_profiles|scenario_mining|scenario_readiness}/{run_id}/report-{sha256}.json
+{run_root}/evaluations/{evaluation_run_id}/manifest-{sha256}.json
+{run_root}/evaluations/{evaluation_run_id}/metrics-{sha256}.json
+{run_root}/evaluations/{evaluation_run_id}/samples/{scene_id}/{sample_id}.json
+{run_root}/inference/{run_id}/prediction_manifest-{sha256}.json
+```
+
+`ArtifactRecord.checksum` is the checksum of the bytes at its `uri`, and the
+`uri` names that checksum, so a record can only ever refer to the bytes it
+pinned. The record id is `derived_artifact_id(prefix, run_id, checksum)`
+(`derived.publication.publish_registered`): a retry of a Job that reproduces
+the same bytes converges on the same object and record whichever worker runs
+it, and a changed result for the same run id is a new revision beside the old
+one. Report bytes carry no timestamp; timing lives on the run record. A run
+id is derived from its Job, so a new execution is a new run with its own
+outputs. Per-sample evaluation and prediction results are pinned by checksum
+in their manifest; they are written once per run id and a different result
+under a reused id is a conflict.
 
 ### External inputs and the raw-source boundary
 

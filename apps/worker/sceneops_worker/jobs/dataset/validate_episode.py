@@ -6,8 +6,8 @@ from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import default_validation_run_id, generate_artifact_id
+from sceneops_core.common.canonical_json import canonical_json_bytes
+from sceneops_core.common.ids import default_validation_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.episodes.schemas import EpisodeValidationRunRecord
@@ -19,6 +19,7 @@ from sceneops_core.jobs.schemas import (
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.episodes.resolver import resolve_registered_episode
 from sceneops_worker.episodes.validation import EpisodeManifestValidator
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
@@ -151,38 +152,35 @@ class ValidateEpisodeJobHandler(
                     "state_count": result.state_count,
                     "action_count": result.action_count,
                     "event_count": result.event_count,
-                    "issues": [i.model_dump() for i in result.issues],
+                    "issues": [i.model_dump(mode="json") for i in result.issues],
                 }
             )
 
             per_episode_run_id = _per_episode_validation_run_id(job.job_id, episode_id)
-            per_episode_report_uri = context.artifact_store.join_uri(
-                context.settings.run_root_uri,
-                "episode_validations",
-                per_episode_run_id,
-                "report.json",
-            )
-            await context.artifact_store.write_json(
-                per_episode_report_uri,
-                {
-                    "run_id": per_episode_run_id,
-                    "job_id": job.job_id,
-                    "episode_id": episode_id,
-                    "checked_episode_count": 1,
-                    "total_issues": episode_issue_count,
-                    "should_block_pipeline": result.should_block,
-                    "status": result.status,
-                    "episodes": [report_episodes[-1]],
-                    "created_at": utc_now().isoformat(),
-                },
-            )
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.EPISODE_VALIDATION_REPORT,
-                    uri=per_episode_report_uri,
-                    media_type="application/json",
+            per_episode_report = await publish_registered(
+                context,
+                kind=ArtifactKind.EPISODE_VALIDATION_REPORT,
+                prefix="valreport",
+                logical_id=per_episode_run_id,
+                directory=context.artifact_store.join_uri(
+                    context.settings.run_root_uri,
+                    "episode_validations",
+                    per_episode_run_id,
                 ),
+                stem="report",
+                data=canonical_json_bytes(
+                    {
+                        "run_id": per_episode_run_id,
+                        "job_id": job.job_id,
+                        "episode_id": episode_id,
+                        "checked_episode_count": 1,
+                        "total_issues": episode_issue_count,
+                        "should_block_pipeline": result.should_block,
+                        "status": result.status,
+                        "episodes": [report_episodes[-1]],
+                    }
+                ),
+                media_type="application/json",
                 owner_type=ArtifactOwnerType.EPISODE_VALIDATION_RUN,
                 owner_id=per_episode_run_id,
                 dataset_id=dataset_id,
@@ -202,7 +200,7 @@ class ValidateEpisodeJobHandler(
                     status=RunStatus.SUCCEEDED,
                     validation_status=result.status,
                     should_block_pipeline=result.should_block,
-                    validation_report_uri=per_episode_report_uri,
+                    validation_report_uri=per_episode_report.uri,
                     checked_episode_count=1,
                     issue_count=episode_issue_count,
                     error_count=episode_blocking_count,
@@ -222,31 +220,27 @@ class ValidateEpisodeJobHandler(
         else:
             overall_status = "ready"
 
-        report = {
-            "run_id": run_id,
-            "job_id": job.job_id,
-            "checked_episode_count": len(episode_ids),
-            "total_issues": total_issues,
-            "should_block_pipeline": blocking,
-            "status": overall_status,
-            "episodes": report_episodes,
-            "created_at": utc_now().isoformat(),
-        }
-        report_uri = context.artifact_store.join_uri(
-            context.settings.run_root_uri,
-            "episode_validations",
-            run_id,
-            "report.json",
-        )
-        await context.artifact_store.write_json(report_uri, report)
-
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.EPISODE_VALIDATION_REPORT,
-                uri=report_uri,
-                media_type="application/json",
+        report = await publish_registered(
+            context,
+            kind=ArtifactKind.EPISODE_VALIDATION_REPORT,
+            prefix="valreport",
+            logical_id=run_id,
+            directory=context.artifact_store.join_uri(
+                context.settings.run_root_uri, "episode_validations", run_id
             ),
+            stem="report",
+            data=canonical_json_bytes(
+                {
+                    "run_id": run_id,
+                    "job_id": job.job_id,
+                    "checked_episode_count": len(episode_ids),
+                    "total_issues": total_issues,
+                    "should_block_pipeline": blocking,
+                    "status": overall_status,
+                    "episodes": report_episodes,
+                }
+            ),
+            media_type="application/json",
             owner_type=ArtifactOwnerType.EPISODE_VALIDATION_RUN,
             owner_id=run_id,
             dataset_id=dataset_id,
@@ -255,6 +249,7 @@ class ValidateEpisodeJobHandler(
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
         )
+        report_uri = report.uri
 
         succeeded_record = initial_record.model_copy(
             update={

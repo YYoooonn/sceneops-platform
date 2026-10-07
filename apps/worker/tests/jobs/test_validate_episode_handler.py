@@ -55,7 +55,9 @@ async def test_registered_episode_is_validated_at_its_pinned_revision() -> None:
         manifest_artifact_id=record.manifest_artifact_id,
         manifest_checksum=record.manifest_checksum,
     )
-    for call in context.artifact_record_store.create.await_args_list:
+    registered = context.artifact_record_store.register.await_args_list
+    assert registered  # the per-episode report and the run report
+    for call in registered:
         assert call.kwargs["owner_type"] == ArtifactOwnerType.EPISODE_VALIDATION_RUN
     context.scene_store.get.assert_not_called()
 

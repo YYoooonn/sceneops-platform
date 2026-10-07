@@ -87,7 +87,9 @@ Label criteria require a label set and every view must pin that revision.
 - `evaluate_detection` pins one prediction revision and one label revision,
   scores only samples the label set covers, and fails on frame mismatch.
   `categories` is an exact allowlist. The evaluation manifest records its
-  `inputs`.
+  `inputs` and pins every per-sample result by checksum; it and the metrics
+  document are write-once, checksum-qualified revisions of the run (see
+  [Storage layout](./storage-layout.md)).
 - The `mock` backend is a seeded test double over the labels attached to a
   sample; real backends never receive labels.
 

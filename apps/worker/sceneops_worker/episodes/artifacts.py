@@ -15,12 +15,12 @@ canonical revisions, under ``episodes/{episode_id}/aligned/``.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
 
 from sceneops_core.common.checksums import (
+    checksum_hex,
     checksum_qualified_manifest_name,
     sha256_checksum,
 )
@@ -30,7 +30,12 @@ from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     load_canonical_episode_manifest,
 )
-from sceneops_storage import ArtifactNotFoundError, ArtifactStore
+from sceneops_storage import (
+    ArtifactNotFoundError,
+    ArtifactStore,
+    WriteOnceConflictError,
+    write_once,
+)
 
 from sceneops_worker.recordings.payload_store import ObservationPayloadStore
 
@@ -40,7 +45,7 @@ class EpisodeManifestIntegrityError(RuntimeError):
     checksum / size."""
 
 
-class EpisodeManifestWriteConflictError(RuntimeError):
+class EpisodeManifestWriteConflictError(WriteOnceConflictError):
     """A write-once manifest key already holds different bytes."""
 
 
@@ -55,10 +60,6 @@ def _canonical_bytes(payload: dict[str, Any]) -> bytes:
     from the platform's general write_json(indent=2) convention, scoped to
     this store only, in exchange for exact-checksum determinism."""
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def _sha256_hex(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -238,20 +239,18 @@ class EpisodeArtifactStore:
             source_manifest_sha256=source_manifest_sha256,
             alignment_key=alignment_key,
         )
-        data = _canonical_bytes(artifact.to_artifact_dict())
         # An AlignedEpisode is a pure function of (source revision, alignment
         # recipe), and both are in the key, so the same key always holds the
         # same bytes: a retry is a no-op, anything else is a conflict.
-        if await self.artifact_store.exists(uri):
-            if await self.artifact_store.read_bytes(uri) != data:
-                raise EpisodeManifestWriteConflictError(
-                    f"{uri} already holds a different aligned episode; aligned "
-                    "episode keys are write-once"
-                )
-        else:
-            await self.artifact_store.write_bytes(uri, data)
+        written = await write_once(
+            self.artifact_store,
+            uri,
+            _canonical_bytes(artifact.to_artifact_dict()),
+            conflict=EpisodeManifestWriteConflictError,
+            verify=False,
+        )
         return EpisodeArtifactWriteResult(
-            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
+            uri=uri, checksum=written.checksum, size_bytes=written.size_bytes
         )
 
     async def read_aligned_episode_bytes(self, uri: str) -> bytes | None:
@@ -276,13 +275,15 @@ class EpisodeArtifactStore:
         source_manifest_sha256: str,
         alignment_key: str,
         report_kind: str,
+        checksum: str,
     ) -> str:
         """Sibling of the aligned artifact's own URI -- same two identity
         segments (source hash, alignment key), suffixed by report_kind
-        ("validation" | "profile") rather than nested under the aligned
-        artifact's own ``.json`` file, so a listing of the ``aligned/{hash}/``
-        prefix shows the artifact and its analyses grouped together by name
-        (SceneOps V2 Request 2.4 §30)."""
+        ("validation" | "profile") and the report's own checksum, so a
+        listing of the ``aligned/{hash}/`` prefix shows the artifact and its
+        analyses grouped together by name (SceneOps V2 Request 2.4 §30) and a
+        re-run of a changed validator or profiler adds a revision instead of
+        replacing the one a record pins."""
         version_root = self._version_root_uri(
             dataset_id=dataset_id, dataset_version=dataset_version
         )
@@ -292,7 +293,7 @@ class EpisodeArtifactStore:
             episode_id,
             "aligned",
             source_manifest_sha256[:16],
-            f"{alignment_key[:16]}.{report_kind}.json",
+            f"{alignment_key[:16]}.{report_kind}-{checksum_hex(checksum)}.json",
         )
 
     async def write_aligned_episode_report(
@@ -306,6 +307,7 @@ class EpisodeArtifactStore:
         report_kind: str,
         report: SceneOpsBaseModel,
     ) -> EpisodeArtifactWriteResult:
+        data = _canonical_bytes(report.to_artifact_dict())
         uri = self.aligned_episode_report_uri(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
@@ -313,9 +315,15 @@ class EpisodeArtifactStore:
             source_manifest_sha256=source_manifest_sha256,
             alignment_key=alignment_key,
             report_kind=report_kind,
+            checksum=sha256_checksum(data),
         )
-        data = _canonical_bytes(report.to_artifact_dict())
-        await self.artifact_store.write_bytes(uri, data)
+        written = await write_once(
+            self.artifact_store,
+            uri,
+            data,
+            conflict=EpisodeManifestWriteConflictError,
+            verify=False,
+        )
         return EpisodeArtifactWriteResult(
-            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
+            uri=uri, checksum=written.checksum, size_bytes=written.size_bytes
         )

@@ -19,6 +19,7 @@ from sceneops_core.episodes.schemas import (
 from sceneops_core.episodes.testing import action, episode_manifest, observation, state
 from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
 
+from sceneops_worker.derived import DerivedManifestStore
 from sceneops_worker.episodes.artifacts import EpisodeManifestIntegrityError
 
 S = 1_000_000_000
@@ -60,6 +61,25 @@ def register(manifest: EpisodeManifest, *, dataset_id="d1", version="v1"):
     return record, artifact, data
 
 
+class MemoryArtifactStore:
+    """The slice of ArtifactStore the report publication path uses."""
+
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def join_uri(self, root: str, *parts: str) -> str:
+        return "/".join([root.rstrip("/"), *parts])
+
+    async def exists(self, uri: str) -> bool:
+        return uri in self.objects
+
+    async def read_bytes(self, uri: str) -> bytes:
+        return self.objects[uri]
+
+    async def write_bytes(self, uri: str, data: bytes) -> None:
+        self.objects[uri] = data
+
+
 def make_context(
     registered: list[tuple[EpisodeRecord, ArtifactRecord, bytes]],
 ) -> MagicMock:
@@ -94,10 +114,13 @@ def make_context(
     context.episode_artifact_store.read_pinned_manifest = AsyncMock(
         side_effect=read_manifest
     )
-    context.artifact_store.join_uri = MagicMock(
-        side_effect=lambda *parts: "/".join(parts)
+    context.artifact_store = MemoryArtifactStore()
+    context.derived_store = DerivedManifestStore(
+        artifact_store=context.artifact_store,
+        dataset_root_uri="mem://datasets",
+        runs_root_uri="mem://runs",
+        label_root_uri="mem://labels",
     )
-    context.artifact_store.write_json = AsyncMock()
     context.runs.episode_runs.upsert = AsyncMock(side_effect=lambda r: r)
     context.settings.run_root_uri = "mem://runs"
     context.commit = AsyncMock()

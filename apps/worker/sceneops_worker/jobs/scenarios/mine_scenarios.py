@@ -17,12 +17,9 @@ from typing import Any
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.derived_ids import scenario_set_artifact_id
-from sceneops_core.common.ids import (
-    default_mining_run_id,
-    generate_artifact_id,
-    generate_scenario_set_id,
-)
+from sceneops_core.common.ids import default_mining_run_id, default_scenario_set_id
 from sceneops_core.common.time import utc_now
 from sceneops_core.jobs.schemas import (
     JobType,
@@ -44,6 +41,7 @@ from sceneops_core.scenarios.schemas.records import ScenarioSetRecord
 from sceneops_core.scenarios.schemas.runs import ScenarioMiningRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived import DerivedManifestConflictError
+from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.derived.resolution import resolve_sample_view
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_worker.scenes.readiness import pinned_revision_readiness
@@ -290,7 +288,9 @@ class MineScenariosJobHandler(
                 {"scene_id": member.scene_id, "reasons": ["max_candidates"]}
             )
 
-        scenario_set_id = params.output_scenario_set_id or generate_scenario_set_id()
+        scenario_set_id = params.output_scenario_set_id or default_scenario_set_id(
+            job.job_id
+        )
         manifest = ScenarioSetManifest(
             scenario_set_id=scenario_set_id,
             dataset_id=params.dataset_id,
@@ -344,31 +344,29 @@ class MineScenariosJobHandler(
             pipeline_run_id=job.pipeline_run_id,
         )
 
-        report_uri = context.artifact_store.join_uri(
-            context.settings.run_root_uri, "scenario_mining", run_id, "report.json"
-        )
         selected_scene_ids = [m.scene_id for m in members]
-        await context.artifact_store.write_json(
-            report_uri,
-            {
-                "run_id": run_id,
-                "job_id": job.job_id,
-                "scenario_set_id": scenario_set_id,
-                "scenario_set_checksum": checksum,
-                "input_scene_count": len(views),
-                "selected_count": len(members),
-                "rejected_count": len(views) - len(members),
-                "rejected": rejected,
-                "created_at": utc_now().isoformat(),
-            },
-        )
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.SCENARIO_MINING_REPORT,
-                uri=report_uri,
-                media_type="application/json",
+        report = await publish_registered(
+            context,
+            kind=ArtifactKind.SCENARIO_MINING_REPORT,
+            prefix="miningreport",
+            logical_id=run_id,
+            directory=context.artifact_store.join_uri(
+                context.settings.run_root_uri, "scenario_mining", run_id
             ),
+            stem="report",
+            data=canonical_json_bytes(
+                {
+                    "run_id": run_id,
+                    "job_id": job.job_id,
+                    "scenario_set_id": scenario_set_id,
+                    "scenario_set_checksum": checksum,
+                    "input_scene_count": len(views),
+                    "selected_count": len(members),
+                    "rejected_count": len(views) - len(members),
+                    "rejected": rejected,
+                }
+            ),
+            media_type="application/json",
             owner_type=ArtifactOwnerType.SCENARIO_MINING_RUN,
             owner_id=run_id,
             scenario_set_id=scenario_set_id,
@@ -378,6 +376,7 @@ class MineScenariosJobHandler(
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
         )
+        report_uri = report.uri
 
         await context.scenario_store.upsert(
             ScenarioSetRecord(

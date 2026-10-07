@@ -6,8 +6,8 @@ from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import default_profile_run_id, generate_artifact_id
+from sceneops_core.common.canonical_json import canonical_json_bytes
+from sceneops_core.common.ids import default_profile_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.jobs.schemas import (
@@ -19,6 +19,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.runs import SceneProfileRunRecord
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_worker.scenes.profiling import SceneManifestProfiler
 from sceneops_worker.scenes.resolver import resolve_registered_scene
@@ -118,28 +119,19 @@ class ProfileSceneJobHandler(
             scene_profiles.append(scene_profile)
 
             per_scene_run_id = _per_scene_profile_run_id(job.job_id, scene_id)
-            per_scene_report_uri = context.artifact_store.join_uri(
-                context.settings.run_root_uri,
-                "scene_profiles",
-                per_scene_run_id,
-                "report.json",
-            )
-            await context.artifact_store.write_json(
-                per_scene_report_uri,
-                {
-                    "run_id": per_scene_run_id,
-                    "job_id": job.job_id,
-                    **scene_profile,
-                    "created_at": utc_now().isoformat(),
-                },
-            )
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.DATASET_PROFILE_REPORT,
-                    uri=per_scene_report_uri,
-                    media_type="application/json",
+            per_scene_report = await publish_registered(
+                context,
+                kind=ArtifactKind.DATASET_PROFILE_REPORT,
+                prefix="profreport",
+                logical_id=per_scene_run_id,
+                directory=context.artifact_store.join_uri(
+                    context.settings.run_root_uri, "scene_profiles", per_scene_run_id
                 ),
+                stem="report",
+                data=canonical_json_bytes(
+                    {"run_id": per_scene_run_id, "job_id": job.job_id, **scene_profile}
+                ),
+                media_type="application/json",
                 owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
                 owner_id=per_scene_run_id,
                 scene_id=scene_id,
@@ -161,7 +153,7 @@ class ProfileSceneJobHandler(
                     observation_count=result.observation_count,
                     keyframe_count=result.keyframe_count,
                     observed_channels=result.observed_channels,
-                    profile_report_uri=per_scene_report_uri,
+                    profile_report_uri=per_scene_report.uri,
                     coverage=coverage,
                     pipeline_run_id=job.pipeline_run_id,
                     pipeline_task_run_id=job.pipeline_task_run_id,
@@ -172,29 +164,27 @@ class ProfileSceneJobHandler(
             )
 
         observed_channels = sorted(all_channels)
-        report_uri = context.artifact_store.join_uri(
-            context.settings.run_root_uri, "scene_profiles", run_id, "report.json"
-        )
-        await context.artifact_store.write_json(
-            report_uri,
-            {
-                "run_id": run_id,
-                "job_id": job.job_id,
-                "scene_count": len(scene_profiles),
-                "observation_count": total_observations,
-                "keyframe_count": total_keyframes,
-                "observed_channels": observed_channels,
-                "scenes": scene_profiles,
-                "created_at": utc_now().isoformat(),
-            },
-        )
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.DATASET_PROFILE_REPORT,
-                uri=report_uri,
-                media_type="application/json",
+        report = await publish_registered(
+            context,
+            kind=ArtifactKind.DATASET_PROFILE_REPORT,
+            prefix="profreport",
+            logical_id=run_id,
+            directory=context.artifact_store.join_uri(
+                context.settings.run_root_uri, "scene_profiles", run_id
             ),
+            stem="report",
+            data=canonical_json_bytes(
+                {
+                    "run_id": run_id,
+                    "job_id": job.job_id,
+                    "scene_count": len(scene_profiles),
+                    "observation_count": total_observations,
+                    "keyframe_count": total_keyframes,
+                    "observed_channels": observed_channels,
+                    "scenes": scene_profiles,
+                }
+            ),
+            media_type="application/json",
             owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
             owner_id=run_id,
             dataset_id=params.dataset_id,
@@ -203,6 +193,7 @@ class ProfileSceneJobHandler(
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
         )
+        report_uri = report.uri
 
         succeeded_record = initial_record.model_copy(
             update={

@@ -94,3 +94,24 @@ def test_export_id_ignores_duplicate_adjacent_calls_with_same_set_different_list
     ) == learning_data_export_id(
         aligned_checksums=checksums_b, export_config=LearningDataExportConfig()
     )
+
+
+def test_an_incremental_export_never_shares_an_id_with_a_full_export() -> None:
+    """The incremental export reuses its base's shards and rows, so its bytes
+    differ from a full export over the same episodes; they must not share the
+    id that names where those bytes live."""
+    full = learning_data_export_id(
+        aligned_checksums=["a" * 64, "b" * 64],
+        export_config=LearningDataExportConfig(),
+    )
+    incremental = learning_data_export_id(
+        aligned_checksums=["a" * 64, "b" * 64],
+        export_config=LearningDataExportConfig(),
+        base_export_id="c" * 64,
+    )
+    other_base = learning_data_export_id(
+        aligned_checksums=["a" * 64, "b" * 64],
+        export_config=LearningDataExportConfig(),
+        base_export_id="d" * 64,
+    )
+    assert len({full, incremental, other_base}) == 3

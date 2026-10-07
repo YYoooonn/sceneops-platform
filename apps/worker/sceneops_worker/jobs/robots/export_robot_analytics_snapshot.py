@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from sceneops_analytics import (
     ROBOT_TABLE_BUILDERS,
+    AnalyticsTableWriteResult,
     build_missions_table,
     build_robot_telemetry_table,
 )
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import (
     ExportRobotAnalyticsSnapshotJobParams,
@@ -16,6 +15,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
+from sceneops_worker.derived.publication import register_published
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
 # Row-count cap for a single robot_run's analytics export. RobotState is a
@@ -69,7 +69,7 @@ class ExportRobotAnalyticsSnapshotJobHandler(
             set(params.tables) if params.tables else set(ROBOT_TABLE_BUILDERS)
         )
 
-        table_uris: dict[str, str] = {}
+        tables: dict[str, AnalyticsTableWriteResult] = {}
         row_counts: dict[str, int] = {}
 
         if "robot_telemetry" in requested_tables:
@@ -77,10 +77,11 @@ class ExportRobotAnalyticsSnapshotJobHandler(
                 robot_run_id=robot_run_id, limit=_MAX_ROWS_PER_TABLE
             )
             df = build_robot_telemetry_table(states)
-            uri = await context.analytics_writer.write_robot_run_table(
+            tables[
+                "robot_telemetry"
+            ] = await context.analytics_writer.write_robot_run_table(
                 "robot_telemetry", df, robot_run_id=robot_run_id
             )
-            table_uris["robot_telemetry"] = uri
             row_counts["robot_telemetry"] = df.height
 
         if "missions" in requested_tables:
@@ -88,20 +89,22 @@ class ExportRobotAnalyticsSnapshotJobHandler(
                 robot_run_id=robot_run_id, limit=_MAX_ROWS_PER_TABLE
             )
             df = build_missions_table(missions)
-            uri = await context.analytics_writer.write_robot_run_table(
+            tables["missions"] = await context.analytics_writer.write_robot_run_table(
                 "missions", df, robot_run_id=robot_run_id
             )
-            table_uris["missions"] = uri
             row_counts["missions"] = df.height
 
-        for table_name, uri in table_uris.items():
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.ANALYTICS_TABLE,
-                    uri=uri,
-                    media_type="application/vnd.apache.parquet",
-                ),
+        for table_name, table in tables.items():
+            await register_published(
+                context,
+                kind=ArtifactKind.ANALYTICS_TABLE,
+                prefix="analyticstable",
+                logical_id=f"{robot_run_id}:{table_name}",
+                uri=table.uri,
+                checksum=table.checksum,
+                size_bytes=table.size_bytes,
+                media_type="application/vnd.apache.parquet",
+                metadata={"table_name": table_name},
                 owner_type=ArtifactOwnerType.ROBOT_RUN,
                 owner_id=robot_run_id,
                 job_id=job.job_id,
@@ -110,6 +113,6 @@ class ExportRobotAnalyticsSnapshotJobHandler(
 
         return ExportRobotAnalyticsSnapshotJobResult(
             robot_run_id=robot_run_id,
-            table_uris=table_uris,
+            table_uris={name: table.uri for name, table in tables.items()},
             row_counts=row_counts,
         )

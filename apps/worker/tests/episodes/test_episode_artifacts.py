@@ -236,3 +236,63 @@ class TestAlignedEpisodeIsWriteOnce:
             + hashlib.sha256(await store.artifact_store.read_bytes(one.uri)).hexdigest()
             == one.checksum
         )
+
+
+class TestAlignedEpisodeReportStorage:
+    """Reports are named by their own content: a re-run of a changed validator
+    or profiler is a new revision beside the old one, never a replacement."""
+
+    @staticmethod
+    def _report(**fields):
+        from sceneops_core.common.schemas import SceneOpsBaseModel
+
+        class _Report(SceneOpsBaseModel):
+            valid: bool = True
+            issue_count: int = 0
+
+        return _Report(**fields)
+
+    @staticmethod
+    def _kwargs():
+        return dict(
+            dataset_id="d1",
+            dataset_version="v1",
+            episode_id="ep-1",
+            source_manifest_sha256="a" * 64,
+            alignment_key="k" * 64,
+            report_kind="validation",
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_report_pins_its_bytes_and_a_retry_converges(
+        self, tmp_path
+    ) -> None:
+        store = _store(tmp_path)
+        one = await store.write_aligned_episode_report(
+            report=self._report(), **self._kwargs()
+        )
+        again = await store.write_aligned_episode_report(
+            report=self._report(), **self._kwargs()
+        )
+
+        data = await store.artifact_store.read_bytes(one.uri)
+        assert one.checksum == "sha256:" + hashlib.sha256(data).hexdigest()
+        assert one.checksum.removeprefix("sha256:") in one.uri
+        assert (again.uri, again.checksum) == (one.uri, one.checksum)
+
+    @pytest.mark.asyncio
+    async def test_a_changed_report_is_a_new_revision_and_keeps_the_old_bytes(
+        self, tmp_path
+    ) -> None:
+        store = _store(tmp_path)
+        one = await store.write_aligned_episode_report(
+            report=self._report(), **self._kwargs()
+        )
+        old_bytes = await store.artifact_store.read_bytes(one.uri)
+
+        two = await store.write_aligned_episode_report(
+            report=self._report(valid=False, issue_count=2), **self._kwargs()
+        )
+
+        assert two.uri != one.uri
+        assert await store.artifact_store.read_bytes(one.uri) == old_bytes

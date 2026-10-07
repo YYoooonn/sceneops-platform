@@ -393,6 +393,9 @@ async def test_full_build_and_incremental_export_expose_identical_logical_data(
     )
     incremental_result = await ExportLearningDataJobHandler().run(incremental_request)
 
+    # Two physically different exports, so two ids: neither overwrote the other.
+    assert full_result.export_id != incremental_result.export_id
+
     full_dataset = await _open_dataset(fixture, full_result.export_id)
     incremental_dataset = await _open_dataset(fixture, incremental_result.export_id)
 

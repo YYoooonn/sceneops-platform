@@ -65,12 +65,14 @@ async def mine(harness, views, **params):
     from sceneops_core.jobs.schemas import JobType, MineScenariosJobParams
     from sceneops_worker.jobs.scenarios import MineScenariosJobHandler
 
+    job_id = params.pop("job_id", None)
     params.setdefault("dataset_id", DATASET_ID)
     params.setdefault("dataset_version", DATASET_VERSION)
     return await MineScenariosJobHandler().run(
         harness.request(
             JobType.MINE_SCENARIOS,
             MineScenariosJobParams(sample_views=list(views), **params),
+            job_id=job_id,
         )
     )
 
@@ -79,13 +81,18 @@ async def predict(harness, **params):
     from sceneops_core.jobs.schemas import JobType, PredictDetectionJobParams
     from sceneops_worker.jobs.inference import PredictDetectionJobHandler
 
+    job_id = params.pop("job_id", None)
     params.setdefault("dataset_id", DATASET_ID)
     params.setdefault("dataset_version", DATASET_VERSION)
     params.setdefault("model_id", "dummy")
     params.setdefault("model_version", "v1")
     params.setdefault("camera_channel", "CAM_FRONT")
     return await PredictDetectionJobHandler().run(
-        harness.request(JobType.PREDICT_DETECTION, PredictDetectionJobParams(**params))
+        harness.request(
+            JobType.PREDICT_DETECTION,
+            PredictDetectionJobParams(**params),
+            job_id=job_id,
+        )
     )
 
 
@@ -93,10 +100,13 @@ async def evaluate(harness, **params):
     from sceneops_core.jobs.schemas import EvaluateDetectionJobParams, JobType
     from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
 
+    job_id = params.pop("job_id", None)
     params.setdefault("dataset_id", DATASET_ID)
     params.setdefault("dataset_version", DATASET_VERSION)
     return await EvaluateDetectionJobHandler().run(
         harness.request(
-            JobType.EVALUATE_DETECTION, EvaluateDetectionJobParams(**params)
+            JobType.EVALUATE_DETECTION,
+            EvaluateDetectionJobParams(**params),
+            job_id=job_id,
         )
     )

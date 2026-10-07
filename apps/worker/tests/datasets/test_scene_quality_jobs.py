@@ -203,3 +203,107 @@ async def test_profile_requires_scene_ids(scene_world):
                 job=_job(), params=ProfileSceneJobParams(), context=scene_world.context
             )
         )
+
+
+# ── report artifacts: immutable, content-pinned, convergent ─────────────────
+
+
+def _report_records(world, kind: str):
+    return [r for r in world.artifacts.values() if r.kind == kind]
+
+
+async def _validate(world, scene_ids, *, channels):
+    return await ValidateSceneJobHandler().run(
+        JobHandlerRequest(
+            job=_job(),
+            params=ValidateSceneJobParams(
+                dataset_id="ds",
+                dataset_version="v1",
+                scene_ids=scene_ids,
+                require_target_channels=channels,
+            ),
+            context=world.context,
+        )
+    )
+
+
+async def test_every_validation_report_record_pins_the_bytes_at_its_uri(scene_world):
+    from sceneops_core.common.checksums import sha256_checksum
+
+    registered = await _registered(scene_world, "a")
+    result = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+
+    reports = _report_records(scene_world, "dataset_validation_report")
+    assert len(reports) == 2  # the per-scene report and the run report
+    assert result.report_uri in {r.uri for r in reports}
+    for record in reports:
+        data = await scene_world.artifact_store.read_bytes(record.uri)
+        assert record.checksum == sha256_checksum(data)
+        assert record.size_bytes == len(data)
+        # The key itself names the content it holds.
+        assert record.checksum.removeprefix("sha256:") in record.uri
+        assert b"created_at" not in data
+
+
+async def test_re_executing_a_validation_job_converges_on_the_same_reports(
+    scene_world,
+):
+    registered = await _registered(scene_world, "a")
+    first = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+    ids = {
+        r.artifact_id for r in _report_records(scene_world, "dataset_validation_report")
+    }
+
+    again = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+
+    assert again.report_uri == first.report_uri
+    assert {
+        r.artifact_id for r in _report_records(scene_world, "dataset_validation_report")
+    } == ids
+
+
+async def test_a_changed_validation_result_is_a_new_revision_never_an_overwrite(
+    scene_world,
+):
+    registered = await _registered(scene_world, "a")
+    first = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+    first_bytes = await scene_world.artifact_store.read_bytes(first.report_uri)
+
+    # Same Job and run id, different outcome (a channel the Scene lacks).
+    second = await _validate(
+        scene_world, registered.scene_ids, channels=["RADAR_FRONT"]
+    )
+
+    assert second.report_uri != first.report_uri
+    assert await scene_world.artifact_store.read_bytes(first.report_uri) == first_bytes
+    uris = {r.uri for r in _report_records(scene_world, "dataset_validation_report")}
+    assert {first.report_uri, second.report_uri} <= uris
+
+
+async def test_re_executing_a_profile_job_converges_and_pins_its_bytes(scene_world):
+    from sceneops_core.common.checksums import sha256_checksum
+
+    registered = await _registered(scene_world, "a")
+
+    async def profile():
+        return await ProfileSceneJobHandler().run(
+            JobHandlerRequest(
+                job=_job(),
+                params=ProfileSceneJobParams(
+                    dataset_id="ds",
+                    dataset_version="v1",
+                    scene_ids=registered.scene_ids,
+                ),
+                context=scene_world.context,
+            )
+        )
+
+    first = await profile()
+    records = _report_records(scene_world, "dataset_profile_report")
+    again = await profile()
+
+    assert again.report_uri == first.report_uri
+    assert _report_records(scene_world, "dataset_profile_report") == records
+    for record in records:
+        data = await scene_world.artifact_store.read_bytes(record.uri)
+        assert record.checksum == sha256_checksum(data)

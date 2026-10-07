@@ -6,8 +6,8 @@ from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import default_profile_run_id, generate_artifact_id
+from sceneops_core.common.canonical_json import canonical_json_bytes
+from sceneops_core.common.ids import default_profile_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.episodes.schemas import EpisodeProfileRunRecord
@@ -19,6 +19,7 @@ from sceneops_core.jobs.schemas import (
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.episodes.profiling import EpisodeManifestProfiler
 from sceneops_worker.episodes.resolver import resolve_registered_episode
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
@@ -120,28 +121,21 @@ class ProfileEpisodeJobHandler(
             episode_profiles.append(profile)
 
             per_episode_run_id = _per_episode_profile_run_id(job.job_id, episode_id)
-            per_episode_report_uri = context.artifact_store.join_uri(
-                context.settings.run_root_uri,
-                "episode_profiles",
-                per_episode_run_id,
-                "report.json",
-            )
-            await context.artifact_store.write_json(
-                per_episode_report_uri,
-                {
-                    "run_id": per_episode_run_id,
-                    "job_id": job.job_id,
-                    "created_at": utc_now().isoformat(),
-                    **profile,
-                },
-            )
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.EPISODE_PROFILE_REPORT,
-                    uri=per_episode_report_uri,
-                    media_type="application/json",
+            per_episode_report = await publish_registered(
+                context,
+                kind=ArtifactKind.EPISODE_PROFILE_REPORT,
+                prefix="profreport",
+                logical_id=per_episode_run_id,
+                directory=context.artifact_store.join_uri(
+                    context.settings.run_root_uri,
+                    "episode_profiles",
+                    per_episode_run_id,
                 ),
+                stem="report",
+                data=canonical_json_bytes(
+                    {"run_id": per_episode_run_id, "job_id": job.job_id, **profile}
+                ),
+                media_type="application/json",
                 owner_type=ArtifactOwnerType.EPISODE_PROFILE_RUN,
                 owner_id=per_episode_run_id,
                 dataset_id=dataset_id,
@@ -159,7 +153,7 @@ class ProfileEpisodeJobHandler(
                     dataset_id=dataset_id,
                     dataset_version=dataset_version,
                     status=RunStatus.SUCCEEDED,
-                    profile_report_uri=per_episode_report_uri,
+                    profile_report_uri=per_episode_report.uri,
                     checked_episode_count=1,
                     **{name: getattr(result, name) for name in totals},
                     **{name: getattr(result, name) for name in _TOPIC_LISTS},
@@ -174,26 +168,26 @@ class ProfileEpisodeJobHandler(
             )
 
         observed = {name: sorted(values) for name, values in topics.items()}
-        report = {
-            "run_id": run_id,
-            "job_id": job.job_id,
-            "checked_episode_count": len(episode_profiles),
-            **totals,
-            **observed,
-            "episodes": episode_profiles,
-            "created_at": utc_now().isoformat(),
-        }
-        report_uri = context.artifact_store.join_uri(
-            context.settings.run_root_uri, "episode_profiles", run_id, "report.json"
-        )
-        await context.artifact_store.write_json(report_uri, report)
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.EPISODE_PROFILE_REPORT,
-                uri=report_uri,
-                media_type="application/json",
+        report = await publish_registered(
+            context,
+            kind=ArtifactKind.EPISODE_PROFILE_REPORT,
+            prefix="profreport",
+            logical_id=run_id,
+            directory=context.artifact_store.join_uri(
+                context.settings.run_root_uri, "episode_profiles", run_id
             ),
+            stem="report",
+            data=canonical_json_bytes(
+                {
+                    "run_id": run_id,
+                    "job_id": job.job_id,
+                    "checked_episode_count": len(episode_profiles),
+                    **totals,
+                    **observed,
+                    "episodes": episode_profiles,
+                }
+            ),
+            media_type="application/json",
             owner_type=ArtifactOwnerType.EPISODE_PROFILE_RUN,
             owner_id=run_id,
             dataset_id=dataset_id,
@@ -202,6 +196,7 @@ class ProfileEpisodeJobHandler(
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
         )
+        report_uri = report.uri
 
         succeeded_record = initial_record.model_copy(
             update={

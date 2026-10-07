@@ -10,7 +10,8 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sceneops_storage import ArtifactStore
+from sceneops_core.common.checksums import checksum_hex
+from sceneops_storage import ArtifactStore, WrittenObject, write_once
 
 
 def _canonical_bytes(payload: dict[str, Any]) -> bytes:
@@ -26,31 +27,48 @@ def _sha256_hex(data: bytes) -> str:
 
 @dataclass(frozen=True)
 class AnalyticsTableWriteResult:
-    """Like EpisodeArtifactStore.EpisodeArtifactWriteResult, but for Parquet
-    tables/manifests written through this writer (SceneOps V2 Request 2.5).
-    Added alongside the existing str-only write_table/write_robot_run_table
-    -- those two keep their existing return type unchanged so
-    export_analytics_snapshot/export_robot_analytics_snapshot are
-    unaffected; only the new learning-export write paths return this."""
+    """Where one Parquet table or manifest was written and the checksum and
+    size of exactly those bytes."""
 
     uri: str
     checksum: str
     size_bytes: int
 
 
+def _result(written: WrittenObject) -> AnalyticsTableWriteResult:
+    return AnalyticsTableWriteResult(
+        uri=written.uri, checksum=written.checksum, size_bytes=written.size_bytes
+    )
+
+
+def _parquet_bytes(df: pl.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    df.write_parquet(buffer)
+    return buffer.getvalue()
+
+
 class AnalyticsTableWriter:
     """Writes Polars tables as Parquet artifacts under an ArtifactStore root.
 
-    Two scoping schemes, one underlying writer:
-      - dataset-scoped:  ``{root_uri}/{dataset_id}/{dataset_version}/{table_name}.parquet``
-      - robot-run-scoped: ``{root_uri}/robot_runs/{robot_run_id}/{table_name}.parquet``
+    Every object is write-once: a key that already holds the same bytes is a
+    retry, a key that holds different bytes is a conflict, and nothing is
+    ever overwritten. Snapshot tables are named by their own content, so
+    rebuilding a snapshot from changed data adds a revision beside the old
+    one:
 
-    A rebuild overwrites the same URI rather than versioning each write.
+      - dataset-scoped:  ``{root_uri}/{dataset_id}/{dataset_version}/snapshots/{table_name}-{hex}.parquet``
+      - robot-run-scoped: ``{root_uri}/robot_runs/{robot_run_id}/{table_name}-{hex}.parquet``
+
+    The returned checksum is the one an ArtifactRecord registers.
     """
 
     def __init__(self, *, artifact_store: ArtifactStore, root_uri: str) -> None:
         self.artifact_store = artifact_store
         self.root_uri = root_uri
+
+    async def _publish(self, uri: str, data: bytes) -> AnalyticsTableWriteResult:
+        written = await write_once(self.artifact_store, uri, data, verify=False)
+        return _result(written)
 
     def table_uri(
         self,
@@ -58,12 +76,14 @@ class AnalyticsTableWriter:
         dataset_id: str,
         dataset_version: str,
         table_name: str,
+        checksum: str,
     ) -> str:
         return self.artifact_store.join_uri(
             self.root_uri,
             dataset_id,
             dataset_version,
-            f"{table_name}.parquet",
+            "snapshots",
+            f"{table_name}-{checksum_hex(checksum)}.parquet",
         )
 
     async def write_table(
@@ -73,20 +93,26 @@ class AnalyticsTableWriter:
         *,
         dataset_id: str,
         dataset_version: str,
-    ) -> str:
-        uri = self.table_uri(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            table_name=table_name,
+    ) -> AnalyticsTableWriteResult:
+        data = _parquet_bytes(df)
+        return await self._publish(
+            self.table_uri(
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                table_name=table_name,
+                checksum=f"sha256:{_sha256_hex(data)}",
+            ),
+            data,
         )
-        return await self._write_parquet(uri, df)
 
-    def robot_run_table_uri(self, *, robot_run_id: str, table_name: str) -> str:
+    def robot_run_table_uri(
+        self, *, robot_run_id: str, table_name: str, checksum: str
+    ) -> str:
         return self.artifact_store.join_uri(
             self.root_uri,
             "robot_runs",
             robot_run_id,
-            f"{table_name}.parquet",
+            f"{table_name}-{checksum_hex(checksum)}.parquet",
         )
 
     async def write_robot_run_table(
@@ -95,24 +121,25 @@ class AnalyticsTableWriter:
         df: pl.DataFrame,
         *,
         robot_run_id: str,
-    ) -> str:
-        uri = self.robot_run_table_uri(robot_run_id=robot_run_id, table_name=table_name)
-        return await self._write_parquet(uri, df)
-
-    async def _write_parquet(self, uri: str, df: pl.DataFrame) -> str:
-        buffer = io.BytesIO()
-        df.write_parquet(buffer)
-        await self.artifact_store.write_bytes(uri, buffer.getvalue())
-        return uri
+    ) -> AnalyticsTableWriteResult:
+        data = _parquet_bytes(df)
+        return await self._publish(
+            self.robot_run_table_uri(
+                robot_run_id=robot_run_id,
+                table_name=table_name,
+                checksum=f"sha256:{_sha256_hex(data)}",
+            ),
+            data,
+        )
 
     # ------------------------------------------------------------------
     # Columnar learning-data export snapshots (SceneOps V2 Request 2.5)
     # ------------------------------------------------------------------
     #
-    # Scoped by export_id rather than overwriting a single per-dataset-
-    # version URI like write_table does -- multiple learning-data export
-    # snapshots must coexist per DatasetVersion (Request 2.5 §6), each
-    # identified by its own deterministic export_id.
+    # Scoped by export_id -- multiple learning-data export snapshots must
+    # coexist per DatasetVersion (Request 2.5 §6), each identified by its own
+    # deterministic export_id. An export_id names one content: rewriting the
+    # same bytes is a retry, different bytes under it are a conflict.
 
     def learning_table_uri(
         self,
@@ -146,13 +173,7 @@ class AnalyticsTableWriter:
             export_id=export_id,
             table_name=table_name,
         )
-        buffer = io.BytesIO()
-        df.write_parquet(buffer)
-        data = buffer.getvalue()
-        await self.artifact_store.write_bytes(uri, data)
-        return AnalyticsTableWriteResult(
-            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
-        )
+        return await self._publish(uri, _parquet_bytes(df))
 
     # ------------------------------------------------------------------
     # Sharded learning_steps/learning_signals objects (SceneOps V2 Request
@@ -226,11 +247,7 @@ class AnalyticsTableWriter:
                     arrow_table.slice(offset, size), row_group_size=size
                 )
                 offset += size
-        data = sink.getvalue().to_pybytes()
-        await self.artifact_store.write_bytes(uri, data)
-        return AnalyticsTableWriteResult(
-            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
-        )
+        return await self._publish(uri, sink.getvalue().to_pybytes())
 
     def learning_export_manifest_uri(
         self,
@@ -261,11 +278,7 @@ class AnalyticsTableWriter:
             dataset_version=dataset_version,
             export_id=export_id,
         )
-        data = _canonical_bytes(manifest.to_artifact_dict())
-        await self.artifact_store.write_bytes(uri, data)
-        return AnalyticsTableWriteResult(
-            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
-        )
+        return await self._publish(uri, _canonical_bytes(manifest.to_artifact_dict()))
 
     async def read_learning_export_manifest_bytes(self, uri: str) -> bytes | None:
         """Raw bytes, for CURATE_EPISODES (SceneOps V2 Request 2.6) which
@@ -325,11 +338,7 @@ class AnalyticsTableWriter:
             dataset_version=dataset_version,
             curation_id=curation_id,
         )
-        data = _canonical_bytes(manifest.to_artifact_dict())
-        await self.artifact_store.write_bytes(uri, data)
-        return AnalyticsTableWriteResult(
-            uri=uri, checksum=f"sha256:{_sha256_hex(data)}", size_bytes=len(data)
-        )
+        return await self._publish(uri, _canonical_bytes(manifest.to_artifact_dict()))
 
 
 __all__ = ["AnalyticsTableWriter", "AnalyticsTableWriteResult"]

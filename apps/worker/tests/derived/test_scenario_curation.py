@@ -223,3 +223,38 @@ async def test_readiness_scores_the_pinned_members(tmp_path):
                 JobType.SCORE_SCENARIO_READINESS, ScoreScenarioReadinessJobParams()
             )
         )
+
+
+async def test_re_executing_a_readiness_job_converges_on_one_pinned_report(tmp_path):
+    from sceneops_core.common.checksums import sha256_checksum
+
+    harness, _scenes, _ls, views = await _setup(tmp_path)
+    mined = await mine(harness, views.values(), label_set_id="gt")
+
+    async def score():
+        return await ScoreScenarioReadinessJobHandler().run(
+            harness.request(
+                JobType.SCORE_SCENARIO_READINESS,
+                ScoreScenarioReadinessJobParams(scenario_set_id=mined.scenario_set_id),
+                job_id="job-score",
+            )
+        )
+
+    first = await score()
+    records = [
+        r
+        for r in harness.repo.records.values()
+        if r.kind == ArtifactKind.SCENARIO_READINESS_REPORT.value
+    ]
+    again = await score()
+
+    assert again.readiness_report_uri == first.readiness_report_uri
+    assert [
+        r
+        for r in harness.repo.records.values()
+        if r.kind == ArtifactKind.SCENARIO_READINESS_REPORT.value
+    ] == records
+    (record,) = records
+    data = await harness.artifact_store.read_bytes(record.uri)
+    assert record.checksum == sha256_checksum(data)
+    assert b"created_at" not in data

@@ -284,10 +284,9 @@ check "same run id, same inputs: the same prediction revision" \
 echo ""
 
 echo "=== [6/8] atomic EVALUATE: the same pinned inputs reproduce the same metrics ==="
-# A second evaluation of the same pinned inputs under its own fixed run id. evaluate_detection
-# registers ArtifactRecords under fresh ids on every execution, so re-executing an existing
-# evaluation run would add duplicate records: the evaluation runs once, and a repeated journey
-# reads the run it recorded.
+# A second evaluation of the same pinned inputs under its own fixed run id. Re-executing it
+# would converge on the same content-pinned artifacts, so the evaluation runs once and a
+# repeated journey reads the run it recorded instead of repeating the work.
 if RECHECK_RUN="$(api_get "$API_BASE_URL" "/evaluations/runs/$RECHECK_EVALUATION_RUN_ID" 2>/dev/null)" \
   && [ "$(echo "$RECHECK_RUN" | jq -r '.run.status')" = succeeded ]; then
   echo "  evaluation run $RECHECK_EVALUATION_RUN_ID exists: read, not re-executed"

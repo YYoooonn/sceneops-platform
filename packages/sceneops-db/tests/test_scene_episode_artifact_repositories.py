@@ -4,17 +4,22 @@ test_scene_repository.py."""
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import generate_artifact_id
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.episodes import PostgresEpisodeRepository
 
 
 # ── EpisodeRecord ─────────────────────────────────────────────────────────────
+
+
+def _artifact_id() -> str:
+    return f"art-test-{uuid.uuid4().hex[:12]}"
 
 
 @pytest.mark.asyncio
@@ -116,7 +121,7 @@ async def test_episode_window_must_be_non_empty_in_the_database(
 @pytest.mark.asyncio
 async def test_artifact_record_insert_and_get(db_session, unique_id):
     repo = PostgresArtifactRefRepository(db_session)
-    artifact_id = generate_artifact_id()
+    artifact_id = _artifact_id()
     scene_id = unique_id("scene")
     job_id = unique_id("job")
     pipeline_run_id = unique_id("pipe")
@@ -175,14 +180,14 @@ async def test_artifact_record_filter_by_owner(db_session, unique_id):
     other_scene_id = unique_id("scene-other")
 
     await repo.create(
-        artifact_id=generate_artifact_id(),
+        artifact_id=_artifact_id(),
         ref=ArtifactRef(kind=ArtifactKind.SCENE_MANIFEST, uri="s3://x/a.json"),
         owner_type=ArtifactOwnerType.SCENE,
         owner_id=scene_id,
         scene_id=scene_id,
     )
     await repo.create(
-        artifact_id=generate_artifact_id(),
+        artifact_id=_artifact_id(),
         ref=ArtifactRef(kind=ArtifactKind.SCENE_MANIFEST, uri="s3://x/b.json"),
         owner_type=ArtifactOwnerType.SCENE,
         owner_id=other_scene_id,
@@ -205,14 +210,14 @@ async def test_artifact_record_no_dedupe_on_insert(db_session, unique_id):
     uri = f"s3://sceneops/artifacts/scenes/{scene_id}.json"
 
     await repo.create(
-        artifact_id=generate_artifact_id(),
+        artifact_id=_artifact_id(),
         ref=ArtifactRef(kind=ArtifactKind.SCENE_MANIFEST, uri=uri),
         owner_type=ArtifactOwnerType.SCENE,
         owner_id=scene_id,
         scene_id=scene_id,
     )
     await repo.create(
-        artifact_id=generate_artifact_id(),
+        artifact_id=_artifact_id(),
         ref=ArtifactRef(kind=ArtifactKind.SCENE_MANIFEST, uri=uri),
         owner_type=ArtifactOwnerType.SCENE,
         owner_id=scene_id,

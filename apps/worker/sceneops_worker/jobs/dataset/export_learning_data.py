@@ -192,6 +192,7 @@ class ExportLearningDataJobHandler(
             aligned_checksums=[r.aligned_artifact_checksum for r in all_revisions],
             export_config=export_config,
             schema_version=LEARNING_DATA_SCHEMA_VERSION,
+            base_export_id=params.base_export_id,
         )
 
         requested_tables = (

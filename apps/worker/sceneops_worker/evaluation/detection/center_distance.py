@@ -19,12 +19,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from sceneops_core.evaluations.schemas import EvaluationSampleShardRef
 from sceneops_core.jobs.schemas.params import MissingGroundTruthPolicy
 from sceneops_worker.evaluation.detection.accumulation import EvaluationAccumulator
 from sceneops_worker.evaluation.detection.artifacts import (
-    write_final_evaluation_manifest,
+    build_final_evaluation_manifest,
+    build_skipped_evaluation_manifest,
     write_sample_evaluation,
-    write_skipped_evaluation_manifest,
 )
 from sceneops_worker.evaluation.detection.base import (
     DetectionEvaluationRequest,
@@ -61,7 +62,7 @@ async def evaluate_center_distance_detection(
     label_set_id = request.label_set.label_set_id
 
     accumulator = EvaluationAccumulator()
-    evaluated_sample_count = 0
+    sample_shards: list[EvaluationSampleShardRef] = []
     evaluated_scene_ids: set[str] = set()
     skipped_shards: list[dict[str, Any]] = []
 
@@ -105,14 +106,15 @@ async def evaluate_center_distance_detection(
             match_distance_m=request.match_distance_m,
         )
         accumulator.add(sample_eval)
-        evaluated_sample_count += 1
         evaluated_scene_ids.add(shard.scene_id)
-        await write_sample_evaluation(
-            run_artifact_store=request.run_artifact_store,
-            evaluation_run_id=request.evaluation_run_id,
-            scene_id=shard.scene_id,
-            sample_id=shard.sample_id,
-            sample_eval=sample_eval,
+        sample_shards.append(
+            await write_sample_evaluation(
+                run_artifact_store=request.run_artifact_store,
+                evaluation_run_id=request.evaluation_run_id,
+                scene_id=shard.scene_id,
+                sample_id=shard.sample_id,
+                sample_eval=sample_eval,
+            )
         )
 
     summary = {
@@ -127,21 +129,21 @@ async def evaluate_center_distance_detection(
         "missing_gt_policy": request.missing_gt_policy.value,
     }
 
-    if evaluated_sample_count == 0:
+    if not sample_shards:
         reason = (
             "No predicted sample is covered by the pinned label set. "
             "Detection evaluation was skipped."
         )
         if _policy_is_fail(request):
             raise ValueError(reason)
-        return await write_skipped_evaluation_manifest(
+        return build_skipped_evaluation_manifest(
             request=request, reason=reason, metadata=summary
         )
 
-    return await write_final_evaluation_manifest(
+    return build_final_evaluation_manifest(
         request=request,
         accumulator=accumulator,
-        evaluated_sample_count=evaluated_sample_count,
+        sample_shards=sample_shards,
         evaluation_unit="label",
         metadata={**summary, "evaluated_scene_ids": sorted(evaluated_scene_ids)},
     )

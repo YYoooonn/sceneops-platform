@@ -6,8 +6,8 @@ from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import default_evaluation_run_id, generate_artifact_id
+from sceneops_core.common.canonical_json import canonical_json_bytes
+from sceneops_core.common.ids import default_evaluation_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.evaluations.schemas import EvaluationInputs, EvaluationTaskType
@@ -25,6 +25,7 @@ from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.sample_views import SceneSampleViewManifest
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived import DerivedManifestIntegrityError
+from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.derived.resolution import (
     ResolvedPrediction,
     resolve_label_set,
@@ -163,7 +164,7 @@ class EvaluateDetectionJobHandler(
 
         counts = self._extract_evaluation_counts(evaluation_manifest)
 
-        artifacts = await self._write_and_register_artifacts(
+        artifacts = await self._publish_artifacts(
             execution=execution,
             evaluation_manifest=evaluation_manifest,
             counts=counts,
@@ -336,119 +337,93 @@ class EvaluateDetectionJobHandler(
             )
         )
 
-    # ── artifact writing / registration ───────────────────────────────────────
+    # ── artifact publication / registration ───────────────────────────────────
 
     @staticmethod
-    async def _write_metrics_artifact(
+    def _metrics_document(
         *,
         execution: EvaluateDetectionExecution,
         evaluation_manifest: DetectionEvaluationManifest,
         counts: EvaluationCounts,
-    ) -> str:
+    ) -> JsonDict:
         params = execution.params
         inference_run = execution.prediction.run
-        return await execution.context.run_artifact_store.write_evaluation_run_metrics(
-            evaluation_run_id=execution.evaluation_run_id,
-            metrics={
-                "evaluation_run_id": execution.evaluation_run_id,
-                "inference_run_id": params.inference_run_id,
-                "dataset_id": params.dataset_id,
-                "dataset_version": params.dataset_version,
-                "model_id": inference_run.model_id,
-                "model_version": inference_run.model_version,
-                "evaluator_id": params.evaluator_id,
-                "match_distance_m": params.match_distance_m,
-                "primary_metric_name": counts.primary_metric_name,
-                "primary_metric_value": counts.primary_metric_value,
-                "metrics": evaluation_manifest.metrics,
-                "class_metrics": evaluation_manifest.class_metrics,
-                "sample_count": counts.sample_count,
-                "prediction_count": counts.prediction_count,
-                "evaluable_prediction_count": counts.evaluable_prediction_count,
-                "lifting_failed_prediction_count": counts.lifting_failed_prediction_count,
-                "ground_truth_count": counts.ground_truth_count,
-                "evaluation_unit": counts.evaluation_unit,
-            },
-        )
+        return {
+            "evaluation_run_id": execution.evaluation_run_id,
+            "inference_run_id": params.inference_run_id,
+            "dataset_id": params.dataset_id,
+            "dataset_version": params.dataset_version,
+            "model_id": inference_run.model_id,
+            "model_version": inference_run.model_version,
+            "evaluator_id": params.evaluator_id,
+            "match_distance_m": params.match_distance_m,
+            "primary_metric_name": counts.primary_metric_name,
+            "primary_metric_value": counts.primary_metric_value,
+            "metrics": evaluation_manifest.metrics,
+            "class_metrics": evaluation_manifest.class_metrics,
+            "sample_count": counts.sample_count,
+            "prediction_count": counts.prediction_count,
+            "evaluable_prediction_count": counts.evaluable_prediction_count,
+            "lifting_failed_prediction_count": counts.lifting_failed_prediction_count,
+            "ground_truth_count": counts.ground_truth_count,
+            "evaluation_unit": counts.evaluation_unit,
+        }
 
-    @staticmethod
-    async def _register_artifacts(
-        *,
-        execution: EvaluateDetectionExecution,
-        evaluation_manifest_uri: str,
-        metrics_uri: str,
-    ) -> EvaluateDetectionArtifacts:
-        context = execution.context
-        job = execution.job
-        params = execution.params
-        evaluation_run_id = execution.evaluation_run_id
-
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.EVALUATION_MANIFEST,
-                uri=evaluation_manifest_uri,
-                media_type="application/json",
-            ),
-            owner_type=ArtifactOwnerType.EVALUATION_RUN,
-            owner_id=evaluation_run_id,
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
-            run_id=evaluation_run_id,
-            job_id=job.job_id,
-            pipeline_run_id=job.pipeline_run_id,
-        )
-
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.METRICS,
-                uri=metrics_uri,
-                media_type="application/json",
-            ),
-            owner_type=ArtifactOwnerType.EVALUATION_RUN,
-            owner_id=evaluation_run_id,
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
-            run_id=evaluation_run_id,
-            job_id=job.job_id,
-            pipeline_run_id=job.pipeline_run_id,
-        )
-
-        return EvaluateDetectionArtifacts(
-            evaluation_manifest_uri=evaluation_manifest_uri,
-            metrics_uri=metrics_uri,
-        )
-
-    async def _write_and_register_artifacts(
+    async def _publish_artifacts(
         self,
         *,
         execution: EvaluateDetectionExecution,
         evaluation_manifest: DetectionEvaluationManifest,
         counts: EvaluationCounts,
     ) -> EvaluateDetectionArtifacts:
-        metrics_uri = await self._write_metrics_artifact(
-            execution=execution,
-            evaluation_manifest=evaluation_manifest,
-            counts=counts,
+        """Publish the manifest and the metrics document as write-once,
+        checksum-qualified revisions of this evaluation run and register
+        each under its content-derived id: a re-execution that reproduces
+        the same bytes converges, and no key is ever overwritten."""
+        context = execution.context
+        job = execution.job
+        params = execution.params
+        run_id = execution.evaluation_run_id
+        directory = context.run_artifact_store.evaluation_run_root_uri(run_id)
+        owner = {
+            "owner_type": ArtifactOwnerType.EVALUATION_RUN,
+            "owner_id": run_id,
+            "dataset_id": params.dataset_id,
+            "dataset_version": params.dataset_version,
+            "run_id": run_id,
+            "job_id": job.job_id,
+            "pipeline_run_id": job.pipeline_run_id,
+        }
+        manifest = await publish_registered(
+            context,
+            kind=ArtifactKind.EVALUATION_MANIFEST,
+            prefix="evalmanifest",
+            logical_id=run_id,
+            directory=directory,
+            stem="manifest",
+            data=evaluation_manifest.to_canonical_bytes(),
+            media_type="application/json",
+            **owner,
         )
-
-        evaluation_manifest_uri = evaluation_manifest.evaluation_manifest_uri
-        if not evaluation_manifest_uri:
-            raise ValueError(
-                f"evaluate_detection succeeded without evaluation_manifest_uri "
-                f"(evaluation_run_id={execution.evaluation_run_id})"
-            )
-        if not metrics_uri:
-            raise ValueError(
-                f"evaluate_detection succeeded without metrics_uri "
-                f"(evaluation_run_id={execution.evaluation_run_id})"
-            )
-
-        return await self._register_artifacts(
-            execution=execution,
-            evaluation_manifest_uri=evaluation_manifest_uri,
-            metrics_uri=metrics_uri,
+        metrics = await publish_registered(
+            context,
+            kind=ArtifactKind.METRICS,
+            prefix="evalmetrics",
+            logical_id=run_id,
+            directory=directory,
+            stem="metrics",
+            data=canonical_json_bytes(
+                self._metrics_document(
+                    execution=execution,
+                    evaluation_manifest=evaluation_manifest,
+                    counts=counts,
+                )
+            ),
+            media_type="application/json",
+            **owner,
+        )
+        return EvaluateDetectionArtifacts(
+            evaluation_manifest_uri=manifest.uri, metrics_uri=metrics.uri
         )
 
     # ── result assembly ───────────────────────────────────────────────────────
@@ -579,7 +554,6 @@ def _build_evaluation_summary(
         "skipped": is_skipped,
         "warning": metadata.get("reason") if is_skipped else None,
         "match_distance_m": evaluation_manifest.match_distance_m,
-        "samples_root_uri": evaluation_manifest.samples_root_uri,
         "prediction_count": counts.prediction_count,
         "evaluable_prediction_count": counts.evaluable_prediction_count,
         "lifting_failed_prediction_count": counts.lifting_failed_prediction_count,

@@ -6,8 +6,8 @@ from typing import Any
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.ids import default_validation_run_id, generate_artifact_id
+from sceneops_core.common.canonical_json import canonical_json_bytes
+from sceneops_core.common.ids import default_validation_run_id
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.common.time import utc_now
 from sceneops_core.jobs.schemas import (
@@ -19,6 +19,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.schemas.runs import SceneValidationRunRecord
 from sceneops_worker.core.context import WorkerContext
+from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_worker.scenes.resolver import resolve_registered_scene
 from sceneops_worker.scenes.validation import SceneManifestValidator
@@ -149,36 +150,31 @@ class ValidateSceneJobHandler(
                     "keyframe_count": result.keyframe_count,
                     "observed_channels": result.observed_channels,
                     "missing_channels": result.missing_channels,
-                    "issues": [i.model_dump() for i in result.issues],
+                    "issues": [i.model_dump(mode="json") for i in result.issues],
                 }
             )
 
             per_scene_run_id = _per_scene_validation_run_id(job.job_id, scene_id)
-            per_scene_report_uri = context.artifact_store.join_uri(
-                context.settings.run_root_uri,
-                "scene_validations",
-                per_scene_run_id,
-                "report.json",
-            )
-            await context.artifact_store.write_json(
-                per_scene_report_uri,
-                {
-                    "run_id": per_scene_run_id,
-                    "job_id": job.job_id,
-                    "scene_id": scene_id,
-                    "should_block_pipeline": result.should_block,
-                    "status": result.status,
-                    "scenes": [report_scenes[-1]],
-                    "created_at": utc_now().isoformat(),
-                },
-            )
-            await context.artifact_record_store.create(
-                artifact_id=generate_artifact_id(),
-                ref=ArtifactRef(
-                    kind=ArtifactKind.DATASET_VALIDATION_REPORT,
-                    uri=per_scene_report_uri,
-                    media_type="application/json",
+            per_scene_report = await publish_registered(
+                context,
+                kind=ArtifactKind.DATASET_VALIDATION_REPORT,
+                prefix="valreport",
+                logical_id=per_scene_run_id,
+                directory=context.artifact_store.join_uri(
+                    context.settings.run_root_uri, "scene_validations", per_scene_run_id
                 ),
+                stem="report",
+                data=canonical_json_bytes(
+                    {
+                        "run_id": per_scene_run_id,
+                        "job_id": job.job_id,
+                        "scene_id": scene_id,
+                        "should_block_pipeline": result.should_block,
+                        "status": result.status,
+                        "scenes": [report_scenes[-1]],
+                    }
+                ),
+                media_type="application/json",
                 owner_type=ArtifactOwnerType.SCENE_VALIDATION_RUN,
                 owner_id=per_scene_run_id,
                 scene_id=scene_id,
@@ -199,7 +195,7 @@ class ValidateSceneJobHandler(
                     status=RunStatus.SUCCEEDED,
                     validation_status=result.status,
                     should_block_pipeline=result.should_block,
-                    validation_report_uri=per_scene_report_uri,
+                    validation_report_uri=per_scene_report.uri,
                     issue_count=len(result.issues),
                     error_count=scene_errors,
                     warning_count=scene_warnings,
@@ -221,29 +217,27 @@ class ValidateSceneJobHandler(
         else:
             overall_status = "ready"
 
-        report_uri = context.artifact_store.join_uri(
-            context.settings.run_root_uri, "scene_validations", run_id, "report.json"
-        )
-        await context.artifact_store.write_json(
-            report_uri,
-            {
-                "run_id": run_id,
-                "job_id": job.job_id,
-                "checked_scene_count": len(params.scene_ids),
-                "total_issues": total_issues,
-                "should_block_pipeline": blocking,
-                "status": overall_status,
-                "scenes": report_scenes,
-                "created_at": utc_now().isoformat(),
-            },
-        )
-        await context.artifact_record_store.create(
-            artifact_id=generate_artifact_id(),
-            ref=ArtifactRef(
-                kind=ArtifactKind.DATASET_VALIDATION_REPORT,
-                uri=report_uri,
-                media_type="application/json",
+        report = await publish_registered(
+            context,
+            kind=ArtifactKind.DATASET_VALIDATION_REPORT,
+            prefix="valreport",
+            logical_id=run_id,
+            directory=context.artifact_store.join_uri(
+                context.settings.run_root_uri, "scene_validations", run_id
             ),
+            stem="report",
+            data=canonical_json_bytes(
+                {
+                    "run_id": run_id,
+                    "job_id": job.job_id,
+                    "checked_scene_count": len(params.scene_ids),
+                    "total_issues": total_issues,
+                    "should_block_pipeline": blocking,
+                    "status": overall_status,
+                    "scenes": report_scenes,
+                }
+            ),
+            media_type="application/json",
             owner_type=ArtifactOwnerType.SCENE_VALIDATION_RUN,
             owner_id=run_id,
             dataset_id=params.dataset_id,
@@ -252,6 +246,7 @@ class ValidateSceneJobHandler(
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
         )
+        report_uri = report.uri
 
         succeeded_record = initial_record.model_copy(
             update={

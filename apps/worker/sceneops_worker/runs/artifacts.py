@@ -3,11 +3,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.checksums import sha256_checksum
-from sceneops_storage import ArtifactStore
+from sceneops_storage import (
+    ArtifactStore,
+    WriteOnceConflictError,
+    WrittenObject,
+    write_once,
+)
 
 
-class RunArtifactConflictError(RuntimeError):
+class RunArtifactConflictError(WriteOnceConflictError):
     """A write-once run artifact key already holds different bytes."""
 
 
@@ -60,17 +66,16 @@ class RunArtifactStore:
         self, *, run_id: str, scene_id: str, sample_id: str, data: bytes
     ) -> str:
         """Write-once: the same bytes are a retry, different bytes a conflict."""
-        uri = self.prediction_shard_uri(
-            run_id=run_id, scene_id=scene_id, sample_id=sample_id
+        written = await write_once(
+            self.artifact_store,
+            self.prediction_shard_uri(
+                run_id=run_id, scene_id=scene_id, sample_id=sample_id
+            ),
+            data,
+            conflict=RunArtifactConflictError,
+            verify=False,
         )
-        if await self.artifact_store.exists(uri):
-            if await self.artifact_store.read_bytes(uri) != data:
-                raise RunArtifactConflictError(
-                    f"{uri} already holds different bytes; prediction shards are write-once"
-                )
-            return uri
-        await self.artifact_store.write_bytes(uri, data)
-        return uri
+        return written.uri
 
     async def read_pinned_prediction_shard(
         self, *, uri: str, checksum: str
@@ -89,24 +94,17 @@ class RunArtifactStore:
     # ---------------------------------------------------------------------
     # Evaluation runs
     # ---------------------------------------------------------------------
+    #
+    # An evaluation's manifest and metrics are checksum-qualified revisions
+    # published and registered by the evaluate_detection handler (see
+    # derived.publication); only the per-sample results, which the manifest
+    # pins by checksum, are written here.
 
     def evaluation_run_root_uri(self, evaluation_run_id: str) -> str:
         return self.artifact_store.join_uri(
             self.runs_root_uri,
             "evaluations",
             evaluation_run_id,
-        )
-
-    def evaluation_run_manifest_uri(self, evaluation_run_id: str) -> str:
-        return self.artifact_store.join_uri(
-            self.evaluation_run_root_uri(evaluation_run_id),
-            "evaluation.json",
-        )
-
-    def evaluation_run_metrics_uri(self, evaluation_run_id: str) -> str:
-        return self.artifact_store.join_uri(
-            self.evaluation_run_root_uri(evaluation_run_id),
-            "metrics.json",
         )
 
     def evaluation_samples_root_uri(self, evaluation_run_id: str) -> str:
@@ -129,38 +127,22 @@ class RunArtifactStore:
             f"{sample_id}.json",
         )
 
-    async def write_sample_evaluation_manifest(
+    async def write_sample_evaluation(
         self,
         *,
         evaluation_run_id: str,
         scene_id: str,
         sample_id: str,
-        manifest: dict[str, Any],
-    ) -> str:
-        uri = self.sample_evaluation_manifest_uri(
-            evaluation_run_id=evaluation_run_id,
-            scene_id=scene_id,
-            sample_id=sample_id,
+        result: dict[str, Any],
+    ) -> WrittenObject:
+        """Write-once: the same result is a retry, a different one a conflict."""
+        return await write_once(
+            self.artifact_store,
+            self.sample_evaluation_manifest_uri(
+                evaluation_run_id=evaluation_run_id,
+                scene_id=scene_id,
+                sample_id=sample_id,
+            ),
+            canonical_json_bytes(result),
+            conflict=RunArtifactConflictError,
         )
-        await self.artifact_store.write_json(uri, manifest)
-        return uri
-
-    async def write_evaluation_run_manifest(
-        self,
-        *,
-        evaluation_run_id: str,
-        manifest: dict[str, Any],
-    ) -> str:
-        uri = self.evaluation_run_manifest_uri(evaluation_run_id)
-        await self.artifact_store.write_json(uri, manifest)
-        return uri
-
-    async def write_evaluation_run_metrics(
-        self,
-        *,
-        evaluation_run_id: str,
-        metrics: dict[str, Any],
-    ) -> str:
-        uri = self.evaluation_run_metrics_uri(evaluation_run_id)
-        await self.artifact_store.write_json(uri, metrics)
-        return uri

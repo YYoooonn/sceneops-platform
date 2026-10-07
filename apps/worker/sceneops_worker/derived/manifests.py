@@ -16,8 +16,6 @@ bytes under a key that already exists fail loudly instead of overwriting.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from sceneops_core.common.checksums import checksum_hex, sha256_checksum
 from sceneops_core.inference.schemas.manifests import (
     DetectionPredictionManifest,
@@ -32,7 +30,13 @@ from sceneops_core.scenarios.schemas.manifests import (
     ScenarioSetManifest,
     load_canonical_scenario_set,
 )
-from sceneops_storage import ArtifactNotFoundError, ArtifactStore
+from sceneops_storage import (
+    ArtifactNotFoundError,
+    ArtifactStore,
+    WriteOnceConflictError,
+    WrittenObject,
+    write_once,
+)
 
 
 class DerivedManifestIntegrityError(RuntimeError):
@@ -40,16 +44,8 @@ class DerivedManifestIntegrityError(RuntimeError):
     checksum."""
 
 
-class DerivedManifestConflictError(RuntimeError):
+class DerivedManifestConflictError(WriteOnceConflictError):
     """A write-once manifest key already holds different bytes."""
-
-
-@dataclass(frozen=True)
-class PublishedManifest:
-    uri: str
-    checksum: str
-    size_bytes: int
-    created: bool
 
 
 class DerivedManifestStore:
@@ -118,18 +114,10 @@ class DerivedManifestStore:
     # write-once publication and pinned reads
     # ------------------------------------------------------------------
 
-    async def publish(self, *, uri: str, data: bytes) -> PublishedManifest:
-        checksum = sha256_checksum(data)
-        if await self.artifact_store.exists(uri):
-            if await self.artifact_store.read_bytes(uri) != data:
-                raise DerivedManifestConflictError(
-                    f"{uri} already holds different bytes; manifest keys are write-once"
-                )
-            return PublishedManifest(uri, checksum, len(data), created=False)
-        await self.artifact_store.write_bytes(uri, data)
-        if await self.artifact_store.read_bytes(uri) != data:
-            raise DerivedManifestIntegrityError(f"read-back of {uri} differs")
-        return PublishedManifest(uri, checksum, len(data), created=True)
+    async def publish(self, *, uri: str, data: bytes) -> WrittenObject:
+        return await write_once(
+            self.artifact_store, uri, data, conflict=DerivedManifestConflictError
+        )
 
     async def read_pinned(
         self, *, uri: str, checksum: str, size_bytes: int | None = None
@@ -182,5 +170,4 @@ __all__ = [
     "DerivedManifestConflictError",
     "DerivedManifestIntegrityError",
     "DerivedManifestStore",
-    "PublishedManifest",
 ]
