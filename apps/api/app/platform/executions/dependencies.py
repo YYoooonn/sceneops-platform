@@ -15,7 +15,6 @@ from app.platform.executions.backends import (
 )
 from app.platform.executions.factory import create_celery_app
 from app.platform.executions.service import ExecutionService
-from sceneops_core.executions.schemas import ExecutionBackend
 
 
 def get_celery_app(settings: ApiSettingsDep) -> Celery:
@@ -30,11 +29,9 @@ def get_job_execution_backend(
     settings: ApiSettingsDep,
     celery_app: CeleryAppDep,
 ) -> JobExecutionBackend:
-    backend = settings.execution.job_backend
-    if backend == ExecutionBackend.CELERY:
-        c = settings.execution.celery
-        return CeleryJobExecutionBackend(app=celery_app, job_queue=c.job_queue)
-    raise ValueError(f"Unsupported job execution backend: {backend}")
+    return CeleryJobExecutionBackend(
+        app=celery_app, job_queue=settings.execution.celery.job_queue
+    )
 
 
 JobExecutionBackendDep = Annotated[
@@ -46,13 +43,9 @@ def get_pipeline_execution_backend(
     settings: ApiSettingsDep,
     celery_app: CeleryAppDep,
 ) -> PipelineExecutionBackend:
-    backend = settings.execution.pipeline_backend
-    if backend == ExecutionBackend.CELERY:
-        c = settings.execution.celery
-        return CeleryPipelineExecutionBackend(
-            app=celery_app, pipeline_queue=c.pipeline_queue
-        )
-    raise ValueError(f"Unsupported pipeline execution backend: {backend}")
+    return CeleryPipelineExecutionBackend(
+        app=celery_app, pipeline_queue=settings.execution.celery.pipeline_queue
+    )
 
 
 PipelineExecutionBackendDep = Annotated[

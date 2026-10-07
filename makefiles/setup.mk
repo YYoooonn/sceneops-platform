@@ -79,7 +79,8 @@ DISPOSABLE_ENV_RUN := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --
 DISPOSABLE_ENV_RUNTIME := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --env-file $(ENV_FILE) --runtime
 
 INTEGRATION_COMMAND := $(DISPOSABLE_PYTEST) packages/sceneops-db/tests/ packages/sceneops-storage/tests/ -v \
-	&& $(DISPOSABLE_PYTEST) -o python_files="*_integration.py" apps/worker/tests packages/sceneops-analytics/tests -v
+	&& $(DISPOSABLE_PYTEST) -o python_files="*_integration.py" apps/worker/tests packages/sceneops-analytics/tests -v \
+	&& $(DISPOSABLE_PYTEST) -o python_files="*_integration.py" apps/api/tests -v
 
 .PHONY: test-integration
 # Real-infrastructure tests of one subsystem each, in the disposable PostgreSQL

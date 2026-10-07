@@ -1568,7 +1568,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "celery", extras = ["redis"], specifier = ">=5.4" },
-    { name = "fastapi", specifier = ">=0.110" },
+    { name = "fastapi", specifier = ">=0.121" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },

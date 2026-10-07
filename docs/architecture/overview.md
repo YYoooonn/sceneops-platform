@@ -68,6 +68,23 @@ apps/api/app/
 Each domain is layered `router.py` -> `service.py` -> (`sceneops-db`
 repository). `dependencies.py` wires session + repository via FastAPI DI.
 
+### Transaction model
+
+A mutating API request is one PostgreSQL transaction, and a success response
+means that transaction has committed. `DbSessionDep` (`apps/api/app/core/dependencies.py`)
+is a function-scoped dependency: the session commits when the path operation
+returns, before the response is sent, and rolls back on any exception
+(`HTTPException` included). A failed commit is therefore an error response, and a
+client may act on a 2xx at once (create, then read or execute). Services and
+repositories flush but never commit.
+
+Operations that commit and then call an external system (the dispatch facades and
+`RobotRunRegistrationService`) do not use the request session. They open short
+sessions of their own and commit explicitly before dispatching, so no transaction
+is open while talking to Celery and a worker never receives a reference to a row
+that is not yet durable. Workers do not auto-commit: `JobRunner` and
+`PipelineOrchestrator` commit at their own checkpoints.
+
 ### Dispatch flow
 
 The API never executes anything itself. `JobDispatchFacade` /

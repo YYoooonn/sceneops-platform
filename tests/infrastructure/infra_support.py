@@ -100,17 +100,12 @@ class Api:
         return self.post(f"/pipelines/runs/{run_id}/execute", {})
 
     def dispatched(self, run_id: str) -> None:
-        """Dispatch and fail fast unless the API accepted it. A rejection reports whether
-        the run is readable right after: a 404 for a run that a GET then finds means the
-        dispatch ran before the creating request's commit became visible (the API commits
-        its request session after the response has started), not that the run is missing."""
+        """Dispatch and fail fast unless the API accepted it. The create request's write
+        is committed before its response is sent, so a rejection is never a read of a
+        write that is not yet visible."""
         response = self.dispatch(run_id)
-        if response.status_code in (200, 202):
-            return
-        visible = self._client.get(f"/pipelines/runs/{run_id}").status_code
-        raise AssertionError(
-            f"POST /pipelines/runs/{run_id}/execute -> {response.status_code} {response.text}; "
-            f"GET of the run right after -> {visible}"
+        assert response.status_code in (200, 202), (
+            f"POST /pipelines/runs/{run_id}/execute -> {response.status_code} {response.text}"
         )
 
     def wait(self, run_id: str, *, timeout: float = 900.0) -> dict:

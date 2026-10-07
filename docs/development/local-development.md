@@ -134,9 +134,9 @@ make check-commands                the command surface is consistent (no pytest,
 - `make test-integration` covers `packages/sceneops-db/tests` (real Postgres,
   including a check that the migrated schema has no column the models dropped),
   `packages/sceneops-storage/tests` (real MinIO), and every module named
-  `*_integration.py` under `apps/worker/tests` and `packages/sceneops-analytics/tests`
-  (registrars, reconciliation, recording Scene / Episode and derived verticals,
-  selective Parquet reads) against both. A new `*_integration.py` is picked up without
+  `*_integration.py` under `apps/worker/tests`, `packages/sceneops-analytics/tests`
+  and `apps/api/tests` (registrars, reconciliation, recording Scene / Episode and
+  derived verticals, selective Parquet reads, the API request transaction) against both. A new `*_integration.py` is picked up without
   editing the Makefile; `make test` collects the same files but they skip without
   `SCENEOPS_DATABASE_URL` / `MINIO_ENDPOINT_URL`. The real-infrastructure commands run
   with `-p require_infrastructure` (`tests/infrastructure/require_infrastructure.py`):

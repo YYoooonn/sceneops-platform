@@ -7,7 +7,7 @@ dependencies = [
     "sceneops-core",
     "sceneops-db",
     "sceneops-storage",
-    "fastapi>=0.110",
+    "fastapi>=0.121",
     "uvicorn[standard]>=0.29",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",

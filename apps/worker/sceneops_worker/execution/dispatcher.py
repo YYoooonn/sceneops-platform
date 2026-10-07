@@ -68,13 +68,6 @@ class CeleryExecutionDispatcher:
 
 
 def create_execution_dispatcher(settings: ExecutionSettings) -> ExecutionDispatcher:
-    for name, backend in (
-        ("job_backend", settings.job_backend),
-        ("pipeline_backend", settings.pipeline_backend),
-    ):
-        if backend != ExecutionBackend.CELERY:
-            raise ValueError(f"Unsupported execution {name}: {backend}")
-
     # The worker's own Celery app: it carries the task routes of both queues.
     from sceneops_worker.celery_app import celery_app
 
