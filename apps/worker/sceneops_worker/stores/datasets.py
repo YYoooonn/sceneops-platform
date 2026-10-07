@@ -20,9 +20,6 @@ class DatasetStore:
     async def create_dataset(self, dataset: DatasetRecord) -> DatasetRecord:
         return await self._datasets.create(dataset)
 
-    async def save_dataset(self, dataset: DatasetRecord) -> DatasetRecord:
-        return await self._datasets.update(dataset)
-
     async def get_version(
         self,
         *,
@@ -35,14 +32,6 @@ class DatasetStore:
         self, version: DatasetVersionRecord
     ) -> DatasetVersionRecord:
         return await self._versions.create(version)
-
-    async def save_version(self, version: DatasetVersionRecord) -> DatasetVersionRecord:
-        return await self._versions.update(version)
-
-    async def upsert_version(
-        self, version: DatasetVersionRecord
-    ) -> DatasetVersionRecord:
-        return await self._versions.upsert(version)
 
     async def lock_version_for_update(
         self, *, dataset_id: str, version: str

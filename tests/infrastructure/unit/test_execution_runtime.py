@@ -98,13 +98,7 @@ def test_every_service_that_touches_state_takes_its_database_and_bucket_from_the
     service,
 ):
     env = _environment(COMPOSE["services"][service])
-    for variable in (
-        "SCENEOPS_DATABASE_URL",
-        "SCENEOPS_WORKER_DATABASE_URL"
-        if service != "test-api"
-        else "SCENEOPS_API_DATABASE_URL",
-    ):
-        assert env[variable] == "${TEST_DATABASE_URL:?}", (service, variable)
+    assert env["SCENEOPS_DATABASE_URL"] == "${TEST_DATABASE_URL:?}", service
     root = (
         "SCENEOPS_API_ARTIFACT__ROOT_URI"
         if service == "test-api"

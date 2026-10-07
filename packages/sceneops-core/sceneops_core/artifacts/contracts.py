@@ -23,7 +23,7 @@ class ArtifactObject:
 class ArtifactStore(Protocol):
     """Port-like contract for artifact storage.
 
-    Implementations may use local filesystem, MinIO, S3, GCS, or another
+    Implementations may use local filesystem, MinIO, S3, or another
     object storage backend.
 
     The contract is async because object storage implementations are expected

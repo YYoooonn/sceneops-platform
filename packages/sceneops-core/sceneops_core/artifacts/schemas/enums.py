@@ -7,7 +7,6 @@ class ArtifactBackend(StrEnum):
     LOCAL = "local"
     MINIO = "minio"
     S3 = "s3"
-    GCS = "gcs"
 
 
 class ArtifactKind(StrEnum):
@@ -35,8 +34,6 @@ class ArtifactKind(StrEnum):
     # stored under a checksum-qualified key. The only kind REGISTER_SCENES
     # accepts.
     SCENE_MANIFEST = "scene_manifest"
-    WORLD_STATE_MANIFEST = "world_state_manifest"
-    SCENE_PACKAGE = "scene_package"
 
     # Episode-level
     EPISODE_MANIFEST = "episode_manifest"
@@ -86,13 +83,5 @@ class ArtifactKind(StrEnum):
     PREDICTIONS_ROOT = "predictions_root"
     EVALUATION_MANIFEST = "evaluation_manifest"
     METRICS = "metrics"
-
-    # Auto-label
-    AUTO_LABEL_MANIFEST = "auto_label_manifest"
-    AUTO_LABEL_REPORT = "auto_label_report"
-
-    # Model
-    MODEL_ARTIFACT = "model_artifact"
-    MODEL_CONFIG = "model_config"
 
     OTHER = "other"

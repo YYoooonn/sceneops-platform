@@ -21,8 +21,6 @@
 # Independent of `local-reset`, which only destroys state.
 # --------------------
 
-FIXTURE ?=
-
 CANONICAL_ENV = $(E2E_ENV) REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(FIXTURE),FIXTURE=$(FIXTURE))
 
 .PHONY: canonical-bootstrap

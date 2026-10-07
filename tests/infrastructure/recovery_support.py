@@ -349,9 +349,6 @@ class WorkerProcess:
             "SCENEOPS_WORKER_EXECUTION__CELERY__JOB_QUEUE": self.env.queue,
             "SCENEOPS_WORKER_EXECUTION__CELERY__TASK_DEFAULT_QUEUE": self.env.queue,
         }
-        environment.setdefault(
-            "SCENEOPS_WORKER_DATABASE_URL", os.environ["SCENEOPS_DATABASE_URL"]
-        )
         return environment
 
     def start(self) -> "WorkerProcess":
@@ -390,10 +387,6 @@ class WorkerProcess:
         return (
             self.log_path.read_text(errors="replace") if self.log_path.exists() else ""
         )
-
-    @property
-    def alive(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
 
     def kill(self) -> None:
         """SIGKILL the worker and its pool children."""

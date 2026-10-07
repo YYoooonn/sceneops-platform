@@ -1,9 +1,4 @@
-from .enums import (
-    EvaluationMetricKey,
-    EvaluationTaskType,
-    LeaderboardSortBy,
-    MetricDirection,
-)
+from .enums import EvaluationTaskType
 from .manifests import (
     DetectionEvaluationManifest,
     EvaluationInputs,
@@ -11,16 +6,10 @@ from .manifests import (
     EvaluationSampleShardRef,
     load_canonical_evaluation_manifest,
 )
-from .metrics import EvaluationMetricSpec, EvaluationMetricValue
 from .runs import EvaluationRunRecord
 
 __all__ = [
     "EvaluationTaskType",
-    "MetricDirection",
-    "EvaluationMetricKey",
-    "LeaderboardSortBy",
-    "EvaluationMetricSpec",
-    "EvaluationMetricValue",
     "DetectionEvaluationManifest",
     "EvaluationInputs",
     "EvaluationManifestError",

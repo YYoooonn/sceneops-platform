@@ -35,8 +35,8 @@ echo "--- stopping stack and removing volumes (postgres, redis, minio, kafka, ac
 "${COMPOSE[@]}" --profile worker --profile tools --profile debug --profile streaming --profile acquisition --profile ros2 --profile recovery down -v --remove-orphans
 
 echo "--- clearing generated artifacts under ./data ---"
-rm -rf data/datasets data/runs data/models data/artifacts
-mkdir -p data/raw data/datasets data/runs data/models data/artifacts data/inputs cache/hf
+rm -rf data/runs data/artifacts
+mkdir -p data/raw data/runs data/artifacts data/inputs cache/hf
 
 echo "--- rebuilding clean stack ---"
 make local-up ENV_FILE="$ENV_FILE"

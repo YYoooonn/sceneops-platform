@@ -18,7 +18,6 @@ from sceneops_core.sample_views import ResolvedMember
 from sceneops_core.scenes.schemas.manifests import ScenePose
 
 MIN_FRUSTUM_POINTS = 3  # fewer -> skip lifting, keep placeholder
-MIN_CLUSTER_POINTS = 5  # fewer -> use all frustum points (no DBSCAN pruning)
 
 
 def frustum_lift(

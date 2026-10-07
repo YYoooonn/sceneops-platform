@@ -101,11 +101,6 @@ class SceneArtifactStore:
             checksum_qualified_manifest_name(checksum),
         )
 
-    def observation_payload_uri(self, *, robot_run_id: str, artifact_id: str) -> str:
-        return self.payload_store.payload_uri(
-            robot_run_id=robot_run_id, artifact_id=artifact_id
-        )
-
     # ------------------------------------------------------------------
     # Canonical SceneManifest I/O
     # ------------------------------------------------------------------

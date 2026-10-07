@@ -24,12 +24,9 @@ disposable database and bucket and is dropped with them. No test deletes anythin
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import subprocess
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -37,12 +34,8 @@ import httpx
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 API_PREFIX = os.environ.get("API_PREFIX", "/api/v1")
-ENV_FILE = os.environ.get("ENV_FILE", ".env.local")
 TERMINAL = {"succeeded", "failed", "blocked", "cancelled"}
 JOB_TERMINAL = {"succeeded", "failed", "cancelled", "skipped"}
-# The runtime input area IMPORT_LABELS reads, as the host and as the worker see it.
-LABELS_DIR = REPO_ROOT / "data" / "inputs" / "labels"
-WORKER_LABELS_DIR = "/data/inputs/labels"
 
 
 def _config(name: str) -> dict:
@@ -128,31 +121,6 @@ class Api:
         self.dispatched(created["pipelineRunId"])
         return self.wait(created["pipelineRunId"])
 
-    def run_job(
-        self, job_type: str, dataset: tuple[str, str], params: dict, *, timeout: float = 300.0
-    ) -> dict:
-        """Create, execute and wait for one atomic Job; returns the terminal job."""
-        created = self.post(
-            "/jobs",
-            {
-                "type": job_type,
-                "dataset_id": dataset[0],
-                "dataset_version": dataset[1],
-                "params": params,
-                "force": True,
-            },
-        )
-        assert created.status_code in (200, 201), created.text
-        job_id = created.json()["job"]["jobId"]
-        assert self.post(f"/jobs/{job_id}/execute", {}).status_code in (200, 202)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            job = self.get(f"/jobs/{job_id}")["job"]
-            if job["status"] in JOB_TERMINAL:
-                return job
-            time.sleep(2)
-        raise AssertionError(f"job {job_id} did not finish in {timeout}s")
-
     def tasks(self, run_id: str) -> dict[str, dict]:
         return {t["pipelineTaskId"]: t for t in self.get(f"/pipelines/runs/{run_id}/tasks")["tasks"]}
 
@@ -163,42 +131,6 @@ class Api:
         return self.get("/episodes", dataset_id=dataset[0], dataset_version=dataset[1], limit=500)[
             "episodes"
         ]
-
-
-@contextlib.contextmanager
-def reference_label_document(
-    corpus: str, fixture_id: str, robot_run_id: str, label_set_id: str
-) -> Iterator[str]:
-    """The fixture's locked reference labels rendered for ``robot_run_id`` into the
-    runtime input area, as the URI the worker reads (``import_labels.document_uri``).
-
-    The same container ``make e2e-scene-ml`` uses (no source dataset). Needs the
-    acquisition image and the prepared reference corpus; a missing prerequisite is an
-    assertion failure, never a skip. The file is removed on exit."""
-    LABELS_DIR.mkdir(parents=True, exist_ok=True)
-    file_name = f"{label_set_id}.labels.json"
-    result = subprocess.run(
-        [
-            "docker", "compose", "--env-file", ENV_FILE, "--profile", "acquisition",
-            "run", "--rm", "-T", "--no-deps", "--user", f"{os.getuid()}:{os.getgid()}",
-            "-e", "HOME=/tmp", "reference-labels", "reference", "render-labels",
-            "--corpus", f"/config/reference/{corpus}", "--cache-root", "/reference",
-            "--fixture", fixture_id, "--robot-run-id", robot_run_id,
-            "--label-set-id", label_set_id, "--output", f"/inputs/labels/{file_name}",
-        ],  # fmt: skip
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
-        stdin=subprocess.DEVNULL,
-    )
-    assert result.returncode == 0, (
-        f"no verified reference labels for {fixture_id}; run `make acquisition-image` and "
-        f"`make reference-data-bootstrap`:\n{result.stdout[-2000:]}{result.stderr[-2000:]}"
-    )
-    try:
-        yield f"{WORKER_LABELS_DIR}/{file_name}"
-    finally:
-        (LABELS_DIR / file_name).unlink(missing_ok=True)
 
 
 def scene_params(run_id: str, *, config: dict | None = None, replace: bool = False, **extra) -> dict:

@@ -55,11 +55,6 @@ class PipelineStore:
             offset=offset,
         )
 
-    async def get_task(
-        self, pipeline_task_run_id: str
-    ) -> PipelineTaskRunManifest | None:
-        return await self._tasks.get(pipeline_task_run_id)
-
     async def find_task(
         self,
         *,

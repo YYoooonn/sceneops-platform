@@ -102,7 +102,7 @@ ArtifactStoreError        ← Base Artifact Store error
 # factory.py
 _REGISTRY = {
     ...
-    ArtifactBackend.GCS: lambda s: GCSArtifactStore(settings=s),
+    ArtifactBackend.NEW_BACKEND: lambda s: NewArtifactStore(settings=s),
 }
 ```
 

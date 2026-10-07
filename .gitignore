@@ -153,13 +153,4 @@ cache/
 *.credentials
 service-account*.json
 
-# =========================
-# Infrastructure
-# =========================
-infra/helm/charts/sceneops-db/templates/*
-!infra/helm/charts/sceneops-db/templates/_helper.tpl
-
-infra/values/local/*
-!infra/values/local/*.example.yaml
-
 .claude

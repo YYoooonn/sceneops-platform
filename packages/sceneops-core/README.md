@@ -54,7 +54,6 @@ class MySchema(SceneOpsBaseModel):
 obj = MySchema(my_field="value")
 obj.to_artifact_dict()  # camelCase alias 적용, JSON 직렬화
 obj.to_api_dict()       # API 응답용
-obj.to_db_dict()        # DB 저장용
 ```
 
 ### ArtifactStore contract

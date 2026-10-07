@@ -6,8 +6,6 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, JsonDict
 
-from .refs import ArtifactRef
-
 
 class ArtifactRecord(SceneOpsBaseModel):
     artifact_id: str
@@ -36,13 +34,3 @@ class ArtifactRecord(SceneOpsBaseModel):
     created_at: datetime | None = None
 
     metadata: JsonDict = Field(default_factory=dict)
-
-    def to_ref(self) -> ArtifactRef:
-        return ArtifactRef(
-            kind=self.kind,
-            uri=self.uri,
-            media_type=self.media_type,
-            size_bytes=self.size_bytes,
-            checksum=self.checksum,
-            metadata=self.metadata,
-        )

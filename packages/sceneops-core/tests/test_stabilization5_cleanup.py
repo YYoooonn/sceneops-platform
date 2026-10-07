@@ -56,15 +56,21 @@ def test_distribution_artifact_enums_were_removed_alongside_check_distribution()
     assert "distribution_report" not in {m.value for m in ArtifactKind}
 
 
-def test_reserved_job_types_still_have_matching_artifact_evidence():
-    """The 5 JobType values with no registered handler are retained
-    specifically because each has a matching ArtifactOwnerType (or
-    ArtifactKind) reservation — this is the concrete evidence standard the
-    cleanup decision register applied. If any of these matching values ever
-    get removed too, revisit whether the JobType should go with them."""
-    assert ArtifactOwnerType.SCENE_COMPARISON_RUN
-    assert ArtifactOwnerType.SCENE_AUTO_LABEL_RUN
-    assert ArtifactOwnerType.SCENE_EXPORT_RUN
-    assert ArtifactKind.SCENE_PACKAGE
-    assert ArtifactOwnerType.DATASET_AUTO_LABEL_RUN
-    assert ArtifactOwnerType.DATASET_EXPORT_RUN
+def test_artifact_reservations_for_unbuilt_capabilities_do_not_exist():
+    """Scene comparison, auto-labeling and scene / dataset export have no
+    JobType, so no ArtifactOwnerType or ArtifactKind is reserved for them."""
+    owners = {member.value for member in ArtifactOwnerType}
+    kinds = {member.value for member in ArtifactKind}
+    assert not owners & {
+        "scene_comparison_run",
+        "scene_export_run",
+        "scene_auto_label_run",
+        "dataset_export_run",
+        "dataset_auto_label_run",
+    }
+    assert not kinds & {
+        "scene_package",
+        "world_state_manifest",
+        "auto_label_manifest",
+        "auto_label_report",
+    }

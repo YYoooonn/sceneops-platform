@@ -87,8 +87,6 @@ e2e-streaming-equivalence:
 # `make reference-data-bootstrap REFERENCE_SCOPE=<scope>`.
 # --------------------
 
-FIXTURE ?=
-
 STREAMING_ENV = $(E2E_ENV) REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(FIXTURE),FIXTURE=$(FIXTURE)) $(if $(RATE),RATE=$(RATE))
 
 .PHONY: streaming-bootstrap

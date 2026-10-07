@@ -31,9 +31,6 @@ class SceneOpsBaseModel(BaseModel):
         alias_generator=to_camel,
     )
 
-    def to_db_dict(self) -> dict[str, Any]:
-        return self.model_dump(mode="json")
-
     def to_artifact_dict(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, mode="json")
 

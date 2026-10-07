@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from enum import Enum
 from typing import Any
 
 from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.runs.schemas import BaseRunRecord
-
-
-def dt_to_iso(dt: datetime | None) -> str | None:
-    return dt.isoformat() if dt is not None else None
 
 
 def enum_to_value(v: Any) -> Any:

@@ -9,7 +9,6 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from sceneops_core.common.derived_ids import sample_view_artifact_id
 from sceneops_core.labels.schemas import Box3DLabel, LabelSetManifest, LabelSetRef
@@ -47,12 +46,6 @@ class SceneLacksAnchorChannelError(SampleViewPolicyError):
 
 class AmbiguousAnchorError(SampleViewError):
     """A label anchor matches more than one observation of the Scene."""
-
-
-@dataclass(frozen=True)
-class _Associated:
-    observation: SceneObservation
-    delta_ns: int
 
 
 def _associate(

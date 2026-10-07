@@ -30,7 +30,6 @@ from sceneops_db.repositories.robots import (
     RobotStateRepository,
 )
 from sceneops_db.repositories.scenarios import (
-    ScenarioRunRepository,
     ScenarioSetRepository,
 )
 from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
@@ -63,7 +62,6 @@ from sceneops_db.postgres.robots import (
     PostgresRobotStateRepository,
 )
 from sceneops_db.postgres.scenarios import (
-    PostgresScenarioRunRepository,
     PostgresScenarioSetRepository,
 )
 from sceneops_db.postgres.scenes import (
@@ -186,15 +184,8 @@ def get_scenario_set_repository(session: DbSessionDep) -> ScenarioSetRepository:
     return PostgresScenarioSetRepository(session)
 
 
-def get_scenario_run_repository(session: DbSessionDep) -> ScenarioRunRepository:
-    return PostgresScenarioRunRepository(session)
-
-
 ScenarioSetRepositoryDep = Annotated[
     ScenarioSetRepository, Depends(get_scenario_set_repository)
-]
-ScenarioRunRepositoryDep = Annotated[
-    ScenarioRunRepository, Depends(get_scenario_run_repository)
 ]
 
 

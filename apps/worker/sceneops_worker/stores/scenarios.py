@@ -58,9 +58,6 @@ class ScenarioStore:
     async def create_run(self, run: ScenarioRunRecord) -> ScenarioRunRecord:
         return await self._runs.create(run)
 
-    async def save_run(self, run: ScenarioRunRecord) -> ScenarioRunRecord:
-        return await self._runs.update(run)
-
     async def upsert_run(self, run: ScenarioRunRecord) -> ScenarioRunRecord:
         existing = await self._runs.get(run.run_id)
         if existing is None:

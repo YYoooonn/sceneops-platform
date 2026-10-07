@@ -134,12 +134,6 @@ class DetectionPredictionManifest(_Model):
     def checksum(self) -> str:
         return sha256_checksum(self.to_canonical_bytes())
 
-    def input_for_scene(self, scene_id: str) -> PredictionInputRef | None:
-        for item in self.inputs:
-            if item.sample_view.scene_id == scene_id:
-                return item
-        return None
-
 
 def load_canonical_prediction_manifest(data: bytes) -> DetectionPredictionManifest:
     try:

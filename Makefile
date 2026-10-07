@@ -1,11 +1,5 @@
 ENV_FILE     ?= .env.local
 COMPOSE      := docker compose --env-file $(ENV_FILE)
-# API_HOST -- used only by the debug/status targets below (api-health,
-# show-pipeline, show-job-events, worker-cli helpers). Every E2E/smoke/verify
-# script-facing target instead uses API_BASE_URL -- one authoritative name
-# for the same concept on that surface, no Makefile-side translation needed.
-# The two are not merged because they serve genuinely separate target groups.
-API_HOST     ?= http://localhost:8000
 API_BASE_URL ?= http://localhost:8000
 API_PREFIX   ?= /api/v1
 ALEMBIC_CONFIG ?= migrations/alembic.ini
@@ -34,7 +28,8 @@ ROS2_CMD        ?=
 
 # Journey selection -- the only user-facing variables of the E2E / baseline
 # surface (see makefiles/e2e.mk). SCENE: the nuScenes scene (default
-# scene-0061). RATE: streaming replay rate of streaming-bootstrap (default: the
+# scene-0061). FIXTURE: one fixture of the reference scope for the canonical /
+# streaming baselines (default: the whole scope). RATE: streaming replay rate of streaming-bootstrap (default: the
 # fixture's replay definition). BASELINE_ID: the baseline whose RobotRuns a journey uses (default: the
 # golden reference contract's; a different one registers non-contract RobotRuns and
 # needs DISPOSABLE_RUNTIME=1). DATASET_ID: the Dataset an L3 journey writes into
@@ -42,6 +37,7 @@ ROS2_CMD        ?=
 # runtime will be reset afterwards (docs/development/test-matrix.md). BACKEND /
 # MAX_SAMPLES: the detection backend and sample cap of the Scene ML journey.
 SCENE           ?=
+FIXTURE         ?=
 RATE            ?=
 BASELINE_ID     ?=
 DATASET_ID      ?=

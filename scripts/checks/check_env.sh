@@ -14,7 +14,7 @@ test -f uv.lock || {
 uv --version >/dev/null
 docker compose version >/dev/null
 
-grep -q "SCENEOPS_API_DATABASE_URL" .env.local || echo "WARN: missing SCENEOPS_API_DATABASE_URL"
+grep -q "SCENEOPS_DATABASE_URL" .env.local || echo "WARN: missing SCENEOPS_DATABASE_URL"
 grep -q "SCENEOPS_API_EXECUTION__CELERY__BROKER_URL" .env.local || echo "WARN: missing SCENEOPS_API_EXECUTION__CELERY__BROKER_URL"
 grep -q "SCENEOPS_WORKER_ARTIFACT__ROOT_URI" .env.local || echo "WARN: missing SCENEOPS_WORKER_ARTIFACT__ROOT_URI"
 

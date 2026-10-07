@@ -224,13 +224,11 @@ class ExecutionRuntime:
         bucket."""
         worker_settings = {
             "SCENEOPS_DATABASE_URL": self.database_url,
-            "SCENEOPS_WORKER_DATABASE_URL": self.database_url,
             "SCENEOPS_WORKER_ARTIFACT__ROOT_URI": self.artifact_root_uri,
         }
         for service, variables in {
             "test-api": {
                 "SCENEOPS_DATABASE_URL": self.database_url,
-                "SCENEOPS_API_DATABASE_URL": self.database_url,
                 "SCENEOPS_API_ARTIFACT__ROOT_URI": self.artifact_root_uri,
             },
             "test-worker-jobs": worker_settings,

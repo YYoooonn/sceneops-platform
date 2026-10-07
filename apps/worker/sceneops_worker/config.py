@@ -6,7 +6,6 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from sceneops_core.config import (
-    ArtifactBackend,
     ArtifactSettings,
     ExecutionSettings,
     InputSourceSettings,
@@ -22,10 +21,6 @@ class WorkerSettings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str = Field(
-        default="postgresql+asyncpg://sceneops:sceneops@postgres:5432/sceneops"
-    )
-
     artifact: ArtifactSettings = Field(default_factory=ArtifactSettings)
     input_source: InputSourceSettings = Field(default_factory=InputSourceSettings)
     runtime: WorkerRuntimeSettings = Field(
@@ -34,10 +29,6 @@ class WorkerSettings(BaseSettings):
     execution: ExecutionSettings = Field(
         default_factory=ExecutionSettings,
     )
-
-    @property
-    def artifact_backend(self) -> ArtifactBackend:
-        return self.artifact.backend
 
     @property
     def artifact_root_uri(self) -> str:

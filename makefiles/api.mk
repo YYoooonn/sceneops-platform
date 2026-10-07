@@ -12,7 +12,7 @@ api-shell:
 
 .PHONY: api-health
 api-health:
-	curl -sf $(API_HOST)/health | python3 -m json.tool
+	curl -sf $(API_BASE_URL)/health | python3 -m json.tool
 
 .PHONY: api-openapi
 api-openapi:

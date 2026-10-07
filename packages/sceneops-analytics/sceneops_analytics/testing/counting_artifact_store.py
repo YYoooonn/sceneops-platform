@@ -21,7 +21,7 @@ from sceneops_core.common.schemas import ArtifactUri
 
 @dataclass
 class IoStats:
-    """Cumulative counters since construction or the last ``reset()``.
+    """Cumulative counters since construction.
     ``read_bytes_*`` (whole-object) and ``read_range_*`` (Request 5.3
     targeted range reads) are tracked separately -- a workload that reads
     selectively should show activity on ``read_range_*`` only, never
@@ -37,22 +37,6 @@ class IoStats:
     per_uri_read_calls: Counter[str] = field(default_factory=Counter)
     per_uri_range_bytes: Counter[str] = field(default_factory=Counter)
     per_uri_range_calls: Counter[str] = field(default_factory=Counter)
-
-    def reset(self) -> None:
-        self.read_bytes_calls = 0
-        self.read_bytes_total = 0
-        self.read_range_calls = 0
-        self.read_range_total = 0
-        self.write_bytes_calls = 0
-        self.write_bytes_total = 0
-        self.per_uri_read_bytes.clear()
-        self.per_uri_read_calls.clear()
-        self.per_uri_range_bytes.clear()
-        self.per_uri_range_calls.clear()
-
-    @property
-    def distinct_uris_read(self) -> int:
-        return len(set(self.per_uri_read_calls) | set(self.per_uri_range_calls))
 
     @property
     def total_bytes_read(self) -> int:

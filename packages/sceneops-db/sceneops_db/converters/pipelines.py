@@ -18,43 +18,6 @@ from ._utils import (
 )
 
 
-def _remap_legacy_pipeline_result(result: dict) -> dict:
-    # Handle field renames in stored results:
-    # 1. "steps" key → "tasks" (pipeline step→task rename)
-    # 2. Within each item:
-    #    - step_id/pipeline_step_id → pipeline_task_id (very old + pre-task-rename data)
-    #    - step_name/pipeline_step_name → pipeline_task_name
-    if "steps" not in result and "tasks" not in result:
-        return result
-
-    items = result.get("tasks") or result.get("steps") or []
-    remapped = []
-    for item in items:
-        if (
-            "step_id" in item
-            and "pipeline_task_id" not in item
-            and "pipeline_step_id" not in item
-        ):
-            item = {
-                **item,
-                "pipeline_task_id": item["step_id"],
-                "pipeline_task_name": item.get("step_name", item["step_id"]),
-            }
-        elif "pipeline_step_id" in item and "pipeline_task_id" not in item:
-            item = {
-                **item,
-                "pipeline_task_id": item["pipeline_step_id"],
-                "pipeline_task_name": item.get(
-                    "pipeline_step_name", item["pipeline_step_id"]
-                ),
-            }
-        remapped.append(item)
-
-    new_result = {k: v for k, v in result.items() if k not in ("steps", "tasks")}
-    new_result["tasks"] = remapped
-    return new_result
-
-
 def pipeline_run_model_to_manifest(model: PipelineRunModel) -> PipelineRunManifest:
     return PipelineRunManifest(
         pipeline_run_id=model.pipeline_run_id,
@@ -65,11 +28,7 @@ def pipeline_run_model_to_manifest(model: PipelineRunModel) -> PipelineRunManife
         model_id=model.model_id,
         model_version=model.model_version,
         params=model.params or {},
-        result=PipelineRunResult.model_validate(
-            _remap_legacy_pipeline_result(model.result)
-        )
-        if model.result
-        else None,
+        result=PipelineRunResult.model_validate(model.result) if model.result else None,
         error=error_from_json(model.error),
         execution_key=model.execution_key,
         created_at=model.created_at,

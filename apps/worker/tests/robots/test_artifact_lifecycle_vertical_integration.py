@@ -396,7 +396,6 @@ async def test_artifact_lifecycle_classifies_every_class_on_real_infrastructure(
         check=False,
         env={
             **os.environ,
-            "SCENEOPS_DATABASE_URL": worker_settings.database_url,
             "SCENEOPS_API_ARTIFACT__BACKEND": "minio",
             "SCENEOPS_API_ARTIFACT__ROOT_URI": artifact.root_uri,
             "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": artifact.endpoint_url,

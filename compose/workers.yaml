@@ -18,7 +18,6 @@ x-worker-common: &worker-common
   volumes:
     - ./data/artifacts:/data/artifacts
     - ./data/inputs:/data/inputs:ro
-    - ./scripts:/workspace/scripts:ro
 
 
 services:
@@ -51,7 +50,8 @@ services:
 
   worker-cli:
     <<: *worker-common
-    # Also reads the LeRobot export written by lerobot-integration
+    # Also reads the LeRobot export written by lerobot-integration, and runs the
+    # E2E verification scripts mounted at /workspace/scripts
     # (scripts/e2e/e2e_episode_learning.sh).
     volumes:
       - ./data/artifacts:/data/artifacts

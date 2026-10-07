@@ -7,7 +7,7 @@ Responsibility: exactly one hop --
 
 The bridge is transport infrastructure. It never imports/knows about
 PostgreSQL, DatasetVersion, Scene, RobotRun DB records, Episode,
-ArtifactStore, MinIO, MCAP, Celery, or Airflow -- verified by construction
+ArtifactStore, MinIO, MCAP, or Celery -- verified by construction
 (no such import appears anywhere in this file or its dependencies,
 sceneops_core.streaming / sceneops_streaming).
 

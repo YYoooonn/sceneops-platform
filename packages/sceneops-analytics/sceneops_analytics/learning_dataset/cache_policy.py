@@ -45,14 +45,6 @@ class CachePolicy:
     def episode_steps_enabled(self) -> bool:
         return self.max_episode_steps != 0
 
-    @property
-    def schemas_enabled(self) -> bool:
-        return self.max_schemas != 0
-
-    @property
-    def shard_metadata_enabled(self) -> bool:
-        return self.max_shard_metadata != 0
-
 
 DEFAULT_CACHE_POLICY = CachePolicy()
 

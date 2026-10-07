@@ -458,10 +458,6 @@ def worker_settings(unique_id) -> WorkerSettings:
     _minio_reachable's job, so a test can request just this fixture
     without triggering the KeyError a plain os.environ[...] would."""
     return WorkerSettings(
-        database_url=os.environ.get(
-            "SCENEOPS_DATABASE_URL",
-            "postgresql+asyncpg://sceneops:sceneops@localhost:5432/sceneops_test",
-        ),
         artifact={
             "backend": ArtifactBackend.MINIO,
             "root_uri": f"s3://{_BUCKET}/{_TEST_PREFIX}/{unique_id('root')}",

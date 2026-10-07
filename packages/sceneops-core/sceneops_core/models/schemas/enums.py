@@ -6,8 +6,6 @@ from enum import StrEnum
 class ModelBackend(StrEnum):
     MOCK = "mock"
     GROUNDING_DINO = "grounding_dino"
-    TRITON = "triton"
-    REMOTE_HTTP = "remote_http"
 
 
 class ModelVersionStatus(StrEnum):
@@ -21,4 +19,3 @@ class ModelTaskType(StrEnum):
     DETECTION = "detection"
     SEGMENTATION = "segmentation"
     TRACKING = "tracking"
-    SCENE_UNDERSTANDING = "scene_understanding"

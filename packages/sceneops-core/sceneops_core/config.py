@@ -31,10 +31,6 @@ class ArtifactSettings(StorageSettings):
     observation_payload_prefix: str = "observation_payloads"
     label_prefix: str = "labels"
 
-    # Unused legacy fields — kept for backward compatibility only.
-    bucket: str | None = None
-    prefix: str | None = None
-
     @property
     def dataset_root_uri(self) -> str:
         return join_uri(self.root_uri, self.dataset_prefix)

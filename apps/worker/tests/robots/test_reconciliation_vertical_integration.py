@@ -504,7 +504,6 @@ async def test_reconcile_once_classifies_known_durable_states_and_changes_nothin
         check=False,
         env={
             **os.environ,
-            "SCENEOPS_DATABASE_URL": worker_settings.database_url,
             "SCENEOPS_API_ARTIFACT__BACKEND": "minio",
             "SCENEOPS_API_ARTIFACT__ROOT_URI": artifact.root_uri,
             "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": artifact.endpoint_url,
