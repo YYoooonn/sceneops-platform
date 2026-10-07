@@ -6,7 +6,7 @@
 #   locked reference MCAP
 #     -> `reference replay` (dataset-replay container, no raw dataset mounted)
 #     -> ROS 2 topics -> streaming_bridge_node -> Kafka
-#     -> capture (until RUN_END; MCAP + capture receipt on the recordings volume)
+#     -> capture (finalizes only on RUN_END; MCAP + capture receipt on the recordings volume)
 #     -> publish-pending -> reconcile --apply -> REGISTER_ROBOT_RUN -> RobotRun
 #
 # Publication and registration are the production operational commands of ADR-008
@@ -95,7 +95,7 @@ streaming_acquire() {
     --exit-after-idle-seconds 10 >/dev/null
   "${COMPOSE[@]}" run -d --name "$capture" -T ros2 python3 /workspace/capture/cli.py \
     --robot-id "$robot_id" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
-    --output-root "$capture_root" --until-run-end --idle-timeout-seconds 120 >/dev/null
+    --output-root "$capture_root" --idle-timeout-seconds 120 >/dev/null
   for _ in $(seq 1 60); do
     docker logs "$bridge" 2>&1 | grep -q "streaming bridge ready" && break
     sleep 1

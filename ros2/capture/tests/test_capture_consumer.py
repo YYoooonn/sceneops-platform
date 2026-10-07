@@ -29,6 +29,7 @@ import capture_consumer  # noqa: E402
 from capture_consumer import (  # noqa: E402
     CAPTURE_CONSUMER_GROUP_ID,
     PartitionInvariantError,
+    RunEndNotObservedError,
     SequenceIntegrityError,
     _RunFilter,
     _SequenceTracker,
@@ -616,24 +617,80 @@ def test_run_capture_stop_on_run_end_finalizes_exactly_at_run_end(tmp_path, monk
     assert created[0].committed is True
 
 
-def test_run_capture_without_run_end_keeps_polling_until_stop_condition(
+def test_run_capture_stopped_before_run_end_is_not_finalized(tmp_path, monkeypatch) -> None:
+    """With stop_on_run_end the stop condition is only an abort guard: a
+    run whose RUN_END never arrived (a killed bridge, a truncated stream)
+    must not become a finalized capture that publishes as a complete
+    RobotRun. Nothing is finalized, nothing is committed, and the partial
+    bag stays for the next attempt to discard."""
+    queue = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0),
+        _consumed(_envelope(sequence_number=0), offset=1),
+        _consumed(_envelope(sequence_number=1), offset=2),
+    ]
+    created = _install_fake_consumer(monkeypatch, queue)
+
+    with pytest.raises(RunEndNotObservedError):
+        asyncio.run(
+            run_capture(
+                settings=object(),
+                robot_id="robot-1",
+                robot_run_id="run-1",
+                output_root=tmp_path,
+                stop_condition=_bounded_stop_condition(3),
+                stop_on_run_end=True,
+            )
+        )
+
+    assert created[0].committed is False
+    assert created[0].closed is True
+    assert not final_bag_path(tmp_path, "run-1").exists()
+    assert partial_bag_path(tmp_path, "run-1").exists()
+
+
+def test_run_capture_retry_after_unfinished_attempt_finalizes_on_run_end(
     tmp_path, monkeypatch
 ) -> None:
-    queue = [_consumed(_envelope(sequence_number=0), offset=0)]
-    _install_fake_consumer(monkeypatch, queue)
+    """The aborted attempt leaves only a partial bag; a later attempt that
+    does see RUN_END discards it and finalizes from Kafka."""
+    truncated = [
+        _control(RunEventType.RUN_START, sequence_number=0, offset=0),
+        _consumed(_envelope(sequence_number=0), offset=1),
+    ]
+    _install_fake_consumer(monkeypatch, truncated)
+    with pytest.raises(RunEndNotObservedError):
+        asyncio.run(
+            run_capture(
+                settings=object(),
+                robot_id="robot-1",
+                robot_run_id="run-1",
+                output_root=tmp_path,
+                stop_condition=_bounded_stop_condition(2),
+                stop_on_run_end=True,
+            )
+        )
 
+    complete = [
+        *truncated,
+        _consumed(_envelope(sequence_number=1), offset=2),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=3),
+    ]
+    created = _install_fake_consumer(monkeypatch, complete)
     result = asyncio.run(
         run_capture(
             settings=object(),
             robot_id="robot-1",
             robot_run_id="run-1",
             output_root=tmp_path,
-            stop_condition=_bounded_stop_condition(3),
+            stop_condition=_bounded_stop_condition(50),
             stop_on_run_end=True,
         )
     )
 
-    assert result.message_count == 1
+    assert result.message_count == 2
+    assert created[0].committed is True
+    assert final_bag_path(tmp_path, "run-1").exists()
+    assert not partial_bag_path(tmp_path, "run-1").exists()
 
 
 def test_run_capture_records_receive_time_and_transport_sequence(tmp_path, monkeypatch) -> None:

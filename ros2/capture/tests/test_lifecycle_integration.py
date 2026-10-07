@@ -63,8 +63,7 @@ from streaming_bridge_node import (  # noqa: E402
 
 
 def _unique_test_topic() -> str:
-    # Same reasoning as test_router_integration.py's own helper -- a
-    # fresh, disposable, per-invocation topic so this test never has to
+    # A fresh, disposable, per-invocation topic so this test never has to
     # scan unrelated accumulated history from other local/CI runs.
     return f"sceneops.robot.telemetry.lifecycle-capture-test.{uuid.uuid4().hex[:12]}.v1"
 
@@ -127,9 +126,9 @@ def test_run_capture_handles_real_lifecycle_enabled_stream(tmp_path) -> None:
             robot_id=robot_id,
             robot_run_id=robot_run_id,
             output_root=tmp_path,
-            # Matches exactly how the bridge's own published_count
-            # (telemetry-only) is used as --max-messages in practice --
-            # control events never count toward writer.stats.message_count.
+            # Count-bounded stop (no stop_on_run_end): the telemetry-only
+            # count -- control events never count toward
+            # writer.stats.message_count.
             stop_condition=lambda count: count >= telemetry_count,
             poll_timeout_seconds=2.0,
         )

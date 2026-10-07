@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""CLI entry point for durable MCAP capture.
+"""CLI entry point for durable MCAP capture of one streamed RobotRun.
 
 Runs inside the ros2 container (needs the ROS 2 interface definitions for
-schema text). Externally controls the capture lifecycle: this module
-supplies the stop policy, run_capture() does not invent one. At least one
-of ``--until-run-end`` (the bridge's explicit RUN_END control event, the
-normal end of a streamed run), ``--max-messages`` and
-``--idle-timeout-seconds`` is required; the first one met ends the capture.
-An idle timeout finalizes what was captured when no RUN_END ever arrives (a
-bridge that was killed); it cannot tell a complete run from a truncated one.
+schema text). The capture ends, and finalizes, only on the run's explicit
+RUN_END control event, which the bridge publishes after its last telemetry
+record. ``--idle-timeout-seconds`` is an abort guard, not a finalization
+policy: when no new message arrives for that long before RUN_END, the
+capture fails (non-zero exit) without finalizing or committing Kafka offsets,
+so a bridge that was killed cannot leave a truncated recording that looks
+complete. The partial bag stays; re-running the capture discards it and
+rebuilds from Kafka's committed offsets.
 
 The finalized bag directory holds the MCAP and a ``capture_receipt.json``
 (acquisition metadata, ADR-008) that ``publish --from-capture`` reads, so
@@ -20,15 +21,7 @@ Usage:
         --robot-id ROBOT --robot-run-id RUN \\
         --output-root /recordings/capture \\
         --channels-file /workspace/channels/surround-camera-lidar.json \\
-        --until-run-end --idle-timeout-seconds 60
-    python3 /workspace/capture/cli.py \\
-        --robot-id ROBOT --robot-run-id RUN \\
-        --output-root /recordings/capture \\
-        --max-messages 2915
-    python3 /workspace/capture/cli.py \\
-        --robot-id ROBOT --robot-run-id RUN \\
-        --output-root /recordings/capture \\
-        --idle-timeout-seconds 10.0
+        --idle-timeout-seconds 60
 """
 
 from __future__ import annotations
@@ -41,15 +34,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from sceneops_core.robots.capture_receipt import FinalizationReason
 from sceneops_core.streaming import build_channel_registry
 from sceneops_streaming import StreamingSettings
 
 from capture_consumer import run_capture
-
-
-def _max_messages_stop_condition(max_messages: int) -> Callable[[int], bool]:
-    return lambda count: count >= max_messages
 
 
 def _idle_timeout_stop_condition(idle_timeout_seconds: float) -> Callable[[int], bool]:
@@ -86,58 +74,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "must match the bridge's",
     )
     parser.add_argument(
-        "--until-run-end",
-        action="store_true",
-        help="Stop when the run's explicit RUN_END control event is consumed.",
-    )
-    parser.add_argument(
-        "--max-messages",
-        type=int,
-        help="Stop once this many messages have been captured (deterministic runs).",
-    )
-    parser.add_argument(
         "--idle-timeout-seconds",
         type=float,
-        help="Stop after this many seconds with no new matching message.",
+        help="Abort (without finalizing) after this many seconds with no new "
+        "matching message before the run's RUN_END. Default: wait for RUN_END.",
     )
     parser.add_argument("--poll-timeout-seconds", type=float, default=1.0)
-    args = parser.parse_args(argv)
-    if not (args.until_run_end or args.max_messages or args.idle_timeout_seconds):
-        parser.error(
-            "one of --until-run-end, --max-messages, --idle-timeout-seconds is required"
-        )
-    return args
+    return parser.parse_args(argv)
 
 
-def _stop_condition(
-    args: argparse.Namespace,
-) -> Callable[[int], FinalizationReason | None]:
-    """The first condition met ends the capture and names itself as the
-    finalization reason recorded in the capture receipt."""
-    conditions: list[tuple[FinalizationReason, Callable[[int], bool]]] = []
-    if args.max_messages is not None:
-        conditions.append(
-            (
-                FinalizationReason.MAX_MESSAGES,
-                _max_messages_stop_condition(args.max_messages),
-            )
-        )
-    if args.idle_timeout_seconds is not None:
-        conditions.append(
-            (
-                FinalizationReason.IDLE_TIMEOUT,
-                _idle_timeout_stop_condition(args.idle_timeout_seconds),
-            )
-        )
-
-    def stop_condition(count: int) -> FinalizationReason | None:
-        # With only --until-run-end this never fires by itself.
-        for reason, condition in conditions:
-            if condition(count):
-                return reason
-        return None
-
-    return stop_condition
+def _abort_condition(args: argparse.Namespace) -> Callable[[int], bool]:
+    if args.idle_timeout_seconds is None:
+        return lambda count: False
+    return _idle_timeout_stop_condition(args.idle_timeout_seconds)
 
 
 async def _main_async(args: argparse.Namespace) -> int:
@@ -147,10 +96,10 @@ async def _main_async(args: argparse.Namespace) -> int:
         robot_id=args.robot_id,
         robot_run_id=args.robot_run_id,
         output_root=args.output_root,
-        stop_condition=_stop_condition(args),
+        stop_condition=_abort_condition(args),
         poll_timeout_seconds=args.poll_timeout_seconds,
         registry=build_channel_registry(args.channels_file),
-        stop_on_run_end=args.until_run_end,
+        stop_on_run_end=True,
         robot_platform=args.robot_platform,
     )
 

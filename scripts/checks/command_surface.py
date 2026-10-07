@@ -120,6 +120,10 @@ DELETED = [
     "worker-run-pipeline",
     "worker-register-robot-run",
     "PIPELINE_RUN_TASK",
+    "ContinuousCaptureRouter",
+    "router_benchmark",
+    "--until-run-end",
+    "--emit-lifecycle-events",
 ]
 
 # Measurement tooling lives in benchmarks/ and is never part of a command or of scripts/.

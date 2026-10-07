@@ -12,11 +12,6 @@ services:
       - .env.local
     volumes:
       - ./ros2/nodes:/workspace/nodes:ro
-      # Read-only, matching compose/workers.yaml's identical mount for the
-      # worker service -- lets scripts/e2e/ros2_streaming_verify.py run
-      # inside this container (real rclpy deserialize_message for every
-      # ROS2 message type) without duplicating it into ros2/.
-      - ./scripts:/workspace/scripts:ro
       # Benchmark tooling (benchmarks/streaming/) that runs against the real
       # capture modules inside this image; never an acceptance check.
       - ./benchmarks:/workspace/benchmarks:ro

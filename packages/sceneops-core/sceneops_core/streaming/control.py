@@ -1,8 +1,8 @@
-"""Run lifecycle control events (Phase 7.2).
+"""Run lifecycle control events.
 
-An ADDITIVE mechanism for telling a continuous consumer (e.g.
-``ros2/capture/router.py``'s ``ContinuousCaptureRouter``) when a
-RobotRun starts and ends, without touching the frozen
+An ADDITIVE mechanism for telling a consumer (the run-scoped capture,
+``ros2/capture/capture_consumer.py``, which finalizes a run only on its
+``RUN_END``) when a RobotRun starts and ends, without touching the frozen
 ``TelemetryEnvelope`` schema, the Kafka wire contract, or any existing
 channel's semantics.
 
@@ -13,9 +13,9 @@ channel, never a separate control topic.** A control event IS a
 ``wire.partition_key``, entirely unchanged), same topic. What makes it
 a control event rather than telemetry is purely its
 ``channel``/``message_type`` (this module's reserved values, never a
-real ROS2 topic/interface, never present in
-``ros2/capture/schema_registry.py``'s ``SUPPORTED_CHANNELS``, so it can
-never accidentally get written to an MCAP even if some caller forgot to
+real ROS2 topic/interface, never admitted to the channel registry
+(``ChannelSpec`` rejects it), so it can never accidentally get written to
+an MCAP even if some caller forgot to
 special-case it -- ``McapCaptureWriter.write_envelope`` would reject it
 with ``UnsupportedChannelError``, matching every other unknown-channel
 case).
@@ -40,9 +40,7 @@ doesn't care about lifecycle.
 Not a canonical/domain concept -- ``RunEventType`` and
 ``build_control_envelope``/``is_control_envelope``/``parse_control_event``
 are transport-level only, matching where ``TelemetryEnvelope`` itself
-lives. See ``ros2/capture/router.py`` for how the router's own runtime
-``CaptureSession``/``SessionState`` model is DRIVEN by these events --
-that model itself is not defined here.
+lives.
 """
 
 from __future__ import annotations
@@ -93,10 +91,9 @@ def build_control_envelope(
     that run's own telemetry sequence counter (``sequence_number`` is
     documented as "diagnostic only, never identity" --
     ``TelemetryEnvelope``'s own field docstring) -- a control event is
-    intercepted by a lifecycle-aware consumer (``ContinuousCaptureRouter``)
-    before it ever reaches per-run sequence-gap/duplicate tracking, so
-    there is no shared numbering invariant to preserve here. Callers
-    that want it to reflect "where in the stream this happened" (e.g.
+    intercepted by capture and validated in its own sequence space,
+    independent of telemetry's, so there is no shared numbering invariant
+    to preserve here. Callers that want it to reflect "where in the stream this happened" (e.g.
     the ROS2 bridge, which reads its own live counter without
     incrementing it) may pass an explicit value; the default (``0``) is
     fine for any caller that doesn't need that.

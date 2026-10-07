@@ -112,6 +112,12 @@ class SequenceIntegrityError(RuntimeError):
     was observed for this robot_run_id's stream."""
 
 
+class RunEndNotObservedError(RuntimeError):
+    """A capture that must end on its run's RUN_END was stopped before it
+    arrived. What was consumed may be a truncated recording, so nothing is
+    finalized and no offset is committed."""
+
+
 @dataclass
 class CaptureResult:
     robot_id: str
@@ -250,12 +256,19 @@ async def run_capture(
     idle-timeout or wall-clock-deadline policy closes over its own clock
     inside the callable it passes in.
 
-    ``stop_on_run_end`` additionally ends the capture when the run's
-    explicit ``RUN_END`` control event has been consumed (after it passed
-    its own sequence validation). The bridge publishes ``RUN_END`` after
-    its last telemetry record on the same partition, so everything the
-    bridge forwarded precedes it. A run that never sends ``RUN_END`` ends
-    only through ``stop_condition``.
+    ``stop_on_run_end`` makes the run's explicit ``RUN_END`` control event
+    the only way to finalize: the capture ends when ``RUN_END`` has been
+    consumed (after it passed its own sequence validation). The bridge
+    publishes ``RUN_END`` after its last telemetry record on the same
+    partition, so everything the bridge forwarded precedes it. In this mode
+    ``stop_condition`` is an abort guard (e.g. an idle timeout): if it ends
+    the capture before ``RUN_END``, ``RunEndNotObservedError`` is raised and
+    nothing is finalized or committed, because a recording that merely
+    stopped arriving cannot be told from a complete one once it is a
+    registered RobotRun. The partial bag stays for the next attempt to
+    discard and rebuild from Kafka. Without ``stop_on_run_end`` the
+    ``stop_condition`` alone ends and finalizes the capture (count-bounded
+    synthetic runs in tests and benchmarks).
 
     A stop condition may return the ``FinalizationReason`` it stands for
     (recorded in the capture receipt); a plain ``True`` records ``MANUAL``.
@@ -357,6 +370,13 @@ async def run_capture(
             # but only proceed to validate/finalize/commit on the clean
             # (non-exception) path below.
             writer.close()
+
+        if stop_on_run_end and not run_ended:
+            raise RunEndNotObservedError(
+                f"capture of robot_run_id={robot_run_id!r} stopped before its "
+                f"RUN_END after {writer.stats.message_count} message(s); "
+                "not finalized"
+            )
 
         mcap_path = writer.mcap_file_path()
         validate_mcap_file(

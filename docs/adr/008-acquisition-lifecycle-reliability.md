@@ -549,6 +549,26 @@ published-but-unregistered RobotRunManifests", "capture crash recovery",
 "artifact garbage collection" — classification only) and records why the
 rest of §11.3 (`CaptureSessionRecord`) stays deferred.
 
+**Amendment — acquisition consolidation.**
+Accepted. It changes no decision above; it removes an undeployed component and closes
+one finding the audit recorded.
+
+- **The continuous router is removed.** `ContinuousCaptureRouter` had no CLI, compose
+  service or make target (§1.1); capture is `capture/cli.py` → `run_capture()`, one
+  one-shot process per `robot_run_id`. The router, its tests and benchmark are deleted
+  (Git history keeps them). F6 and the router half of B7 are void; the router
+  productionization item of §9 is withdrawn. Multi-run routing is a question for the
+  later Kafka reliability study, not a deferred ADR-008 deliverable. The audit text
+  below describes the repository as it was audited and still mentions the router.
+- **F7 is closed for the deployed capture path.** `capture/cli.py` finalizes a capture
+  only on the run's `RUN_END`; `--idle-timeout-seconds` is an abort guard, and an
+  aborted capture (`RunEndNotObservedError`) finalizes and commits nothing, leaving a
+  `capture_unfinished` partial bag. A capture finalized through the CLI therefore always
+  records `finalization.reason = explicit_run_end`. The receipt schema is unchanged:
+  `run_capture()` called without `stop_on_run_end` (tests, benchmarks) can still record
+  `idle_timeout`, `max_messages` or `manual`, and the Publisher does not gate on the
+  reason.
+
 As in ADR-007, three labels are used where confusion is possible:
 
 ```text

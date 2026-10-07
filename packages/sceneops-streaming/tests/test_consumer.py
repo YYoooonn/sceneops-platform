@@ -101,7 +101,6 @@ class _FakeConfluentConsumer:
         self.config = config
         self.subscribed_topics: list[str] = []
         self.committed: list[tuple[object, bool]] = []
-        self.committed_offsets: list[tuple[list, bool]] = []
         self.closed = False
         self._queue: list[_FakeMessage] = []
         # (num_messages, timeout) for every consume() call -- lets tests
@@ -122,10 +121,7 @@ class _FakeConfluentConsumer:
         batch, self._queue = self._queue[:num_messages], self._queue[num_messages:]
         return batch
 
-    def commit(self, message=None, offsets=None, asynchronous=True) -> None:
-        if offsets is not None:
-            self.committed_offsets.append((offsets, asynchronous))
-            return
+    def commit(self, message=None, asynchronous=True) -> None:
         self.committed.append((message, asynchronous))
 
     def close(self) -> None:
@@ -167,45 +163,6 @@ async def test_commit_commits_the_last_polled_message_synchronously() -> None:
     await consumer.commit()
 
     assert consumer._consumer.committed == [(sentinel_message, False)]
-
-
-# ---------------------------------------------------------------------
-# Phase 7.1: explicit per-partition offset commit (commit_offsets)
-# ---------------------------------------------------------------------
-
-
-async def test_commit_offsets_with_empty_mapping_is_a_no_op() -> None:
-    consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), enable_auto_commit=False
-    )
-    await consumer.commit_offsets({})
-    assert consumer._consumer.committed_offsets == []
-
-
-async def test_commit_offsets_builds_topic_partitions_for_each_entry() -> None:
-    consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), enable_auto_commit=False
-    )
-
-    await consumer.commit_offsets({0: 105, 1: 240})
-
-    assert len(consumer._consumer.committed_offsets) == 1
-    topic_partitions, asynchronous = consumer._consumer.committed_offsets[0]
-    assert asynchronous is False
-    by_partition = {tp.partition: tp.offset for tp in topic_partitions}
-    assert by_partition == {0: 105, 1: 240}
-    assert all(tp.topic == consumer._topic for tp in topic_partitions)
-
-
-async def test_commit_offsets_never_touches_last_message_commit_path() -> None:
-    """commit_offsets() and commit() are independent mechanisms --
-    using one must not interfere with the other's own state."""
-    consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), enable_auto_commit=False
-    )
-    await consumer.commit_offsets({0: 50})
-    assert consumer._consumer.committed == []
-    assert len(consumer._consumer.committed_offsets) == 1
 
 
 # ---------------------------------------------------------------------

@@ -145,13 +145,14 @@ acquire_fixture() {
 
 # resume_capture <run-id> <capture-root> — an interrupted capture: Kafka is the source
 # of truth, and a capture resumes from its group's committed offsets. Nothing is
-# replayed: it finalizes only if the run's RUN_END is already in the topic.
+# replayed: it finalizes only if the run's RUN_END is already in the topic, and
+# otherwise aborts (a recording that merely stopped arriving is never finalized).
 resume_capture() {
   local run_id="$1" capture_root="$2" summary
   docker rm -f "$CAPTURE" >/dev/null 2>&1 || true
   "${COMPOSE[@]}" run -d --name "$CAPTURE" -T ros2 python3 /workspace/capture/cli.py \
     --robot-id "$ROBOT_ID" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
-    --output-root "$capture_root" --until-run-end --idle-timeout-seconds 60 >/dev/null
+    --output-root "$capture_root" --idle-timeout-seconds 60 >/dev/null
   [ "$(docker wait "$CAPTURE")" = 0 ] || fail "the resumed capture of $run_id failed (its RUN_END may never have reached Kafka: remove the capture and the run's partial state by hand)"
   summary="$(summary_line "$(docker logs "$CAPTURE" 2>&1)" capture_summary)"
   log "  ✅  capture of $run_id resumed from Kafka: $(echo "$summary" | jq -c '{message_count, sha256}')"

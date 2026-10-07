@@ -31,7 +31,7 @@ smoke-streaming:
 
 # --------------------
 # ROS 2 -> Kafka -> MCAP unit tests: the streaming bridge node, the capture
-# consumer/router/writer, and the channel registry they share. Runs inside the
+# consumer/writer, and the channel registry they share. Runs inside the
 # ros2 image (rclpy, ROS 2 interface definitions); the capture suite includes
 # real-Kafka integration tests (including the lifecycle envelope of a run: the
 # real bridge's RUN_START, telemetry and RUN_END, and the capture receipt's

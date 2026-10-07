@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 from confluent_kafka import Consumer as ConfluentConsumer
-from confluent_kafka import TopicPartition
 
 from sceneops_core.streaming import ConsumedTelemetryEnvelope
 
@@ -174,38 +173,6 @@ class KafkaTelemetryConsumer:
             return
         await asyncio.to_thread(
             self._consumer.commit, message=self._last_message, asynchronous=False
-        )
-
-    async def commit_offsets(self, offsets: dict[int, int]) -> None:
-        """Explicitly commit a next-offset-to-read position per Kafka
-        partition (Phase 7.1) -- for a caller that must commit to a
-        position OTHER than "the most recently returned record"
-        (``commit()``'s only mode). The motivating case: a single
-        continuous consumer multiplexing many independent downstream
-        consumers (e.g. one open MCAP writer per RobotRun) can only
-        safely advance a partition's committed offset up to the
-        earliest position still needed by any of them -- never simply
-        "the last record this process happened to see," which could
-        acknowledge (and thus make Kafka stop redelivering) a record
-        some other, still-open downstream consumer has not yet
-        durably persisted.
-
-        ``offsets`` maps ``partition -> offset``, where ``offset`` is
-        the position a FRESH consumer in this group should read NEXT
-        (``confluent_kafka``'s own commit convention -- one past the
-        last position that's safe to consider durably handled, not
-        the last-consumed offset itself). Caller-computed; this method
-        performs no safety reasoning of its own, only the mechanical
-        commit. A partition absent from ``offsets`` is left untouched.
-        """
-        if not offsets:
-            return
-        topic_partitions = [
-            TopicPartition(self._topic, partition, offset)
-            for partition, offset in offsets.items()
-        ]
-        await asyncio.to_thread(
-            self._consumer.commit, offsets=topic_partitions, asynchronous=False
         )
 
     async def close(self) -> None:

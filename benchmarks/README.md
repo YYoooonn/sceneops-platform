@@ -19,7 +19,6 @@ what was measured: "validated through 100k messages" is not "supports at most 10
 | `learning_data/benchmark_incremental_export.py` | write amplification of incremental vs full-rebuild export | host | nothing |
 | `learning_data/benchmark_minio_access_strategy.py` | the same access strategies against real MinIO | host | `make local-up`; writes under a throwaway prefix of the configured bucket |
 | `streaming/benchmark_streaming_capture_scale.sh` (+ `.py`) | capture throughput, Kafka lag and memory vs message count and payload size | `ros2` container + host | Kafka (`make streaming-up`) |
-| `streaming/producer.py` + `streaming/router_benchmark.py` | `ContinuousCaptureRouter` over an interleaved multi-RobotRun topic | host producer, `ros2` container consumer | Kafka |
 | `acquisition/benchmark_registration_latency.py` | `REGISTER_ROBOT_RUN` latency through the production path | host + the stack's worker | `make local-up`, the prepared recording; registers throwaway `bench-reg-*` RobotRuns |
 
 ```bash
@@ -39,5 +38,7 @@ Each script's docstring states its workload, options and prerequisites.
   overhead, and record the environment next to every number.
 - A benchmark that is superseded (its decision was taken, or a later benchmark covers its
   workload) is deleted; its result stays in the study document that recorded it.
-- Study documents written before this directory existed cite these scripts under
-  `scripts/dev/` and `scripts/dev/phase7/`; the files are the ones listed above.
+- Study documents written before this directory existed cite scripts under `scripts/dev/` and
+  `scripts/dev/phase7/`. The ones still needed are listed above; the others (including the
+  multi-run router prototype and benchmark) were removed with the experiment they measured and
+  remain in Git history.

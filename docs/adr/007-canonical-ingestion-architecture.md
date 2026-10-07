@@ -822,7 +822,7 @@ routing by `robot_run_id`, writing `.partial` MCAP, finalizing atomically,
 and `CaptureSession` state transitions. It must not write SceneOps records,
 call SceneOps APIs to create canonical state, or depend on `sceneops-db`.
 
-CURRENT IMPLEMENTATION: satisfied by `ros2/capture/` (`router.py`,
+CURRENT IMPLEMENTATION: satisfied by `ros2/capture/` (`capture_consumer.py`,
 `finalize.py`, `mcap_writer.py`). Unchanged by this ADR.
 
 ### 7.2 Recording Publisher

@@ -41,7 +41,7 @@ Usage (inside the ros2 Docker sandbox):
     python3 /workspace/nodes/streaming_bridge_node.py \\
         --robot-id robot-nuscenes-streaming --robot-run-id run-<unique> \\
         [--channels-file /workspace/channels/surround-camera-lidar.json] \\
-        [--emit-lifecycle-events] [--exit-after-idle-seconds 10]
+        [--exit-after-idle-seconds 10]
 """
 
 from __future__ import annotations
@@ -215,21 +215,12 @@ class StreamingBridgeNode(Node):
         constructing a real producer -- see
         ros2/nodes/tests/test_streaming_bridge_node.py.
 
-        ``emit_lifecycle_events`` (Phase 7.2, default ``False``) --
-        publish a ``RUN_START`` control event
-        (``sceneops_core.streaming.control``) right after construction
-        and a best-effort ``RUN_END`` during ``shutdown()``, for a
-        lifecycle-aware continuous consumer (e.g.
-        ``ros2/capture/router.py``'s ``ContinuousCaptureRouter``) to key
-        off. Defaults to ``False`` so every existing test that injects a
-        fake bridge and asserts exact published-envelope counts/indices/
-        sequence numbers keeps working completely unchanged -- ``main()``
-        (the real CLI entry point) is the one caller that turns it on.
-        The router does not require this: it discovers a run implicitly
-        from its first telemetry record regardless (Phase 7.0 study
-        §10) -- this only makes the SIGNAL explicit and enables the
-        router's ``EXPLICIT_RUN_END`` finalization path instead of
-        always falling back to its idle-timeout policy."""
+        ``emit_lifecycle_events`` -- publish a ``RUN_START`` control event
+        (``sceneops_core.streaming.control``) right after construction and a
+        best-effort ``RUN_END`` during ``shutdown()``. Capture finalizes a run
+        only on its ``RUN_END``, so ``main()`` always enables it. It defaults
+        to ``False`` so tests that inject a fake bridge and assert exact
+        published-envelope counts/indices/sequence numbers are unaffected."""
         super().__init__("streaming_bridge_node")
         self._robot_id = robot_id
         self._robot_run_id = robot_run_id
@@ -317,17 +308,16 @@ class StreamingBridgeNode(Node):
 
     def _publish_lifecycle_event(self, event_type: RunEventType) -> None:
         """Best-effort -- a control event failing to publish must never
-        crash bridge startup/shutdown or abort telemetry publishing;
-        the router's idle-timeout fallback exists specifically so a
-        missing lifecycle signal (this one included) is never a
-        correctness problem, only a slower detection of "this run is
-        done." Uses the SEPARATE, independent lifecycle sequence counter
-        (``_next_lifecycle_sequence_number``, Phase 7.2.1) -- never the
-        telemetry one -- so RUN_START always gets a clean 0 and RUN_END
-        a clean 1, regardless of how many (or how few) telemetry
-        messages were published in between; RunScopedCapture validates
-        this stream's own 0..N-1 completeness independently of
-        telemetry's (capture_consumer.py's own second
+        crash bridge startup/shutdown or abort telemetry publishing. A RUN_END
+        that fails to publish leaves the run unfinalizable by capture, which
+        fails the capture rather than finalizing a recording of unknown
+        completeness. Uses the SEPARATE, independent lifecycle sequence
+        counter (``_next_lifecycle_sequence_number``) -- never the telemetry
+        one -- so RUN_START always gets a clean 0 and RUN_END a clean 1,
+        regardless of how many (or how few) telemetry messages were
+        published in between; capture validates this stream's own 0..N-1
+        completeness independently of telemetry's (capture_consumer.py's
+        second
         ``_SequenceTracker``)."""
         try:
             envelope = build_control_envelope(
@@ -427,10 +417,8 @@ class StreamingBridgeNode(Node):
         possibly-racing producer/connection.
 
         This is the GRACEFUL path only -- a hard kill (SIGKILL, crash)
-        never reaches this method, which is exactly why the router's
-        idle-timeout fallback exists as the defensive counterpart:
-        RUN_END is the normal-case signal, never the only one a
-        consumer can rely on."""
+        never reaches this method, so that run never gets a RUN_END and
+        capture refuses to finalize it."""
         if self._emit_lifecycle_events:
             self._publish_lifecycle_event(RunEventType.RUN_END)
         self._bridge.close(timeout_seconds=timeout_seconds)
@@ -465,16 +453,6 @@ def main() -> None:
         help="Bound on how long a single publish() may block the ROS2 callback thread",
     )
     parser.add_argument(
-        "--emit-lifecycle-events",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "Publish RUN_START at startup and RUN_END at graceful shutdown "
-            "(sceneops_core.streaming.control). Capture finalizes the "
-            "recording on RUN_END. Default on."
-        ),
-    )
-    parser.add_argument(
         "--exit-after-idle-seconds",
         type=float,
         default=None,
@@ -498,7 +476,7 @@ def main() -> None:
         robot_run_id=args.robot_run_id,
         registry=registry,
         publish_timeout_seconds=args.publish_timeout_seconds,
-        emit_lifecycle_events=args.emit_lifecycle_events,
+        emit_lifecycle_events=True,
     )
 
     shutdown_requested = threading.Event()
