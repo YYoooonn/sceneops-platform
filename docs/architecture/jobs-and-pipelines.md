@@ -287,4 +287,4 @@ The DAG file cannot import SceneOps, so it mirrors the task ids of the four
 definitions statically; `apps/worker/tests/pipelines/test_airflow_dag_mirror.py`
 fails when the mirror drifts. Tasks run serially in definition order, and
 optional tasks skip themselves exactly as on the Celery path. The orchestrator
-acceptance is `make test-infrastructure-airflow`.
+acceptance is `make test-infrastructure SUITE=airflow`.

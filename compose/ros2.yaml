@@ -17,6 +17,9 @@ services:
       # inside this container (real rclpy deserialize_message for every
       # ROS2 message type) without duplicating it into ros2/.
       - ./scripts:/workspace/scripts:ro
+      # Benchmark tooling (benchmarks/streaming/) that runs against the real
+      # capture modules inside this image; never an acceptance check.
+      - ./benchmarks:/workspace/benchmarks:ro
       # The durable MCAP capture consumer -- not a ROS2 node (no rclpy
       # Node/pub-sub), but it needs rosbag2_py for standard-format MCAP
       # writing, so it runs in this same ROS2-capable image rather than

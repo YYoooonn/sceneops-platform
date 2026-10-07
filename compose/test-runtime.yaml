@@ -1,5 +1,5 @@
 # The disposable execution runtime of `make test-infrastructure` and
-# `make test-infrastructure-airflow` (tests/infrastructure/execution_runtime.py).
+# `make test-infrastructure SUITE=airflow` (tests/infrastructure/execution_runtime.py).
 #
 # A compose project of its own (`sceneops-test`), deliberately not included from
 # compose.yaml: an API, Celery workers and a Redis wired to the disposable

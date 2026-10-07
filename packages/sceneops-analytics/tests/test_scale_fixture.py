@@ -1,7 +1,7 @@
 """Correctness smoke test for the SceneOps V2 Request 5.1 scaling benchmark
 fixture (sceneops_analytics.testing.scale_fixture) -- fast (xs scale only),
 part of the regular unit-test tier. The benchmark harness itself
-(scripts/dev/benchmark_learning_data_scaling.py) is not run by pytest.
+(benchmarks/learning_data/) is not run by pytest.
 """
 
 from __future__ import annotations

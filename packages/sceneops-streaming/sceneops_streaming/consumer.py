@@ -13,8 +13,7 @@ from .wire import decode_envelope
 
 # Default size of the bounded internal fetch buffer (see poll()'s
 # docstring). Chosen from a real-Kafka benchmark
-# (scripts/dev/phase7/poll_batch_size_benchmark.py) sweeping 8/16/32/64/
-# 128/256/512 at a real ~1M-message topic history: throughput rises
+# sweeping 8/16/32/64/128/256/512 at a real ~1M-message topic history: throughput rises
 # sharply up to ~16-32 (amortizing the asyncio.to_thread dispatch cost
 # that motivated this change at all), then plateaus -- 64 reproducibly
 # edged out every other candidate tested (~78-79k msg/s vs ~69-75k msg/s

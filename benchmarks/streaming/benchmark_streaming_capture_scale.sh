@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # benchmark_streaming_capture_scale.sh — reproducible entry point for the
 # Phase 6.6 streaming capture scale/backpressure benchmark
-# (scripts/dev/benchmark_streaming_capture_scale.py). Real Kafka broker,
+# (benchmarks/streaming/benchmark_streaming_capture_scale.py). Real Kafka broker,
 # real MCAP capture, no synthetic mocking.
 #
 # Runs the produce phase, queries real Kafka consumer-group lag from the
@@ -10,10 +10,10 @@
 # queries lag again, prints one combined JSON report.
 #
 # Usage:
-#   scripts/dev/benchmark_streaming_capture_scale.sh 3000 64
-#   scripts/dev/benchmark_streaming_capture_scale.sh 30000 64
-#   scripts/dev/benchmark_streaming_capture_scale.sh 100000 64
-#   scripts/dev/benchmark_streaming_capture_scale.sh 5000 1000000   # large payload
+#   benchmarks/streaming/benchmark_streaming_capture_scale.sh 3000 64
+#   benchmarks/streaming/benchmark_streaming_capture_scale.sh 30000 64
+#   benchmarks/streaming/benchmark_streaming_capture_scale.sh 100000 64
+#   benchmarks/streaming/benchmark_streaming_capture_scale.sh 5000 1000000   # large payload
 
 set -euo pipefail
 
@@ -42,7 +42,7 @@ _lag() {
 echo "=== benchmark: message_count=$MESSAGE_COUNT payload_bytes=$PAYLOAD_BYTES robot_run_id=$ROBOT_RUN_ID ===" >&2
 
 PRODUCE_JSON="$($COMPOSE --profile ros2 run --rm ros2 python3 \
-  /workspace/scripts/dev/benchmark_streaming_capture_scale.py \
+  /workspace/benchmarks/streaming/benchmark_streaming_capture_scale.py \
   --phase produce --robot-run-id "$ROBOT_RUN_ID" \
   --message-count "$MESSAGE_COUNT" --payload-bytes "$PAYLOAD_BYTES")"
 echo "  produce: $PRODUCE_JSON" >&2
@@ -54,7 +54,7 @@ LAG_AFTER_PRODUCE="$(_lag "$GROUP_ID")"
 echo "  kafka_lag_after_produce=$LAG_AFTER_PRODUCE" >&2
 
 CAPTURE_JSON="$($COMPOSE --profile ros2 run --rm ros2 python3 \
-  /workspace/scripts/dev/benchmark_streaming_capture_scale.py \
+  /workspace/benchmarks/streaming/benchmark_streaming_capture_scale.py \
   --phase capture --robot-run-id "$ROBOT_RUN_ID" \
   --message-count "$MESSAGE_COUNT" --payload-bytes "$PAYLOAD_BYTES")"
 echo "  capture: $CAPTURE_JSON" >&2

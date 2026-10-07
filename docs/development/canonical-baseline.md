@@ -3,6 +3,12 @@
 > Developer / test orchestration, not a Pipeline. Decision record:
 > [ADR-007](../adr/007-canonical-ingestion-architecture.md) §34. Input:
 > the [reference corpus](./reference-corpus.md).
+>
+> `canonical-bootstrap` and `streaming-bootstrap` (with their read-only `*-verify` and
+> `streaming-compare`) are the building blocks of `make reference-contract-bootstrap` /
+> `reference-contract-verify`, which are the commands to use. They stay callable for one
+> fixture or one mode, and they are not part of the validation surface
+> ([test-matrix.md](./test-matrix.md)).
 
 A **canonical baseline** is a reproducible L1/L2 state on a running stack, built
 from prepared reference-corpus recordings:
@@ -247,8 +253,10 @@ fixture by `make e2e-streaming-equivalence`, which reads the two registered Robo
 
 - Fixtures are streamed one at a time, sequentially; the run owns its Kafka offset
   range, which the capture receipt check relies on.
-- Kafka retains every streamed run (no retention is configured); the broker's disk use
-  grows by about one recording per fixture. Reset Kafka only deliberately.
+- Kafka keeps every streamed run until the broker's retention expires its segments (the
+  repository configures none; the local broker's telemetry topic reports 7 days), so its
+  disk use grows by about one recording per fixture meanwhile. Reset Kafka only
+  deliberately; see [Disk hygiene](./local-development.md#disk-hygiene).
 - The streamed recording's checksum is specific to the execution that captured it
   and is not reproducible; the baseline is verified by its registered facts, not by
   a fixed checksum.
@@ -264,7 +272,7 @@ fixture by `make e2e-streaming-equivalence`, which reads the two registered Robo
 | `make e2e-scene-ml`, `make e2e-episode-learning` | the contract's Recording Import RobotRun of `SOURCE_UNIT` (default `scene-0061`); Scenes, Episodes and everything derived are written to the fixed Datasets `sceneops-test-scene-ml` / `sceneops-test-episode-learning` (DatasetVersion `baseline`), which a repeated run reuses | `REFERENCE_DERIVED` |
 | `make e2e-streaming-equivalence` | the contract's Recording Import and Streaming Acquisition RobotRuns of `SOURCE_UNIT` (default `scene-0061`), their recordings and their Scenes and Episodes; it creates nothing | `REFERENCE_READ_ONLY` |
 | `make e2e-cleanroom` | resets the runtime, reconstructs the whole contract from the preserved reference inputs, then runs both L3 journeys on `scene-0061` into their fixed Datasets | `CLEANROOM_ACCEPTANCE` |
-| `make test-infrastructure`, `make test-infrastructure-airflow` | the contract's Recording Import RobotRun of `smoke-1`, create-or-verify seeded into the command's own disposable database and bucket (the reference environment is not read); the tests build its Scenes / Episodes into the fixed `sceneops-test-infra-pipelines` / `sceneops-test-infra-airflow` Datasets, one named DatasetVersion per test | `DISPOSABLE_ENVIRONMENT` |
+| `make test-infrastructure` (`SUITE=pipelines`, `airflow`) | the contract's Recording Import RobotRun of `smoke-1`, create-or-verify seeded into the command's own disposable database and bucket (the reference environment is not read); the tests build its Scenes / Episodes into the fixed `sceneops-test-infra-pipelines` / `sceneops-test-infra-airflow` Datasets, one named DatasetVersion per test | `DISPOSABLE_ENVIRONMENT` |
 
 The baseline is independent of `make local-reset`: reset only destroys generated
 state, the bootstrap (re)creates the baseline on top of a running stack, and the

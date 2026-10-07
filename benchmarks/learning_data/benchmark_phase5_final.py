@@ -36,9 +36,9 @@ Profiling/reporting tool, not a test: no pass/fail assertions, no flaky
 wall-clock thresholds. Not part of `make test`.
 
 Usage:
-    uv run python scripts/dev/benchmark_phase5_final.py
-    uv run python scripts/dev/benchmark_phase5_final.py --scales tiny,small
-    uv run python scripts/dev/benchmark_phase5_final.py --out /tmp/report.json
+    uv run python benchmarks/learning_data/benchmark_phase5_final.py
+    uv run python benchmarks/learning_data/benchmark_phase5_final.py --scales tiny,small
+    uv run python benchmarks/learning_data/benchmark_phase5_final.py --out /tmp/report.json
 """
 
 from __future__ import annotations

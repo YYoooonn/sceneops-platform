@@ -117,9 +117,9 @@ layer a given contract belongs to; this section is the command surface.
 ```
 make test                          unit suites, no infrastructure (run anywhere)
 make test-integration              real Postgres + MinIO in a disposable database + bucket, needs `make local-up`
-make test-infrastructure           pipeline contracts on a disposable execution runtime, needs `make local-up`
-make test-infrastructure-airflow   the same pipelines through a private Airflow (Docker, see below)
-make test-recovery                 acquisition recovery under injected faults + the full-lifecycle acceptance (Docker, needs `make local-up`)
+make test-infrastructure [SUITE=pipelines|recovery|airflow|kafka|boundaries]
+                                   real-infrastructure suites; `pipelines` is the default (see below)
+make reference-contract-verify     the golden contract is valid (read-only)
 make e2e-streaming-equivalence | e2e-scene-ml | e2e-episode-learning
 make e2e-cleanroom                 the acceptance of reconstruction (DESTRUCTIVE: runs `make local-reset`)
 make check-commands                the command surface is consistent (no pytest, no stack)
@@ -150,42 +150,51 @@ make check-commands                the command surface is consistent (no pytest,
   exist, and `... drop` removes them. `TEST_POSTGRES_DB` / `TEST_MINIO_BUCKET` rename
   them; names outside `sceneops_test*` / `sceneops-test*`, or equal to `POSTGRES_DB` /
   `MINIO_BUCKET`, are refused.
-- `make test-infrastructure` runs `tests/infrastructure` on a disposable execution runtime:
-  execution-key dedup / force, convergence of an unchanged rebuild,
-  conflict-then-explicit-replacement, resumption of a blocked pipeline, recovery
-  of a failed one, concurrent runs over one scope and the orchestrator that
-  executed them (the Airflow and acquisition-recovery modules have their own
-  targets). These tests re-execute pipelines on purpose and the platform keeps every
-  Job and PipelineRun that results, so the command creates the disposable database and
-  bucket of `make test-integration`, starts an API, Celery workers and a Redis of its own
-  on them (compose project `sceneops-test`, `compose/test-runtime.yaml`), seeds the one
-  RobotRun of the golden contract it consumes by the production create-or-verify path
-  (`canonical-bootstrap`'s script, `smoke-1`, from the prepared reference recording), and
-  removes everything afterwards. The reference api, workers, Redis, database and bucket
-  are not used or modified; the tests build into the fixed Dataset
-  `sceneops-test-infra-pipelines`, one DatasetVersion per test, inside the disposable
-  database. It needs `make local-up` (the PostgreSQL / MinIO servers and the images) and
-  `make reference-data-bootstrap`, and takes its ports from the free ones on the host.
-  `make test-infrastructure-airflow` runs the same canonical pipelines through the
-  Airflow per-task DAGs in the same kind of runtime plus a private Airflow (own metadata
-  database, webserver and scheduler, the Docker socket for the per-task worker
-  containers) and an API started on the `airflow` pipeline backend; it needs neither
-  `make airflow-up` nor a restarted reference `api`, builds the Airflow image on first
-  use, and fails rather than skips when a prerequisite is missing. Its Scene ML test
-  builds Scenes and imports a LabelSet (the fixture's locked reference labels, rendered
-  by the `reference-labels` container) in a DatasetVersion of the fixed Dataset
-  `sceneops-test-infra-airflow`, so it also needs `make acquisition-image`.
-  `uv run python tests/infrastructure/disposable_env.py status` shows leftovers of a
-  killed run; `docker compose -p sceneops-test down -v` removes a leftover runtime.
-- `make test-recovery` runs the two acquisition-recovery suites against PostgreSQL and
-  MinIO in the same disposable database and bucket as `make test-integration`, with a
-  Redis container and Celery workers of its own, so killing a worker or stopping the
-  broker never touches the dev stack. Each test uses its own MinIO RobotRun root and
-  `rec124-` rows; the database and bucket are dropped as a whole. The
-  production commands run as subprocesses (`publish-pending`, `reconcile --once
-  --apply`, `acquisition_status`); only `recovery_worker` and `recovery_publisher`
-  add a fault point. It needs no canonical baseline. The suites share one harness
-  (`tests/infrastructure/recovery_support.py`).
+- `make test-infrastructure SUITE=<name>` selects one real-infrastructure suite (default
+  `pipelines`). `pipelines`, `recovery` and `airflow` fail, never skip, when their infrastructure
+  is missing, and the selection changes no suite's isolation:
+  - `pipelines` runs `tests/infrastructure` on a disposable execution runtime:
+    execution-key dedup / force, convergence of an unchanged rebuild,
+    conflict-then-explicit-replacement, resumption of a blocked pipeline, recovery
+    of a failed one, concurrent runs over one scope and the orchestrator that
+    executed them. These tests re-execute pipelines on purpose and the platform keeps every
+    Job and PipelineRun that results, so the command creates the disposable database and
+    bucket of `make test-integration`, starts an API, Celery workers and a Redis of its own
+    on them (compose project `sceneops-test`, `compose/test-runtime.yaml`), seeds the one
+    RobotRun of the golden contract it consumes by the production create-or-verify path
+    (`canonical-bootstrap`'s script, `smoke-1`, from the prepared reference recording), and
+    removes everything afterwards. The reference api, workers, Redis, database and bucket
+    are not used or modified; the tests build into the fixed Dataset
+    `sceneops-test-infra-pipelines`, one DatasetVersion per test, inside the disposable
+    database. It needs `make local-up` (the PostgreSQL / MinIO servers and the images) and
+    `make reference-data-bootstrap`, and takes its ports from the free ones on the host.
+  - `airflow` runs the same canonical pipelines through the Airflow per-task DAGs in the same
+    kind of runtime plus a private Airflow (own metadata database, webserver and scheduler,
+    the Docker socket for the per-task worker containers) and an API started on the
+    `airflow` pipeline backend; it needs neither `make airflow-up` nor a restarted reference
+    `api`, and builds the Airflow image on first use. Its Scene ML test builds Scenes and
+    imports a LabelSet (the fixture's locked reference labels, rendered by the
+    `reference-labels` container) in a DatasetVersion of the fixed Dataset
+    `sceneops-test-infra-airflow`, so it also needs `make acquisition-image`.
+  - `recovery` runs the two acquisition-recovery suites against PostgreSQL and MinIO in the
+    same disposable database and bucket as `make test-integration`, with a Redis container
+    and Celery workers of its own, so killing a worker or stopping the broker never touches
+    the dev stack. Each test uses its own MinIO RobotRun root and `rec124-` rows; the
+    database and bucket are dropped as a whole. The production commands run as subprocesses
+    (`publish-pending`, `reconcile --once --apply`, `acquisition_status`); only
+    `recovery_worker` and `recovery_publisher` add a fault point. It needs no canonical
+    baseline. The suites share one harness (`tests/infrastructure/recovery_support.py`);
+    `RECOVERY_TESTS=<path>` runs one module.
+  - `kafka` runs the ROS 2 bridge and capture tests in the `ros2` image (real-Kafka
+    integration included) and then the transport smoke, which publishes a deterministic
+    sequence and verifies envelope recovery, per-RobotRun ordering and partitioning. It needs
+    `make streaming-up` and creates no domain data.
+  - `boundaries` runs the isolation boundaries: the dataset-acquisition tool's tests,
+    including its import boundary, and the LeRobot adapter's tests, each in its own uv
+    project; the I-36 check of the acquisition and replay images; and the check that only the
+    acquisition / reference-preparation services mount the raw dataset.
+  `uv run python tests/infrastructure/disposable_env.py status` shows leftovers of a killed
+  run; `docker compose -p sceneops-test down -v` removes a leftover runtime.
 - On Apple Silicon hosts, running `sceneops-db`'s async engine outside Docker
   requires `greenlet`, which `sqlalchemy`'s own platform-marker-gated extra
   silently excludes there — `packages/sceneops-db` depends on it directly.
@@ -236,20 +245,20 @@ reconstruction.
   contract's Streaming Acquisition RobotRuns) but no GPU or Airflow, and runs
   none of the other acceptance surfaces. Requires confirmation unless `FORCE=1`.
 
-`make smoke-streaming` is a liveness / transport check, not a journey: it never
+The transport smoke (`SUITE=kafka`) is a liveness / transport check, not a journey: it never
 creates persistent domain data.
 
-### Canonical baseline
+### Reference baselines
 
-`make canonical-bootstrap` builds the reproducible L1/L2 baseline of a reference
-corpus scope (prepared recordings -> one RobotRun per fixture -> Scenes ->
-Episodes, validated and profiled; run `make reference-data-bootstrap` first) and
-`make canonical-verify` re-checks it read-only; see [canonical-baseline.md](./canonical-baseline.md). The Scene and
-Episode build configurations every journey uses are the files under
-`config/baselines/`. `make streaming-bootstrap` builds the same baseline by replaying
-each fixture's locked recording through ROS 2 -> Kafka -> capture (needs Kafka and
-`make reference-data-bootstrap`), `make streaming-verify` re-checks it read-only and
-`make streaming-compare` compares it with the Recording Import baseline.
+`make reference-contract-bootstrap` builds the reference environment: the two baselines of
+the [golden reference contract](./reference-contract.md), composed from the baseline
+bootstraps (`canonical-bootstrap` for Recording Import, `streaming-bootstrap` for Streaming
+Acquisition; run `make reference-data-bootstrap` first), and `make reference-contract-verify`
+re-checks it read-only. The baseline bootstraps and their read-only verifiers
+(`canonical-verify`, `streaming-verify`, `streaming-compare`) stay callable for debugging one
+fixture or one mode; they are building blocks, not part of the validation surface. See
+[canonical-baseline.md](./canonical-baseline.md). The Scene and Episode build configurations
+every journey uses are the files under `config/baselines/`.
 
 ### Identity
 
@@ -274,15 +283,63 @@ pipeline of the journeys: they are requested without `force`, because a forced
 re-execution of the Scene ML stages appends scenario-mining and readiness reports under
 fresh Job ids on every run (`test-matrix.md`, Execution history).
 
-### Disk usage
+## Operator tools
 
-Each baseline stores its recording and extracted payloads in MinIO (the nuScenes
-mini `scene-0061` recording is ~350 MB), and the Kafka and MinIO volumes keep
-growing across runs. There is no automated cleanup and no selective removal:
-`make local-reset` is the supported way to clear generated runtime state
-(PostgreSQL, Redis, MinIO, the Kafka log and the capture volume; it keeps `data/raw`
-and the reference corpus under `data/reference`), after which
-`make reference-contract-bootstrap` rebuilds the reference environment from the
-locked corpus. `make clean-artifacts` clears generated `./data` output. Journeys
-remove the scratch they own — the MCAP in the acquisition volume after
+Diagnostics and manual operations are **operator tools, not acceptance gates**: they answer
+"is my machine / stack in a usable state" or perform one operation by hand, assert no
+SceneOps contract, and a green result proves nothing about correctness. Correctness is the
+[validation surface](./test-matrix.md).
+
+| Command | What it tells you |
+| --- | --- |
+| `make check-env` | `.env.local`, `uv.lock`, `uv` and `docker compose` exist |
+| `make check-imports` | the built `api` and `worker` images import their packages |
+| `make check-celery` | Redis answers and both Celery workers reply to `inspect ping` |
+| `make check-runtime-boundary` | no normal runtime service mounts the raw dataset (also part of `SUITE=boundaries`) |
+| `make check-inference-server` / `check-inference-server-ready` | the inference server is alive / has loaded its model |
+| `make ros2-check` | `rclpy` and the MCAP storage plugin exist in the `ros2` image |
+| `make api-health` / `api-openapi` / `show-runs` / `show-pipeline` / `show-job-events` | the API answers; a run, pipeline or job as the API reports it |
+| `make worker-run-job` / `worker-run-pipeline` / `worker-run-pipeline-task` / `worker-register-robot-run` | run one Job, pipeline or registration by hand through the worker CLI |
+| `make reconcile-once` / `reconcile-apply` / `artifact-lifecycle-once` / `acquisition-status` | one acquisition-reconciliation pass; read-only lifecycle and status reports ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)) |
+| `make disk-report` | disk headroom and what could be reclaimed (below) |
+
+`make check-commands` is different in kind: it is static, needs no stack, and is part of how
+the command surface itself is kept consistent.
+
+## Benchmarks
+
+The scripts under [`benchmarks/`](../../benchmarks/README.md) measure one workload on one
+machine and assert nothing. No make target runs one and none is acceptance; their results
+are recorded as point-in-time evidence next to the decision they informed.
+
+## Disk hygiene
+
+Platform state is durable and nothing in the platform removes it, so the local runtime only
+grows: each baseline stores its recording and extracted payloads in MinIO (the nuScenes mini
+`scene-0061` recording alone is ~350 MB), and the Kafka log keeps every streamed run until
+the broker's retention expires it. There is no automated cleanup and no selective removal of
+platform state. `make disk-report` is read-only and shows the host headroom (the streaming
+bootstrap stops below `MIN_FREE_GIB`, default 6, on the host and the Docker VM), the
+generated directories, the SceneOps volumes, the Kafka log, disposable-test leftovers and
+what Docker could reclaim. Reclaim in this order, stopping when there is room:
+
+| Target | Safe? | How |
+| --- | --- | --- |
+| Disposable test resources (`sceneops_test`, `sceneops-test`, compose project `sceneops-test`) | always; a run removes its own, a killed run leaves them | `uv run python tests/infrastructure/disposable_env.py drop`, `docker compose -p sceneops-test down -v` |
+| Stopped containers, dangling images | yes | `docker container prune`, `docker image prune` |
+| Docker build cache | yes; the next image build is slower | `docker builder prune` (`--filter until=168h` keeps the recent layers) |
+| Generated `./data` output, Python caches | yes; `data/raw` and `data/reference` are untouched | `make clean-artifacts`, `make clean-python` |
+| `cache/hf` (model weights) | yes if no inference server is used; re-downloaded on next use | `rm -rf cache/hf/*` |
+| Unused images (`docker image prune -a`) | **costly, not unsafe**: it also removes the opt-in `ros2`, `dataset-replay`, `dataset-acquisition`, `lerobot-integration` and `airflow` images, which the journeys and the contract bootstrap rebuild (GBs of build time) | only when the room is needed |
+| Kafka log | not selectively. The telemetry topic reports `retention.ms` = 7 days and 1 GiB segments (the repository sets neither): the broker deletes rolled segments once their newest record is that old, so the log drains by itself after the last streamed run. Every streamed run owns its offset range and a capture can only resume from what the topic still holds, so truncating by hand is not supported | wait, or `make local-reset` |
+| Acquisition scratch (`sceneops_acquisition-recordings`) | transient MCAPs are removed once their recording is provably registered; a capture that is not provably published is kept on purpose and is recovered with `publish-pending` / `reconcile`, not deleted | `make acquisition-status` |
+
+Never remove with Docker or the shell: `data/raw`, `data/reference`, `config/reference`
+(the preserved reference inputs), and the `sceneops_minio-data` and `sceneops_postgres-data`
+volumes (the golden state). **Do not run `docker volume prune` or `docker system prune
+--volumes`**: after `make local-down` every SceneOps volume is unreferenced, including those
+two. `make local-reset` is the one supported way to clear generated runtime state
+(PostgreSQL, Redis, MinIO, the Kafka log and the capture volume); afterwards
+`make reference-contract-bootstrap` rebuilds the reference environment from the locked
+corpus. Journeys remove the scratch they own: the MCAP in the acquisition volume after
 publication, the label document, the LeRobot export directory.

@@ -18,7 +18,7 @@ CLEANROOM = E2E / "e2e_cleanroom.sh"
 OTHER_SURFACES = (
     "e2e-streaming-equivalence",
     "test-integration",
-    "test-recovery",
+    "SUITE=",
     "test-infrastructure",
     "acceptance-grounding-dino",
     "benchmark",

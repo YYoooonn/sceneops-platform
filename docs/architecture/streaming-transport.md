@@ -6,7 +6,7 @@
 > [external-integration-runtime.md](./external-integration-runtime.md),
 > this is a "what's actually built" document, not aspirational -- every
 > claim below is checked against the code and against real, live runs
-> (`make streaming-up && make smoke-streaming`, `make ros2-test`,
+> (`make streaming-up && make test-infrastructure SUITE=kafka`,
 > `make e2e-streaming-equivalence`).
 >
 > Four parts: Part 1 covers the Kafka transport itself (envelope contract,
@@ -676,8 +676,9 @@ recording-publisher container).
 ## 16. Make surface and verification
 
 ```text
-make ros2-test                    bridge + capture unit and real-Kafka integration
-                                  tests, inside the ros2 image (needs streaming-up)
+make test-infrastructure SUITE=kafka   `make ros2-test` (bridge + capture unit and
+                                  real-Kafka integration tests, inside the ros2 image),
+                                  then `make smoke-streaming` (needs streaming-up)
 make e2e-streaming-equivalence    transport-preservation equivalence of one fixture's
                                   two golden RobotRuns, read-only (SCENE overridable;
                                   default smoke-1); needs neither Kafka nor ROS 2

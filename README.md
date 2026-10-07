@@ -101,12 +101,11 @@ make setup                          # install deps + pre-commit hooks
 make local-up                       # idempotent: Postgres + Redis + MinIO + migrate + API + workers
 make test                           # unit suites, no infrastructure
 make reference-data-bootstrap       # source preparation: nuScenes mini -> locked MCAPs, verified (once per scope)
-make canonical-bootstrap            # Recording Import: prepared MCAPs -> RobotRun -> Scenes -> Episodes (default selection smoke-1 = scene-0061 of the reference baseline)
-make streaming-bootstrap            # Streaming Acquisition: locked MCAPs -> replay -> ROS 2 -> Kafka -> capture -> RobotRun -> Scenes -> Episodes
 make reference-contract-bootstrap   # converge on the golden reference contract: 10 fixtures x both modes = 20 RobotRuns (reuses what exists)
-make local-reset                    # [destructive] drop all generated runtime state; the reference environment is then rebuilt from the locked corpus
+make reference-contract-verify      # read-only: exactly the contract's RobotRuns, Scenes and Episodes
 make e2e-scene-ml                   # Scenes -> labels -> views -> ScenarioSet -> prediction -> evaluation
 make e2e-episode-learning           # Episodes -> aligned -> learning export -> LeRobot round trip
+make local-reset                    # [destructive] drop all generated runtime state; the reference environment is then rebuilt from the locked corpus
 ```
 
 Artifact storage backend (`.env.local`):
@@ -140,33 +139,34 @@ See [`docs/development/local-development.md`](docs/development/local-development
 | `make reconcile-once` / `make reconcile-apply` | One acquisition reconciliation pass: observe only / bounded registration recovery |
 | `make acquisition-status` / `make artifact-lifecycle-once` | Read-only reports: derived per-run acquisition status with operational aggregates / classification of `robot_runs/` objects (nothing is stored or deleted) |
 
-### Tests
+### Validation
+
+The whole acceptance surface is the commands below; [`docs/development/test-matrix.md`](docs/development/test-matrix.md) says what each proves and which state it may leave behind.
 
 | Command | Description |
 | --- | --- |
-| `make test` | Unit suites (worker, api, inference-server, core, analytics, integrations, streaming) — no infrastructure |
+| `make test` | Unit suites (worker, api, inference-server, core, analytics, integrations, streaming, reference contract, e2e verifiers, test-infrastructure) — no infrastructure |
 | `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, every `*_integration.py` module (registrars, recording Scene / Episode and derived verticals, selective Parquet reads) — in a disposable database and bucket, needs `make local-up`; a skipped test fails the run |
-| `make test-infrastructure` | Pipeline contracts on a disposable execution runtime (own API, workers, Redis, database and bucket): dedup / force / convergence / replacement / blocked resumption / failure recovery / concurrent registration, the configured orchestrator |
-| `make test-infrastructure-airflow` | The same pipelines through the Airflow per-task DAGs, on a private Airflow in that disposable runtime |
-| `make test-recovery` | Acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance: real Postgres + MinIO in a disposable database and bucket, a throwaway Redis and Celery workers (needs `make local-up` and Docker) |
-| `make acquisition-test` / `make lerobot-test` / `make ros2-test` | Isolated-environment suites: dataset-acquisition, LeRobot adapter, ROS 2 bridge + capture |
-| `make smoke-streaming` | Transport / liveness only — never create persistent domain data |
-| `make lint` / `make format` | Ruff check / format |
+| `make test-infrastructure [SUITE=…]` | Real-infrastructure suites; `pipelines`, `recovery` and `airflow` fail instead of skipping. `pipelines` (default): pipeline contracts on a disposable execution runtime (own API, workers, Redis, database and bucket). `recovery`: acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance. `airflow`: the same pipelines through a private Airflow. `kafka`: ROS 2 bridge + capture tests and the transport smoke (needs `make streaming-up`). `boundaries`: acquisition tool and LeRobot adapter in their own uv projects, acquisition images, raw-source mount of the runtime services |
+| `make reference-contract-verify` | Read-only: exactly the golden contract's 20 RobotRuns, Scenes and Episodes; reports non-contract state (`REQUIRE_PRISTINE=1` fails on it) |
+| `make e2e-streaming-equivalence` | Read-only: the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture are equivalent (see below) |
+| `make e2e-scene-ml` / `make e2e-episode-learning` | The two derived journeys on the golden RobotRun, into fixed test-owned Datasets (see below) |
+| `make e2e-cleanroom` | The acceptance of reconstruction. **Destructive** (see below) |
 
-### Baseline and E2E journeys
+`make lint` / `make format` run Ruff; `make check-commands` verifies that the command surface is consistent. Operator diagnostics (`check-*`, `disk-report`, `ros2-check`, …) are manual tools, not acceptance gates, and the scripts under [`benchmarks/`](benchmarks/README.md) are measurement tooling that no command runs.
+
+### Reference environment and E2E journeys
 
 There are four E2E journeys. Platform operations go through FastAPI and bulk data through one-shot containers; the host needs only Docker Compose, curl and jq. There is no bare `make e2e` aggregate — the journeys need different infrastructure.
 
 | Command | Journey |
 | --- | --- |
-| `make canonical-bootstrap` / `make canonical-verify` | Developer orchestration, not a pipeline: prepared reference-corpus recordings → one RobotRun per fixture → Scenes → Episodes → validate / profile, then read-only verification. Builds nothing derived. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
-| `make streaming-bootstrap` / `make streaming-verify` / `make streaming-compare` | Developer orchestration, not a pipeline: each fixture's locked reference MCAP → replay → ROS 2 → Kafka → capture → publish-pending → reconcile → one streamed RobotRun → Scene → Episode (`stream-ref-<scope>`), then read-only verification and a corpus-level comparison with the Recording Import baseline. See [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
-| `make reference-contract-bootstrap` / `make reference-contract-verify` | Developer orchestration, not a pipeline: the golden reference contract — each corpus fixture ingested once by Recording Import and once by Streaming Acquisition under a fixed identity (20 RobotRuns, 20 whole-recording Scenes, 20 Episodes); the bootstrap composes the two baseline bootstraps, the verifier is read-only and reports contract vs non-contract RobotRuns. See [`docs/development/reference-contract.md`](docs/development/reference-contract.md) |
+| `make reference-contract-bootstrap` / `make reference-contract-verify` | Developer orchestration, not a pipeline: the golden reference contract — each corpus fixture ingested once by Recording Import and once by Streaming Acquisition under a fixed identity (20 RobotRuns, 20 whole-recording Scenes, 20 Episodes); the bootstrap composes the two baseline bootstraps, the verifier is read-only and reports contract vs non-contract RobotRuns. See [`docs/development/reference-contract.md`](docs/development/reference-contract.md) and [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make e2e-streaming-equivalence` | Read-only: the reference contract's Recording Import and Streaming Acquisition RobotRuns of one fixture, read from the ArtifactStore, are semantically equivalent in acquisition and in canonical Scenes and Episodes (creates no state; needs neither Kafka nor ROS 2) |
-| `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend) |
-| `make e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → export verification + LeRobot round trip |
+| `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend), into the fixed Dataset `sceneops-test-scene-ml` |
+| `make e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → export verification + LeRobot round trip, into the fixed Dataset `sceneops-test-episode-learning` |
 | `make e2e-cleanroom` | **The acceptance of reconstruction**: reset the generated runtime → rebuild the golden contract from the preserved reference inputs (verified pristine, then a second bootstrap that converges) → `e2e-scene-ml` and `e2e-episode-learning` on one fixture → the contract is still valid and unchanged. **Destructive** (preserves `data/raw`, `data/reference`, `config/reference`) |
-| `make acceptance-grounding-dino` | Model-backend acceptance of `e2e-scene-ml` with the GroundingDINO backend (needs an inference server) |
+| `make acceptance-grounding-dino` | Opt-in model-backend acceptance of `e2e-scene-ml` with the GroundingDINO backend (needs an inference server) |
 
 ### Robot sandbox
 
@@ -239,10 +239,13 @@ sceneops-platform/
 ├── migrations/                     # Alembic versions
 ├── scripts/
 │   ├── e2e/                        # the four journeys, shared helpers, container-run verifiers
-│   ├── canonical/                  # canonical-bootstrap / canonical-verify
-│   ├── streaming/                  # streaming-bootstrap / -verify / -compare, shared streaming acquisition path
-│   └── checks/                     # environment checks, command-surface consistency
+│   ├── reference/                  # reference corpus preparation, the golden contract's bootstrap / verifier
+│   ├── canonical/                  # Recording Import baseline bootstrap / verify (composed by the contract)
+│   ├── streaming/                  # Streaming Acquisition baseline bootstrap / verify / compare
+│   ├── checks/                     # diagnostics, command-surface consistency
+│   └── ops/, dev/                  # operator tools: polling loop, disk report, local reset
 ├── tests/infrastructure/           # pipeline-contract / orchestrator / acquisition-recovery acceptance tests
+├── benchmarks/                     # measurement tooling (learning data, streaming, acquisition); not acceptance
 ├── docs/                           # architecture/, adr/, development/, workflows/
 ├── compose.yaml, compose/          # Compose entrypoint and core, workers, inference, airflow, ros2,
 │                                   #   tools, streaming, acquisition, lerobot

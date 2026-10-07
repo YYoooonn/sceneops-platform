@@ -3,7 +3,8 @@
 # `streaming` compose profile (compose/streaming.yaml), mirroring
 # ros2.mk's opt-in `ros2` profile (makefiles/ros2.mk). Never part of
 # `make local-up`'s default stack, and never a dependency of it -- Kafka is
-# non-canonical transport, proven by `make smoke-streaming` only.
+# non-canonical transport, proven by `make test-infrastructure SUITE=kafka`
+# (ros2-test + smoke-streaming below) only.
 # See docs/architecture/streaming-transport.md.
 # --------------------
 
@@ -51,7 +52,7 @@ ros2-test:
 # registered or built, and no Kafka, ROS 2 or replay container is involved; it
 # creates no durable state and runs on the reference environment
 # (REFERENCE_READ_ONLY, docs/development/test-matrix.md). The Kafka lifecycle
-# records of a streamed run are proven by `make ros2-test`.
+# records of a streamed run are proven by `make ros2-test` (SUITE=kafka).
 #
 # Selection: SCENE=<fixture> (default smoke-1, i.e. scene-0061). Prerequisites:
 # `make local-up` and the contract's RobotRuns (`make reference-contract-bootstrap`).

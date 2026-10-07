@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Phase 7.1: real-Kafka multi-run benchmark for ContinuousCaptureRouter.
+"""Real-Kafka multi-run benchmark for ContinuousCaptureRouter.
 
 Runs INSIDE the ros2 container (needs rosbag2_py via mcap_writer.py,
 same as every other real capture path). Consumes an already-published
 interleaved multi-RobotRun workload (see
-scripts/dev/phase7/producer.py's ``multirun`` mode, run from the host
+benchmarks/streaming/producer.py's ``multirun`` mode, run from the host
 beforehand) in ONE continuous pass, finalizes every run, and reports
 timing/throughput/RSS/correctness -- directly comparable to Phase 7.0's
 run-scoped multi-run result (`runscoped-batch`,
 docs/architecture/streaming-multirun-phase7-study.md §5) and its
 continuous-router PROTOTYPE (§7, counting-only, no MCAP writing).
 
-This is Phase 7 study/benchmark tooling (category C evidence-gathering)
--- not a production capture-path change.
+Benchmark tooling, not an acceptance check (see benchmarks/README.md).
 """
 
 from __future__ import annotations

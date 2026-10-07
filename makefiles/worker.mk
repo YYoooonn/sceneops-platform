@@ -14,11 +14,6 @@ worker-shell:
 worker-python:
 	$(COMPOSE) --profile debug run --rm --entrypoint python worker-cli
 
-.PHONY: worker-imports
-worker-imports:
-	$(COMPOSE) --profile debug run --rm --entrypoint python worker-cli \
-		-c "import sceneops_worker; from sceneops_worker.jobs.registry import create_default_job_handler_registry; print('worker import ok'); print(create_default_job_handler_registry())"
-
 .PHONY: worker-cli
 worker-cli:
 	$(COMPOSE) --profile debug run --rm worker-cli

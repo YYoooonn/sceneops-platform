@@ -42,7 +42,7 @@ UNIT_TEST_SUITES := apps/worker/tests apps/api/tests apps/inference-server/tests
 # model-dependent pytest suite; that path is only exercised by
 # `make acceptance-grounding-dino`. packages/sceneops-streaming/tests is pure
 # wire/schema unit tests (no Kafka broker) -- real-broker behavior is
-# `make smoke-streaming`, not this tier. scripts/reference/tests evaluates the
+# `make test-infrastructure SUITE=kafka`, not this tier. scripts/reference/tests evaluates the
 # golden reference contract on synthetic state only; scripts/e2e/tests covers the
 # decisions of the read-only equivalence verifier the same way.
 test:
@@ -56,7 +56,7 @@ test:
 # running, MinIO unreachable -- fails the run instead of passing silently.
 REAL_INFRA_PYTEST := uv run pytest -p require_infrastructure
 
-# Suites that commit state of their own (test-integration, test-recovery) run in
+# Suites that commit state of their own (test-integration, the recovery suite) run in
 # a disposable PostgreSQL database and MinIO bucket that exist only for the run
 # (tests/infrastructure/disposable_env.py): created and migrated first, dropped
 # afterwards, so the reference environment is never written to and nothing is
@@ -93,7 +93,30 @@ INTEGRATION_COMMAND := $(DISPOSABLE_PYTEST) packages/sceneops-db/tests/ packages
 test-integration:
 	$(DISPOSABLE_ENV_RUN) sh -c '$(INTEGRATION_COMMAND)'
 
+# `make test-infrastructure [SUITE=<name>]`: the suites that need real infrastructure
+# beyond the stack's PostgreSQL / MinIO. Each is its own `infra-suite-<name>` target
+# (internal: not advertised, not run directly); the name selects which one runs and the
+# isolation of each is unchanged by the selection.
+#
+#   pipelines   (default) pipeline execution contracts on a disposable execution runtime
+#   recovery    acquisition-recovery fault injection + full-lifecycle acceptance
+#               (makefiles/recovery.mk), same disposable database + bucket, own Redis/workers
+#   airflow     the same pipelines through a private Airflow, same disposable environment
+#   kafka       real-Kafka transport: bridge + capture tests in the ros2 image, then the
+#               transport smoke (makefiles/streaming.mk); needs `make streaming-up`
+#   boundaries  isolation boundaries: the acquisition tool (own uv project, I-36 import
+#               boundary), the LeRobot adapter (own uv project), the acquisition images
+#               and the raw-source mount boundary of the runtime services
+INFRA_SUITES := pipelines recovery airflow kafka boundaries
+SUITE ?= pipelines
+
 .PHONY: test-infrastructure
+test-infrastructure:
+	@case " $(INFRA_SUITES) " in *" $(SUITE) "*) ;; \
+		*) echo "Unknown SUITE='$(SUITE)'. One of: $(INFRA_SUITES)"; exit 2;; esac
+	@$(MAKE) --no-print-directory infra-suite-$(SUITE)
+
+.PHONY: infra-suite-pipelines
 # Infrastructure acceptance of the pipeline contracts below the E2E journeys:
 # dedup / force / convergence / replacement / blocked resumption / failure
 # recovery / concurrent registration, on the Celery orchestrator. These tests
@@ -106,24 +129,30 @@ test-integration:
 # Prerequisite: `make local-up` (the PostgreSQL / MinIO servers and the images) and
 # `make reference-data-bootstrap` (the locked recording); the reference database,
 # bucket, api, workers and Redis are neither read nor written. The Airflow and
-# acquisition-recovery modules are their own targets; a skip here is a failure.
-test-infrastructure:
+# acquisition-recovery modules are their own suites; a skip here is a failure.
+infra-suite-pipelines:
 	$(DISPOSABLE_ENV_RUNTIME) celery -- $(DISPOSABLE_PYTEST) tests/infrastructure \
 		--ignore=tests/infrastructure/test_airflow_backend.py \
 		--ignore=tests/infrastructure/test_acquisition_recovery.py \
 		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
 
-.PHONY: test-infrastructure-airflow
+.PHONY: infra-suite-airflow
 # The canonical pipelines through the Airflow per-task DAGs, in the same disposable
-# environment as test-infrastructure plus a private Airflow (its own metadata
+# environment as the pipelines suite plus a private Airflow (its own metadata
 # database, scheduler and webserver; the reference environment's Airflow is not used
 # and `airflow-up` is not required). The API of the runtime is started on the
 # airflow pipeline backend, so nothing is reconfigured in place. Needs the Docker
 # socket (the DAGs start the worker image per task) and builds the Airflow image on
 # first use. Fails -- never skips -- when a prerequisite is missing.
-test-infrastructure-airflow:
+infra-suite-airflow:
 	$(DISPOSABLE_ENV_RUNTIME) airflow -- $(DISPOSABLE_PYTEST) tests/infrastructure/test_airflow_backend.py -v
+
+.PHONY: infra-suite-kafka
+infra-suite-kafka: ros2-test smoke-streaming
+
+.PHONY: infra-suite-boundaries
+infra-suite-boundaries: check-runtime-boundary acquisition-image-check acquisition-test lerobot-test
 
 .PHONY: lint
 lint:

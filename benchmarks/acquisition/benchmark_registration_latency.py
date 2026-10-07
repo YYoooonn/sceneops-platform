@@ -18,12 +18,12 @@ fixture MCAPs, the real nuScenes scene-0061 recording of the canonical baseline,
 and synthetic multiples of it. Everything the tool creates is removed at the end
 (``--keep`` to inspect). Profiling tool, not a test: no pass/fail assertions.
 
-Requires ``make local-up`` + ``make canonical-bootstrap`` (the source recording)
+Requires ``make local-up`` + ``make reference-contract-bootstrap`` (the source recording)
 and a running ``worker-jobs``.
 
 Usage::
 
-    uv run python scripts/dev/benchmark_registration_latency.py \\
+    uv run python benchmarks/acquisition/benchmark_registration_latency.py \\
         --out /tmp/registration_latency.json
 """
 

@@ -1,13 +1,14 @@
 """Unit tests of the disposable execution runtime's wiring (no Docker, PostgreSQL or MinIO).
 
 Starting the runtime and running the suites on it is what `make test-infrastructure`
-and `make test-infrastructure-airflow` do; these tests pin the rules that keep it
+and `make test-infrastructure SUITE=airflow` do; these tests pin the rules that keep it
 isolated from the reference environment.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -188,7 +189,7 @@ def _recipe(target: str) -> str:
 
 @pytest.mark.parametrize(
     "target, backend",
-    [("test-infrastructure", "celery"), ("test-infrastructure-airflow", "airflow")],
+    [("infra-suite-pipelines", "celery"), ("infra-suite-airflow", "airflow")],
 )
 def test_the_infrastructure_targets_run_on_the_disposable_execution_runtime(
     target, backend
@@ -201,3 +202,34 @@ def test_the_infrastructure_targets_run_on_the_disposable_execution_runtime(
     first_line = recipe.splitlines()[0]
     assert first_line.strip() == f"{target}:", first_line
     assert "API_BASE_URL" not in recipe
+
+
+def _make(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["make", "--no-print-directory", *args],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "suite", ["pipelines", "recovery", "airflow", "kafka", "boundaries"]
+)
+def test_test_infrastructure_dispatches_each_suite_to_its_own_target(suite):
+    """`SUITE=` only selects; the isolation of a suite is its own recipe's."""
+    dry_run = _make("-n", "test-infrastructure", f"SUITE={suite}")
+    assert dry_run.returncode == 0, dry_run.stderr
+    assert f"infra-suite-{suite}" in dry_run.stdout
+
+
+def test_test_infrastructure_defaults_to_the_pipelines_suite():
+    dry_run = _make("-n", "test-infrastructure")
+    assert "infra-suite-pipelines" in dry_run.stdout
+
+
+def test_an_unknown_suite_fails_before_anything_starts():
+    run = _make("test-infrastructure", "SUITE=nope")
+    assert run.returncode != 0
+    assert "Unknown SUITE='nope'" in run.stdout
+    assert "disposable_env.py" not in run.stdout

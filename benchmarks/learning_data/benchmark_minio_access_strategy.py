@@ -17,7 +17,7 @@ pass/fail assertions, no flaky wall-clock thresholds -- run manually, not
 part of `make test`/`make test-integration`.
 
 Usage:
-    uv run python scripts/dev/benchmark_minio_access_strategy.py
+    uv run python benchmarks/learning_data/benchmark_minio_access_strategy.py
 """
 
 from __future__ import annotations

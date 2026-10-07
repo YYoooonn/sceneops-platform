@@ -24,7 +24,7 @@ def api() -> Api:
     # runtime a make target started for them -- never a developer's API on :8000.
     assert os.environ.get("SCENEOPS_EXECUTION_RUNTIME") == "disposable", (
         "the infrastructure tests run on a disposable execution runtime: "
-        "`make test-infrastructure` / `make test-infrastructure-airflow`"
+        "`make test-infrastructure [SUITE=airflow]`"
     )
     client = httpx.Client(base_url=f"{API_BASE_URL}{API_PREFIX}", timeout=60.0)
     try:

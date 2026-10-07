@@ -1,4 +1,4 @@
-"""The disposable execution runtime of `make test-infrastructure[-airflow]`.
+"""The disposable execution runtime of `make test-infrastructure [SUITE=airflow]`.
 
 Infrastructure tests exist to exercise orchestration: forced re-execution, retries,
 conflicts, concurrent registration, every pipeline through its orchestrator. Each of

@@ -35,7 +35,7 @@ the captures (the Kafka consumption that feeds it is ``make ros2-test`` and the
 streaming equivalence journey); the object store is real MinIO, the database real
 PostgreSQL, the broker a throwaway Redis, the workers real Celery subprocesses,
 and times are real (the stall threshold is 5 s here). It is infrastructure
-acceptance, not a product journey. Run: ``make test-recovery``.
+acceptance, not a product journey. Run: ``make test-infrastructure SUITE=recovery``.
 """
 
 from __future__ import annotations

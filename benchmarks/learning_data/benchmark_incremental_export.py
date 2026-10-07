@@ -25,9 +25,9 @@ Profiling/reporting tool, not a test: no pass/fail assertions. Not part of
 `make test`.
 
 Usage:
-    uv run python scripts/dev/benchmark_incremental_export.py
-    uv run python scripts/dev/benchmark_incremental_export.py --num-episodes 1000
-    uv run python scripts/dev/benchmark_incremental_export.py --out /tmp/report.json
+    uv run python benchmarks/learning_data/benchmark_incremental_export.py
+    uv run python benchmarks/learning_data/benchmark_incremental_export.py --num-episodes 1000
+    uv run python benchmarks/learning_data/benchmark_incremental_export.py --out /tmp/report.json
 """
 
 from __future__ import annotations

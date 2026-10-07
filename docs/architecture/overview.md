@@ -264,7 +264,7 @@ dispatched as standalone Jobs, no dedicated pipeline or API domain)
 semantic mapping, real Postgres/MinIO round-trip E2E (Phase 3, complete)
 - Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/`
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
-- Adapter tests (isolated environment): `make lerobot-test`
+- Adapter tests (isolated environment): `make test-infrastructure SUITE=boundaries`
 - Doc: [dataset-interoperability.md](./dataset-interoperability.md)
 
 **EXTERNAL INTEGRATION RUNTIME** — IntegrationRequest/IntegrationResult

@@ -559,7 +559,7 @@ make e2e-episode-learning            # Episodes -> AlignedEpisodes -> learning e
 
 The streaming vertical (locked reference MCAP -> replay -> ROS2 -> bridge -> Kafka
 -> capture -> publish-pending -> reconcile -> RobotRun, then Scenes and Episodes
-equivalent to the batch baseline's; needs `make reference-data-bootstrap` once) is the
+equivalent to the Recording Import baseline's; needs `make reference-data-bootstrap` once) is the
 reference contract's Streaming Acquisition baseline, and its equivalence with Recording
 Import is checked read-only:
 

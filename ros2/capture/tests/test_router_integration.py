@@ -5,10 +5,9 @@ RunScopedCapture path.
 
 Kept deliberately small/fast (a handful of runs, tens of messages) --
 this is regression coverage for "the router is correct against a real
-broker," run as part of the normal test suite (`make e2e-streaming-
-capture`'s stage 1). The larger-scale (100k+/1M message) real-Kafka
-benchmark comparison against Phase 7.0's numbers lives separately under
-scripts/dev/phase7/ (not part of the fast unit/integration suite).
+broker," run by `make test-infrastructure SUITE=kafka` (`make ros2-test`).
+The larger-scale (100k+/1M message) real-Kafka benchmark of the router lives
+separately under benchmarks/streaming/ (not an acceptance check).
 """
 
 from __future__ import annotations

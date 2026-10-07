@@ -1,7 +1,7 @@
 """Helpers for the infrastructure acceptance tests (client, params builders).
 
 These run against the disposable execution runtime that `make test-infrastructure`
-(Celery) and `make test-infrastructure-airflow` start on a disposable PostgreSQL
+(Celery) and `make test-infrastructure SUITE=airflow` start on a disposable PostgreSQL
 database and MinIO bucket (execution_runtime.py): the FastAPI control plane, the
 Celery workers, Redis, PostgreSQL, MinIO and (for the Airflow module) Airflow. They
 exercise the contracts of the pipelines that no single user journey proves: dedup,

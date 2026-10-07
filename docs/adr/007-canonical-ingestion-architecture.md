@@ -6039,3 +6039,71 @@ section; macOS host, Docker Desktop VM, `FORCE=1 make e2e-cleanroom`, exit 0).**
   run), so these durations are not a performance claim. Final sizes: MinIO 13,982 MiB,
   Kafka 5,061 MiB, PostgreSQL 75 MiB, Docker local volumes 21.04 GB, 7.6 GiB free on the host
   and 5.4 GiB in the Docker VM.
+
+### 36.10 The validation surface is reduced; benchmarks and diagnostics are separated
+
+**Decision.** The human-facing validation surface is eight commands, one per class of
+claim:
+
+```text
+make test                       unit
+make test-integration           real PostgreSQL / MinIO in the disposable database + bucket
+make test-infrastructure        SUITE = pipelines (default) | recovery | airflow | kafka | boundaries
+make reference-contract-verify  the golden contract, read-only
+make e2e-streaming-equivalence  Recording Import ≡ Streaming Acquisition, read-only
+make e2e-scene-ml               derived journey
+make e2e-episode-learning       derived journey
+make e2e-cleanroom              reconstruction, destructive
+```
+
+Environment commands stay separate (`reference-data-bootstrap`, `reference-contract-bootstrap`,
+`local-reset`). Each suite of `test-infrastructure` keeps the isolation of the command it
+replaces (§36.5, §36.8): `pipelines` and `airflow` are the former `test-infrastructure` and
+`test-infrastructure-airflow`, `recovery` is the former `test-recovery`, `kafka` runs
+`ros2-test` and `smoke-streaming`, `boundaries` runs the acquisition-tool and LeRobot-adapter
+tests, `acquisition-image-check` and `check-runtime-boundary`. `test-recovery` and
+`test-infrastructure-airflow` no longer exist; the older sections of this ADR that name them
+(§34.5, §36.5, §36.8) describe the commands as decided then. The building blocks the surface
+composes (`canonical-bootstrap`, `streaming-bootstrap`, their `*-verify`, `streaming-compare`,
+`reference-data-verify`, `ros2-test`, `smoke-streaming`, `acquisition-test`, `lerobot-test`)
+remain callable and are no longer advertised by `make help`; `make check-commands` enforces
+the advertised set.
+
+Benchmarks move out of `scripts/` into `benchmarks/` (`benchmarks/README.md`); no Make
+command runs one and none is acceptance. Benchmark and prototype scripts whose decision was
+taken or whose workload a later script covers are deleted: the Phase 5 layout-candidate and
+pre-redesign baseline benchmarks, and the Phase 7 baseline runner, router prototype,
+poll-batch-size and rescan benchmarks. Their results stay in the study documents that
+recorded them. Diagnostics (`check-*`, `ros2-check`, `disk-report`, the `show-*` and
+`worker-*` commands) are operator tools, not acceptance gates; `worker-imports` is removed as a
+duplicate of `check-imports`.
+
+**Why.** Overlapping test and acceptance commands, baseline helpers advertised beside the
+journeys, and a `scripts/dev` directory that mixed benchmarks with a destructive reset made
+it unclear which command proved what and which result could be cited as acceptance. The
+reduction changes what is advertised, not what is proved.
+
+**Consequences.** `test-infrastructure SUITE=kafka` and `SUITE=boundaries` are not
+disposable-environment suites: they run the tools' own pytest sessions and checks, need
+`make streaming-up` and Docker respectively, and skip (rather than fail) the real-nuScenes
+test of the acquisition tool when `data/raw/nuscenes` is absent. Study documents written
+earlier cite the benchmarks under `scripts/dev/`.
+
+### 36.11 Handed off to the next phase: measured questions
+
+Questions, not decisions, observed at `5f3b523` on one macOS host with the local Docker
+stack. Nothing here was optimized or changed by this step; each needs a measurement before
+a mechanism is chosen (testing instructions §5: isolate implementation overhead from
+architectural overhead).
+
+| Question | Evidence so far | What to measure |
+| --- | --- | --- |
+| Why does reconstruction and verification time vary several-fold between runs? | One cleanroom: 22,844 s, of which contract reconstruction 18,437 s; the first streamed fixture ~1 h of stage time, later ones ~2 min; `reference-data-verify` 2,588 s there and ~3 min earlier (§36.9). Docker VM free space was 5.4 GiB at the end | per-stage wall time with host / VM CPU, memory and free-space sampling; the same stage on a roomy and on a tight disk |
+| Where does publish / register latency go at contract scale? | ADR-008 measured registration up to 1.07 GB at 5.4 s on an idle host (stall threshold 900 s); no measurement exists under 20 runs of load | `REGISTER_ROBOT_RUN` queue and execution time per recording size with the contract's 20 runs, separated from capture and replay time |
+| How does Scene / Episode build time behave? | 40 builds in the reconstruction; the second `e2e-episode-learning` run took 1,051 s against 123 s for the first although it converges and adds nothing durable (§36.9) | build and export time per stage on repeated runs; what the second run re-reads |
+| How fast do Kafka and MinIO grow, and what is the right retention? | After the contract: MinIO 13,982 MiB over 12,794 objects (~0.7 GiB per RobotRun averaged over everything in the bucket), Kafka 5,061 MiB; 24 GiB free on the host (95% used). The telemetry topic reports 7-day retention that the repository does not set | bytes per RobotRun by artifact class (recording, extracted payloads, derived); what Kafka must retain for resume versus what is only history |
+| What does object-store I/O cost? | Many small objects per RobotRun; reconciliation and lifecycle classification list `robot_runs/` | requests and bytes per stage from the MinIO side; list cost against object count |
+| What does process and container start cost? | Every fixture uses one-shot `dataset-replay`, `ros2` and `recording-publisher` containers; each infrastructure run starts and drops a compose project and re-seeds one RobotRun (~80 s) | start-up time separated from the work each one does |
+| What does reconciliation polling cost? | `recovery-up` repeats `publish-pending` and `reconcile --once --apply` every `RECOVERY_POLL_INTERVAL_SECONDS` (default 60) | per-pass time and requests against the number of RobotRuns and objects; whether a pass can be bounded by what changed |
+| Can `POST /pipelines/runs/{id}/execute` return 404 right after the run is created? | The API commits its session after the response has started (FastAPI ≥ 0.118); pinned as an `xfail` in `apps/api/tests/platform/test_session_commit_timing.py`; not reproduced over HTTP in ~1,500 create / execute pairs | reproduction under load; if confirmed, commit before the response is sent |
+| Why does repeating `evaluate_detection` under an existing evaluation run id register duplicate ArtifactRecords for the same objects? | Known platform behavior; the Scene ML journey runs its second evaluation once because of it (test-matrix.md, Execution history) | which identity the evaluation's artifact registration should converge on when it is retried |

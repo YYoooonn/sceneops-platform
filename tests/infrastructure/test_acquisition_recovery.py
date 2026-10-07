@@ -16,7 +16,7 @@ and the converse for what must never be repaired: conflicts and integrity
 incidents leave every object and row exactly as they were.
 
 Needs ``make local-up`` (PostgreSQL + MinIO) and Docker (a throwaway Redis);
-skips otherwise. Run: ``make test-recovery``.
+skips otherwise. Run: ``make test-infrastructure SUITE=recovery``.
 """
 
 from __future__ import annotations

@@ -55,15 +55,15 @@ recovery-logs:
 RECOVERY_TESTS ?= tests/infrastructure/test_acquisition_recovery.py \
 	tests/infrastructure/test_acquisition_lifecycle_acceptance.py
 
-.PHONY: test-recovery
-# Fault-injection acceptance of acquisition recovery: real PostgreSQL + MinIO in
-# the disposable database and bucket of `make test-integration` (the servers of
-# `make local-up`; the reference database and bucket are not touched), and a
-# throwaway Redis container plus Celery worker subprocesses of the test's own
-# (Docker required) -- killing a worker or stopping the broker never touches the
-# dev stack. Needs no canonical baseline.
+.PHONY: infra-suite-recovery
+# Fault-injection acceptance of acquisition recovery (`make test-infrastructure
+# SUITE=recovery`): real PostgreSQL + MinIO in the disposable database and bucket of
+# `make test-integration` (the servers of `make local-up`; the reference database and
+# bucket are not touched), and a throwaway Redis container plus Celery worker
+# subprocesses of the test's own (Docker required) -- killing a worker or stopping
+# the broker never touches the dev stack. Needs no canonical baseline.
 # The production commands run as subprocesses: publish-pending, reconcile --once
-# --apply and the read-only acquisition status. One suite alone:
-#   make test-recovery RECOVERY_TESTS=tests/infrastructure/test_acquisition_lifecycle_acceptance.py
-test-recovery:
+# --apply and the read-only acquisition status. One module alone:
+#   make test-infrastructure SUITE=recovery RECOVERY_TESTS=tests/infrastructure/test_acquisition_lifecycle_acceptance.py
+infra-suite-recovery:
 	$(DISPOSABLE_ENV_RUN) $(DISPOSABLE_PYTEST) $(RECOVERY_TESTS) -v

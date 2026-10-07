@@ -21,8 +21,8 @@ Profiling/reporting tool, not a test: no pass/fail assertions, no flaky
 wall-clock thresholds. Not part of `make test`.
 
 Usage:
-    uv run python scripts/dev/benchmark_cache_and_bulk_access.py
-    uv run python scripts/dev/benchmark_cache_and_bulk_access.py --scales tiny,small
+    uv run python benchmarks/learning_data/benchmark_cache_and_bulk_access.py
+    uv run python benchmarks/learning_data/benchmark_cache_and_bulk_access.py --scales tiny,small
 """
 
 from __future__ import annotations

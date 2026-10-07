@@ -1,4 +1,4 @@
-"""The disposable test environment of `make test-integration` and `make test-recovery`.
+"""The disposable test environment of `make test-integration` and `make test-infrastructure SUITE=recovery`.
 
 Integration and recovery tests commit rows and objects of their own. They run
 against a PostgreSQL database and a MinIO bucket that exist only for the run, so

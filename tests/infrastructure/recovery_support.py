@@ -13,7 +13,7 @@ take from the shared local stack:
 
 PostgreSQL and MinIO are real servers (the semantics under test: row locks,
 unique constraints, object reads), but not the reference environment's: the suites
-run in the disposable database and bucket of ``make test-recovery``
+run in the disposable database and bucket of ``make test-infrastructure SUITE=recovery``
 (``disposable_env.py``), which are dropped as a whole, so no test removes rows or
 objects. Rows are keyed by ``rec124-`` run ids.
 
@@ -491,7 +491,7 @@ RECOVERY_FIXTURES = ("fresh_engine", "clean_faults_and_queue")
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
     if "SCENEOPS_DATABASE_URL" not in os.environ:
-        pytest.skip("SCENEOPS_DATABASE_URL not set; run `make test-recovery`")
+        pytest.skip("SCENEOPS_DATABASE_URL not set; run `make test-infrastructure SUITE=recovery`")
     if not docker_available():
         pytest.skip("Docker is needed for the throwaway Redis")
 

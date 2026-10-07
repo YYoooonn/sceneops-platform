@@ -1,7 +1,7 @@
 """Pipelines through the Airflow per-task DAGs (airflow/dags/sceneops_pipelines.py).
 
 Opt-in: the Airflow stack is not part of `make local-up`, and the API picks its
-pipeline backend at process start, so `make test-infrastructure-airflow` starts a
+pipeline backend at process start, so `make test-infrastructure SUITE=airflow` starts a
 private Airflow and an API on the airflow backend in the disposable execution runtime
 (execution_runtime.py); the reference environment's API and Airflow are not used or
 reconfigured. Run any other way, the module is skipped (and a skip fails the command).
@@ -31,7 +31,7 @@ from infra_support import (
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SCENEOPS_TEST_AIRFLOW") != "1",
-    reason="Airflow acceptance is opt-in: make test-infrastructure-airflow",
+    reason="Airflow acceptance is opt-in: make test-infrastructure SUITE=airflow",
 )
 
 

@@ -4,7 +4,7 @@
 
 Runs INSIDE the ros2 container (needs rosbag2_py + real Kafka). Two
 phases, run as SEPARATE invocations (so the orchestrating shell script,
-scripts/dev/benchmark_streaming_capture_scale.sh, can query real Kafka
+benchmarks/streaming/benchmark_streaming_capture_scale.sh, can query real Kafka
 consumer-group lag from the HOST in between them -- this container has
 no kafka-consumer-groups.sh and no Docker socket to reach the kafka
 container's):
@@ -19,7 +19,7 @@ real robot session's Kafka topic already decouples producer and capture
 rate: Kafka itself is the backlog buffer; this script only measures how
 deep that backlog gets and how fast capture drains it.
 
-Usage: see scripts/dev/benchmark_streaming_capture_scale.sh (the
+Usage: see benchmarks/streaming/benchmark_streaming_capture_scale.sh (the
 reproducible entry point -- runs both phases plus the lag checks
 between them).
 """

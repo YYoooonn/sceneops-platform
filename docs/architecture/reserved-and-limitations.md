@@ -122,7 +122,7 @@ presence doesn't imply an export or deprecation workflow exists.
   (`Api.dispatched`).
 - The Airflow pipeline backend is a per-task DAG proof of concept: one DAG per
   pipeline type, serial tasks, the API backend chosen at process start. Its
-  acceptance (`make test-infrastructure-airflow`) is opt-in and runs on a private
+  acceptance (`make test-infrastructure SUITE=airflow`) is opt-in and runs on a private
   Airflow in a disposable runtime.
 - `export_analytics_snapshot` covers Scene only; aligned Episode revisions have their own Parquet export
   (`EXPORT_LEARNING_DATA` -> `learning_episodes/steps/signals.parquet`,
@@ -180,8 +180,8 @@ implements or half-implements them, so there's nothing to document as
 - Durable recovery of in-flight capture sessions across a restart, and Kafka
   message sizes beyond the stock ~1 MB limit (streaming-transport §14, §26,
   §33). Nothing supervises or restarts one-shot capture: a capture killed before
-  finalize is re-run by an operator while Kafka still retains its records, and the
-  repository configures no broker retention.
+  finalize is re-run by an operator while Kafka still retains its records (the repository
+  configures no broker retention; the local broker's telemetry topic reports 7 days).
 - A capture that triggers its own publication and registration. The hand-off is
   recoverable, not triggered by capture: a finalized capture with a receipt is
   published by `publish-pending`, and a published manifest is registered,

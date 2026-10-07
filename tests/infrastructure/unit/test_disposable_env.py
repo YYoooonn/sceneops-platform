@@ -1,7 +1,7 @@
 """Unit tests of the disposable-environment safety rules (no PostgreSQL / MinIO needed).
 
 The lifecycle itself (create, migrate, drop, rerun after interruption) needs the
-real servers and is exercised by `make test-integration` / `make test-recovery`.
+real servers and is exercised by `make test-integration` / `make test-infrastructure SUITE=recovery`.
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ def test_the_pytest_plugin_lets_a_disposable_session_start(monkeypatch):
     plugin.pytest_sessionstart(None)
 
 
-@pytest.mark.parametrize("target", ["test-integration", "test-recovery"])
+@pytest.mark.parametrize("target", ["test-integration", "infra-suite-recovery"])
 def test_the_make_targets_run_inside_the_disposable_environment(target):
     """The wiring is part of the contract: both targets go through the runner and
     the guard plugin, and neither builds a database URL of its own."""

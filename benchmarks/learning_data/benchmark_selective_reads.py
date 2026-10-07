@@ -26,8 +26,8 @@ Profiling/reporting tool, not a test: no pass/fail assertions, no flaky
 wall-clock thresholds. Not part of `make test`.
 
 Usage:
-    uv run python scripts/dev/benchmark_selective_reads.py
-    uv run python scripts/dev/benchmark_selective_reads.py --scales tiny,small
+    uv run python benchmarks/learning_data/benchmark_selective_reads.py
+    uv run python benchmarks/learning_data/benchmark_selective_reads.py --scales tiny,small
 """
 
 from __future__ import annotations

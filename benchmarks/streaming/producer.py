@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 7.0 study: host-side Kafka telemetry producer helpers.
+"""Benchmark workload producer: host-side Kafka telemetry publishing.
 
 Runs on the HOST (uv run python) against a localhost-reachable broker --
 same convention as scripts/e2e/smoke_streaming.py. Does not need
@@ -19,9 +19,9 @@ Three subcommands:
               own 0..PER-RUN-COUNT-1 sequence, report every run's
               robot_run_id + partition
 
-This is Phase 7.0 study tooling (category C evidence-gathering), not a
-production capture-path change -- nothing here touches ros2/capture or
-sceneops-streaming.
+Benchmark tooling, not an acceptance check (see benchmarks/README.md): it
+publishes to the configured topic and leaves the records in Kafka. Nothing
+here touches ros2/capture or sceneops-streaming.
 """
 
 from __future__ import annotations
