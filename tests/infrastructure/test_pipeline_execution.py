@@ -31,6 +31,15 @@ def _dataset(api, version: str) -> tuple[str, str]:
     return api.dataset_version(INFRA_PIPELINES_DATASET, version)
 
 
+def _finished_job(api, job_id: str) -> dict:
+    deadline = time.monotonic() + 120
+    job = api.get(f"/jobs/{job_id}")["job"]
+    while job["status"] not in ("succeeded", "failed") and time.monotonic() < deadline:
+        time.sleep(2)
+        job = api.get(f"/jobs/{job_id}")["job"]
+    return job
+
+
 def _without_timestamps(records: list[dict]) -> list[dict]:
     return sorted(
         ({k: v for k, v in r.items() if k not in ("updatedAt", "registeredAt")} for r in records),
@@ -101,6 +110,8 @@ def test_registering_a_published_recording_again_converges(api, baseline_run):
     first = api.post("/robot-runs:register", {"manifest_uri": manifest_uri}).json()["job"]["jobId"]
     again = api.post("/robot-runs:register", {"manifest_uri": manifest_uri}).json()["job"]["jobId"]
     assert again == first, "an identical registration request returns the original Job"
+    # force never starts a second in-flight Job of one key, so it waits for this one.
+    assert _finished_job(api, first)["status"] == "succeeded"
 
     forced = api.post(
         "/jobs",
@@ -111,12 +122,9 @@ def test_registering_a_published_recording_again_converges(api, baseline_run):
         },
         expect=201,
     ).json()["job"]["jobId"]
+    assert forced != first
     api.post(f"/jobs/{forced}/execute", {})
-    deadline = time.monotonic() + 120
-    job = api.get(f"/jobs/{forced}")["job"]
-    while job["status"] not in ("succeeded", "failed") and time.monotonic() < deadline:
-        time.sleep(2)
-        job = api.get(f"/jobs/{forced}")["job"]
+    job = _finished_job(api, forced)
 
     assert job["status"] == "succeeded", job
     assert job["result"]["created"] is False
@@ -127,7 +135,7 @@ def test_registering_a_published_recording_again_converges(api, baseline_run):
     )
 
 
-def test_identical_jobs_dedup_and_force_creates_a_fresh_job(api):
+def test_identical_jobs_dedup_and_force_creates_a_fresh_job_once_finished(api):
     dataset = _dataset(api, "jobs-dedup")
     body = {
         "type": "export_analytics_snapshot",
@@ -137,9 +145,17 @@ def test_identical_jobs_dedup_and_force_creates_a_fresh_job(api):
     }
     first = api.post("/jobs", body, expect=201).json()["job"]["jobId"]
     again = api.post("/jobs", body, expect=201).json()["job"]["jobId"]
-    forced = api.post("/jobs", {**body, "force": True}, expect=201).json()["job"]["jobId"]
+    forced_in_flight = api.post("/jobs", {**body, "force": True}, expect=201).json()["job"][
+        "jobId"
+    ]
 
     assert again == first
+    assert forced_in_flight == first, "one Job of a key is in flight at a time"
+
+    api.post(f"/jobs/{first}/execute", {})
+    assert _finished_job(api, first)["status"] in ("succeeded", "failed")
+    forced = api.post("/jobs", {**body, "force": True}, expect=201).json()["job"]["jobId"]
+
     assert forced != first
 
 

@@ -19,9 +19,10 @@ class CreateJobRequest(SceneOpsBaseModel):
 
     max_retries: int = 0
 
-    # If a job with the same computed execution_key already exists as
-    # QUEUED/RUNNING/SUCCEEDED, that job is returned instead of creating a
-    # duplicate. Set force=True to always create a new job.
+    # If a job with the same computed execution_key is PENDING / QUEUED /
+    # RUNNING / SUCCEEDED, that job is returned instead of creating a duplicate.
+    # force=True creates a new job even after a succeeded one; a job that is
+    # still pending, queued or running is returned in either case.
     force: bool = False
 
     metadata: JsonDict = Field(default_factory=dict)

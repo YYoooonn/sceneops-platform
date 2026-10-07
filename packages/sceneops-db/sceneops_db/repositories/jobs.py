@@ -13,13 +13,34 @@ from sceneops_core.jobs.schemas import (
 )
 
 
+class JobExecutionKeyInFlightError(ValueError):
+    """Another PENDING / QUEUED / RUNNING Job already holds this execution key.
+
+    At most one Job per execution key is in flight; PostgreSQL enforces it with a
+    partial unique index, so the error reports a write the database refused,
+    whatever an earlier read observed."""
+
+    def __init__(self, execution_key: str | None) -> None:
+        super().__init__(
+            f"A Job with execution_key={execution_key!r} is already pending, "
+            "queued or running"
+        )
+        self.execution_key = execution_key
+
+
 @runtime_checkable
 class JobRepository(Protocol):
-    async def create(self, job: JobManifest) -> JobManifest: ...
+    async def create(self, job: JobManifest) -> JobManifest:
+        """Raises ``JobExecutionKeyInFlightError`` when ``job`` is in flight and
+        another in-flight Job holds its execution key."""
+        ...
 
     async def get(self, job_id: str) -> JobManifest | None: ...
 
-    async def update(self, job: JobManifest) -> JobManifest: ...
+    async def update(self, job: JobManifest) -> JobManifest:
+        """Raises ``JobExecutionKeyInFlightError`` like ``create``; the caller's
+        transaction is then unusable and must be rolled back."""
+        ...
 
     async def list(
         self,

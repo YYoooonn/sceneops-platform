@@ -64,7 +64,8 @@ def _policy(**overrides) -> RecoveryPolicy:
 
 class FakeSubmitter:
     """``RobotRunRegistrationService`` over the in-memory Job list: ``force``
-    skips the dedup, a dispatch can be made to fail, and every call is kept."""
+    skips only the reuse of a succeeded Job, a dispatch can be made to fail, and
+    every call is kept."""
 
     def __init__(self, facts: FakeFacts, *, now: datetime = NOW) -> None:
         self.facts = facts
@@ -78,15 +79,12 @@ class FakeSubmitter:
         if manifest_uri in self.raise_for:
             raise self.raise_for[manifest_uri]
         key = register_robot_run_execution_key(manifest_uri)
+        reusable = {JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING}
         if not force:
-            for job in self.facts.jobs:
-                if job.execution_key == key and job.status in (
-                    JobStatus.PENDING,
-                    JobStatus.QUEUED,
-                    JobStatus.RUNNING,
-                    JobStatus.SUCCEEDED,
-                ):
-                    return RegisterRobotRunResponse(job=job, execution=None)
+            reusable.add(JobStatus.SUCCEEDED)
+        for job in self.facts.jobs:
+            if job.execution_key == key and job.status in reusable:
+                return RegisterRobotRunResponse(job=job, execution=None)
         job = JobManifest(
             job_id=f"job-{len(self.facts.jobs):04d}",
             type=JobType.REGISTER_ROBOT_RUN,

@@ -17,6 +17,7 @@ from sceneops_core.jobs.schemas import (
     JobStatus,
     JobType,
 )
+from sceneops_db.repositories.jobs import JobExecutionKeyInFlightError
 
 DATASET_ID = "nuscenes"
 DATASET_VERSION = "v1.0-mini"
@@ -50,6 +51,18 @@ class FakeJobRepository:
             if job.execution_key == execution_key and job.status in statuses:
                 return job
         return None
+
+
+class _LosingJobRepository(FakeJobRepository):
+    """Its first insert loses to a concurrent request, as the in-flight unique
+    index makes a real one: the winner appears and the insert is refused."""
+
+    async def create(self, job: JobManifest) -> JobManifest:
+        if not self.jobs:
+            winner = job.model_copy(update={"job_id": "job-winner"})
+            self.jobs[winner.job_id] = winner
+            raise JobExecutionKeyInFlightError(job.execution_key)
+        return await super().create(job)
 
 
 class FakeJobEventRepository:
@@ -118,13 +131,46 @@ async def test_identical_requests_return_same_job():
     assert first.job_id == second.job_id
 
 
-async def test_force_bypasses_dedup():
-    service, _ = _service()
+async def test_force_creates_a_new_job_after_a_succeeded_one():
+    service, repo = _service()
 
     first = await service.create_job(_request())
+    await repo.update(first.model_copy(update={"status": JobStatus.SUCCEEDED}))
     second = await service.create_job(_request(force=True))
 
     assert first.job_id != second.job_id
+
+
+@pytest.mark.parametrize(
+    "status", [JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING]
+)
+async def test_force_returns_the_job_still_in_flight(status):
+    service, repo = _service()
+
+    first = await service.create_job(_request())
+    await repo.update(first.model_copy(update={"status": status}))
+    forced = await service.create_job(_request(force=True))
+
+    assert forced.job_id == first.job_id
+    assert len(repo.jobs) == 1
+
+
+async def test_a_lost_insert_returns_the_concurrent_winner():
+    """The in-flight unique index refused the insert: the Job a concurrent request
+    committed after this one's lookup is returned, and no CREATED event is
+    written for the refused one."""
+    repo = _LosingJobRepository()
+    events = FakeJobEventRepository()
+    service = JobService(
+        repository=repo,
+        event_repository=events,
+        artifact_repository=FakeArtifactRepository(),
+    )
+
+    job = await service.create_job(_request())
+
+    assert job.job_id == "job-winner"
+    assert events.events == []
 
 
 async def test_different_params_are_not_deduped():

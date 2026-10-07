@@ -22,14 +22,18 @@ from app.platform.jobs.schemas import JobEventListResponse, JobListResponse
 from sceneops_db.queries import resolve_current_episode_manifest_source
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.episodes import EpisodeRepository
-from sceneops_db.repositories.jobs import JobEventRepository, JobRepository
+from sceneops_db.repositories.jobs import (
+    JobEventRepository,
+    JobExecutionKeyInFlightError,
+    JobRepository,
+)
 
-_DEDUP_STATUSES = {
-    JobStatus.PENDING,
-    JobStatus.QUEUED,
-    JobStatus.RUNNING,
-    JobStatus.SUCCEEDED,
-}
+_IN_FLIGHT_STATUSES = {JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING}
+_DEDUP_STATUSES = _IN_FLIGHT_STATUSES | {JobStatus.SUCCEEDED}
+# A lost insert is followed by a lookup that finds the winner. Another insert is
+# needed only if the winner already left flight (failed, or succeeded under force)
+# by then.
+_CREATE_ATTEMPTS = 3
 
 
 class JobService:
@@ -87,13 +91,6 @@ class JobService:
             params=params_for_execution_key(request.type, validated_params_dump),
         )
 
-        if not request.force:
-            existing = await self._repository.find_by_execution_key(
-                execution_key, statuses=_DEDUP_STATUSES
-            )
-            if existing is not None:
-                return existing
-
         job = JobManifest(
             job_id=generate_job_id(),
             type=request.type,
@@ -110,7 +107,24 @@ class JobService:
             updated_at=now,
         )
 
-        created = await self._repository.create(job)
+        # The lookup only avoids a doomed insert; the in-flight unique index decides
+        # between concurrent requests. A loser looks again and joins the Job that
+        # won, which READ COMMITTED lets the same transaction see. A forced request
+        # never reuses a finished Job but cannot start a second in-flight one.
+        reusable = _IN_FLIGHT_STATUSES if request.force else _DEDUP_STATUSES
+        for _ in range(_CREATE_ATTEMPTS):
+            existing = await self._repository.find_by_execution_key(
+                execution_key, statuses=reusable
+            )
+            if existing is not None:
+                return existing
+            try:
+                created = await self._repository.create(job)
+                break
+            except JobExecutionKeyInFlightError:
+                continue
+        else:
+            raise JobExecutionKeyInFlightError(execution_key)
 
         await self._event_repository.append(
             JobEvent(

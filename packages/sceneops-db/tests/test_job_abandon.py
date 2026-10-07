@@ -31,7 +31,7 @@ def _job(job_id: str, status: JobStatus, **kw) -> JobManifest:
         job_id=job_id,
         type=kw.pop("type", JobType.REGISTER_ROBOT_RUN),
         status=status,
-        execution_key=kw.pop("execution_key", "key"),
+        execution_key=kw.pop("execution_key", f"key-{job_id}"),
         created_at=created,
         queued_at=kw.pop("queued_at", created),
         **kw,

@@ -128,6 +128,21 @@ Index("ix_jobs_pipeline_task_run_id", JobModel.pipeline_task_run_id)
 Index("ix_jobs_status_queued_at", JobModel.status, JobModel.queued_at)
 Index("ix_jobs_status_locked_at", JobModel.status, JobModel.locked_at)
 Index("ix_jobs_execution_key", JobModel.execution_key)
+# At most one Job per execution key is in flight. Finished Jobs are outside the
+# index: a forced rerun of a succeeded Job and the replacement of a failed one share
+# its key. The predicate is literal SQL, never bound parameters: an ON CONFLICT
+# clause naming it must still match the index when PostgreSQL plans the prepared
+# INSERT generically, without parameter values.
+JOB_IN_FLIGHT_STATUSES = ("pending", "queued", "running")
+JOB_IN_FLIGHT_PREDICATE = text(
+    "status IN ({})".format(", ".join(f"'{s}'" for s in JOB_IN_FLIGHT_STATUSES))
+)
+Index(
+    "uq_jobs_execution_key_in_flight",
+    JobModel.execution_key,
+    unique=True,
+    postgresql_where=JOB_IN_FLIGHT_PREDICATE,
+)
 
 Index("ix_job_events_job_id_created_at", JobEventModel.job_id, JobEventModel.created_at)
 Index("ix_job_events_level_created_at", JobEventModel.level, JobEventModel.created_at)

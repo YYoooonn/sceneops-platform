@@ -308,8 +308,14 @@ class TestOrderIndependentDedup:
         assert job1.job_id != job2.job_id
 
     @pytest.mark.asyncio
-    async def test_force_bypasses_dedup(self) -> None:
-        service, artifacts = _service()
+    async def test_force_bypasses_dedup_of_a_succeeded_job(self) -> None:
+        jobs = FakeJobRepository()
+        artifacts = FakeArtifactRepository()
+        service = JobService(
+            repository=jobs,
+            event_repository=FakeJobEventRepository(),
+            artifact_repository=artifacts,
+        )
         artifacts.add(
             artifact_id="art-A", episode_id="ep-1", checksum="sha256:" + "a" * 64
         )
@@ -317,6 +323,7 @@ class TestOrderIndependentDedup:
         job1 = await service.create_job(
             _request([{"episode_id": "ep-1", "aligned_artifact_id": "art-A"}])
         )
+        await jobs.update(job1.model_copy(update={"status": JobStatus.SUCCEEDED}))
         job2 = await service.create_job(
             CreateJobRequest(
                 type=JobType.EXPORT_LEARNING_DATA,

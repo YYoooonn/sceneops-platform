@@ -203,8 +203,9 @@ redispatch of durable state.
 
 | Concern | Current implementation |
 | --- | --- |
-| Request identity | `execution_key = sha256(kind, type, dataset_id, dataset_version, model_id, model_version, params)` (`sceneops_core.executions.compute_execution_key`). Creating a Job or PipelineRun whose key already has a `PENDING` / `QUEUED` / `RUNNING` / `SUCCEEDED` record returns that record; `force: true` always creates a new one. Some job types normalize their params first so equivalent requests share a key (`params_for_execution_key`). |
-| Standalone Job retry | Redispatching a `FAILED` Job (`POST /jobs/{id}/execute`) increments `retry_count`; past `max_retries` it is refused. |
+| Request identity | `execution_key = sha256(kind, type, dataset_id, dataset_version, model_id, model_version, params)` (`sceneops_core.executions.compute_execution_key`). Creating a Job or PipelineRun whose key already has a `PENDING` / `QUEUED` / `RUNNING` / `SUCCEEDED` record returns that record. `force: true` skips the reuse of a succeeded record: a PipelineRun is always new, a Job is new unless one of its key is still in flight, which is returned. Some job types normalize their params first so equivalent requests share a key (`params_for_execution_key`). |
+| Concurrent Job creation | At most one Job per execution key is `PENDING` / `QUEUED` / `RUNNING`: the partial unique index `uq_jobs_execution_key_in_flight` enforces it in PostgreSQL. `create_job` inserts with `ON CONFLICT DO NOTHING` against that index, so concurrent requests for one key converge on one Job and one `CREATED` event; a loser waits for the winner's transaction and returns its Job. Finished Jobs are outside the index, so a key keeps any number of succeeded and failed Jobs. The reuse of a succeeded Job is a read, not a constraint: a request whose lookup preceded a Job's whole run can start one more. PipelineRun creation has no such index; concurrent identical PipelineRun requests can each create a run. |
+| Standalone Job retry | Redispatching a `FAILED` Job (`POST /jobs/{id}/execute`) increments `retry_count`; past `max_retries` it is refused, and so is a retry while another Job of its key is in flight. |
 | Pipeline retry | Re-executing a `FAILED` or `BLOCKED` run resumes at its first unfinished task; succeeded and skipped tasks are not re-run. |
 | Duplicate delivery | The atomic Job claim and the row-locked, idempotent orchestration step make a duplicated message harmless. |
 | Duplicate output | Derived artifacts are write-once and content-pinned, so a Job that re-runs converges on the same objects and records (§7). |
@@ -212,6 +213,7 @@ redispatch of durable state.
 
 Implementation: `packages/sceneops-core/sceneops_core/executions/key.py`,
 `apps/api/app/platform/jobs/service.py` (`create_job`, `mark_queued`),
+`packages/sceneops-db/sceneops_db/postgres/jobs.py` (`create`),
 `apps/api/app/platform/pipelines/service.py` (`create_pipeline_run`, `validate_executable`).
 
 ### Durable-state-first boundaries and failure windows

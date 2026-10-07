@@ -13,6 +13,7 @@ capture router, deleted `make` commands) is intentional; the current architectur
 | [streaming-reliability-scale-baseline.md](./streaming-reliability-scale-baseline.md) | streaming failure-injection matrix and scale measurements | [streaming-transport.md](../architecture/streaming-transport.md) |
 | [streaming-cleanroom-acceptance-phase6.7.md](./streaming-cleanroom-acceptance-phase6.7.md) | clean-room acceptance of the streaming pipeline at one commit | [streaming-transport.md](../architecture/streaming-transport.md), [test-matrix.md](../development/test-matrix.md) |
 | [streaming-multirun-phase7-study.md](./streaming-multirun-phase7-study.md) | multi-run capture study; evaluated a router that was not adopted | [streaming-transport.md](../architecture/streaming-transport.md) §26, [ADR-008](../adr/008-acquisition-lifecycle-reliability.md) |
+| [job-creation-concurrency-study.md](./job-creation-concurrency-study.md) | concurrent Job creation and claim experiments on real PostgreSQL | [jobs-and-pipelines.md](../architecture/jobs-and-pipelines.md) §5, [ADR-008](../adr/008-acquisition-lifecycle-reliability.md) |
 
 Old results are never rewritten when the implementation changes: a new report is added
 instead. Implementation chronology (what changed and when) belongs to Git history.

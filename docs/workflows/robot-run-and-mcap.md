@@ -211,7 +211,8 @@ through Job execution-key dedup (see
 `execution: null`, so a retry after success sees that Job's original
 result (`created=true`) and no second registration runs. The registrar
 runs again, and reports `created=false`, only through a new Job
-(`force: true` on `POST /jobs`) or `sceneops-worker robots register`.
+(`force: true` on `POST /jobs`, once no Job of that manifest is in flight) or
+`sceneops-worker robots register`.
 
 `robot_run_root` defaults to the ArtifactSettings' `robot_run_root_uri`
 (`{artifact root}/robot_runs`); the publisher reads its ArtifactStore
@@ -454,9 +455,10 @@ acquisition-status` runs one pass; the recovery loops do not run it.
   longer than the budget times the threshold (about 45 minutes at the defaults)
   can spend it without the registration ever having failed; an operator's forced
   submission then registers the run.
-- Plain submissions (a first Job, a transient retry) are not serialized, so
-  concurrent passes can create a duplicate Job. Registration converges on one
-  RobotRun regardless.
+- Concurrent submissions of one registration converge on one in-flight Job (at
+  most one Job per execution key is in flight). The reuse of a succeeded Job is a
+  read, so a submission whose lookup preceded a Job's whole run can add one more
+  Job; registration converges on one RobotRun regardless.
 - The artifact lifecycle covers `robot_runs/` only and classifies without
   deleting: no artifact is deleted, quarantined or repaired. A registered
   recording is checked by size unless `--verify-recording-bytes`.

@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.common.schemas import ErrorInfo
@@ -22,11 +24,19 @@ from sceneops_db.converters.jobs import (
     job_manifest_to_values,
     job_model_to_manifest,
 )
-from sceneops_db.models.jobs import JobEventModel, JobModel
+from sceneops_db.models.jobs import JOB_IN_FLIGHT_PREDICATE, JobEventModel, JobModel
+from sceneops_db.repositories.jobs import JobExecutionKeyInFlightError
 
 from ._utils import IN_CLAUSE_CHUNK, apply_pagination, apply_values, enum_value
 
 _ACTIVE_STATUSES = (JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING)
+_IN_FLIGHT_INDEX = "uq_jobs_execution_key_in_flight"
+
+
+def _constraint_name(exc: IntegrityError) -> str | None:
+    # asyncpg's exception, wrapped by the SQLAlchemy DBAPI adapter.
+    return getattr(exc.orig.__cause__, "constraint_name", None)
+
 
 # The columns the claiming worker writes while it owns a RUNNING Job (its start
 # bookkeeping and its terminal state); identity, params and request-side columns
@@ -49,10 +59,32 @@ class PostgresJobRepository:
         self._session = session
 
     async def create(self, job: JobManifest) -> JobManifest:
-        model = JobModel(**job_manifest_to_values(job))
-        self._session.add(model)
-        await self._session.flush()
-        await self._session.refresh(model)
+        """Insert ``job``. Raises ``JobExecutionKeyInFlightError`` when ``job`` is
+        in flight and another in-flight Job holds its execution key.
+
+        One ``INSERT ... ON CONFLICT DO NOTHING`` on the in-flight unique index: a
+        writer that meets an uncommitted Job with the same key waits for that
+        transaction and loses only if it commits, and losing leaves this
+        transaction usable. Any other conflict (the job_id primary key) still
+        raises. Unset columns take their database defaults."""
+        values = {
+            column: value
+            for column, value in job_manifest_to_values(job).items()
+            if value is not None
+        }
+        stmt = (
+            insert(JobModel)
+            .values(**values)
+            .on_conflict_do_nothing(
+                index_elements=[JobModel.execution_key],
+                index_where=JOB_IN_FLIGHT_PREDICATE,
+            )
+            .returning(JobModel)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise JobExecutionKeyInFlightError(job.execution_key)
         return job_model_to_manifest(model)
 
     async def get(self, job_id: str) -> JobManifest | None:
@@ -68,7 +100,14 @@ class PostgresJobRepository:
         if model is None:
             raise ValueError(f"Job not found: {job.job_id}")
         apply_values(model, job_manifest_to_values(job))
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            # Putting a finished Job back in flight (a retry of a FAILED Job) while
+            # another Job with its key is in flight.
+            if _constraint_name(exc) == _IN_FLIGHT_INDEX:
+                raise JobExecutionKeyInFlightError(job.execution_key) from exc
+            raise
         await self._session.refresh(model)
         return job_model_to_manifest(model)
 

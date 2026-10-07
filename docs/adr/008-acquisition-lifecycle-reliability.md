@@ -572,6 +572,32 @@ one finding the audit recorded.
   `idle_timeout`, `max_messages` or `manual`, and the Publisher does not gate on the
   reason.
 
+**Amendment — one in-flight Job per execution key.**
+Accepted. It reverses the W11 resolution (§2) and the `jobs.execution_key` bullet of
+§3.3; no other decision changes.
+
+- **Why it changes.** W11 kept `execution_key` a plain index because duplicate
+  registration Jobs were judged benign and a unique index "would affect every job
+  type". A real-PostgreSQL experiment showed duplicates are the normal outcome of
+  concurrent submissions, not a corner case: 8 concurrent creates of one key stored 8
+  Jobs and 8 `CREATED` events, and with callers arriving 20 ms apart 3 of 30 trials
+  still duplicated ([study](../history/job-creation-concurrency-study.md)). They are
+  also not benign for this ADR's own budget (§5.2): `failed_job_count` counts every
+  `FAILED` Job of the key and stalled-Job replacement abandons every in-flight one, so
+  two duplicates of one logical attempt spend two attempts.
+- **Decision.** A partial unique index, `uq_jobs_execution_key_in_flight` on
+  `jobs(execution_key) WHERE status IN ('pending', 'queued', 'running')`. It is narrower
+  than the rejected index: finished Jobs stay outside it, so forced reruns and
+  stalled-Job replacements keep sharing the key (the budget still counts across them),
+  and no job type wants two in-flight Jobs of one key. `create_job` inserts with
+  `ON CONFLICT DO NOTHING` and a loser returns the winner's Job.
+- **Consequence for `force`.** A forced submission never reuses a succeeded Job, and
+  returns a Job of its key that is still in flight instead of starting a second one.
+  Stalled-Job replacement (§5.3) is unaffected: it abandons first, so nothing of the
+  key is in flight when it submits; a submission that got there first is joined.
+- The active contract is in [Jobs and pipelines](../architecture/jobs-and-pipelines.md)
+  §5.
+
 As in ADR-007, three labels are used where confusion is possible:
 
 ```text
