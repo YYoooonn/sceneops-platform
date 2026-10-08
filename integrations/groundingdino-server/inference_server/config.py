@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -38,9 +39,14 @@ class InferenceServerSettings(BaseSettings):
     # Concurrency
     max_concurrent_inference_requests: int = Field(default=1, ge=1)
 
-    # Image URI security: file:// paths must be under one of these roots.
-    # Only the local ArtifactStore payload root: no source dataset is readable.
+    # Local image URI
     allowed_file_roots: list[str] = Field(default_factory=lambda: ["/data/artifacts"])
+
+    # S3-compatible image URI
+    s3_enabled: bool = Field(default=False)
+    s3_endpoint_url: str | None = Field(default=None)
+    s3_region: str = Field(default="us-east-1")
+    s3_addressing_style: Literal["auto", "path", "virtual"] = Field(default="auto")
 
     @field_validator("allowed_file_roots", mode="before")
     @classmethod

@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from inference_server.config import InferenceServerSettings, get_settings
+from inference_server.storage import build_s3_client
 from inference_server.grounding_dino import GroundingDinoModel
 from inference_server.image_resolver import ImageResolver
 from inference_server.schemas import (
@@ -76,6 +77,7 @@ async def _do_warmup(
 async def lifespan(app: FastAPI):
     global _model, _image_resolver, _warmup_state, _inference_sem, _concurrency
     settings = get_settings()
+    s3_client = build_s3_client(settings)
     logger.info(
         "Loading %s (box_threshold=%.2f, text_threshold=%.2f, max_image_size=%d)",
         settings.model_id,
@@ -87,7 +89,10 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(_model.load)
     logger.info("Model loaded on device: %s", _model.device)
 
-    _image_resolver = ImageResolver(allowed_roots=settings.allowed_file_roots)
+    _image_resolver = ImageResolver(
+        allowed_roots=settings.allowed_file_roots,
+        s3_client=s3_client,
+    )
     logger.info(
         "ImageResolver initialized (allowed_roots=%s)", settings.allowed_file_roots
     )

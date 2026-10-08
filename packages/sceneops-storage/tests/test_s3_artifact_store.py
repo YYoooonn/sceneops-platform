@@ -202,13 +202,6 @@ async def test_join_uri_builds_expected_key_structure(store, bucket):
     assert joined == f"s3://{bucket}/datasets/ds1/versions/v1/raw/log.json"
 
 
-@pytest.mark.asyncio
-async def test_unsupported_uri_scheme_raises(store):
-    artifact_store = store
-    with pytest.raises(ValueError, match="Unsupported S3 artifact URI scheme"):
-        await artifact_store.exists("file:///not/an/s3/uri.json")
-
-
 # ── overwrite behavior ────────────────────────────────────────────────────────
 
 

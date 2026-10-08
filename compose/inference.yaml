@@ -12,6 +12,8 @@ x-inference-common: &inference-common
   environment:
     HF_HOME: /cache/hf
     SCENEOPS_INFERENCE_HF_CACHE_DIR: /cache/hf
+    AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"
+    AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
   ports:
     - "${INFERENCE_PORT:-8001}:8001"
   volumes:
