@@ -1,8 +1,8 @@
 # --------------------
 # Kafka streaming transport -- single-node KRaft broker, opt-in via the
 # `streaming` compose profile (compose/streaming.yaml), which also holds the
-# two processes attached to it: the streaming bridge (apps/streaming-bridge) and
-# Capture (apps/capture). Never part of `make local-up`'s default stack, and never
+# processes attached to it: the ROS 2 -> Kafka bridge integration
+# (integrations/ros2-kafka-bridge) and Capture (apps/capture). Never part of `make local-up`'s default stack, and never
 # a dependency of it -- Kafka is non-canonical transport, proven by `make
 # test-infrastructure SUITE=kafka` (streaming-test + smoke-streaming below) only.
 # See docs/architecture/streaming-transport.md.
@@ -30,7 +30,7 @@ smoke-streaming:
 	tools/e2e/smoke_streaming.sh
 
 # --------------------
-# ROS 2 -> Kafka -> MCAP tests: the streaming bridge (apps/streaming-bridge), the
+# ROS 2 -> Kafka -> MCAP tests: the ROS 2 -> Kafka bridge integration (integrations/ros2-kafka-bridge), the
 # capture suite (packages/sceneops-recording/tests/capture) and the one test that
 # spans both (tests/streaming). Each runs inside the ROS 2 image of the app it
 # tests (rclpy / ROS 2 interface definitions); the sources under test are baked
@@ -45,12 +45,12 @@ ROS_RUN = $(COMPOSE) --profile streaming run --rm -T --entrypoint /ros_entrypoin
 
 .PHONY: streaming-test
 streaming-test: streaming-ros-build
-	$(ROS_RUN) -v $(CURDIR)/apps/streaming-bridge/tests:/workspace/tests/bridge:ro \
+	$(ROS_RUN) -v $(CURDIR)/integrations/ros2-kafka-bridge/tests:/workspace/tests/bridge:ro \
 		streaming-bridge python3 -m pytest /workspace/tests/bridge -q -p no:cacheprovider
 	$(ROS_RUN) -v $(CURDIR)/packages/sceneops-recording/tests/capture:/workspace/tests/capture:ro \
 		capture python3 -m pytest /workspace/tests/capture -q -p no:cacheprovider
 	$(ROS_RUN) -v $(CURDIR)/tests/streaming:/workspace/tests/streaming:ro \
-		-v $(CURDIR)/apps/streaming-bridge/sceneops_streaming_bridge:/workspace/bridge/sceneops_streaming_bridge:ro \
+		-v $(CURDIR)/integrations/ros2-kafka-bridge/sceneops_streaming_bridge:/workspace/bridge/sceneops_streaming_bridge:ro \
 		-e PYTHONPATH=/workspace/bridge \
 		capture python3 -m pytest /workspace/tests/streaming -q -p no:cacheprovider
 

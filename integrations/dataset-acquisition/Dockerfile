@@ -2,7 +2,7 @@
 #
 # The build context is this directory only:
 #
-#   docker build -t sceneops-platform/dataset-acquisition:local tools/dataset-acquisition
+#   docker build -t sceneops-platform/dataset-acquisition:local integrations/dataset-acquisition
 #   (equivalently: make acquisition-image)
 #
 # so no SceneOps package source is reachable from the build, and the image
@@ -16,7 +16,7 @@
 #   replay                         ROS 2 Jazzy + the tool; publishes the same
 #                                  events on ROS 2 topics (streaming mode)
 #
-#   docker build --target replay -t sceneops-platform/dataset-replay:local tools/dataset-acquisition
+#   docker build --target replay -t sceneops-platform/dataset-replay:local integrations/dataset-acquisition
 #   (equivalently: make acquisition-image)
 #
 # Neither target contains a SceneOps package.

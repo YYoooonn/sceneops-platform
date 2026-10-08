@@ -16,7 +16,7 @@
 services:
   dataset-acquisition:
     build:
-      context: ./tools/dataset-acquisition
+      context: ./integrations/dataset-acquisition
       target: batch
     image: sceneops-platform/dataset-acquisition:local
     network_mode: none
@@ -33,7 +33,7 @@ services:
   # object-storage access.
   dataset-replay:
     build:
-      context: ./tools/dataset-acquisition
+      context: ./integrations/dataset-acquisition
       target: replay
     image: sceneops-platform/dataset-replay:local
     volumes:
@@ -52,7 +52,7 @@ services:
   # `--no-deps`: it needs and touches no platform service.
   reference-data:
     build:
-      context: ./tools/dataset-acquisition
+      context: ./integrations/dataset-acquisition
       target: batch
     image: sceneops-platform/dataset-acquisition:local
     network_mode: none
@@ -71,7 +71,7 @@ services:
   # (SCENEOPS_WORKER_INPUT_SOURCE__ROOT_URI, ./data/inputs).
   reference-labels:
     build:
-      context: ./tools/dataset-acquisition
+      context: ./integrations/dataset-acquisition
       target: batch
     image: sceneops-platform/dataset-acquisition:local
     network_mode: none

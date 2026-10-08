@@ -15,7 +15,7 @@
 # path sources (sceneops-core/storage/analytics) live outside this
 # directory and Docker COPY cannot reach outside its build context:
 #
-#   docker build -f tools/lerobot-integration/Dockerfile -t sceneops-platform/lerobot-integration:local .
+#   docker build -f integrations/lerobot/Dockerfile -t sceneops-platform/lerobot-integration:local .
 #
 # (equivalently: make lerobot-image)
 
@@ -25,8 +25,8 @@ WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV UV_PROJECT_ENVIRONMENT=/workspace/tools/lerobot-integration/.venv
-ENV PATH="/workspace/tools/lerobot-integration/.venv/bin:$PATH"
+ENV UV_PROJECT_ENVIRONMENT=/workspace/integrations/lerobot/.venv
+ENV PATH="/workspace/integrations/lerobot/.venv/bin:$PATH"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -42,8 +42,8 @@ RUN pip install --no-cache-dir uv
 #    first, from lock metadata alone -- cacheable independently of any
 #    SceneOps source change. --no-install-local skips the three editable
 #    path dependencies below; their source isn't copied in yet.
-COPY tools/lerobot-integration/pyproject.toml tools/lerobot-integration/uv.lock ./tools/lerobot-integration/
-WORKDIR /workspace/tools/lerobot-integration
+COPY integrations/lerobot/pyproject.toml integrations/lerobot/uv.lock ./integrations/lerobot/
+WORKDIR /workspace/integrations/lerobot
 RUN uv sync --frozen --no-dev --no-install-local
 
 # 2. Copy exactly the SceneOps source this project's editable path sources
@@ -53,10 +53,10 @@ WORKDIR /workspace
 COPY packages/sceneops-core ./packages/sceneops-core
 COPY packages/sceneops-storage ./packages/sceneops-storage
 COPY packages/sceneops-analytics ./packages/sceneops-analytics
-COPY tools/lerobot-integration ./tools/lerobot-integration
+COPY integrations/lerobot ./integrations/lerobot
 
 # 3. Install the local editable packages now that their source exists.
-WORKDIR /workspace/tools/lerobot-integration
+WORKDIR /workspace/integrations/lerobot
 RUN uv sync --frozen --no-dev
 
 # --no-sync: the venv above is already exactly what the committed

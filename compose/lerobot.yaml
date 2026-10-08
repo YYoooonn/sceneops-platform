@@ -13,7 +13,7 @@ services:
   lerobot-integration:
     build:
       context: .
-      dockerfile: tools/lerobot-integration/Dockerfile
+      dockerfile: integrations/lerobot/Dockerfile
     image: sceneops-platform/lerobot-integration:local
     env_file:
       - .env.local

@@ -13,7 +13,8 @@ Start at [`docs/architecture/overview.md`](docs/architecture/overview.md) for th
 ## Architecture
 
 ```text
-L0  transport       ROS 2 topics -> Kafka -> capture            (non-canonical, bounded replay)
+L0  transport       Kafka -> capture -> MCAP + receipt          (non-canonical, bounded replay;
+                    producers such as the ROS 2 bridge integration are external)
 L1  RobotRun        immutable recording (MCAP) + RobotRunManifest, registered and verified
 L2  Scene / Episode canonical, source-faithful units built from a RobotRun; checksum-pinned manifests
 L3  derived         labels, sample views, ScenarioSets, predictions, evaluations,
@@ -43,14 +44,16 @@ Platform primitives are generic; domain semantics stay explicit. PostgreSQL hold
 | ---------------- | ----------------------------- | -------------------------------------------------------------------------------- |
 | Control plane    | `apps/api`                    | REST API: datasets, scenes, episodes, scenarios, jobs, pipelines, runs, artifacts, robots |
 | Execution        | `apps/worker`                 | Pipeline orchestration, job execution, artifact writes, `sceneops-worker` CLI (recovery, acquisition commands) |
-| Acquisition      | `apps/streaming-bridge`, `apps/capture`, `apps/publisher` | ROS 2 → Kafka bridge; Kafka → MCAP capture; MCAP → published RobotRun objects |
-| Inference server | `apps/inference-server`       | Optional GroundingDINO server                                                    |
+| Acquisition      | `apps/capture`, `apps/publisher` | Kafka → MCAP capture (complete only at `RUN_END`); finalized MCAP + receipt → published RobotRun objects |
 | Foundations      | `packages/sceneops-{core,db,storage,streaming}` | Domain schemas and contracts; PostgreSQL; ArtifactStore; Kafka transport |
 | Capabilities     | `packages/sceneops-{recording,execution,acquisition,scenes,episodes,derived,inference,evaluation,analytics}` | Capture and publication; Job / Pipeline execution; acquisition lifecycle; Scene and Episode building; derived storage; inference; evaluation; Parquet analytics |
-| Tools            | `tools/`                      | Checks, E2E journeys, baselines, benchmarks, dev helpers; isolated uv projects `dataset-acquisition` (external dataset → MCAP) and `lerobot-integration` |
+| Integrations     | `integrations/ros2-kafka-bridge`, `integrations/groundingdino-server`, `integrations/dataset-acquisition`, `integrations/lerobot` | Adapters to things outside SceneOps: ROS 2 → Kafka; the optional GroundingDINO model server; external dataset → MCAP and ROS 2 replay; the LeRobot export runtime |
+| Tools            | `tools/`                      | Checks, E2E journeys, baselines, reference corpus, benchmarks, dev helpers       |
 
-Apps are processes; packages are the reusable code they import; tools are never imported
-by either. Details and the dependency rules: [Repository structure](docs/architecture/repository-structure.md).
+Apps are the processes SceneOps owns; packages are the reusable code they import;
+integrations connect SceneOps to external protocols, runtimes and data sources and may
+run as containers without becoming apps; tools are never imported by production code.
+Details and the dependency rules: [Repository structure](docs/architecture/repository-structure.md).
 
 ### Pipelines and jobs
 
@@ -149,7 +152,7 @@ The whole acceptance surface is the commands below; [`docs/development/test-matr
 | --- | --- |
 | `make test` | Dependency-direction check, then the unit suites of every app, package and tool (the ROS 2 suites run in `make streaming-test`) — no infrastructure |
 | `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, every `*_integration.py` module (registrars, recording Scene / Episode and derived verticals, selective Parquet reads) — in a disposable database and bucket, needs `make local-up`; a skipped test fails the run |
-| `make test-infrastructure [SUITE=…]` | Real-infrastructure suites; `pipelines` and `recovery` fail instead of skipping. `pipelines` (default): pipeline contracts on a disposable execution runtime (own API, workers, Redis, database and bucket). `recovery`: acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance. `kafka`: ROS 2 bridge + capture tests and the transport smoke (needs `make streaming-up`). `boundaries`: acquisition tool and LeRobot adapter in their own uv projects, acquisition images, raw-source mount of the runtime services |
+| `make test-infrastructure [SUITE=…]` | Real-infrastructure suites; `pipelines` and `recovery` fail instead of skipping. `pipelines` (default): pipeline contracts on a disposable execution runtime (own API, workers, Redis, database and bucket). `recovery`: acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance. `kafka`: ROS 2 bridge + capture tests and the transport smoke (needs `make streaming-up`). `boundaries`: the dataset-acquisition and LeRobot integrations in their own uv projects, acquisition images, raw-source mount of the runtime services |
 | `make reference-contract-verify` | Read-only: exactly the golden contract's 20 RobotRuns, Scenes and Episodes; reports non-contract state (`REQUIRE_PRISTINE=1` fails on it) |
 | `make e2e-streaming-equivalence` | Read-only: the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture are equivalent (see below) |
 | `make e2e-scene-ml` / `make e2e-episode-learning` | The two derived journeys on the golden RobotRun, into fixed test-owned Datasets (see below) |
@@ -236,14 +239,12 @@ curl http://localhost:8000/openapi.json | jq '.paths | keys[]'
 
 ```text
 sceneops-platform/
-├── apps/                           # processes (one container image each)
+├── apps/                           # canonical SceneOps runtime processes
 │   ├── api/                        # FastAPI control plane (platform/, domains/, views/)
 │   ├── worker/                     # Celery workers + `sceneops-worker` CLI: JobRunner, PipelineOrchestrator, handlers
 │   ├── capture/                    # Kafka -> MCAP + capture receipt, one process per run
-│   ├── streaming-bridge/           # ROS 2 topics -> Kafka (integration adapter)
-│   ├── publisher/                  # database-free: finalized MCAP -> published RobotRun objects
-│   └── inference-server/           # GroundingDINO server (port 8001; optional)
-├── packages/                       # reusable production code; never imports apps/ or tools/
+│   └── publisher/                  # database-free: finalized MCAP -> published RobotRun objects
+├── packages/                       # reusable production code; never imports apps/, integrations/ or tools/
 │   ├── sceneops-core/              # domain schemas, enums, pipeline and job definitions (no I/O)
 │   ├── sceneops-db/                # SQLAlchemy models, repositories, sessions
 │   ├── sceneops-storage/           # LocalArtifactStore, S3ArtifactStore, write-once primitive
@@ -257,9 +258,13 @@ sceneops-platform/
 │   ├── sceneops-inference/         # detection inference backends
 │   ├── sceneops-evaluation/        # detection evaluation
 │   └── sceneops-analytics/         # Parquet tables, learning-data reader, external adapters
-├── tools/                          # developer / CI / benchmark utilities; not production
-│   ├── checks/ e2e/ baselines/ reference/ benchmarks/ dev/
-│   └── dataset-acquisition/, lerobot-integration/   # isolated uv projects
+├── integrations/                   # adapters to external systems; may be containers, are not apps
+│   ├── ros2-kafka-bridge/          # ROS 2 topics -> Kafka (external ingress adapter)
+│   ├── groundingdino-server/       # GroundingDINO model server (port 8001; optional)
+│   ├── dataset-acquisition/        # isolated uv project: external dataset -> MCAP; MCAP -> ROS 2 replay
+│   └── lerobot/                    # isolated uv project: LeRobot export runtime
+├── tools/                          # engineering / operator tooling; not production
+│   └── checks/ e2e/ baselines/ reference/ benchmarks/ dev/
 ├── tests/                          # cross-system tests: infrastructure/ (PostgreSQL, MinIO, Redis, Celery), streaming/ (ROS 2 + Kafka)
 ├── config/                         # channels/, baselines/, reference/
 ├── migrations/                     # Alembic versions
@@ -300,7 +305,7 @@ The code-verified list is in [`docs/architecture/limitations.md`](docs/architect
 | Analytics            | Polars, PyArrow, DuckDB                               |
 | Inference (optional) | GroundingDINO, HuggingFace Transformers               |
 | Robot data           | ROS 2 Jazzy, rclpy, MCAP (`mcap`, `mcap-ros2-support`), Kafka |
-| Dataset fixture      | nuScenes mini (read by the acquisition tool only)     |
+| Dataset fixture      | nuScenes mini (read by the acquisition integration only)     |
 | Package manager      | uv workspace                                          |
 | Code quality         | Ruff, pre-commit                                      |
 | Infra                | Docker Compose                                        |

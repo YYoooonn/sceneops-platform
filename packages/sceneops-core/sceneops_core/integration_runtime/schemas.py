@@ -1,6 +1,6 @@
 """IntegrationRequest / IntegrationResult: the execution contract for one
 interoperability runtime that runs outside the main SceneOps runtime (e.g.
-the isolated LeRobot EXPORT, ``tools/lerobot-integration``).
+the isolated LeRobot EXPORT, ``integrations/lerobot``).
 
 ::
 

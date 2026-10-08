@@ -31,8 +31,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Operational tooling scanned for deleted names and benchmark markers. Not scanned:
-# tools/benchmarks (measurement tooling) and the isolated uv projects, which are products
-# of their own rather than command scripts.
+# tools/benchmarks (measurement tooling); integrations/ is not under tools/ and is not
+# scanned: its isolated uv projects are products of their own rather than command scripts.
 SCRIPT_TOOLS = ("checks", "e2e", "baselines", "reference", "dev")
 
 E2E_JOURNEYS = {
@@ -158,6 +158,12 @@ RETIRED_VOCABULARY = {
     "READ_ONLY_REFERENCE": (),
     "MUTATING_ACQUISITION_TEST": (),
     "REQUIRE_CLEAN": ("makefiles/reference.mk",),
+    # Source locations that moved when external adapters left apps/ and tools/ for
+    # integrations/. The checker names them only to refuse them.
+    "apps/streaming-bridge": (),
+    "apps/inference-server": (),
+    "tools/dataset-acquisition": (),
+    "tools/lerobot-integration": (),
     "--require-clean": ("tools/reference/tests/test_reference_contract.py",),
 }
 ACTIVE_DOCS = ("README.md", "docs/development", "docs/architecture", "docs/workflows")

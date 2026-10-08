@@ -5,7 +5,7 @@
 #
 #   locked reference MCAP
 #     -> `reference replay` (dataset-replay container, no raw dataset mounted)
-#     -> ROS 2 topics -> streaming bridge (apps/streaming-bridge) -> Kafka
+#     -> ROS 2 topics -> streaming bridge (integrations/ros2-kafka-bridge) -> Kafka
 #     -> capture (finalizes only on RUN_END; MCAP + capture receipt on the recordings volume)
 #     -> publish-pending -> reconcile --apply -> REGISTER_ROBOT_RUN -> RobotRun
 #

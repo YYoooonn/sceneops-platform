@@ -2,7 +2,7 @@
 by a real MCAP (ROS 2 profile, CDR payloads serialized from embedded
 schemas) that conforms except for the one defect under test.
 
-The suite is writer-independent; the external acquisition tool's real
+The suite is writer-independent; the external acquisition integration's real
 nuScenes output is checked by tools/e2e/e2e_batch_acquisition.sh.
 """
 

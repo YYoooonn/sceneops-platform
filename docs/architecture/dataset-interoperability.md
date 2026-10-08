@@ -46,7 +46,7 @@ Dataset / DatasetVersion
 
 source version (e.g. nuScenes "v1.0-mini")
   The external SOURCE dataset's own version, read only by the
-  dataset-acquisition tool that converts it into a recording. Never a
+  dataset-acquisition integration that converts it into a recording. Never a
   SceneOps DatasetVersion and never canonical identity.
 ```
 
@@ -55,7 +55,7 @@ nuScenes data acquired as a recording and canonicalized into SceneOps,
 followed by a LeRobot export of that same canonical DatasetVersion):
 
 ```text
-nuScenes v1.0-mini                          (external source, read by the acquisition tool)
+nuScenes v1.0-mini                          (external source, read by the acquisition integration)
         | dataset-acquisition -> RobotRun -> canonical units
         v
 SceneOps test-e2e-core / test-v1            (DatasetVersion, SceneOps-canonical)
@@ -218,7 +218,7 @@ though the adapter code lives inside that package at
 member into the one universal `uv.lock`, so a declared `lerobot` extra would pull the
 LeRobot dependency graph (it needs `numpy>=2`) into the platform lock.
 
-`tools/lerobot-integration/` is instead a standalone uv project, deliberately **not**
+`integrations/lerobot/` is instead a standalone uv project, deliberately **not**
 a workspace member, with its own committed `uv.lock`. It depends on the existing
 `sceneops-core` / `sceneops-storage` / `sceneops-analytics` code through editable
 path sources plus `lerobot` directly; no adapter code is duplicated there, only the
@@ -226,7 +226,7 @@ dependency resolution is isolated. See
 [External integration runtime](./external-integration-runtime.md) §3.
 
 ```bash
-make lerobot-sync    # cd tools/lerobot-integration && uv sync --group dev --locked
+make lerobot-sync    # cd integrations/lerobot && uv sync --group dev --locked
 make lerobot-test    # runs packages/sceneops-analytics/tests/test_lerobot_adapter.py there
 ```
 
@@ -306,10 +306,10 @@ into PostgreSQL or MinIO.
 | --- | --- | --- |
 | `ExternalDatasetRef` | Shared vocabulary for a dataset outside SceneOps' model (import or export) | `sceneops_core.datasets.schemas` |
 | `ExternalDatasetAdapter` / `ExternalDatasetWriter` | Framework-neutral export contract, orchestration, semantic-loss bookkeeping | `sceneops_analytics.external_adapters` |
-| `LeRobotDatasetAdapter` / `LeRobotDatasetWriter` | Concrete LeRobot v3 mapping/writer, fps derivation, semantic classification | `sceneops_analytics.external_adapters.lerobot` (optional, needs `tools/lerobot-integration`) |
+| `LeRobotDatasetAdapter` / `LeRobotDatasetWriter` | Concrete LeRobot v3 mapping/writer, fps derivation, semantic classification | `sceneops_analytics.external_adapters.lerobot` (optional, needs `integrations/lerobot`) |
 | Interop golden fixture | Deterministic hand-built source data + expected values for the adapter / entrypoint unit tests | `sceneops_analytics.testing.interop_dataset` |
 | LeRobot round trip | Request built in the worker image, export and read-back in the isolated container image, on a real pinned export | `tools/e2e/lerobot_{build_request,verify_export}.py`, `compose/lerobot.yaml`, `make e2e-episode-learning` |
-| Isolated LeRobot environment | Its own `pyproject.toml`/`uv.lock`, editable path sources onto the real package code | `tools/lerobot-integration/` |
+| Isolated LeRobot environment | Its own `pyproject.toml`/`uv.lock`, editable path sources onto the real package code | `integrations/lerobot/` |
 
 ## 9. Persisted vs. runtime-only representations
 
@@ -346,7 +346,7 @@ Deliberate v1 boundaries, verified against the code:
   never persisted.
 - LeRobot output is never a SceneOps `DatasetVersion`; it is described only as an
   `ExternalDatasetRef`, by design (§4/§9).
-- The LeRobot runtime is isolated in `tools/lerobot-integration/` (own uv project and
+- The LeRobot runtime is isolated in `integrations/lerobot/` (own uv project and
   lock) as SDK / runtime isolation; see
   [External integration runtime](./external-integration-runtime.md) §3.
 - The LeRobot round trip needs the LeRobot image (`make lerobot-image`); it is part of
@@ -359,7 +359,7 @@ Deliberate v1 boundaries, verified against the code:
 - Shared adapter contract: `packages/sceneops-analytics/sceneops_analytics/external_adapters/{adapter,writer,schemas,enums,errors,validation}.py`
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
 - Interop golden fixture: `packages/sceneops-analytics/sceneops_analytics/testing/interop_dataset.py`
-- Isolated LeRobot environment: `tools/lerobot-integration/` (`pyproject.toml`, `uv.lock`, `README.md`)
+- Isolated LeRobot environment: `integrations/lerobot/` (`pyproject.toml`, `uv.lock`, `README.md`)
 - LeRobot round trip: `tools/e2e/e2e_episode_learning.sh`, `tools/e2e/lerobot_build_request.py`, `tools/e2e/lerobot_verify_export.py`, `compose/lerobot.yaml`
 - Makefile targets: `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-lock`/`lerobot-test`/`lerobot-image`), `makefiles/e2e.mk` (`e2e-episode-learning`)
 - `ExternalDatasetRef`: `packages/sceneops-core/sceneops_core/integration_runtime/external.py`

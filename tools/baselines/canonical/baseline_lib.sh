@@ -12,7 +12,7 @@
 #
 # Selection: FIXTURE=<id> (one fixture) or REFERENCE_SCOPE=<scope> (default
 # smoke-1). Fixtures and their locked recordings are resolved only through
-# corpus.json + corpus.lock.json, by the dataset-acquisition tool's
+# corpus.json + corpus.lock.json, by the dataset-acquisition integration's
 # `reference resolve`. Nothing here converts source data: a recording that is
 # not prepared, or does not match the lock, is an error that points at
 # `make reference-data-bootstrap`.

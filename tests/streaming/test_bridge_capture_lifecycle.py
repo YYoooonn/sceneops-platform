@@ -1,5 +1,5 @@
 """The lifecycle envelope of a streamed run, end to end on a real broker: the real
-StreamingBridgeNode (apps/streaming-bridge) publishes through its real Kafka producer
+StreamingBridgeNode (integrations/ros2-kafka-bridge) publishes through its real Kafka producer
 and Capture (``sceneops_recording.capture``) consumes it.
 
 The topic holds exactly one RUN_START, the run's telemetry records and one RUN_END,

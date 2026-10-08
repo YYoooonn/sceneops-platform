@@ -16,11 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # of looking them up on PyPI (none of them is published there).
 COPY packages/sceneops-core /workspace/packages/sceneops-core
 COPY packages/sceneops-streaming /workspace/packages/sceneops-streaming
-COPY apps/streaming-bridge /workspace/apps/streaming-bridge
+COPY integrations/ros2-kafka-bridge /workspace/integrations/ros2-kafka-bridge
 RUN pip3 install --break-system-packages --no-cache-dir \
     /workspace/packages/sceneops-core \
     /workspace/packages/sceneops-streaming \
-    /workspace/apps/streaming-bridge
+    /workspace/integrations/ros2-kafka-bridge
 
 WORKDIR /workspace
 # The ROS entrypoint sources the ROS 2 environment before the app starts.

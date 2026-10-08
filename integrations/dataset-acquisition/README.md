@@ -118,7 +118,7 @@ reach SceneOps if it tried. `make acquisition-image-check` verifies inside
 the image that no SceneOps package is installed, importable or loaded.
 
 **Local development.** `make acquisition-sync` creates the project venv;
-`uv run --project tools/dataset-acquisition dataset-acquisition ...` runs
+`uv run --project integrations/dataset-acquisition dataset-acquisition ...` runs
 the same CLI.
 
 The command prints a JSON summary (path, sha256, size, message and per-topic

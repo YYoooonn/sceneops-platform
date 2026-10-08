@@ -42,8 +42,8 @@ members = [
   "apps/worker",
   "apps/capture",
   "apps/publisher",
-  "apps/streaming-bridge",
-  "apps/inference-server",
+  "integrations/ros2-kafka-bridge",
+  "integrations/groundingdino-server",
 ]
 
 [tool.uv.sources]

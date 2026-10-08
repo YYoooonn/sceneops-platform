@@ -1,4 +1,4 @@
-"""I-36: the acquisition tool depends on no SceneOps package.
+"""I-36: the dataset-acquisition integration depends on no SceneOps package.
 
 Checked three ways: no source or test file imports a SceneOps module, the
 project declares and locks no SceneOps distribution, and the tool's own

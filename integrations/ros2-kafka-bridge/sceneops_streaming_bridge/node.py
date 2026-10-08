@@ -212,7 +212,7 @@ class StreamingBridgeNode(Node):
         ``publish(envelope)``/``close()`` shape instead, so envelope-
         construction logic is testable without Kafka and without
         constructing a real producer -- see
-        apps/streaming-bridge/tests/test_streaming_bridge_node.py.
+        integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py.
 
         ``emit_lifecycle_events`` -- publish a ``RUN_START`` control event
         (``sceneops_streaming.control``) right after construction and a

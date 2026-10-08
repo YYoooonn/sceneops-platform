@@ -6,7 +6,7 @@ A RUN_START/telemetry/RUN_END stream (exactly what a lifecycle-events-enabled
 StreamingBridgeNode publishes) is captured successfully, producing a valid MCAP with
 no control-channel records. The bridge side of the same invariant (the real bridge
 publishes RUN_START, its telemetry and RUN_END, and the receipt spans them) is
-apps/streaming-bridge/tests/test_bridge_run_lifecycle_capture.py.
+integrations/ros2-kafka-bridge/tests/test_bridge_run_lifecycle_capture.py.
 
 Runs only inside the ROS 2 capture image (``make streaming-test``) and needs a running
 Kafka broker (``make streaming-up``).

@@ -10,7 +10,7 @@ class IntegrationOperation(StrEnum):
 
     There is no ingest direction: acquired data enters SceneOps only as a
     registered RobotRun recording (ADR-007 §29.2, I-31). An external
-    dataset reaches SceneOps through the acquisition tool, never through an
+    dataset reaches SceneOps through the acquisition integration, never through an
     integration runtime.
     """
 

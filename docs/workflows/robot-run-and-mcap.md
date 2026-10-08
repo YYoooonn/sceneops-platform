@@ -2,8 +2,8 @@
 
 A robot's data enters SceneOps as an L1 raw recording (an MCAP, ADR-007
 §29.5) acquired in one of two modes -- batch (an external dataset converted
-by `tools/dataset-acquisition`) or streaming (ROS2 topics -> bridge -> Kafka
--> capture) -- and is registered as a `RobotRun`. An adapter decodes the
+by the `integrations/dataset-acquisition` integration) or streaming (ROS2 topics -> the
+`integrations/ros2-kafka-bridge` integration -> Kafka -> `apps/capture`) -- and is registered as a `RobotRun`. An adapter decodes the
 recording (real CDR encoding, not a mock) into `RobotState`/`Mission` rows,
 and the recording builders produce canonical Scenes and Episodes. This doc
 covers what's actually implemented, followed by current, verified
@@ -12,8 +12,8 @@ limitations.
 ## 1. End-to-end flow
 
 ```text
-batch      external dataset -> tools/dataset-acquisition -> MCAP
-streaming  robot / dataset replay -> ROS2 topics -> apps/streaming-bridge -> Kafka
+batch      external dataset -> integrations/dataset-acquisition -> MCAP
+streaming  robot / dataset replay -> ROS2 topics -> integrations/ros2-kafka-bridge -> Kafka
              -> apps/capture -> MCAP                      (docs/architecture/streaming-transport.md)
 
 either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
@@ -56,7 +56,7 @@ The vehicle telemetry channels the batch tool and the streaming path both carry:
 Standard ROS2 messages (`nav_msgs`, `sensor_msgs`) are used wherever they
 fit. `/vehicle/control` has no matching standard message for a
 steering+throttle+brake tuple, and a custom `.msg` package would need a
-`colcon` build step — out of scope for the acquisition tool — so it's carried as
+`colcon` build step — out of scope for the acquisition integration — so it's carried as
 flat JSON inside `std_msgs/String`, which `RecordingTelemetryReader` recognizes and
 unwraps; the Episode builder reads it with `decoding: json_string`.
 
@@ -71,7 +71,7 @@ maps the string to `MissionStatus` (unrecognized values fall back to
 `PENDING`).
 
 nuScenes CAN quaternions are `(w, x, y, z)`; ROS2 `geometry_msgs/Quaternion`
-is `(x, y, z, w)` — the acquisition tool's nuScenes adapter handles the
+is `(x, y, z, w)` — the acquisition integration's nuScenes adapter handles the
 reorder.
 
 ## 3. Reading a recording
@@ -178,7 +178,7 @@ A RobotRun exists only for a recording that was published and verified
 (ADR-007 §7, §12):
 
 ```text
-finalized local MCAP (a capture directory, or the acquisition tool's output)
+finalized local MCAP (a capture directory, or the acquisition integration's output)
   -> python -m sceneops_publisher publish     (DB-free, own process)
        --from-capture <dir>   every input comes from capture_receipt.json
        --mcap-path ... --robot-id ... --source-kind ...   explicit inputs, for a recording without a receipt
@@ -477,14 +477,14 @@ acquisition-status` runs one pass; the recovery loops do not run it.
 ### 3.3 Batch acquisition and the L1 recording contract
 
 A recording that already exists — a robot's onboard recorder, or an
-external dataset converted by the acquisition tool — enters through the
+external dataset converted by the dataset-acquisition integration — enters through the
 same publisher and registrar as a capture (ADR-007 §29.4). Only
 `capture.source.kind` (`file`) differs, and nothing downstream branches on
 it:
 
 ```text
 external dataset (e.g. nuScenes v1.0-mini scene, read-only mount)
-  -> dataset-acquisition container      tools/dataset-acquisition; no SceneOps package,
+  -> dataset-acquisition container      integrations/dataset-acquisition; no SceneOps package,
                                         no network, no credentials
        -> finalized MCAP                 camera, CameraInfo, lidar, /tf_static, /tf,
                                          CAN telemetry, mission events
@@ -504,10 +504,10 @@ bytes never pass through the API. Registration and everything after it go
 through FastAPI. `make canonical-bootstrap` runs this path as developer
 orchestration from the host with only Docker Compose, curl and jq.
 
-The tool stops at the MCAP. It never publishes, registers or calls
+The integration stops at the MCAP. It never publishes, registers or calls
 SceneOps. Its channel mapping, timing policy and calibration representation
 are documented in
-[`tools/dataset-acquisition/README.md`](../../tools/dataset-acquisition/README.md).
+[`integrations/dataset-acquisition/README.md`](../../integrations/dataset-acquisition/README.md).
 The source unit it converts (a nuScenes scene name) selects input only. It
 is not a SceneOps Scene, and the recording carries no Scene, Episode or
 DatasetVersion information.
@@ -630,7 +630,7 @@ Requires nuScenes v1.0-mini with the CAN bus expansion at
 - **Committed test fixture is real data**, not hand-crafted bytes:
   `apps/worker/tests/fixtures/rosbag/can_replay_scene_0061.mcap` (1.4MB)
   was produced by an actual `ros2 bag record` run of the CAN replay that
-  the acquisition tool's replay sink has since replaced. The fixture is
+  the acquisition integration's replay sink has since replaced. The fixture is
   kept as a real-data test input.
 
 ## 7. Example output — scene-0061 CAN telemetry projection

@@ -185,7 +185,7 @@ def test_serialization_is_stable_across_repeated_dumps():
 
 def test_integration_runtime_module_imports_no_lerobot_or_nuscenes_symbols():
     """sceneops-core must stay importable from both the main workspace venv
-    and tools/lerobot-integration's isolated venv -- and vice versa, from a
+    and integrations/lerobot's isolated venv -- and vice versa, from a
     hypothetical future nuScenes-only runtime that never installs lerobot.
     Reusing this contract must never pull in either SDK.
 

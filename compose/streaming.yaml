@@ -1,9 +1,11 @@
-# Kafka transport for streaming robot telemetry, and the two SceneOps processes that
-# attach to it. Opt-in only (`streaming` profile); not part of the default SceneOps stack.
+# Kafka transport for streaming robot telemetry, the external ingress adapter that
+# produces into it and the SceneOps process that consumes from it. Opt-in only
+# (`streaming` profile); not part of the default SceneOps stack.
 # See docs/architecture/streaming-transport.md.
 #
 #   kafka             the transport broker (single-node KRaft)
-#   streaming-bridge  apps/streaming-bridge: ROS 2 topics -> Kafka (integration adapter).
+#   streaming-bridge  integrations/ros2-kafka-bridge: ROS 2 topics -> Kafka (external
+#                     ingress adapter, not a SceneOps app).
 #                     Run per RobotRun with `docker compose run`; the entrypoint is the app.
 #   capture           apps/capture: Kafka -> durable MCAP + capture receipt in the
 #                     acquisition-recordings volume. Run per RobotRun with `docker compose run`.
@@ -49,7 +51,7 @@ services:
       # Repo root context: the image installs sceneops-core and sceneops-streaming
       # from packages/, and Docker COPY cannot reach outside its build context.
       context: .
-      dockerfile: apps/streaming-bridge/Dockerfile
+      dockerfile: integrations/ros2-kafka-bridge/Dockerfile
     image: sceneops-platform/streaming-bridge:local
     env_file:
       - .env.local

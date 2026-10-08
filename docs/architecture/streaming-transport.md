@@ -1,8 +1,8 @@
 # Streaming Transport
 
 > Describes how SceneOps moves robot telemetry and sensor data through
-> Kafka, and how the ROS2 streaming bridge feeds real ROS2 topics into that
-> transport. Like
+> Kafka, and how the ROS2 Kafka bridge integration (`integrations/ros2-kafka-bridge`)
+> feeds real ROS2 topics into that transport. Like
 > [external-integration-runtime.md](./external-integration-runtime.md),
 > this is a "what's actually built" document, not aspirational -- every
 > claim below is checked against the code and against real, live runs
@@ -51,7 +51,7 @@ The robot-runtime-communication (ROS2) vs. data-platform-event-stream
 [ADR-005](../adr/005-ros2-vs-kafka-boundary.md); why streaming was worth
 building only once real telemetry needed it is decided in
 [ADR-003](../adr/003-batch-first-architecture.md). Batch acquisition (the
-external acquisition tool's MCAP sink -> Recording Publisher ->
+external acquisition integration's MCAP sink -> Recording Publisher ->
 `REGISTER_ROBOT_RUN`, see
 [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md)) is independent
 of this transport and converges with it on the same L1 recording contract
@@ -78,7 +78,7 @@ Kafka adapter (the only code that imports confluent_kafka)
 ```
 
 The package depends only on `sceneops-core`. It defines no RobotRun, Scene or Episode
-behavior. Its dependents are the streaming bridge (`apps/streaming-bridge`), Capture
+behavior. Its dependents are the ROS 2 -> Kafka bridge integration (`integrations/ros2-kafka-bridge`), Capture
 (`apps/capture`) and `sceneops-recording`'s `capture` subpackage, which consumes the
 envelope; `apps/api`, `apps/worker` and `apps/publisher` depend on none of it, so the
 Kafka SDK is not in their images. `sceneops-streaming` is a member of the root uv
@@ -374,19 +374,32 @@ configured base group id as its prefix.
 
 ---
 
-# Part 2: ROS2 Streaming Bridge
+# Part 2: ROS2 Kafka Bridge (integration)
 
 ## 10. Goal and scope
 
-The ROS2 streaming bridge connects real ROS2 topics -- telemetry, sensor
-and transform channels -- to the Kafka transport described in Part 1,
-without changing that transport's contract:
+The ROS2 Kafka bridge (`integrations/ros2-kafka-bridge`) connects real ROS2 topics --
+telemetry, sensor and transform channels -- to the Kafka transport described in Part 1,
+without changing that transport's contract. It is an integration, not a SceneOps
+application: the external ingress adapter between ROS2 and the transport. SceneOps
+itself begins at the Kafka topic, and ROS2 is one source among those that could feed it:
+
+```text
+EXTERNAL
+  robot / simulator / replay -> ROS2 (or another source)
+    -> integrations/ros2-kafka-bridge -> Kafka
+============ SceneOps streaming boundary ============
+  apps/capture -> finalized MCAP + capture receipt -> apps/publisher
+```
+
+The bridge and Capture share one transport contract through the production package
+`sceneops-streaming`; the bridge depends on it, never the reverse. The full path is:
 
 ```text
 robot, or a replay of a locked reference MCAP
-(tools/dataset-acquisition, `reference replay`)
+(integrations/dataset-acquisition, `reference replay`)
   -> real ROS2 DDS
-  -> apps/streaming-bridge/sceneops_streaming_bridge/node.py
+  -> integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py
   -> TelemetryEnvelope
   -> KafkaTelemetryProducer
   -> real Kafka
@@ -395,14 +408,14 @@ robot, or a replay of a locked reference MCAP
 
 The bridge is source-agnostic: it knows ROS2 topics, types and where a
 message carries its source timestamp, never a dataset format. The replay
-sink of the external acquisition tool is one publisher of those topics
+sink of the external acquisition integration is one publisher of those topics
 (§10.1); a robot's own stack is another. `make streaming-bootstrap` drives
 the whole path through containers and FastAPI into the Reference Contract's
 Streaming Acquisition RobotRuns.
 
 ### 10.1 Replay as the external-tool boundary
 
-`tools/dataset-acquisition` turns a source into tool-local acquisition
+`integrations/dataset-acquisition` turns a source into tool-local acquisition
 events (topic, message type, CDR payload serialized once, source time) and
 feeds two sinks: the batch MCAP sink and the ROS2 replay sink (image
 `sceneops-platform/dataset-replay:local`: ROS2 Jazzy plus the tool, no
@@ -478,7 +491,7 @@ an unstamped `/tf_static` builds the same calibrations as a stamped one.
 
 **Events on the source timeline.** `/mission/status` events carry
 `source_timestamp_ns` values on the source's own timeline, set by whoever
-publishes them (the replay sink replays the acquisition tool's events at the
+publishes them (the replay sink replays the acquisition integration's events at the
 unit's first and last source times). A synthetic event never carries replay
 wall-clock or replay-pacing time.
 
@@ -497,19 +510,21 @@ never renamed or reinterpreted by the bridge.
 
 ## 12. Bridge responsibility and boundaries
 
-`apps/streaming-bridge/sceneops_streaming_bridge/node.py`'s `StreamingBridgeNode` has exactly
+`integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py`'s `StreamingBridgeNode` has exactly
 one responsibility: `ROS2 message -> TelemetryEnvelope -> TelemetryProducer`.
 Verified by construction -- the file imports only `rclpy`/ROS2 message
 packages, `sceneops_streaming`, and `sceneops_streaming`. It never
 imports `sceneops-db`, `sceneops-storage`, Celery, or anything
 API/worker-side.
 
-**Process boundary:** the bridge is `apps/streaming-bridge`, a standalone ROS2 node
+**Process boundary:** the bridge is `integrations/ros2-kafka-bridge`, a standalone ROS2 node
 run as the `streaming-bridge` service (`compose/streaming.yaml`, profile
 `streaming`) from its own `ros:jazzy` image, which has `rclpy`, the message packages
 and the MCAP plugin and additionally pip-installs `packages/sceneops-core`,
-`packages/sceneops-streaming` and the app itself
-(`apps/streaming-bridge/Dockerfile`). It is not inside `apps/api` or `apps/worker`.
+`packages/sceneops-streaming` and the integration itself
+(`integrations/ros2-kafka-bridge/Dockerfile`). It is not inside `apps/api` or `apps/worker`,
+and no SceneOps application depends on ROS2 except Capture's use of the ROS2 interface
+definitions.
 
 ## 13. Topic subscriptions, CDR payloads, sequence numbers, ingest timestamp
 
@@ -673,7 +688,7 @@ make e2e-streaming-equivalence    transport-preservation equivalence of one fixt
                                   default smoke-1); needs neither Kafka nor ROS 2
 ```
 
-`apps/streaming-bridge/tests/test_streaming_bridge_node.py` uses a `FakeProducerBridge`
+`integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py` uses a `FakeProducerBridge`
 in place of `_AsyncProducerBridge`, with every payload produced by real
 `rclpy.serialization.serialize_message`, never JSON-mocked: field mapping per
 timestamp rule (header, transform header, JSON field), raw-byte forwarding,
@@ -1095,8 +1110,8 @@ deferral (§7).
 ## 27. Make surface and verification
 
 `make streaming-test` runs `packages/sceneops-recording/tests/capture/` in the capture
-image, `apps/streaming-bridge/tests/` in the bridge image, and
-`tests/streaming/` (the one test that spans both apps) in the capture image with the
+image, `integrations/ros2-kafka-bridge/tests/` in the bridge image, and
+`tests/streaming/` (the one test that spans the bridge and Capture) in the capture image with the
 bridge source on `PYTHONPATH`: writer (receive time, publish time, sequence, monotonic clamp,
 payload bytes, duplicates, late channel arrival, unsupported channels),
 message definitions decoded by an independent MCAP ROS 2 decoder,
@@ -1260,11 +1275,11 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 **ROS2 streaming bridge:**
 
 - Channel registry (`ChannelSpec`, `ChannelRegistry`, timestamp rules, channel-set files) + tests: `packages/sceneops-streaming/sceneops_streaming/channels.py`, `packages/sceneops-streaming/tests/test_channels.py`; shipped channel set: `config/channels/surround-camera-lidar.json`
-- Bridge node: `apps/streaming-bridge/sceneops_streaming_bridge/node.py`
-- Bridge unit tests (real rclpy, no Kafka, ROS 2 image only): `apps/streaming-bridge/tests/test_streaming_bridge_node.py`
-- Replay sink (external-tool boundary; no SceneOps dependency): `tools/dataset-acquisition/src/dataset_acquisition/ros2_replay.py`, `tools/dataset-acquisition/tests/test_ros2_replay.py`, image target `replay` in `tools/dataset-acquisition/Dockerfile`, service `dataset-replay` in `compose/acquisition.yaml`
-- Replay source (a locked MCAP): `tools/dataset-acquisition/src/dataset_acquisition/mcap_source.py` (`reference replay` in `cli.py`), `tools/dataset-acquisition/tests/test_mcap_source.py`
-- Container/runtime: `apps/streaming-bridge/Dockerfile`, `apps/capture/Dockerfile`, `compose/streaming.yaml`
+- Bridge node: `integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py`
+- Bridge unit tests (real rclpy, no Kafka, ROS 2 image only): `integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py`
+- Replay sink (external-tool boundary; no SceneOps dependency): `integrations/dataset-acquisition/src/dataset_acquisition/ros2_replay.py`, `integrations/dataset-acquisition/tests/test_ros2_replay.py`, image target `replay` in `integrations/dataset-acquisition/Dockerfile`, service `dataset-replay` in `compose/acquisition.yaml`
+- Replay source (a locked MCAP): `integrations/dataset-acquisition/src/dataset_acquisition/mcap_source.py` (`reference replay` in `cli.py`), `integrations/dataset-acquisition/tests/test_mcap_source.py`
+- Container/runtime: `integrations/ros2-kafka-bridge/Dockerfile`, `apps/capture/Dockerfile`, `compose/streaming.yaml`
 - Make: `make streaming-test`, `make e2e-streaming-equivalence` (`makefiles/streaming.mk`)
 
 **Durable MCAP capture:**
@@ -1287,7 +1302,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 
 - Lifecycle control envelopes (`RunEventType`, `build_control_envelope`/`is_control_envelope`/`parse_run_event`): `packages/sceneops-streaming/sceneops_streaming/control.py`, `packages/sceneops-streaming/tests/test_control.py`
 - `SESSION_CONTROL_CHANNEL` constant: `packages/sceneops-streaming/sceneops_streaming/constants.py`
-- Bridge lifecycle-event publishing: `apps/streaming-bridge/sceneops_streaming_bridge/node.py`, `apps/streaming-bridge/tests/test_streaming_bridge_node.py`
+- Bridge lifecycle-event publishing: `integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py`, `integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py`
 - Control-envelope handling and RUN_END finalization in capture (`control_tracker`, `RunEndNotObservedError`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
 - Real-Kafka lifecycle integration (solo and interleaved runs): `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py` and `tests/streaming/test_bridge_capture_lifecycle.py`
 - Point-in-time design/benchmark record: [Multi-run streaming architecture study](../history/streaming-multirun-phase7-study.md)

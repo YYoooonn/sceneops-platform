@@ -17,7 +17,7 @@ dependencies = [
     "sceneops-inference",
     "sceneops-evaluation",
     # No external dataset SDK: datasets reach SceneOps only as recordings
-    # converted by tools/dataset-acquisition (ADR-007 §29.13).
+    # converted by integrations/dataset-acquisition (ADR-007 §29.13).
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "typer>=0.12",

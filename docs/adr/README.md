@@ -9,7 +9,7 @@ paths a historical ADR or study names.
 | Cited path or command | Now |
 | --- | --- |
 | `ros2/capture/`, `capture_consumer.py`, `mcap_writer.py` | `packages/sceneops-recording/sceneops_recording/capture/` (`consumer.py`, `writer.py`); process `apps/capture` |
-| `ros2/nodes/streaming_bridge_node.py` | `apps/streaming-bridge/sceneops_streaming_bridge/node.py` |
+| `ros2/nodes/streaming_bridge_node.py` | `integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py` |
 | `ros2/channels/` | `config/channels/` |
 | `ros2` service / image, `make ros2-test` | `streaming-bridge` and `capture` services, `make streaming-test` |
 | `sceneops_integrations.recording`, `python -m sceneops_integrations.recording` | `sceneops_recording`; the CLI is `python -m sceneops_publisher` (`apps/publisher`) |
@@ -27,3 +27,7 @@ paths a historical ADR or study names.
 | `sceneops_worker.inference.detection.*`, `sceneops_worker.evaluation.*` | `sceneops_inference.detection.*`, `sceneops_evaluation.*` |
 | `scripts/{checks,e2e,reference,canonical,streaming,dev,ops,init}/` | `tools/{checks,e2e,reference,baselines/canonical,baselines/streaming,dev}/` |
 | `benchmarks/` | `tools/benchmarks/` |
+| `apps/streaming-bridge` | `integrations/ros2-kafka-bridge` (an external ingress adapter, not a SceneOps app) |
+| `apps/inference-server` | `integrations/groundingdino-server` |
+| `tools/dataset-acquisition` | `integrations/dataset-acquisition` |
+| `tools/lerobot-integration` | `integrations/lerobot` |

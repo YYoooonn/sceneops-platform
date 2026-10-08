@@ -1764,7 +1764,7 @@ requires-dist = [
 [[package]]
 name = "sceneops-inference-server"
 version = "0.1.0"
-source = { editable = "apps/inference-server" }
+source = { editable = "integrations/groundingdino-server" }
 dependencies = [
     { name = "fastapi" },
     { name = "pillow" },
@@ -1918,7 +1918,7 @@ requires-dist = [
 [[package]]
 name = "sceneops-streaming-bridge"
 version = "0.1.0"
-source = { editable = "apps/streaming-bridge" }
+source = { editable = "integrations/ros2-kafka-bridge" }
 dependencies = [
     { name = "sceneops-core" },
     { name = "sceneops-streaming" },

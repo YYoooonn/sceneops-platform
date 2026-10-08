@@ -9,7 +9,7 @@ serializable request/result contract. Today it serves one direction,
 There is no ingest runtime. Acquired data enters SceneOps only as a
 registered RobotRun recording ([ADR-007](../adr/007-canonical-ingestion-architecture.md)
 §29.2, I-31). An external dataset reaches SceneOps through the
-dataset-acquisition tool (`tools/dataset-acquisition`), which converts it
+dataset-acquisition integration (`integrations/dataset-acquisition`), which converts it
 into an L1 recording and has no SceneOps dependency; see
 [Robot data ingestion](../workflows/robot-run-and-mcap.md).
 
@@ -62,7 +62,7 @@ writes an ArtifactRecord or mutates canonical state
 SceneOpsDataset.open(...)                 a pinned learning-data export on MinIO
   -> IntegrationRequest (EXPORT, external_ref.format = "lerobot")
        built by tools/e2e/lerobot_build_request.py
-  -> LeRobot integration container        tools/lerobot-integration (own uv.lock, Dockerfile);
+  -> LeRobot integration container        integrations/lerobot (own uv.lock, Dockerfile);
                                           entrypoint sceneops_analytics.external_adapters
                                           .lerobot.entrypoint
   -> LeRobot v3 dataset at external_ref.uri
@@ -87,6 +87,6 @@ pulls in `sceneops-db`, Celery or the worker's dependencies.
 
 - Contract: `packages/sceneops-core/sceneops_core/integration_runtime/`, `packages/sceneops-core/tests/test_integration_runtime.py`
 - LeRobot entrypoint: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/entrypoint.py`
-- Isolated LeRobot environment/container: `tools/lerobot-integration/`
+- Isolated LeRobot environment/container: `integrations/lerobot/`
 - E2E: the LeRobot round trip of `make e2e-episode-learning` (`tools/e2e/lerobot_build_request.py`, `tools/e2e/lerobot_verify_export.py`)
 - Make targets: `makefiles/lerobot.mk` (`lerobot-sync`, `lerobot-test`, `lerobot-image`); the container is the `lerobot-integration` compose service (`compose/lerobot.yaml`), driven by `make e2e-episode-learning`

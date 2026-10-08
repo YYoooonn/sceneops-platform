@@ -1,6 +1,6 @@
 # Reference corpus
 
-> Developer / test input, not a Pipeline. Tool: [`tools/dataset-acquisition`](../../tools/dataset-acquisition/README.md).
+> Developer / test input, not a Pipeline. Tool: [`integrations/dataset-acquisition`](../../integrations/dataset-acquisition/README.md).
 
 A **reference corpus** is a versioned set of real source fixtures with one
 acquisition / replay definition per fixture and a verified local cache of what is

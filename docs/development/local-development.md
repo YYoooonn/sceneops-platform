@@ -28,8 +28,9 @@ Every step is idempotent, so `make local-up` is safe to run repeatedly —
 against an already-running stack it just confirms everything is healthy and
 re-applies nothing destructive.
 
-`inference-server` is **not** part of the default stack — it is a genuinely
-optional detection backend. Start it explicitly: `make inference-local-up`
+The GroundingDINO server integration (`integrations/groundingdino-server`, services
+`inference-server-local` / `inference-server-gpu`) is **not** part of the default
+stack — it is a genuinely optional detection backend. Start it explicitly: `make inference-local-up`
 (CPU) or `make inference-gpu-up`.
 
 ## Stopping vs. resetting
@@ -123,12 +124,12 @@ make check-commands                the command surface is consistent (no pytest,
 
 - `make test` first runs `make check-boundaries` (the static dependency-direction check
   of [Repository structure](../architecture/repository-structure.md)), then each unit
-  suite in its own pytest process (`apps/{worker,api,inference-server,publisher}`,
+  suite in its own pytest process (`apps/{worker,api,publisher}`, `integrations/groundingdino-server`,
   `packages/sceneops-{core,streaming,recording,execution,acquisition,scenes,episodes,
   inference,evaluation,analytics}`, `tools/{checks,reference,e2e}`,
   `tests/infrastructure/unit`): several suites ship their own test-package `__init__.py`
   and conftest, which pytest cannot register together. The ROS 2 suites do not run here
-  (see `make streaming-test`). Every `inference-server`
+  (see `make streaming-test`). Every `groundingdino-server`
   test mocks `GroundingDinoModel`/`ImageResolver` — none needs a GPU, model
   weights or a running inference server.
 - `make test-integration` covers `packages/sceneops-db/tests` (real Postgres,
@@ -182,11 +183,11 @@ make check-commands                the command surface is consistent (no pytest,
     and `dispatch_worker` (probe handlers for every Job type, failable sends) add a fault
     point. It needs no canonical baseline. The suites share one harness (`tests/infrastructure/recovery_support.py`);
     `RECOVERY_TESTS=<path>` runs one module.
-  - `kafka` runs the ROS 2 bridge and capture tests in the `streaming-bridge` and `capture`
-    images (real-Kafka integration included, `make streaming-test`) and then the transport smoke, which publishes a deterministic
+  - `kafka` runs the ROS 2 bridge (`integrations/ros2-kafka-bridge`) and capture tests in the
+    `streaming-bridge` and `capture` images (real-Kafka integration included, `make streaming-test`) and then the transport smoke, which publishes a deterministic
     sequence and verifies envelope recovery, per-RobotRun ordering and partitioning. It needs
     `make streaming-up` and creates no domain data.
-  - `boundaries` runs the isolation boundaries: the dataset-acquisition tool's tests,
+  - `boundaries` runs the isolation boundaries: the dataset-acquisition integration's tests,
     including its import boundary, and the LeRobot adapter's tests, each in its own uv
     project; the I-36 check of the acquisition and replay images; and the check that only the
     acquisition / reference-preparation services mount the raw dataset.

@@ -6,7 +6,7 @@
 x-inference-common: &inference-common
   build:
     context: .
-    dockerfile: apps/inference-server/Dockerfile
+    dockerfile: integrations/groundingdino-server/Dockerfile
   env_file:
     - .env.local
   environment:
@@ -44,7 +44,7 @@ services:
     <<: *inference-common
     build:
       context: .
-      dockerfile: apps/inference-server/Dockerfile
+      dockerfile: integrations/groundingdino-server/Dockerfile
       args:
         TORCH_FLAVOR: cu121
     image: sceneops-platform/inference-server:gpu-local

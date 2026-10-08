@@ -26,12 +26,12 @@ conflict above cannot occur here.
 
 ```bash
 # from the repo root
-make lerobot-sync   # cd tools/lerobot-integration && uv sync --group dev --locked
+make lerobot-sync   # cd integrations/lerobot && uv sync --group dev --locked
 make lerobot-test    # runs packages/sceneops-analytics/tests/test_lerobot_adapter.py
 make lerobot-lock   # re-lock after changing this project's or lerobot's own pin
 
 # equivalent, run directly
-cd tools/lerobot-integration
+cd integrations/lerobot
 uv sync --group dev --locked
 uv run pytest -c pyproject.toml ../../packages/sceneops-analytics/tests/test_lerobot_adapter.py -v
 ```

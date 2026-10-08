@@ -1,5 +1,5 @@
 # --------------------
-# Reference corpus (config/reference/<corpus>/, tools/dataset-acquisition)
+# Reference corpus (config/reference/<corpus>/, integrations/dataset-acquisition)
 #
 # reference-data-bootstrap -- fingerprint the source, materialize the locked MCAPs
 #                             of a scope into data/reference/<corpus>/recordings/

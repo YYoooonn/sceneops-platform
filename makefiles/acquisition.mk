@@ -1,8 +1,8 @@
 # --------------------
-# External dataset acquisition tool
+# External dataset acquisition integration
 # --------------------
 #
-# tools/dataset-acquisition converts an external dataset into L1 acquisition
+# integrations/dataset-acquisition converts an external dataset into L1 acquisition
 # input: a finalized, sensor-bearing ROS 2 MCAP (ADR-007 §29.13). It is its
 # own uv project with its own uv.lock, outside the root workspace, and
 # depends on no SceneOps package (I-36, enforced by its
@@ -11,20 +11,20 @@
 
 .PHONY: acquisition-sync
 acquisition-sync:
-	cd tools/dataset-acquisition && uv sync --group dev --locked
+	cd integrations/dataset-acquisition && uv sync --group dev --locked
 
 .PHONY: acquisition-lock
 acquisition-lock:
-	cd tools/dataset-acquisition && uv lock
+	cd integrations/dataset-acquisition && uv lock
 
 # Unit tests on a synthetic nuScenes dataroot, the import-boundary test, and
 # the real nuScenes v1.0-mini conversion test (skipped when
 # data/raw/nuscenes is absent).
 .PHONY: acquisition-test
 acquisition-test:
-	cd tools/dataset-acquisition && uv run --locked pytest -v
+	cd integrations/dataset-acquisition && uv run --locked pytest -v
 
-# The tool's container image, built from tools/dataset-acquisition alone (its
+# The integration's container image, built from integrations/dataset-acquisition alone (its
 # own uv.lock; no SceneOps source in the build context). Run one-shot through
 # compose/acquisition.yaml:
 #   docker compose --env-file .env.local --profile acquisition run --rm \

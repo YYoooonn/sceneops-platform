@@ -30,7 +30,7 @@ check:
 # Infrastructure-independent unit suites, one pytest invocation per suite:
 # several suites ship their own `tests/__init__.py` + conftest, which pytest
 # cannot register together in one process.
-UNIT_TEST_SUITES := apps/worker/tests apps/api/tests apps/inference-server/tests \
+UNIT_TEST_SUITES := apps/worker/tests apps/api/tests integrations/groundingdino-server/tests \
 	apps/publisher/tests \
 	packages/sceneops-acquisition/tests packages/sceneops-analytics/tests \
 	packages/sceneops-core/tests packages/sceneops-derived/tests \
@@ -42,7 +42,7 @@ UNIT_TEST_SUITES := apps/worker/tests apps/api/tests apps/inference-server/tests
 
 .PHONY: test
 # All infrastructure-independent automated tests -- no Postgres/MinIO/network/
-# GPU/model weights required. apps/inference-server/tests is included: every
+# GPU/model weights required. integrations/groundingdino-server/tests is included: every
 # test there mocks GroundingDinoModel/ImageResolver -- there is no runtime/
 # model-dependent pytest suite; that path is only exercised by
 # `make acceptance-grounding-dino`. packages/sceneops-streaming/tests is pure
@@ -110,7 +110,7 @@ test-integration:
 #               (makefiles/recovery.mk), same disposable database + bucket, own Redis/workers
 #   kafka       real-Kafka transport: bridge + capture tests in their ROS 2 images, then the
 #               transport smoke (makefiles/streaming.mk); needs `make streaming-up`
-#   boundaries  isolation boundaries: the acquisition tool (own uv project, I-36 import
+#   boundaries  isolation boundaries: the acquisition integration (own uv project, I-36 import
 #               boundary), the LeRobot adapter (own uv project), the acquisition images
 #               and the raw-source mount boundary of the runtime services
 INFRA_SUITES := pipelines recovery kafka boundaries
@@ -151,8 +151,8 @@ infra-suite-boundaries: check-runtime-boundary acquisition-image-check acquisiti
 
 .PHONY: lint
 lint:
-	uv run ruff check apps/ packages/
+	uv run ruff check apps/ packages/ integrations/ros2-kafka-bridge integrations/groundingdino-server
 
 .PHONY: format
 format:
-	uv run ruff format apps/ packages/
+	uv run ruff format apps/ packages/ integrations/ros2-kafka-bridge integrations/groundingdino-server

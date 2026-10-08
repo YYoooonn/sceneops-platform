@@ -40,7 +40,8 @@ def _project(
 
 
 def _repo(tmp_path: Path, **overrides: dict) -> Path:
-    """A minimal valid tree: every declared app and package, importing nothing."""
+    """A minimal valid tree: every declared app, package and integration, importing
+    nothing. An integration is identified by its directory; its module is `<dir>_mod`."""
     for module in boundaries.PACKAGES:
         spec = overrides.get(module, {})
         _project(
@@ -61,6 +62,17 @@ def _repo(tmp_path: Path, **overrides: dict) -> Path:
             spec.get("depends", []),
             spec.get("files", {}),
         )
+    for name in boundaries.INTEGRATIONS:
+        spec = overrides.get(name, {})
+        _project(
+            tmp_path,
+            "integrations",
+            name,
+            name.replace("-", "_") + "_mod",
+            spec.get("depends", []),
+            spec.get("files", {}),
+        )
+    (tmp_path / "compose").mkdir(exist_ok=True)
     return tmp_path
 
 
@@ -157,7 +169,116 @@ def test_an_image_that_copies_tools_is_rejected(tmp_path):
     (root / "apps" / "sceneops-capture" / "Dockerfile").write_text(
         "COPY tools/e2e /x\n"
     )
-    assert any("copies tools/" in p for p in boundaries.check(root))
+    assert any("copies `tools/`" in p for p in boundaries.check(root))
+
+
+def test_an_integration_importing_an_app_is_rejected(tmp_path):
+    root = _repo(
+        tmp_path,
+        **{"ros2-kafka-bridge": {"files": {"x.py": "import sceneops_capture\n"}}},
+    )
+    assert any(
+        "imports the app `sceneops_capture`" in p for p in boundaries.check(root)
+    )
+
+
+def test_an_integration_importing_another_integration_is_rejected(tmp_path):
+    root = _repo(
+        tmp_path,
+        **{"lerobot": {"files": {"x.py": "import groundingdino_server_mod\n"}}},
+    )
+    assert any(
+        "imports the integration `groundingdino_server_mod`" in p
+        for p in boundaries.check(root)
+    )
+
+
+def test_a_package_or_app_importing_an_integration_is_rejected(tmp_path):
+    for owner in ("sceneops_inference", "sceneops_worker"):
+        root = _repo(
+            tmp_path / owner,
+            **{owner: {"files": {"x.py": "import groundingdino_server_mod\n"}}},
+        )
+        assert any(
+            "imports the integration `groundingdino_server_mod`" in p
+            for p in boundaries.check(root)
+        )
+
+
+def test_an_integration_importing_a_package_beyond_its_allowance_is_rejected(tmp_path):
+    root = _repo(
+        tmp_path,
+        **{
+            "groundingdino-server": {
+                "files": {"x.py": "import sceneops_core\n"},
+                "depends": ["sceneops-core"],
+            }
+        },
+    )
+    problems = boundaries.check(root)
+    assert any(
+        "`groundingdino-server` may not import `sceneops_core`" in p for p in problems
+    )
+    assert any("may not depend on `sceneops_core`" in p for p in problems)
+
+
+def test_an_integration_may_import_its_declared_packages(tmp_path):
+    root = _repo(
+        tmp_path,
+        **{
+            "ros2-kafka-bridge": {
+                "files": {"x.py": "import sceneops_streaming\n"},
+                "depends": ["sceneops-streaming"],
+            }
+        },
+    )
+    assert boundaries.check(root) == []
+
+
+def test_depending_on_an_integration_distribution_is_rejected(tmp_path):
+    root = _repo(tmp_path, sceneops_inference={"depends": ["groundingdino-server"]})
+    assert any(
+        "declares a dependency on the integration" in p for p in boundaries.check(root)
+    )
+
+
+def test_an_integration_image_may_copy_only_its_own_directory(tmp_path):
+    ok = _repo(tmp_path / "ok")
+    (ok / "integrations" / "lerobot" / "Dockerfile").write_text(
+        "COPY integrations/lerobot ./integrations/lerobot\nCOPY packages/sceneops-core /p\n"
+    )
+    assert boundaries.check(ok) == []
+    for foreign in (
+        "apps/sceneops-worker",
+        "integrations/ros2-kafka-bridge",
+        "tools/e2e",
+    ):
+        bad = _repo(tmp_path / foreign.replace("/", "_"))
+        (bad / "integrations" / "lerobot" / "Dockerfile").write_text(
+            f"COPY {foreign} /x\n"
+        )
+        assert any("another category" in p for p in boundaries.check(bad)), foreign
+
+
+def test_a_directory_that_is_not_a_project_is_rejected(tmp_path):
+    root = _repo(tmp_path)
+    (root / "integrations" / "stray").mkdir()
+    assert any("not a project" in p for p in boundaries.check(root))
+
+
+def test_an_undeclared_integration_is_rejected(tmp_path):
+    root = _repo(tmp_path)
+    _project(root, "integrations", "new-adapter", "new_adapter", [], {})
+    assert any("`new-adapter` is not declared" in p for p in boundaries.check(root))
+
+
+def test_a_compose_build_path_that_does_not_exist_is_rejected(tmp_path):
+    root = _repo(tmp_path)
+    (root / "compose" / "x.yaml").write_text(
+        "services:\n  s:\n    build:\n      context: .\n"
+        "      dockerfile: integrations/gone/Dockerfile\n"
+    )
+    assert any("does not exist" in p for p in boundaries.check(root))
 
 
 def test_the_repository_satisfies_the_boundaries():

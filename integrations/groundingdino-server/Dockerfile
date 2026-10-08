@@ -24,7 +24,7 @@ COPY pyproject.toml uv.lock ./
 COPY packages/sceneops-core/pyproject.toml ./packages/sceneops-core/pyproject.toml
 COPY packages/sceneops-db/pyproject.toml ./packages/sceneops-db/pyproject.toml
 COPY packages/sceneops-storage/pyproject.toml ./packages/sceneops-storage/pyproject.toml
-COPY apps/inference-server/pyproject.toml ./apps/inference-server/pyproject.toml
+COPY integrations/groundingdino-server/pyproject.toml ./integrations/groundingdino-server/pyproject.toml
 
 RUN uv venv
 
@@ -37,10 +37,10 @@ RUN if [ "$TORCH_FLAVOR" = "cu121" ]; then \
 RUN uv sync --package sceneops-inference-server --frozen --no-dev --no-install-workspace
 
 COPY packages ./packages
-COPY apps/inference-server ./apps/inference-server
+COPY integrations/groundingdino-server ./integrations/groundingdino-server
 
 RUN uv sync --package sceneops-inference-server --frozen --no-dev
 
-WORKDIR /workspace/apps/inference-server
+WORKDIR /workspace/integrations/groundingdino-server
 
 CMD ["uvicorn", "inference_server.main:app", "--host", "0.0.0.0", "--port", "8001"]
