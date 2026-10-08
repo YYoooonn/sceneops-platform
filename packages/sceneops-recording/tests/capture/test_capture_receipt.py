@@ -84,7 +84,14 @@ class _FakeConsumer:
 def _install(monkeypatch, queue) -> list[_FakeConsumer]:
     created: list[_FakeConsumer] = []
 
-    def factory(*, settings, group_id, auto_offset_reset, enable_auto_commit):
+    def factory(
+        *,
+        settings,
+        group_id,
+        auto_offset_reset,
+        enable_auto_commit,
+        start_from_beginning,
+    ):
         assert group_id.startswith(CAPTURE_CONSUMER_GROUP_ID + "-")
         consumer = _FakeConsumer(queue)
         created.append(consumer)
@@ -176,28 +183,34 @@ def test_explicit_run_end_reason(tmp_path, monkeypatch) -> None:
     from sceneops_streaming import RunEventType, build_control_envelope
 
     run_id = "run-1"
-    queue = _queue(run_id)
-    queue.append(
-        ConsumedTelemetryEnvelope(
+
+    def control(event_type, sequence_number, offset):
+        return ConsumedTelemetryEnvelope(
             envelope=build_control_envelope(
-                event_type=RunEventType.RUN_END,
+                event_type=event_type,
                 robot_id="robot-1",
                 robot_run_id=run_id,
-                sequence_number=0,
+                sequence_number=sequence_number,
             ),
             key=run_id.encode(),
             topic=TOPIC,
             partition=2,
-            offset=13,
+            offset=offset,
         )
-    )
+
+    queue = [
+        control(RunEventType.RUN_START, 0, 9),
+        *_queue(run_id),
+        control(RunEventType.RUN_END, 1, 13),
+    ]
     _install(monkeypatch, queue)
 
     _capture(tmp_path, stop_condition=lambda count: False, stop_on_run_end=True)
 
     receipt = _receipt(tmp_path)
     assert receipt.finalization.reason is FinalizationReason.EXPLICIT_RUN_END
-    # The control event is not recorded, but its offset is part of the span.
+    # The control events are not recorded, but their offsets are part of the span.
+    assert receipt.kafka.first_offset == 9
     assert receipt.message_count == 3
     assert receipt.kafka.last_offset == 13
 

@@ -27,6 +27,12 @@ not a recognized control one). A legacy stream with no control events
 at all is completely unaffected: ``is_control_envelope`` is never true
 for it, so every record takes the exact same path this module always
 used.
+
+A lifecycle-governed capture (``stop_on_run_end``) additionally enforces the
+run's RUN_START -> telemetry -> RUN_END order (``lifecycle.py``): telemetry or
+RUN_END before RUN_START and a second RUN_START fail like a sequence violation,
+and a missing RUN_END is never finalized. Without ``stop_on_run_end`` (count-
+bounded synthetic runs) control events are only sequence-validated.
 """
 
 from __future__ import annotations
@@ -59,7 +65,6 @@ from sceneops_streaming import (
     DEFAULT_REGISTRY,
     ChannelRegistry,
     ConsumedTelemetryEnvelope,
-    RunEventType,
     is_control_envelope,
     parse_run_event,
 )
@@ -73,6 +78,7 @@ from .finalize import (
     prepare_partial_bag_dir,
 )
 from .group_id import derive_capture_group_id
+from .lifecycle import RunLifecycle, RunPhase
 from .writer import McapCaptureWriter
 from .receipt_io import (
     CaptureReceiptConflictError,
@@ -116,6 +122,13 @@ class RunEndNotObservedError(RuntimeError):
     """A capture that must end on its run's RUN_END was stopped before it
     arrived. What was consumed may be a truncated recording, so nothing is
     finalized and no offset is committed."""
+
+
+class RunStartNotObservedError(RuntimeError):
+    """A capture that must start on its run's RUN_START was stopped before it
+    arrived: the run never started on the topic (wrong ids, retention, a bridge
+    that never published it), or the capture began after it. Nothing was
+    recorded, finalized or committed."""
 
 
 @dataclass
@@ -233,13 +246,54 @@ class _SequenceTracker:
         return self._last_sequence
 
 
+_monotonic = time.monotonic
+
+
+class _IdleGuard:
+    """Abort guard of a lifecycle-governed capture. Three notions of progress
+    are kept apart so a healthy scan is never mistaken for a dead run and a
+    dead run is never hidden behind unrelated traffic:
+
+    - consumer progress -- any record taken from Kafka, of any run. Proves the
+      consumer is advancing, not that the target run is alive.
+    - target-run progress -- any record of the target run (RUN_START,
+      telemetry, a skipped redelivery).
+    - run inactivity -- time since the last target-run record once the run
+      has started.
+
+    While ARMED (scanning history for RUN_START, or waiting for a bridge that
+    has not started yet) the inactivity clock is consumer progress. Once
+    CAPTURING it is target-run progress only, so records of other runs never
+    keep a run alive whose RUN_END is not coming.
+
+    The clock starts at construction: the timeout must cover the consumer
+    group join (~3 s on a new group) as well as any wait for the bridge.
+    """
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self._timeout = timeout_seconds
+        self._last_consumed = _monotonic()
+        self._last_target = self._last_consumed
+
+    def consumed(self) -> None:
+        self._last_consumed = _monotonic()
+
+    def target_record(self) -> None:
+        self._last_target = self._last_consumed = _monotonic()
+
+    def expired(self, phase: RunPhase) -> bool:
+        last = self._last_target if phase is RunPhase.CAPTURING else self._last_consumed
+        return _monotonic() - last >= self._timeout
+
+
 async def run_capture(
     *,
     settings: StreamingSettings,
     robot_id: str,
     robot_run_id: str,
     output_root: Path,
-    stop_condition: Callable[[int], bool | FinalizationReason],
+    stop_condition: Callable[[int], bool | FinalizationReason] | None = None,
+    idle_timeout_seconds: float | None = None,
     poll_timeout_seconds: float = 1.0,
     registry: ChannelRegistry = DEFAULT_REGISTRY,
     stop_on_run_end: bool = False,
@@ -256,19 +310,31 @@ async def run_capture(
     idle-timeout or wall-clock-deadline policy closes over its own clock
     inside the callable it passes in.
 
-    ``stop_on_run_end`` makes the run's explicit ``RUN_END`` control event
-    the only way to finalize: the capture ends when ``RUN_END`` has been
-    consumed (after it passed its own sequence validation). The bridge
-    publishes ``RUN_END`` after its last telemetry record on the same
-    partition, so everything the bridge forwarded precedes it. In this mode
-    ``stop_condition`` is an abort guard (e.g. an idle timeout): if it ends
-    the capture before ``RUN_END``, ``RunEndNotObservedError`` is raised and
-    nothing is finalized or committed, because a recording that merely
-    stopped arriving cannot be told from a complete one once it is a
-    registered RobotRun. The partial bag stays for the next attempt to
-    discard and rebuild from Kafka. Without ``stop_on_run_end`` the
-    ``stop_condition`` alone ends and finalizes the capture (count-bounded
-    synthetic runs in tests and benchmarks).
+    ``stop_on_run_end`` makes the capture lifecycle-governed
+    (``lifecycle.py``): the run must be a complete RUN_START, telemetry,
+    RUN_END session, and its explicit ``RUN_END`` control event is the only way
+    to finalize. The capture ends when ``RUN_END`` has been consumed (after it
+    passed its own sequence validation). The bridge publishes ``RUN_END``
+    after its last telemetry record on the same partition, so everything the
+    bridge forwarded precedes it. A lifecycle violation raises
+    ``RunLifecycleError`` at the first offending record.
+
+    In this mode ``stop_condition`` and ``idle_timeout_seconds`` are abort
+    guards (``_IdleGuard`` defines what counts as progress). If either ends the
+    capture before ``RUN_END``, ``RunStartNotObservedError`` (the run never
+    started) or ``RunEndNotObservedError`` is raised and nothing is finalized
+    or committed, because a recording that merely stopped arriving cannot be
+    told from a complete one once it is a registered RobotRun. The partial bag
+    stays for the next attempt to discard and rebuild from Kafka. Without
+    ``stop_on_run_end`` the ``stop_condition`` alone ends and finalizes the
+    capture (count-bounded synthetic runs in tests and benchmarks), and
+    ``idle_timeout_seconds`` is not accepted.
+
+    Every attempt reads the run from the beginning of the topic: the group's
+    committed offset only records that a capture completed, it is never a
+    start position (``KafkaTelemetryConsumer(start_from_beginning=True)``). A
+    re-run of an already finalized run therefore converges onto the existing bag
+    (or fails on different content) instead of resuming after its RUN_END.
 
     A stop condition may return the ``FinalizationReason`` it stands for
     (recorded in the capture receipt); a plain ``True`` records ``MANUAL``.
@@ -282,9 +348,18 @@ async def run_capture(
     Each written message's ``log_time`` is the wall-clock instant this
     function took the record from Kafka (see ``mcap_writer.py``).
     """
+    if idle_timeout_seconds is not None and not stop_on_run_end:
+        raise ValueError("idle_timeout_seconds requires stop_on_run_end")
+    if stop_condition is None and not stop_on_run_end:
+        raise ValueError("a capture without stop_on_run_end needs a stop_condition")
+
     partial_dir = prepare_partial_bag_dir(output_root, robot_run_id)
     writer = McapCaptureWriter(bag_uri=str(partial_dir), registry=registry)
     run_ended = False
+    lifecycle = RunLifecycle() if stop_on_run_end else None
+    idle_guard = (
+        _IdleGuard(idle_timeout_seconds) if idle_timeout_seconds is not None else None
+    )
     run_filter = _RunFilter(robot_id=robot_id, robot_run_id=robot_run_id)
     tracker = _SequenceTracker()
     # Lifecycle control events (Phase 7.2.1) get their OWN independent
@@ -307,6 +382,7 @@ async def run_capture(
         group_id=group_id,
         auto_offset_reset="earliest",
         enable_auto_commit=False,
+        start_from_beginning=True,
     )
 
     first_offset: int | None = None
@@ -317,7 +393,17 @@ async def run_capture(
     try:
         try:
             while not run_ended:
-                stop = stop_condition(writer.stats.message_count)
+                stop = (
+                    stop_condition(writer.stats.message_count)
+                    if stop_condition is not None
+                    else False
+                )
+                if (
+                    not stop
+                    and idle_guard is not None
+                    and idle_guard.expired(lifecycle.phase)
+                ):
+                    stop = FinalizationReason.IDLE_TIMEOUT
                 if stop:
                     if isinstance(stop, FinalizationReason):
                         stop_reason = stop
@@ -326,8 +412,12 @@ async def run_capture(
                 receive_time_ns = time.time_ns()
                 if consumed is None:
                     continue
+                if idle_guard is not None:
+                    idle_guard.consumed()
                 if not run_filter.matches(consumed):
                     continue
+                if idle_guard is not None:
+                    idle_guard.target_record()
                 source_topics.add(consumed.topic)
 
                 envelope = consumed.envelope
@@ -340,20 +430,22 @@ async def run_capture(
                     # deliberately never includes it (so a genuinely
                     # unsupported/unknown channel still fails loudly,
                     # unambiguously, via UnsupportedChannelError).
-                    control_tracker.accept(
+                    is_new_control = control_tracker.accept(
                         sequence_number=envelope.sequence_number,
                         payload=envelope.payload,
                     )
+                    if lifecycle is not None:
+                        lifecycle.on_control(
+                            parse_run_event(envelope), redelivery=not is_new_control
+                        )
+                        run_ended = lifecycle.phase is RunPhase.ENDED
                     if first_offset is None:
                         first_offset = consumed.offset
                     last_offset = consumed.offset
-                    if (
-                        stop_on_run_end
-                        and parse_run_event(envelope) is RunEventType.RUN_END
-                    ):
-                        run_ended = True
                     continue
 
+                if lifecycle is not None:
+                    lifecycle.on_telemetry()
                 should_write = tracker.accept(
                     sequence_number=envelope.sequence_number,
                     payload=envelope.payload,
@@ -372,6 +464,11 @@ async def run_capture(
             writer.close()
 
         if stop_on_run_end and not run_ended:
+            if lifecycle.phase is RunPhase.ARMED:
+                raise RunStartNotObservedError(
+                    f"capture of robot_run_id={robot_run_id!r} stopped before "
+                    "its RUN_START; nothing recorded, not finalized"
+                )
             raise RunEndNotObservedError(
                 f"capture of robot_run_id={robot_run_id!r} stopped before its "
                 f"RUN_END after {writer.stats.message_count} message(s); "

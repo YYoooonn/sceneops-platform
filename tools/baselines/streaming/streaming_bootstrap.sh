@@ -144,8 +144,8 @@ acquire_fixture() {
 }
 
 # resume_capture <run-id> <capture-root> — an interrupted capture: Kafka is the source
-# of truth, and a capture resumes from its group's committed offsets. Nothing is
-# replayed: it finalizes only if the run's RUN_END is already in the topic, and
+# of truth, and a capture rebuilds the run from the beginning of the topic. Nothing is
+# replayed: it finalizes only if the run's RUN_START..RUN_END is already in the topic, and
 # otherwise aborts (a recording that merely stopped arriving is never finalized).
 resume_capture() {
   local run_id="$1" capture_root="$2" summary

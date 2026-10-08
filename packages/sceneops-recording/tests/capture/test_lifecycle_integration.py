@@ -17,9 +17,19 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import pytest
+from confluent_kafka import OFFSET_INVALID, Consumer, TopicPartition
 from mcap.reader import make_reader
 
-from sceneops_recording.capture.consumer import run_capture
+from sceneops_recording.capture.consumer import (
+    CAPTURE_CONSUMER_GROUP_ID,
+    run_capture,
+)
+from sceneops_recording.capture.finalize import final_bag_path
+from sceneops_recording.capture.group_id import derive_capture_group_id
+from sceneops_recording.capture.lifecycle import RunLifecycleError
+from sceneops_recording.capture_receipt import FinalizationReason
+from sceneops_recording.capture.receipt_io import read_capture_receipt
 from sceneops_streaming import (
     EnvelopeEncoding,
     KafkaTelemetryProducer,
@@ -186,3 +196,131 @@ def test_run_capture_handles_real_lifecycle_events_interleaved_with_another_run(
     assert result.first_sequence == 0
     assert result.last_sequence == 1
     assert _mcap_channels(result.path) == {"/vehicle/odom"}
+
+
+# ---------------------------------------------------------------------
+# Lifecycle-governed capture on a real broker
+# ---------------------------------------------------------------------
+
+
+def _committed_offset(topic: str, partition: int, robot_run_id: str) -> int:
+    """The run-scoped group's committed offset (OFFSET_INVALID when none)."""
+    group_id = derive_capture_group_id(
+        base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=robot_run_id
+    )
+    probe = Consumer(
+        {
+            "bootstrap.servers": StreamingSettings().bootstrap_servers,
+            "group.id": group_id,
+            "enable.auto.commit": False,
+        }
+    )
+    try:
+        [tp] = probe.committed([TopicPartition(topic, partition)], timeout=10)
+        return tp.offset
+    finally:
+        probe.close()
+
+
+async def _publish_session(
+    topic: str, robot_id: str, run_id: str, *, telemetry: int, run_start: bool = True
+) -> None:
+    producer = KafkaTelemetryProducer(settings=StreamingSettings(telemetry_topic=topic))
+    if run_start:
+        await producer.publish(
+            build_control_envelope(
+                event_type=RunEventType.RUN_START,
+                robot_id=robot_id,
+                robot_run_id=run_id,
+            )
+        )
+    for seq in range(telemetry):
+        await producer.publish(
+            _envelope(robot_run_id=run_id, robot_id=robot_id, sequence_number=seq)
+        )
+    await producer.publish(
+        build_control_envelope(
+            event_type=RunEventType.RUN_END,
+            robot_id=robot_id,
+            robot_run_id=run_id,
+            sequence_number=1,
+        )
+    )
+    await producer.flush()
+    await producer.close()
+
+
+def _governed_capture(topic: str, robot_id: str, run_id: str, output_root):
+    return run_capture(
+        settings=StreamingSettings(telemetry_topic=topic),
+        robot_id=robot_id,
+        robot_run_id=run_id,
+        output_root=output_root,
+        stop_on_run_end=True,
+        # Covers the consumer group join as well as the scan.
+        idle_timeout_seconds=30,
+        poll_timeout_seconds=1.0,
+    )
+
+
+def test_governed_capture_commits_exactly_past_run_end_after_other_runs_history(
+    tmp_path,
+) -> None:
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-governed-{invocation}"
+    topic = _unique_test_topic()
+
+    async def publish() -> None:
+        await _publish_session(
+            topic, "robot-other", f"other-{invocation}", telemetry=200
+        )
+        await _publish_session(topic, robot_id, run_id, telemetry=5)
+
+    asyncio.run(publish())
+
+    result = asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+
+    assert result.message_count == 5
+    # RUN_START .. RUN_END are consecutive on the run's partition.
+    assert result.last_offset - result.first_offset + 1 == 5 + 2
+    receipt = read_capture_receipt(final_bag_path(tmp_path, run_id))
+    assert receipt.finalization.reason is FinalizationReason.EXPLICIT_RUN_END
+    assert _committed_offset(topic, result.partition, run_id) == result.last_offset + 1
+
+
+def test_run_without_run_start_is_not_finalized_and_commits_nothing(tmp_path) -> None:
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-no-start-{invocation}"
+    topic = _unique_test_topic()
+    asyncio.run(_publish_session(topic, robot_id, run_id, telemetry=5, run_start=False))
+
+    with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
+        asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+
+    assert not final_bag_path(tmp_path, run_id).exists()
+    assert _committed_offset(topic, 0, run_id) == OFFSET_INVALID
+
+
+def test_rerun_of_a_finalized_and_committed_run_converges(tmp_path) -> None:
+    """The committed offset marks the run captured; it is never where the next
+    attempt starts. A group resuming past the committed RUN_END would find
+    nothing and wait; every attempt instead reads the run again, meets the
+    finalized bag, and converges onto it."""
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-rerun-{invocation}"
+    topic = _unique_test_topic()
+    asyncio.run(_publish_session(topic, robot_id, run_id, telemetry=5))
+
+    first = asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+    committed = _committed_offset(topic, first.partition, run_id)
+    assert committed == first.last_offset + 1
+
+    second = asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+
+    assert second.path == first.path
+    assert second.sha256 == first.sha256
+    assert (second.first_offset, second.last_offset) == (
+        first.first_offset,
+        first.last_offset,
+    )
+    assert _committed_offset(topic, first.partition, run_id) == committed

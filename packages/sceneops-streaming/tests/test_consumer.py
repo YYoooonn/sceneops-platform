@@ -108,8 +108,13 @@ class _FakeConfluentConsumer:
         # blocking fetch calls, not just that poll() still "works".
         self.consume_calls: list[tuple[int, float]] = []
 
-    def subscribe(self, topics: list[str]) -> None:
+    def subscribe(self, topics: list[str], on_assign=None) -> None:
         self.subscribed_topics = topics
+        self.on_assign = on_assign
+        self.assigned = None
+
+    def assign(self, partitions) -> None:
+        self.assigned = partitions
 
     def enqueue(self, *messages: _FakeMessage) -> None:
         self._queue.extend(messages)
@@ -143,6 +148,24 @@ def test_enable_auto_commit_false_is_passed_through() -> None:
         settings=StreamingSettings(_env_file=None), enable_auto_commit=False
     )
     assert consumer._consumer.config["enable.auto.commit"] is False
+
+
+def test_default_subscription_resumes_from_committed_offsets() -> None:
+    consumer = KafkaTelemetryConsumer(settings=StreamingSettings(_env_file=None))
+    assert consumer._consumer.on_assign is None
+
+
+def test_start_from_beginning_rewinds_every_assignment() -> None:
+    from confluent_kafka import OFFSET_BEGINNING, TopicPartition
+
+    consumer = KafkaTelemetryConsumer(
+        settings=StreamingSettings(_env_file=None), start_from_beginning=True
+    )
+    fake = consumer._consumer
+    # Partitions arrive carrying the group's committed offset.
+    fake.on_assign(fake, [TopicPartition("t", 0, 42), TopicPartition("t", 1, 7)])
+
+    assert [p.offset for p in fake.assigned] == [OFFSET_BEGINNING, OFFSET_BEGINNING]
 
 
 async def test_commit_with_no_polled_message_is_a_no_op() -> None:

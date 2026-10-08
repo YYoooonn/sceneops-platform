@@ -42,9 +42,9 @@ Details and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md) §5, 
 Details: [Streaming transport](./streaming-transport.md) §26, §31 and
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2, §6.
 
-- **Capture replays the whole topic.** Each capture uses its own consumer group with
-  `auto.offset.reset=earliest`, so it reads the topic from the beginning to reach one
-  run's records. The cost grows with topic history; the measurements are
+- **Capture replays the whole topic.** Each capture uses its own consumer group and
+  every attempt, a re-run of a finished run included, starts at the beginning of the
+  topic to reach one run's records. The cost grows with topic history; the measurements are
   single-broker, local-environment records in
   [History](../history/streaming-reliability-scale-baseline.md).
 - **No Kafka retention or partition policy is configured.** The local broker

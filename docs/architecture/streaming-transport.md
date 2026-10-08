@@ -961,7 +961,7 @@ late/out-of-order (sequence < expected next, not
 "Fail" here means `SequenceIntegrityError`, which aborts the capture
 attempt the same way `PartitionInvariantError`/`UnsupportedChannelError`
 do -- per §21's ordering, nothing gets finalized or committed, so a
-restart safely rebuilds from the last committed offset rather than
+restart safely rebuilds the run from the beginning of the topic rather than
 silently accepting corrupted sequencing.
 
 ## 25. Temp/final file lifecycle
@@ -979,8 +979,7 @@ is that whole directory. Layout, per `robot_run_id`, under one capture `output_r
 stale `.partial` directory from a previous crashed/interrupted attempt --
 it discards it (`shutil.rmtree`) and lets the writer recreate it from
 scratch, because the source of truth for what belongs in a capture is
-Kafka, replayed from the last *committed* offset (always before anything
-a stale partial could contain under §21's ordering), never whatever bytes
+Kafka, replayed from the beginning of the topic (§26), never whatever bytes
 happen to already be on disk. The writer refuses to open into a directory
 that already exists, so `prepare_partial_bag_dir()` guarantees the path
 does *not* exist and its parent does, rather than creating it itself.
@@ -1003,20 +1002,36 @@ or zero messages.
 ## 26. Capture lifecycle, configuration, and failure behavior
 
 **Lifecycle.** `run_capture()` never inspects payload content to decide
-when to stop. A run is finalized only by its explicit `RUN_END` control
-event (`stop_on_run_end`, always set by `cli.py`), consumed after it passed
-its own sequence validation. The bridge publishes `RUN_END` after its last
-telemetry record on the same partition, so everything it forwarded precedes
-it. The caller's `stop_condition(message_count)`, polled before every Kafka
-poll, is then only an abort guard: `cli.py --idle-timeout-seconds S` aborts
-when nothing arrives for `S` seconds before `RUN_END`. An aborted capture
-raises `RunEndNotObservedError`, exits non-zero and finalizes and commits
-nothing, because a recording that merely stopped arriving (a bridge killed
-without `RUN_END`) cannot be told from a complete one once it is a registered
+when to stop. `cli.py` always runs it lifecycle-governed (`stop_on_run_end`):
+the run must be a complete `RUN_START` -> telemetry -> `RUN_END` session
+(§29), and only its explicit `RUN_END`, consumed after it passed its own
+sequence validation, finalizes it. The bridge publishes `RUN_END` after its
+last telemetry record on the same partition, so everything it forwarded
+precedes it. The abort guard is then the only other way the capture ends:
+`cli.py --idle-timeout-seconds S` (`idle_timeout_seconds`), or a caller's
+`stop_condition(message_count)` polled before every Kafka poll. An aborted
+capture raises `RunStartNotObservedError` (the run never started) or
+`RunEndNotObservedError`, exits non-zero and finalizes and commits nothing,
+because a recording that merely stopped arriving (a bridge killed without
+`RUN_END`) cannot be told from a complete one once it is a registered
 RobotRun. Without `stop_on_run_end` (tests and benchmarks of count-bounded
-synthetic runs) the `stop_condition` alone ends and finalizes the capture; the
-receipt then records its reason (`max_messages`, `idle_timeout`, `manual`),
-and every capture finalized through `cli.py` records `explicit_run_end`.
+synthetic runs) the `stop_condition` alone ends and finalizes the capture, no
+`RUN_START` is required, control events are only sequence-validated, and the
+receipt records its reason (`max_messages`, `idle_timeout`, `manual`); every
+capture finalized through `cli.py` records `explicit_run_end`.
+
+**Idle guard.** Three kinds of progress are kept apart. *Consumer progress*
+is any record taken from Kafka, of any run: it proves the consumer is
+advancing, not that the run is alive. *Run progress* is any record of the
+target run. *Run inactivity* is the time since the last run record once the
+run has started. Before `RUN_START` (a scan of history, or a wait for a
+bridge that has not started) the guard measures consumer progress, so a
+healthy scan is never taken for idleness; after `RUN_START` it measures run
+progress only, so other runs' traffic never keeps alive a run whose `RUN_END`
+is not coming. The clock starts when the capture starts, so S must cover the
+consumer-group join (about 3 s on a new group) and any wait for the bridge. A
+topic that stays busy with other runs' records while the target `RUN_START`
+never arrives is not bounded by the guard.
 
 Channels arrive asynchronously: a channel is registered in the MCAP the
 first time a message for it is written, whenever that is, and a run is not
@@ -1026,8 +1041,9 @@ RUN_END) never enter the recording (§29).
 **Restart and failure behavior (current, explicit).**
 
 ```text
-Capture process dies before finalize   the .partial directory is discarded and the capture
-                                       rebuilds from Kafka (offsets were never committed).
+Capture dies before RUN_START, in     the .partial directory is discarded and the capture
+the run, or after RUN_END but before   rebuilds the whole run from the beginning of the topic
+finalize                               (offsets were never committed).
 Capture dies after finalize, before    a re-run consumes the same records, writes a new
 commit                                 partial and finds the final file. It converges only
                                        if the recorded messages match (topic, schema, publish
@@ -1036,6 +1052,17 @@ commit                                 partial and finds the final file. It conv
                                        stays the recording of record, the offsets are
                                        committed. Different content under the same run id
                                        fails with FinalBagExistsError and commits nothing.
+Re-run of a finalized, committed run   the run is read again from the beginning (the committed
+                                       offset is a completion marker, never a start position),
+                                       meets the final file and converges as above, committing
+                                       the same offset again. Its cost is a full scan.
+Run records no longer on the topic     RUN_START is never observed: with an idle guard the
+(retention) or the run never started   capture fails (RunStartNotObservedError), without one
+                                       it waits for RUN_START.
+Same robot_run_id streamed twice       a second RUN_START before the first RUN_END fails
+                                       (RunLifecycleError). A second session after the first
+                                       RUN_END is never read (Capture ends at the first
+                                       RUN_END), so Capture neither records nor detects it.
 Bridge killed without RUN_END          no RUN_END arrives; the idle-timeout guard aborts the
                                        capture (RunEndNotObservedError): nothing is finalized
                                        or committed, the .partial directory stays, and a re-run
@@ -1060,6 +1087,9 @@ CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
 auto.offset.reset = "earliest"   -- correctness-first: a capture that
   starts after some of a run's messages were already published must
   still see all of them, not just whatever arrives from "now".
+start_from_beginning = True      -- every assignment starts at the beginning of
+  the topic, whatever the group has committed: the committed offset is written
+  once, after finalize, so it only ever points past the run's RUN_END.
 enable.auto.commit = False       -- required; see §21.
 ```
 
@@ -1076,9 +1106,8 @@ prefix alone, which is cosmetic only).
 
 **Tradeoff, not fully solved:** this provides correct, isolated replay per
 RobotRun -- it does not provide efficient large-scale multi-run capture.
-Each run-scoped group is, the first time it's used, a brand new Kafka
-consumer group with no committed offset, so `auto.offset.reset = earliest`
-means it may scan the topic's entire historical record before reaching its
+Every capture attempt starts at the beginning of the topic, so it may
+scan the topic's entire historical record before reaching its
 own messages (measured: ~3.4s against a lightly-used topic vs ~44s once it
 held ~150,000 prior messages; see
 [Streaming reliability & scale baseline](../history/streaming-reliability-scale-baseline.md)).
@@ -1116,7 +1145,8 @@ bridge source on `PYTHONPATH`: writer (receive time, publish time, sequence, mon
 payload bytes, duplicates, late channel arrival, unsupported channels),
 message definitions decoded by an independent MCAP ROS 2 decoder,
 finalize/validation, `RunFilter`/`SequenceTracker`/duplicate policy,
-`run_capture` (RUN_END finalization and refusal to finalize without it, sensor
+`run_capture` (the RUN_START/RUN_END lifecycle matrix and idle-guard progress semantics,
+RUN_END finalization and refusal to finalize without it, sensor
 channels from a channel file, durability ordering, crash boundaries C and D
 including conflicting retry), and real-Kafka integration (multi-run isolation, lifecycle,
 camera- and lidar-sized payloads, oversize failure).
@@ -1174,6 +1204,38 @@ to the MCAP writer. A control envelope therefore never appears in a finalized
 MCAP and never raises `UnsupportedChannelError` (reserved for a genuinely
 unsupported channel). Its offset still belongs to the receipt's Kafka offset
 range.
+
+**Run lifecycle contract.** A lifecycle-governed capture (`stop_on_run_end`)
+enforces the order of one run's records with `RunLifecycle`
+(`capture/lifecycle.py`). One `robot_run_id` is exactly one streaming session.
+
+```text
+phase      accepts                          rejects (RunLifecycleError, at the first record)
+ARMED      RUN_START -> CAPTURING           telemetry (it precedes RUN_START); RUN_END
+CAPTURING  telemetry; RUN_END -> ENDED      a second RUN_START
+ENDED      nothing: Capture stops reading   (a record after RUN_END is never read)
+```
+
+After ENDED the code is linear: validate the MCAP, write the receipt, finalize
+atomically, commit the Kafka offset once. A failure anywhere before the commit
+leaves the `.partial` directory and no committed offset; no durable finalize
+means no Kafka commit.
+
+```text
+RUN_START mandatory                      yes; the first record of the run that Capture reads
+telemetry or RUN_END before RUN_START    fails, rather than being discovered at RUN_END
+RUN_START redelivered immediately        skipped (a producer retry); after any other record
+  after itself, same sequence/payload      of the run it is a second session and fails
+RUN_END repeating RUN_START's bytes      fails (the payload does not encode the event type)
+unrecognized future control event        sequence validated, otherwise ignored
+telemetry after RUN_END                  not detectable: Capture stops at RUN_END
+```
+
+A start position other than the beginning of the topic is a lower bound on
+the offset of `RUN_START`, never a claim about the run: other runs' records
+before `RUN_START` are skipped, and a position after `RUN_START` fails at the
+first telemetry record of the run instead of producing a recording that lacks
+its start.
 
 ## 30. From capture to canonical Scenes and Episodes
 
@@ -1304,6 +1366,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - `SESSION_CONTROL_CHANNEL` constant: `packages/sceneops-streaming/sceneops_streaming/constants.py`
 - Bridge lifecycle-event publishing: `integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py`, `integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py`
 - Control-envelope handling and RUN_END finalization in capture (`control_tracker`, `RunEndNotObservedError`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
+- Run lifecycle (`RunLifecycle`, `RunLifecycleError`): `packages/sceneops-recording/sceneops_recording/capture/lifecycle.py`, `packages/sceneops-recording/tests/capture/test_run_lifecycle.py`, `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py`
 - Real-Kafka lifecycle integration (solo and interleaved runs): `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py` and `tests/streaming/test_bridge_capture_lifecycle.py`
 - Point-in-time design/benchmark record: [Multi-run streaming architecture study](../history/streaming-multirun-phase7-study.md)
 

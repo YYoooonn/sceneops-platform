@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from confluent_kafka import OFFSET_BEGINNING
 from confluent_kafka import Consumer as ConfluentConsumer
 
 
@@ -27,6 +28,12 @@ from .wire import decode_envelope
 DEFAULT_POLL_BATCH_SIZE = 64
 
 
+def _assign_from_beginning(consumer: ConfluentConsumer, partitions: list) -> None:
+    for partition in partitions:
+        partition.offset = OFFSET_BEGINNING
+    consumer.assign(partitions)
+
+
 class KafkaTelemetryConsumer:
     """Concrete ``TelemetryConsumer`` (``sceneops_streaming.contracts``)
     backed by ``confluent_kafka``.
@@ -49,6 +56,13 @@ class KafkaTelemetryConsumer:
     finalized on disk) passes ``enable_auto_commit=False`` and calls
     ``commit()`` explicitly once it has established its own durability
     boundary -- never relying on librdkafka's periodic background commit.
+
+    ``start_from_beginning`` ignores the group's committed offsets and starts
+    every assignment at the beginning of the topic (the default resumes from
+    the committed offset, ``auto_offset_reset`` applying when there is none).
+    For a caller whose commit only marks "this unit of work completed", never
+    "continue from here" (the run-scoped capture): resuming past a committed
+    unit would find none of its records.
 
     **Internal fetch batching (Phase 7.0.1).** ``poll()``'s PUBLIC
     contract is unchanged: one call returns one decoded record (or
@@ -105,6 +119,7 @@ class KafkaTelemetryConsumer:
         auto_offset_reset: str = "earliest",
         enable_auto_commit: bool = True,
         poll_batch_size: int = DEFAULT_POLL_BATCH_SIZE,
+        start_from_beginning: bool = False,
     ) -> None:
         self._topic = topic or settings.telemetry_topic
         self._last_message: object | None = None
@@ -118,7 +133,10 @@ class KafkaTelemetryConsumer:
                 "enable.auto.commit": enable_auto_commit,
             }
         )
-        self._consumer.subscribe([self._topic])
+        if start_from_beginning:
+            self._consumer.subscribe([self._topic], on_assign=_assign_from_beginning)
+        else:
+            self._consumer.subscribe([self._topic])
 
     async def poll(
         self, timeout_seconds: float = 1.0
