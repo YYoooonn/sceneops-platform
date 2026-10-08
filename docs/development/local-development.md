@@ -106,6 +106,23 @@ store backend), not an optional extra, so `api`/`worker-*` can
 `depends_on: minio: condition: service_healthy` directly, and a plain
 `docker compose down -v` actually reaches `minio-data`.
 
+### MinIO image
+
+Local object storage is MinIO release `RELEASE.2024-11-07T00-52-20Z`. The registry
+image and the `dl.min.io` binaries for that release are no longer published, so
+`tools/dev/minio/Dockerfile` compiles the release from its upstream source tag
+(`github.com/minio/minio`) together with the `mc` client that `minio-init` uses, and
+Compose runs the result as `sceneops-minio:RELEASE.2024-11-07T00-52-20Z` for both
+`minio` and `minio-init`. The build context is that directory only.
+
+- The source tarballs are pinned by SHA-256 in the Dockerfile; a mismatch fails the
+  build. The Go toolchain and Alpine base images are pinned by digest.
+- The build needs network access to `github.com` and the Go module proxy; the first
+  `make local-up` on a machine compiles it (about a minute), later runs reuse the image.
+- Builds `linux/amd64` and `linux/arm64`.
+- SceneOps reaches it only through the S3 API (`http://minio:9000`); nothing in the
+  application is MinIO-specific.
+
 ## Testing
 
 See [test-matrix.md](./test-matrix.md) for what each test layer proves and the
