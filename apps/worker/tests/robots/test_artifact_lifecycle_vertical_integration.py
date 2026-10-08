@@ -24,15 +24,15 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 
-from app.domains.robots.artifact_lifecycle import (
+from sceneops_acquisition.lifecycle import (
     ArtifactLifecyclePolicy,
     artifact_lifecycle_once,
 )
-from app.domains.robots.reconciliation import postgres_registration_facts
+from sceneops_acquisition.reconciliation import postgres_registration_facts
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRef
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.jobs.schemas import JobStatus
-from sceneops_core.robots.artifact_lifecycle import LifecycleClass as C
+from sceneops_acquisition.lifecycle.vocabulary import LifecycleClass as C
 from sceneops_core.robots.manifest import (
     CaptureSource,
     CaptureSourceKind,
@@ -40,7 +40,7 @@ from sceneops_core.robots.manifest import (
 )
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.session import get_async_sessionmaker
-from sceneops_integrations.recording import publish_from_capture, scan_capture_volume
+from sceneops_recording import publish_from_capture, scan_capture_volume
 from sceneops_storage.backends.s3 import S3ArtifactStore
 from sceneops_worker.robots.registration import register_robot_run
 from tests.robots.test_reconciliation_vertical_integration import (
@@ -62,7 +62,7 @@ async def test_artifact_lifecycle_classifies_every_class_on_real_infrastructure(
     unique_id,
     tmp_path,
 ) -> None:
-    from sceneops_integrations.recording import publish_recording
+    from sceneops_recording import publish_recording
 
     session_factory = get_async_sessionmaker()
     store = S3ArtifactStore(settings=worker_settings.artifact)
@@ -384,7 +384,9 @@ async def test_artifact_lifecycle_classifies_every_class_on_real_infrastructure(
         [
             sys.executable,
             "-m",
-            "app.domains.robots.artifact_lifecycle",
+            "sceneops_worker.main",
+            "acquisition",
+            "artifact-lifecycle",
             "--once",
             "--capture-report",
             str(capture_report_path),
@@ -396,11 +398,11 @@ async def test_artifact_lifecycle_classifies_every_class_on_real_infrastructure(
         check=False,
         env={
             **os.environ,
-            "SCENEOPS_API_ARTIFACT__BACKEND": "minio",
-            "SCENEOPS_API_ARTIFACT__ROOT_URI": artifact.root_uri,
-            "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": artifact.endpoint_url,
-            "SCENEOPS_API_ARTIFACT__ACCESS_KEY_ID": artifact.access_key_id,
-            "SCENEOPS_API_ARTIFACT__SECRET_ACCESS_KEY": artifact.secret_access_key,
+            "SCENEOPS_WORKER_ARTIFACT__BACKEND": "minio",
+            "SCENEOPS_WORKER_ARTIFACT__ROOT_URI": artifact.root_uri,
+            "SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL": artifact.endpoint_url,
+            "SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID": artifact.access_key_id,
+            "SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY": artifact.secret_access_key,
         },
     )
     assert completed.returncode == 0, completed.stderr

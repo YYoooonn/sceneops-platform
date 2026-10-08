@@ -24,7 +24,6 @@ TEST_MINIO_BUCKET ?= sceneops-test
 JOB_ID          ?=
 PIPELINE_RUN_ID ?=
 MSG             ?=
-ROS2_CMD        ?=
 
 # Journey selection -- the only user-facing variables of the E2E / baseline
 # surface (see makefiles/e2e.mk). SCENE: the nuScenes scene (default
@@ -73,7 +72,7 @@ help:
 	@echo "  make test-infrastructure [SUITE=pipelines|recovery|kafka|boundaries]   Real-infrastructure suites (pipelines / recovery: a skipped test fails the run)"
 	@echo "      pipelines   (default) execution contracts -- dedup/force/convergence/replacement/resumption/concurrency -- on a disposable execution runtime (needs local-up + reference-data-bootstrap)"
 	@echo "      recovery    acquisition-recovery fault injection + the full-lifecycle acceptance + Job worker loss under leases + lost broker messages, in the disposable database + bucket with a throwaway Redis and workers (Docker; needs local-up)"
-	@echo "      kafka       ROS 2 bridge + capture tests in the ros2 image, then the transport smoke (needs streaming-up)"
+	@echo "      kafka       streaming bridge + capture tests in their ROS 2 images, then the transport smoke (needs streaming-up)"
 	@echo "      boundaries  tool isolation: acquisition tool + LeRobot adapter (own uv projects), acquisition images, raw-source mount of the runtime services"
 	@echo "  make reference-contract-verify     READ-ONLY: exactly the golden contract's 20 RobotRuns / Scenes / Episodes; REQUIRE_PRISTINE=1 also requires no other state"
 	@echo "  make e2e-streaming-equivalence [SCENE=..]   READ-ONLY: the contract's Recording Import and Streaming Acquisition RobotRuns of one fixture are equivalent"
@@ -116,7 +115,7 @@ help:
 	@echo "  make db-shell"
 	@echo "  make inference-local-build / inference-local-up / inference-local-down / inference-local-logs   (CPU, opt-in)"
 	@echo "  make inference-gpu-build / inference-gpu-up / inference-gpu-down / inference-gpu-logs           (GPU, opt-in)"
-	@echo "  make ros2-up / ros2-down / ros2-shell / ros2-logs / ros2-run ROS2_CMD='ros2 topic list'"
+	@echo "  make bridge-shell                    Shell in the streaming-bridge image (ROS 2 environment sourced)"
 	@echo "  make streaming-up / streaming-down   Local Kafka broker (opt-in)"
 	@echo "  make recovery-up / recovery-down / recovery-logs   Opt-in polling loops: publish-pending + reconcile --apply + sceneops-worker recover (compose/recovery.yaml)"
 	@echo "  make prepare-data / clean-artifacts / clean-python"
@@ -125,9 +124,10 @@ help:
 	@echo "Operator tools (diagnostics and manual operations -- NOT acceptance gates; docs/development/local-development.md#operator-tools):"
 	@echo "=================================================================="
 	@echo "  make check-env / check-imports / check-celery        Host tooling / api + worker image imports / broker and worker liveness"
+	@echo "  make check-boundaries                                Dependency direction: apps -> packages, packages never import apps or tools (static; part of make test)"
 	@echo "  make check-runtime-boundary                          Raw source is mounted only by the acquisition / reference-preparation services (starts nothing)"
 	@echo "  make check-inference-server / check-inference-server-ready   Inference server liveness / readiness"
-	@echo "  make ros2-check                                      rclpy and the MCAP storage plugin in the ros2 image"
+	@echo "  make bridge-check                                    rclpy and the MCAP storage plugin in the streaming-bridge image"
 	@echo "  make api-logs / api-shell / api-health / api-openapi"
 	@echo "  make worker-logs / worker-shell / worker-python / worker-cli"
 	@echo "  make worker-run-job JOB_ID=job-xxx"
@@ -140,7 +140,7 @@ help:
 	@echo "  make acquisition-status [ARGS=..]       Read-only operational report: a derived AcquisitionStatus per run + aggregates (ADR-008 §7)"
 	@echo "  make disk-report                        Read-only: host headroom, volumes, Kafka log, test leftovers, what Docker could reclaim"
 	@echo ""
-	@echo "Benchmarks (benchmarks/README.md) are measurement tooling, not acceptance; no Make command runs one."
+	@echo "Benchmarks (tools/benchmarks/README.md) are measurement tooling, not acceptance; no Make command runs one."
 	@echo ""
 	@echo "=================================================================="
 	@echo "Development:"
@@ -159,7 +159,6 @@ help:
 include makefiles/setup.mk
 include makefiles/cleanup.mk
 include makefiles/local.mk
-include makefiles/ros2.mk
 include makefiles/compose.mk
 include makefiles/db.mk
 include makefiles/api.mk

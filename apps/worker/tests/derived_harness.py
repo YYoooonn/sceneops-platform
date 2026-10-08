@@ -41,10 +41,10 @@ from sceneops_core.scenes.testing import (
 )
 from sceneops_storage import LocalArtifactStore
 
-from sceneops_worker.derived import DerivedManifestStore
+from sceneops_derived import DerivedManifestStore
 from sceneops_worker.jobs.base import JobHandlerRequest
-from sceneops_worker.runs import RunArtifactStore
-from sceneops_worker.scenes.artifacts import SceneArtifactStore
+from sceneops_derived import RunArtifactStore
+from sceneops_scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 
 DATASET_ID = "ds"

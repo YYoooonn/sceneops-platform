@@ -19,9 +19,8 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from sceneops_core.constants.streaming import TELEMETRY_HEADER_PREFIX
-from sceneops_core.streaming import TelemetryEnvelope
-
+from .constants import TELEMETRY_HEADER_PREFIX
+from .envelope import TelemetryEnvelope
 from .errors import EnvelopeDecodeError
 
 HEADER_VERSION = f"{TELEMETRY_HEADER_PREFIX}version"

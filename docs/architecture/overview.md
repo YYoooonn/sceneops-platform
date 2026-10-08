@@ -7,8 +7,8 @@
 
 ## 1. System overview
 
-SceneOps is a control plane, an execution plane and a storage layer, connected
-through shared libraries under `packages/`:
+SceneOps is a control plane, an execution plane, an acquisition path and a storage
+layer, connected through shared libraries under `packages/`:
 
 ```text
 Control plane   apps/api              FastAPI: resources, Job / Pipeline create + dispatch
@@ -16,23 +16,21 @@ Control plane   apps/api              FastAPI: resources, Job / Pipeline create 
       v   Redis (Celery broker)
 Execution       apps/worker           Celery workers: PipelineOrchestrator, JobRunner, handlers
                 apps/inference-server optional GroundingDINO HTTP server (called by predict_detection)
+Acquisition     apps/streaming-bridge ROS 2 topics -> Kafka (integration adapter)
+                apps/capture          Kafka -> MCAP + capture receipt, one process per run
+                apps/publisher        MCAP + receipt -> published RobotRun objects (database-free)
       |
       v
 Storage         PostgreSQL            identity, metadata, execution state, lineage references
                 ArtifactStore         immutable bytes: recordings, manifests, reports, Parquet
 ```
 
-```text
-packages/
-  sceneops-core          domain schemas, Protocol contracts, pipeline / job definitions (no I/O)
-  sceneops-db            SQLAlchemy models, repositories, converters; Alembic migrations live in migrations/
-  sceneops-storage       ArtifactStore implementations: LocalArtifactStore, S3ArtifactStore (MinIO included)
-  sceneops-analytics     Parquet table builders, DuckDB helper, learning-data read layer, external adapters
-  sceneops-integrations  recording Publisher / reader / conformance (database-free)
-  sceneops-streaming     Kafka client and wire mapping of the TelemetryEnvelope
-ros2/                    ROS 2 streaming bridge node and run-scoped MCAP capture
-tools/                   isolated uv projects: dataset-acquisition, lerobot-integration
-```
+`apps/` holds the processes, `packages/` the reusable production code they import
+(`sceneops-core`, `-db`, `-storage`, `-streaming`, `-recording`, `-execution`,
+`-acquisition`, `-scenes`, `-episodes`, `-derived`, `-inference`, `-evaluation`,
+`-analytics`), and `tools/` the developer, CI and benchmark utilities. Apps import
+packages; packages never import apps or tools. The ownership of each directory and the
+dependency rules are in [Repository structure](./repository-structure.md).
 
 `sceneops-core` never touches a database or object store: it defines the
 `ArtifactStore` Protocol and the Pydantic schemas, and `sceneops-db` /
@@ -70,12 +68,14 @@ Batch / reference
   MCAP -> Publisher -> published RobotRun objects -> registration / reconciliation -> RobotRun
 
 Streaming
-  replay / ROS 2 -> bridge -> Kafka -> run-scoped capture -> MCAP + capture receipt
-    -> Publisher -> registration / reconciliation -> RobotRun
+  replay / ROS 2 -> apps/streaming-bridge -> Kafka -> apps/capture -> MCAP + capture receipt
+    -> apps/publisher -> registration / reconciliation -> RobotRun
 ```
 
-ROS 2, Kafka and capture are transport and acquisition concerns. Kafka is bounded
-replay, never canonical storage. Capture is one one-shot process per `robot_run_id`;
+ROS 2, Kafka and capture are transport and acquisition concerns. The producer of robot
+experience is outside SceneOps and the bridge is its integration adapter. Kafka is
+bounded replay, never canonical storage. Capture (`apps/capture`, implemented in
+`sceneops-recording`) is one one-shot process per `robot_run_id`;
 a capture that expects a lifecycle-complete run finalizes only after the run's
 `RUN_END`. Publication and registration are recoverable one-shot commands, not
 triggered by capture. See [Streaming transport](./streaming-transport.md) and
@@ -87,16 +87,19 @@ triggered by capture. See [Streaming transport](./streaming-transport.md) and
 apps/api/app/
   domains/            resource-centric domain APIs
     datasets/ scenes/ episodes/ scenarios/ robots/ inference/ evaluations/ models/
-  platform/           execution infrastructure API
-    jobs/             Job create / query, dispatch facade
-    pipelines/        PipelineRun create / query, dispatch facade, built-in definitions
-    executions/       Celery dispatch backends + ExecutionRecord service
+  platform/           execution infrastructure API (routers and dependencies; the services
+                      are in sceneops-execution)
+    jobs/             Job create / query / dispatch routes
+    pipelines/        PipelineRun create / query / dispatch routes, built-in definitions
+    executions/       ExecutionRecord routes
     artifacts/        artifact metadata query
   views/              aggregate / cross-domain APIs (leaderboards, operations)
 ```
 
 Each domain is layered `router.py` -> `service.py` -> `sceneops-db` repository,
-wired by FastAPI dependencies.
+wired by FastAPI dependencies. The Job, Pipeline and Execution services, their dispatch
+facades and the Celery dispatch backends are `sceneops-execution`; the
+`REGISTER_ROBOT_RUN` submission service is `sceneops-acquisition`.
 
 ### Transaction model
 
@@ -152,6 +155,12 @@ PipelineRun -> PipelineTaskRun -> durable Job -> asynchronous dispatch
   state: it settles the finished task's Job, applies the quality gate, or creates,
   commits and dispatches the next task's Job, then returns.
 - Handlers are registered per `JobType` in `JobHandlerRegistry`.
+- The mechanics that do not depend on the worker's context are in `sceneops-execution`:
+  ownership leases (`jobs/lease.py`), lease recovery, execution recovery, job event and
+  result recording, the pipeline quality gate and result builder, and the Celery
+  dispatcher. The domain logic the handlers call is in `sceneops-scenes`,
+  `sceneops-episodes`, `sceneops-inference`, `sceneops-evaluation` and
+  `sceneops-derived`.
 
 Details, retry semantics and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md).
 
@@ -217,6 +226,7 @@ process per run. The rationale and the superseded decisions are in
 | Scalable learning data (production layout, frozen contracts) | [scalable-learning-data.md](./scalable-learning-data.md) |
 | Dataset interoperability (adapter contract, LeRobot) | [dataset-interoperability.md](./dataset-interoperability.md) |
 | External integration runtime | [external-integration-runtime.md](./external-integration-runtime.md) |
+| Repository structure: apps, packages, tools, dependency rules | [repository-structure.md](./repository-structure.md) |
 | Streaming transport, bridge, capture, run lifecycle | [streaming-transport.md](./streaming-transport.md) |
 | Jobs, pipelines, quality gates, execution reliability | [jobs-and-pipelines.md](./jobs-and-pipelines.md) |
 | Artifact layout, URI conventions, publication | [storage-layout.md](./storage-layout.md) |
@@ -237,8 +247,9 @@ document.
 
 **SCENE** — canonical SceneManifest, registration, validate / profile / quality
 - Schema `packages/sceneops-core/sceneops_core/scenes/`; builder / registration
+  builder / validator / profiler `packages/sceneops-scenes/sceneops_scenes/`, registration
   `apps/worker/sceneops_worker/scenes/`; recording reader
-  `packages/sceneops-integrations/sceneops_integrations/recording/reader.py`
+  `packages/sceneops-recording/sceneops_recording/reader.py`
 - Pipeline definition `RECORDING_SCENE_BUILDING_PIPELINE` in
   `packages/sceneops-core/sceneops_core/pipelines/builtin.py`
 - Handlers `apps/worker/sceneops_worker/jobs/dataset/`; quality `apps/api/app/domains/scenes/quality.py`
@@ -246,8 +257,10 @@ document.
 
 **EPISODE** — build / register / validate / profile / quality
 - Pipeline definition `RECORDING_EPISODE_BUILDING_PIPELINE` (same file); builder /
-  registrar `apps/worker/sceneops_worker/episodes/`; shared recording-builder code
-  `apps/worker/sceneops_worker/recordings/`; quality `apps/api/app/domains/episodes/quality.py`
+  `packages/sceneops-episodes/sceneops_episodes/`, registration
+  `apps/worker/sceneops_worker/episodes/`; shared payload extraction
+  `packages/sceneops-recording/sceneops_recording/observations/`; quality
+  `apps/api/app/domains/episodes/quality.py`
 - Doc: [episode-domain.md](./episode-domain.md)
 
 **LEARNING DATA** — alignment, validation / profiling, columnar export, curation, native dataset
@@ -264,10 +277,10 @@ document.
   [external-integration-runtime.md](./external-integration-runtime.md)
 
 **EXECUTION** — Jobs, Pipelines, dispatch, execution records
-- API: `apps/api/app/platform/{jobs,pipelines,executions}/`
+- Services and dispatch `packages/sceneops-execution/sceneops_execution/`; API routes
+  `apps/api/app/platform/{jobs,pipelines,executions}/`
 - Worker: `apps/worker/sceneops_worker/jobs/runner.py`,
   `apps/worker/sceneops_worker/pipelines/orchestrator.py`,
-  `apps/worker/sceneops_worker/execution/dispatcher.py`,
   `apps/worker/sceneops_worker/tasks/`
 - Task / queue names `packages/sceneops-core/sceneops_core/constants/tasks.py`;
   execution key `packages/sceneops-core/sceneops_core/executions/key.py`
@@ -280,9 +293,10 @@ document.
 - Doc: [storage-layout.md](./storage-layout.md)
 
 **ACQUISITION / STREAMING**
-- `ros2/` (bridge `nodes/streaming_bridge_node.py`, capture `capture/`),
-  `packages/sceneops-streaming/`, `packages/sceneops-integrations/sceneops_integrations/recording/`,
-  `apps/api/app/domains/robots/{registration.py,reconciliation/,acquisition_status/,artifact_lifecycle/}`
+- Bridge `apps/streaming-bridge/`, capture `apps/capture/` +
+  `packages/sceneops-recording/sceneops_recording/capture/`, publisher `apps/publisher/` +
+  `packages/sceneops-recording/sceneops_recording/`, transport `packages/sceneops-streaming/`,
+  lifecycle commands `packages/sceneops-acquisition/` (run as `sceneops-worker acquisition ...`)
 - Docs: [streaming-transport.md](./streaming-transport.md),
   [robot-run-and-mcap.md](../workflows/robot-run-and-mcap.md),
   [ADR-005](../adr/005-ros2-vs-kafka-boundary.md), [ADR-008](../adr/008-acquisition-lifecycle-reliability.md)

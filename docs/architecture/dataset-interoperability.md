@@ -308,7 +308,7 @@ into PostgreSQL or MinIO.
 | `ExternalDatasetAdapter` / `ExternalDatasetWriter` | Framework-neutral export contract, orchestration, semantic-loss bookkeeping | `sceneops_analytics.external_adapters` |
 | `LeRobotDatasetAdapter` / `LeRobotDatasetWriter` | Concrete LeRobot v3 mapping/writer, fps derivation, semantic classification | `sceneops_analytics.external_adapters.lerobot` (optional, needs `tools/lerobot-integration`) |
 | Interop golden fixture | Deterministic hand-built source data + expected values for the adapter / entrypoint unit tests | `sceneops_analytics.testing.interop_dataset` |
-| LeRobot round trip | Request built in the worker image, export and read-back in the isolated container image, on a real pinned export | `scripts/e2e/lerobot_{build_request,verify_export}.py`, `compose/lerobot.yaml`, `make e2e-episode-learning` |
+| LeRobot round trip | Request built in the worker image, export and read-back in the isolated container image, on a real pinned export | `tools/e2e/lerobot_{build_request,verify_export}.py`, `compose/lerobot.yaml`, `make e2e-episode-learning` |
 | Isolated LeRobot environment | Its own `pyproject.toml`/`uv.lock`, editable path sources onto the real package code | `tools/lerobot-integration/` |
 
 ## 9. Persisted vs. runtime-only representations
@@ -360,6 +360,6 @@ Deliberate v1 boundaries, verified against the code:
 - Concrete LeRobot adapter: `packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/`
 - Interop golden fixture: `packages/sceneops-analytics/sceneops_analytics/testing/interop_dataset.py`
 - Isolated LeRobot environment: `tools/lerobot-integration/` (`pyproject.toml`, `uv.lock`, `README.md`)
-- LeRobot round trip: `scripts/e2e/e2e_episode_learning.sh`, `scripts/e2e/lerobot_build_request.py`, `scripts/e2e/lerobot_verify_export.py`, `compose/lerobot.yaml`
+- LeRobot round trip: `tools/e2e/e2e_episode_learning.sh`, `tools/e2e/lerobot_build_request.py`, `tools/e2e/lerobot_verify_export.py`, `compose/lerobot.yaml`
 - Makefile targets: `makefiles/lerobot.mk` (`lerobot-sync`/`lerobot-lock`/`lerobot-test`/`lerobot-image`), `makefiles/e2e.mk` (`e2e-episode-learning`)
 - `ExternalDatasetRef`: `packages/sceneops-core/sceneops_core/integration_runtime/external.py`

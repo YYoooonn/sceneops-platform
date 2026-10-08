@@ -1,6 +1,6 @@
 """``publish-pending`` with a fault at an exact point of a publication.
 
-The production command (``sceneops_integrations.recording.cli.main``: same
+The production command (``sceneops_publisher.cli.main``: same
 argument parsing, same ``publish_pending``, same ``publish_from_capture``, same
 S3 store) run in a process of its own, with one addition: the ArtifactStore it
 is given is wrapped so a test can kill or fail it between the two writes of a
@@ -28,7 +28,7 @@ import os
 import sys
 from pathlib import Path
 
-from sceneops_integrations.recording import cli as _cli
+from sceneops_publisher import cli as _cli
 
 _CONTROL = Path(os.environ["RECOVERY_FAULT_FILE"])
 KILL_EXIT_CODE = 137

@@ -1,0 +1,20 @@
+[project]
+name = "sceneops-derived"
+version = "0.1.0"
+description = "SceneOps derived layer storage: write-once, checksum-pinned manifests (labels, sample views, scenario sets, predictions) and run artifacts"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-storage = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_derived"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

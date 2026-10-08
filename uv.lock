@@ -16,15 +16,25 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "sceneops-acquisition",
     "sceneops-analytics",
     "sceneops-api",
+    "sceneops-capture",
     "sceneops-core",
     "sceneops-db",
+    "sceneops-derived",
+    "sceneops-episodes",
+    "sceneops-evaluation",
+    "sceneops-execution",
+    "sceneops-inference",
     "sceneops-inference-server",
-    "sceneops-integrations",
     "sceneops-platform",
+    "sceneops-publisher",
+    "sceneops-recording",
+    "sceneops-scenes",
     "sceneops-storage",
     "sceneops-streaming",
+    "sceneops-streaming-bridge",
     "sceneops-worker",
 ]
 
@@ -1520,6 +1530,29 @@ wheels = [
 ]
 
 [[package]]
+name = "sceneops-acquisition"
+version = "0.1.0"
+source = { editable = "packages/sceneops-acquisition" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sceneops-core" },
+    { name = "sceneops-db" },
+    { name = "sceneops-execution" },
+    { name = "sceneops-recording" },
+    { name = "sceneops-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-db", editable = "packages/sceneops-db" },
+    { name = "sceneops-execution", editable = "packages/sceneops-execution" },
+    { name = "sceneops-recording", editable = "packages/sceneops-recording" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+]
+
+[[package]]
 name = "sceneops-analytics"
 version = "0.1.0"
 source = { editable = "packages/sceneops-analytics" }
@@ -1559,8 +1592,10 @@ dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "sceneops-acquisition" },
     { name = "sceneops-core" },
     { name = "sceneops-db" },
+    { name = "sceneops-execution" },
     { name = "sceneops-storage" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1572,10 +1607,29 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "sceneops-acquisition", editable = "packages/sceneops-acquisition" },
     { name = "sceneops-core", editable = "packages/sceneops-core" },
     { name = "sceneops-db", editable = "packages/sceneops-db" },
+    { name = "sceneops-execution", editable = "packages/sceneops-execution" },
     { name = "sceneops-storage", editable = "packages/sceneops-storage" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
+]
+
+[[package]]
+name = "sceneops-capture"
+version = "0.1.0"
+source = { editable = "apps/capture" }
+dependencies = [
+    { name = "sceneops-core" },
+    { name = "sceneops-recording", extra = ["capture"] },
+    { name = "sceneops-streaming" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-recording", extras = ["capture"], editable = "packages/sceneops-recording" },
+    { name = "sceneops-streaming", editable = "packages/sceneops-streaming" },
 ]
 
 [[package]]
@@ -1617,6 +1671,97 @@ requires-dist = [
 ]
 
 [[package]]
+name = "sceneops-derived"
+version = "0.1.0"
+source = { editable = "packages/sceneops-derived" }
+dependencies = [
+    { name = "sceneops-core" },
+    { name = "sceneops-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+]
+
+[[package]]
+name = "sceneops-episodes"
+version = "0.1.0"
+source = { editable = "packages/sceneops-episodes" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sceneops-core" },
+    { name = "sceneops-recording" },
+    { name = "sceneops-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-recording", editable = "packages/sceneops-recording" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+]
+
+[[package]]
+name = "sceneops-evaluation"
+version = "0.1.0"
+source = { editable = "packages/sceneops-evaluation" }
+dependencies = [
+    { name = "sceneops-core" },
+    { name = "sceneops-derived" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-derived", editable = "packages/sceneops-derived" },
+]
+
+[[package]]
+name = "sceneops-execution"
+version = "0.1.0"
+source = { editable = "packages/sceneops-execution" }
+dependencies = [
+    { name = "celery", extra = ["redis"] },
+    { name = "pydantic" },
+    { name = "sceneops-core" },
+    { name = "sceneops-db" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "celery", extras = ["redis"], specifier = ">=5.4" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-db", editable = "packages/sceneops-db" },
+]
+
+[[package]]
+name = "sceneops-inference"
+version = "0.1.0"
+source = { editable = "packages/sceneops-inference" }
+dependencies = [
+    { name = "httpx" },
+    { name = "numpy" },
+    { name = "sceneops-core" },
+    { name = "sceneops-derived" },
+    { name = "sceneops-storage" },
+    { name = "scikit-learn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "numpy", specifier = ">=1.24" },
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-derived", editable = "packages/sceneops-derived" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+    { name = "scikit-learn", specifier = ">=1.3" },
+]
+
+[[package]]
 name = "sceneops-inference-server"
 version = "0.1.0"
 source = { editable = "apps/inference-server" }
@@ -1638,25 +1783,6 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "torch", specifier = ">=2.1" },
     { name = "transformers", specifier = ">=4.39" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
-]
-
-[[package]]
-name = "sceneops-integrations"
-version = "0.1.0"
-source = { editable = "packages/sceneops-integrations" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "sceneops-core" },
-    { name = "sceneops-storage" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "sceneops-core", editable = "packages/sceneops-core" },
-    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 
@@ -1685,6 +1811,72 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
+name = "sceneops-publisher"
+version = "0.1.0"
+source = { editable = "apps/publisher" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "sceneops-core" },
+    { name = "sceneops-recording" },
+    { name = "sceneops-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-recording", editable = "packages/sceneops-recording" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+]
+
+[[package]]
+name = "sceneops-recording"
+version = "0.1.0"
+source = { editable = "packages/sceneops-recording" }
+dependencies = [
+    { name = "mcap" },
+    { name = "mcap-ros2-support" },
+    { name = "sceneops-core" },
+    { name = "sceneops-storage" },
+]
+
+[package.optional-dependencies]
+capture = [
+    { name = "sceneops-streaming" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcap", specifier = ">=1.4" },
+    { name = "mcap-ros2-support", specifier = ">=0.5" },
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+    { name = "sceneops-streaming", marker = "extra == 'capture'", editable = "packages/sceneops-streaming" },
+]
+provides-extras = ["capture"]
+
+[[package]]
+name = "sceneops-scenes"
+version = "0.1.0"
+source = { editable = "packages/sceneops-scenes" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sceneops-core" },
+    { name = "sceneops-recording" },
+    { name = "sceneops-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-recording", editable = "packages/sceneops-recording" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
 ]
 
 [[package]]
@@ -1724,41 +1916,64 @@ requires-dist = [
 ]
 
 [[package]]
+name = "sceneops-streaming-bridge"
+version = "0.1.0"
+source = { editable = "apps/streaming-bridge" }
+dependencies = [
+    { name = "sceneops-core" },
+    { name = "sceneops-streaming" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-streaming", editable = "packages/sceneops-streaming" },
+]
+
+[[package]]
 name = "sceneops-worker"
 version = "0.1.0"
 source = { editable = "apps/worker" }
 dependencies = [
     { name = "celery", extra = ["redis"] },
-    { name = "httpx" },
     { name = "mcap" },
     { name = "mcap-ros2-support" },
-    { name = "numpy" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "sceneops-acquisition" },
     { name = "sceneops-analytics" },
     { name = "sceneops-core" },
     { name = "sceneops-db" },
-    { name = "sceneops-integrations" },
+    { name = "sceneops-derived" },
+    { name = "sceneops-episodes" },
+    { name = "sceneops-evaluation" },
+    { name = "sceneops-execution" },
+    { name = "sceneops-inference" },
+    { name = "sceneops-recording" },
+    { name = "sceneops-scenes" },
     { name = "sceneops-storage" },
-    { name = "scikit-learn" },
     { name = "typer" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "celery", extras = ["redis"], specifier = ">=5.4" },
-    { name = "httpx", specifier = ">=0.27" },
     { name = "mcap", specifier = ">=1.4" },
     { name = "mcap-ros2-support", specifier = ">=0.5" },
-    { name = "numpy", specifier = ">=1.24" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "sceneops-acquisition", editable = "packages/sceneops-acquisition" },
     { name = "sceneops-analytics", editable = "packages/sceneops-analytics" },
     { name = "sceneops-core", editable = "packages/sceneops-core" },
     { name = "sceneops-db", editable = "packages/sceneops-db" },
-    { name = "sceneops-integrations", editable = "packages/sceneops-integrations" },
+    { name = "sceneops-derived", editable = "packages/sceneops-derived" },
+    { name = "sceneops-episodes", editable = "packages/sceneops-episodes" },
+    { name = "sceneops-evaluation", editable = "packages/sceneops-evaluation" },
+    { name = "sceneops-execution", editable = "packages/sceneops-execution" },
+    { name = "sceneops-inference", editable = "packages/sceneops-inference" },
+    { name = "sceneops-recording", editable = "packages/sceneops-recording" },
+    { name = "sceneops-scenes", editable = "packages/sceneops-scenes" },
     { name = "sceneops-storage", editable = "packages/sceneops-storage" },
-    { name = "scikit-learn", specifier = ">=1.3" },
     { name = "typer", specifier = ">=0.12" },
 ]
 

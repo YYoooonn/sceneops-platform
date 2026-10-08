@@ -18,7 +18,7 @@ dev = [
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 pythonpath = ["tests/infrastructure"]
-testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests", "packages/sceneops-core/tests", "packages/sceneops-integrations/tests", "packages/sceneops-streaming/tests"]
+testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests", "packages/sceneops-acquisition/tests", "packages/sceneops-core/tests", "packages/sceneops-derived/tests", "packages/sceneops-episodes/tests", "packages/sceneops-evaluation/tests", "packages/sceneops-execution/tests", "packages/sceneops-inference/tests", "packages/sceneops-scenes/tests", "packages/sceneops-recording/tests", "packages/sceneops-streaming/tests"]
 
 [tool.uv]
 package = false
@@ -29,10 +29,20 @@ members = [
   "packages/sceneops-db",
   "packages/sceneops-storage",
   "packages/sceneops-analytics",
-  "packages/sceneops-integrations",
+  "packages/sceneops-recording",
+  "packages/sceneops-execution",
+  "packages/sceneops-acquisition",
+  "packages/sceneops-scenes",
+  "packages/sceneops-episodes",
+  "packages/sceneops-derived",
+  "packages/sceneops-inference",
+  "packages/sceneops-evaluation",
   "packages/sceneops-streaming",
   "apps/api",
   "apps/worker",
+  "apps/capture",
+  "apps/publisher",
+  "apps/streaming-bridge",
   "apps/inference-server",
 ]
 
@@ -41,7 +51,17 @@ sceneops-core = { workspace = true }
 sceneops-db = { workspace = true }
 sceneops-storage = { workspace = true }
 sceneops-analytics = { workspace = true }
-sceneops-integrations = { workspace = true }
+sceneops-recording = { workspace = true }
+sceneops-execution = { workspace = true }
+sceneops-acquisition = { workspace = true }
+sceneops-scenes = { workspace = true }
+sceneops-episodes = { workspace = true }
+sceneops-derived = { workspace = true }
+sceneops-inference = { workspace = true }
+sceneops-evaluation = { workspace = true }
 sceneops-streaming = { workspace = true }
 sceneops-api = { workspace = true }
 sceneops-worker = { workspace = true }
+sceneops-capture = { workspace = true }
+sceneops-publisher = { workspace = true }
+sceneops-streaming-bridge = { workspace = true }

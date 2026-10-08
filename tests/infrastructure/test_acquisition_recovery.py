@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.domains.robots.reconciliation import (
+from sceneops_acquisition.reconciliation import (
     AcquisitionState as S,
     RecoveryActionKind,
     RecoveryOutcome,
@@ -41,14 +41,14 @@ from app.domains.robots.reconciliation import (
     reconcile_and_recover,
     reconcile_once,
 )
-from app.domains.robots.reconciliation.cli import build_registration_submitter
+from sceneops_worker.cli.acquisition.reconcile import build_registration_submitter
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.robots.manifest import (
     load_canonical_robot_run_manifest,
 )
-from sceneops_core.robots.registration_failures import JOB_ABANDONED_ERROR_TYPE
+from sceneops_acquisition.registration_failures import JOB_ABANDONED_ERROR_TYPE
 from sceneops_db.session import get_async_sessionmaker
-from sceneops_integrations.recording import publish_pending
+from sceneops_recording import publish_pending
 
 from recovery_support import (
     FIXTURE_MCAP,
@@ -98,7 +98,7 @@ async def recover(env, *, now=None, policy=None, apply=True):
         artifact_store=env.store(),
         root_uri=env.robot_run_root,
         registration_facts=postgres_registration_facts(sessionmaker),
-        submitter=build_registration_submitter(env.api_settings()),
+        submitter=build_registration_submitter(env.worker_settings()),
         jobs=PostgresStalledJobControl(sessionmaker),
         policy=policy or _policy(),
         now=now,
@@ -150,7 +150,7 @@ async def test_finalized_capture_to_registered_runs_through_the_one_shot_command
             [
                 sys.executable,
                 "-m",
-                "sceneops_integrations.recording",
+                "sceneops_publisher",
                 "publish-pending",
                 "--capture-root",
                 str(capture_root),
@@ -168,14 +168,16 @@ async def test_finalized_capture_to_registered_runs_through_the_one_shot_command
             [
                 sys.executable,
                 "-m",
-                "app.domains.robots.reconciliation",
+                "sceneops_worker.main",
+                "acquisition",
+                "reconcile",
                 "--once",
                 "--apply",
             ],
             capture_output=True,
             text=True,
             env=reconciler_env,
-            cwd=str(REPO_ROOT / "apps" / "api"),
+            cwd=str(REPO_ROOT / "apps" / "worker"),
         )
         assert proc.returncode == 0, proc.stderr
         return json.loads(proc.stdout)
@@ -423,7 +425,7 @@ async def test_transient_failures_share_one_budget_across_replacement_jobs(env):
 
         # An operator's forced submission is outside the budget.
         env.clear_faults()
-        service = build_registration_submitter(env.api_settings())
+        service = build_registration_submitter(env.worker_settings())
         await service.submit(exhausts.manifest_uri, force=True)
         await async_wait_until(lambda: registered(exhausts.run_id), timeout=60)
     assert [j.status for j in await jobs_of(exhausts.run_id)] == ["failed"] * 3 + [
@@ -526,7 +528,7 @@ async def test_concurrent_passes_converge_on_one_registration_per_acquisition(en
     policy = _policy(stall_threshold=timedelta(seconds=10))
 
     # One acquisition has a Job nobody will run (no worker is up yet).
-    submitter = build_registration_submitter(env.api_settings())
+    submitter = build_registration_submitter(env.worker_settings())
     (stalled_job,) = [(await submitter.submit(stalled.manifest_uri)).job]
     await asyncio.sleep(11)  # past the stall threshold, for real
 

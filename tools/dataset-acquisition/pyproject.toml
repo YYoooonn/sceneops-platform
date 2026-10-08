@@ -23,8 +23,8 @@ dev = [
 
 # Dependency-isolated by design (ADR-007 §29.13, I-36): this project depends
 # on dataset SDKs, MCAP and ROS 2 message serialization only -- never on a
-# SceneOps package (sceneops-core, -db, -storage, -streaming, -integrations,
-# apps). It is not a member of the root uv workspace and has its own uv.lock.
+# SceneOps package (sceneops-core, -db, -storage, -streaming, -recording,
+# -execution, -acquisition, the domain packages, apps). It is not a member of the root uv workspace and has its own uv.lock.
 # Its only output is a local MCAP; publication and registration happen
 # afterwards through the platform's Recording Publisher and
 # REGISTER_ROBOT_RUN. tests/test_import_boundary.py enforces the boundary.

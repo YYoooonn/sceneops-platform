@@ -7,7 +7,8 @@ current subsystem document and ends with a source-of-truth map into the code.
 architecture/   how the system works now (current implementation only)
 workflows/      end-to-end data flows as implemented (robot ingestion)
 development/    running it locally, commands, the test surface, the reference environment
-adr/            architecture decision records: why a decision was made
+adr/            architecture decision records: why a decision was made (README.md maps
+                the paths they cite to the current layout)
 history/        point-in-time studies and benchmarks; evidence, not current truth
 ```
 

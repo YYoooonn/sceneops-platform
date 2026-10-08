@@ -46,13 +46,13 @@ from sceneops_core.pipelines.schemas import (
     PipelineTaskRunStatus,
 )
 from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.execution.dispatcher import ExecutionDispatcher
-from sceneops_worker.jobs.events import JobEventPublisher
-from sceneops_worker.pipelines.errors import PipelineQualityBlocked
+from sceneops_execution.executions.dispatcher import ExecutionDispatcher
+from sceneops_execution.jobs.events import JobEventPublisher
+from sceneops_execution.pipelines.errors import PipelineQualityBlocked
 from sceneops_worker.pipelines.input_resolver import PipelineInputResolver
 from sceneops_worker.pipelines.planning import PipelineJobPlanner
-from sceneops_worker.pipelines.quality_gate import PipelineQualityGate
-from sceneops_worker.pipelines.result_builder import (
+from sceneops_execution.pipelines.quality_gate import PipelineQualityGate
+from sceneops_execution.pipelines.result_builder import (
     build_pipeline_result_from_task_runs,
 )
 from sceneops_worker.pipelines.result_recorder import PipelineTaskResultRecorder

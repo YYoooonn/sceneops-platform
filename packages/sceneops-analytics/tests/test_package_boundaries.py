@@ -2,7 +2,7 @@
 is a production package (the columnar analytics export layer) and must
 never depend on sceneops-db -- that dependency existed for exactly one
 reason (the E2E fixture bootstrap's Postgres repository usage), and that
-code now lives in scripts/e2e/e2e_fixture_bootstrap.py instead.
+code now lives in tools/e2e/e2e_fixture_bootstrap.py instead.
 
 Importing sceneops_analytics (including its sceneops_analytics.testing
 submodule, which is still test-support code but must stay DB-free) must

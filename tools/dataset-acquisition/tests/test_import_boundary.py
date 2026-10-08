@@ -66,7 +66,7 @@ def test_tool_environment_cannot_import_sceneops() -> None:
         "import dataset_acquisition.cli, dataset_acquisition.nuscenes\n"
         "loaded = sorted(m for m in sys.modules if m.startswith('sceneops'))\n"
         "available = [m for m in ('sceneops_core', 'sceneops_db', 'sceneops_storage',\n"
-        "             'sceneops_streaming', 'sceneops_integrations', 'sceneops_worker',\n"
+        "             'sceneops_streaming', 'sceneops_recording', 'sceneops_worker',\n"
         "             'sceneops_api') if importlib.util.find_spec(m)]\n"
         "assert not loaded and not available, (loaded, available)\n"
     )

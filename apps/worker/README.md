@@ -5,18 +5,24 @@ durable Pipeline state; it never runs a Pipeline inline.
 
 ```text
 sceneops_worker/
+  celery_app.py # the Celery app, its worker lifecycle hooks, the execution dispatcher over it
   tasks/        # Celery tasks: run_job_task (job queue), advance_pipeline_task (pipeline queue)
   jobs/         # JobRunner (sole entry point for a Job), handler registry and handlers
   pipelines/    # PipelineOrchestrator: one short, repeatable step over durable pipeline state
-  execution/    # ExecutionDispatcher: the two messages a worker sends (dispatch a Job, advance a run)
   core/         # WorkerContext and dependency wiring
-  runtime/      # async runtime helper for Celery's synchronous task entry points
   stores/       # persistence ports over sceneops-db
-  scenes/ episodes/ recordings/ robots/   # canonical building, registration and recording resolution
-  derived/      # content-pinned publication of derived artifacts (labels, views, manifests)
-  runs/ inference/ evaluation/            # run artifacts, prediction and evaluation logic
-  cli/          # `sceneops-worker jobs run`, `sceneops-worker pipelines advance`
+  runtime/      # async runtime helper for Celery's synchronous task entry points
+  scenes/ episodes/ robots/ recordings/ derived/ inference/
+                # registration, resolution and publication use cases that run on a WorkerContext
+  cli/          # `sceneops-worker jobs | pipelines | recover | execution-status | acquisition ...`
 ```
 
-See [`docs/architecture/jobs-and-pipelines.md`](../../docs/architecture/jobs-and-pipelines.md)
+What is not here: lease and recovery mechanics, Job / Pipeline services
+(`sceneops-execution`), acquisition reconciliation (`sceneops-acquisition`), and the
+Scene, Episode, derived-storage, inference and evaluation logic the handlers call
+(`sceneops-scenes`, `-episodes`, `-derived`, `-inference`, `-evaluation`). The worker keeps
+what takes a `WorkerContext`.
+
+See [`docs/architecture/repository-structure.md`](../../docs/architecture/repository-structure.md)
+for the boundaries and [`docs/architecture/jobs-and-pipelines.md`](../../docs/architecture/jobs-and-pipelines.md)
 for the execution model.

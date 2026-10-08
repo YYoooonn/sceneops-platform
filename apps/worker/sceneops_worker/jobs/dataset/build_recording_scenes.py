@@ -39,7 +39,7 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.scenes.schemas import scene_id_for
-from sceneops_integrations.recording import check_l1_recording
+from sceneops_recording import check_l1_recording
 
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
@@ -48,7 +48,7 @@ from sceneops_worker.recordings.artifact_records import (
     require_same_artifact as _require_same,
 )
 from sceneops_worker.robots.resolver import resolve_recording
-from sceneops_worker.scenes.recording_builder import (
+from sceneops_scenes.recording_builder import (
     PlannedPayload,
     RecordingRevision,
     RecordingSceneBuildError,

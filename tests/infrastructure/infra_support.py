@@ -9,7 +9,7 @@ concurrent registration, and every pipeline task running as a Job on the job wor
 
 The pipelines need a registered RobotRun. The runtime starts empty, so the suite's
 `baseline` fixture seeds the one it consumes: the golden reference contract's Recording
-Import RobotRun (`scripts/canonical/canonical_bootstrap.sh`, create-or-verify; the
+Import RobotRun (`tools/baselines/canonical/canonical_bootstrap.sh`, create-or-verify; the
 smoke-1 selection, scene-0061, unless REFERENCE_SCOPE says otherwise), published from
 the locked recording into the disposable bucket. `baseline_run` takes one of them and
 the tests build into DatasetVersions they own: the reference environment is never read

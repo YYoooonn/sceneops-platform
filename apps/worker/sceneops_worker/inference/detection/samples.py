@@ -16,8 +16,8 @@ from sceneops_core.sample_views import SceneSampleResolver, SceneSampleViewManif
 
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.resolution import ResolvedView, resolve_label_set
-from sceneops_worker.inference.detection.base import DetectionSampleInput
-from sceneops_worker.inference.detection.uris import normalize_image_uri
+from sceneops_inference.detection.base import DetectionSampleInput
+from sceneops_inference.detection.uris import normalize_image_uri
 from sceneops_worker.recordings.payload_refs import ArtifactPayloadLocator
 
 

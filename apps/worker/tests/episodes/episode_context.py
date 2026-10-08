@@ -19,8 +19,8 @@ from sceneops_core.episodes.schemas import (
 from sceneops_core.episodes.testing import action, episode_manifest, observation, state
 from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
 
-from sceneops_worker.derived import DerivedManifestStore
-from sceneops_worker.episodes.artifacts import EpisodeManifestIntegrityError
+from sceneops_derived import DerivedManifestStore
+from sceneops_episodes.artifacts import EpisodeManifestIntegrityError
 
 S = 1_000_000_000
 

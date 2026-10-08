@@ -97,10 +97,10 @@ The Compose project is named `sceneops` (set via `name:` in `compose.yaml`)
 and `compose.yaml` at the repo root is the canonical entrypoint, so plain
 `docker compose ...` (no `-f`) resolves it via normal discovery from the
 repo root — that's what `$(COMPOSE)` in the Makefile and the scripts under
-`scripts/` rely on.
+`tools/` rely on.
 
 `minio` is intentionally **not** profile-gated, unlike `inference`/
-`ros2`/`gpu`/`debug` — it's required infrastructure (the artifact
+`streaming`/`gpu`/`debug` — it's required infrastructure (the artifact
 store backend), not an optional extra, so `api`/`worker-*` can
 `depends_on: minio: condition: service_healthy` directly, and a plain
 `docker compose down -v` actually reaches `minio-data`.
@@ -121,18 +121,23 @@ make e2e-cleanroom                 the acceptance of reconstruction (DESTRUCTIVE
 make check-commands                the command surface is consistent (no pytest, no stack)
 ```
 
-- `make test` runs each unit suite in its own pytest process (`apps/worker`,
-  `apps/api`, `apps/inference-server`, `packages/sceneops-{core,analytics,
-  integrations,streaming}`): several suites ship their own test-package `__init__.py`
-  and conftest, which pytest cannot register together. Every `inference-server`
+- `make test` first runs `make check-boundaries` (the static dependency-direction check
+  of [Repository structure](../architecture/repository-structure.md)), then each unit
+  suite in its own pytest process (`apps/{worker,api,inference-server,publisher}`,
+  `packages/sceneops-{core,streaming,recording,execution,acquisition,scenes,episodes,
+  inference,evaluation,analytics}`, `tools/{checks,reference,e2e}`,
+  `tests/infrastructure/unit`): several suites ship their own test-package `__init__.py`
+  and conftest, which pytest cannot register together. The ROS 2 suites do not run here
+  (see `make streaming-test`). Every `inference-server`
   test mocks `GroundingDinoModel`/`ImageResolver` — none needs a GPU, model
   weights or a running inference server.
 - `make test-integration` covers `packages/sceneops-db/tests` (real Postgres,
   including a check that the migrated schema has no column the models dropped),
   `packages/sceneops-storage/tests` (real MinIO), and every module named
-  `*_integration.py` under `apps/worker/tests`, `packages/sceneops-analytics/tests`
-  and `apps/api/tests` (registrars, reconciliation, recording Scene / Episode and
-  derived verticals, selective Parquet reads, the API request transaction) against both. A new `*_integration.py` is picked up without
+  `*_integration.py` under `apps/worker/tests`, `packages/sceneops-analytics/tests`,
+  `packages/sceneops-execution/tests` and `apps/api/tests` (registrars, reconciliation,
+  recording Scene / Episode and derived verticals, selective Parquet reads, job dispatch
+  concurrency, the API request transaction) against both. A new `*_integration.py` is picked up without
   editing the Makefile; `make test` collects the same files but they skip without
   `SCENEOPS_DATABASE_URL` / `MINIO_ENDPOINT_URL`. The real-infrastructure commands run
   with `-p require_infrastructure` (`tests/infrastructure/require_infrastructure.py`):
@@ -170,14 +175,15 @@ make check-commands                the command surface is consistent (no pytest,
     own, so killing, pausing or starving a worker or stopping the broker never touches the
     dev stack. Each test uses its own MinIO RobotRun root and `rec124-` / `job-lease-` /
     `job-lost-` rows; the database and bucket are dropped as a whole. The production
-    commands run as subprocesses (`publish-pending`, `reconcile --once --apply`,
-    `acquisition_status`, `sceneops-worker recover`); only `recovery_worker`,
+    commands run as subprocesses (`python -m sceneops_publisher publish-pending`,
+    `sceneops-worker acquisition reconcile --once --apply`,
+    `sceneops-worker acquisition status`, `sceneops-worker recover`); only `recovery_worker`,
     `recovery_publisher`, `lease_worker` (a probe handler for one Job type, 2 s leases)
     and `dispatch_worker` (probe handlers for every Job type, failable sends) add a fault
     point. It needs no canonical baseline. The suites share one harness (`tests/infrastructure/recovery_support.py`);
     `RECOVERY_TESTS=<path>` runs one module.
-  - `kafka` runs the ROS 2 bridge and capture tests in the `ros2` image (real-Kafka
-    integration included) and then the transport smoke, which publishes a deterministic
+  - `kafka` runs the ROS 2 bridge and capture tests in the `streaming-bridge` and `capture`
+    images (real-Kafka integration included, `make streaming-test`) and then the transport smoke, which publishes a deterministic
     sequence and verifies envelope recovery, per-RobotRun ordering and partitioning. It needs
     `make streaming-up` and creates no domain data.
   - `boundaries` runs the isolation boundaries: the dataset-acquisition tool's tests,
@@ -288,10 +294,11 @@ SceneOps contract, and a green result proves nothing about correctness. Correctn
 | `make check-celery` | Redis answers and both Celery workers reply to `inspect ping` |
 | `make check-runtime-boundary` | no normal runtime service mounts the raw dataset (also part of `SUITE=boundaries`) |
 | `make check-inference-server` / `check-inference-server-ready` | the inference server is alive / has loaded its model |
-| `make ros2-check` | `rclpy` and the MCAP storage plugin exist in the `ros2` image |
+| `make check-boundaries` | apps import packages, packages never import apps or tools, the package layering is acyclic (static; part of `make test`) |
+| `make bridge-check` / `bridge-shell` | `rclpy` and the MCAP storage plugin exist in the `streaming-bridge` image / open a shell in it |
 | `make api-health` / `api-openapi` / `show-runs` / `show-pipeline` / `show-job-events` | the API answers; a run, pipeline or job as the API reports it |
 | `make worker-run-job JOB_ID=…` / `worker-advance-pipeline PIPELINE_RUN_ID=…` | run one Job through `JobRunner`, or take one `PipelineOrchestrator` step, by hand through the worker CLI (`sceneops-worker jobs run`, `sceneops-worker pipelines advance`) |
-| `make reconcile-once` / `reconcile-apply` / `artifact-lifecycle-once` / `acquisition-status` | one acquisition-reconciliation pass; read-only lifecycle and status reports ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)) |
+| `make reconcile-once` / `reconcile-apply` / `artifact-lifecycle-once` / `acquisition-status` | one acquisition-reconciliation pass; read-only lifecycle and status reports ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)); these run `sceneops-worker acquisition reconcile / artifact-lifecycle / status` in the `worker-jobs` container |
 | `make disk-report` | disk headroom and what could be reclaimed (below) |
 
 `make check-commands` is different in kind: it is static, needs no stack, and is part of how
@@ -299,7 +306,7 @@ the command surface itself is kept consistent.
 
 ## Benchmarks
 
-The scripts under [`benchmarks/`](../../benchmarks/README.md) measure one workload on one
+The scripts under [`tools/benchmarks/`](../../tools/benchmarks/README.md) measure one workload on one
 machine and assert nothing. No make target runs one and none is acceptance; their results
 are recorded as point-in-time evidence next to the decision they informed.
 
@@ -321,7 +328,7 @@ what Docker could reclaim. Reclaim in this order, stopping when there is room:
 | Docker build cache | yes; the next image build is slower | `docker builder prune` (`--filter until=168h` keeps the recent layers) |
 | Generated `./data` output, Python caches | yes; `data/raw` and `data/reference` are untouched | `make clean-artifacts`, `make clean-python` |
 | `cache/hf` (model weights) | yes if no inference server is used; re-downloaded on next use | `rm -rf cache/hf/*` |
-| Unused images (`docker image prune -a`) | **costly, not unsafe**: it also removes the opt-in `ros2`, `dataset-replay`, `dataset-acquisition`, and `lerobot-integration` images, which the journeys and the contract bootstrap rebuild (GBs of build time) | only when the room is needed |
+| Unused images (`docker image prune -a`) | **costly, not unsafe**: it also removes the opt-in `streaming-bridge`, `capture`, `dataset-replay`, `dataset-acquisition`, and `lerobot-integration` images, which the journeys and the contract bootstrap rebuild (GBs of build time) | only when the room is needed |
 | Kafka log | not selectively. The telemetry topic reports `retention.ms` = 7 days and 1 GiB segments (the repository sets neither): the broker deletes rolled segments once their newest record is that old, so the log drains by itself after the last streamed run. Every streamed run owns its offset range and a capture can only resume from what the topic still holds, so truncating by hand is not supported | wait, or `make local-reset` |
 | Acquisition scratch (`sceneops_acquisition-recordings`) | transient MCAPs are removed once their recording is provably registered; a capture that is not provably published is kept on purpose and is recovered with `publish-pending` / `reconcile`, not deleted | `make acquisition-status` |
 

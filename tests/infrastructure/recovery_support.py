@@ -26,7 +26,6 @@ code), the production-command runners and the fault points are the same.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import io
 import json
 import os
@@ -48,7 +47,7 @@ from sqlalchemy import text
 
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.config import ArtifactSettings, CelerySettings, ExecutionSettings
-from sceneops_core.robots.capture_receipt import (
+from sceneops_recording.capture_receipt import (
     CaptureReceipt,
     FinalizationReason,
     ReceiptFinalization,
@@ -62,8 +61,11 @@ from sceneops_core.robots.manifest import (
     RecordingFormat,
 )
 from sceneops_db.session import dispose_async_engine, get_async_sessionmaker
-from sceneops_integrations.recording import derive_mcap_facts
-from sceneops_integrations.recording.publisher import publish_recording_bytes
+from sceneops_recording import derive_mcap_facts
+# Capture's durability protocol (receipt written before the atomic rename).
+from sceneops_recording.capture import finalize as _capture_finalize
+from sceneops_recording.capture import receipt_io as _capture_receipt
+from sceneops_recording.publisher import publish_recording_bytes
 from sceneops_storage import create_artifact_store
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -212,10 +214,10 @@ class RecoveryEnv:
     def store(self):
         return create_artifact_store(self.artifact)
 
-    def api_settings(self):
-        from app.config import ApiSettings
+    def worker_settings(self):
+        from sceneops_worker.config import WorkerSettings
 
-        return ApiSettings(
+        return WorkerSettings(
             artifact=self.artifact,
             execution=ExecutionSettings(
                 celery=CelerySettings(
@@ -258,16 +260,16 @@ class RecoveryEnv:
         art = self.artifact
         return {
             **os.environ,
-            "SCENEOPS_API_ARTIFACT__BACKEND": "minio",
-            "SCENEOPS_API_ARTIFACT__ROOT_URI": art.root_uri,
-            "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": art.endpoint_url,
-            "SCENEOPS_API_ARTIFACT__REGION": art.region,
-            "SCENEOPS_API_ARTIFACT__ACCESS_KEY_ID": art.access_key_id,
-            "SCENEOPS_API_ARTIFACT__SECRET_ACCESS_KEY": art.secret_access_key,
-            "SCENEOPS_API_EXECUTION__CELERY__BROKER_URL": self.redis.url,
-            "SCENEOPS_API_EXECUTION__CELERY__RESULT_BACKEND": self.redis.result_url,
-            "SCENEOPS_API_EXECUTION__CELERY__JOB_QUEUE": self.queue,
-            "SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS": str(
+            "SCENEOPS_WORKER_ARTIFACT__BACKEND": "minio",
+            "SCENEOPS_WORKER_ARTIFACT__ROOT_URI": art.root_uri,
+            "SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL": art.endpoint_url,
+            "SCENEOPS_WORKER_ARTIFACT__REGION": art.region,
+            "SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID": art.access_key_id,
+            "SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY": art.secret_access_key,
+            "SCENEOPS_WORKER_EXECUTION__CELERY__BROKER_URL": self.redis.url,
+            "SCENEOPS_WORKER_EXECUTION__CELERY__RESULT_BACKEND": self.redis.result_url,
+            "SCENEOPS_WORKER_EXECUTION__CELERY__JOB_QUEUE": self.queue,
+            "SCENEOPS_WORKER_RECONCILER__STALL_THRESHOLD_SECONDS": str(
                 stall_threshold_seconds
             ),
         }
@@ -568,22 +570,6 @@ def clean_faults_and_queue(env):
 
 
 # ── captures, built by Capture's own finalize and receipt code ───────────────
-
-
-def _load_capture_module(name: str):
-    """``ros2/capture/<name>.py`` under a private module name: Capture's
-    durability protocol (receipt written before the atomic rename), imported
-    without putting its flat module namespace on ``sys.path``."""
-    path = REPO_ROOT / "ros2" / "capture" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(f"_sceneops_capture_{name}", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_capture_finalize = _load_capture_module("finalize")
-_capture_receipt = _load_capture_module("receipt")
 
 
 def _capture_receipt_for(run_id: str, robot_id: str, data: bytes) -> CaptureReceipt:

@@ -19,7 +19,7 @@ from sceneops_core.episodes.alignment import (
 )
 from sceneops_core.jobs.schemas import AlignEpisodeJobParams, JobType
 from sceneops_core.jobs.schemas.params import EpisodeAlignmentInput
-from sceneops_worker.episodes.artifacts import (
+from sceneops_episodes.artifacts import (
     EpisodeArtifactWriteResult,
     EpisodeManifestIntegrityError,
 )

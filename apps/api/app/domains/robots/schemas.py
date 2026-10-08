@@ -3,8 +3,6 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
-from sceneops_core.executions.schemas import ExecutionDispatchResult
-from sceneops_core.jobs.schemas.manifests import JobManifest
 from sceneops_core.robots.schemas import (
     MissionRecord,
     RobotRecord,
@@ -41,13 +39,6 @@ class RegisterRobotRunRequest(SceneOpsBaseModel):
     references before registering anything."""
 
     manifest_uri: str = Field(min_length=1)
-
-
-class RegisterRobotRunResponse(SceneOpsBaseModel):
-    job: JobManifest
-    # None when an equivalent job already exists and was not re-dispatched
-    # (job dedup by execution key; see JobService.create_job).
-    execution: ExecutionDispatchResult | None = None
 
 
 class RobotRunDetailResponse(SceneOpsBaseModel):

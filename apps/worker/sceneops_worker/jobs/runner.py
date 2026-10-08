@@ -9,11 +9,11 @@ from pydantic import ValidationError
 from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.jobs.schemas import JobManifest, JobStatus
 from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.execution.dispatcher import ExecutionDispatcher
+from sceneops_execution.executions.dispatcher import ExecutionDispatcher
 from sceneops_worker.jobs.base import JobHandlerRequest
-from sceneops_worker.jobs.events import JobEventPublisher
-from sceneops_worker.jobs.execution import JobExecution
-from sceneops_worker.jobs.lease import (
+from sceneops_execution.jobs.events import JobEventPublisher
+from sceneops_execution.jobs.execution import JobExecution
+from sceneops_execution.jobs.lease import (
     JobLeaseKeeper,
     LeaseRenewal,
     PostgresLeaseRenewal,
@@ -22,7 +22,7 @@ from sceneops_worker.jobs.registry import (
     JobHandlerRegistry,
     create_default_job_handler_registry,
 )
-from sceneops_worker.jobs.result_recorder import JobResultRecorder
+from sceneops_execution.jobs.result_recorder import JobResultRecorder
 
 logger = logging.getLogger(__name__)
 

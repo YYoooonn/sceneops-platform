@@ -1,0 +1,23 @@
+[project]
+name = "sceneops-episodes"
+version = "0.1.0"
+description = "SceneOps Episode domain: Episode building from recordings, validation, profiling and Episode artifact storage"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+  "sceneops-recording",
+  "pydantic>=2.0.0",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-storage = { workspace = true }
+sceneops-recording = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_episodes"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

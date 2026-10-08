@@ -1,13 +1,1 @@
-"""Storage and revision plumbing for derived (L3) manifests (ADR-007 §33.1)."""
-
-from .manifests import (
-    DerivedManifestConflictError,
-    DerivedManifestIntegrityError,
-    DerivedManifestStore,
-)
-
-__all__ = [
-    "DerivedManifestConflictError",
-    "DerivedManifestIntegrityError",
-    "DerivedManifestStore",
-]
+"""Publication and resolution of derived manifests through the worker context."""

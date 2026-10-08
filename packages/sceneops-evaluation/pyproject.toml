@@ -1,0 +1,20 @@
+[project]
+name = "sceneops-evaluation"
+version = "0.1.0"
+description = "SceneOps detection evaluation: matching, metric accumulation and evaluation artifacts"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-derived",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-derived = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_evaluation"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

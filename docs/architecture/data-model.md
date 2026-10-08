@@ -221,7 +221,7 @@ recording the database-free Recording Publisher already published:
 
 ```text
 finalized local MCAP
-  -> Recording Publisher (sceneops_integrations.recording, no DB)
+  -> Recording Publisher (sceneops_recording, no DB)
        {robot_run_root}/{run_id}/recording.mcap             write-once
        {robot_run_root}/{run_id}/robot_run_manifest.json    canonical RobotRunManifest v1, written last
   -> POST /robot-runs:register {manifest_uri}  ->  REGISTER_ROBOT_RUN Job

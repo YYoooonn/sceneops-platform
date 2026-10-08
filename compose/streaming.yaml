@@ -1,6 +1,12 @@
-# Kafka transport for streaming robot telemetry.
-# Opt-in only; not part of the default SceneOps stack.
+# Kafka transport for streaming robot telemetry, and the two SceneOps processes that
+# attach to it. Opt-in only (`streaming` profile); not part of the default SceneOps stack.
 # See docs/architecture/streaming-transport.md.
+#
+#   kafka             the transport broker (single-node KRaft)
+#   streaming-bridge  apps/streaming-bridge: ROS 2 topics -> Kafka (integration adapter).
+#                     Run per RobotRun with `docker compose run`; the entrypoint is the app.
+#   capture           apps/capture: Kafka -> durable MCAP + capture receipt in the
+#                     acquisition-recordings volume. Run per RobotRun with `docker compose run`.
 
 services:
   kafka:
@@ -37,5 +43,38 @@ services:
       retries: 20
     profiles:
       - streaming
+
+  streaming-bridge:
+    build:
+      # Repo root context: the image installs sceneops-core and sceneops-streaming
+      # from packages/, and Docker COPY cannot reach outside its build context.
+      context: .
+      dockerfile: apps/streaming-bridge/Dockerfile
+    image: sceneops-platform/streaming-bridge:local
+    env_file:
+      - .env.local
+    volumes:
+      # Channel-set files shared by the bridge and Capture
+      # (sceneops_streaming.channels).
+      - ./config/channels:/workspace/channels:ro
+    profiles:
+      - streaming
+
+  capture:
+    build:
+      context: .
+      dockerfile: apps/capture/Dockerfile
+    image: sceneops-platform/capture:local
+    env_file:
+      - .env.local
+    volumes:
+      - ./config/channels:/workspace/channels:ro
+      # Captured recordings land here, the same volume the publisher containers
+      # read: the MCAP moves between containers without passing through the host
+      # or the API.
+      - acquisition-recordings:/recordings
+    profiles:
+      - streaming
+
 volumes:
   kafka-data:

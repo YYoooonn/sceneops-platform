@@ -14,9 +14,9 @@ from __future__ import annotations
 import pytest
 
 from sceneops_core.jobs.schemas import JobType
-from sceneops_worker.derived import DerivedManifestIntegrityError
+from sceneops_derived import DerivedManifestIntegrityError
 from sceneops_worker.derived.resolution import LegacyDerivedRecordError
-from sceneops_worker.evaluation.detection.utils import FrameMismatchError
+from sceneops_evaluation.detection.utils import FrameMismatchError
 from sceneops_worker.inference.detection.samples import SampleViewResolutionError
 from sceneops_worker.jobs.inference.predict_detection import DatasetScopeMismatchError
 from tests.derived.flow_support import (
@@ -28,7 +28,7 @@ from tests.derived.flow_support import (
     mine,
     predict,
 )
-from tests.derived.labels_support import label_document, write_document
+from sceneops_derived.testing import label_document, write_document
 from tests.derived_harness import make_harness
 
 
@@ -185,7 +185,7 @@ async def test_categories_restrict_both_labels_and_predictions(tmp_path):
 
 
 def test_a_prediction_in_another_frame_fails_loudly():
-    from sceneops_worker.evaluation.detection import utils
+    from sceneops_evaluation.detection import utils
 
     labels = list(label_document("x", covered=[T0], labels={"l": (T0, 1.0)}).labels)
     with pytest.raises(FrameMismatchError, match="base_link"):

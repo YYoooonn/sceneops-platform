@@ -15,7 +15,7 @@ def publish(worker_settings):
     into this test's unique MinIO prefix -- the same prefix the worker
     context reads from."""
     from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
-    from sceneops_integrations.recording import publish_recording
+    from sceneops_recording import publish_recording
 
     async def _publish(
         mcap_path,

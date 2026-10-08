@@ -19,7 +19,7 @@ contract is read by nothing and written by nothing.
 The minimum reference facts the tests need (one RobotRun of the golden contract's
 Recording Import baseline) are not copied from the reference environment: the suite's
 `baseline` fixture runs the production create-or-verify path
-(`scripts/canonical/canonical_bootstrap.sh`) against this runtime's API, publishing the
+(`tools/baselines/canonical/canonical_bootstrap.sh`) against this runtime's API, publishing the
 locked recording into the disposable bucket (`SCENEOPS_WORKER_ARTIFACT__ROOT_URI`).
 
 A run killed before it could stop the runtime leaves its containers behind; the next

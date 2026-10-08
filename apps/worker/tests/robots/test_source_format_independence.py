@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import sceneops_core.robots
-import sceneops_integrations.recording
+import sceneops_recording
 import sceneops_worker.robots
 
 _FORMATS = ("nuscenes", "lerobot")
@@ -28,7 +28,7 @@ def _sources(package) -> dict[str, str]:
 def test_robot_run_path_names_no_source_format() -> None:
     sources = {
         **_sources(sceneops_core.robots),
-        **_sources(sceneops_integrations.recording),
+        **_sources(sceneops_recording),
         **_sources(sceneops_worker.robots),
     }
     assert {
@@ -39,11 +39,11 @@ def test_robot_run_path_names_no_source_format() -> None:
 def test_only_the_conformance_report_mentions_acquisition_origin() -> None:
     sources = {
         **_sources(sceneops_core.robots),
-        **_sources(sceneops_integrations.recording),
+        **_sources(sceneops_recording),
         **_sources(sceneops_worker.robots),
     }
     readers = {name for name, text in sources.items() if "acquisition_origin" in text}
     assert readers <= {
-        "sceneops_integrations.recording/conformance.py",
-        "sceneops_integrations.recording/__init__.py",  # re-exports the record name
+        "sceneops_recording/conformance.py",
+        "sceneops_recording/__init__.py",  # re-exports the record name
     }

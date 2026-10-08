@@ -2,7 +2,7 @@
 (ADR-007 §12.1).
 
 Input is the URI of a RobotRunManifest that the database-free Recording
-Publisher (``sceneops_integrations.recording``) already wrote as its
+Publisher (``sceneops_recording``) already wrote as its
 publication marker. Registration verifies and projects; it never uploads,
 copies, moves or rewrites recording or manifest bytes (I-9).
 
@@ -46,7 +46,7 @@ from sceneops_core.robots.manifest import (
     load_canonical_robot_run_manifest,
 )
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
-from sceneops_integrations.recording import (
+from sceneops_recording import (
     RecordingValidationError,
     derive_mcap_facts,
     sha256_checksum,

@@ -28,7 +28,7 @@ ArtifactRecord id is a deterministic function of `(logical id, checksum)`
 (`sceneops_core.common.derived_ids`). Registering identical work again is a
 no-op; a conflicting duplicate fails. A consumer resolves a pin by verifying
 the record's kind, owner and checksum and hashing the bytes
-(`sceneops_worker.derived`). Records that do not pin a revision are refused
+(`sceneops_derived`). Records that do not pin a revision are refused
 (`LegacyDerivedRecordError`) and must be rebuilt. There is no "latest" pointer.
 
 ## 2. Label sets

@@ -67,7 +67,7 @@ S3/MinIO: `s3://sceneops/artifacts/{datasets,runs,labels,analytical,robot_runs,o
 
 ### Published robot recordings: write-once per `run_id`
 
-The database-free Recording Publisher (`sceneops_integrations.recording`)
+The database-free Recording Publisher (`sceneops_recording`)
 writes two objects per run under the publication root (default
 `{ARTIFACT_ROOT_URI}/robot_runs`):
 

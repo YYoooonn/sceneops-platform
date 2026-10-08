@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from app.domains.robots.reconciliation import (
+from sceneops_acquisition.reconciliation import (
     AcquisitionState as S,
     ClassificationPolicy,
     postgres_registration_facts,
@@ -39,7 +39,7 @@ from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.common.schemas import ErrorInfo
 from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
-from sceneops_core.robots.capture_receipt import (
+from sceneops_recording.capture_receipt import (
     CAPTURE_RECEIPT_FILENAME,
     CaptureReceipt,
     FinalizationReason,
@@ -57,7 +57,7 @@ from sceneops_core.robots.manifest import (
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.jobs import PostgresJobRepository
 from sceneops_db.session import get_async_sessionmaker
-from sceneops_integrations.recording import (
+from sceneops_recording import (
     derive_mcap_facts,
     publish_from_capture,
     scan_capture_volume,
@@ -210,7 +210,7 @@ async def _durable_snapshot(
 async def test_reconcile_once_classifies_known_durable_states_and_changes_nothing(
     worker_context, worker_settings, db_session, unique_id, tmp_path
 ) -> None:
-    from sceneops_integrations.recording import publish_recording
+    from sceneops_recording import publish_recording
 
     session_factory = get_async_sessionmaker()
     store = S3ArtifactStore(settings=worker_settings.artifact)
@@ -494,7 +494,9 @@ async def test_reconcile_once_classifies_known_durable_states_and_changes_nothin
         [
             sys.executable,
             "-m",
-            "app.domains.robots.reconciliation",
+            "sceneops_worker.main",
+            "acquisition",
+            "reconcile",
             "--once",
             "--capture-report",
             str(capture_report_path),
@@ -504,12 +506,12 @@ async def test_reconcile_once_classifies_known_durable_states_and_changes_nothin
         check=False,
         env={
             **os.environ,
-            "SCENEOPS_API_ARTIFACT__BACKEND": "minio",
-            "SCENEOPS_API_ARTIFACT__ROOT_URI": artifact.root_uri,
-            "SCENEOPS_API_ARTIFACT__ENDPOINT_URL": artifact.endpoint_url,
-            "SCENEOPS_API_ARTIFACT__ACCESS_KEY_ID": artifact.access_key_id,
-            "SCENEOPS_API_ARTIFACT__SECRET_ACCESS_KEY": artifact.secret_access_key,
-            "SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS": str(
+            "SCENEOPS_WORKER_ARTIFACT__BACKEND": "minio",
+            "SCENEOPS_WORKER_ARTIFACT__ROOT_URI": artifact.root_uri,
+            "SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL": artifact.endpoint_url,
+            "SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID": artifact.access_key_id,
+            "SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY": artifact.secret_access_key,
+            "SCENEOPS_WORKER_RECONCILER__STALL_THRESHOLD_SECONDS": str(
                 never.total_seconds()
             ),
         },

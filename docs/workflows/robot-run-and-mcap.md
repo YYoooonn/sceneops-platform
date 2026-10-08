@@ -13,8 +13,8 @@ limitations.
 
 ```text
 batch      external dataset -> tools/dataset-acquisition -> MCAP
-streaming  robot / dataset replay -> ROS2 topics -> streaming_bridge_node -> Kafka
-             -> ros2/capture -> MCAP                      (docs/architecture/streaming-transport.md)
+streaming  robot / dataset replay -> ROS2 topics -> apps/streaming-bridge -> Kafka
+             -> apps/capture -> MCAP                      (docs/architecture/streaming-transport.md)
 
 either     -> L1 conformance check -> Recording Publisher (no DB) -> MCAP + RobotRunManifest in Object Storage
            -> REGISTER_ROBOT_RUN (POST /robot-runs:register, or submitted by reconcile --apply) -> RobotRun (§3.2)
@@ -86,7 +86,7 @@ Two readers consume a resolved recording (§3.1):
   flattens `nav_msgs/Odometry`, `sensor_msgs/Imu` and
   `sensor_msgs/BatteryState` into robot-state fields, and re-parses
   `std_msgs/String` `.data` as JSON (the §2 bridge format).
-- `sceneops_integrations.recording.reader` is the reader canonical Scene
+- `sceneops_recording.reader` is the reader canonical Scene
   building uses. It streams every message in file order with its topic,
   schema, encodings, payload, `log_time`, `publish_time`, MCAP sequence and
   file position, and decodes ROS 2 messages with the embedded schema. The L1
@@ -179,7 +179,7 @@ A RobotRun exists only for a recording that was published and verified
 
 ```text
 finalized local MCAP (a capture directory, or the acquisition tool's output)
-  -> python -m sceneops_integrations.recording publish     (DB-free, own process)
+  -> python -m sceneops_publisher publish     (DB-free, own process)
        --from-capture <dir>   every input comes from capture_receipt.json
        --mcap-path ... --robot-id ... --source-kind ...   explicit inputs, for a recording without a receipt
        P1 validate MCAP, derive facts (time range, channels, counts), sha256 + size
@@ -231,13 +231,13 @@ keeps nothing between invocations and is safe at any frequency, concurrently and
 after any crash:
 
 ```text
-python -m sceneops_integrations.recording scan-capture --capture-root <capture output root>
+python -m sceneops_publisher scan-capture --capture-root <capture output root>
     -> JSON CaptureScanReport (DB-free, read-only; reads directory entries, sizes and receipts, never recording bytes)
-python -m sceneops_integrations.recording publish-pending --capture-root <capture output root>
+python -m sceneops_publisher publish-pending --capture-root <capture output root>
     -> JSON PublishPendingReport (DB-free; publishes finalized captures that have a receipt and are not completely published)
-python -m app.domains.robots.reconciliation --once [--capture-report <scan-capture JSON | ->]
-    -> JSON ReconciliationReport, read-only (from apps/api; needs ArtifactStore + PostgreSQL, not the HTTP server)
-python -m app.domains.robots.reconciliation --once --apply
+sceneops-worker acquisition reconcile --once [--capture-report <scan-capture JSON | ->]
+    -> JSON ReconciliationReport, read-only (from apps/worker; needs ArtifactStore + PostgreSQL, not the HTTP server)
+sceneops-worker acquisition reconcile --once --apply
     -> the same report, after bounded registration recovery
 ```
 
@@ -296,7 +296,7 @@ Each run's report entry shows `failed_job_count`, `abandoned_job_count`,
 performs at most 100 actions; the rest wait for the next pass.
 
 The stall threshold (`--stall-threshold-seconds`, or
-`SCENEOPS_API_RECONCILER__STALL_THRESHOLD_SECONDS`) is 900 s by default
+`SCENEOPS_WORKER_RECONCILER__STALL_THRESHOLD_SECONDS`) is 900 s by default
 ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md) Amendment 12.4 gives
 the measurements it comes from). If the broker refuses a dispatch the Job stays
 committed as `queued` and execution recovery re-sends its message after 300 s
@@ -346,7 +346,7 @@ whether deleting it could ever be safe. It deletes, moves and repairs nothing; a
 class is a classification, not an instruction.
 
 ```text
-python -m app.domains.robots.artifact_lifecycle --once \
+sceneops-worker acquisition artifact-lifecycle --once \
     [--capture-report <scan-capture JSON | ->] [--observed-at <ISO-8601 with offset>] \
     [--pending-grace-seconds N] [--orphan-grace-seconds N] [--verify-recording-bytes]
     -> JSON ArtifactLifecycleReport (needs ArtifactStore + PostgreSQL, not the HTTP server)
@@ -379,7 +379,7 @@ pending (with the oldest age), orphan-candidate (by reason and risk) and
 incident counts and bytes. A finding whose object appears while the scan runs is
 dropped and counted in `unconfirmed_findings`. A classification can be stale by
 the time anyone acts on it; any future deletion must re-verify. Grace periods are
-also set by `SCENEOPS_API_ARTIFACT_LIFECYCLE__PENDING_GRACE_SECONDS` and
+also set by `SCENEOPS_WORKER_ARTIFACT_LIFECYCLE__PENDING_GRACE_SECONDS` and
 `..._ORPHAN_GRACE_SECONDS`; `make artifact-lifecycle-once` runs one pass.
 
 **Acquisition status and operational report.** A read-only one-shot command
@@ -389,7 +389,7 @@ lifecycle semantics of its own. It is a function of the reconciler's per-run
 state, the artifact lifecycle entries and the observation time.
 
 ```text
-python -m app.domains.robots.acquisition_status --once \
+sceneops-worker acquisition status --once \
     [--summary-only] [--capture-report <scan-capture JSON | ->] [--observed-at <ISO-8601 with offset>] \
     [--stall-threshold-seconds N] [--pending-grace-seconds N] [--orphan-grace-seconds N] \
     [--verify-recording-bytes]
@@ -489,7 +489,7 @@ external dataset (e.g. nuScenes v1.0-mini scene, read-only mount)
        -> finalized MCAP                 camera, CameraInfo, lidar, /tf_static, /tf,
                                          CAN telemetry, mission events
                                          (acquisition-recordings volume)
-  -> recording-publisher container      python -m sceneops_integrations.recording
+  -> recording-publisher container      python -m sceneops_publisher
        check                             L1 conformance (optional, read-only)
        publish --source-kind file        recording + RobotRunManifest -> ArtifactStore;
                                          JSON result incl. manifest_uri
@@ -513,7 +513,7 @@ is not a SceneOps Scene, and the recording carries no Scene, Episode or
 DatasetVersion information.
 
 **L1 conformance.** `check_l1_recording()`
-(`sceneops_integrations.recording.conformance`, CLI `... recording check
+(`sceneops_recording.conformance`, CLI `... recording check
 --mcap-path`) checks what the bytes of any L1 recording can prove: a
 finalized MCAP, one channel definition per topic, embedded schemas with
 the `ros2`/`cdr`/`ros2msg` profile, every payload decoding with its own

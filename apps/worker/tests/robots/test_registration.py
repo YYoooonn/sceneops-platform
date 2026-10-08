@@ -26,7 +26,7 @@ from sceneops_core.robots.manifest import (
     RobotRunManifestError,
 )
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
-from sceneops_integrations.recording import publish_recording
+from sceneops_recording import publish_recording
 from sceneops_storage import LocalArtifactStore
 from sceneops_worker.robots.registration import (
     InconsistentCanonicalStateError,

@@ -26,7 +26,7 @@ from sceneops_core.scenes.schemas import SceneManifest
 
 from sceneops_worker.core.context import WorkerContext
 
-from .manifests import DerivedManifestIntegrityError
+from sceneops_derived.manifests import DerivedManifestIntegrityError
 
 
 class LegacyDerivedRecordError(ValueError):

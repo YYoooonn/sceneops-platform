@@ -22,15 +22,15 @@ UPDATE_LOCK     ?=
 .PHONY: reference-data-bootstrap
 reference-data-bootstrap:
 	$(COMPOSE) --profile acquisition build dataset-acquisition
-	chmod +x scripts/reference/*.sh
+	chmod +x tools/reference/*.sh
 	ENV_FILE=$(ENV_FILE) REFERENCE_SCOPE=$(REFERENCE_SCOPE) UPDATE_LOCK=$(UPDATE_LOCK) \
-		scripts/reference/reference_data.sh bootstrap
+		tools/reference/reference_data.sh bootstrap
 
 .PHONY: reference-data-verify
 reference-data-verify:
-	chmod +x scripts/reference/*.sh
+	chmod +x tools/reference/*.sh
 	ENV_FILE=$(ENV_FILE) REFERENCE_SCOPE=$(REFERENCE_SCOPE) \
-		scripts/reference/reference_data.sh verify
+		tools/reference/reference_data.sh verify
 
 # --------------------
 # Golden reference contract (config/reference/<corpus>/reference_contract.json,
@@ -64,9 +64,9 @@ endif
 .PHONY: reference-contract-verify
 reference-contract-verify:
 	@ENV_FILE=$(ENV_FILE) API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-		python3 scripts/reference/reference_contract.py verify $(if $(REQUIRE_PRISTINE),--require-pristine)
+		python3 tools/reference/reference_contract.py verify $(if $(REQUIRE_PRISTINE),--require-pristine)
 
 .PHONY: reference-contract-bootstrap
 reference-contract-bootstrap:
 	@MAKE=$(MAKE) ENV_FILE=$(ENV_FILE) API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
-		python3 scripts/reference/reference_contract.py bootstrap $(if $(REQUIRE_PRISTINE),--require-pristine)
+		python3 tools/reference/reference_contract.py bootstrap $(if $(REQUIRE_PRISTINE),--require-pristine)

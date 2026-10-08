@@ -39,7 +39,7 @@ def api() -> Api:
 def baseline(api: Api) -> dict:
     """The canonical L1/L2 baseline (create-or-verify), as its JSON summary."""
     result = subprocess.run(
-        [str(REPO_ROOT / "scripts" / "canonical" / "canonical_bootstrap.sh")],
+        [str(REPO_ROOT / "tools" / "baselines" / "canonical" / "canonical_bootstrap.sh")],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,

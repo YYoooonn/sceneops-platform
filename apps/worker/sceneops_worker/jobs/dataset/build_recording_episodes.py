@@ -42,9 +42,9 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_integrations.recording import check_l1_recording
+from sceneops_recording import check_l1_recording
 
-from sceneops_worker.episodes.recording_builder import (
+from sceneops_episodes.recording_builder import (
     EpisodeBuildPlan,
     RecordingEpisodeBuildError,
     iter_planned_payloads,
@@ -55,7 +55,7 @@ from sceneops_worker.recordings.artifact_records import (
     ArtifactRecordConflictError,
     require_same_artifact as _require_same,
 )
-from sceneops_worker.recordings.payloads import PlannedPayload, RecordingRevision
+from sceneops_recording.observations.payloads import PlannedPayload, RecordingRevision
 from sceneops_worker.robots.resolver import resolve_recording
 
 EPISODE_MANIFEST_ARTIFACT_ID_SCHEMA_V1 = "sceneops.episode_manifest_artifact_id/v1"

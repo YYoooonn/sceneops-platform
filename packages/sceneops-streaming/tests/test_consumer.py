@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from sceneops_core.streaming import EnvelopeEncoding, TelemetryEnvelope
+from sceneops_streaming import EnvelopeEncoding, TelemetryEnvelope
 from sceneops_streaming import consumer as consumer_module
 from sceneops_streaming.config import StreamingSettings
 from sceneops_streaming.consumer import KafkaTelemetryConsumer

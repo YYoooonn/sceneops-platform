@@ -49,7 +49,7 @@ from sceneops_db.session import (
     reset_async_engine_cache,
 )
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.jobs.lease_recovery import (
+from sceneops_execution.jobs.lease_recovery import (
     JOB_CLAIM_BUDGET,
     JOB_LEASE_EXPIRED_ERROR_TYPE,
     LeaseRecoveryOutcome,

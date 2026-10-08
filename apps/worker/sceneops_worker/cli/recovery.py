@@ -9,12 +9,12 @@ import typer
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.cli.async_utils import run_cli_async
 from sceneops_worker.config import get_settings
-from sceneops_worker.execution.dispatcher import create_execution_dispatcher
-from sceneops_worker.execution.recovery import (
+from sceneops_worker.celery_app import create_execution_dispatcher
+from sceneops_execution.executions.recovery import (
     DEFAULT_RESEND_AFTER_SECONDS,
     recover_execution,
 )
-from sceneops_worker.jobs.lease_recovery import DEFAULT_MAX_ACTIONS_PER_PASS
+from sceneops_execution.jobs.lease_recovery import DEFAULT_MAX_ACTIONS_PER_PASS
 
 
 def recover_command(

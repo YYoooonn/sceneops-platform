@@ -5,14 +5,14 @@ import asyncio
 from confluent_kafka import KafkaException
 from confluent_kafka import Producer as ConfluentProducer
 
-from sceneops_core.streaming import TelemetryEnvelope
 
 from .config import StreamingSettings
+from .envelope import TelemetryEnvelope
 from .wire import EncodedTelemetryRecord, encode_envelope
 
 
 class KafkaTelemetryProducer:
-    """Concrete ``TelemetryProducer`` (``sceneops_core.streaming.contracts``)
+    """Concrete ``TelemetryProducer`` (``sceneops_streaming.contracts``)
     backed by ``confluent_kafka``. The only place in this package that owns
     a live broker connection for producing.
 

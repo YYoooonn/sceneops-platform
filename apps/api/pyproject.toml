@@ -7,6 +7,8 @@ dependencies = [
     "sceneops-core",
     "sceneops-db",
     "sceneops-storage",
+    "sceneops-execution",
+    "sceneops-acquisition",
     "fastapi>=0.121",
     "uvicorn[standard]>=0.29",
     "pydantic>=2.0",
@@ -22,6 +24,8 @@ sceneops-api = "app.main:main"
 sceneops-core = { workspace = true }
 sceneops-db = { workspace = true }
 sceneops-storage = { workspace = true }
+sceneops-execution = { workspace = true }
+sceneops-acquisition = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

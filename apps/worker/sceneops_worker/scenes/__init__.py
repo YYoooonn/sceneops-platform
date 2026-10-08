@@ -1,3 +1,1 @@
-from .artifacts import SceneArtifactStore
-
-__all__ = ["SceneArtifactStore"]
+"""Scene registration, resolution and readiness: the worker-side use cases over a WorkerContext."""

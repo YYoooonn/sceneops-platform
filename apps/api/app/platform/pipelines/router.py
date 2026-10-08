@@ -8,7 +8,7 @@ from app.platform.pipelines.dependencies import (
     PipelineDispatchFacadeDep,
     PipelineServiceDep,
 )
-from app.platform.pipelines.schemas import (
+from sceneops_execution.pipelines.schemas import (
     PipelineDefinitionListResponse,
     PipelineDefinitionResponse,
     PipelineExecuteResponse,

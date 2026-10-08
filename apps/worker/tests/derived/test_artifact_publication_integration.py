@@ -21,7 +21,7 @@ from sceneops_db.models.artifacts import ArtifactModel
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.derived import DerivedManifestConflictError
+from sceneops_derived import DerivedManifestConflictError
 from sceneops_worker.derived.publication import publish_registered
 from sqlalchemy import select
 

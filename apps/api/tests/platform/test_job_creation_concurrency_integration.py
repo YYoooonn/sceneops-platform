@@ -17,8 +17,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import func, select, text
 
-from app.domains.robots.reconciliation import register_robot_run_execution_key
-from app.platform.jobs.service import JobService
+from sceneops_acquisition.reconciliation import register_robot_run_execution_key
+from sceneops_execution.jobs.service import JobService
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEventType,

@@ -2,7 +2,7 @@
 against real Postgres.
 
 Reproduces the actual production bug independently of
-scripts/canonical/canonical_bootstrap.sh: a caller that registers Episodes
+tools/baselines/canonical/canonical_bootstrap.sh: a caller that registers Episodes
 for the same DatasetVersion across several independent operations (one
 REGISTER_EPISODES per RobotRun) must end up
 with DatasetVersionRecord.episode.episode_count equal to the true current

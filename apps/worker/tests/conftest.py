@@ -160,7 +160,7 @@ class SceneWorld:
 
     def __init__(self, root) -> None:
         from sceneops_storage.backends.local import LocalArtifactStore
-        from sceneops_worker.scenes.artifacts import SceneArtifactStore
+        from sceneops_scenes.artifacts import SceneArtifactStore
 
         self.root = str(root)
         self.artifact_store = LocalArtifactStore(root_uri=self.root)
@@ -227,7 +227,7 @@ class SceneWorld:
         )
         # The production idempotent-registration logic over the in-memory
         # records, so a test sees convergence and conflict as the platform does.
-        from sceneops_worker.derived import DerivedManifestStore
+        from sceneops_derived import DerivedManifestStore
         from sceneops_worker.stores.artifacts import ArtifactRecordStore
 
         records = ArtifactRecordStore.__new__(ArtifactRecordStore)

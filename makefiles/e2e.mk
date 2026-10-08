@@ -50,17 +50,17 @@ E2E_ENV = API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) ENV_FILE=$(ENV_F
 # beyond local-up). The model-backend acceptance of the same journey is
 # `make acceptance-grounding-dino`.
 e2e-scene-ml: acquisition-image
-	chmod +x scripts/e2e/e2e_scene_ml.sh scripts/canonical/*.sh
-	$(E2E_ENV) BACKEND=mock MAX_SAMPLES=$(MAX_SAMPLES) scripts/e2e/e2e_scene_ml.sh
+	chmod +x tools/e2e/e2e_scene_ml.sh tools/baselines/canonical/*.sh
+	$(E2E_ENV) BACKEND=mock MAX_SAMPLES=$(MAX_SAMPLES) tools/e2e/e2e_scene_ml.sh
 
 .PHONY: acceptance-grounding-dino
 # Model-backend acceptance of the Scene ML journey: the same script with the
 # GroundingDINO backend, lifting boxes through the real lidar payload. Needs a
 # running inference server (make inference-local-up / inference-gpu-up).
 acceptance-grounding-dino: acquisition-image
-	chmod +x scripts/e2e/e2e_scene_ml.sh scripts/canonical/*.sh
+	chmod +x tools/e2e/e2e_scene_ml.sh tools/baselines/canonical/*.sh
 	$(E2E_ENV) BACKEND=grounding_dino MAX_SAMPLES=$(MAX_SAMPLES) \
-	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) scripts/e2e/e2e_scene_ml.sh
+	INFERENCE_ENDPOINT_URL=$(INFERENCE_ENDPOINT_URL) tools/e2e/e2e_scene_ml.sh
 
 .PHONY: e2e-episode-learning
 # canonical Episodes -> episode_learning_data_building (align -> export) ->
@@ -68,8 +68,8 @@ acceptance-grounding-dino: acquisition-image
 # LeRobot export (isolated container) read back with the official reader.
 # Prerequisite: `make local-up`; builds the acquisition and LeRobot images.
 e2e-episode-learning: acquisition-image lerobot-image
-	chmod +x scripts/e2e/e2e_episode_learning.sh scripts/canonical/*.sh
-	$(E2E_ENV) scripts/e2e/e2e_episode_learning.sh
+	chmod +x tools/e2e/e2e_episode_learning.sh tools/baselines/canonical/*.sh
+	$(E2E_ENV) tools/e2e/e2e_episode_learning.sh
 
 .PHONY: e2e-cleanroom
 # The acceptance of reconstruction: can an empty generated runtime be rebuilt from the
@@ -83,5 +83,5 @@ e2e-episode-learning: acquisition-image lerobot-image
 # Needs ROS 2 and Kafka (the contract's Streaming Acquisition RobotRuns); no GPU.
 # Requires interactive confirmation (same as local-reset) unless FORCE=1.
 e2e-cleanroom:
-	chmod +x scripts/e2e/e2e_cleanroom.sh
-	$(E2E_ENV) scripts/e2e/e2e_cleanroom.sh
+	chmod +x tools/e2e/e2e_cleanroom.sh
+	$(E2E_ENV) tools/e2e/e2e_cleanroom.sh

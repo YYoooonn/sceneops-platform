@@ -21,6 +21,6 @@ services:
       - ./data/artifacts:/data/artifacts
       # IntegrationRequest / IntegrationResult files and the export root.
       - ./data/runs:/data/runs
-      - ./scripts:/workspace/scripts:ro
+      - ./tools/e2e:/workspace/tools/e2e:ro
     profiles:
       - lerobot

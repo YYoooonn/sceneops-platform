@@ -84,3 +84,13 @@ class TestWorkerSettingsInputSource:
         # Ensure the two settings are independent.
         s = WorkerSettings()
         assert s.artifact.root_uri != s.input_source.root_uri
+
+
+class TestAcquisitionSettings:
+    def test_artifact_lifecycle_graces_default_and_override(self, monkeypatch):
+        assert WorkerSettings().artifact_lifecycle.pending_grace_seconds == 24 * 3600
+        assert WorkerSettings().artifact_lifecycle.orphan_grace_seconds == 7 * 24 * 3600
+        monkeypatch.setenv(
+            "SCENEOPS_WORKER_ARTIFACT_LIFECYCLE__ORPHAN_GRACE_SECONDS", "123"
+        )
+        assert WorkerSettings().artifact_lifecycle.orphan_grace_seconds == 123

@@ -1,0 +1,461 @@
+from __future__ import annotations
+
+from typing import Any
+
+from sceneops_core.artifacts.schemas import ArtifactKind
+from sceneops_core.common.ids import generate_job_event_id, generate_job_id
+from sceneops_core.common.schemas import JsonDict
+from sceneops_core.common.time import utc_now
+from sceneops_core.executions import compute_execution_key, params_for_execution_key
+from sceneops_core.jobs.schemas import (
+    CreateJobRequest,
+    JobEvent,
+    JobEventLevel,
+    JobEventType,
+    JobManifest,
+    JobStatus,
+    JobType,
+    create_initial_job_steps,
+    parse_job_params,
+)
+from sceneops_execution.jobs.schemas import JobEventListResponse, JobListResponse
+from sceneops_db.queries import resolve_current_episode_manifest_source
+from sceneops_db.repositories.artifacts import ArtifactRepository
+from sceneops_db.repositories.episodes import EpisodeRepository
+from sceneops_db.repositories.jobs import (
+    JobEventRepository,
+    JobExecutionKeyInFlightError,
+    JobRepository,
+)
+
+_IN_FLIGHT_STATUSES = {JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING}
+_DEDUP_STATUSES = _IN_FLIGHT_STATUSES | {JobStatus.SUCCEEDED}
+# A lost insert is followed by a lookup that finds the winner. Another insert is
+# needed only if the winner already left flight (failed, or succeeded under force)
+# by then.
+_CREATE_ATTEMPTS = 3
+
+
+class JobDispatchConflictError(ValueError):
+    """The Job left the state it was read in before it could be queued: a worker
+    claimed or finished it, reconciliation abandoned it, or another dispatch
+    queued it first. It was not queued and must not be dispatched."""
+
+    def __init__(self, job: JobManifest) -> None:
+        super().__init__(
+            f"Job {job.job_id} changed while being dispatched (read as "
+            f"status={job.status.value}, retry_count={job.retry_count}); "
+            "it was not dispatched"
+        )
+        self.job_id = job.job_id
+
+
+class JobService:
+    def __init__(
+        self,
+        *,
+        repository: JobRepository,
+        event_repository: JobEventRepository,
+        artifact_repository: ArtifactRepository,
+        episode_repository: EpisodeRepository | None = None,
+    ) -> None:
+        self._repository = repository
+        self._event_repository = event_repository
+        self._artifact_repository = artifact_repository
+        self._episode_repository = episode_repository
+
+    async def create_job(self, request: CreateJobRequest) -> JobManifest:
+        now = utc_now()
+
+        # The DatasetVersion scope is whatever the caller states, on the
+        # request or in the params; there is no platform-wide default.
+        dataset_id = request.dataset_id or request.params.get("dataset_id")
+        dataset_version = request.dataset_version or request.params.get(
+            "dataset_version"
+        )
+
+        raw_params = {**request.params}
+        if dataset_id is not None:
+            raw_params["dataset_id"] = dataset_id
+        if dataset_version is not None:
+            raw_params["dataset_version"] = dataset_version
+
+        if request.type == JobType.ALIGN_EPISODE:
+            raw_params = await self._resolve_align_episode_source(raw_params)
+        elif request.type in (
+            JobType.VALIDATE_ALIGNED_EPISODE,
+            JobType.PROFILE_ALIGNED_EPISODE,
+        ):
+            raw_params = await self._resolve_aligned_artifact_checksum(raw_params)
+        elif request.type == JobType.EXPORT_LEARNING_DATA:
+            raw_params = await self._resolve_learning_data_export_inputs(raw_params)
+        elif request.type == JobType.CURATE_EPISODES:
+            raw_params = await self._resolve_learning_export_manifest_checksum(
+                raw_params
+            )
+
+        validated_params = parse_job_params(request.type, raw_params)
+        validated_params_dump = validated_params.model_dump()
+
+        execution_key = compute_execution_key(
+            kind="job",
+            type=request.type.value,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            params=params_for_execution_key(request.type, validated_params_dump),
+        )
+
+        job = JobManifest(
+            job_id=generate_job_id(),
+            type=request.type,
+            status=JobStatus.PENDING,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            params=validated_params_dump,
+            steps=create_initial_job_steps(request.type),
+            retry_count=0,
+            max_retries=request.max_retries,
+            execution_key=execution_key,
+            queued_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+        # The lookup only avoids a doomed insert; the in-flight unique index decides
+        # between concurrent requests. A loser looks again and joins the Job that
+        # won, which READ COMMITTED lets the same transaction see. A forced request
+        # never reuses a finished Job but cannot start a second in-flight one.
+        reusable = _IN_FLIGHT_STATUSES if request.force else _DEDUP_STATUSES
+        for _ in range(_CREATE_ATTEMPTS):
+            existing = await self._repository.find_by_execution_key(
+                execution_key, statuses=reusable
+            )
+            if existing is not None:
+                return existing
+            try:
+                created = await self._repository.create(job)
+                break
+            except JobExecutionKeyInFlightError:
+                continue
+        else:
+            raise JobExecutionKeyInFlightError(execution_key)
+
+        await self._event_repository.append(
+            JobEvent(
+                event_id=generate_job_event_id(),
+                job_id=created.job_id,
+                type=JobEventType.CREATED,
+                level=JobEventLevel.INFO,
+                job_type=created.type,
+                message="Job created",
+                data={
+                    "dataset_id": created.dataset_id,
+                    "dataset_version": created.dataset_version,
+                },
+                created_at=now,
+            )
+        )
+
+        return created
+
+    async def _resolve_align_episode_source(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """Pin each Episode's current canonical revision -- exactly the
+        EPISODE_MANIFEST its record points to (ADR-007 §14.4) -- before the
+        execution key is computed, so an unpinned ALIGN_EPISODE request dedups
+        on source content. A caller-supplied pin always wins."""
+        episodes = raw_params.get("episodes")
+        if not isinstance(episodes, list):
+            # Let normal Pydantic param validation raise its own clear error.
+            return raw_params
+
+        pinned: list[Any] = []
+        for item in episodes:
+            if (
+                not isinstance(item, dict)
+                or item.get("source_artifact_id") is not None
+                or not item.get("episode_id")
+            ):
+                pinned.append(item)
+                continue
+            if self._episode_repository is None:
+                raise ValueError("align_episode source resolution needs Episode access")
+            episode_id = item["episode_id"]
+            record = await resolve_current_episode_manifest_source(
+                episode_repository=self._episode_repository,
+                artifact_repository=self._artifact_repository,
+                episode_id=episode_id,
+            )
+            if record is None:
+                raise ValueError(
+                    f"Episode {episode_id!r} is not registered — run "
+                    "recording_episode_building before align_episode."
+                )
+            pinned.append(
+                {
+                    **item,
+                    "source_artifact_id": record.artifact_id,
+                    "source_manifest_sha256": (record.checksum or "").removeprefix(
+                        "sha256:"
+                    ),
+                }
+            )
+        return {**raw_params, "episodes": pinned}
+
+    async def _resolve_aligned_artifact_checksum(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """SceneOps V2 Request 2.4 §33/§34: shared by
+        VALIDATE_ALIGNED_EPISODE/PROFILE_ALIGNED_EPISODE.
+
+        Unlike ALIGN_EPISODE's source resolution, aligned_artifact_id is
+        always required and caller-pinned (there is no sensible "current
+        aligned artifact" for one episode, which can legitimately have many).
+        Resolving its checksum is therefore a simple 1:1 ArtifactRecord.get()
+        lookup, not a "latest" selection -- no ambiguity, no ordering
+        assumption. A caller-supplied aligned_artifact_checksum is left
+        untouched, matching ALIGN_EPISODE's pin-always-wins behavior.
+        """
+        if raw_params.get("aligned_artifact_checksum") is not None:
+            return raw_params
+
+        aligned_artifact_id = raw_params.get("aligned_artifact_id")
+        if not aligned_artifact_id:
+            # Let normal Pydantic param validation raise its own clear
+            # "aligned_artifact_id required" error.
+            return raw_params
+
+        record = await self._artifact_repository.get(aligned_artifact_id)
+        if record is None or record.kind != ArtifactKind.ALIGNED_EPISODE_MANIFEST.value:
+            raise ValueError(
+                f"aligned_artifact_id={aligned_artifact_id!r} is not a valid "
+                "ALIGNED_EPISODE_MANIFEST artifact — align_episode must run "
+                "before validation/profiling can be dispatched."
+            )
+        if record.checksum is None:
+            raise ValueError(
+                f"ALIGNED_EPISODE_MANIFEST artifact {aligned_artifact_id!r} has "
+                "no checksum -- this should not happen for any artifact "
+                "written by align_episode; re-run align_episode to produce a "
+                "checksummed artifact."
+            )
+
+        return {
+            **raw_params,
+            "aligned_artifact_checksum": record.checksum.removeprefix("sha256:"),
+        }
+
+    async def _resolve_learning_data_export_inputs(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """resolve each pinned input's checksum
+        *before* execution-key computation, same pattern as
+        _resolve_aligned_artifact_checksum, but applied per-item across a
+        LIST of inputs rather than a single field -- one export can pin many
+        aligned revisions at once. A caller-supplied
+        aligned_artifact_checksum on any individual item is left untouched
+        (pin-always-wins, matching every other resolver here).
+
+        SceneOps V2 Request 2.5A §2: also rejects duplicate *semantic*
+        inputs -- two items that resolve to the same
+        aligned_artifact_checksum, even under two different (random)
+        aligned_artifact_ids. Checked here, once every item's checksum is
+        known, rather than as a Pydantic model_validator on
+        ExportLearningDataJobParams, because an unresolved item's checksum
+        (and therefore whether it collides with another item) isn't known
+        until after this resolution step runs -- the same reason checksum
+        resolution itself lives here and not in the schema layer. Semantic
+        identity is checksum-only (Request 2.5A §3): episode_id is
+        deliberately not part of the duplicate check.
+        """
+        inputs = raw_params.get("inputs")
+        if not isinstance(inputs, list) or not inputs:
+            # Let normal Pydantic param validation raise its own clear
+            # "at least one input required" error.
+            return raw_params
+
+        resolved_inputs: list[Any] = []
+        seen_checksums: dict[str, str | None] = {}
+        for item in inputs:
+            if not isinstance(item, dict):
+                resolved_inputs.append(item)
+                continue
+
+            checksum = item.get("aligned_artifact_checksum")
+            if not checksum:
+                aligned_artifact_id = item.get("aligned_artifact_id")
+                if not aligned_artifact_id:
+                    resolved_inputs.append(item)
+                    continue
+
+                record = await self._artifact_repository.get(aligned_artifact_id)
+                if (
+                    record is None
+                    or record.kind != ArtifactKind.ALIGNED_EPISODE_MANIFEST.value
+                ):
+                    raise ValueError(
+                        f"aligned_artifact_id={aligned_artifact_id!r} is not a "
+                        "valid ALIGNED_EPISODE_MANIFEST artifact — "
+                        "align_episode must run before export_learning_data "
+                        "can be dispatched."
+                    )
+                if record.checksum is None:
+                    raise ValueError(
+                        f"ALIGNED_EPISODE_MANIFEST artifact {aligned_artifact_id!r} "
+                        "has no checksum -- this should not happen for any "
+                        "artifact written by align_episode; re-run "
+                        "align_episode to produce a checksummed artifact."
+                    )
+                checksum = record.checksum.removeprefix("sha256:")
+                item = {**item, "aligned_artifact_checksum": checksum}
+
+            if checksum in seen_checksums:
+                raise ValueError(
+                    f"export_learning_data: duplicate aligned_artifact_checksum="
+                    f"{checksum!r} in export selection "
+                    f"(aligned_artifact_id={item.get('aligned_artifact_id')!r} "
+                    "duplicates aligned_artifact_id="
+                    f"{seen_checksums[checksum]!r}) -- each export snapshot "
+                    "must reference distinct aligned revisions; remove the "
+                    "duplicate input."
+                )
+            seen_checksums[checksum] = item.get("aligned_artifact_id")
+
+            resolved_inputs.append(item)
+
+        return {**raw_params, "inputs": resolved_inputs}
+
+    async def _resolve_learning_export_manifest_checksum(
+        self, raw_params: dict[str, Any]
+    ) -> JsonDict:
+        """SceneOps V2 Request 2.6 §11: resolve
+        learning_data_export_manifest_checksum *before* execution-key
+        computation, same pattern as _resolve_aligned_artifact_checksum one
+        layer up. learning_data_export_manifest_artifact_id is always
+        required and caller-pinned -- there is no "latest export" to
+        resolve unambiguously, matching every other pinned-artifact
+        resolver in this file. A caller-supplied
+        learning_data_export_manifest_checksum is left untouched
+        (pin-always-wins).
+        """
+        if raw_params.get("learning_data_export_manifest_checksum") is not None:
+            return raw_params
+
+        manifest_artifact_id = raw_params.get(
+            "learning_data_export_manifest_artifact_id"
+        )
+        if not manifest_artifact_id:
+            # Let normal Pydantic param validation raise its own clear
+            # "learning_data_export_manifest_artifact_id required" error.
+            return raw_params
+
+        record = await self._artifact_repository.get(manifest_artifact_id)
+        if (
+            record is None
+            or record.kind != ArtifactKind.LEARNING_DATA_EXPORT_MANIFEST.value
+        ):
+            raise ValueError(
+                f"learning_data_export_manifest_artifact_id={manifest_artifact_id!r} "
+                "is not a valid LEARNING_DATA_EXPORT_MANIFEST artifact — "
+                "export_learning_data must run before curate_episodes can be "
+                "dispatched."
+            )
+        if record.checksum is None:
+            raise ValueError(
+                f"LEARNING_DATA_EXPORT_MANIFEST artifact {manifest_artifact_id!r} "
+                "has no checksum -- this should not happen for any artifact "
+                "written by export_learning_data; re-run export_learning_data "
+                "to produce a checksummed artifact."
+            )
+
+        return {
+            **raw_params,
+            "learning_data_export_manifest_checksum": (
+                record.checksum.removeprefix("sha256:")
+            ),
+        }
+
+    async def list_jobs(
+        self,
+        *,
+        status: JobStatus | None = None,
+        job_type: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> JobListResponse:
+        jobs = await self._repository.list(
+            type=job_type,
+            status=status,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            limit=limit,
+            offset=offset,
+        )
+        return JobListResponse(jobs=jobs, count=len(jobs))
+
+    async def get_job(self, job_id: str) -> JobManifest | None:
+        return await self._repository.get(job_id)
+
+    async def list_job_events(self, job_id: str) -> JobEventListResponse | None:
+        job = await self._repository.get(job_id)
+        if job is None:
+            return None
+        events = await self._event_repository.list_for_job(job_id)
+        return JobEventListResponse(events=events, count=len(events))
+
+    async def validate_executable(self, job_id: str) -> JobManifest:
+        job = await self._repository.get(job_id)
+        if job is None:
+            raise FileNotFoundError(f"Job not found: {job_id}")
+        blocked = {JobStatus.RUNNING, JobStatus.SUCCEEDED, JobStatus.CANCELLED}
+        if job.status in blocked:
+            raise ValueError(
+                f"Job is not executable: job_id={job_id}, status={job.status}"
+            )
+        return job
+
+    async def mark_queued(
+        self, job_id: str, *, expected_status: JobStatus | None = None
+    ) -> JobManifest:
+        """Queue the Job for a dispatch. Raises ``JobDispatchConflictError`` when
+        the Job changed after it was read here, or is not in ``expected_status``
+        (the state a caller decided on); then nothing is written and the caller
+        must not send a message."""
+        job = await self.validate_executable(job_id)
+        if expected_status is not None and job.status != expected_status:
+            raise JobDispatchConflictError(job)
+
+        if job.status == JobStatus.FAILED and job.retry_count >= job.max_retries:
+            raise ValueError(
+                f"Job has exhausted retries: job_id={job_id}, "
+                f"retry_count={job.retry_count}, max_retries={job.max_retries}"
+            )
+
+        # The checks above judged the Job as read; the write applies only to that
+        # same state, so a decision made on a stale read cannot take effect.
+        queued = await self._repository.queue_if_unchanged(job)
+        if queued is None:
+            raise JobDispatchConflictError(job)
+        job = queued
+
+        now = utc_now()
+        await self._event_repository.append(
+            JobEvent(
+                event_id=generate_job_event_id(),
+                job_id=job.job_id,
+                type=JobEventType.QUEUED,
+                level=JobEventLevel.INFO,
+                status=JobStatus.QUEUED,
+                job_type=job.type,
+                pipeline_run_id=job.pipeline_run_id,
+                pipeline_task_run_id=job.pipeline_task_run_id,
+                pipeline_task_id=job.pipeline_task_id,
+                message="Job queued",
+                created_at=now,
+            )
+        )
+
+        return job

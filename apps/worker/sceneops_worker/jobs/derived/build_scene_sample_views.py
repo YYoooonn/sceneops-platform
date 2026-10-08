@@ -30,7 +30,7 @@ from sceneops_core.sample_views import (
 )
 from sceneops_core.scenes.schemas import SceneRecord
 
-from sceneops_worker.derived import DerivedManifestIntegrityError
+from sceneops_derived import DerivedManifestIntegrityError
 from sceneops_worker.derived.resolution import resolve_label_set
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest

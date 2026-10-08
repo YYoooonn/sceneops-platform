@@ -19,7 +19,7 @@ from sceneops_worker.jobs.derived import (
     BuildSceneSampleViewsJobHandler,
     ImportLabelsJobHandler,
 )
-from tests.derived.labels_support import label_document, write_document
+from sceneops_derived.testing import label_document, write_document
 from tests.derived_harness import DATASET_ID, DATASET_VERSION
 
 MS = 1_000_000

@@ -1,8 +1,9 @@
 # Jobs and Pipelines
 
 > Based on `packages/sceneops-core/sceneops_core/pipelines/builtin.py`,
-> `apps/worker/sceneops_worker/{pipelines,jobs,execution,tasks}/` and
-> `apps/api/app/platform/`. Decision records:
+> `apps/worker/sceneops_worker/{pipelines,jobs,tasks}/`,
+> `packages/sceneops-execution/` (the services, dispatch, leases and recovery both
+> processes share) and `apps/api/app/platform/` (the routes). Decision records:
 > [ADR-009](../adr/009-job-centric-execution-and-durable-boundaries.md),
 > [ADR-010](../adr/010-job-ownership-lease-and-fencing.md) (ownership lease),
 > [ADR-011](../adr/011-state-derived-redispatch.md) (lost messages).
@@ -238,7 +239,7 @@ Job transition currently produces them.
 There is no Celery-level retry on either task. Retrying is always an explicit
 redispatch of durable state, or lease recovery's requeue of a Job whose worker is gone.
 
-### Ownership: claim, lease, fencing (`jobs/lease.py`, `jobs/lease_recovery.py`)
+### Ownership: claim, lease, fencing (`sceneops_execution/jobs/lease.py`, `.../jobs/lease_recovery.py`)
 
 A claim owns a `RUNNING` Job. Three separate mechanisms keep that ownership correct:
 
@@ -323,9 +324,9 @@ run steps); there is no outbox and no delivered marker.
 | Backfill | None: there is no time-partitioned execution; one more PipelineRun is dispatched for the scope. |
 
 Implementation: `packages/sceneops-core/sceneops_core/executions/key.py`,
-`apps/api/app/platform/jobs/service.py` (`create_job`, `mark_queued`),
+`packages/sceneops-execution/sceneops_execution/jobs/service.py` (`create_job`, `mark_queued`),
 `packages/sceneops-db/sceneops_db/postgres/jobs.py` (`create`, `queue_if_unchanged`),
-`apps/api/app/platform/pipelines/service.py` (`create_pipeline_run`, `validate_executable`).
+`packages/sceneops-execution/sceneops_execution/pipelines/service.py` (`create_pipeline_run`, `validate_executable`).
 
 ### Durable-state-first boundaries and failure windows
 
@@ -394,12 +395,12 @@ JobType.VALIDATE_SCENE: [
 ```
 
 `create_initial_job_steps(job_type)` runs when a Job is created
-(`apps/api/app/platform/jobs/service.py`) and when the orchestrator plans a task
+(`packages/sceneops-execution/sceneops_execution/jobs/service.py`) and when the orchestrator plans a task
 (`apps/worker/sceneops_worker/pipelines/planning.py`), so every Job persists a
 `steps` list matching its type.
 
 Only the first step is updated at runtime. `JobResultRecorder`
-(`apps/worker/sceneops_worker/jobs/result_recorder.py`) marks the first `PENDING`
+(`packages/sceneops-execution/sceneops_execution/jobs/result_recorder.py`) marks the first `PENDING`
 step `RUNNING` when the Job starts and the running step `SUCCEEDED` / `FAILED` when it
 finishes; no handler reports progress through its own steps, so on a succeeded Job the
 other declared steps stay `PENDING`. Treat the step list as declarative documentation

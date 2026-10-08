@@ -51,12 +51,12 @@ services:
   worker-cli:
     <<: *worker-common
     # Also reads the LeRobot export written by lerobot-integration, and runs the
-    # E2E verification scripts mounted at /workspace/scripts
-    # (scripts/e2e/e2e_episode_learning.sh).
+    # E2E verification scripts mounted at /workspace/tools/e2e
+    # (tools/e2e/e2e_episode_learning.sh).
     volumes:
       - ./data/artifacts:/data/artifacts
       - ./data/inputs:/data/inputs:ro
       - ./data/runs:/data/runs
-      - ./scripts:/workspace/scripts:ro
+      - ./tools/e2e:/workspace/tools/e2e:ro
     profiles:
       - debug

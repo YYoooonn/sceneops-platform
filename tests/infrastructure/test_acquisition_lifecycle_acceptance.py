@@ -31,7 +31,7 @@ The invariant it ends on: one logical acquisition is one RobotRun matching its
 published manifest, or none when recovery is over and a person must decide.
 
 What it proves and what it does not: Capture's finalize and receipt code build
-the captures (the Kafka consumption that feeds it is ``make ros2-test`` and the
+the captures (the Kafka consumption that feeds it is ``make streaming-test`` and the
 streaming equivalence journey); the object store is real MinIO, the database real
 PostgreSQL, the broker a throwaway Redis, the workers real Celery subprocesses,
 and times are real (the stall threshold is 5 s here). It is infrastructure
@@ -145,7 +145,7 @@ class Commands:
     def publish_pending(self, *, faulty: bool = False) -> Command:
         """``faulty`` runs the same command through ``recovery_publisher``,
         which only adds the fault points of the control file."""
-        module = "recovery_publisher" if faulty else "sceneops_integrations.recording"
+        module = "recovery_publisher" if faulty else "sceneops_publisher"
         proc = _spawn(
             self._publish_args(module),
             env_vars=self.env.publisher_environment(),
@@ -156,7 +156,7 @@ class Commands:
     def publish_pending_concurrently(self, count: int) -> list[Command]:
         procs = [
             _spawn(
-                self._publish_args("sceneops_integrations.recording"),
+                self._publish_args("sceneops_publisher"),
                 env_vars=self.env.publisher_environment(),
                 cwd=self.env.tmp,
             )
@@ -167,7 +167,9 @@ class Commands:
     def _reconcile_args(self, stall: float) -> list[str]:
         return [
             "-m",
-            "app.domains.robots.reconciliation",
+            "sceneops_worker.main",
+            "acquisition",
+            "reconcile",
             "--once",
             "--apply",
             "--stall-threshold-seconds",
@@ -178,7 +180,7 @@ class Commands:
         proc = _spawn(
             self._reconcile_args(stall),
             env_vars=self.env.reconciler_environment(stall_threshold_seconds=stall),
-            cwd=REPO_ROOT / "apps" / "api",
+            cwd=REPO_ROOT / "apps" / "worker",
         )
         return self._record(_finish("reconcile", proc))
 
@@ -187,7 +189,7 @@ class Commands:
             _spawn(
                 self._reconcile_args(stall),
                 env_vars=self.env.reconciler_environment(stall_threshold_seconds=stall),
-                cwd=REPO_ROOT / "apps" / "api",
+                cwd=REPO_ROOT / "apps" / "worker",
             )
             for _ in range(count)
         ]
@@ -198,7 +200,7 @@ class Commands:
         proc = _spawn(
             [
                 "-m",
-                "sceneops_integrations.recording",
+                "sceneops_publisher",
                 "scan-capture",
                 "--capture-root",
                 str(self.capture_root),
@@ -217,7 +219,9 @@ class Commands:
     ) -> Command:
         args = [
             "-m",
-            "app.domains.robots.acquisition_status",
+            "sceneops_worker.main",
+            "acquisition",
+            "status",
             "--once",
             "--capture-report",
             str(self.scan_capture()),
@@ -229,7 +233,7 @@ class Commands:
         proc = _spawn(
             args,
             env_vars=self.env.reconciler_environment(stall_threshold_seconds=stall),
-            cwd=REPO_ROOT / "apps" / "api",
+            cwd=REPO_ROOT / "apps" / "worker",
         )
         command = _finish("acquisition-status", proc)
         assert command.returncode == 0, command.stderr

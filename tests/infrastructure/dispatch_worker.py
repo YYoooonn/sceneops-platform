@@ -28,7 +28,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-import sceneops_worker.execution.dispatcher as _dispatcher
+import sceneops_execution.executions.dispatcher as _dispatcher
 import sceneops_worker.jobs.runner as _runner
 import sceneops_worker.pipelines.planning as _planning
 from sceneops_core.jobs.schemas import JobType

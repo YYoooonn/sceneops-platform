@@ -12,8 +12,8 @@ from app.core.repositories import (
     JobRepositoryDep,
 )
 from app.platform.executions.dependencies import JobExecutionBackendDep
-from app.platform.jobs.dispatch_facade import JobDispatchFacade
-from app.platform.jobs.service import JobService
+from sceneops_execution.jobs.dispatch_facade import JobDispatchFacade
+from sceneops_execution.jobs.service import JobService
 from sceneops_db.session import get_async_sessionmaker
 
 

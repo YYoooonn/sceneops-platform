@@ -81,9 +81,9 @@ under the contract's robot.
 make reference-contract-verify      read-only
 make reference-contract-bootstrap   converge on the contract
 make reference-contract-verify REQUIRE_PRISTINE=1    ... and nothing but the contract
-python3 scripts/reference/reference_contract.py show|validate|verify|bootstrap [--require-pristine]
-python3 scripts/reference/reference_contract.py pair [--fixture <id> | --scope <scope>]
-python3 scripts/reference/reference_contract.py fingerprint [--golden]
+python3 tools/reference/reference_contract.py show|validate|verify|bootstrap [--require-pristine]
+python3 tools/reference/reference_contract.py pair [--fixture <id> | --scope <scope>]
+python3 tools/reference/reference_contract.py fingerprint [--golden]
 ```
 
 Both print one JSON report on stdout (`sceneops.reference_contract_report/1`);

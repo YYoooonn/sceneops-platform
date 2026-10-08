@@ -7,19 +7,21 @@ from fastapi import Depends
 
 from app.core.dependencies import ApiSettingsDep
 from app.core.repositories import ExecutionRecordRepositoryDep
-from app.platform.executions.backends import (
+from sceneops_execution.executions.backends import (
     CeleryJobExecutionBackend,
     CeleryPipelineExecutionBackend,
     JobExecutionBackend,
     PipelineExecutionBackend,
 )
-from app.platform.executions.factory import create_celery_app
-from app.platform.executions.service import ExecutionService
+from sceneops_execution.executions.client import create_celery_client
+from sceneops_execution.executions.service import ExecutionService
 
 
 def get_celery_app(settings: ApiSettingsDep) -> Celery:
     c = settings.execution.celery
-    return create_celery_app(broker_url=c.broker_url, result_backend=c.result_backend)
+    return create_celery_client(
+        broker_url=c.broker_url, result_backend=c.result_backend
+    )
 
 
 CeleryAppDep = Annotated[Celery, Depends(get_celery_app)]

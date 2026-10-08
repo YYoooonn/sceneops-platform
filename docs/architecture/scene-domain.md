@@ -192,7 +192,7 @@ Everything downstream of registration reads canonical Scenes through a pin:
   produces independent label set revisions anchored on canonical
   observations; labels are never written into a Scene.
 - Scenario mining, detection and evaluation consume sample views and label
-  sets through checksum-verified pins (`sceneops_worker.derived`), locate
+  sets through checksum-verified pins (`sceneops_derived`), locate
   payloads through their ArtifactRecords, and refuse a view whose Scene
   revision blocked downstream use. See
   [Derived layer](./derived-layer.md).
@@ -213,11 +213,11 @@ validate_scene           VALIDATE_SCENE (scene_ids from registration)
 profile_scene            PROFILE_SCENE (optional)
 ```
 
-The builder (`sceneops_worker.scenes.recording_builder`, producer
+The builder (`sceneops_scenes.recording_builder`, producer
 `sceneops.recording_scene_builder`, semantics version 1) reads the recording
 only through `resolve_recording(robot_run_id)`, requires it to pass the L1
 conformance suite, and reads messages through
-`sceneops_integrations.recording.reader`. Its behavior is a function of
+`sceneops_recording.reader`. Its behavior is a function of
 recording content and `RecordingSceneBuildConfig`
 (`sceneops_core.scenes.recording_build`), whose normalized form is
 `ProducerInfo.build_config`:

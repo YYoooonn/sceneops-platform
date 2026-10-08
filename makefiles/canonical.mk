@@ -26,10 +26,10 @@ CANONICAL_ENV = $(E2E_ENV) REFERENCE_SCOPE=$(REFERENCE_SCOPE) $(if $(FIXTURE),FI
 .PHONY: canonical-bootstrap
 canonical-bootstrap:
 	$(COMPOSE) --profile acquisition build dataset-acquisition
-	chmod +x scripts/canonical/*.sh
-	$(CANONICAL_ENV) scripts/canonical/canonical_bootstrap.sh
+	chmod +x tools/baselines/canonical/*.sh
+	$(CANONICAL_ENV) tools/baselines/canonical/canonical_bootstrap.sh
 
 .PHONY: canonical-verify
 canonical-verify:
-	chmod +x scripts/canonical/*.sh
-	$(CANONICAL_ENV) scripts/canonical/canonical_verify.sh
+	chmod +x tools/baselines/canonical/*.sh
+	$(CANONICAL_ENV) tools/baselines/canonical/canonical_verify.sh

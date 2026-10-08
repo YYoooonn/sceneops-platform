@@ -30,10 +30,10 @@ local-down:
 .PHONY: local-reset
 # DESTRUCTIVE — deletes Postgres/Redis/MinIO volumes and generated ./data
 # artifacts, then rebuilds a clean stack. Interactive confirmation unless
-# FORCE=1. See scripts/dev/reset_local_state.sh for the exact steps.
+# FORCE=1. See tools/dev/reset_local_state.sh for the exact steps.
 local-reset:
-	chmod +x scripts/dev/reset_local_state.sh
-	ENV_FILE=$(ENV_FILE) scripts/dev/reset_local_state.sh
+	chmod +x tools/dev/reset_local_state.sh
+	ENV_FILE=$(ENV_FILE) tools/dev/reset_local_state.sh
 
 .PHONY: logs
 logs:

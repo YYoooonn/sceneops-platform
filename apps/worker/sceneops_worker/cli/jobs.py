@@ -6,7 +6,7 @@ from rich import print
 from sceneops_db.session import async_session_scope
 from sceneops_worker.cli.async_utils import run_cli_async
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.execution.dispatcher import create_execution_dispatcher
+from sceneops_worker.celery_app import create_execution_dispatcher
 from sceneops_worker.jobs.runner import JobRunner
 
 app = typer.Typer(

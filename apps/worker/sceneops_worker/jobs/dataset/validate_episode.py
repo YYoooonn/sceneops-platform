@@ -21,7 +21,7 @@ from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.episodes.resolver import resolve_registered_episode
-from sceneops_worker.episodes.validation import EpisodeManifestValidator
+from sceneops_episodes.validation import EpisodeManifestValidator
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
 _validator = EpisodeManifestValidator()

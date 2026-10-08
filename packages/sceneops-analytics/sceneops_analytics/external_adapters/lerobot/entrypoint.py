@@ -36,7 +36,7 @@ Transport (Request 4.2 §3): a JSON ``IntegrationRequest`` file in
 no DB objects or in-process Python object sharing, trivial to invoke via
 ``docker run``. Failure is a non-zero exit code plus a clear stderr
 message, never a caught error serialized as "success" -- the same
-convention every ``scripts/e2e/e2e_lerobot_*.py`` script already uses.
+convention every ``tools/e2e/e2e_lerobot_*.py`` script already uses.
 
 ArtifactStore backend/credentials (Request 4.2 follow-up §2) are selected
 entirely from environment variables, via the same ``pydantic_settings.
@@ -56,7 +56,7 @@ This container never deletes a caller-owned ``external_ref.uri`` target
 (Request 4.2 follow-up §1): it attempts the export and fails clearly (a
 wrapped ``IntegrationRuntimeError``) if the target already exists. Cleaning
 a known test-owned output directory between reruns is the test
-orchestrator's job (``scripts/e2e/smoke_lerobot_container.sh``), never this
+orchestrator's job (``tools/e2e/smoke_lerobot_container.sh``), never this
 runtime's.
 """
 
@@ -181,7 +181,7 @@ def _resolve_export_root(uri: str) -> Path:
     not this function's to silently clear -- see ``execute()``'s own
     ``FileExistsError`` handling for that clear failure. Idempotent-rerun
     cleanup of a known test-owned directory belongs to the test
-    orchestrator (``scripts/e2e/smoke_lerobot_container.sh``), never this
+    orchestrator (``tools/e2e/smoke_lerobot_container.sh``), never this
     runtime."""
     export_root = Path(uri)
     export_root.parent.mkdir(parents=True, exist_ok=True)

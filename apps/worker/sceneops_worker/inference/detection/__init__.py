@@ -1,17 +1,1 @@
-from sceneops_worker.inference.detection.base import DetectionInferenceBackend
-from sceneops_worker.inference.detection.mock import MockDetectionInferenceBackend
-from sceneops_worker.inference.detection.grounding_dino import (
-    GroundingDinoDetectionBackend,
-)
-from sceneops_worker.inference.detection.factory import (
-    create_detection_inference_backend,
-    register_detection_inference_backend,
-)
-
-__all__ = [
-    "DetectionInferenceBackend",
-    "MockDetectionInferenceBackend",
-    "GroundingDinoDetectionBackend",
-    "create_detection_inference_backend",
-    "register_detection_inference_backend",
-]
+"""Sample resolution for detection inference over a WorkerContext."""

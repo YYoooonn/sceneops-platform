@@ -11,7 +11,7 @@ from sceneops_core.jobs.schemas import (
     ScoreScenarioReadinessJobParams,
 )
 from sceneops_core.scenarios import ScenarioSortKey
-from sceneops_worker.derived import DerivedManifestConflictError
+from sceneops_derived import DerivedManifestConflictError
 from sceneops_worker.derived.resolution import (
     LegacyDerivedRecordError,
     resolve_scenario_set,
@@ -32,7 +32,7 @@ async def _setup(tmp_path):
         name: await harness.register_scene(robot_run_id=run)
         for name, run in (("a", "run-001"), ("b", "run-002"), ("c", "run-003"))
     }
-    from tests.derived.labels_support import label_document, write_document
+    from sceneops_derived.testing import label_document, write_document
     from sceneops_core.jobs.schemas import ImportLabelsJobParams
     from sceneops_worker.jobs.derived import ImportLabelsJobHandler
     from sceneops_core.labels import LabelSetManifest

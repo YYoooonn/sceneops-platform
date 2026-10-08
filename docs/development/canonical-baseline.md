@@ -49,9 +49,9 @@ make canonical-verify    [same selection]                      read-only re-chec
 - The bootstrap **converts nothing**. If a fixture's recording is not prepared, or
   does not match `corpus.lock.json`, it stops and names the problem; the fix is
   `make reference-data-bootstrap REFERENCE_SCOPE=<scope>`.
-- `scripts/canonical/canonical_bootstrap.sh` builds the baseline;
-  `scripts/canonical/canonical_verify.sh` is the read-only check the bootstrap ends
-  with (`scripts/canonical/baseline_lib.sh`). Both use only FastAPI and one-shot
+- `tools/baselines/canonical/canonical_bootstrap.sh` builds the baseline;
+  `tools/baselines/canonical/canonical_verify.sh` is the read-only check the bootstrap ends
+  with (`tools/baselines/canonical/baseline_lib.sh`). Both use only FastAPI and one-shot
   containers. The bootstrap prints one JSON summary on stdout (below); progress
   goes to stderr.
 - The Scene and Episode build configurations are the files under
@@ -188,7 +188,7 @@ make streaming-compare   [same selection]            read-only: Recording Import
 - Publication and registration are the production commands of
   [ADR-008](../adr/008-acquisition-lifecycle-reliability.md); nothing writes PostgreSQL
   or MinIO directly.
-- `scripts/streaming/streaming_lib.sh` holds the acquisition path of the streaming
+- `tools/baselines/streaming/streaming_lib.sh` holds the acquisition path of the streaming
   baseline.
 
 ### create-or-verify, per fixture

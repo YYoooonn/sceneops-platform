@@ -39,7 +39,7 @@ from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.episodes import recording_builder as episode_builder_module
+from sceneops_episodes import recording_builder as episode_builder_module
 from sceneops_worker.episodes.registration import EpisodeRegistrationConflictError
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset import build_recording_episodes as build_job_module
@@ -55,14 +55,13 @@ from sceneops_worker.jobs.dataset.register_scenes import RegisterScenesJobHandle
 from sceneops_worker.jobs.dataset.validate_episode import ValidateEpisodeJobHandler
 
 sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parents[1] / "scenes"))
-from episode_recording_fixture import (  # noqa: E402
+from sceneops_recording.testing.episode_recordings import (  # noqa: E402
     ODOM,
     episode_build_config,
     episode_recording,
     with_odometry,
 )
-from recording_fixture import (  # noqa: E402
+from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     CAMERA_TOPIC,
     build_config as scene_build_config,
     default_recording,

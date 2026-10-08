@@ -42,7 +42,7 @@ from sceneops_core.episodes.schemas import (
 )
 
 from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.episodes.artifacts import EpisodeManifestIntegrityError
+from sceneops_episodes.artifacts import EpisodeManifestIntegrityError
 from sceneops_worker.recordings.payload_refs import (
     PayloadIntegrityError,
     resolve_payload_artifacts,

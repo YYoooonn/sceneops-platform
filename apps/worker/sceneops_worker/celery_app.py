@@ -8,7 +8,12 @@ from celery.signals import (
 
 from sceneops_db.session import reset_async_engine_cache
 from sceneops_worker.config import get_settings
-from sceneops_worker.execution import create_celery_app
+from sceneops_core.config import ExecutionSettings
+from sceneops_execution.executions.celery_factory import create_celery_app
+from sceneops_execution.executions.dispatcher import (
+    CeleryExecutionDispatcher,
+    ExecutionDispatcher,
+)
 
 settings = get_settings()
 
@@ -20,6 +25,16 @@ celery_app = create_celery_app(
         "sceneops_worker.tasks.jobs",
     ],
 )
+
+
+def create_execution_dispatcher(settings: ExecutionSettings) -> ExecutionDispatcher:
+    """The two messages a worker sends, over this worker's own Celery app: it
+    carries the task routes of both queues."""
+    return CeleryExecutionDispatcher(
+        app=celery_app,
+        job_queue=settings.celery.job_queue,
+        pipeline_queue=settings.celery.pipeline_queue,
+    )
 
 
 # This worker's Celery node name ("<name>@<host>"), set in the main process

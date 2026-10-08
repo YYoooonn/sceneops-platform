@@ -38,7 +38,7 @@ from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
 from sceneops_db.postgres.jobs import PostgresJobRepository
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_storage import create_artifact_store
-from sceneops_worker.execution import create_celery_app
+from sceneops_execution.executions.celery_factory import create_celery_app
 
 pytestmark = pytest.mark.usefixtures(*RECOVERY_FIXTURES)
 

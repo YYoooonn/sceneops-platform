@@ -5,7 +5,10 @@ from fastapi import APIRouter
 from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.platform.executions.dependencies import ExecutionServiceDep
-from app.platform.executions.schemas import ExecutionListResponse, ExecutionResponse
+from sceneops_execution.executions.schemas import (
+    ExecutionListResponse,
+    ExecutionResponse,
+)
 from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionKind,

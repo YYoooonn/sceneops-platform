@@ -10,8 +10,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from app.domains.robots.registration import RobotRunRegistrationService
-from app.platform.jobs.service import JobDispatchConflictError, JobService
+from sceneops_acquisition.registration import RobotRunRegistrationService
+from sceneops_execution.jobs.service import JobDispatchConflictError, JobService
 from sceneops_core.executions.schemas import (
     ExecutionBackend,
     ExecutionDispatchResult,

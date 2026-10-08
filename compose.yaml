@@ -7,8 +7,6 @@ include:
     project_directory: .
   - path: ./compose/inference.yaml
     project_directory: .
-  - path: ./compose/ros2.yaml
-    project_directory: .
   - path: ./compose/tools.yaml
     project_directory: .
   - path: ./compose/streaming.yaml

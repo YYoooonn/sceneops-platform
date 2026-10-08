@@ -7,8 +7,8 @@ from fastapi import Depends
 from app.core.dependencies import ApiSettingsDep
 from app.core.repositories import PipelineRunRepositoryDep, PipelineTaskRunRepositoryDep
 from app.platform.executions.dependencies import PipelineExecutionBackendDep
-from app.platform.pipelines.dispatch_facade import PipelineDispatchFacade
-from app.platform.pipelines.service import PipelineService
+from sceneops_execution.pipelines.dispatch_facade import PipelineDispatchFacade
+from sceneops_execution.pipelines.service import PipelineService
 from sceneops_db.session import get_async_sessionmaker
 
 

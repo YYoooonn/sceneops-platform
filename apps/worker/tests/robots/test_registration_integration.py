@@ -23,7 +23,7 @@ from sceneops_db.postgres.robots import (
     PostgresRobotRunRepository,
 )
 from sceneops_db.session import get_async_sessionmaker
-from sceneops_integrations.recording import RecordingPublicationConflictError
+from sceneops_recording import RecordingPublicationConflictError
 from sceneops_storage.backends.s3 import S3ArtifactStore
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
@@ -131,7 +131,7 @@ async def test_different_manifest_for_registered_run_is_hard_conflict(
     other_settings = worker_settings.model_copy(deep=True)
     other_settings.artifact.root_uri = worker_settings.artifact.root_uri + "-other"
     from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
-    from sceneops_integrations.recording import publish_recording
+    from sceneops_recording import publish_recording
 
     other = await publish_recording(
         artifact_store=S3ArtifactStore(settings=other_settings.artifact),

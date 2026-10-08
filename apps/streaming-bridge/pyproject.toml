@@ -1,0 +1,25 @@
+[project]
+name = "sceneops-streaming-bridge"
+version = "0.1.0"
+description = "SceneOps streaming bridge: ROS 2 topics to the Kafka streaming transport"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-streaming",
+]
+# rclpy and the ROS 2 message packages come from the ROS 2 distribution of the
+# container image, not from a Python distribution.
+
+[project.scripts]
+sceneops-streaming-bridge = "sceneops_streaming_bridge.node:main"
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-streaming = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_streaming_bridge"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

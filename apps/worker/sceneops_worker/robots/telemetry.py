@@ -137,8 +137,8 @@ class RecordingTelemetryReader:
     projection (``extract_robot_states``, ``extract_missions``) that
     ``INGEST_ROBOT_STATES`` persists (L1 -> L3, ADR-007 §29.3). It is not a
     canonical ingress: canonical Scenes and Episodes are built by
-    ``sceneops_worker.scenes.recording_builder`` and
-    ``sceneops_worker.episodes.recording_builder`` from build configuration.
+    ``sceneops_scenes.recording_builder`` and
+    ``sceneops_episodes.recording_builder`` from build configuration.
 
     Decodes two message encodings:
 

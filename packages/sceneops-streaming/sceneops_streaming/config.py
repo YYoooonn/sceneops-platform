@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from sceneops_core.constants.streaming import DEFAULT_TELEMETRY_TOPIC
+from .constants import DEFAULT_TELEMETRY_TOPIC
 
 
 class StreamingSettings(BaseSettings):
@@ -59,7 +59,7 @@ class StreamingSettings(BaseSettings):
     # DOES need isolation (make smoke-streaming, so repeated runs don't
     # inherit a previous run's committed offsets) derives its own group
     # id FROM this configured base rather than inventing an unrelated
-    # literal -- see scripts/e2e/smoke_streaming.py.
+    # literal -- see tools/e2e/smoke_streaming.py.
     consumer_group_id: str = "sceneops-telemetry-consumer"
 
 

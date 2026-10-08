@@ -1,0 +1,27 @@
+[project]
+name = "sceneops-recording"
+version = "0.1.0"
+description = "SceneOps recording: Kafka-to-MCAP capture, publication of finalized recordings, and the capture receipt and scans that join them"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+  "mcap>=1.4",
+  "mcap-ros2-support>=0.5",
+]
+
+[project.optional-dependencies]
+# Capture consumes the streaming transport; publishing and reading recordings do not.
+capture = ["sceneops-streaming"]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-storage = { workspace = true }
+sceneops-streaming = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_recording"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

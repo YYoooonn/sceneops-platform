@@ -4,8 +4,8 @@
 
 .PHONY: setup
 setup:
-	chmod +x scripts/setup_dev.sh
-	./scripts/setup_dev.sh
+	chmod +x tools/dev/setup_dev.sh
+	./tools/dev/setup_dev.sh
 
 .PHONY: uv-sync
 uv-sync:
@@ -31,9 +31,14 @@ check:
 # several suites ship their own `tests/__init__.py` + conftest, which pytest
 # cannot register together in one process.
 UNIT_TEST_SUITES := apps/worker/tests apps/api/tests apps/inference-server/tests \
-	packages/sceneops-analytics/tests packages/sceneops-core/tests \
-	packages/sceneops-integrations/tests packages/sceneops-streaming/tests \
-	scripts/reference/tests scripts/e2e/tests tests/infrastructure/unit
+	apps/publisher/tests \
+	packages/sceneops-acquisition/tests packages/sceneops-analytics/tests \
+	packages/sceneops-core/tests packages/sceneops-derived/tests \
+	packages/sceneops-episodes/tests \
+	packages/sceneops-evaluation/tests packages/sceneops-execution/tests \
+	packages/sceneops-inference/tests packages/sceneops-recording/tests \
+	packages/sceneops-scenes/tests packages/sceneops-streaming/tests \
+	tools/checks/tests tools/reference/tests tools/e2e/tests tests/infrastructure/unit
 
 .PHONY: test
 # All infrastructure-independent automated tests -- no Postgres/MinIO/network/
@@ -42,10 +47,10 @@ UNIT_TEST_SUITES := apps/worker/tests apps/api/tests apps/inference-server/tests
 # model-dependent pytest suite; that path is only exercised by
 # `make acceptance-grounding-dino`. packages/sceneops-streaming/tests is pure
 # wire/schema unit tests (no Kafka broker) -- real-broker behavior is
-# `make test-infrastructure SUITE=kafka`, not this tier. scripts/reference/tests evaluates the
-# golden reference contract on synthetic state only; scripts/e2e/tests covers the
+# `make test-infrastructure SUITE=kafka`, not this tier. tools/reference/tests evaluates the
+# golden reference contract on synthetic state only; tools/e2e/tests covers the
 # decisions of the read-only equivalence verifier the same way.
-test:
+test: check-boundaries
 	@set -e; for suite in $(UNIT_TEST_SUITES); do \
 		echo "=== $$suite"; \
 		uv run pytest $$suite -q || exit 1; \
@@ -79,7 +84,7 @@ DISPOSABLE_ENV_RUN := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --
 DISPOSABLE_ENV_RUNTIME := $(DISPOSABLE_ENV) run $(DISPOSABLE_ENV_FLAGS) --env-file $(ENV_FILE) --runtime
 
 INTEGRATION_COMMAND := $(DISPOSABLE_PYTEST) packages/sceneops-db/tests/ packages/sceneops-storage/tests/ -v \
-	&& $(DISPOSABLE_PYTEST) -o python_files="*_integration.py" apps/worker/tests packages/sceneops-analytics/tests -v \
+	&& $(DISPOSABLE_PYTEST) -o python_files="*_integration.py" apps/worker/tests packages/sceneops-analytics/tests packages/sceneops-execution/tests -v \
 	&& $(DISPOSABLE_PYTEST) -o python_files="*_integration.py" apps/api/tests -v
 
 .PHONY: test-integration
@@ -103,7 +108,7 @@ test-integration:
 #   recovery    acquisition-recovery fault injection + full-lifecycle acceptance + Job
 #               worker loss under the ownership lease + lost broker messages
 #               (makefiles/recovery.mk), same disposable database + bucket, own Redis/workers
-#   kafka       real-Kafka transport: bridge + capture tests in the ros2 image, then the
+#   kafka       real-Kafka transport: bridge + capture tests in their ROS 2 images, then the
 #               transport smoke (makefiles/streaming.mk); needs `make streaming-up`
 #   boundaries  isolation boundaries: the acquisition tool (own uv project, I-36 import
 #               boundary), the LeRobot adapter (own uv project), the acquisition images
@@ -139,7 +144,7 @@ infra-suite-pipelines:
 		--ignore=tests/infrastructure/unit -v
 
 .PHONY: infra-suite-kafka
-infra-suite-kafka: ros2-test smoke-streaming
+infra-suite-kafka: streaming-test smoke-streaming
 
 .PHONY: infra-suite-boundaries
 infra-suite-boundaries: check-runtime-boundary acquisition-image-check acquisition-test lerobot-test

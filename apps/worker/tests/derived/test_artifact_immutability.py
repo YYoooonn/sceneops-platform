@@ -15,7 +15,7 @@ import pytest
 from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.evaluations.schemas import load_canonical_evaluation_manifest
-from sceneops_worker.runs.artifacts import RunArtifactConflictError
+from sceneops_derived.run_artifacts import RunArtifactConflictError
 from tests.derived.flow_support import evaluate, mine, predict
 from tests.derived.test_detection_vertical import _world
 

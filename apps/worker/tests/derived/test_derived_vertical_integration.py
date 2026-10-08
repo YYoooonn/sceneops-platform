@@ -14,8 +14,6 @@ skips otherwise. Rows are created under unique ids and removed afterwards.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import pytest
 
@@ -48,11 +46,10 @@ from sceneops_worker.jobs.evaluation import EvaluateDetectionJobHandler
 from sceneops_worker.jobs.inference import PredictDetectionJobHandler
 from sceneops_worker.jobs.scenarios import MineScenariosJobHandler
 
-from tests.derived.labels_support import anchor, box_label
+from sceneops_derived.testing import anchor, box_label
 from tests.scenes.test_recording_scene_vertical_integration import _Vertical
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "scenes"))
-from recording_fixture import (  # noqa: E402
+from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     CAMERA_TOPIC,
     LIDAR_TOPIC,
     build_config,

@@ -39,18 +39,18 @@ Episode
 
 Platform primitives are generic; domain semantics stay explicit. PostgreSQL holds identity, metadata, membership and lineage references; object storage holds durable artifacts; Parquet is the analytical representation; Redis is transient execution support; Kafka is streaming transport, never canonical storage.
 
-| Layer            | Package                       | Role                                                                             |
+| Layer            | Location                      | Role                                                                             |
 | ---------------- | ----------------------------- | -------------------------------------------------------------------------------- |
 | Control plane    | `apps/api`                    | REST API: datasets, scenes, episodes, scenarios, jobs, pipelines, runs, artifacts, robots |
-| Data plane       | `apps/worker`                 | Pipeline orchestration, job execution, artifact writes                           |
-| Metadata store   | `packages/sceneops-db`        | PostgreSQL models, repositories, Alembic migrations                              |
-| Artifact store   | `packages/sceneops-storage`   | Local and S3-compatible artifact storage                                         |
-| Domain contracts | `packages/sceneops-core`      | Pydantic schemas, job contracts, pipeline definitions                            |
-| Analytics        | `packages/sceneops-analytics` | Parquet tables, learning-data reader, external adapters (LeRobot)                |
-| Integrations     | `packages/sceneops-integrations`, `packages/sceneops-streaming` | Recording publisher / reader, Kafka wire contracts       |
-| Tools            | `tools/`                      | Isolated uv projects: `dataset-acquisition` (external dataset → MCAP), `lerobot-integration` |
-| Robot sandbox    | `ros2/`                       | ROS 2 Jazzy: streaming bridge node and durable MCAP capture                      |
+| Execution        | `apps/worker`                 | Pipeline orchestration, job execution, artifact writes, `sceneops-worker` CLI (recovery, acquisition commands) |
+| Acquisition      | `apps/streaming-bridge`, `apps/capture`, `apps/publisher` | ROS 2 → Kafka bridge; Kafka → MCAP capture; MCAP → published RobotRun objects |
 | Inference server | `apps/inference-server`       | Optional GroundingDINO server                                                    |
+| Foundations      | `packages/sceneops-{core,db,storage,streaming}` | Domain schemas and contracts; PostgreSQL; ArtifactStore; Kafka transport |
+| Capabilities     | `packages/sceneops-{recording,execution,acquisition,scenes,episodes,derived,inference,evaluation,analytics}` | Capture and publication; Job / Pipeline execution; acquisition lifecycle; Scene and Episode building; derived storage; inference; evaluation; Parquet analytics |
+| Tools            | `tools/`                      | Checks, E2E journeys, baselines, benchmarks, dev helpers; isolated uv projects `dataset-acquisition` (external dataset → MCAP) and `lerobot-integration` |
+
+Apps are processes; packages are the reusable code they import; tools are never imported
+by either. Details and the dependency rules: [Repository structure](docs/architecture/repository-structure.md).
 
 ### Pipelines and jobs
 
@@ -147,7 +147,7 @@ The whole acceptance surface is the commands below; [`docs/development/test-matr
 
 | Command | Description |
 | --- | --- |
-| `make test` | Unit suites (worker, api, inference-server, core, analytics, integrations, streaming, reference contract, e2e verifiers, test-infrastructure) — no infrastructure |
+| `make test` | Dependency-direction check, then the unit suites of every app, package and tool (the ROS 2 suites run in `make streaming-test`) — no infrastructure |
 | `make test-integration` | Real Postgres + MinIO: sceneops-db, sceneops-storage, every `*_integration.py` module (registrars, recording Scene / Episode and derived verticals, selective Parquet reads) — in a disposable database and bucket, needs `make local-up`; a skipped test fails the run |
 | `make test-infrastructure [SUITE=…]` | Real-infrastructure suites; `pipelines` and `recovery` fail instead of skipping. `pipelines` (default): pipeline contracts on a disposable execution runtime (own API, workers, Redis, database and bucket). `recovery`: acquisition recovery under injected faults and the full capture → RobotRun lifecycle acceptance. `kafka`: ROS 2 bridge + capture tests and the transport smoke (needs `make streaming-up`). `boundaries`: acquisition tool and LeRobot adapter in their own uv projects, acquisition images, raw-source mount of the runtime services |
 | `make reference-contract-verify` | Read-only: exactly the golden contract's 20 RobotRuns, Scenes and Episodes; reports non-contract state (`REQUIRE_PRISTINE=1` fails on it) |
@@ -155,7 +155,7 @@ The whole acceptance surface is the commands below; [`docs/development/test-matr
 | `make e2e-scene-ml` / `make e2e-episode-learning` | The two derived journeys on the golden RobotRun, into fixed test-owned Datasets (see below) |
 | `make e2e-cleanroom` | The acceptance of reconstruction. **Destructive** (see below) |
 
-`make lint` / `make format` run Ruff; `make check-commands` verifies that the command surface is consistent. Operator diagnostics (`check-*`, `disk-report`, `ros2-check`, …) are manual tools, not acceptance gates, and the scripts under [`benchmarks/`](benchmarks/README.md) are measurement tooling that no command runs.
+`make lint` / `make format` run Ruff; `make check-commands` verifies that the command surface is consistent. Operator diagnostics (`check-*`, `disk-report`, `bridge-check`, …) are manual tools, not acceptance gates, and the scripts under [`tools/benchmarks/`](tools/benchmarks/README.md) are measurement tooling that no command runs.
 
 ### Reference environment and E2E journeys
 
@@ -170,12 +170,12 @@ There are four E2E journeys. Platform operations go through FastAPI and bulk dat
 | `make e2e-cleanroom` | **The acceptance of reconstruction**: reset the generated runtime → rebuild the golden contract from the preserved reference inputs (verified pristine, then a second bootstrap that converges) → `e2e-scene-ml` and `e2e-episode-learning` on one fixture → the contract is still valid and unchanged. **Destructive** (preserves `data/raw`, `data/reference`, `config/reference`) |
 | `make acceptance-grounding-dino` | Opt-in model-backend acceptance of `e2e-scene-ml` with the GroundingDINO backend (needs an inference server) |
 
-### Robot sandbox
+### Streaming and robot data
 
 | Command | Description |
 | --- | --- |
-| `make ros2-up` / `ros2-down` / `ros2-shell` / `ros2-check` | ROS 2 Jazzy sandbox container |
-| `POST /api/v1/robot-runs:register` | `REGISTER_ROBOT_RUN` for a RobotRunManifest published by `python -m sceneops_integrations.recording publish` (`reconcile --apply` submits it for unregistered manifests); see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) |
+| `make streaming-test` / `make bridge-shell` / `make bridge-check` | Bridge and capture tests in their ROS 2 images (needs `make streaming-up`) / shell in the bridge image / `rclpy` check |
+| `POST /api/v1/robot-runs:register` | `REGISTER_ROBOT_RUN` for a RobotRunManifest published by `python -m sceneops_publisher publish` (`reconcile --apply` submits it for unregistered manifests); see [`docs/workflows/robot-run-and-mcap.md`](docs/workflows/robot-run-and-mcap.md) |
 
 ---
 
@@ -236,33 +236,35 @@ curl http://localhost:8000/openapi.json | jq '.paths | keys[]'
 
 ```text
 sceneops-platform/
-├── apps/
+├── apps/                           # processes (one container image each)
 │   ├── api/                        # FastAPI control plane (platform/, domains/, views/)
-│   ├── inference-server/           # GroundingDINO server (port 8001; optional)
-│   └── worker/sceneops_worker/     # pipelines/, jobs/, scenes/, episodes/, recordings/, derived/,
-│                                   #   robots/, inference/, evaluation/, cli/, execution/
-├── packages/
-│   ├── sceneops-core/              # domain schemas, enums, pipeline and job definitions
-│   ├── sceneops-db/                # SQLAlchemy models, async repositories
-│   ├── sceneops-storage/           # LocalArtifactStore, S3ArtifactStore
-│   ├── sceneops-analytics/         # Parquet tables, learning-data reader, external adapters
-│   ├── sceneops-integrations/      # recording publisher / reader
-│   └── sceneops-streaming/         # Kafka wire contracts
-├── tools/                          # isolated uv projects: dataset-acquisition, lerobot-integration
-├── ros2/                           # ROS 2 Jazzy sandbox: streaming bridge node, MCAP capture
-├── config/baselines/               # Scene / Episode build configurations of the canonical baseline
+│   ├── worker/                     # Celery workers + `sceneops-worker` CLI: JobRunner, PipelineOrchestrator, handlers
+│   ├── capture/                    # Kafka -> MCAP + capture receipt, one process per run
+│   ├── streaming-bridge/           # ROS 2 topics -> Kafka (integration adapter)
+│   ├── publisher/                  # database-free: finalized MCAP -> published RobotRun objects
+│   └── inference-server/           # GroundingDINO server (port 8001; optional)
+├── packages/                       # reusable production code; never imports apps/ or tools/
+│   ├── sceneops-core/              # domain schemas, enums, pipeline and job definitions (no I/O)
+│   ├── sceneops-db/                # SQLAlchemy models, repositories, sessions
+│   ├── sceneops-storage/           # LocalArtifactStore, S3ArtifactStore, write-once primitive
+│   ├── sceneops-streaming/         # TelemetryEnvelope, channel registry, Kafka producer / consumer
+│   ├── sceneops-recording/         # capture, publication, conformance, recording reader, receipts
+│   ├── sceneops-execution/         # Job / Pipeline services, leases, execution recovery, dispatch
+│   ├── sceneops-acquisition/       # reconciliation, acquisition status, artifact lifecycle
+│   ├── sceneops-scenes/            # Scene building, validation, profiling, artifact layout
+│   ├── sceneops-episodes/          # Episode building, validation, profiling, artifact layout
+│   ├── sceneops-derived/           # write-once derived manifests and run artifacts
+│   ├── sceneops-inference/         # detection inference backends
+│   ├── sceneops-evaluation/        # detection evaluation
+│   └── sceneops-analytics/         # Parquet tables, learning-data reader, external adapters
+├── tools/                          # developer / CI / benchmark utilities; not production
+│   ├── checks/ e2e/ baselines/ reference/ benchmarks/ dev/
+│   └── dataset-acquisition/, lerobot-integration/   # isolated uv projects
+├── tests/                          # cross-system tests: infrastructure/ (PostgreSQL, MinIO, Redis, Celery), streaming/ (ROS 2 + Kafka)
+├── config/                         # channels/, baselines/, reference/
 ├── migrations/                     # Alembic versions
-├── scripts/
-│   ├── e2e/                        # the four journeys, shared helpers, container-run verifiers
-│   ├── reference/                  # reference corpus preparation, the golden contract's bootstrap / verifier
-│   ├── canonical/                  # Recording Import baseline bootstrap / verify (composed by the contract)
-│   ├── streaming/                  # Streaming Acquisition baseline bootstrap / verify / compare
-│   ├── checks/                     # diagnostics, command-surface consistency
-│   └── ops/, dev/                  # operator tools: polling loop, disk report, local reset
-├── tests/infrastructure/           # pipeline-contract / orchestrator / acquisition-recovery acceptance tests
-├── benchmarks/                     # measurement tooling (learning data, streaming, acquisition); not acceptance
 ├── docs/                           # architecture/, workflows/, development/, adr/, history/
-├── compose.yaml, compose/          # Compose entrypoint and core, workers, inference, ros2, tools,
+├── compose.yaml, compose/          # Compose entrypoint and core, workers, inference, tools,
 │                                   #   streaming, acquisition, recovery, lerobot, test-runtime
 ├── Makefile, makefiles/
 └── pyproject.toml                  # uv workspace (Python 3.11–3.12)

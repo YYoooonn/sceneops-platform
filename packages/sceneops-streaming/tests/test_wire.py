@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from sceneops_core.streaming import EnvelopeEncoding, TelemetryEnvelope
+from sceneops_streaming import EnvelopeEncoding, TelemetryEnvelope
 
 from sceneops_streaming.errors import EnvelopeDecodeError
 from sceneops_streaming.wire import (

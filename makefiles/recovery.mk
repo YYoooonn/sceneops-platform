@@ -14,11 +14,11 @@
 
 .PHONY: reconcile-once
 reconcile-once:
-	$(COMPOSE) exec -T api python -m app.domains.robots.reconciliation --once
+	$(COMPOSE) exec -T worker-jobs sceneops-worker acquisition reconcile --once
 
 .PHONY: reconcile-apply
 reconcile-apply:
-	$(COMPOSE) exec -T api python -m app.domains.robots.reconciliation --once --apply
+	$(COMPOSE) exec -T worker-jobs sceneops-worker acquisition reconcile --once --apply
 
 .PHONY: execution-recovery
 # One execution recovery pass (sceneops-worker recover): requeue each RUNNING Job
@@ -43,7 +43,7 @@ execution-status:
 # nothing is deleted. Pass a capture scan for O1 / PN-3, e.g.
 #   make artifact-lifecycle-once ARGS="--capture-report /path/capture_scan.json"
 artifact-lifecycle-once:
-	$(COMPOSE) exec -T api python -m app.domains.robots.artifact_lifecycle --once $(ARGS)
+	$(COMPOSE) exec -T worker-jobs sceneops-worker acquisition artifact-lifecycle --once $(ARGS)
 
 .PHONY: acquisition-status
 # Read-only operational report (ADR-008 §7): one derived AcquisitionStatus per run
@@ -54,14 +54,15 @@ artifact-lifecycle-once:
 #   make acquisition-status ARGS="--summary-only"
 #   make acquisition-status ARGS="--capture-report /path/capture_scan.json"
 acquisition-status:
-	$(COMPOSE) exec -T api python -m app.domains.robots.acquisition_status --once $(ARGS)
+	$(COMPOSE) exec -T worker-jobs sceneops-worker acquisition status --once $(ARGS)
 
 .PHONY: recovery-up
 recovery-up:
 	$(COMPOSE) --profile recovery up -d publication-recovery registration-recovery execution-recovery
 
 .PHONY: recovery-down
-# Named services, not `--profile recovery down` bare (see ros2-down).
+# Named services, not `--profile recovery down` bare: profile flags only ADD
+# services to the "down" set, they do not scope it.
 recovery-down:
 	$(COMPOSE) --profile recovery stop publication-recovery registration-recovery execution-recovery
 	$(COMPOSE) --profile recovery rm -f publication-recovery registration-recovery execution-recovery

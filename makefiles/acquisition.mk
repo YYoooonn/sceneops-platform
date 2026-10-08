@@ -39,6 +39,6 @@ acquisition-image:
 .PHONY: acquisition-image-check
 acquisition-image-check:
 	$(COMPOSE) --profile acquisition run --rm -T --entrypoint python \
-		dataset-acquisition - < scripts/checks/acquisition_image_boundary.py
+		dataset-acquisition - < tools/checks/acquisition_image_boundary.py
 	$(COMPOSE) --profile acquisition run --rm -T --entrypoint python \
-		dataset-replay - < scripts/checks/acquisition_image_boundary.py
+		dataset-replay - < tools/checks/acquisition_image_boundary.py

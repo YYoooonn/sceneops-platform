@@ -1,0 +1,27 @@
+[project]
+name = "sceneops-capture"
+version = "0.1.0"
+description = "SceneOps Capture: durable MCAP capture of one streamed RobotRun from Kafka"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-streaming",
+  "sceneops-recording[capture]",
+]
+# The ROS 2 interface definitions the MCAP schemas are written from come from the
+# ROS 2 distribution of the container image, not from a Python distribution.
+
+[project.scripts]
+sceneops-capture = "sceneops_capture.cli:main"
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-streaming = { workspace = true }
+sceneops-recording = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_capture"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

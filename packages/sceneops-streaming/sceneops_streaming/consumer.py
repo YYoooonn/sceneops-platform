@@ -4,9 +4,9 @@ import asyncio
 
 from confluent_kafka import Consumer as ConfluentConsumer
 
-from sceneops_core.streaming import ConsumedTelemetryEnvelope
 
 from .config import StreamingSettings
+from .contracts import ConsumedTelemetryEnvelope
 from .errors import EnvelopeDecodeError
 from .wire import decode_envelope
 
@@ -28,7 +28,7 @@ DEFAULT_POLL_BATCH_SIZE = 64
 
 
 class KafkaTelemetryConsumer:
-    """Concrete ``TelemetryConsumer`` (``sceneops_core.streaming.contracts``)
+    """Concrete ``TelemetryConsumer`` (``sceneops_streaming.contracts``)
     backed by ``confluent_kafka``.
 
     ``group_id`` defaults to ``settings.consumer_group_id`` (the one
@@ -38,7 +38,7 @@ class KafkaTelemetryConsumer:
     RobotRun replay, one per smoke-test invocation) passes its own,
     derived from that same configured base rather than an unrelated
     literal -- e.g. ``f"{settings.consumer_group_id}-smoke-<uuid>"``
-    (``scripts/e2e/smoke_streaming.py``). This class never invents a
+    (``tools/e2e/smoke_streaming.py``). This class never invents a
     suffix itself; group identity/rebalancing policy beyond the
     configured default is a caller concern, not a transport one.
 

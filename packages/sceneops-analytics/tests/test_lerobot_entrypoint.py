@@ -6,7 +6,7 @@ into a real ``LeRobotDatasetAdapter.export()`` call, and back into an
 Only the CLI's testable core (``execute()``) is exercised here, against a
 ``LocalArtifactStore`` fixture built the same way
 ``test_lerobot_adapter.py``/the real interop E2E fixture are -- never
-against real MinIO/Postgres (that is ``scripts/e2e/`` E2E territory, and
+against real MinIO/Postgres (that is ``tools/e2e/`` E2E territory, and
 Request 4.2 §7's container smoke test). ``main()``'s argv/env/stdio glue is
 intentionally not covered here.
 
@@ -60,7 +60,7 @@ async def _write_manifest_artifact(bootstrap, tmp_path) -> ArtifactRef:
     """Write the bootstrap's already-open learning manifest to a fresh URI
     in its own ArtifactStore, so it can be referenced by URI+checksum
     exactly as ``canonical_inputs["learning_manifest"]`` expects -- the
-    same real-artifact-store round trip ``scripts/e2e/
+    same real-artifact-store round trip ``tools/e2e/
     e2e_lerobot_resolve.py``/``e2e_lerobot_export.py`` do against MinIO,
     just against a ``LocalArtifactStore`` here."""
     uri = str(tmp_path / "canonical_inputs" / "learning_manifest.json")
@@ -215,7 +215,7 @@ async def test_execute_never_deletes_a_preexisting_target(tmp_path):
 async def test_execute_fails_clearly_on_a_rerun_against_the_same_target(tmp_path):
     """A second execute() against the same external_ref.uri fails clearly
     rather than silently overwriting -- idempotent reruns are the test
-    orchestrator's responsibility (scripts/e2e/smoke_lerobot_container.sh),
+    orchestrator's responsibility (tools/e2e/smoke_lerobot_container.sh),
     never this runtime's (SceneOps V2 Request 4.2 follow-up §1)."""
     bootstrap = await build_interop_test_dataset(tmp_path)
     manifest_ref = await _write_manifest_artifact(bootstrap, tmp_path)

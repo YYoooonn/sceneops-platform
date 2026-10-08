@@ -43,7 +43,7 @@ and exit 1. The only runtime replay source is a locked reference MCAP: a raw
 dataset is converted to an MCAP first and never replayed directly.
 
 The tool stops at the local MCAP or the ROS 2 topics. Publication and
-registration are the platform's: ``python -m sceneops_integrations.recording
+registration are the platform's: ``python -m sceneops_publisher
 publish`` and then ``REGISTER_ROBOT_RUN``; for replay, the platform's ROS 2
 bridge and capture.
 """

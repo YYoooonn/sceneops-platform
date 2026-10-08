@@ -1,0 +1,27 @@
+[project]
+name = "sceneops-acquisition"
+version = "0.1.0"
+description = "SceneOps acquisition lifecycle: reconciliation and recovery of RobotRun registration, derived acquisition status, and artifact lifecycle classification"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-db",
+  "sceneops-storage",
+  "sceneops-recording",
+  "sceneops-execution",
+  "pydantic>=2.0.0",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-db = { workspace = true }
+sceneops-storage = { workspace = true }
+sceneops-recording = { workspace = true }
+sceneops-execution = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_acquisition"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -7,7 +7,7 @@
 # test leftovers and what Docker could reclaim. Removes nothing; the cleanup policy is
 # docs/development/local-development.md#disk-hygiene.
 disk-report:
-	@ENV_FILE=$(ENV_FILE) scripts/ops/disk_report.sh
+	@ENV_FILE=$(ENV_FILE) tools/dev/disk_report.sh
 
 .PHONY: prepare-data
 prepare-data:

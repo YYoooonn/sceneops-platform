@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from app.core.errors import raise_bad_request, raise_not_found
 from app.core.pagination import PaginationDep
 from app.platform.jobs.dependencies import JobDispatchFacadeDep, JobServiceDep
-from app.platform.jobs.schemas import (
+from sceneops_execution.jobs.schemas import (
     JobDetailResponse,
     JobEventListResponse,
     JobExecuteResponse,

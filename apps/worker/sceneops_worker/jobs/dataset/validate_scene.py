@@ -22,7 +22,7 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_worker.scenes.resolver import resolve_registered_scene
-from sceneops_worker.scenes.validation import SceneManifestValidator
+from sceneops_scenes.validation import SceneManifestValidator
 
 _validator = SceneManifestValidator()
 

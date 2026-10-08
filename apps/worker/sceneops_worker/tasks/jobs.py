@@ -12,7 +12,7 @@ from sceneops_db.session import (
 )
 from sceneops_worker.celery_app import celery_app, worker_node
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.execution.dispatcher import create_execution_dispatcher
+from sceneops_worker.celery_app import create_execution_dispatcher
 from sceneops_worker.jobs.runner import JobNotClaimableError, JobRunner
 from sceneops_worker.runtime.async_runner import AsyncRuntimeRunner
 

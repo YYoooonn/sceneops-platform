@@ -11,7 +11,7 @@ import inspect
 import pytest
 
 from sceneops_core.robots import manifest as manifest_module
-from sceneops_core.robots.registration_failures import (
+from sceneops_acquisition.registration_failures import (
     PERMANENT_REGISTRATION_ERROR_TYPES,
     RegistrationFailureClass,
     classify_registration_failure,

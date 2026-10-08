@@ -40,7 +40,7 @@ from sceneops_core.scenarios import (
 from sceneops_core.scenarios.schemas.records import ScenarioSetRecord
 from sceneops_core.scenarios.schemas.runs import ScenarioMiningRunRecord
 from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.derived import DerivedManifestConflictError
+from sceneops_derived import DerivedManifestConflictError
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.derived.resolution import resolve_sample_view
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler

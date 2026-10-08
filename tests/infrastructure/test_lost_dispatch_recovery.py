@@ -38,8 +38,8 @@ from sceneops_db.postgres.pipelines import (
     PostgresPipelineTaskRunRepository,
 )
 from sceneops_db.session import get_async_sessionmaker
-from sceneops_worker.execution import create_celery_app
-from sceneops_worker.execution.dispatcher import CeleryExecutionDispatcher
+from sceneops_execution.executions.celery_factory import create_celery_app
+from sceneops_execution.executions.dispatcher import CeleryExecutionDispatcher
 
 pytestmark = pytest.mark.usefixtures(*RECOVERY_FIXTURES)
 
@@ -80,8 +80,8 @@ def celery(env, broker_url: str | None = None):
 
 def job_facade(env, broker_url: str | None = None):
     """``POST /jobs/{id}/execute``'s dispatch path."""
-    from app.platform.executions.backends.celery import CeleryJobExecutionBackend
-    from app.platform.jobs.dispatch_facade import JobDispatchFacade
+    from sceneops_execution.executions.backends.celery import CeleryJobExecutionBackend
+    from sceneops_execution.jobs.dispatch_facade import JobDispatchFacade
 
     return JobDispatchFacade(
         session_factory=get_async_sessionmaker(),
@@ -93,8 +93,10 @@ def job_facade(env, broker_url: str | None = None):
 
 def pipeline_facade(env):
     """``POST /pipelines/runs/{id}/execute``'s dispatch path."""
-    from app.platform.executions.backends.celery import CeleryPipelineExecutionBackend
-    from app.platform.pipelines.dispatch_facade import PipelineDispatchFacade
+    from sceneops_execution.executions.backends.celery import (
+        CeleryPipelineExecutionBackend,
+    )
+    from sceneops_execution.pipelines.dispatch_facade import PipelineDispatchFacade
 
     return PipelineDispatchFacade(
         session_factory=get_async_sessionmaker(),
@@ -220,7 +222,7 @@ async def create_job(status: JobStatus = JobStatus.PENDING) -> str:
 
 
 async def create_run() -> str:
-    from app.platform.pipelines.service import PipelineService
+    from sceneops_execution.pipelines.service import PipelineService
 
     async with get_async_sessionmaker()() as session:
         detail = await PipelineService(

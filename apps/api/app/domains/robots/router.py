@@ -18,8 +18,8 @@ from app.domains.robots.schemas import (
     RobotRunListResponse,
     RobotStateListResponse,
     RegisterRobotRunRequest,
-    RegisterRobotRunResponse,
 )
+from sceneops_acquisition.registration import RegisterRobotRunResponse
 from sceneops_core.robots.schemas import MissionStatus, RobotStatus
 
 # Four sibling top-level resources (Robot/RobotRun/Mission/RobotState),

@@ -8,10 +8,10 @@ from sceneops_analytics import AnalyticsTableWriter
 from sceneops_storage import ArtifactStore
 
 from sceneops_worker.config import WorkerSettings
-from sceneops_worker.derived import DerivedManifestStore
-from sceneops_worker.episodes.artifacts import EpisodeArtifactStore
-from sceneops_worker.runs.artifacts import RunArtifactStore
-from sceneops_worker.scenes.artifacts import SceneArtifactStore
+from sceneops_derived import DerivedManifestStore
+from sceneops_episodes.artifacts import EpisodeArtifactStore
+from sceneops_derived.run_artifacts import RunArtifactStore
+from sceneops_scenes.artifacts import SceneArtifactStore
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 from sceneops_worker.stores.datasets import DatasetStore
 from sceneops_worker.stores.episodes import EpisodeStore

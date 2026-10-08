@@ -20,7 +20,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
-from sceneops_worker.episodes.profiling import EpisodeManifestProfiler
+from sceneops_episodes.profiling import EpisodeManifestProfiler
 from sceneops_worker.episodes.resolver import resolve_registered_episode
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 

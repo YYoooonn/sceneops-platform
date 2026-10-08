@@ -28,12 +28,12 @@ from sceneops_worker.jobs.dataset.build_recording_scenes import (
     BuildRecordingScenesJobHandler,
 )
 from sceneops_worker.jobs.dataset.register_scenes import RegisterScenesJobHandler
-from sceneops_worker.scenes.artifacts import ObservationPayloadConflictError
-from sceneops_worker.scenes.recording_builder import RecordingSceneBuildError
+from sceneops_scenes.artifacts import ObservationPayloadConflictError
+from sceneops_scenes.recording_builder import RecordingSceneBuildError
 from sceneops_worker.scenes.registration import SceneRegistrationConflictError
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scenes"))
-from recording_fixture import build_config, default_recording  # noqa: E402
+from sceneops_recording.testing.ros2_recordings import build_config, default_recording  # noqa: E402
 
 RUN_ID = "run-scenes-1"
 

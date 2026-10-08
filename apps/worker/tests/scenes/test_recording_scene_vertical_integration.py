@@ -44,7 +44,7 @@ from sceneops_worker.jobs.dataset.validate_scene import ValidateSceneJobHandler
 from sceneops_worker.scenes.registration import SceneRegistrationConflictError
 
 sys.path.insert(0, str(Path(__file__).parent))
-from recording_fixture import build_config, default_recording  # noqa: E402
+from sceneops_recording.testing.ros2_recordings import build_config, default_recording  # noqa: E402
 
 
 def _job(job_id: str):

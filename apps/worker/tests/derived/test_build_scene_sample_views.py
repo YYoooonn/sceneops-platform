@@ -7,7 +7,7 @@ import pytest
 
 from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
-from sceneops_worker.derived import DerivedManifestIntegrityError
+from sceneops_derived import DerivedManifestIntegrityError
 from sceneops_worker.derived.resolution import resolve_sample_view
 from tests.derived.flow_support import (
     T0,

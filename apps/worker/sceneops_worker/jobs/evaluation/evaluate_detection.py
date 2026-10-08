@@ -24,7 +24,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.sample_views import SceneSampleViewManifest
 from sceneops_worker.core.context import WorkerContext
-from sceneops_worker.derived import DerivedManifestIntegrityError
+from sceneops_derived import DerivedManifestIntegrityError
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.derived.resolution import (
     ResolvedPrediction,
@@ -32,8 +32,8 @@ from sceneops_worker.derived.resolution import (
     resolve_prediction_revision,
     resolve_sample_view,
 )
-from sceneops_worker.evaluation import create_detection_evaluator
-from sceneops_worker.evaluation.detection import DetectionEvaluationRequest
+from sceneops_evaluation import create_detection_evaluator
+from sceneops_evaluation.detection import DetectionEvaluationRequest
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_worker.scenes.readiness import require_no_blocked_scenes
 

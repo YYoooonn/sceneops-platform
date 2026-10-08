@@ -21,7 +21,7 @@ from sceneops_core.scenes.schemas.runs import SceneProfileRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-from sceneops_worker.scenes.profiling import SceneManifestProfiler
+from sceneops_scenes.profiling import SceneManifestProfiler
 from sceneops_worker.scenes.resolver import resolve_registered_scene
 
 _profiler = SceneManifestProfiler()

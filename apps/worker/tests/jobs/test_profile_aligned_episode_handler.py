@@ -32,7 +32,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
     ProfileAlignedEpisodeJobParams,
 )
-from sceneops_worker.episodes.artifacts import EpisodeArtifactWriteResult
+from sceneops_episodes.artifacts import EpisodeArtifactWriteResult
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset._aligned_episode_resolution import (
     AlignedArtifactChecksumMismatchError,

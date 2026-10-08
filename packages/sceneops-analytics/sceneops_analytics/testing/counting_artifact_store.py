@@ -2,7 +2,7 @@
 counts and byte volumes per URI (SceneOps V2 Request 5.1, extended by
 Request 5.3 for ``read_range``) -- used by the learning-data
 scaling/selective-read benchmark harnesses
-(``benchmarks/learning_data/``) to answer "how many files, and how many bytes, did this
+(``tools/benchmarks/learning_data/``) to answer "how many files, and how many bytes, did this
 workload actually touch" without guessing from Parquet file sizes on disk.
 
 Test/benchmark-support code only -- never imported by production code, and

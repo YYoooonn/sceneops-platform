@@ -40,8 +40,8 @@ from sceneops_worker.derived.resolution import (
     resolve_sample_view,
     resolve_scenario_set,
 )
-from sceneops_worker.inference.detection import create_detection_inference_backend
-from sceneops_worker.inference.detection.base import (
+from sceneops_inference.detection import create_detection_inference_backend
+from sceneops_inference.detection.base import (
     DetectionInferenceRequest,
     SampleDetectionBackend,
 )

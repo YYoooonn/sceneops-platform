@@ -28,8 +28,8 @@ services:
         condition: service_healthy
     entrypoint:
       - /bin/sh
-      - /scripts/init/minio_init.sh
+      - /scripts/minio_init.sh
     volumes:
-      - ./scripts:/scripts:ro
+      - ./tools/dev/minio_init.sh:/scripts/minio_init.sh:ro
     profiles:
       - tools

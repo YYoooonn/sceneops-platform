@@ -88,23 +88,45 @@ services:
   reference-conformance:
     build:
       context: .
-      dockerfile: apps/worker/Dockerfile
-    image: sceneops-platform/worker:local
-    entrypoint: ["python", "-m", "sceneops_integrations.recording"]
+      dockerfile: apps/publisher/Dockerfile
+    image: sceneops-platform/publisher:local
     command: ["--help"]
     volumes:
       - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
     profiles:
       - acquisition
 
-  recording-publisher:
-    # The publisher ships in the worker image (sceneops_integrations.recording);
-    # this service runs it with its own entrypoint and settings.
+  # Verifiers that compare what the platform derived with the locked reference recording
+  # (e2e-scene-ml's lidar payload check). They need the worker's decoders, so this is the
+  # worker image with the reference cache mounted read-only and the ArtifactStore settings
+  # of the publisher; no other worker container sees the cache.
+  reference-verify:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
     image: sceneops-platform/worker:local
-    entrypoint: ["python", "-m", "sceneops_integrations.recording"]
+    environment:
+      SCENEOPS_PUBLISHER_ARTIFACT__BACKEND: ${SCENEOPS_WORKER_ARTIFACT__BACKEND:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI: ${SCENEOPS_WORKER_ARTIFACT__ROOT_URI:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ENDPOINT_URL: ${SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__REGION: ${SCENEOPS_WORKER_ARTIFACT__REGION:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID: ${SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY: ${SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY:-}
+    volumes:
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    profiles:
+      - acquisition
+
+  recording-publisher:
+    # apps/publisher: database-free, ArtifactStore settings only. Its image holds no
+    # database driver, Celery or Kafka client.
+    build:
+      context: .
+      dockerfile: apps/publisher/Dockerfile
+    image: sceneops-platform/publisher:local
     command: ["--help"]
     # Publishes into the same ArtifactStore the workers verify from.
     environment:

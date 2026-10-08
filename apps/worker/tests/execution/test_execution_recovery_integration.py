@@ -51,13 +51,13 @@ from sceneops_db.session import (
     reset_async_engine_cache,
 )
 from sceneops_worker.core.dependencies import create_worker_context
-from sceneops_worker.execution.recovery import (
+from sceneops_execution.executions.recovery import (
     ResendOutcome,
     recover_execution,
     resend_overdue_advances,
     resend_overdue_dispatches,
 )
-from sceneops_worker.jobs.lease_recovery import LeaseRecoveryOutcome
+from sceneops_execution.jobs.lease_recovery import LeaseRecoveryOutcome
 from sceneops_worker.jobs.registry import JobHandlerRegistry
 from sceneops_worker.jobs.runner import JobRunner
 from sceneops_worker.pipelines.orchestrator import PipelineOrchestrator
