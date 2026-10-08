@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from celery.signals import worker_process_init, worker_process_shutdown
+from celery.signals import (
+    celeryd_after_setup,
+    worker_process_init,
+    worker_process_shutdown,
+)
 
 from sceneops_db.session import reset_async_engine_cache
 from sceneops_worker.config import get_settings
@@ -16,6 +20,23 @@ celery_app = create_celery_app(
         "sceneops_worker.tasks.jobs",
     ],
 )
+
+
+# This worker's Celery node name ("<name>@<host>"), set in the main process
+# before the pool forks, so every pool child inherits it. A task's
+# ``request.hostname`` is only the host in a prefork child, which cannot tell two
+# workers on one machine apart.
+_worker_node: str | None = None
+
+
+@celeryd_after_setup.connect
+def on_worker_setup(sender: str, **_: object) -> None:
+    global _worker_node
+    _worker_node = sender
+
+
+def worker_node() -> str | None:
+    return _worker_node
 
 
 @worker_process_init.connect

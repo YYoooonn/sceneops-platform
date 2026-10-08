@@ -32,6 +32,12 @@ _RUNNABLE_STATUSES = {
 }
 
 
+class JobNotClaimableError(RuntimeError):
+    """The Job is not runnable (already running, terminal or cancelled) or another
+    claim took it first: the message that asked for this run is a duplicate or
+    a late one, and nothing was done. Expected under at-least-once delivery."""
+
+
 class JobOwnershipLostError(RuntimeError):
     """The Job is no longer RUNNING under this worker's claim: it was abandoned,
     reclaimed after its lease expired, or finished by someone else. The worker
@@ -68,6 +74,7 @@ class JobRunner:
         dispatcher: ExecutionDispatcher,
         handler_registry: JobHandlerRegistry | None = None,
         lease_renewal: Callable[[], LeaseRenewal] = PostgresLeaseRenewal,
+        worker_node: str | None = None,
     ) -> None:
         self.context = context
         self.worker_id = context.worker_id
@@ -79,6 +86,7 @@ class JobRunner:
         self.events = JobEventPublisher(
             context.job_event_store,
             worker_id=self.worker_id,
+            worker_node=worker_node,
         )
         self.result_recorder = JobResultRecorder()
 
@@ -174,13 +182,13 @@ class JobRunner:
         job = await self._load_job(job_id)
 
         if job.status in _RUNNABLE_STATUSES:
-            raise RuntimeError(
+            raise JobNotClaimableError(
                 f"Job could not be claimed, possibly claimed by another worker: "
                 f"{job.job_id}, status={job.status.value}"
             )
 
         self._validate_runnable(job)
-        raise RuntimeError(
+        raise JobNotClaimableError(
             f"Job is not runnable: {job.job_id}, status={job.status.value}"
         )
 
@@ -194,13 +202,13 @@ class JobRunner:
 
     def _validate_runnable(self, job: JobManifest) -> None:
         if job.status == JobStatus.SUCCEEDED:
-            raise RuntimeError(f"Job is already succeeded: {job.job_id}")
+            raise JobNotClaimableError(f"Job is already succeeded: {job.job_id}")
 
         if job.status == JobStatus.RUNNING:
-            raise RuntimeError(f"Job is already running: {job.job_id}")
+            raise JobNotClaimableError(f"Job is already running: {job.job_id}")
 
         if job.status == JobStatus.CANCELLED:
-            raise RuntimeError(f"Job is cancelled: {job.job_id}")
+            raise JobNotClaimableError(f"Job is cancelled: {job.job_id}")
 
     # ── lifecycle steps ───────────────────────────────────────────────────────
 

@@ -126,6 +126,12 @@ Index(
     PipelineRunModel.created_at,
 )
 Index("ix_pipeline_runs_execution_key", PipelineRunModel.execution_key)
+# Window reads of finished runs (execution metrics) by finish time.
+Index(
+    "ix_pipeline_runs_finished_at",
+    PipelineRunModel.finished_at,
+    postgresql_where=text("finished_at IS NOT NULL"),
+)
 
 Index(
     "ix_pipeline_task_runs_pipeline_run_order",

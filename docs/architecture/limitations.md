@@ -21,6 +21,10 @@ Details and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md) §5, 
   detects a dead or unreachable worker, not a handler that hangs in a live process, and
   a reclaimed handler's own domain writes are not fenced (they rely on idempotent
   publication).
+- **Execution health is read on demand.** `make execution-status` derives backlog,
+  queue age, latency percentiles, failures and recovery actions from PostgreSQL; no
+  metric is exported, sampled or alerted on, and no worker capacity is recorded
+  ([ADR-012](../adr/012-execution-health-from-durable-state.md)).
 - **Delivery is at least once.** Recovery cannot tell a lost message from one waiting
   behind a backlog, so waiting Jobs receive one more message per threshold; consumers
   refuse the duplicates.

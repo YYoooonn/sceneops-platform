@@ -135,6 +135,7 @@ help:
 	@echo "  make show-runs / show-pipeline PIPELINE_RUN_ID=pipe-xxx / show-job-events JOB_ID=job-xxx"
 	@echo "  make reconcile-once / reconcile-apply   Acquisition reconciliation: observe only / bounded registration recovery (ADR-008)"
 	@echo "  make execution-recovery   One execution recovery pass: requeue Jobs of lost workers, re-send lost job / advance messages"
+	@echo "  make execution-status [ARGS=..]   Read-only execution health: backlog, queue age, latency percentiles, failures, recovery (JSON)"
 	@echo "  make artifact-lifecycle-once [ARGS=..]  Read-only lifecycle classification of robot_runs/ objects (ADR-008 §6; deletes nothing)"
 	@echo "  make acquisition-status [ARGS=..]       Read-only operational report: a derived AcquisitionStatus per run + aggregates (ADR-008 §7)"
 	@echo "  make disk-report                        Read-only: host headroom, volumes, Kafka log, test leftovers, what Docker could reclaim"

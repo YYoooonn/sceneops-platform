@@ -130,9 +130,12 @@ class PostgresJobRepository:
         A status recurs only through a way back to an earlier one -- a retry
         (FAILED -> QUEUED, increments retry_count) or lease recovery (RUNNING ->
         QUEUED, after a claim that incremented lease_generation) -- so the three
-        columns together never recur. Does not commit."""
+        columns together never recur. ``enqueued_at`` becomes now unless the Job
+        was already QUEUED: a redispatch does not restart its wait. Does not
+        commit."""
         retry = job.status == JobStatus.FAILED
         now = func.now()
+        entering = {} if job.status == JobStatus.QUEUED else {"enqueued_at": now}
         stmt = (
             update(JobModel)
             .where(JobModel.job_id == job.job_id)
@@ -145,6 +148,7 @@ class PostgresJobRepository:
                 retry_count=JobModel.retry_count + (1 if retry else 0),
                 queued_at=now,
                 updated_at=now,
+                **entering,
             )
             .returning(JobModel)
             .execution_options(populate_existing=True)
@@ -257,7 +261,8 @@ class PostgresJobRepository:
         or None when it changed (claimed by a worker, dispatched again by someone
         else). One conditional UPDATE, so of concurrent recovery passes exactly
         one sends the message, and the next resend waits a full interval from
-        this one. Does not commit."""
+        this one. ``enqueued_at`` is kept: the Job's wait goes on. Does not
+        commit."""
         now = func.now()
         stmt = (
             update(JobModel)
@@ -463,6 +468,7 @@ class PostgresJobRepository:
             .values(
                 status=enum_value(JobStatus.QUEUED),
                 queued_at=now,
+                enqueued_at=now,
                 updated_at=now,
             )
             .returning(JobModel)

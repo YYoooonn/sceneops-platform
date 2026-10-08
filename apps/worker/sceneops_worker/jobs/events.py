@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import socket
 from typing import Any
 
 from sceneops_core.common.ids import generate_job_event_id
@@ -16,9 +18,18 @@ from sceneops_core.jobs.schemas import (
 
 
 class JobEventPublisher:
-    def __init__(self, event_store, *, worker_id: str | None) -> None:
+    def __init__(
+        self,
+        event_store,
+        *,
+        worker_id: str | None,
+        worker_node: str | None = None,
+    ) -> None:
         self.event_store = event_store
         self.worker_id = worker_id
+        # The worker process: Celery's node name ("<name>@<host>") when run by
+        # Celery, else the host name.
+        self.worker_node = worker_node or socket.gethostname()
 
     async def job_queued(self, job: JobManifest) -> None:
         await self._append(
@@ -30,12 +41,21 @@ class JobEventPublisher:
         )
 
     async def job_locked(self, job: JobManifest) -> None:
+        """The claim ``job.lease_generation``, and the process that holds it:
+        ``worker_id`` names the Celery message, not the worker, so a lost or
+        slow worker is attributed through ``worker_node`` / ``pid``."""
         await self._append(
             job=job,
             event_type=JobEventType.LOCKED,
             status=JobStatus.RUNNING,
             message="Job locked",
-            data={"worker_id": self.worker_id, "job_type": job.type.value},
+            attempt=job.lease_generation,
+            data={
+                "worker_id": self.worker_id,
+                "job_type": job.type.value,
+                "worker_node": self.worker_node,
+                "pid": os.getpid(),
+            },
         )
 
     async def job_started(self, job: JobManifest) -> None:
@@ -138,6 +158,7 @@ class JobEventPublisher:
         message: str | None = None,
         error: ErrorInfo | None = None,
         data: dict[str, Any] | None = None,
+        attempt: int | None = None,
     ) -> None:
         event = JobEvent(
             event_id=generate_job_event_id(),
@@ -153,6 +174,7 @@ class JobEventPublisher:
             pipeline_task_run_id=job.pipeline_task_run_id,
             pipeline_task_id=job.pipeline_task_id,
             worker_id=self.worker_id,
+            attempt=attempt,
             message=message,
             error=error,
             data=data or {},

@@ -19,7 +19,11 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.jobs.schemas.steps import JobStep
 from sceneops_worker.jobs.registry import JobHandlerRegistry
-from sceneops_worker.jobs.runner import JobOwnershipLostError, JobRunner
+from sceneops_worker.jobs.runner import (
+    JobNotClaimableError,
+    JobOwnershipLostError,
+    JobRunner,
+)
 
 
 class _SimpleResult(BaseModel):
@@ -509,10 +513,56 @@ class TestJobRunnerPipelineReport:
         dispatcher.advance_pipeline.assert_not_called()
 
 
+# ── claim identity ────────────────────────────────────────────────────────────
+
+
+class TestJobRunnerClaimIdentity:
+    async def test_the_locked_event_names_the_claim_and_the_process_holding_it(
+        self,
+    ) -> None:
+        import os
+        import socket
+
+        job = _make_job()
+        job.lease_generation = 2  # claimed twice before: this claim is the third
+        ctx = _make_context(job)
+
+        await JobRunner(
+            ctx,
+            dispatcher=MagicMock(),
+            handler_registry=_make_registry(_SimpleResult(value="ok")),
+        ).run("job-001")
+
+        (locked,) = [
+            c.args[0]
+            for c in ctx.job_event_store.append.await_args_list
+            if c.args[0].type == JobEventType.LOCKED
+        ]
+        assert locked.attempt == 3
+        assert locked.data["worker_node"] == socket.gethostname()
+        assert locked.data["pid"] == os.getpid()
+        assert locked.data["worker_id"] == "worker-001"
+
+
 # ── validation guards ─────────────────────────────────────────────────────────
 
 
 class TestJobRunnerValidation:
+    @pytest.mark.parametrize(
+        "status", [JobStatus.SUCCEEDED, JobStatus.RUNNING, JobStatus.CANCELLED]
+    )
+    async def test_a_job_that_is_not_runnable_is_refused_as_not_claimable(
+        self, status: JobStatus
+    ) -> None:
+        ctx = _make_context(_make_job(status=status))
+
+        with pytest.raises(JobNotClaimableError):
+            await JobRunner(
+                ctx,
+                dispatcher=MagicMock(),
+                handler_registry=MagicMock(spec=JobHandlerRegistry),
+            ).run("job-001")
+
     async def test_already_succeeded_raises(self) -> None:
         job = _make_job(status=JobStatus.SUCCEEDED)
         ctx = _make_context(job)

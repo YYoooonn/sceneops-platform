@@ -321,7 +321,10 @@ claimed it and when; a redelivered message repeats its `worker_id`, so it never
 decides ownership. `queued_at` is the Job's last dispatch: every dispatch, lease
 reclaim and resend of a lost message sets it, and execution recovery re-sends the
 message of a `QUEUED` Job whose `queued_at` is older than its threshold (see
-[Jobs and pipelines](./jobs-and-pipelines.md) §5, §8).
+[Jobs and pipelines](./jobs-and-pipelines.md) §5, §8). `enqueued_at` is when the Job
+entered `QUEUED` from another status (dispatch, retry, lease reclaim); a redispatch or
+resend keeps it, so it is the start of the current wait that queue-time metrics are
+measured from (§5 "Execution health").
 
 `job_events` — execution log/event stream for a job (`level`, `attempt`,
 `job_step_id`, etc.).

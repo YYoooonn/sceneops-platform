@@ -38,7 +38,11 @@ class JobManifest(SceneOpsBaseModel):
     # Claim generation: the fencing token of the current claim (one per claim).
     lease_generation: int = 0
 
+    # The last dispatch: every send of a job message, a resend included.
     queued_at: datetime | None = None
+    # When the Job entered QUEUED from another status (dispatch, retry, lease
+    # recovery); kept by a redispatch or resend, so it starts the current wait.
+    enqueued_at: datetime | None = None
     locked_at: datetime | None = None
     heartbeat_at: datetime | None = None
     lease_expires_at: datetime | None = None

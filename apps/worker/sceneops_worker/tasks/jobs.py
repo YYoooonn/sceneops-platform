@@ -10,10 +10,10 @@ from sceneops_db.session import (
     dispose_async_engine,
     reset_async_engine_cache,
 )
-from sceneops_worker.celery_app import celery_app
+from sceneops_worker.celery_app import celery_app, worker_node
 from sceneops_worker.core.dependencies import create_worker_context
 from sceneops_worker.execution.dispatcher import create_execution_dispatcher
-from sceneops_worker.jobs.runner import JobRunner
+from sceneops_worker.jobs.runner import JobNotClaimableError, JobRunner
 from sceneops_worker.runtime.async_runner import AsyncRuntimeRunner
 
 logger = get_task_logger(__name__)
@@ -42,9 +42,23 @@ def run_job_task(
             async with async_session_scope() as session:
                 context = create_worker_context(session, worker_id=worker_id)
                 dispatcher = create_execution_dispatcher(context.settings.execution)
-                job = await JobRunner(context, dispatcher=dispatcher).run(job_id)
+                job = await JobRunner(
+                    context,
+                    dispatcher=dispatcher,
+                    worker_node=worker_node(),
+                ).run(job_id)
 
             return {"job_id": job_id, "status": job.status.value}
+        except JobNotClaimableError as refused:
+            # A duplicate or late message (a resend, a redelivery): delivery is at
+            # least once and the claim decides, so this is not a task failure.
+            # One line per refusal; their rate is the cost of duplicate messages.
+            logger.warning(
+                "job claim refused: %s",
+                refused,
+                extra={"job_id": job_id, "celery_task_id": celery_task_id},
+            )
+            return {"job_id": job_id, "status": "not_claimed"}
         finally:
             await dispose_async_engine()
 

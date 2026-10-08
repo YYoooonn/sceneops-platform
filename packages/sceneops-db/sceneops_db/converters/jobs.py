@@ -36,6 +36,7 @@ def job_model_to_manifest(model: JobModel) -> JobManifest:
         worker_id=model.worker_id,
         lease_generation=model.lease_generation,
         queued_at=model.queued_at,
+        enqueued_at=model.enqueued_at,
         locked_at=model.locked_at,
         heartbeat_at=model.heartbeat_at,
         lease_expires_at=model.lease_expires_at,

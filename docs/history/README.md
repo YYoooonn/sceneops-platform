@@ -17,6 +17,7 @@ capture router, deleted `make` commands) is intentional; the current architectur
 | [job-state-transition-concurrency-study.md](./job-state-transition-concurrency-study.md) | stale-dispatch races on Job state transitions, real PostgreSQL | [jobs-and-pipelines.md](../architecture/jobs-and-pipelines.md) §5 |
 | [job-worker-liveness-study.md](./job-worker-liveness-study.md) | worker loss, Celery redelivery and the ownership lease, real workers | [jobs-and-pipelines.md](../architecture/jobs-and-pipelines.md) §5, [ADR-010](../adr/010-job-ownership-lease-and-fencing.md) |
 | [lost-dispatch-study.md](./lost-dispatch-study.md) | database / broker dual write: lost `run_job` and `advance` messages, state-derived redispatch | [jobs-and-pipelines.md](../architecture/jobs-and-pipelines.md) §5, [ADR-011](../adr/011-state-derived-redispatch.md) |
+| [execution-observability-study.md](./execution-observability-study.md) | execution health from durable state: SQL baseline, controlled workloads (backlog, slow handler, worker loss, lost dispatch), instrumentation | [jobs-and-pipelines.md](../architecture/jobs-and-pipelines.md) §5, [ADR-012](../adr/012-execution-health-from-durable-state.md) |
 
 Old results are never rewritten when the implementation changes: a new report is added
 instead. Implementation chronology (what changed and when) belongs to Git history.

@@ -193,11 +193,11 @@ nothing instead of moving it backward or erasing another actor's columns
 | --- | --- | --- |
 | (none) → `PENDING` | `create_job` (API) | `INSERT ... ON CONFLICT DO NOTHING` on `uq_jobs_execution_key_in_flight` |
 | (none) → `QUEUED` | the orchestrator, for a task's Job | insert (task Jobs carry no execution key) |
-| `PENDING` / `QUEUED` / `FAILED` → `QUEUED` | a dispatch (`mark_queued`): first dispatch, redispatch, retry | `queue_if_unchanged`: `WHERE status = <as read> AND retry_count = <as read> AND lease_generation = <as read>`; a retry increments `retry_count` and is refused past `max_retries` or beside another in-flight Job of its key |
+| `PENDING` / `QUEUED` / `FAILED` → `QUEUED` | a dispatch (`mark_queued`): first dispatch, redispatch, retry | `queue_if_unchanged`: `WHERE status = <as read> AND retry_count = <as read> AND lease_generation = <as read>`; sets `queued_at`, and `enqueued_at` unless the Job was already `QUEUED`; a retry increments `retry_count` and is refused past `max_retries` or beside another in-flight Job of its key |
 | `PENDING` / `QUEUED` → `RUNNING` | `JobRunner` | `claim_for_run`: `WHERE status IN (PENDING, QUEUED)`; increments `lease_generation`, sets `worker_id` and `lease_expires_at = now() + lease` |
 | `RUNNING` → `RUNNING` / `SUCCEEDED` / `FAILED` | `JobRunner`, the claim holding the Job | `update_owned_run`: `WHERE status = RUNNING AND lease_generation = <its claim>` |
 | `RUNNING` → `RUNNING` (lease renewal) | the claim's `JobLeaseKeeper` | `renew_lease`: `WHERE status = RUNNING AND lease_generation = <its claim>`; sets `heartbeat_at`, `lease_expires_at` |
-| `RUNNING` → `QUEUED`, or `FAILED` (`JobLeaseExpired`) once the claim budget is spent | job lease recovery | `reclaim_expired_lease`: `WHERE status = RUNNING AND lease_expires_at < now()` and `lease_generation <` (or `>=`) the budget |
+| `RUNNING` → `QUEUED`, or `FAILED` (`JobLeaseExpired`) once the claim budget is spent | job lease recovery | `reclaim_expired_lease`: `WHERE status = RUNNING AND lease_expires_at < now()` and `lease_generation <` (or `>=`) the budget; a requeue sets `queued_at` and `enqueued_at` |
 | `PENDING` / `QUEUED` / `RUNNING` → `FAILED` | reconciliation (`JobAbandoned`) | `abandon_if_inactive`: `WHERE status IN (...) AND <no activity since the threshold>` |
 
 A status recurs only through a way back to an earlier one: a retry (`FAILED` →
@@ -216,8 +216,14 @@ Job transition currently produces them.
 
 1. `claim_for_run` is one atomic `UPDATE ... WHERE status IN (PENDING, QUEUED)
    RETURNING`, so a duplicated or late Celery message cannot run a Job twice. A Job
-   that cannot be claimed (missing, running, terminal) makes `run` raise. The claim
-   takes the next `lease_generation` and a lease (below).
+   that cannot be claimed (running, terminal, cancelled, or claimed first by another
+   message) makes `run` raise `JobNotClaimableError`; the Celery task logs one
+   `job claim refused` warning and returns `not_claimed`, because under at-least-once
+   delivery a refused duplicate is expected, not a failure. A missing Job still fails
+   the task. The claim takes the next `lease_generation` and a lease (below), and its
+   `LOCKED` JobEvent records the claim (`attempt` = its generation) and the process
+   holding it (`worker_node`: Celery's `<name>@<host>`; `pid`): `worker_id` names the
+   message, not the worker.
 2. The Job is committed as `RUNNING`, the handler runs, and the terminal state is
    committed. A handler failure is a persisted `FAILED` Job (with its error), not an
    exception: the returned Job is the outcome. Every write of a running Job is one
@@ -278,7 +284,7 @@ it waits for:
 
 | Durable state | Waits on | Re-sent when |
 | --- | --- | --- |
-| Job `QUEUED` | `run_job(job_id)` | `queued_at` (its last dispatch) is older than the resend threshold |
+| Job `QUEUED` | `run_job(job_id)` | `queued_at` (its last dispatch) is older than the resend threshold; `enqueued_at` keeps the start of the wait |
 | PipelineRun `QUEUED` | `advance(run_id)` (start) | `updated_at` (its last dispatch) is older than the threshold |
 | PipelineRun `RUNNING` whose `RUNNING` task's Job is terminal or missing | `advance(run_id)` (observe the Job) | the Job finished, and the run was last stepped or re-sent, longer ago than the threshold |
 
@@ -349,6 +355,29 @@ Lease recovery   reclaim (QUEUED) + commit | send_task | commit ExecutionRecord
 `make worker-advance-pipeline PIPELINE_RUN_ID=…` takes a single `advance` step by hand,
 and a `QUEUED` Job can be dispatched through `POST /jobs/{id}/execute`; both are the same
 idempotent operations recovery performs.
+
+### Execution health (`sceneops_db/postgres/execution_metrics.py`)
+
+Execution health is derived from the durable state above by read-only SQL; nothing
+writes a metric. `sceneops-worker execution-status` (`make execution-status`) prints
+one JSON snapshot ([ADR-012](../adr/012-execution-health-from-durable-state.md)):
+
+| Reading | Definition | Cost follows |
+| --- | --- | --- |
+| backlog, by Job type | `QUEUED` count; oldest queued = `now() - min(enqueued_at)` | Jobs in flight |
+| running, by Job type | `RUNNING` count; expired leases; heartbeat age = `now() - min(heartbeat_at)` (renewed every third of the lease, so it stays below that while workers live) | Jobs in flight |
+| what active runs wait on | `run_queued`, `job_queued`, `job_running`, `job_finished_awaiting_advance`, with the oldest wait | runs in flight |
+| per Job type, over a window | finished, failed, failure rate, failures by error type, throughput; p50 / p95 / p99 / max of queue wait (`locked_at - enqueued_at`), execution (`finished_at - locked_at`), end to end (`finished_at - created_at`); Jobs claimed more than once | the window (`ix_jobs_finished_at`) |
+| recovery, over a window | lease requeues, lease-budget failures, job resends (their JobEvents), reclaims by the worker that held the expired claim (`worker_node` of its `LOCKED` event) | the window |
+| per pipeline task, over a window | queue wait, execution, and handoff (`task.finished_at - job.finished_at`: the `advance` message and the step that observed the Job) | the window (`ix_pipeline_runs_finished_at`) |
+| broker (optional) | messages in the job and pipeline queues | one broker call |
+
+Queue time is measured from `enqueued_at`, never from `queued_at`: recovery moves
+`queued_at` on every resend, so a wait measured from it cannot exceed the resend
+threshold. Queue wait and execution describe the claim that finished a Job; time lost
+to a dead worker appears in end to end and in "claimed more than once". The broker
+counts messages and PostgreSQL counts work: resends make the broker's depth larger than
+the backlog, a lost message makes it smaller.
 
 ## 6. Job steps: `JOB_STEP_DEFINITIONS_BY_TYPE`
 
@@ -439,3 +468,10 @@ These are the verified gaps and bounds of the current design.
   refuse a cancelled record, but no API or worker path sets one.
 - **No time-based scheduling.** Dispatch is always an API call or a reconciliation
   command; there is no scheduler.
+- **Execution health is read on demand, not exported.** Nothing samples
+  `execution-status` or alerts on it. Re-sent `advance` messages and refused claims
+  leave no row: they are counted only in recovery's JSON summary and the workers'
+  `job claim refused` warnings. Worker capacity (slots) is not recorded, so
+  saturation is read as `RUNNING` at its plateau with a growing backlog. Durations mix
+  the workers' clocks (`locked_at`, `finished_at`) with PostgreSQL's (`enqueued_at`,
+  `heartbeat_at` renewals); across hosts they include clock skew.

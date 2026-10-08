@@ -58,6 +58,7 @@ class PipelineJobPlanner:
             retry_count=0,
             max_retries=0,
             queued_at=now,
+            enqueued_at=now,
             created_at=now,
             updated_at=now,
         )

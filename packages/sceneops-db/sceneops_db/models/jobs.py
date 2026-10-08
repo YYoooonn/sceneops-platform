@@ -48,7 +48,13 @@ class JobModel(Base):
         Integer, nullable=False, server_default=text("0")
     )
 
+    # The last dispatch: moved by every send, the resends of recovery included.
     queued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # When the Job entered QUEUED from another status; a redispatch or resend
+    # of a QUEUED Job keeps it. The start of the wait that a claim ends.
+    enqueued_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     locked_at: Mapped[datetime | None] = mapped_column(
@@ -137,6 +143,12 @@ Index("ix_jobs_pipeline_task_run_id", JobModel.pipeline_task_run_id)
 Index("ix_jobs_status_queued_at", JobModel.status, JobModel.queued_at)
 Index("ix_jobs_status_locked_at", JobModel.status, JobModel.locked_at)
 Index("ix_jobs_execution_key", JobModel.execution_key)
+# Window reads of finished Jobs (execution metrics) by finish time.
+Index(
+    "ix_jobs_finished_at",
+    JobModel.finished_at,
+    postgresql_where=text("finished_at IS NOT NULL"),
+)
 # Job lease recovery scans the RUNNING Jobs whose lease has passed.
 Index(
     "ix_jobs_running_lease_expires_at",

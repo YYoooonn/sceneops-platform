@@ -28,6 +28,15 @@ reconcile-apply:
 execution-recovery:
 	$(COMPOSE) exec -T worker-jobs sceneops-worker recover $(ARGS)
 
+.PHONY: execution-status
+# Read-only execution health from durable state (sceneops-worker execution-status):
+# backlog and oldest queued Job, running Jobs and heartbeat age, what active
+# PipelineRuns wait on, and over a window throughput, latency percentiles,
+# failures and recovery actions by type, plus the broker's queue depths. One JSON
+# document; nothing is stored. ARGS="--window-seconds 900" / "--no-broker".
+execution-status:
+	$(COMPOSE) exec -T worker-jobs sceneops-worker execution-status $(ARGS)
+
 .PHONY: artifact-lifecycle-once
 # Read-only artifact lifecycle report of the robot_runs/ root (ADR-008 §6):
 # referenced / pending / orphan candidate / integrity incident. Classifies only;

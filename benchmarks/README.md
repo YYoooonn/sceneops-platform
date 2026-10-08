@@ -19,6 +19,8 @@ what was measured: "validated through 100k messages" is not "supports at most 10
 | `learning_data/benchmark_incremental_export.py` | write amplification of incremental vs full-rebuild export | host | nothing |
 | `learning_data/benchmark_minio_access_strategy.py` | the same access strategies against real MinIO | host | `make local-up`; writes under a throwaway prefix of the configured bucket |
 | `streaming/benchmark_streaming_capture_scale.sh` (+ `.py`) | capture throughput, Kafka lag and memory vs message count and payload size | `ros2` container + host | Kafka (`make streaming-up`) |
+| `execution/benchmark_execution_metrics_sql.py` | cost of the execution-health queries over a synthetic history (200 000 Jobs by default) | host | a disposable database (`disposable_env.py create --database sceneops_test_<name>`); TRUNCATEs its execution tables |
+| `execution/execution_observability_experiments.py` (+ `load_worker.py`) | healthy / backlog / slow handler / worker loss / lost dispatch workloads on real workers, observed through the execution-health metrics and checked against ground truth | host (Celery subprocesses, throwaway Redis) | Docker, `make local-up` (PostgreSQL), a disposable database; TRUNCATEs its execution tables per scenario |
 | `acquisition/benchmark_registration_latency.py` | `REGISTER_ROBOT_RUN` latency through the production path | host + the stack's worker | `make local-up`, the prepared recording; registers throwaway `bench-reg-*` RobotRuns |
 
 ```bash
@@ -30,7 +32,7 @@ Each script's docstring states its workload, options and prerequisites.
 
 ## Rules
 
-- A benchmark that writes to PostgreSQL, MinIO or Kafka (the last four rows) does not run
+- A benchmark that writes to PostgreSQL, MinIO or Kafka (the last six rows) does not run
   on a reference environment that must stay equal to the golden contract: use a
   disposable runtime, or accept that `make local-reset` + `make reference-contract-bootstrap`
   rebuilds the reference environment afterwards.
