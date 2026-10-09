@@ -15,10 +15,9 @@ many -- the telemetry tracker has already proven they are the dense 0..N-1
 sequence, so a matching count proves nothing at the head, in the middle or at the
 tail was lost. See ``check_run_complete``.
 
-Everything after ENDED (validate, receipt, atomic finalize, Kafka commit) is
-linear code in ``consumer.run_capture``, not event-driven, so it is not a
-phase here. The invariant that matters across it is that no offset is
-committed before the bag is durably finalized.
+Everything after ENDED (validate, receipt, atomic finalize) is linear code in
+``consumer.run_capture``, not event-driven, so it is not a phase here. The
+atomic finalize is what marks the run captured.
 
 The machine rejects, loudly and at the first offending record, what the
 sequence trackers would otherwise only catch indirectly and late (a missing
@@ -44,13 +43,13 @@ class RunPhase(StrEnum):
 class RunLifecycleError(RuntimeError):
     """The target run's records violate its RUN_START -> telemetry -> RUN_END
     lifecycle (telemetry or RUN_END before RUN_START, a second RUN_START, a
-    record after RUN_END). Nothing is finalized or committed."""
+    record after RUN_END). Nothing is finalized."""
 
 
 class RunIncompleteError(RunLifecycleError):
     """RUN_END declares a telemetry count different from what Capture observed
     (telemetry lost after the last record Capture saw, or a RUN_END that does not
-    describe this stream). Nothing is finalized or committed."""
+    describe this stream). Nothing is finalized."""
 
 
 def check_run_complete(*, declared: int, observed: int) -> None:

@@ -1,12 +1,13 @@
 """Orchestrates one run-scoped durable MCAP capture: Kafka -> RunFilter ->
-SequenceTracker -> McapCaptureWriter -> validate -> finalize -> commit.
+SequenceTracker -> McapCaptureWriter -> validate -> finalize.
 
-Frozen commit-boundary ordering (never reversed): consume -> write to the
-temp/partial MCAP -> close the writer (fsync) -> validate by reading the
-file back -> atomically finalize (rename + fsync parent dir) -> only then
-commit Kafka offsets. If anything before the Kafka commit fails, this
-function raises without committing, leaving the partial bag in place for
-the next attempt to discard and rebuild from Kafka (see ``finalize.py``).
+Frozen ordering (never reversed): consume -> write to the temp/partial MCAP
+-> close the writer (fsync) -> validate by reading the file back -> write the
+receipt -> atomically finalize (rename + fsync parent dir). The atomic finalize
+is the only completion boundary: Capture reads Kafka and records no progress in
+it. If anything before the finalize fails, this function raises, leaving the
+partial bag in place for the next attempt to discard and rebuild from Kafka
+(see ``finalize.py``).
 
 Lifecycle is externally controlled: this module has no notion of what a
 "mission" is and never inspects the content of ``/mission/status`` (or
@@ -41,6 +42,8 @@ bounded synthetic runs) control events are only sequence-validated.
 attempt is over, and with a ``KafkaStartPosition`` the attempt reads exactly one
 explicitly assigned partition (no consumer-group join, no rebalance). Kafka
 arbitrates nothing; which attempt captures a run is decided by whoever starts it.
+A run's captured state is its finalized bag and receipt; an attempt neither
+reads nor writes any consumer-group state.
 """
 
 from __future__ import annotations
@@ -88,7 +91,6 @@ from .finalize import (
     finalize_bag,
     prepare_partial_bag_dir,
 )
-from .group_id import derive_capture_group_id
 from .lifecycle import RunLifecycle, RunLifecycleError, RunPhase, check_run_complete
 from .ownership import own_run
 from .writer import McapCaptureWriter
@@ -109,18 +111,6 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-# The capture consumer-group BASE (conceptually
-# SCENEOPS_STREAMING_KAFKA_CAPTURE_CONSUMER_GROUP_ID -- frozen as a code
-# constant, not an actual environment variable, since Phase 6.3; this
-# follow-up does not change that). Never used as a literal Kafka
-# group.id directly -- every capture derives its own run-scoped group
-# from this base (see derive_capture_group_id, group_id.py), so a
-# capture attempt never shares committed-offset state with any other
-# consumer, generic or otherwise, NOR with an independent RobotRun's own
-# capture (Phase 6.6.1).
-CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
-
-
 class PartitionInvariantError(RuntimeError):
     """A robot_run_id's messages spanned more than one Kafka partition."""
 
@@ -133,14 +123,14 @@ class SequenceIntegrityError(RuntimeError):
 class RunEndNotObservedError(RuntimeError):
     """A capture that must end on its run's RUN_END was stopped before it
     arrived. What was consumed may be a truncated recording, so nothing is
-    finalized and no offset is committed."""
+    finalized."""
 
 
 class RunStartNotObservedError(RuntimeError):
     """A capture that must start on its run's RUN_START was stopped before it
     arrived: the run never started on the topic (wrong ids, retention, a bridge
     that never published it), or the capture began after it. Nothing was
-    recorded, finalized or committed."""
+    recorded or finalized."""
 
 
 @dataclass
@@ -288,8 +278,8 @@ class _IdleGuard:
     CAPTURING it is target-run progress only, so records of other runs never
     keep a run alive whose RUN_END is not coming.
 
-    The clock starts at construction: the timeout must cover the consumer
-    group join (~3 s on a new group) as well as any wait for the bridge.
+    The clock starts at construction: the timeout must cover any wait for the
+    bridge as well as the scan to RUN_START.
     """
 
     def __init__(self, timeout_seconds: float) -> None:
@@ -323,8 +313,8 @@ async def run_capture(
     start: KafkaStartPosition | None = None,
 ) -> CaptureResult:
     """Consume from Kafka and durably capture one run's messages into a
-    finalized MCAP bag, returning a ``CaptureResult`` once Kafka offsets
-    have been committed.
+    finalized MCAP bag, returning a ``CaptureResult`` once the recording is
+    durably finalized (or an identical one already was).
 
     ``stop_condition(message_count)`` is polled before every Kafka poll
     and decides when enough has been captured -- this function has no
@@ -345,22 +335,22 @@ async def run_capture(
     In this mode ``stop_condition`` and ``idle_timeout_seconds`` are abort
     guards (``_IdleGuard`` defines what counts as progress). If either ends the
     capture before ``RUN_END``, ``RunStartNotObservedError`` (the run never
-    started) or ``RunEndNotObservedError`` is raised and nothing is finalized
-    or committed, because a recording that merely stopped arriving cannot be
+    started) or ``RunEndNotObservedError`` is raised and nothing is finalized,
+    because a recording that merely stopped arriving cannot be
     told from a complete one once it is a registered RobotRun. The partial bag
     stays for the next attempt to discard and rebuild from Kafka. Without
     ``stop_on_run_end`` the ``stop_condition`` alone ends and finalizes the
     capture (count-bounded synthetic runs in tests and benchmarks), and
     ``idle_timeout_seconds`` is not accepted.
 
-    Where an attempt starts reading is never taken from the group's committed
-    offset, which only records that a capture completed. Without ``start`` it
-    reads every partition of the topic from the beginning
-    (``KafkaTelemetryConsumer(start_from_beginning=True)``, a consumer-group
-    join that scans the whole history). With ``start`` it ``assign()``s that one
-    partition at that offset (``KafkaStartPosition``, normally the offset of the
-    run's RUN_START): no group join or rebalance, and no record of any other
-    partition is read. The position is validated (``StartPositionError`` if the
+    Capture never joins a consumer group and records no progress in Kafka: where
+    an attempt starts reading is decided by its caller, and whether a run was
+    captured is decided by its finalized bag. Without ``start`` it ``assign()``s
+    every partition of the topic at its beginning
+    (``KafkaTelemetryConsumer(start_from_beginning=True)``, a scan of the whole
+    history). With ``start`` it ``assign()``s that one partition at that offset
+    (``KafkaStartPosition``, normally the offset of the run's RUN_START): no
+    record of any other partition is read. The position is validated (``StartPositionError`` if the
     partition or offset is not in the retained log) and never replaced by
     another: in a lifecycle-governed capture, RUN_START must be found between
     ``start.offset`` and the log end seen at startup, else
@@ -400,15 +390,6 @@ async def run_capture(
         # existing partial bag alone.
         consumer = KafkaTelemetryConsumer(
             settings=settings,
-            # Run-scoped, not the literal base -- see group_id.py's own
-            # docstring for why (Phase 6.6.1): a group shared across every
-            # RobotRun let one run's capture silently advance another's
-            # committed offset.
-            group_id=derive_capture_group_id(
-                base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=robot_run_id
-            ),
-            auto_offset_reset="earliest",
-            enable_auto_commit=False,
             start_from_beginning=start is None,
             start_position=start,
         )
@@ -540,9 +521,9 @@ async def _capture_with_consumer(
                     )
                     run_ended = lifecycle.phase is RunPhase.ENDED
                     if run_ended:
-                        # Before anything is validated, finalized or
-                        # committed: the producer's declared closing
-                        # state against what this capture observed.
+                        # Before anything is validated or finalized: the
+                        # producer's declared closing state against what
+                        # this capture observed.
                         try:
                             declared = parse_run_end_telemetry_count(envelope)
                         except RunEndPayloadError as exc:
@@ -570,7 +551,7 @@ async def _capture_with_consumer(
             last_offset = consumed.offset
     finally:
         # Always fsync/close the writer, whatever happened above --
-        # but only proceed to validate/finalize/commit on the clean
+        # but only proceed to validate/finalize on the clean
         # (non-exception) path below.
         writer.close()
 
@@ -628,17 +609,14 @@ async def _capture_with_consumer(
         final_dir = finalize_bag(output_root, robot_run_id)
         final_mcap_path = final_dir / Path(mcap_path).name
     except FinalBagExistsError:
-        # A prior attempt for this robot_run_id already reached
-        # finalize successfully but was killed/crashed before
-        # committing Kafka offsets (the exact "after finalize, before
-        # commit" crash boundary) -- Kafka never advanced past those
-        # records, so this attempt independently consumed, wrote, and
+        # A prior attempt for this robot_run_id already finalized (it
+        # crashed before reporting, or the run is simply being captured
+        # again), and this attempt independently consumed, wrote, and
         # validated the SAME messages again. That is convergence, not
-        # a conflict: if the recorded messages genuinely match, commit
-        # the offset now (the durability boundary this run reached is
-        # identical to the prior one) and report the existing final
-        # file -- never silently overwrite it, and never loop forever
-        # crashing on the same already-finalized file either.
+        # a conflict: if the recorded messages genuinely match, report
+        # the existing final file -- never silently overwrite it, and
+        # never loop forever crashing on the same already-finalized file
+        # either.
         #
         # "Match" ignores log_time only: each attempt stamps its own
         # receive time, so the bytes of two attempts legitimately
@@ -689,8 +667,4 @@ async def _capture_with_consumer(
         ),
     )
 
-    # Only now -- after the MCAP has been validated and durably,
-    # atomically finalized on disk -- is it safe to acknowledge
-    # these Kafka records as consumed. Never before.
-    await consumer.commit()
     return result

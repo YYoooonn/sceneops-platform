@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import pytest
 from confluent_kafka import Consumer, Producer, TopicPartition
 from confluent_kafka.admin import AdminClient, NewTopic
+from group_state import assert_leaves_no_group_state
 from sceneops_streaming import (
     EnvelopeEncoding,
     KafkaStartPosition,
@@ -28,16 +29,15 @@ from sceneops_streaming import (
     TelemetryEnvelope,
     build_control_envelope,
 )
+from sceneops_streaming.consumer import ASSIGNED_READER_GROUP_ID
 from sceneops_streaming.wire import encode_envelope
 
 from sceneops_recording.capture.consumer import (
-    CAPTURE_CONSUMER_GROUP_ID,
     RunEndNotObservedError,
     RunStartNotObservedError,
     run_capture,
 )
 from sceneops_recording.capture.finalize import final_bag_path, partial_bag_path
-from sceneops_recording.capture.group_id import derive_capture_group_id
 from sceneops_recording.capture.lifecycle import RunLifecycleError
 from sceneops_recording.capture.receipt_io import read_capture_receipt
 
@@ -192,23 +192,6 @@ def _capture(tmp_path, topic, run, start, **kwargs):
     )
 
 
-def _committed(topic, partition, run) -> int:
-    probe = Consumer(
-        {
-            "bootstrap.servers": StreamingSettings().bootstrap_servers,
-            "group.id": derive_capture_group_id(
-                base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=run
-            ),
-            "enable.auto.commit": False,
-        }
-    )
-    try:
-        [tp] = probe.committed([TopicPartition(topic, partition)], timeout=10)
-        return tp.offset
-    finally:
-        probe.close()
-
-
 def _publish_three_runs(topic):
     """Three runs on three partitions. Each partition first receives an earlier
     unrelated run's RUN_START (history), then the three sessions interleave."""
@@ -257,7 +240,7 @@ def test_capture_at_the_exact_run_start_offset(tmp_path, topic):
         assert result.message_count == 4
         receipt = read_capture_receipt(final_bag_path(tmp_path, run))
         assert receipt.kafka.partition == start.partition
-        assert _committed(topic, start.partition, run) == pub.end_of(run).offset + 1
+        assert_leaves_no_group_state(topic, start.partition, run)
 
 
 def test_capture_starting_before_run_start_scans_forward_to_it(tmp_path, topic):
@@ -368,6 +351,42 @@ def test_without_a_start_position_the_topic_is_scanned_from_the_beginning(
         result = _capture(tmp_path, topic, run, None)
         assert result.first_offset == pub.start_of(run).offset
         assert result.message_count == 4
+        assert_leaves_no_group_state(topic, result.partition, run)
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+def test_offsets_committed_in_the_readers_group_are_never_a_start_position(
+    tmp_path, topic, pinned
+):
+    """Capture neither reads nor writes group offsets: an offset committed past
+    the whole run, for the very group id its consumer is configured with, changes
+    nothing -- the run is captured from the position it was given (or from the
+    beginning)."""
+    runs, pub = _publish_three_runs(topic)
+    run = runs[0]
+    start = pub.start_of(run)
+    past_the_run = TopicPartition(topic, start.partition, pub.end_of(run).offset + 1)
+    group = Consumer(
+        {
+            "bootstrap.servers": StreamingSettings().bootstrap_servers,
+            "group.id": ASSIGNED_READER_GROUP_ID,
+            "enable.auto.commit": False,
+        }
+    )
+    try:
+        group.commit(offsets=[past_the_run], asynchronous=False)
+        result = _capture(tmp_path, topic, run, start.start if pinned else None)
+    finally:
+        group.close()
+        _ADMIN.delete_consumer_groups([ASSIGNED_READER_GROUP_ID])[
+            ASSIGNED_READER_GROUP_ID
+        ].result(timeout=30)
+
+    assert (result.first_offset, result.last_offset) == (
+        start.offset,
+        pub.end_of(run).offset,
+    )
+    assert result.message_count == 4
 
 
 def test_restart_after_an_incomplete_attempt_rebuilds_from_the_same_position(
@@ -382,12 +401,11 @@ def test_restart_after_an_incomplete_attempt_rebuilds_from_the_same_position(
     start = pub.start_of(run).start
 
     # The first attempt gives up before RUN_END, leaving its partial bag and
-    # neither finalizing nor committing.
+    # not finalizing.
     with pytest.raises(RunEndNotObservedError):
         _capture(tmp_path, topic, run, start, idle_timeout_seconds=3.0)
     assert partial_bag_path(tmp_path, run).is_dir()
     assert not final_bag_path(tmp_path, run).exists()
-    assert _committed(topic, start.partition, run) < 0
 
     # RUN_END arrives; the next attempt discards the stale partial and converges.
     pub.run_end(run, 3)
@@ -396,7 +414,7 @@ def test_restart_after_an_incomplete_attempt_rebuilds_from_the_same_position(
 
     assert result.message_count == 3
     assert not partial_bag_path(tmp_path, run).exists()
-    assert _committed(topic, start.partition, run) == pub.end_of(run).offset + 1
+    assert_leaves_no_group_state(topic, start.partition, run)
 
 
 def test_retry_of_a_finalized_run_converges_on_the_same_bag(tmp_path, topic):

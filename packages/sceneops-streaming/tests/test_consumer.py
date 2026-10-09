@@ -1,8 +1,7 @@
-"""Unit tests for KafkaTelemetryConsumer's manual-commit support and
-(Phase 7.0.1) its internal batched-fetch/buffer behavior. No real broker
--- confluent_kafka.Consumer is monkeypatched with a minimal fake that
-records constructor config, consume()/commit() calls, and serves
-pre-loaded fake messages.
+"""Unit tests for KafkaTelemetryConsumer's subscribed and assigned modes and its
+internal batched-fetch/buffer behavior. No real broker -- confluent_kafka.Consumer
+is monkeypatched with a minimal fake that records constructor config,
+assign()/subscribe()/consume() calls, and serves pre-loaded fake messages.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from sceneops_streaming import (
 )
 from sceneops_streaming import consumer as consumer_module
 from sceneops_streaming.config import StreamingSettings
-from sceneops_streaming.consumer import KafkaTelemetryConsumer
+from sceneops_streaming.consumer import ASSIGNED_READER_GROUP_ID, KafkaTelemetryConsumer
 from sceneops_streaming.errors import EnvelopeDecodeError
 from sceneops_streaming.wire import encode_envelope
 
@@ -109,7 +108,6 @@ class _FakeConfluentConsumer:
     def __init__(self, config: dict) -> None:
         self.config = config
         self.subscribed_topics: list[str] = []
-        self.committed: list[tuple[object, bool]] = []
         self.closed = False
         self._queue: list[_FakeMessage] = []
         # (num_messages, timeout) for every consume() call -- lets tests
@@ -153,9 +151,6 @@ class _FakeConfluentConsumer:
         batch, self._queue = self._queue[:num_messages], self._queue[num_messages:]
         return batch
 
-    def commit(self, message=None, asynchronous=True) -> None:
-        self.committed.append((message, asynchronous))
-
     def close(self) -> None:
         self.closed = True
 
@@ -182,37 +177,83 @@ def test_default_subscription_resumes_from_committed_offsets() -> None:
     assert consumer._consumer.on_assign is None
 
 
-def test_start_from_beginning_rewinds_every_assignment() -> None:
-    from confluent_kafka import OFFSET_BEGINNING, TopicPartition
+def test_start_from_beginning_assigns_every_partition_at_the_beginning() -> None:
+    from confluent_kafka import OFFSET_BEGINNING
 
     consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), start_from_beginning=True
+        settings=StreamingSettings(_env_file=None),
+        topic="t",
+        start_from_beginning=True,
     )
     fake = consumer._consumer
-    # Partitions arrive carrying the group's committed offset.
-    fake.on_assign(fake, [TopicPartition("t", 0, 42), TopicPartition("t", 1, 7)])
 
-    assert [p.offset for p in fake.assigned] == [OFFSET_BEGINNING, OFFSET_BEGINNING]
+    assert not fake.subscribed
+    assert [(tp.topic, tp.partition, tp.offset) for tp in fake.assigned] == [
+        ("t", 0, OFFSET_BEGINNING),
+        ("t", 1, OFFSET_BEGINNING),
+    ]
 
 
-async def test_commit_with_no_polled_message_is_a_no_op() -> None:
+def test_start_from_beginning_of_a_missing_topic_fails_and_releases_the_client(
+    monkeypatch,
+) -> None:
+    created: list[_FakeConfluentConsumer] = []
+
+    class _Fake(_FakeConfluentConsumer):
+        def __init__(self, config: dict) -> None:
+            super().__init__(config)
+            created.append(self)
+
+    monkeypatch.setattr(consumer_module, "ConfluentConsumer", _Fake)
+
+    with pytest.raises(StartPositionError, match="does not exist"):
+        KafkaTelemetryConsumer(
+            settings=StreamingSettings(_env_file=None),
+            topic="missing",
+            start_from_beginning=True,
+        )
+
+    assert created[0].closed
+    assert created[0].assigned is None
+
+
+@pytest.mark.parametrize(
+    "assigned",
+    [
+        {"start_from_beginning": True, "topic": "t"},
+        {"start_position": KafkaStartPosition("t", 0, 10)},
+    ],
+)
+def test_assigned_consumer_has_no_group_progress(assigned) -> None:
+    """Assigned reading never joins a group and nothing can record progress:
+    auto-commit is off whatever the caller asks, there is no commit API, and an
+    offset leaving the log is an error."""
     consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), enable_auto_commit=False
+        settings=StreamingSettings(_env_file=None),
+        enable_auto_commit=True,
+        auto_offset_reset="earliest",
+        **assigned,
     )
-    await consumer.commit()
-    assert consumer._consumer.committed == []
+    config = consumer._consumer.config
+
+    assert config["enable.auto.commit"] is False
+    assert config["group.id"] == ASSIGNED_READER_GROUP_ID
+    assert config["auto.offset.reset"] == "error"
+    assert not hasattr(consumer, "commit")
 
 
-async def test_commit_commits_the_last_polled_message_synchronously() -> None:
-    consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), enable_auto_commit=False
-    )
-    sentinel_message = object()
-    consumer._last_message = sentinel_message
-
-    await consumer.commit()
-
-    assert consumer._consumer.committed == [(sentinel_message, False)]
+@pytest.mark.parametrize(
+    "assigned",
+    [
+        {"start_from_beginning": True, "topic": "t"},
+        {"start_position": KafkaStartPosition("t", 0, 10)},
+    ],
+)
+def test_assigned_consumer_rejects_a_group_id(assigned) -> None:
+    with pytest.raises(ValueError, match="no consumer group"):
+        KafkaTelemetryConsumer(
+            settings=StreamingSettings(_env_file=None), group_id="g", **assigned
+        )
 
 
 # ---------------------------------------------------------------------
@@ -353,24 +394,6 @@ async def test_malformed_record_raises_decode_error_with_location() -> None:
     assert exc_info.value.offset == 7
 
 
-async def test_commit_commits_the_last_record_even_when_served_from_buffer() -> None:
-    consumer = _consumer(poll_batch_size=10, enable_auto_commit=False)
-    envelopes = [_envelope(sequence_number=i) for i in range(2)]
-    consumer._consumer.enqueue(
-        *[_fake_message(e, offset=i) for i, e in enumerate(envelopes)]
-    )
-
-    await consumer.poll(1.0)  # triggers the fetch, returns record 0
-    second = await consumer.poll(1.0)  # served from buffer, returns record 1
-
-    await consumer.commit()
-
-    assert len(consumer._consumer.committed) == 1
-    committed_message, asynchronous = consumer._consumer.committed[0]
-    assert committed_message.offset() == second.offset
-    assert asynchronous is False
-
-
 async def test_close_with_buffered_unreturned_messages_does_not_raise() -> None:
     consumer = _consumer(poll_batch_size=10)
     envelopes = [_envelope(sequence_number=i) for i in range(5)]
@@ -384,10 +407,8 @@ async def test_close_with_buffered_unreturned_messages_does_not_raise() -> None:
     await consumer.close()
 
     assert consumer._consumer.closed is True
-    # Buffered-but-never-returned records are dropped, not committed --
-    # they were never eligible for commit() in the first place (only
-    # _last_message, the most recently RETURNED record, ever is), so
-    # dropping them loses nothing a future consumer can't redeliver.
+    # Fetched-but-never-returned records are dropped; the next attempt reads
+    # them again from its own start position.
     assert consumer._buffer == []
 
 
@@ -401,7 +422,7 @@ def _pinned(position: KafkaStartPosition, **kwargs) -> KafkaTelemetryConsumer:
 
 
 def test_start_position_assigns_the_exact_partition_without_subscribing() -> None:
-    consumer = _pinned(KafkaStartPosition("t", 1, 42), group_id="g")
+    consumer = _pinned(KafkaStartPosition("t", 1, 42))
     fake = consumer._consumer
 
     assert not fake.subscribed
@@ -411,7 +432,6 @@ def test_start_position_assigns_the_exact_partition_without_subscribing() -> Non
     assert consumer.end_offset == 100
     # An offset that later leaves the log must be an error, never a reset.
     assert fake.config["auto.offset.reset"] == "error"
-    assert fake.config["group.id"] == "g"
 
 
 def test_start_position_overrides_the_caller_auto_offset_reset() -> None:

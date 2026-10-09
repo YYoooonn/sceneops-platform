@@ -1,7 +1,7 @@
 """Capture receipt written atomically with finalize (ADR-008 §4.2 A1, Phase
 12.2): the receipt lands in the partial bag before the rename, so a finalized
 bag never exists without it; retries converge on the bag of record; conflicts
-fail loudly and never commit Kafka offsets.
+fail loudly.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from sceneops_streaming import (  # noqa: E402
 )
 
 import sceneops_recording.capture.consumer as capture_consumer_module  # noqa: E402
-from sceneops_recording.capture.consumer import CAPTURE_CONSUMER_GROUP_ID, run_capture  # noqa: E402
+from sceneops_recording.capture.consumer import run_capture  # noqa: E402
 from sceneops_recording.capture.finalize import (
     FinalBagExistsError,
     final_bag_path,
@@ -69,13 +69,9 @@ def _queue(run_id: str, count: int = 3, *, first_offset: int = 10):
 class _FakeConsumer:
     def __init__(self, queue) -> None:
         self._queue = list(queue)
-        self.committed = False
 
     async def poll(self, timeout_seconds: float):
         return self._queue.pop(0) if self._queue else None
-
-    async def commit(self) -> None:
-        self.committed = True
 
     async def close(self) -> None:
         pass
@@ -87,13 +83,9 @@ def _install(monkeypatch, queue) -> list[_FakeConsumer]:
     def factory(
         *,
         settings,
-        group_id,
-        auto_offset_reset,
-        enable_auto_commit,
         start_from_beginning,
         start_position,
     ):
-        assert group_id.startswith(CAPTURE_CONSUMER_GROUP_ID + "-")
         consumer = _FakeConsumer(queue)
         created.append(consumer)
         return consumer
@@ -221,9 +213,9 @@ def test_crash_before_rename_exposes_no_finalized_capture(
     tmp_path, monkeypatch
 ) -> None:
     """Boundary: receipt written into .partial, then the process dies before
-    the atomic rename. Nothing is finalized, nothing is committed, and a
+    the atomic rename. Nothing is finalized, and a
     publisher scanning finalized bags finds nothing."""
-    created = _install(monkeypatch, _queue("run-1"))
+    _install(monkeypatch, _queue("run-1"))
 
     def crash(output_root, robot_run_id):
         raise RuntimeError("simulated crash before rename")
@@ -233,7 +225,6 @@ def test_crash_before_rename_exposes_no_finalized_capture(
         _capture(tmp_path)
 
     assert not final_bag_path(tmp_path, "run-1").exists()
-    assert created[0].committed is False
     # The receipt exists only inside the partial directory, next to its MCAP.
     assert (partial_bag_path(tmp_path, "run-1") / CAPTURE_RECEIPT_FILENAME).is_file()
 
@@ -241,17 +232,18 @@ def test_crash_before_rename_exposes_no_finalized_capture(
 def test_crash_after_rename_leaves_recording_and_receipt_together(
     tmp_path, monkeypatch
 ) -> None:
-    """Boundary D: killed after finalize, before the Kafka commit. The
-    finalized bag is whole -- receipt included -- and recoverable."""
-    created = _install(monkeypatch, _queue("run-1"))
+    """Boundary D: killed right after finalize. The finalized bag is whole --
+    receipt included -- and recoverable."""
+    _install(monkeypatch, _queue("run-1"))
+    real_finalize_bag = capture_consumer_module.finalize_bag
 
-    async def crash_commit(self):
-        raise RuntimeError("simulated crash before commit")
+    def finalize_then_crash(output_root, robot_run_id):
+        real_finalize_bag(output_root, robot_run_id)
+        raise RuntimeError("simulated crash after finalize")
 
-    monkeypatch.setattr(_FakeConsumer, "commit", crash_commit)
-    with pytest.raises(RuntimeError, match="before commit"):
+    monkeypatch.setattr(capture_consumer_module, "finalize_bag", finalize_then_crash)
+    with pytest.raises(RuntimeError, match="after finalize"):
         _capture(tmp_path)
-    assert created[0].committed is False
 
     final = final_bag_path(tmp_path, "run-1")
     assert (final / "run-1_0.mcap").is_file()
@@ -285,10 +277,8 @@ def test_retry_after_finalize_converges_on_the_existing_receipt(
     first = _capture(tmp_path, robot_platform="platform-x")
     receipt_bytes = first.receipt_path.read_bytes()
 
-    created = _install(monkeypatch, _queue("run-1"))
+    _install(monkeypatch, _queue("run-1"))
     second = _capture(tmp_path, robot_platform="platform-x")
-
-    assert created[0].committed is True
     assert second.receipt_path == first.receipt_path
     # The first finalized bag (and its receipt) is the recording of record.
     assert second.receipt_path.read_bytes() == receipt_bytes
@@ -307,11 +297,9 @@ def test_retry_with_conflicting_metadata_fails_loudly(
     first = _capture(tmp_path, robot_platform="platform-x")
     before = (first.path.read_bytes(), first.receipt_path.read_bytes())
 
-    created = _install(monkeypatch, _queue("run-1"))
+    _install(monkeypatch, _queue("run-1"))
     with pytest.raises(CaptureReceiptConflictError, match="robot_platform"):
         _capture(tmp_path, **override)
-
-    assert created[0].committed is False
     assert (first.path.read_bytes(), first.receipt_path.read_bytes()) == before
 
 
@@ -333,11 +321,9 @@ def test_retry_with_conflicting_robot_identity_fails_loudly(
         )
         for i in range(3)
     ]
-    created = _install(monkeypatch, queue)
+    _install(monkeypatch, queue)
     with pytest.raises(CaptureReceiptConflictError, match="robot_id"):
         _capture(tmp_path, robot_id="robot-2")
-
-    assert created[0].committed is False
     assert _receipt(tmp_path).robot_id == "robot-1"
     assert first.path.exists()
 
@@ -349,10 +335,9 @@ def test_retry_against_a_corrupt_existing_receipt_fails_loudly(
     first = _capture(tmp_path)
     first.receipt_path.write_bytes(first.receipt_path.read_bytes()[:50])
 
-    created = _install(monkeypatch, _queue("run-1"))
+    _install(monkeypatch, _queue("run-1"))
     with pytest.raises(CaptureReceiptError):
         _capture(tmp_path)
-    assert created[0].committed is False
 
 
 def test_retry_against_a_receipt_that_misdescribes_its_bytes_fails_loudly(
@@ -368,10 +353,9 @@ def test_retry_against_a_receipt_that_misdescribes_its_bytes_fails_loudly(
         CaptureReceipt.model_validate(payload).to_canonical_bytes()
     )
 
-    created = _install(monkeypatch, _queue("run-1"))
+    _install(monkeypatch, _queue("run-1"))
     with pytest.raises(CaptureReceiptConflictError, match="checksum"):
         _capture(tmp_path)
-    assert created[0].committed is False
 
 
 def test_legacy_bag_without_receipt_still_converges_without_gaining_one(
@@ -383,10 +367,8 @@ def test_legacy_bag_without_receipt_still_converges_without_gaining_one(
     first = _capture(tmp_path)
     first.receipt_path.unlink()
 
-    created = _install(monkeypatch, _queue("run-1"))
+    _install(monkeypatch, _queue("run-1"))
     second = _capture(tmp_path)
-
-    assert created[0].committed is True
     assert second.receipt_path is None
     assert not (final_bag_path(tmp_path, "run-1") / CAPTURE_RECEIPT_FILENAME).exists()
 
@@ -411,10 +393,9 @@ def test_different_recorded_content_still_fails_with_final_bag_exists(
         )
         for i in range(3)
     ]
-    created = _install(monkeypatch, changed)
+    _install(monkeypatch, changed)
     with pytest.raises(FinalBagExistsError):
         _capture(tmp_path)
-    assert created[0].committed is False
 
 
 def test_invalid_run_id_fails_before_finalize(tmp_path, monkeypatch) -> None:

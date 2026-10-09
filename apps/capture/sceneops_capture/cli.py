@@ -6,8 +6,7 @@ RUN_END control event, which the bridge publishes after its last telemetry
 record, and only for a complete RUN_START, telemetry, RUN_END session of that
 run (``sceneops_recording.capture.lifecycle``). ``--idle-timeout-seconds`` is an
 abort guard, not a finalization policy: when the run shows no activity for that
-long before RUN_END, the capture fails (non-zero exit) without finalizing or
-committing Kafka offsets, so a bridge that was killed cannot leave a truncated
+long before RUN_END, the capture fails (non-zero exit) without finalizing, so a bridge that was killed cannot leave a truncated
 recording that looks complete. The partial bag stays; re-running the capture
 discards it and rebuilds the run from the start position (the beginning of the
 topic when none is given). Only one capture of a run can run at a time on an output
@@ -70,8 +69,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=float,
         help="Abort (without finalizing) after this many seconds without progress "
         "before the run's RUN_END: before RUN_START, no record of any run "
-        "arrives (without --start-position this covers the consumer group join, "
-        "~3 s); after it, no record of this run arrives, whatever other runs "
+        "arrives; after it, no record of this run arrives, whatever other runs "
         "publish. Default: wait for RUN_END.",
     )
     parser.add_argument(
@@ -79,8 +77,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=_start_position,
         metavar="TOPIC:PARTITION:OFFSET",
         help="Read exactly this partition from this offset (normally the offset of "
-        "the run's RUN_START) instead of scanning the whole topic from the "
-        "beginning: no consumer-group join, no rebalance. A position that is not "
+        "the run's RUN_START) instead of scanning every partition of the topic "
+        "from the beginning. A position that is not "
         "in the retained log, or that does not lead to the run's RUN_START, fails "
         "the capture; it is never replaced by another position.",
     )

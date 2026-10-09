@@ -1,8 +1,8 @@
 """Exclusive local ownership of one RobotRun by one Capture attempt.
 
 An advisory ``flock`` on ``<output_root>/.locks/<robot_run_id>.lock`` is held for
-the whole attempt, from before ``.partial/<run>`` is touched until after the
-Kafka commit. A second attempt for the same run on the same capture root fails
+the whole attempt, from before ``.partial/<run>`` is touched until the attempt
+is over. A second attempt for the same run on the same capture root fails
 at once with ``RunAlreadyOwnedError`` instead of discarding the live peer's
 partial bag (``prepare_partial_bag_dir``) or racing it to ``finalize_bag``.
 

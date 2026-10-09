@@ -3,10 +3,9 @@
 Reads the just-closed MCAP back with the same reader stack apps/worker's
 the worker's recording reader uses (the ``mcap`` package) -- never trust the writer's
 own in-memory counters as proof the bytes landed correctly on disk. This
-is the "validate" step in the frozen commit-boundary ordering: consume ->
-write temp MCAP -> close -> fsync/validate -> atomically finalize -> fsync
-parent dir -> commit Kafka offsets. A failure here must leave the bag in
-its ``.partial`` location, unfinalized and uncommitted.
+is the "validate" step in the frozen ordering: consume -> write temp MCAP ->
+close -> fsync/validate -> atomically finalize -> fsync parent dir. A failure
+here must leave the bag in its ``.partial`` location, unfinalized.
 """
 
 from __future__ import annotations

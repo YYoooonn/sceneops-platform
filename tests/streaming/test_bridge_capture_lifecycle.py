@@ -77,8 +77,7 @@ def _odometry(sequence: int) -> Odometry:
 
 async def _records_of_run(settings: StreamingSettings, robot_run_id: str) -> list[dict]:
     """The run's records on the topic, in offset order, read from the beginning by
-    a throwaway consumer group that commits nothing (so it cannot disturb the
-    capture's own run-scoped group)."""
+    a throwaway consumer group that commits nothing."""
     consumer = KafkaTelemetryConsumer(
         settings=settings,
         group_id=f"lifecycle-audit-{uuid.uuid4().hex[:8]}",

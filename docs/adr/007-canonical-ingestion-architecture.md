@@ -4,6 +4,10 @@
 
 **Accepted — implemented. Closed by Amendment A9 (§34).**
 
+**Later change.** Capture no longer commits Kafka offsets after finalize
+([ADR-013](./013-capture-records-no-kafka-progress.md)); statements below that offsets
+commit only after durable finalization describe the earlier design.
+
 **Later change.** Several amendments below (A9 §34 and A11 §36 in particular) describe
 the Airflow pipeline backend, its per-task DAGs, `make test-infrastructure
 SUITE=airflow` and the inline `PipelineRunner` as live. Those components were removed:

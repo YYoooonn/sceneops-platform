@@ -74,7 +74,7 @@ Kafka adapter (the only code that imports confluent_kafka)
   config.py       StreamingSettings (bootstrap servers / topic / consumer group / client id)
   wire.py         pure Kafka key / headers / value mapping -- no broker needed
   producer.py     KafkaTelemetryProducer
-  consumer.py     KafkaTelemetryConsumer (subscribe, or assign() at a KafkaStartPosition), EnvelopeDecodeError
+  consumer.py     KafkaTelemetryConsumer (subscribe; or assign() every partition from the beginning, or one at a KafkaStartPosition), EnvelopeDecodeError
 ```
 
 The package depends only on `sceneops-core`. It defines no RobotRun, Scene or Episode
@@ -83,7 +83,7 @@ behavior. Its dependents are the ROS 2 -> Kafka bridge integration (`integration
 envelope; `apps/api`, `apps/worker` and `apps/publisher` depend on none of it, so the
 Kafka SDK is not in their images. `sceneops-streaming` is a member of the root uv
 workspace, so `make test` runs its unit tests (wire mapping, settings, consumer
-manual-commit behavior, envelope, channel registry and control events) without a broker.
+subscribed and assigned modes, envelope, channel registry and control events) without a broker.
 
 ## 3. TelemetryEnvelope contract
 
@@ -337,9 +337,9 @@ SCENEOPS_STREAMING_KAFKA_CONSUMER_GROUP_ID   consumer_group_id    sceneops-telem
 `linger.ms`, `batch.size`, compression, `auto.offset.reset`,
 `enable.auto.commit`, consumer session timeouts. These stay as explicit
 code-level defaults in `producer.py` (`acks=all`, `enable.idempotence=true`) and `consumer.py`
-(`auto.offset.reset` is a constructor parameter, not an env var;
-`enable.auto.commit=True` is hardcoded) until a demonstrated override
-need exists.
+(`auto.offset.reset` and `enable.auto.commit` are constructor parameters of a
+subscribed consumer, not env vars; an assigned consumer forces auto-commit off
+and `auto.offset.reset=error`) until a demonstrated override need exists.
 
 **Precedence** (pydantic-settings' own built-in behavior, not a custom
 mechanism): explicit constructor kwarg > environment variable >
@@ -874,7 +874,6 @@ packages/sceneops-recording/sceneops_recording/capture/
   validation.py          pre-finalize MCAP read-back validation; retry-convergence comparison
   finalize.py            temp/final bag directory lifecycle
   receipt_io.py          capture receipt write / read / convergence check
-  group_id.py            run-scoped consumer-group derivation
   ownership.py           exclusive local ownership of a run (flock)
   consumer.py            RunFilter, SequenceTracker, CaptureResult, run_capture()
 apps/capture/sceneops_capture/cli.py   CLI entry point (run_capture, finalizes on RUN_END)
@@ -936,32 +935,29 @@ dependency, each introduced by a separator line and `MSG: <package>/<Name>`
 -- the same format rosbag2 writes. Tests decode payloads serialized by
 `rclpy` with those schemas through an independent MCAP ROS 2 decoder.
 
-## 21. Commit-boundary ordering (durability guarantee)
+## 21. Finalize ordering (durability guarantee)
 
 Frozen, never reversed:
 
 ```text
 consume -> write to the temp/partial MCAP -> close the writer (fsync)
-  -> validate by reading the file back -> atomically finalize
-  (rename + fsync parent dir) -> commit Kafka offsets
+  -> validate by reading the file back -> write the receipt
+  -> atomically finalize (rename + fsync parent dir)
 ```
 
-If anything before the Kafka commit fails, `run_capture()`
-(`consumer.py`) raises without committing -- the partial bag is
-left in place for the next attempt to discard and rebuild from Kafka
-(§25), never appended to. `KafkaTelemetryConsumer` gained
-`enable_auto_commit`/`commit()` (Part 1's `consumer.py`) specifically for
-this: `enable.auto.commit=False` is REQUIRED for capture (durability must
-never depend on librdkafka's periodic background commit), and `commit()`
-synchronously commits only up through the most recently polled record,
-called exactly once, after finalize succeeds.
+The atomic finalize is the only completion boundary. Capture reads Kafka and
+records no progress in it (§26): a run counts as captured when its finalized bag
+and receipt exist, and Kafka carries no state about that. If anything before the
+finalize fails, `run_capture()` (`consumer.py`) raises -- the partial bag is left
+in place for the next attempt to discard and rebuild from Kafka (§25), never
+appended to.
 
-A dedicated regression test enforces this ordering, not just the
-behavior: `test_run_capture_commits_only_after_finalize`
-(`packages/sceneops-recording/tests/capture/test_capture_consumer.py`) spies on both
-`finalize_bag` and the consumer's `commit()` and asserts
-`call_order == ["finalize", "commit"]` -- it fails if `run_capture` is
-ever edited to call `commit()` before (or without) `finalize_bag()`.
+`KafkaTelemetryConsumer` in assigned mode has no commit API and forces
+`enable.auto.commit=False`, so durability cannot depend on a background commit
+either. `test_pinned_capture.py` pins what `run_capture` asks of the consumer
+(only `settings`, `start_position`, `start_from_beginning`: no group id, no commit
+behaviour), and the real-Kafka tests assert that a capture leaves no
+consumer-group state behind (`tests/capture/group_state.py`).
 
 ## 22. Supported channels
 
@@ -969,8 +965,7 @@ The channel registry (§11) is the only source of channel/type validation
 -- no dynamic ROS2 topic/type discovery. Capture must be given the same
 `--channels-file`s as the bridge. An envelope naming a channel or
 `message_type` outside the registry raises `UnsupportedChannelError` and
-aborts the capture attempt (§21's ordering means nothing gets finalized or
-committed). The writer needs no imported ROS2 message class: the payload is
+aborts the capture attempt (§21's ordering means nothing gets finalized). The writer needs no imported ROS2 message class: the payload is
 opaque CDR bytes and the schema text is read from the interface
 definitions by type name (§20).
 
@@ -1014,7 +1009,7 @@ late/out-of-order (sequence < expected next, not
 
 "Fail" here means `SequenceIntegrityError`, which aborts the capture
 attempt the same way `PartitionInvariantError`/`UnsupportedChannelError`
-do -- per §21's ordering, nothing gets finalized or committed, so a
+do -- per §21's ordering, nothing gets finalized, so a
 restart safely rebuilds the run from the beginning of the topic rather than
 silently accepting corrupted sequencing.
 
@@ -1071,7 +1066,7 @@ precedes it. The abort guard is then the only other way the capture ends:
 `cli.py --idle-timeout-seconds S` (`idle_timeout_seconds`), or a caller's
 `stop_condition(message_count)` polled before every Kafka poll. An aborted
 capture raises `RunStartNotObservedError` (the run never started) or
-`RunEndNotObservedError`, exits non-zero and finalizes and commits nothing,
+`RunEndNotObservedError`, exits non-zero and finalizes nothing,
 because a recording that merely stopped arriving (a bridge killed without
 `RUN_END`) cannot be told from a complete one once it is a registered
 RobotRun. Without `stop_on_run_end` (tests and benchmarks of count-bounded
@@ -1089,8 +1084,7 @@ bridge that has not started) the guard measures consumer progress, so a
 healthy scan is never taken for idleness; after `RUN_START` it measures run
 progress only, so other runs' traffic never keeps alive a run whose `RUN_END`
 is not coming. The clock starts when the capture starts, so S must cover the
-consumer-group join (about 3 s on a new group; there is none with a start
-position, §26) and any wait for the bridge. A
+scan to `RUN_START` (§26) and any wait for the bridge. A
 topic that stays busy with other runs' records while the target `RUN_START`
 never arrives is not bounded by the guard.
 
@@ -1103,21 +1097,23 @@ RUN_END) never enter the recording (§29).
 
 ```text
 Capture dies before RUN_START, in     the .partial directory is discarded and the capture
-the run, or after RUN_END but before   rebuilds the whole run from the beginning of the topic
-finalize                               (offsets were never committed).
-Capture dies after finalize, before    a re-run consumes the same records, writes a new
-commit                                 partial and finds the final file. It converges only
+the run, or after RUN_END but before   rebuilds the whole run from its start position (the
+finalize                               beginning of the topic when none is given).
+Capture dies after finalize            a re-run consumes the same records, writes a new
+                                       partial and finds the final file. It converges only
                                        if the recorded messages match (topic, schema, publish
                                        time, sequence, payload; log_time excluded, since each
                                        attempt stamps its own receive time): the existing file
-                                       stays the recording of record, the offsets are
-                                       committed. Different content under the same run id
-                                       fails with FinalBagExistsError and commits nothing.
-Re-run of a finalized, committed run   the run is read again from its start position (the
-                                       committed offset is a completion marker, never a start
-                                       position), meets the final file and converges as above,
-                                       committing the same offset again. Without a start
+                                       stays the recording of record. Different content under
+                                       the same run id fails with FinalBagExistsError.
+Re-run of a finalized run              the run is read again from its start position, meets
+                                       the final file and converges as above. Without a start
                                        position its cost is a full scan.
+Consumer-group state of Kafka          irrelevant: Capture neither reads nor writes any, so
+lost, reset or never existed           deleting every group or recreating the broker over
+                                       the same topic data changes nothing.
+Kafka unavailable after finalize       nothing remains to be written to Kafka: the finalized
+                                       bag and receipt are already the completed capture.
 Start position not usable              the partition does not exist, or the offset is below the
                                        low watermark or not below the log end: StartPositionError
                                        before any file is touched. An offset that leaves the
@@ -1141,12 +1137,12 @@ Same robot_run_id streamed twice       a second RUN_START before the first RUN_E
                                        RUN_END is never read (Capture ends at the first
                                        RUN_END), so Capture neither records nor detects it.
 Bridge killed without RUN_END          no RUN_END arrives; the idle-timeout guard aborts the
-                                       capture (RunEndNotObservedError): nothing is finalized
-                                       or committed, the .partial directory stays, and a re-run
-                                       discards it and rebuilds from Kafka.
+                                       capture (RunEndNotObservedError): nothing is finalized,
+                                       the .partial directory stays, and a re-run discards it
+                                       and rebuilds from Kafka.
 Bridge message failure                 counted and logged; the sequence gap fails the capture,
                                        and a failed last message fails it on the RUN_END count.
-Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized or committed.
+Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized.
 partition spread, unsupported channel
 Kafka retention                        capture can only rebuild what the topic still holds.
 In-flight state across restart         capture holds no state beyond Kafka and the .partial
@@ -1156,32 +1152,24 @@ In-flight state across restart         capture holds no state beyond Kafka and t
 **Configuration -- frozen in code, not environment variables:**
 
 ```text
-CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
-  -- a CAPTURE CONSUMER-GROUP BASE, not the literal Kafka group.id any
-     capture attempt actually uses (see below) -- independent from Part
-     1's general SCENEOPS_STREAMING_KAFKA_CONSUMER_GROUP_ID default;
-     capture never shares committed-offset state with any other
-     consumer, generic or otherwise.
-auto.offset.reset = "earliest"   -- correctness-first: a capture that
-  starts after some of a run's messages were already published must
-  still see all of them, not just whatever arrives from "now".
-start_from_beginning = True      -- without a start position, every assignment starts
-  at the beginning of the topic, whatever the group has committed: the committed
-  offset is written once, after finalize, so it only ever points past the run's
-  RUN_END.
-enable.auto.commit = False       -- required; see §21.
+group.id = ASSIGNED_READER_GROUP_ID  -- "sceneops-assigned-reader". librdkafka requires a
+  group.id even for a consumer that only assign()s. Capture never joins that group and
+  never writes to it, so no consumer group exists on the broker because of Capture.
+auto.offset.reset = "error"      -- an offset that leaves the retained log is a consumer
+  error, never a silent reset to earliest or latest.
+enable.auto.commit = False       -- forced for every assigned consumer; there is no commit
+  API. Capture records no progress in Kafka (§21).
 ```
 
 **Start position and ownership.** Where an attempt reads is chosen by the
-caller, never by the consumer group:
+caller; Kafka decides nothing, and no consumer-group state is involved either way:
 
 ```text
-no start position   subscribe to the topic, every partition from the beginning
-                    (a consumer-group join of ~3 s on a new group, then a scan of the
-                    history; the amplification is the topic's whole history)
-KafkaStartPosition  assign() exactly one partition at one offset: no group join, no
-(topic, partition,  rebalance, no record of any other partition. Runtime information of
-offset)             one attempt (sceneops_streaming.contracts), not RobotRun identity.
+no start position   assign() every partition of the topic at its beginning, then a scan of
+                    the history (the amplification is the topic's whole history)
+KafkaStartPosition  assign() exactly one partition at one offset: no record of any other
+(topic, partition,  partition. Runtime information of one attempt
+offset)             (sceneops_streaming.contracts), not RobotRun identity.
                     `python -m sceneops_capture --start-position TOPIC:PARTITION:OFFSET`
 ```
 
@@ -1191,8 +1179,8 @@ safe:
 ```text
 orchestrated   bridge: RUN_START acknowledged -> run_started line (topic, partition, offset)
                launcher: reads that line, starts Capture with --start-position
-               Capture: assign() to that partition at that offset (no scan, no group join)
-manual         no hint -> subscribe, scan from the beginning of the topic
+               Capture: assign() to that partition at that offset (no scan)
+manual         no hint -> assign every partition from the beginning, scan the topic
 ```
 
 A supplied position is never replaced: an unusable one fails (below), it does not
@@ -1221,16 +1209,24 @@ always finds it below that end). Records of the run from any other partition
 fail with `PartitionInvariantError`. The start position topic must be the
 configured telemetry topic.
 
-With `assign()` the group id only names the group that the completion commit is
-written to. The commit is that of a standalone consumer, so it fails if another
-member of the same run-scoped group is subscribed -- a no-position attempt of the
-same run running at the same time, which the ownership lock below excludes on one
-capture root. Nothing about partition ownership or the start offset depends on
-the group; removing the completion commit altogether is a separate decision.
+**No consumer-group state.** Capture joins no consumer group, is never rebalanced
+and commits no offset. A committed offset would serve no purpose here: it is not a
+start position, recovery state or ownership, and it does not decide whether a run
+was captured (the finalized bag does). It would also describe the run poorly: after
+the run's last record the group's lag is the number of records other runs appended
+to the partition since, and while the run is being captured an assigned consumer's
+group does not exist at all. One group per captured run would also persist on the
+broker, with its committed offsets retained for `offsets.retention.minutes` (7 days
+by default), without any use.
+The evidence is in
+[Streaming consumer-group study](../history/streaming-consumer-group-study.md);
+the decision is [ADR-013](../adr/013-capture-records-no-kafka-progress.md).
+Operational visibility of captures is the capture log, the finalized bag and its
+receipt, not Kafka lag.
 
 **Ownership.** One Capture attempt owns one RobotRun. `run_capture` holds an
 advisory `flock` on `<output_root>/.locks/<robot_run_id>.lock`
-(`ownership.py`) from before `.partial/<run>` is touched until after the commit.
+(`ownership.py`) from before `.partial/<run>` is touched until the attempt is over.
 A second attempt for the same run on the same output root fails immediately
 with `RunAlreadyOwnedError` (naming the holder's pid) instead of discarding the
 live attempt's partial bag. The kernel releases the lock with the owning process
@@ -1241,33 +1237,21 @@ volume); it is not a lease across hosts. Kafka decides neither which Capture
 instance handles a run nor when it starts: the launcher starts one attempt, and
 that attempt owns the run locally and reads its explicitly assigned partition.
 
-**Run-scoped consumer groups (`packages/sceneops-recording/sceneops_recording/capture/group_id.py`).** Every
-capture attempt derives its own Kafka `group.id` from the base above and
-its target `robot_run_id` (`derive_capture_group_id`) -- it never passes
-the bare base to `KafkaTelemetryConsumer` directly. Two independent
-RobotRuns therefore never share committed-offset state, even when
-interleaved on the same partition. The same `robot_run_id` always derives
-the same group (a pure function of its inputs), so retries land on the same
-group and offset lifecycle every time; different `robot_run_id`s derive
-different groups (a SHA-256 digest suffix, not the human-readable slug
-prefix alone, which is cosmetic only).
-
-**Tradeoff, not fully solved:** this provides correct, isolated replay per
-RobotRun -- it does not provide efficient large-scale multi-run capture.
-Every capture attempt starts at the beginning of the topic, so it may
-scan the topic's entire historical record before reaching its
-own messages (measured: ~3.4s against a lightly-used topic vs ~44s once it
-held ~150,000 prior messages; see
+**Cost of the manual path.** Without a start position an attempt scans the
+topic's whole history before reaching its own records (measured on a subscribed
+scan, which also paid a consumer-group join: ~3.4 s against a lightly-used topic
+vs ~44 s once it held ~150,000 prior messages; see
 [Streaming reliability & scale baseline](../history/streaming-reliability-scale-baseline.md)).
-Redesigning topic layout to bound this cost is out of scope here.
+A start position removes the scan. Redesigning topic layout to bound the cost of
+the manual path is out of scope here.
 
 None of these are `SCENEOPS_STREAMING_KAFKA_*` settings and none are
 configurable via environment variable -- deliberately, matching Part 1's
 own "explicit code-level default until a demonstrated override need
 exists" policy (§9.1).
 
-**`CaptureResult`** (`consumer.py`), returned once Kafka offsets
-are committed:
+**`CaptureResult`** (`consumer.py`), returned once the recording is durably
+finalized (or an identical one already was):
 
 ```text
 robot_id, robot_run_id, path, message_count, partition,
@@ -1281,7 +1265,7 @@ only; nothing here is a canonical record (§18). The CLI prints it and one
 
 **Out of scope:** scheduling or coordination of Capture instances across hosts,
 durable session recovery and exactly-once capture beyond one invocation's
-commit-after-finalize ordering
+finalize ordering
 -- a reliability boundary for later work, matching Part 1's own DLQ/retry
 deferral (§7).
 
@@ -1405,9 +1389,8 @@ ENDED      nothing: Capture stops reading   (a record after RUN_END is never rea
 ```
 
 After ENDED the code is linear: validate the MCAP, write the receipt, finalize
-atomically, commit the Kafka offset once. A failure anywhere before the commit
-leaves the `.partial` directory and no committed offset; no durable finalize
-means no Kafka commit.
+atomically. A failure anywhere before the finalize leaves the `.partial`
+directory and no finalized bag.
 
 ```text
 RUN_START mandatory                      yes; the first record of the run that Capture reads
@@ -1428,8 +1411,7 @@ telemetry after RUN_END                  not detectable: Capture stops at RUN_EN
 `telemetry_count` with the number of distinct telemetry sequence numbers the
 tracker accepted (`last_sequence + 1`, 0 if none; exact redeliveries do not
 count twice). A mismatch raises `RunIncompleteError`, a `RunLifecycleError`,
-before the MCAP is validated, the receipt written, anything finalized or an
-offset committed. Together with §24, a finalized run is a gap-free,
+before the MCAP is validated, the receipt written or anything finalized. Together with §24, a finalized run is a gap-free,
 in-order telemetry sequence `0..N-1` that the producer declared to be all of
 its telemetry. A run with `telemetry_count == 0` and no telemetry is complete
 but has no recording to finalize: the MCAP validation refuses an empty file.
@@ -1539,7 +1521,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - Kafka wire mapping + client implementation: `packages/sceneops-streaming/sceneops_streaming/{wire,producer,consumer,config,errors}.py`
 - Wire/decode unit tests (no broker required): `packages/sceneops-streaming/tests/test_wire.py`
 - Config surface/precedence unit tests (no broker required): `packages/sceneops-streaming/tests/test_config.py`
-- Manual-commit (`enable_auto_commit`/`commit()`) unit tests (no broker required): `packages/sceneops-streaming/tests/test_consumer.py`
+- Subscribed / assigned consumer unit tests (no broker required): `packages/sceneops-streaming/tests/test_consumer.py`
 - Compose service: `compose/streaming.yaml`
 - Make targets: `makefiles/streaming.mk` (`streaming-up`/`streaming-down`/`smoke-streaming`)
 - Smoke test: `tools/e2e/smoke_streaming.py`, `tools/e2e/smoke_streaming.sh`
@@ -1560,8 +1542,8 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - MCAP writer: `packages/sceneops-recording/sceneops_recording/capture/writer.py`, `packages/sceneops-recording/tests/capture/test_mcap_writer.py`
 - Pre-finalize validation: `packages/sceneops-recording/sceneops_recording/capture/validation.py`, `packages/sceneops-recording/tests/capture/test_validation.py`
 - Temp/final lifecycle: `packages/sceneops-recording/sceneops_recording/capture/finalize.py`, `packages/sceneops-recording/tests/capture/test_finalize.py`
-- Consumer orchestration (`RunFilter`/`SequenceTracker`/`CaptureResult`/`run_capture`, durability-ordering test): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
-- Run-scoped consumer-group derivation: `packages/sceneops-recording/sceneops_recording/capture/group_id.py`, `packages/sceneops-recording/tests/capture/test_group_id.py`
+- Consumer orchestration (`RunFilter`/`SequenceTracker`/`CaptureResult`/`run_capture`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
+- Broker-side check that a capture leaves no consumer-group state (real Kafka): `packages/sceneops-recording/tests/capture/group_state.py`
 - Multi-RobotRun isolation (real Kafka): `packages/sceneops-recording/tests/capture/test_multi_robot_run_integration.py`
 - CLI entry point: `apps/capture/sceneops_capture/cli.py`
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `apps/capture/Dockerfile`, `compose/streaming.yaml`

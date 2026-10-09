@@ -2,8 +2,8 @@
 capture (``run_capture(stop_on_run_end=True)``), docs/architecture/streaming-transport.md
 §26. A fake in-process consumer feeds the real MCAP writer / finalize / receipt path;
 the idle tests drive the guard's clock explicitly. The Kafka behavior the contract
-depends on (the committed offset is never a start position) is proven against a real
-broker in test_lifecycle_integration.py.
+depends on (Capture records no progress in Kafka and reads from the position it is given)
+is proven against a real broker in test_lifecycle_integration.py.
 
 Runs only inside the capture image (needs the ROS 2 interface definitions + mcap).
 """
@@ -175,15 +175,12 @@ class _ProcessDied(Exception):
 
 class _FakeConsumer:
     """Serves the queue; each poll advances the clock by ``tick`` seconds, so a
-    run of polls is a span of wall time for the idle guard. ``crash_on_commit``
-    stands for the process dying between finalize and the Kafka commit."""
+    run of polls is a span of wall time for the idle guard."""
 
-    def __init__(self, queue, clock: _Clock, tick: float, crash_on_commit: bool):
+    def __init__(self, queue, clock: _Clock, tick: float):
         self._queue = list(queue)
         self._clock = clock
         self._tick = tick
-        self._crash_on_commit = crash_on_commit
-        self.committed = False
         self.closed = False
 
     @property
@@ -193,11 +190,6 @@ class _FakeConsumer:
     async def poll(self, timeout_seconds: float):
         self._clock.now += self._tick
         return self._queue.pop(0) if self._queue else None
-
-    async def commit(self) -> None:
-        if self._crash_on_commit:
-            raise _ProcessDied("before the Kafka commit")
-        self.committed = True
 
     async def close(self) -> None:
         self.closed = True
@@ -214,10 +206,10 @@ def clock(monkeypatch) -> _Clock:
 def install(monkeypatch, clock):
     created: list[_FakeConsumer] = []
 
-    def _install(queue, *, tick: float = 0.0, crash_on_commit: bool = False):
+    def _install(queue, *, tick: float = 0.0):
         def factory(*, start_from_beginning, **_kwargs):
             assert start_from_beginning is True
-            consumer = _FakeConsumer(queue, clock, tick, crash_on_commit)
+            consumer = _FakeConsumer(queue, clock, tick)
             created.append(consumer)
             return consumer
 
@@ -239,8 +231,7 @@ def _capture(tmp_path, **overrides):
     return asyncio.run(run_capture(**kwargs))
 
 
-def _assert_nothing_finalized_or_committed(tmp_path, consumer) -> None:
-    assert consumer.committed is False
+def _assert_nothing_finalized(tmp_path, consumer) -> None:
     assert consumer.closed is True
     assert not final_bag_path(tmp_path, "run-1").exists()
 
@@ -254,14 +245,13 @@ def _normal_run(first_offset: int = 0):
     ]
 
 
-def test_normal_run_finalizes_on_run_end_and_commits_once(tmp_path, install) -> None:
-    created = install(_normal_run())
+def test_normal_run_finalizes_on_run_end(tmp_path, install) -> None:
+    install(_normal_run())
 
     result = _capture(tmp_path)
 
     assert result.message_count == 2
     assert (result.first_offset, result.last_offset) == (0, 3)
-    assert created[0].committed is True
     receipt = read_capture_receipt(final_bag_path(tmp_path, "run-1"))
     assert receipt.finalization.reason is FinalizationReason.EXPLICIT_RUN_END
 
@@ -281,7 +271,7 @@ def test_telemetry_before_run_start_fails_at_the_first_record(
     with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
     assert created[0].remaining == len(queue) - 1  # failed on record 0, read no more
     assert partial_bag_path(tmp_path, "run-1").exists()
 
@@ -297,7 +287,7 @@ def test_missing_run_start_with_run_end_present_fails_on_the_first_record(
     with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_run_end_without_run_start_is_rejected(tmp_path, install) -> None:
@@ -306,7 +296,7 @@ def test_run_end_without_run_start_is_rejected(tmp_path, install) -> None:
     with pytest.raises(RunLifecycleError, match="RUN_END in phase armed"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_start_after_run_start_is_a_lifecycle_failure_not_a_sequence_error(
@@ -319,7 +309,7 @@ def test_start_after_run_start_is_a_lifecycle_failure_not_a_sequence_error(
     with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_start_before_run_start_skips_other_runs_and_captures_the_run(
@@ -333,12 +323,11 @@ def test_start_before_run_start_skips_other_runs_and_captures_the_run(
         _c(END, 1, 2, run_id="other", telemetry_count=0),
         *_normal_run(first_offset=3),
     ]
-    created = install(queue)
+    install(queue)
 
     result = _capture(tmp_path)
 
     assert (result.first_offset, result.last_offset) == (3, 6)
-    assert created[0].committed is True
 
 
 def test_missing_run_end_is_not_finalized(tmp_path, install) -> None:
@@ -347,7 +336,7 @@ def test_missing_run_end_is_not_finalized(tmp_path, install) -> None:
     with pytest.raises(RunEndNotObservedError):
         _capture(tmp_path, idle_timeout_seconds=10)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
     assert partial_bag_path(tmp_path, "run-1").exists()
 
 
@@ -358,12 +347,11 @@ def test_immediate_duplicate_run_start_is_skipped(tmp_path, install) -> None:
         _t(0, 2),
         _c(END, 1, 3, telemetry_count=1),
     ]
-    created = install(queue)
+    install(queue)
 
     result = _capture(tmp_path)
 
     assert result.message_count == 1
-    assert created[0].committed is True
 
 
 def test_run_start_repeated_after_telemetry_is_a_second_session(
@@ -381,7 +369,7 @@ def test_run_start_repeated_after_telemetry_is_a_second_session(
     with pytest.raises(RunLifecycleError, match="immediate redelivery"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_second_run_start_with_the_next_control_sequence_is_rejected(
@@ -399,7 +387,7 @@ def test_second_run_start_with_the_next_control_sequence_is_rejected(
     with pytest.raises(RunLifecycleError, match="exactly one streaming session"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_run_end_at_run_starts_control_sequence_is_a_conflict(
@@ -413,7 +401,7 @@ def test_run_end_at_run_starts_control_sequence_is_a_conflict(
     with pytest.raises(SequenceIntegrityError, match="conflicting redelivery"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_telemetry_gap_inside_a_started_run_fails(tmp_path, install) -> None:
@@ -424,7 +412,7 @@ def test_telemetry_gap_inside_a_started_run_fails(tmp_path, install) -> None:
     with pytest.raises(SequenceIntegrityError, match="gap"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 # ---------------------------------------------------------------------
@@ -443,12 +431,11 @@ def _run_with_count(declared: int, telemetry: int, **kw):
 def test_run_end_count_matching_the_observed_telemetry_finalizes(
     tmp_path, install
 ) -> None:
-    created = install(_run_with_count(declared=4, telemetry=4))
+    install(_run_with_count(declared=4, telemetry=4))
 
     result = _capture(tmp_path)
 
     assert result.message_count == 4
-    assert created[0].committed is True
 
 
 def test_missing_tail_telemetry_is_rejected_by_the_declared_count(
@@ -463,7 +450,7 @@ def test_missing_tail_telemetry_is_rejected_by_the_declared_count(
     ):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
     assert partial_bag_path(tmp_path, "run-1").exists()
 
 
@@ -473,7 +460,7 @@ def test_run_end_declaring_less_than_observed_is_rejected(tmp_path, install) -> 
     with pytest.raises(RunIncompleteError, match="2 more than the producer assigned"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_incomplete_error_is_a_lifecycle_error() -> None:
@@ -486,7 +473,7 @@ def test_zero_telemetry_run_declaring_telemetry_is_rejected(tmp_path, install) -
     with pytest.raises(RunIncompleteError, match="declares 3 .* observed 0"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_zero_telemetry_run_with_matching_count_still_has_no_recording(
@@ -499,7 +486,7 @@ def test_zero_telemetry_run_with_matching_count_still_has_no_recording(
     with pytest.raises(McapValidationError, match="zero messages"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 @pytest.mark.parametrize("payload", [b"{}", b"not json", b'{"telemetry_count": "2"}'])
@@ -513,7 +500,7 @@ def test_run_end_without_a_valid_count_is_rejected(tmp_path, install, payload) -
     with pytest.raises(RunLifecycleError, match="RUN_END (payload|must declare)"):
         _capture(tmp_path)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_exact_duplicate_telemetry_does_not_inflate_the_count(
@@ -521,12 +508,11 @@ def test_exact_duplicate_telemetry_does_not_inflate_the_count(
 ) -> None:
     queue = _run_with_count(declared=3, telemetry=3)
     queue.insert(3, queue[2])  # redelivery of telemetry sequence 1
-    created = install(queue)
+    install(queue)
 
     result = _capture(tmp_path)
 
     assert result.message_count == 3
-    assert created[0].committed is True
 
 
 def test_conflicting_run_end_after_the_first_is_never_read(tmp_path, install) -> None:
@@ -546,7 +532,7 @@ def test_rejected_incomplete_run_is_rejected_again_on_replay(tmp_path, install) 
         created = install(queue)
         with pytest.raises(RunIncompleteError):
             _capture(tmp_path)
-        _assert_nothing_finalized_or_committed(tmp_path, created[-1])
+        _assert_nothing_finalized(tmp_path, created[-1])
 
 
 def test_retry_after_a_mid_run_crash_rebuilds_the_whole_run(tmp_path, install) -> None:
@@ -555,27 +541,32 @@ def test_retry_after_a_mid_run_crash_rebuilds_the_whole_run(tmp_path, install) -
         _capture(tmp_path, idle_timeout_seconds=5)
     assert partial_bag_path(tmp_path, "run-1").exists()
 
-    created = install(_normal_run())
+    install(_normal_run())
     result = _capture(tmp_path)
 
     assert result.message_count == 2
-    assert created[-1].committed is True
     assert not partial_bag_path(tmp_path, "run-1").exists()
 
 
-def test_crash_between_finalize_and_commit_converges_on_retry(
-    tmp_path, install
+def test_crash_right_after_finalize_converges_on_retry(
+    tmp_path, install, monkeypatch
 ) -> None:
-    install(_normal_run(), crash_on_commit=True)
+    install(_normal_run())
+    real_finalize_bag = capture_consumer.finalize_bag
+
+    def finalize_then_die(output_root, robot_run_id):
+        real_finalize_bag(output_root, robot_run_id)
+        raise _ProcessDied
+
+    monkeypatch.setattr(capture_consumer, "finalize_bag", finalize_then_die)
     with pytest.raises(_ProcessDied):
         _capture(tmp_path)
+    monkeypatch.setattr(capture_consumer, "finalize_bag", real_finalize_bag)
     assert final_bag_path(tmp_path, "run-1").exists()
     first_bytes = next(final_bag_path(tmp_path, "run-1").glob("*.mcap")).read_bytes()
 
-    created = install(_normal_run())
+    install(_normal_run())
     result = _capture(tmp_path)
-
-    assert created[-1].committed is True
     assert result.path.read_bytes() == first_bytes
 
 
@@ -587,29 +578,24 @@ def test_retry_after_finalize_with_different_content_fails_loudly(
 
     changed = _normal_run()
     changed[1] = _t(0, 1, payload=b"\x00\x01\x00\x00" + b"y" * 16)
-    created = install(changed)
+    install(changed)
     with pytest.raises(FinalBagExistsError):
         _capture(tmp_path)
-
-    assert created[-1].committed is False
     assert first.path.exists()
 
 
-def test_rerun_resumed_past_the_committed_run_end_is_bounded_not_endless(
+def test_rerun_starting_past_the_run_end_is_bounded_not_endless(
     tmp_path, install
 ) -> None:
-    """A group that resumes after a committed RUN_END sees none of the run (the
-    broker proof that capture never resumes is in the integration test): with a
-    guard the capture fails, the finalized bag is untouched."""
+    """A rerun whose reading starts after the finalized run's RUN_END sees none
+    of the run: with a guard the capture fails, the finalized bag is untouched."""
     install(_normal_run())
     first = _capture(tmp_path)
     before = first.path.read_bytes()
 
-    created = install([], tick=1.0)
+    install([], tick=1.0)
     with pytest.raises(RunStartNotObservedError):
         _capture(tmp_path, idle_timeout_seconds=30)
-
-    assert created[-1].committed is False
     assert first.path.read_bytes() == before
 
 
@@ -622,12 +608,11 @@ def test_history_scan_of_other_runs_is_progress_not_idleness(tmp_path, install) 
     """60 foreign records at 1 s each against a 10 s guard: the target run
     produced nothing for a minute, but the consumer was advancing."""
     foreign = [_t(i, i, run_id="other") for i in range(60)]
-    created = install([*foreign, *_normal_run(first_offset=60)], tick=1.0)
+    install([*foreign, *_normal_run(first_offset=60)], tick=1.0)
 
     result = _capture(tmp_path, idle_timeout_seconds=10)
 
     assert result.message_count == 2
-    assert created[0].committed is True
 
 
 def test_quiet_topic_before_run_start_aborts_with_run_start_not_observed(
@@ -638,7 +623,7 @@ def test_quiet_topic_before_run_start_aborts_with_run_start_not_observed(
     with pytest.raises(RunStartNotObservedError):
         _capture(tmp_path, idle_timeout_seconds=10)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
 
 
 def test_other_runs_traffic_does_not_keep_a_dead_run_alive(tmp_path, install) -> None:
@@ -654,7 +639,7 @@ def test_other_runs_traffic_does_not_keep_a_dead_run_alive(tmp_path, install) ->
     with pytest.raises(RunEndNotObservedError):
         _capture(tmp_path, idle_timeout_seconds=10)
 
-    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    _assert_nothing_finalized(tmp_path, created[0])
     assert created[0].remaining > 80  # aborted well before draining the traffic
 
 
@@ -665,12 +650,11 @@ def test_a_slow_but_live_run_is_never_idle(tmp_path, install) -> None:
         *[_t(i, 1 + i) for i in range(10)],
         _c(END, 1, 11, telemetry_count=10),
     ]
-    created = install(queue, tick=5.0)
+    install(queue, tick=5.0)
 
     result = _capture(tmp_path, idle_timeout_seconds=10)
 
     assert result.message_count == 10
-    assert created[0].committed is True
 
 
 def test_idle_timeout_requires_a_lifecycle_governed_capture(tmp_path, install) -> None:

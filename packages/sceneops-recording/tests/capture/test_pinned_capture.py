@@ -24,7 +24,6 @@ from sceneops_streaming import (
 
 import sceneops_recording.capture.consumer as capture_consumer
 from sceneops_recording.capture.consumer import (
-    CAPTURE_CONSUMER_GROUP_ID,
     PartitionInvariantError,
     RunStartNotObservedError,
     run_capture,
@@ -112,14 +111,10 @@ class _FakeConsumer:
     def __init__(self, queue, end_offset) -> None:
         self._queue = list(queue)
         self.end_offset = end_offset
-        self.committed = False
         self.closed = False
 
     async def poll(self, timeout_seconds: float):
         return self._queue.pop(0) if self._queue else None
-
-    async def commit(self) -> None:
-        self.committed = True
 
     async def close(self) -> None:
         self.closed = True
@@ -167,12 +162,13 @@ def test_pinned_capture_assigns_instead_of_scanning_and_finalizes(
     [kwargs] = kwargs_seen
     assert kwargs["start_position"] == start
     assert kwargs["start_from_beginning"] is False
-    assert kwargs["enable_auto_commit"] is False
-    assert kwargs["group_id"].startswith(CAPTURE_CONSUMER_GROUP_ID + "-")
+    # Capture names no consumer group and asks for no commit behaviour: it only
+    # says where to read.
+    assert set(kwargs) == {"settings", "start_position", "start_from_beginning"}
     assert result.partition == 1
     assert (result.first_offset, result.last_offset) == (40, 44)
     assert result.message_count == 3
-    assert created[0].committed and created[0].closed
+    assert created[0].closed
     assert final_bag_path(tmp_path, RUN).is_dir()
 
 
@@ -187,7 +183,6 @@ def test_without_a_start_position_the_whole_topic_is_scanned(
     assert kwargs["start_position"] is None
     assert kwargs["start_from_beginning"] is True
     assert result.partition == 0
-    assert created[0].committed
 
 
 def test_start_position_of_another_topic_is_refused_before_anything_happens(
@@ -225,7 +220,6 @@ def test_start_before_run_start_skips_other_runs_up_to_it(
 
     assert result.first_offset == 35
     assert result.message_count == 3
-    assert created[0].committed
 
 
 def test_start_after_run_start_fails_at_the_first_telemetry_record(
@@ -236,7 +230,6 @@ def test_start_after_run_start_fails_at_the_first_telemetry_record(
     with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
         _capture(tmp_path, KafkaStartPosition(TOPIC, 1, 41))
 
-    assert not created[0].committed
     assert not final_bag_path(tmp_path, RUN).exists()
 
 
@@ -247,7 +240,6 @@ def test_start_after_the_whole_run_is_not_waited_out(tmp_path, monkeypatch) -> N
     with pytest.raises(RunStartNotObservedError, match=r"offsets 50\.\.52"):
         _capture(tmp_path, KafkaStartPosition(TOPIC, 1, 50))
 
-    assert not created[0].committed
     assert not final_bag_path(tmp_path, RUN).exists()
 
 
@@ -320,5 +312,4 @@ def test_a_finalized_run_is_recaptured_to_the_same_bag(tmp_path, monkeypatch) ->
 
     assert second.path == first.path
     assert second.sha256 == first.sha256
-    assert created[0].committed
     assert not partial_bag_path(tmp_path, RUN).exists()
