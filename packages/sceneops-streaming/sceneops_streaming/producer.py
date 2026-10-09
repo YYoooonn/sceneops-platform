@@ -16,12 +16,18 @@ class KafkaTelemetryProducer:
     backed by ``confluent_kafka``. The only place in this package that owns
     a live broker connection for producing.
 
-    Delivery is at-least-once: ``publish`` buffers the record
-    client-side and returns once librdkafka has accepted it into its
-    internal queue, not once the broker has acknowledged it -- call
-    ``flush`` to block until every buffered record is actually delivered
-    (or raise on the first delivery failure). ``enable.idempotence`` is
-    left off deliberately; this transport never claims exactly-once.
+    ``publish`` buffers the record client-side and returns once librdkafka
+    has accepted it into its internal queue, not once the broker has
+    acknowledged it -- call ``flush`` to block until every buffered record
+    is actually delivered (or raise on a delivery failure).
+
+    The producer is idempotent. Within one producer instance, broker
+    retries (connection loss, lost responses, request timeouts) neither
+    duplicate nor reorder records of a partition. A record whose delivery
+    finally fails (``message.timeout.ms``) is reported through ``flush``;
+    later records may still be delivered, leaving a gap, so a delivery
+    error invalidates the run's stream. Idempotence does not span producer
+    instances: a restarted producer can re-send records.
     """
 
     def __init__(
@@ -35,6 +41,9 @@ class KafkaTelemetryProducer:
             {
                 "bootstrap.servers": settings.bootstrap_servers,
                 "client.id": settings.producer_client_id,
+                # Implies max.in.flight<=5 and unlimited retries; with it a
+                # retried batch can neither duplicate nor overtake another.
+                "enable.idempotence": True,
                 "acks": "all",
             }
         )

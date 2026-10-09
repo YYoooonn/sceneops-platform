@@ -185,6 +185,14 @@ class _AsyncProducerBridge:
         )
         future.result(timeout=self._publish_timeout_seconds)
 
+    def flush(self, timeout_seconds: float = 10.0) -> None:
+        """Block until every accepted record is acknowledged by the broker;
+        raises if any delivery failed or the timeout expires."""
+        future = asyncio.run_coroutine_threadsafe(
+            self._producer.flush(timeout_seconds), self._loop
+        )
+        future.result(timeout=timeout_seconds + 5.0)
+
     def close(self, timeout_seconds: float = 10.0) -> None:
         """Flush pending production, close the producer, stop the loop.
         Deterministic and bounded -- never blocks forever."""
@@ -411,19 +419,41 @@ class StreamingBridgeNode(Node):
     def shutdown(self, timeout_seconds: float = 10.0) -> None:
         """Flush pending Kafka production and close the producer. Does
         NOT stop ROS2 spinning -- the caller (main()) stops spin_once
-        first, then calls this: stop accepting new callbacks -> publish
-        RUN_END (best-effort, if enabled) -> flush -> close producer ->
-        destroy node. RUN_END is published BEFORE flush/close so it is
-        handed to the SAME producer instance as every telemetry record,
-        ordered after all of them in publish order -- never a separate,
-        possibly-racing producer/connection.
+        first, then calls this: stop accepting new callbacks -> flush
+        telemetry -> publish RUN_END (best-effort, if enabled) -> flush ->
+        close producer -> destroy node.
+
+        RUN_END is only published once every telemetry record the producer
+        accepted has been acknowledged by the broker. RUN_END carries no
+        record count, so one that follows lost tail telemetry would make the
+        truncated stream look complete to capture; withholding it makes
+        capture refuse the run. (A message that failed before reaching the
+        producer leaves a sequence gap, which capture already rejects.) It is published on the SAME producer instance as
+        the telemetry, after it, never on a separate possibly-racing
+        connection.
 
         This is the GRACEFUL path only -- a hard kill (SIGKILL, crash)
         never reaches this method, so that run never gets a RUN_END and
         capture refuses to finalize it."""
         if self._emit_lifecycle_events:
-            self._publish_lifecycle_event(RunEventType.RUN_END)
+            if self._telemetry_fully_delivered(timeout_seconds):
+                self._publish_lifecycle_event(RunEventType.RUN_END)
+            else:
+                self.get_logger().error(
+                    "telemetry was not fully delivered -- RUN_END withheld so "
+                    "capture refuses this run"
+                )
         self._bridge.close(timeout_seconds=timeout_seconds)
+
+    def _telemetry_fully_delivered(self, timeout_seconds: float) -> bool:
+        try:
+            self._bridge.flush(timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            self.get_logger().error(
+                f"telemetry flush failed: {type(exc).__name__}: {exc}"
+            )
+            return False
+        return True
 
 
 def main() -> None:

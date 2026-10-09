@@ -140,13 +140,37 @@ never sorts or reorders messages. Kafka partitioning by `robot_run_id`
 gives deterministic per-RobotRun ordering (§6); no attempt is made at
 ordering across RobotRuns or globally.
 
-**Delivery.** At-least-once. `KafkaTelemetryProducer.publish` buffers a
-record and returns once accepted into librdkafka's client-side queue;
-`flush` blocks until the broker acknowledges every buffered record (or
-raises on the first delivery failure). No exactly-once claim is made
-end-to-end -- Kafka delivery and any future canonical-side idempotency
-(e.g. a dedup key when this eventually feeds `RobotRun`/MCAP) are separate
-concerns, deliberately not conflated here.
+**Delivery.** `KafkaTelemetryProducer.publish` buffers a record and
+returns once accepted into librdkafka's client-side queue; `flush` blocks
+until the broker acknowledges every buffered record (or raises on a delivery
+failure or timeout). The producer is idempotent (`enable.idempotence=true`,
+`acks=all`):
+
+```text
+within one producer instance
+  broker retries (connection loss, lost response, request timeout)
+  never duplicate and never reorder a partition's records
+across producer instances (a restarted bridge)
+  records may be re-sent; duplicates are possible
+a record whose delivery finally fails (message.timeout.ms)
+  is reported by flush(); later records may still be delivered,
+  so the stream has a gap -- a delivery error invalidates the run's stream
+```
+
+Only a delivery report without error means a record is durable on the
+broker; `publish` returning means nothing about delivery. The ROS2 bridge
+publishes `RUN_END` only after a `flush` that raised nothing (§14), because
+a `RUN_END` that follows lost tail telemetry is indistinguishable from the
+end of a complete run on the topic alone. No exactly-once claim is made
+end-to-end -- Kafka delivery and canonical-side idempotency (e.g. a dedup key
+when this feeds `RobotRun`/MCAP) are separate concerns.
+
+**Partition-count stability.** The partition of a key is fixed when the
+producer *learns* the topic's partition count, which it refreshes only
+periodically (`topic.metadata.refresh.interval.ms`, librdkafka default 300 s)
+or on an explicit metadata request. An active `robot_run_id` therefore moves
+partitions mid-run once the producer observes a larger partition count.
+Topics with active runs must not be resized (§6).
 
 ## 5. Kafka wire contract
 
@@ -305,7 +329,7 @@ SCENEOPS_STREAMING_KAFKA_CONSUMER_GROUP_ID   consumer_group_id    sceneops-telem
 **Deliberately not exposed as environment variables:** `acks`, `retries`,
 `linger.ms`, `batch.size`, compression, `auto.offset.reset`,
 `enable.auto.commit`, consumer session timeouts. These stay as explicit
-code-level defaults in `producer.py` (`acks=all`) and `consumer.py`
+code-level defaults in `producer.py` (`acks=all`, `enable.idempotence=true`) and `consumer.py`
 (`auto.offset.reset` is a constructor parameter, not an env var;
 `enable.auto.commit=True` is hardcoded) until a demonstrated override
 need exists.
@@ -627,9 +651,10 @@ set a `threading.Event`; the spin loop (`rclpy.spin_once(node,
 timeout_sec=0.5)`) checks it every 0.5s. For a finite source,
 `--exit-after-idle-seconds N` ends the loop once at least one message was
 bridged and none arrived for `N` seconds. On shutdown: stop spinning (no
-new callbacks) -> publish `RUN_END` (always; capture finalizes a run only on
-its `RUN_END`) -> flush the producer, bounded
-by a timeout -> close it -> print one `bridge_summary` JSON line (published
+new callbacks) -> flush the producer, bounded by a timeout -> publish `RUN_END`
+only if that flush reported no delivery failure (capture finalizes a run only
+on its `RUN_END`, so withholding it makes capture refuse the run) -> flush and
+close the producer -> print one `bridge_summary` JSON line (published
 and failed counts, per channel) -> `node.destroy_node()` ->
 `rclpy.shutdown()`. If any message failed during the run, the process exits
 non-zero.
@@ -1189,8 +1214,8 @@ live counter without incrementing it, so `RUN_START` always lands at
 sequence_number `0`, the same position the first real telemetry
 message also needs in its own space (§29 covers why this is safe).
 
-Capture finalizes a run only on its `RUN_END` (§26), so a bridge always
-publishes both events.
+Capture finalizes a run only on its `RUN_END` (§26), so a bridge publishes both
+events -- `RUN_END` only after its telemetry was fully delivered (§14).
 
 ## 29. Control envelopes in capture
 

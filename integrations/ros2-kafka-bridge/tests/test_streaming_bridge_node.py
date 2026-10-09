@@ -64,9 +64,16 @@ class FakeProducerBridge:
     def __init__(self) -> None:
         self.published: list[TelemetryEnvelope] = []
         self.closed = False
+        self.flushed = 0
+        self.flush_error: Exception | None = None
 
     def publish(self, envelope: TelemetryEnvelope) -> None:
         self.published.append(envelope)
+
+    def flush(self, timeout_seconds: float = 10.0) -> None:
+        self.flushed += 1
+        if self.flush_error is not None:
+            raise self.flush_error
 
     def close(self, timeout_seconds: float = 10.0) -> None:
         self.closed = True
@@ -648,10 +655,51 @@ class TestLifecycleEvents:
         finally:
             node.destroy_node()
 
+    def test_run_end_follows_a_successful_telemetry_flush(self, fake_bridge):
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            node.shutdown()
+
+            assert fake_bridge.flushed == 1
+            assert fake_bridge.closed
+            assert parse_run_event(fake_bridge.published[-1]) is RunEventType.RUN_END
+        finally:
+            node.destroy_node()
+
+    def test_run_end_is_withheld_when_telemetry_delivery_failed(self, fake_bridge):
+        """RUN_END carries no record count: published after lost tail
+        telemetry it would make a truncated stream look complete."""
+        fake_bridge.flush_error = RuntimeError("simulated delivery failure")
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            node.shutdown()  # must not raise
+
+            assert len(fake_bridge.published) == 2
+            assert parse_run_event(fake_bridge.published[0]) is RunEventType.RUN_START
+            assert fake_bridge.published[1].channel == "/vehicle/odom"
+            assert fake_bridge.closed
+        finally:
+            node.destroy_node()
+
     def test_lifecycle_event_publish_failure_is_logged_and_never_raises(self):
         class RaisingBridge:
             def publish(self, envelope):
                 raise RuntimeError("simulated Kafka failure")
+
+            def flush(self, timeout_seconds=10.0):
+                pass
 
             def close(self, timeout_seconds=10.0):
                 pass
