@@ -65,7 +65,7 @@ The transport is one package, `sceneops-streaming`
 ```text
 Transport-neutral contract (no Kafka SDK import, no I/O)
   envelope.py     TelemetryEnvelope (Pydantic), TelemetryEnvelopeVersion, EnvelopeEncoding
-  contracts.py    ConsumedTelemetryEnvelope, TelemetryProducer / TelemetryConsumer Protocols
+  contracts.py    ConsumedTelemetryEnvelope, DeliveredRecord, KafkaStartPosition, TelemetryProducer / TelemetryConsumer Protocols
   channels.py     ChannelSpec / ChannelRegistry, timestamp rules, channel-set files
   control.py      run lifecycle control events (RUN_START / RUN_END)
   constants.py    default topic name, header prefix, the reserved control channel
@@ -156,6 +156,13 @@ a record whose delivery finally fails (message.timeout.ms)
   is reported by flush(); later records may still be delivered,
   so the stream has a gap -- a delivery error invalidates the run's stream
 ```
+
+`publish_and_wait` publishes one record and returns only once its own delivery
+report arrived, as a `DeliveredRecord(topic, partition, offset)` (the position the
+broker stored it at); a failed delivery raises `DeliveryError`, no report in time
+raises `TimeoutError` (the record may still be stored later). It exists for the
+few records whose position is handed to another process (`RUN_START`, §28); bulk
+telemetry stays on the asynchronous `publish`.
 
 Only a delivery report without error means a record is durable on the
 broker; `publish` returning means nothing about delivery. The ROS2 bridge
@@ -646,6 +653,26 @@ whose messages exceed ~1 MB needs the producer `message.max.bytes`, topic
 `max.message.bytes` and broker `message.max.bytes` raised together; that
 is not configured today.
 
+**Session start:** with lifecycle events on (always, from `main()`) the node
+publishes `RUN_START` with `publish_and_wait` during construction, before it
+creates any subscription, so no telemetry can be bridged before the broker has
+acknowledged `RUN_START`. The acknowledged position becomes
+`node.run_start_position` and `main()` prints it as one machine-readable stdout
+line, distinct from the human log:
+
+```text
+run_started {"event": "run_started", "robot_run_id": "...", "topic": "...",
+             "partition": 2, "offset": 18432, "start_position": "TOPIC:2:18432"}
+```
+
+`start_position` is exactly the value of Capture's `--start-position` (§26). The
+bridge only reports it: it starts no Capture and writes no SceneOps state. If
+`RUN_START` is not acknowledged within `--publish-timeout-seconds` (or its delivery
+fails), the node raises `RunStartError`, `main()` exits non-zero, nothing was
+subscribed and no position was printed. A timed-out `RUN_START` can still reach the
+broker later; that run then has a `RUN_START` and never a `RUN_END`, which Capture
+refuses (§26).
+
 **Graceful shutdown:** `main()` installs `SIGTERM`/`SIGINT` handlers that
 set a `threading.Event`; the spin loop (`rclpy.spin_once(node,
 timeout_sec=0.5)`) checks it every 0.5s. For a finite source,
@@ -1103,6 +1130,12 @@ Run records no longer on the topic     RUN_START is never observed: with an idle
 (retention) or the run never started   capture fails (RunStartNotObservedError), without one
                                        it waits for RUN_START. With a start position the wait
                                        ends at the log end seen at startup (below).
+Bridge killed after RUN_START was       Capture, started from the (valid) position, observes
+acknowledged, before any telemetry      RUN_START and no further record of the run; the
+                                       idle-timeout guard aborts it (RunEndNotObservedError).
+RUN_START not acknowledged             the bridge exits non-zero before bridging anything and
+                                       prints no run_started line; the launcher starts no
+                                       Capture.
 Same robot_run_id streamed twice       a second RUN_START before the first RUN_END fails
                                        (RunLifecycleError). A second session after the first
                                        RUN_END is never read (Capture ends at the first
@@ -1151,6 +1184,29 @@ KafkaStartPosition  assign() exactly one partition at one offset: no group join,
 offset)             one attempt (sceneops_streaming.contracts), not RobotRun identity.
                     `python -m sceneops_capture --start-position TOPIC:PARTITION:OFFSET`
 ```
+
+**Start position hierarchy.** The orchestrated path is exact, the manual path is
+safe:
+
+```text
+orchestrated   bridge: RUN_START acknowledged -> run_started line (topic, partition, offset)
+               launcher: reads that line, starts Capture with --start-position
+               Capture: assign() to that partition at that offset (no scan, no group join)
+manual         no hint -> subscribe, scan from the beginning of the topic
+```
+
+A supplied position is never replaced: an unusable one fails (below), it does not
+degrade to the scan. The launcher (`streaming_acquire` in
+`tools/baselines/streaming/streaming_lib.sh`) owns the coordination: it starts the
+bridge, waits for the `run_started` line (failing if the bridge exits first), starts
+Capture with the position, and only then starts the replay. The position lives in
+the launcher's memory and in the bridge's stdout only. It is not RobotRun metadata,
+not in the envelope and not in the receipt's identity, and nothing persists it, so a
+launcher that dies after reading it loses an optimization, not correctness: a
+restarted Capture without the hint finds `RUN_START` by scanning, and the
+`run_started` line is still in the bridge's output for a restart that has it. A
+Capture started late reads the run from `RUN_START` all the same, because the
+position is a place in the log, not a rendezvous.
 
 The offset is normally that of the run's `RUN_START`. It is validated, never
 repaired: before the first read the consumer checks that the topic and
@@ -1242,7 +1298,13 @@ finalize/validation, `RunFilter`/`SequenceTracker`/duplicate policy,
 RUN_END finalization and refusal to finalize without it, sensor
 channels from a channel file, durability ordering, crash boundaries C and D
 including conflicting retry), and real-Kafka integration (multi-run isolation, lifecycle,
-camera- and lidar-sized payloads, oversize failure).
+camera- and lidar-sized payloads, oversize failure). The orchestrated hand-off is
+tested at three levels: the producer's delivery result and the bridge's
+acknowledge-before-subscribe startup over fakes; the launcher's parsing and
+ordering over a stubbed `docker` (`tools/e2e/tests/test_streaming_launcher.py`);
+and, on a real 3-partition broker, interleaved runs each captured from their
+acknowledged position, a late Capture, a bridge killed after `RUN_START` and an
+unacknowledged `RUN_START` (`tests/streaming/test_bridge_pinned_capture.py`).
 
 `make streaming-bootstrap` is the real vertical: the captured recording is
 checked with the L1 conformance suite
@@ -1283,7 +1345,8 @@ sequence_number `0` and `RUN_END` at `1`, while the first real telemetry
 message also needs `0` in its own space (§29 covers why this is safe).
 
 Capture finalizes a run only on its `RUN_END` (§26), so a bridge publishes both
-events -- `RUN_END` only after its telemetry was fully delivered (§14).
+events -- `RUN_START` synchronously, acknowledged before any telemetry (§14);
+`RUN_END` only after its telemetry was fully delivered (§14).
 
 **Closing state.** `RUN_END`'s payload is a JSON object with a required
 integer `telemetry_count >= 0` (and an optional `reason`); `RUN_START`'s

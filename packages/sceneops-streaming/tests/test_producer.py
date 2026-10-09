@@ -5,10 +5,29 @@ import asyncio
 import pytest
 from confluent_kafka import KafkaError, KafkaException
 
-from sceneops_streaming import StreamingSettings, TelemetryEnvelope
+from sceneops_streaming import (
+    DeliveredRecord,
+    DeliveryError,
+    StreamingSettings,
+    TelemetryEnvelope,
+)
 from sceneops_streaming import producer as producer_module
 from sceneops_streaming.envelope import EnvelopeEncoding
 from sceneops_streaming.producer import KafkaTelemetryProducer
+
+
+class FakeMessage:
+    def __init__(self, topic: str, partition: int, offset: int) -> None:
+        self._position = (topic, partition, offset)
+
+    def topic(self) -> str:
+        return self._position[0]
+
+    def partition(self) -> int:
+        return self._position[1]
+
+    def offset(self) -> int:
+        return self._position[2]
 
 
 class FakeConfluentProducer:
@@ -22,20 +41,34 @@ class FakeConfluentProducer:
         self.pending: list = []
         self.fail_with: KafkaError | None = None
         self.unflushed_remaining = 0
+        # Broker behaviour for publish_and_wait: acknowledge on the n-th poll
+        # (None: never), at this partition and a counter-assigned offset.
+        self.ack_on_poll: int | None = 1
+        self.polls = 0
+        self.partition = 2
+        self.next_offset = 100
         FakeConfluentProducer.instances.append(self)
 
     def produce(self, *, topic, key, value, headers, on_delivery) -> None:
-        self.pending.append(on_delivery)
+        self.pending.append((topic, on_delivery))
 
     def poll(self, _timeout: float) -> int:
+        self.polls += 1
+        if self.ack_on_poll is not None and self.polls >= self.ack_on_poll:
+            self._settle(error=self.fail_with)
         return 0
+
+    def _settle(self, *, error) -> None:
+        pending, self.pending = self.pending, []
+        for topic, on_delivery in pending:
+            message = FakeMessage(topic, self.partition, self.next_offset)
+            self.next_offset += 1
+            on_delivery(error, message)
 
     def flush(self, _timeout: float) -> int:
         if self.unflushed_remaining:
             return self.unflushed_remaining
-        for on_delivery in self.pending:
-            on_delivery(self.fail_with, None)
-        self.pending.clear()
+        self._settle(error=self.fail_with)
         return 0
 
 
@@ -102,3 +135,51 @@ def test_flush_raises_timeout_when_records_remain_queued(fake_producer):
             await fake_producer.flush(0.01)
 
     asyncio.run(scenario())
+
+
+def test_publish_and_wait_returns_the_acknowledged_position(fake_producer):
+    fake_producer.fake.partition = 5
+    fake_producer.fake.next_offset = 18432
+
+    delivered = asyncio.run(fake_producer.publish_and_wait(_envelope()))
+
+    assert delivered == DeliveredRecord("t", 5, 18432)
+    assert delivered.as_start_position().partition == 5
+
+
+def test_publish_and_wait_returns_only_after_the_delivery_report(fake_producer):
+    fake_producer.fake.ack_on_poll = 3
+
+    asyncio.run(fake_producer.publish_and_wait(_envelope()))
+
+    # produce() alone is not an acknowledgement: it kept polling for the report.
+    assert fake_producer.fake.polls == 3
+
+
+def test_publish_and_wait_raises_the_delivery_error_of_its_own_record(fake_producer):
+    fake_producer.fake.fail_with = KafkaError(KafkaError._MSG_TIMED_OUT)
+
+    async def scenario() -> None:
+        with pytest.raises(DeliveryError):
+            await fake_producer.publish_and_wait(_envelope())
+        # The failure was reported to its caller; it is not left for a later flush.
+        fake_producer.fake.fail_with = None
+        await fake_producer.flush()
+
+    asyncio.run(scenario())
+
+
+def test_publish_and_wait_times_out_without_a_delivery_report(fake_producer):
+    fake_producer.fake.ack_on_poll = None
+
+    with pytest.raises(TimeoutError, match="no delivery report"):
+        asyncio.run(fake_producer.publish_and_wait(_envelope(), timeout_seconds=0.05))
+
+
+def test_publish_stays_asynchronous(fake_producer):
+    fake_producer.fake.ack_on_poll = None  # the broker never answers
+
+    # publish() hands the record to librdkafka and returns without any report.
+    asyncio.run(fake_producer.publish(_envelope()))
+
+    assert len(fake_producer.fake.pending) == 1

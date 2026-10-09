@@ -11,6 +11,7 @@ from .config import StreamingSettings, get_settings
 from .consumer import KafkaTelemetryConsumer
 from .contracts import (
     ConsumedTelemetryEnvelope,
+    DeliveredRecord,
     KafkaStartPosition,
     TelemetryConsumer,
     TelemetryProducer,
@@ -24,7 +25,7 @@ from .control import (
     parse_run_event,
 )
 from .envelope import EnvelopeEncoding, TelemetryEnvelope, TelemetryEnvelopeVersion
-from .errors import EnvelopeDecodeError, StartPositionError
+from .errors import DeliveryError, EnvelopeDecodeError, StartPositionError
 from .producer import KafkaTelemetryProducer
 
 __all__ = [
@@ -33,6 +34,8 @@ __all__ = [
     "ChannelRegistry",
     "ChannelSpec",
     "ConsumedTelemetryEnvelope",
+    "DeliveredRecord",
+    "DeliveryError",
     "EnvelopeDecodeError",
     "EnvelopeEncoding",
     "KafkaStartPosition",

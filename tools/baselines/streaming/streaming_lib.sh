@@ -76,13 +76,41 @@ streaming_assert_replay_isolated() {
     || fail "the replay container sees a raw dataset or lacks the reference mounts: $probe"
 }
 
+# streaming_wait_run_started <bridge-container> [seconds] -> the acknowledged RUN_START
+# position (TOPIC:PARTITION:OFFSET) on stdout.
+#
+# The bridge prints one `run_started {json}` line once the broker has acknowledged
+# RUN_START (integrations/ros2-kafka-bridge); nothing else is parsed. Fails if the
+# bridge exits first (its RUN_START was not acknowledged) or the line does not appear.
+streaming_wait_run_started() {
+  local bridge="$1" seconds="${2:-60}" line
+  for _ in $(seq 1 "$seconds"); do
+    line="$(summary_line "$(docker logs "$bridge" 2>&1)" run_started)"
+    if [ -n "$line" ]; then
+      jq -er '.start_position' <<<"$line" || return 1
+      return 0
+    fi
+    [ "$(docker inspect -f '{{.State.Running}}' "$bridge" 2>/dev/null)" = true ] || return 1
+    sleep 1
+  done
+  return 1
+}
+
 # streaming_acquire <resolved-fixture-json> <run-id> <robot-id> <capture-root> <bridge-container> <capture-container>
 #
 # Replays the fixture's locked MCAP into ROS 2 -> bridge -> Kafka -> capture and
 # waits for the capture to finalize on the run's explicit RUN_END. Sets:
 #   REPLAY_SOURCE REPLAY_SUMMARY BRIDGE_SUMMARY CAPTURE_SUMMARY  the tools' own summaries
+#   START_POSITION                                                the acknowledged RUN_START position Capture was pinned to
 #   STREAM_RECORDING RECEIPT_PATH                                 the finalized capture (container paths)
 #   ACQ_REPLAY_S ACQ_CAPTURE_S                                    wall seconds of the replay / capture container
+#
+# Order: the bridge publishes RUN_START and reports where the broker stored it; only
+# then is Capture started, pinned to exactly that position (no topic scan), and only
+# when the bridge reports ready is the replay started. This script keeps the position
+# in memory only: it is an optimization of where Capture starts reading, and a lost
+# one costs a beginning-of-topic scan (an attempt without --start-position), never
+# correctness.
 streaming_acquire() {
   local fixture="$1" run_id="$2" robot_id="$3" capture_root="$4" bridge="$5" capture="$6"
   local fixture_id
@@ -92,9 +120,13 @@ streaming_acquire() {
   "${COMPOSE[@]}" run -d --name "$bridge" -T streaming-bridge \
     --robot-id "$robot_id" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
     --exit-after-idle-seconds 10 >/dev/null
+  START_POSITION="$(streaming_wait_run_started "$bridge")" \
+    || fail "bridge did not report an acknowledged RUN_START"
+  log "  RUN_START acknowledged at $START_POSITION"
   "${COMPOSE[@]}" run -d --name "$capture" -T capture \
     --robot-id "$robot_id" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
-    --output-root "$capture_root" --idle-timeout-seconds 120 >/dev/null
+    --output-root "$capture_root" --idle-timeout-seconds 120 \
+    --start-position "$START_POSITION" >/dev/null
   for _ in $(seq 1 60); do
     docker logs "$bridge" 2>&1 | grep -q "streaming bridge ready" && break
     sleep 1

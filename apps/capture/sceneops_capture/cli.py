@@ -90,12 +90,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def _start_position(text: str) -> KafkaStartPosition:
     try:
-        topic, partition, offset = text.rsplit(":", 2)
-        return KafkaStartPosition(topic, int(partition), int(offset))
+        return KafkaStartPosition.parse(text)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"expected TOPIC:PARTITION:OFFSET, got {text!r}: {exc}"
-        ) from exc
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 async def _main_async(args: argparse.Namespace) -> int:

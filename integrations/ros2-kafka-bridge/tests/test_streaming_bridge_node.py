@@ -34,7 +34,9 @@ from tf2_msgs.msg import TFMessage
 from sceneops_streaming import (  # noqa: E402
     DEFAULT_REGISTRY,
     ChannelSpec,
+    DeliveredRecord,
     EnvelopeEncoding,
+    KafkaStartPosition,
     RunEventType,
     TelemetryEnvelope,
     TimestampRule,
@@ -44,7 +46,10 @@ from sceneops_streaming import (  # noqa: E402
 )
 
 from sceneops_streaming_bridge.node import (  # noqa: E402
+    RUN_STARTED_PREFIX,
+    RunStartError,
     StreamingBridgeNode,
+    run_started_line,
     subscription_qos,
 )
 
@@ -67,9 +72,20 @@ class FakeProducerBridge:
         self.closed = False
         self.flushed = 0
         self.flush_error: Exception | None = None
+        self.start_error: Exception | None = None
+        self.next_offset = 0
 
     def publish(self, envelope: TelemetryEnvelope) -> None:
         self.published.append(envelope)
+
+    def publish_and_wait(
+        self, envelope: TelemetryEnvelope, timeout_seconds: float = 10.0
+    ) -> DeliveredRecord:
+        if self.start_error is not None:
+            raise self.start_error
+        self.published.append(envelope)
+        offset, self.next_offset = self.next_offset, self.next_offset + 1
+        return DeliveredRecord("fake-topic", 2, 40 + offset)
 
     def flush(self, timeout_seconds: float = 10.0) -> None:
         self.flushed += 1
@@ -748,26 +764,113 @@ class TestLifecycleEvents:
         finally:
             node.destroy_node()
 
-    def test_lifecycle_event_publish_failure_is_logged_and_never_raises(self):
-        class RaisingBridge:
-            def publish(self, envelope):
-                raise RuntimeError("simulated Kafka failure")
+    def test_run_end_publish_failure_is_logged_and_never_raises(self, fake_bridge):
+        node = self._lifecycle_node(fake_bridge)
+        fake_bridge.publish = lambda envelope: (_ for _ in ()).throw(
+            RuntimeError("simulated Kafka failure")
+        )
+        try:
+            node.shutdown()  # must not raise
+        finally:
+            node.destroy_node()
 
-            def flush(self, timeout_seconds=10.0):
-                pass
 
-            def close(self, timeout_seconds=10.0):
-                pass
+class TestRunStartAcknowledgement:
+    """RUN_START is the one synchronous publish: the node knows where the broker
+    stored it before it subscribes to anything, and fails startup otherwise."""
 
-        # A broken control-event publish must never prevent the node from
-        # starting and serving real telemetry.
+    def test_run_start_position_is_the_acknowledged_delivery(self, fake_bridge):
         node = StreamingBridgeNode(
             robot_id=ROBOT_ID,
             robot_run_id=ROBOT_RUN_ID,
-            producer_bridge=RaisingBridge(),
+            producer_bridge=fake_bridge,
             emit_lifecycle_events=True,
         )
         try:
-            node.shutdown()  # must also not raise
+            assert node.run_start_position == KafkaStartPosition("fake-topic", 2, 40)
+            assert parse_run_event(fake_bridge.published[0]) is RunEventType.RUN_START
         finally:
             node.destroy_node()
+
+    def test_no_position_without_lifecycle_events(self, fake_bridge):
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID, robot_run_id=ROBOT_RUN_ID, producer_bridge=fake_bridge
+        )
+        try:
+            assert node.run_start_position is None
+        finally:
+            node.destroy_node()
+
+    def test_run_start_is_acknowledged_before_any_subscription_exists(
+        self, fake_bridge, monkeypatch
+    ):
+        """The node creates its subscriptions only after the acknowledgement, so
+        no telemetry callback can run before the position is known."""
+        events: list[str] = []
+        original = fake_bridge.publish_and_wait
+
+        def recording_publish_and_wait(envelope, timeout_seconds=10.0):
+            events.append("run_start_acknowledged")
+            return original(envelope, timeout_seconds)
+
+        fake_bridge.publish_and_wait = recording_publish_and_wait
+        original_create = StreamingBridgeNode.create_subscription
+
+        def recording_create(self, *args, **kwargs):
+            events.append("subscription")
+            return original_create(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            StreamingBridgeNode, "create_subscription", recording_create
+        )
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            assert events[0] == "run_start_acknowledged"
+            assert events.count("subscription") == len(DEFAULT_REGISTRY)
+        finally:
+            node.destroy_node()
+
+    def test_unacknowledged_run_start_fails_startup_without_subscribing(
+        self, fake_bridge, monkeypatch
+    ):
+        fake_bridge.start_error = TimeoutError("no delivery report")
+        subscriptions: list[object] = []
+        original_create = StreamingBridgeNode.create_subscription
+        monkeypatch.setattr(
+            StreamingBridgeNode,
+            "create_subscription",
+            lambda self, *a, **k: subscriptions.append(1)
+            or original_create(self, *a, **k),
+        )
+        with pytest.raises(RunStartError, match="not acknowledged"):
+            StreamingBridgeNode(
+                robot_id=ROBOT_ID,
+                robot_run_id=ROBOT_RUN_ID,
+                producer_bridge=fake_bridge,
+                emit_lifecycle_events=True,
+            )
+        assert subscriptions == []
+        assert fake_bridge.published == []
+        assert fake_bridge.closed  # the failed start releases the producer
+
+    def test_run_started_line_is_parseable_and_carries_the_capture_argument(self):
+        position = KafkaStartPosition("sceneops.robot.telemetry.v1", 2, 18432)
+        line = run_started_line(ROBOT_RUN_ID, position)
+
+        assert line.startswith(RUN_STARTED_PREFIX)
+        assert "\n" not in line
+        event = json.loads(line[len(RUN_STARTED_PREFIX) :])
+        assert event == {
+            "event": "run_started",
+            "robot_run_id": ROBOT_RUN_ID,
+            "topic": "sceneops.robot.telemetry.v1",
+            "partition": 2,
+            "offset": 18432,
+            "start_position": "sceneops.robot.telemetry.v1:2:18432",
+        }
+        assert KafkaStartPosition.parse(event["start_position"]) == position

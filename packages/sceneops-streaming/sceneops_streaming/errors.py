@@ -37,3 +37,9 @@ class StartPositionError(RuntimeError):
     """A ``KafkaStartPosition`` cannot be used: its topic or partition does not
     exist, or its offset is outside the retained log (below the low watermark,
     or at/after the end). The consumer never substitutes another position."""
+
+
+class DeliveryError(RuntimeError):
+    """The broker did not acknowledge a published record (for example its
+    ``message.timeout.ms`` expired). The record is not stored, unless a late
+    attempt still succeeds -- see ``TelemetryProducer.publish_and_wait``."""

@@ -27,6 +27,25 @@ class ConsumedTelemetryEnvelope:
 
 
 @dataclass(frozen=True)
+class DeliveredRecord:
+    """Where the broker stored one record, as reported by its delivery
+    acknowledgement.
+
+    Produced by ``TelemetryProducer.publish_and_wait`` only after the
+    broker acknowledged the record, so the position is a fact, not a guess.
+    A transport fact of one publish: not part of the envelope and not
+    RobotRun identity.
+    """
+
+    topic: str
+    partition: int
+    offset: int
+
+    def as_start_position(self) -> KafkaStartPosition:
+        return KafkaStartPosition(self.topic, self.partition, self.offset)
+
+
+@dataclass(frozen=True)
 class KafkaStartPosition:
     """Where a pinned consumer starts reading: one partition of one topic at
     one offset.
@@ -49,6 +68,22 @@ class KafkaStartPosition:
         if self.offset < 0:
             raise ValueError(f"offset must be >= 0, got {self.offset}")
 
+    def __str__(self) -> str:
+        return f"{self.topic}:{self.partition}:{self.offset}"
+
+    @classmethod
+    def parse(cls, text: str) -> KafkaStartPosition:
+        """Inverse of ``str()``: ``TOPIC:PARTITION:OFFSET``. The text form is how
+        a launcher hands the position to a Capture process. Kafka topic names
+        cannot contain ``:``."""
+        try:
+            topic, partition, offset = text.rsplit(":", 2)
+            return cls(topic, int(partition), int(offset))
+        except ValueError as exc:
+            raise ValueError(
+                f"expected TOPIC:PARTITION:OFFSET, got {text!r}: {exc}"
+            ) from exc
+
 
 @runtime_checkable
 class TelemetryProducer(Protocol):
@@ -64,6 +99,15 @@ class TelemetryProducer(Protocol):
         needs a delivery guarantee beyond "sent to the broker" must handle
         its own retry/idempotency; this contract makes no exactly-once
         claim end-to-end."""
+
+    async def publish_and_wait(
+        self, envelope: TelemetryEnvelope, timeout_seconds: float = 10.0
+    ) -> DeliveredRecord:
+        """Publish one envelope and return only once the broker acknowledged it,
+        with the position it stored it at. Raises ``DeliveryError`` if the
+        delivery failed and ``TimeoutError`` if no outcome arrived in time (the
+        record may still be stored later). For the rare record whose position
+        matters; bulk telemetry uses ``publish``."""
 
     async def flush(self, timeout_seconds: float = 10.0) -> None:
         """Block until all previously published envelopes are acknowledged
