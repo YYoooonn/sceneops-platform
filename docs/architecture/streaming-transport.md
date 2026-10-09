@@ -359,8 +359,11 @@ KAFKA_NODE_ID, KAFKA_PROCESS_ROLES, KAFKA_LISTENERS,
 KAFKA_ADVERTISED_LISTENERS, KAFKA_LISTENER_SECURITY_PROTOCOL_MAP,
 KAFKA_CONTROLLER_LISTENER_NAMES, KAFKA_INTER_BROKER_LISTENER_NAME,
 KAFKA_CONTROLLER_QUORUM_VOTERS, KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR,
-KAFKA_LOG_DIRS, KAFKA_AUTO_CREATE_TOPICS_ENABLE, CLUSTER_ID
+KAFKA_LOG_DIRS, KAFKA_AUTO_CREATE_TOPICS_ENABLE, CLUSTER_ID,
+KAFKA_LOG_RETENTION_HOURS, KAFKA_LOG_ROLL_HOURS, KAFKA_LOG_RETENTION_BYTES
 ```
+
+The last three are the replay window (§26.1).
 
 None of these appear in `.env.example`. `KAFKA_HOST_PORT` (default
 `9092`, in `.env.example`/`.env.local` under local-development
@@ -1114,10 +1117,12 @@ lost, reset or never existed           deleting every group or recreating the br
                                        the same topic data changes nothing.
 Kafka unavailable after finalize       nothing remains to be written to Kafka: the finalized
                                        bag and receipt are already the completed capture.
-Start position not usable              the partition does not exist, or the offset is below the
-                                       low watermark or not below the log end: StartPositionError
-                                       before any file is touched. An offset that leaves the
-                                       retained log mid-capture is a consumer error
+Start position not usable              the partition does not exist, or the offset is not below the
+                                       log end (StartPositionError), or is below the low watermark
+                                       (ReplayExpiredError, a StartPositionError), before any file
+                                       is touched. An offset that leaves the
+                                       retained log mid-capture is ReplayExpiredError once the
+                                       client's fetched records are used up
                                        (auto.offset.reset=error), never a reset.
 Second Capture of a run that is        RunAlreadyOwnedError at once; the live attempt's
 already being captured (same           .partial directory is not touched. The lock disappears
@@ -1125,7 +1130,10 @@ output root)                           with the owning process, SIGKILL included
 Run records no longer on the topic     RUN_START is never observed: with an idle guard the
 (retention) or the run never started   capture fails (RunStartNotObservedError), without one
                                        it waits for RUN_START. With a start position the wait
-                                       ends at the log end seen at startup (below).
+                                       ends at the log end seen at startup (below), and an
+                                       expired run is told apart from one not yet published
+                                       (ReplayExpiredError vs StartPositionError); a scan
+                                       cannot tell them apart.
 Bridge killed after RUN_START was       Capture, started from the (valid) position, observes
 acknowledged, before any telemetry      RUN_START and no further record of the run; the
                                        idle-timeout guard aborts it (RunEndNotObservedError).
@@ -1144,7 +1152,8 @@ Bridge message failure                 counted and logged; the sequence gap fail
                                        and a failed last message fails it on the RUN_END count.
 Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized.
 partition spread, unsupported channel
-Kafka retention                        capture can only rebuild what the topic still holds.
+Kafka retention                        capture can only rebuild what the topic still holds
+                                       (§26.1). A finalized bag never depends on the topic.
 In-flight state across restart         capture holds no state beyond Kafka and the .partial
                                        directory.
 ```
@@ -1268,6 +1277,89 @@ durable session recovery and exactly-once capture beyond one invocation's
 finalize ordering
 -- a reliability boundary for later work, matching Part 1's own DLQ/retry
 deferral (§7).
+
+### 26.1 Replay window and retention
+
+Kafka is where an unfinished capture is rebuilt from; a finalized bag and its receipt do not
+need it (§21). The **replay window** is how long after being produced a run's records stay
+readable by a Capture retry. The states of a run follow from the finalized bag and the
+retained log; none is stored:
+
+```text
+CAPTURABLE      not finalized; its start position is in [low watermark, high watermark)
+CAPTURED        finalized bag + receipt. Terminal and independent of Kafka: the expiry of
+                its records changes nothing about the recording, its receipt, publication
+                or registration (the Publisher and worker images carry no Kafka client)
+REPLAY_EXPIRED  not finalized; its RUN_START is below the low watermark. Unrecoverable from
+                Kafka (ReplayExpiredError): the run can only be streamed again from its source
+```
+
+Records expiring before durable capture are an ingestion failure; after it they are normal.
+
+**What retention does** (Kafka 3.9, single broker):
+
+```text
+shape         a prefix of the partition log is removed, whole segments, oldest first -- never a
+              middle or a suffix. A run is lost from its RUN_START onwards, so a run with a
+              missing prefix is never finalized: telemetry before RUN_START is RunLifecycleError
+              on the pinned and on the scanning path alike
+time          a segment goes when its newest record is older than retention.ms. The check runs
+              every 5 minutes, so a record outlives retention.ms by up to the roll interval
+              plus 5 minutes, never less. When every segment is eligible the active one is
+              rolled and deleted too. Age is the record's CreateTime, the producer's clock
+size          retention.bytes removes the oldest whole segments regardless of age: a second,
+              rate-dependent window that silently shortens the time one
+visibility    the low watermark moves at the check; consumers see it at once; files follow 60 s later
+```
+
+**Start position validity.** `(topic, partition, offset)` is usable while
+`low <= offset < high` at validation. Below `low` the run's records are gone:
+`ReplayExpiredError`. At or after `high` nothing was published there yet (or the position is
+wrong): `StartPositionError`. Only a start position makes the two distinguishable; a scan from
+the beginning reports both as `RunStartNotObservedError` after its idle guard.
+
+**An attempt already reading** is not protected by having validated its position. The client
+delivers the records it had already fetched (up to its prefetch buffer), then fails with
+`ReplayExpiredError` when the log start has passed its next fetch offset. Nothing is finalized
+and the `.partial` directory stays; the next attempt fails at validation.
+
+**Requirement.** A retry succeeds iff its start position is valid when it begins, so the
+window must cover the time from `RUN_START` to the last acceptable retry start:
+
+```text
+replay window >= D_max          longest RUN_START -> RUN_END
+               + T_detect       until a failed capture is noticed
+               + T_retry        until the retry starts (start-up and validation: ~1 s)
+               + T_read         slack for the retry's own read (a 0.47 GB run: ~8 s)
+```
+
+`T_detect` and `T_retry` belong to whoever operates recovery: nothing supervises Capture, so
+they are not properties of the platform. Time retention is the mechanism that guarantees the
+window; it is a lower bound per record.
+
+**Local broker configuration** (`compose/streaming.yaml`, broker defaults inherited by the
+auto-created topic): `retention.ms` 24 h, `segment.ms` 1 h, `retention.bytes` 20 GiB. The
+window is a working day of recovery latency. The roll interval makes a quiet topic expire.
+The size cap exists to protect the host disk, not to define the window: it holds ~40 streamed
+reference runs (~0.47 GB each), and a topic that reaches it has lost the guarantee.
+
+**Disk budget.**
+
+```text
+Kafka disk ~= ingest bytes/s x (window + roll interval + 5 min) x replication factor x safety
+```
+
+A 20 s surround-camera + LiDAR reference run is 471 MB on the topic (1.33x its finalized MCAP),
+24 MB/s while streaming at real time; the non-image channels are ~0.26 MB/s. Per-record
+framing is ~415 B. The measurements are in
+[Kafka replay window study](../history/streaming-retention-study.md); the decision is
+[ADR-014](../adr/014-kafka-replay-window.md).
+
+**Signals not built.** A deployment must watch what ends the guarantee before it is needed:
+the age of the oldest run that is neither captured nor failed (against the window), the
+partition's size against `retention.bytes`, and free broker disk. Producer clocks should be
+within a small fraction of the window of the broker's; a clock behind by more than the window
+makes records expire as they arrive.
 
 ## 27. Make surface and verification
 
@@ -1544,6 +1636,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - Temp/final lifecycle: `packages/sceneops-recording/sceneops_recording/capture/finalize.py`, `packages/sceneops-recording/tests/capture/test_finalize.py`
 - Consumer orchestration (`RunFilter`/`SequenceTracker`/`CaptureResult`/`run_capture`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
 - Broker-side check that a capture leaves no consumer-group state (real Kafka): `packages/sceneops-recording/tests/capture/group_state.py`
+- Retention behaviour of a pinned Capture (real Kafka: expired start, prefix removed, expired vs not started, finalized bag unaffected): `packages/sceneops-recording/tests/capture/test_pinned_start_integration.py`
 - Multi-RobotRun isolation (real Kafka): `packages/sceneops-recording/tests/capture/test_multi_robot_run_integration.py`
 - CLI entry point: `apps/capture/sceneops_capture/cli.py`
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `apps/capture/Dockerfile`, `compose/streaming.yaml`

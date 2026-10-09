@@ -30,6 +30,14 @@ services:
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
       # Allow local-development topics to be created on first publish.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Replay window: how long a run's records stay readable for a Capture retry
+      # (streaming-transport.md §26.1). Time defines the guarantee; every record
+      # outlives it by up to the roll interval and the broker's 5-minute retention
+      # check. The size cap only protects the host disk (a streamed sensor run is
+      # ~0.5 GB, so it holds ~40 runs) and, if it ever fires, ends the guarantee early.
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_ROLL_HOURS: 1
+      KAFKA_LOG_RETENTION_BYTES: 21474836480
     ports:
       - "${KAFKA_HOST_PORT:-9092}:9094"
     volumes:

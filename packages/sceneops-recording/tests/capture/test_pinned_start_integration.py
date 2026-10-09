@@ -23,6 +23,7 @@ from group_state import assert_leaves_no_group_state
 from sceneops_streaming import (
     EnvelopeEncoding,
     KafkaStartPosition,
+    ReplayExpiredError,
     RunEventType,
     StartPositionError,
     StreamingSettings,
@@ -40,6 +41,7 @@ from sceneops_recording.capture.consumer import (
 from sceneops_recording.capture.finalize import final_bag_path, partial_bag_path
 from sceneops_recording.capture.lifecycle import RunLifecycleError
 from sceneops_recording.capture.receipt_io import read_capture_receipt
+from sceneops_recording.capture.validation import validate_mcap_file
 
 PARTITIONS = 3
 
@@ -335,11 +337,81 @@ def test_offset_below_the_retention_watermark_fails_explicitly(tmp_path, topic):
     advanced = TopicPartition(topic, start.partition, start.offset + 1)
     _ADMIN.delete_records([advanced])[advanced].result(timeout=30)
 
-    with pytest.raises(StartPositionError, match="below the low watermark"):
+    with pytest.raises(ReplayExpiredError, match="below the low watermark"):
         _capture(tmp_path, topic, run, start.start)
 
     assert not final_bag_path(tmp_path, run).exists()
     assert not partial_bag_path(tmp_path, run).exists()
+
+
+def _trim_log_start(topic, partition, offset):
+    """What retention does to a partition: only ever a prefix of the log goes."""
+    tp = TopicPartition(topic, partition, offset)
+    _ADMIN.delete_records([tp])[tp].result(timeout=30)
+
+
+@pytest.mark.parametrize(
+    "trimmed", [1, 4], ids=["run-start", "run-start-and-telemetry"]
+)
+@pytest.mark.parametrize("pinned", [True, False])
+def test_a_run_whose_prefix_expired_is_never_finalized(
+    tmp_path, topic, trimmed, pinned
+):
+    """Retention removes the oldest records first, so a run is lost from its
+    RUN_START onwards. Whatever the attempt does with what is left -- a position at
+    the new log start, or a scan from it -- it meets telemetry before any RUN_START
+    and finalizes nothing."""
+    runs, pub = _publish_three_runs(topic)
+    run = runs[0]
+    start = pub.start_of(run)
+    new_log_start = start.offset + trimmed
+    _trim_log_start(topic, start.partition, new_log_start)
+
+    position = KafkaStartPosition(topic, start.partition, new_log_start)
+    with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
+        _capture(tmp_path, topic, run, position if pinned else None)
+
+    assert not final_bag_path(tmp_path, run).exists()
+
+
+def test_an_expired_run_is_told_apart_from_one_that_has_not_started(tmp_path, topic):
+    runs, pub = _publish_three_runs(topic)
+    run = runs[0]
+    start, end = pub.start_of(run), pub.end_of(run)
+    _trim_log_start(topic, start.partition, end.offset + 1)  # the whole run expired
+
+    with pytest.raises(ReplayExpiredError, match="below the low watermark"):
+        _capture(tmp_path, topic, run, start.start)
+
+    not_yet = KafkaStartPosition(topic, start.partition, end.offset + 1)
+    with pytest.raises(StartPositionError, match="not in the log") as exc_info:
+        _capture(tmp_path, topic, run, not_yet)
+    assert not isinstance(exc_info.value, ReplayExpiredError)
+
+
+def test_a_finalized_recording_does_not_depend_on_its_kafka_records(tmp_path, topic):
+    runs, pub = _publish_three_runs(topic)
+    run = runs[0]
+    start, end = pub.start_of(run), pub.end_of(run)
+    _capture(tmp_path, topic, run, start.start)
+    final = final_bag_path(tmp_path, run)
+    recording = next(final.glob("*.mcap"))
+    receipt = read_capture_receipt(final)
+    snapshot = (recording.read_bytes(), (final / "capture_receipt.json").read_bytes())
+
+    _trim_log_start(topic, start.partition, end.offset + 1)  # Kafka forgets the run
+
+    assert (recording.read_bytes(), (final / "capture_receipt.json").read_bytes()) == (
+        snapshot
+    )
+    assert read_capture_receipt(final) == receipt
+    validate_mcap_file(str(recording), expected_message_count=receipt.message_count)
+    # A re-run cannot rebuild it, and must leave the finalized bag as it is.
+    with pytest.raises(ReplayExpiredError):
+        _capture(tmp_path, topic, run, start.start)
+    assert (recording.read_bytes(), (final / "capture_receipt.json").read_bytes()) == (
+        snapshot
+    )
 
 
 def test_without_a_start_position_the_topic_is_scanned_from_the_beginning(

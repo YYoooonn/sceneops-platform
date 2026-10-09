@@ -253,9 +253,9 @@ fixture by `make e2e-streaming-equivalence`, which reads the two registered Robo
 
 - Fixtures are streamed one at a time, sequentially; the run owns its Kafka offset
   range, which the capture receipt check relies on.
-- Kafka keeps every streamed run until the broker's retention expires its segments (the
-  repository configures none; the local broker's telemetry topic reports 7 days), so its
-  disk use grows by about one recording per fixture meanwhile. Reset Kafka only
+- Kafka keeps every streamed run until the broker's retention expires its segments (24 h
+  on the local broker, [Streaming transport](../architecture/streaming-transport.md)
+  §26.1), so its disk use grows by about 0.47 GB per reference fixture meanwhile. Reset Kafka only
   deliberately; see [Disk hygiene](./local-development.md#disk-hygiene).
 - The streamed recording's checksum is specific to the execution that captured it
   and is not reproducible; the baseline is verified by its registered facts, not by

@@ -10,11 +10,12 @@ import types
 
 import pytest
 
-from confluent_kafka import KafkaException
+from confluent_kafka import KafkaError, KafkaException
 
 from sceneops_streaming import (
     EnvelopeEncoding,
     KafkaStartPosition,
+    ReplayExpiredError,
     StartPositionError,
     TelemetryEnvelope,
 )
@@ -394,6 +395,24 @@ async def test_malformed_record_raises_decode_error_with_location() -> None:
     assert exc_info.value.offset == 7
 
 
+@pytest.mark.parametrize(
+    "code", [KafkaError._AUTO_OFFSET_RESET, KafkaError.OFFSET_OUT_OF_RANGE]
+)
+async def test_log_start_passing_the_read_position_is_replay_expired(code) -> None:
+    consumer = _consumer(poll_batch_size=10)
+    consumer._consumer.enqueue(
+        _fake_message(_envelope(sequence_number=0), offset=0),
+        _error_message(offset=1, error=KafkaError(code)),
+    )
+
+    assert (await consumer.poll(1.0)).envelope.sequence_number == 0
+
+    # Records fetched before retention moved were delivered; the first offset the
+    # broker no longer holds is reported as expiry, not as a malformed record.
+    with pytest.raises(ReplayExpiredError, match=r"while they were being read"):
+        await consumer.poll(1.0)
+
+
 async def test_close_with_buffered_unreturned_messages_does_not_raise() -> None:
     consumer = _consumer(poll_batch_size=10)
     envelopes = [_envelope(sequence_number=i) for i in range(5)]
@@ -472,6 +491,16 @@ def test_unusable_start_position_fails_and_releases_the_client(
 
     assert created[0].closed
     assert created[0].assigned is None
+
+
+def test_only_a_position_below_the_low_watermark_is_replay_expired() -> None:
+    # Below the low watermark: the records existed and retention removed them.
+    with pytest.raises(ReplayExpiredError, match="below the low watermark 5"):
+        _pinned(KafkaStartPosition("t", 0, 4))
+    # At the log end: nothing was ever published there. Not expiry.
+    with pytest.raises(StartPositionError, match="high watermark 100") as exc_info:
+        _pinned(KafkaStartPosition("t", 0, 100))
+    assert not isinstance(exc_info.value, ReplayExpiredError)
 
 
 def test_start_position_wraps_broker_errors(monkeypatch) -> None:

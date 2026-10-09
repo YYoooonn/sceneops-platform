@@ -47,10 +47,13 @@ Details: [Streaming transport](./streaming-transport.md) §26, §31 and
   topic to reach one run's records. The cost grows with topic history; the measurements are
   single-broker, local-environment records in
   [History](../history/streaming-reliability-scale-baseline.md).
-- **No Kafka retention or partition policy is configured.** The local broker
-  auto-creates `sceneops.robot.telemetry.v1` with broker defaults; a run's records must
-  still be on the topic when its capture runs, and growing the partition count remaps
-  future `robot_run_id` keys ([Streaming transport](./streaming-transport.md) §6).
+- **The Kafka replay window is a local-development setting.** The local broker keeps a
+  run's records for at least 24 h and caps each partition at 20 GiB
+  ([Streaming transport](./streaming-transport.md) §26.1); a failed capture must be
+  re-run within that window, and a topic that reaches the cap loses it without a signal
+  (none is built). A window for another deployment is derived from its ingest rate and
+  recovery latency, not copied. No partition policy is configured: growing the partition
+  count remaps future `robot_run_id` keys (§6).
 - **Nothing supervises capture.** Capture is a one-shot process per `robot_run_id`; one
   that stops before `RUN_END` finalizes and commits nothing and is re-run by an
   operator. There is no multi-instance coordination, and capture-session state is not

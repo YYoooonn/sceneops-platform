@@ -25,7 +25,12 @@ from .control import (
     parse_run_event,
 )
 from .envelope import EnvelopeEncoding, TelemetryEnvelope, TelemetryEnvelopeVersion
-from .errors import DeliveryError, EnvelopeDecodeError, StartPositionError
+from .errors import (
+    DeliveryError,
+    EnvelopeDecodeError,
+    ReplayExpiredError,
+    StartPositionError,
+)
 from .producer import KafkaTelemetryProducer
 
 __all__ = [
@@ -41,6 +46,7 @@ __all__ = [
     "KafkaStartPosition",
     "KafkaTelemetryConsumer",
     "KafkaTelemetryProducer",
+    "ReplayExpiredError",
     "RunEndPayloadError",
     "RunEventType",
     "StartPositionError",

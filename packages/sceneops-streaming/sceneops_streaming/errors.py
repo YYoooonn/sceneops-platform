@@ -39,6 +39,16 @@ class StartPositionError(RuntimeError):
     or at/after the end). The consumer never substitutes another position."""
 
 
+class ReplayExpiredError(StartPositionError):
+    """Records an attempt needs have left the retained log: its start offset is
+    below the low watermark, or the log start moved past its read position while
+    it was consuming. Kafka retention removed them; no position of this attempt
+    can read them again, and the consumer never resets to another one.
+
+    Distinct from a position that is not in the log yet (at or after the high
+    watermark), which is the run not having started."""
+
+
 class DeliveryError(RuntimeError):
     """The broker did not acknowledge a published record (for example its
     ``message.timeout.ms`` expired). The record is not stored, unless a late

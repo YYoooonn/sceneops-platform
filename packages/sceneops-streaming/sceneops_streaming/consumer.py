@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 
-from confluent_kafka import OFFSET_BEGINNING, KafkaException, TopicPartition
+from confluent_kafka import OFFSET_BEGINNING, KafkaError, KafkaException, TopicPartition
 from confluent_kafka import Consumer as ConfluentConsumer
 
 
 from .config import StreamingSettings
 from .contracts import ConsumedTelemetryEnvelope, KafkaStartPosition
-from .errors import EnvelopeDecodeError, StartPositionError
+from .errors import EnvelopeDecodeError, ReplayExpiredError, StartPositionError
 from .wire import decode_envelope
 
 # Default size of the bounded internal fetch buffer (see poll()'s
@@ -26,6 +26,11 @@ from .wire import decode_envelope
 # package's existing policy for acks/retries/linger.ms/etc.,
 # config.py's own docstring).
 DEFAULT_POLL_BATCH_SIZE = 64
+
+# Consumer errors that mean the requested offset is no longer in the retained log.
+_LOG_START_PASSED = frozenset(
+    {KafkaError._AUTO_OFFSET_RESET, KafkaError.OFFSET_OUT_OF_RANGE}
+)
 
 # Bound on the metadata and watermark requests that resolve an assignment.
 START_VALIDATION_TIMEOUT_SECONDS = 10.0
@@ -67,8 +72,8 @@ class KafkaTelemetryConsumer:
     ``start_position`` assigns one partition at one offset
     (``KafkaStartPosition``) and reads nothing but that partition. The position
     is validated against the live log before the constructor returns
-    (``StartPositionError``: unknown topic or partition, offset below the low
-    watermark, offset at or after the log end). ``end_offset`` is the partition's
+    (``StartPositionError``: unknown topic or partition, offset at or after the
+    log end; ``ReplayExpiredError``, a subclass: offset below the low watermark). ``end_offset`` is the partition's
     high watermark when the position was validated (the records the position is
     expected to find already exist below it). Mutually exclusive with
     ``start_from_beginning``.
@@ -211,7 +216,7 @@ class KafkaTelemetryConsumer:
                 f"{exc}"
             ) from exc
         if position.offset < low:
-            raise StartPositionError(
+            raise ReplayExpiredError(
                 f"offset {position.offset} of {position.topic}[{position.partition}] "
                 f"is below the low watermark {low}: no longer retained"
             )
@@ -240,9 +245,18 @@ class KafkaTelemetryConsumer:
     def _process_message(self, msg: object) -> ConsumedTelemetryEnvelope:
         topic, partition, offset = msg.topic(), msg.partition(), msg.offset()
 
-        if msg.error() is not None:
+        error = msg.error()
+        if error is not None:
+            # An assigned consumer never resets (auto.offset.reset=error), so retention
+            # moving the log start past its read position surfaces here, after the
+            # records the client had already fetched have been delivered.
+            if getattr(error, "code", lambda: None)() in _LOG_START_PASSED:
+                raise ReplayExpiredError(
+                    f"retention removed the records at and after offset {offset} of "
+                    f"{topic}[{partition}] while they were being read: {error}"
+                )
             raise EnvelopeDecodeError(
-                f"Kafka consumer error: {msg.error()}",
+                f"Kafka consumer error: {error}",
                 topic=topic,
                 partition=partition,
                 offset=offset,
