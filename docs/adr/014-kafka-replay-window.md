@@ -5,7 +5,8 @@
 Proposed — the local broker is configured accordingly, uncommitted. Closes the "Kafka
 retention is not configured" gap recorded in [ADR-008](./008-acquisition-lifecycle-reliability.md)
 (B2). The contract is in [Streaming transport](../architecture/streaming-transport.md) §26.1;
-the measurements are in [Kafka replay window study](../history/streaming-retention-study.md).
+the measurements are in [Kafka replay window study](../history/streaming-retention-study.md)
+and [Kafka timestamp type study](../history/kafka-timestamp-type-study.md).
 
 ## Context
 
@@ -44,6 +45,10 @@ The broker had no explicit retention. The topic inherited 7 days of `retention.m
   finalized bag and receipt exist is normal; before, the run is `REPLAY_EXPIRED` and
   unrecoverable from Kafka. A start position makes that distinguishable from a run not yet
   published (`ReplayExpiredError` against `StartPositionError`); a scan cannot.
+- **Age is the broker's append time.** Topics use `message.timestamp.type=LogAppendTime`, set
+  explicitly on the broker, so a record's lifetime starts when Kafka accepted it and no
+  producer or robot clock can shorten or extend the window. Envelope timestamps are
+  unchanged; the Kafka record timestamp is not a SceneOps event time.
 - **Local broker:** 24 h window, 1 h roll, 20 GiB per-partition cap. Local fixtures are
   re-streamable from their locked recordings, so a breach there costs a replay, not data.
   Another deployment derives its window from the formula and its own `T_detect` and
@@ -59,16 +64,18 @@ The broker had no explicit retention. The topic inherited 7 days of `retention.m
 - **No size cap.** Rejected locally (a full host disk is worse than a lost replay for
   rebuildable data); kept as the preferable choice where the source cannot be replayed and a
   stopped broker is safer than deleted records.
-- **`LogAppendTime`.** Deferred: it makes the broker's clock decide record age and removes the
-  producer-clock dependence. Not needed while bridge and broker share a host.
+- **`CreateTime` (the producer's clock).** Rejected: a producer clock behind the broker's by
+  more than `retention.ms` makes new records expire at the first retention check, and
+  nothing in SceneOps enforces clock agreement. It was the broker default, not a choice.
 - **Persisting the start position so an expired run is always distinguishable.** Deferred;
   it changes what a start position is (ADR-013 keeps it runtime information).
 
 ## Consequences
 
 - A failed capture has to be re-run within the window; nothing does so automatically.
-- The window silently ends early if the size cap binds or a producer clock is behind the
-  broker's by more than the window. No signal exists for either yet.
+- The window silently ends early if the size cap binds. No signal exists for it yet.
+- The broker's clock now decides record age. A broker clock that jumps forward expires
+  records early; this is the only clock the window depends on.
 - Broker disk is bounded by `rate × (window + roll + 5 min)`, plus one segment of
   granularity, for each replica.
 - A capture that is overtaken while reading fails with `ReplayExpiredError`, no longer as a

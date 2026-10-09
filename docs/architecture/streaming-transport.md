@@ -1306,7 +1306,8 @@ shape         a prefix of the partition log is removed, whole segments, oldest f
 time          a segment goes when its newest record is older than retention.ms. The check runs
               every 5 minutes, so a record outlives retention.ms by up to the roll interval
               plus 5 minutes, never less. When every segment is eligible the active one is
-              rolled and deleted too. Age is the record's CreateTime, the producer's clock
+              rolled and deleted too. Age is the record's Kafka timestamp, which the broker sets
+              to its append time (LogAppendTime, below); the producer's clock plays no part
 size          retention.bytes removes the oldest whole segments regardless of age: a second,
               rate-dependent window that silently shortens the time one
 visibility    the low watermark moves at the check; consumers see it at once; files follow 60 s later
@@ -1337,8 +1338,30 @@ replay window >= D_max          longest RUN_START -> RUN_END
 they are not properties of the platform. Time retention is the mechanism that guarantees the
 window; it is a lower bound per record.
 
+**Timestamps.** Three clocks exist on a record and each has one owner:
+
+```text
+Kafka record timestamp        the broker's append time (message.timestamp.type=LogAppendTime).
+                              Used by retention and by timestamp->offset lookup; carries no
+                              SceneOps meaning and is never read by SceneOps code
+envelope source_timestamp_ns  the source's observation time (header, passed through verbatim)
+envelope ingest_timestamp_ns  the time SceneOps accepted the message at the transport boundary
+                              (the bridge's clock; header; written as MCAP publish_time, §20)
+```
+
+With `CreateTime` the first would be the producer's clock, so a robot clock behind the broker's
+by more than `retention.ms` would make its records expire at the first retention check, and a
+clock ahead would keep them for the skew longer. `LogAppendTime` makes the lifetime of every
+record start when Kafka accepted it. The envelope headers are not touched by either setting.
+A timestamp->offset lookup is meaningful only under `LogAppendTime`: it then finds the first
+record the broker appended at or after a wall-clock instant, whatever the producers' clocks
+read. It is not an exact start position and a run's `RUN_START` position remains the only
+exact one. The setting applies to records appended after it is set; records written earlier
+keep their producer timestamp.
+
 **Local broker configuration** (`compose/streaming.yaml`, broker defaults inherited by the
-auto-created topic): `retention.ms` 24 h, `segment.ms` 1 h, `retention.bytes` 20 GiB. The
+auto-created topic): `retention.ms` 24 h, `segment.ms` 1 h, `retention.bytes` 20 GiB,
+`message.timestamp.type` `LogAppendTime`. The
 window is a working day of recovery latency. The roll interval makes a quiet topic expire.
 The size cap exists to protect the host disk, not to define the window: it holds ~40 streamed
 reference runs (~0.47 GB each), and a topic that reaches it has lost the guarantee.
@@ -1357,9 +1380,8 @@ framing is ~415 B. The measurements are in
 
 **Signals not built.** A deployment must watch what ends the guarantee before it is needed:
 the age of the oldest run that is neither captured nor failed (against the window), the
-partition's size against `retention.bytes`, and free broker disk. Producer clocks should be
-within a small fraction of the window of the broker's; a clock behind by more than the window
-makes records expire as they arrive.
+partition's size against `retention.bytes`, and free broker disk. Producer clocks do not
+affect the window.
 
 ## 27. Make surface and verification
 
@@ -1374,7 +1396,7 @@ finalize/validation, `RunFilter`/`SequenceTracker`/duplicate policy,
 RUN_END finalization and refusal to finalize without it, sensor
 channels from a channel file, durability ordering, crash boundaries C and D
 including conflicting retry), and real-Kafka integration (multi-run isolation, lifecycle,
-camera- and lidar-sized payloads, oversize failure). The orchestrated hand-off is
+camera- and lidar-sized payloads, oversize failure, broker-assigned record timestamps). The orchestrated hand-off is
 tested at three levels: the producer's delivery result and the bridge's
 acknowledge-before-subscribe startup over fakes; the launcher's parsing and
 ordering over a stubbed `docker` (`tools/e2e/tests/test_streaming_launcher.py`);

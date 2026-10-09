@@ -38,6 +38,10 @@ services:
       KAFKA_LOG_RETENTION_HOURS: 24
       KAFKA_LOG_ROLL_HOURS: 1
       KAFKA_LOG_RETENTION_BYTES: 21474836480
+      # Retention ages a record by the time the broker appended it, never by the
+      # producer's clock: a robot clock behind the broker's would otherwise make
+      # new records expire at the first retention check (streaming-transport.md §26.1).
+      KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: LogAppendTime
     ports:
       - "${KAFKA_HOST_PORT:-9092}:9094"
     volumes:
