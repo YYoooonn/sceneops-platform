@@ -35,6 +35,12 @@ and a missing RUN_END is never finalized. RUN_END must declare the run's
 ``telemetry_count`` and Capture finalizes only if it observed exactly that many
 telemetry records (``RunIncompleteError``). Without ``stop_on_run_end`` (count-
 bounded synthetic runs) control events are only sequence-validated.
+
+**Ownership.** One Capture attempt owns one RobotRun: a local lock on the run id
+(``ownership.py``) is held from before ``.partial/<run>`` is touched until the
+attempt is over, and with a ``KafkaStartPosition`` the attempt reads exactly one
+explicitly assigned partition (no consumer-group join, no rebalance). Kafka
+arbitrates nothing; which attempt captures a run is decided by whoever starts it.
 """
 
 from __future__ import annotations
@@ -67,6 +73,7 @@ from sceneops_streaming import (
     DEFAULT_REGISTRY,
     ChannelRegistry,
     ConsumedTelemetryEnvelope,
+    KafkaStartPosition,
     RunEndPayloadError,
     is_control_envelope,
     parse_run_end_telemetry_count,
@@ -83,6 +90,7 @@ from .finalize import (
 )
 from .group_id import derive_capture_group_id
 from .lifecycle import RunLifecycle, RunLifecycleError, RunPhase, check_run_complete
+from .ownership import own_run
 from .writer import McapCaptureWriter
 from .receipt_io import (
     CaptureReceiptConflictError,
@@ -158,10 +166,14 @@ class _RunFilter:
     partition -- one robot_run_id must map to exactly one partition, and
     a violation fails loudly rather than silently merging streams."""
 
-    def __init__(self, *, robot_id: str, robot_run_id: str) -> None:
+    def __init__(
+        self, *, robot_id: str, robot_run_id: str, partition: int | None = None
+    ) -> None:
         self._robot_id = robot_id
         self._robot_run_id = robot_run_id
-        self._partition: int | None = None
+        # Pre-set when the capture is pinned to a partition: a record of the
+        # run from any other partition then fails like a later divergence.
+        self._partition: int | None = partition
 
     def matches(self, consumed: ConsumedTelemetryEnvelope) -> bool:
         envelope = consumed.envelope
@@ -308,6 +320,7 @@ async def run_capture(
     registry: ChannelRegistry = DEFAULT_REGISTRY,
     stop_on_run_end: bool = False,
     robot_platform: str | None = None,
+    start: KafkaStartPosition | None = None,
 ) -> CaptureResult:
     """Consume from Kafka and durably capture one run's messages into a
     finalized MCAP bag, returning a ``CaptureResult`` once Kafka offsets
@@ -340,11 +353,25 @@ async def run_capture(
     capture (count-bounded synthetic runs in tests and benchmarks), and
     ``idle_timeout_seconds`` is not accepted.
 
-    Every attempt reads the run from the beginning of the topic: the group's
-    committed offset only records that a capture completed, it is never a
-    start position (``KafkaTelemetryConsumer(start_from_beginning=True)``). A
-    re-run of an already finalized run therefore converges onto the existing bag
-    (or fails on different content) instead of resuming after its RUN_END.
+    Where an attempt starts reading is never taken from the group's committed
+    offset, which only records that a capture completed. Without ``start`` it
+    reads every partition of the topic from the beginning
+    (``KafkaTelemetryConsumer(start_from_beginning=True)``, a consumer-group
+    join that scans the whole history). With ``start`` it ``assign()``s that one
+    partition at that offset (``KafkaStartPosition``, normally the offset of the
+    run's RUN_START): no group join or rebalance, and no record of any other
+    partition is read. The position is validated (``StartPositionError`` if the
+    partition or offset is not in the retained log) and never replaced by
+    another: in a lifecycle-governed capture, RUN_START must be found between
+    ``start.offset`` and the log end seen at startup, else
+    ``RunStartNotObservedError``; a position after RUN_START fails the lifecycle
+    at the run's first telemetry record. A re-run of an already finalized run
+    converges onto the existing bag (or fails on different content) instead of
+    resuming after its RUN_END.
+
+    The attempt owns ``robot_run_id`` on ``output_root`` exclusively
+    (``ownership.own_run``): a second concurrent attempt raises
+    ``RunAlreadyOwnedError`` before touching any file.
 
     A stop condition may return the ``FinalizationReason`` it stands for
     (recorded in the capture receipt); a plain ``True`` records ``MANUAL``.
@@ -362,7 +389,61 @@ async def run_capture(
         raise ValueError("idle_timeout_seconds requires stop_on_run_end")
     if stop_condition is None and not stop_on_run_end:
         raise ValueError("a capture without stop_on_run_end needs a stop_condition")
+    if start is not None and start.topic != settings.telemetry_topic:
+        raise ValueError(
+            f"start position topic {start.topic!r} is not the configured "
+            f"telemetry topic {settings.telemetry_topic!r}"
+        )
 
+    with own_run(output_root, robot_run_id):
+        # Before any file is touched: an unusable start position leaves an
+        # existing partial bag alone.
+        consumer = KafkaTelemetryConsumer(
+            settings=settings,
+            # Run-scoped, not the literal base -- see group_id.py's own
+            # docstring for why (Phase 6.6.1): a group shared across every
+            # RobotRun let one run's capture silently advance another's
+            # committed offset.
+            group_id=derive_capture_group_id(
+                base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=robot_run_id
+            ),
+            auto_offset_reset="earliest",
+            enable_auto_commit=False,
+            start_from_beginning=start is None,
+            start_position=start,
+        )
+        try:
+            return await _capture_with_consumer(
+                consumer,
+                robot_id=robot_id,
+                robot_run_id=robot_run_id,
+                output_root=output_root,
+                stop_condition=stop_condition,
+                idle_timeout_seconds=idle_timeout_seconds,
+                poll_timeout_seconds=poll_timeout_seconds,
+                registry=registry,
+                stop_on_run_end=stop_on_run_end,
+                robot_platform=robot_platform,
+                start=start,
+            )
+        finally:
+            await consumer.close()
+
+
+async def _capture_with_consumer(
+    consumer,
+    *,
+    robot_id: str,
+    robot_run_id: str,
+    output_root: Path,
+    stop_condition: Callable[[int], bool | FinalizationReason] | None,
+    idle_timeout_seconds: float | None,
+    poll_timeout_seconds: float,
+    registry: ChannelRegistry,
+    stop_on_run_end: bool,
+    robot_platform: str | None,
+    start: KafkaStartPosition | None,
+) -> CaptureResult:
     partial_dir = prepare_partial_bag_dir(output_root, robot_run_id)
     writer = McapCaptureWriter(bag_uri=str(partial_dir), registry=registry)
     run_ended = False
@@ -370,7 +451,11 @@ async def run_capture(
     idle_guard = (
         _IdleGuard(idle_timeout_seconds) if idle_timeout_seconds is not None else None
     )
-    run_filter = _RunFilter(robot_id=robot_id, robot_run_id=robot_run_id)
+    run_filter = _RunFilter(
+        robot_id=robot_id,
+        robot_run_id=robot_run_id,
+        partition=start.partition if start is not None else None,
+    )
     tracker = _SequenceTracker()
     # Lifecycle control events (Phase 7.2.1) get their OWN independent
     # 0..N-1 validation, never merged with telemetry's -- they are
@@ -381,230 +466,231 @@ async def run_capture(
     # ITS OWN space).
     control_tracker = _SequenceTracker()
 
-    # Run-scoped, not the literal base -- see group_id.py's own docstring
-    # for why (Phase 6.6.1): a group shared across every RobotRun let one
-    # run's capture silently advance another's committed offset.
-    group_id = derive_capture_group_id(
-        base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=robot_run_id
-    )
-    consumer = KafkaTelemetryConsumer(
-        settings=settings,
-        group_id=group_id,
-        auto_offset_reset="earliest",
-        enable_auto_commit=False,
-        start_from_beginning=True,
-    )
-
     first_offset: int | None = None
     last_offset: int | None = None
     source_topics: set[str] = set()
     stop_reason = FinalizationReason.MANUAL
 
+    # With a start position, RUN_START exists below the log end seen at startup
+    # (the position came from its delivery): a lifecycle-governed capture still
+    # ARMED after that record has been consumed was pointed at the wrong place.
+    start_window_end = consumer.end_offset if start is not None else None
+    last_polled_offset: int | None = None
+
     try:
-        try:
-            while not run_ended:
-                stop = (
-                    stop_condition(writer.stats.message_count)
-                    if stop_condition is not None
-                    else False
+        while not run_ended:
+            if (
+                start_window_end is not None
+                and lifecycle is not None
+                and lifecycle.phase is RunPhase.ARMED
+                and last_polled_offset is not None
+                and last_polled_offset + 1 >= start_window_end
+            ):
+                raise RunStartNotObservedError(
+                    f"RUN_START of robot_run_id={robot_run_id!r} not found in "
+                    f"{start.topic}[{start.partition}] offsets "
+                    f"{start.offset}..{start_window_end - 1}: wrong partition, "
+                    "or a start offset after RUN_START"
                 )
-                if (
-                    not stop
-                    and idle_guard is not None
-                    and idle_guard.expired(lifecycle.phase)
-                ):
-                    stop = FinalizationReason.IDLE_TIMEOUT
-                if stop:
-                    if isinstance(stop, FinalizationReason):
-                        stop_reason = stop
-                    break
-                consumed = await consumer.poll(poll_timeout_seconds)
-                receive_time_ns = time.time_ns()
-                if consumed is None:
-                    continue
-                if idle_guard is not None:
-                    idle_guard.consumed()
-                if not run_filter.matches(consumed):
-                    continue
-                if idle_guard is not None:
-                    idle_guard.target_record()
-                source_topics.add(consumed.topic)
+            stop = (
+                stop_condition(writer.stats.message_count)
+                if stop_condition is not None
+                else False
+            )
+            if (
+                not stop
+                and idle_guard is not None
+                and idle_guard.expired(lifecycle.phase)
+            ):
+                stop = FinalizationReason.IDLE_TIMEOUT
+            if stop:
+                if isinstance(stop, FinalizationReason):
+                    stop_reason = stop
+                break
+            consumed = await consumer.poll(poll_timeout_seconds)
+            receive_time_ns = time.time_ns()
+            if consumed is None:
+                continue
+            last_polled_offset = consumed.offset
+            if idle_guard is not None:
+                idle_guard.consumed()
+            if not run_filter.matches(consumed):
+                continue
+            if idle_guard is not None:
+                idle_guard.target_record()
+            source_topics.add(consumed.topic)
 
-                envelope = consumed.envelope
-                if is_control_envelope(envelope):
-                    # Validated (gap/duplicate/conflict) exactly as
-                    # strictly as telemetry, in its own independent
-                    # sequence space -- never silently bypassed -- but
-                    # never written to the MCAP: a control event is not
-                    # sensor data, and the channel registry
-                    # deliberately never includes it (so a genuinely
-                    # unsupported/unknown channel still fails loudly,
-                    # unambiguously, via UnsupportedChannelError).
-                    is_new_control = control_tracker.accept(
-                        sequence_number=envelope.sequence_number,
-                        payload=envelope.payload,
-                    )
-                    if lifecycle is not None:
-                        lifecycle.on_control(
-                            parse_run_event(envelope), redelivery=not is_new_control
-                        )
-                        run_ended = lifecycle.phase is RunPhase.ENDED
-                        if run_ended:
-                            # Before anything is validated, finalized or
-                            # committed: the producer's declared closing
-                            # state against what this capture observed.
-                            try:
-                                declared = parse_run_end_telemetry_count(envelope)
-                            except RunEndPayloadError as exc:
-                                raise RunLifecycleError(str(exc)) from exc
-                            check_run_complete(
-                                declared=declared, observed=tracker.accepted_count
-                            )
-                    if first_offset is None:
-                        first_offset = consumed.offset
-                    last_offset = consumed.offset
-                    continue
-
-                if lifecycle is not None:
-                    lifecycle.on_telemetry()
-                should_write = tracker.accept(
+            envelope = consumed.envelope
+            if is_control_envelope(envelope):
+                # Validated (gap/duplicate/conflict) exactly as
+                # strictly as telemetry, in its own independent
+                # sequence space -- never silently bypassed -- but
+                # never written to the MCAP: a control event is not
+                # sensor data, and the channel registry
+                # deliberately never includes it (so a genuinely
+                # unsupported/unknown channel still fails loudly,
+                # unambiguously, via UnsupportedChannelError).
+                is_new_control = control_tracker.accept(
                     sequence_number=envelope.sequence_number,
                     payload=envelope.payload,
                 )
-                if not should_write:
-                    continue
-
-                writer.write_envelope(envelope, receive_time_ns=receive_time_ns)
+                if lifecycle is not None:
+                    lifecycle.on_control(
+                        parse_run_event(envelope), redelivery=not is_new_control
+                    )
+                    run_ended = lifecycle.phase is RunPhase.ENDED
+                    if run_ended:
+                        # Before anything is validated, finalized or
+                        # committed: the producer's declared closing
+                        # state against what this capture observed.
+                        try:
+                            declared = parse_run_end_telemetry_count(envelope)
+                        except RunEndPayloadError as exc:
+                            raise RunLifecycleError(str(exc)) from exc
+                        check_run_complete(
+                            declared=declared, observed=tracker.accepted_count
+                        )
                 if first_offset is None:
                     first_offset = consumed.offset
                 last_offset = consumed.offset
-        finally:
-            # Always fsync/close the writer, whatever happened above --
-            # but only proceed to validate/finalize/commit on the clean
-            # (non-exception) path below.
-            writer.close()
+                continue
 
-        if stop_on_run_end and not run_ended:
-            if lifecycle.phase is RunPhase.ARMED:
-                raise RunStartNotObservedError(
-                    f"capture of robot_run_id={robot_run_id!r} stopped before "
-                    "its RUN_START; nothing recorded, not finalized"
-                )
-            raise RunEndNotObservedError(
-                f"capture of robot_run_id={robot_run_id!r} stopped before its "
-                f"RUN_END after {writer.stats.message_count} message(s); "
-                "not finalized"
+            if lifecycle is not None:
+                lifecycle.on_telemetry()
+            should_write = tracker.accept(
+                sequence_number=envelope.sequence_number,
+                payload=envelope.payload,
             )
+            if not should_write:
+                continue
 
-        mcap_path = writer.mcap_file_path()
-        validate_mcap_file(mcap_path, expected_message_count=writer.stats.message_count)
+            writer.write_envelope(envelope, receive_time_ns=receive_time_ns)
+            if first_offset is None:
+                first_offset = consumed.offset
+            last_offset = consumed.offset
+    finally:
+        # Always fsync/close the writer, whatever happened above --
+        # but only proceed to validate/finalize/commit on the clean
+        # (non-exception) path below.
+        writer.close()
 
-        # Everything the receipt claims about the bytes is read from the
-        # validated partial file, not from the writer's counters.
-        digest_hex = _sha256_file(Path(mcap_path))
-        receipt = CaptureReceipt(
-            run_id=robot_run_id,
-            robot_id=robot_id,
-            robot_platform=robot_platform,
-            recording=ReceiptRecording(
-                file=Path(mcap_path).name,
-                format=RecordingFormat.MCAP,
-                checksum=f"sha256:{digest_hex}",
-                size_bytes=os.path.getsize(mcap_path),
-            ),
-            capture=CaptureInfo(
-                source=CaptureSource(
-                    kind=CaptureSourceKind.KAFKA, topics=sorted(source_topics)
-                ),
-                source_clock=MCAP_LOG_TIME_CLOCK,
-            ),
-            message_count=writer.stats.message_count,
-            per_channel_counts=dict(writer.stats.per_channel_counts),
-            finalization=ReceiptFinalization(
-                reason=(
-                    FinalizationReason.EXPLICIT_RUN_END if run_ended else stop_reason
-                ),
-                finalized_at=datetime.now(UTC),
-            ),
-            kafka=ReceiptKafka(
-                partition=run_filter.partition,
-                first_offset=first_offset,
-                last_offset=last_offset,
-                first_sequence=tracker.first_sequence,
-                last_sequence=tracker.last_sequence,
-            ),
+    if stop_on_run_end and not run_ended:
+        if lifecycle.phase is RunPhase.ARMED:
+            raise RunStartNotObservedError(
+                f"capture of robot_run_id={robot_run_id!r} stopped before "
+                "its RUN_START; nothing recorded, not finalized"
+            )
+        raise RunEndNotObservedError(
+            f"capture of robot_run_id={robot_run_id!r} stopped before its "
+            f"RUN_END after {writer.stats.message_count} message(s); "
+            "not finalized"
         )
-        write_capture_receipt(partial_dir, receipt)
 
-        try:
-            final_dir = finalize_bag(output_root, robot_run_id)
-            final_mcap_path = final_dir / Path(mcap_path).name
-        except FinalBagExistsError:
-            # A prior attempt for this robot_run_id already reached
-            # finalize successfully but was killed/crashed before
-            # committing Kafka offsets (the exact "after finalize, before
-            # commit" crash boundary) -- Kafka never advanced past those
-            # records, so this attempt independently consumed, wrote, and
-            # validated the SAME messages again. That is convergence, not
-            # a conflict: if the recorded messages genuinely match, commit
-            # the offset now (the durability boundary this run reached is
-            # identical to the prior one) and report the existing final
-            # file -- never silently overwrite it, and never loop forever
-            # crashing on the same already-finalized file either.
-            #
-            # "Match" ignores log_time only: each attempt stamps its own
-            # receive time, so the bytes of two attempts legitimately
-            # differ there and nowhere else. The existing file (and its
-            # receive times) is the recording of record.
-            existing_final_dir = final_bag_path(output_root, robot_run_id)
-            existing_mcap_path = existing_final_dir / Path(mcap_path).name
-            if not existing_mcap_path.is_file() or not same_recorded_content(
-                str(existing_mcap_path), mcap_path
-            ):
-                # A genuine conflict (different content under the same
-                # robot_run_id) -- never silently resolved, re-raise.
-                raise
-            final_dir = existing_final_dir
-            final_mcap_path = existing_mcap_path
-            digest_hex = _sha256_file(existing_mcap_path)
-            # The existing bag keeps its own receipt (recording of record).
-            # It must still describe the bytes beside it and the run this
-            # attempt captured; a bag without a receipt predates receipts
-            # and is left as it is -- a receipt is written only atomically
-            # with finalize, never added afterwards.
-            existing_receipt = read_capture_receipt(existing_final_dir)
-            if existing_receipt is not None:
-                if existing_receipt.recording.checksum != f"sha256:{digest_hex}":
-                    raise CaptureReceiptConflictError(
-                        f"capture receipt of {existing_final_dir} does not match "
-                        f"the checksum of {existing_mcap_path}"
-                    )
-                check_existing_receipt_converges(existing_receipt, receipt)
-            shutil.rmtree(Path(mcap_path).parent, ignore_errors=True)
+    mcap_path = writer.mcap_file_path()
+    validate_mcap_file(mcap_path, expected_message_count=writer.stats.message_count)
 
-        result = CaptureResult(
-            robot_id=robot_id,
-            robot_run_id=robot_run_id,
-            path=final_mcap_path,
-            message_count=writer.stats.message_count,
+    # Everything the receipt claims about the bytes is read from the
+    # validated partial file, not from the writer's counters.
+    digest_hex = _sha256_file(Path(mcap_path))
+    receipt = CaptureReceipt(
+        run_id=robot_run_id,
+        robot_id=robot_id,
+        robot_platform=robot_platform,
+        recording=ReceiptRecording(
+            file=Path(mcap_path).name,
+            format=RecordingFormat.MCAP,
+            checksum=f"sha256:{digest_hex}",
+            size_bytes=os.path.getsize(mcap_path),
+        ),
+        capture=CaptureInfo(
+            source=CaptureSource(
+                kind=CaptureSourceKind.KAFKA, topics=sorted(source_topics)
+            ),
+            source_clock=MCAP_LOG_TIME_CLOCK,
+        ),
+        message_count=writer.stats.message_count,
+        per_channel_counts=dict(writer.stats.per_channel_counts),
+        finalization=ReceiptFinalization(
+            reason=(FinalizationReason.EXPLICIT_RUN_END if run_ended else stop_reason),
+            finalized_at=datetime.now(UTC),
+        ),
+        kafka=ReceiptKafka(
             partition=run_filter.partition,
             first_offset=first_offset,
             last_offset=last_offset,
             first_sequence=tracker.first_sequence,
             last_sequence=tracker.last_sequence,
-            sha256=digest_hex,
-            per_channel_counts=dict(writer.stats.per_channel_counts),
-            receipt_path=(
-                final_dir / CAPTURE_RECEIPT_FILENAME
-                if (final_dir / CAPTURE_RECEIPT_FILENAME).is_file()
-                else None
-            ),
-        )
+        ),
+    )
+    write_capture_receipt(partial_dir, receipt)
 
-        # Only now -- after the MCAP has been validated and durably,
-        # atomically finalized on disk -- is it safe to acknowledge
-        # these Kafka records as consumed. Never before.
-        await consumer.commit()
-        return result
-    finally:
-        await consumer.close()
+    try:
+        final_dir = finalize_bag(output_root, robot_run_id)
+        final_mcap_path = final_dir / Path(mcap_path).name
+    except FinalBagExistsError:
+        # A prior attempt for this robot_run_id already reached
+        # finalize successfully but was killed/crashed before
+        # committing Kafka offsets (the exact "after finalize, before
+        # commit" crash boundary) -- Kafka never advanced past those
+        # records, so this attempt independently consumed, wrote, and
+        # validated the SAME messages again. That is convergence, not
+        # a conflict: if the recorded messages genuinely match, commit
+        # the offset now (the durability boundary this run reached is
+        # identical to the prior one) and report the existing final
+        # file -- never silently overwrite it, and never loop forever
+        # crashing on the same already-finalized file either.
+        #
+        # "Match" ignores log_time only: each attempt stamps its own
+        # receive time, so the bytes of two attempts legitimately
+        # differ there and nowhere else. The existing file (and its
+        # receive times) is the recording of record.
+        existing_final_dir = final_bag_path(output_root, robot_run_id)
+        existing_mcap_path = existing_final_dir / Path(mcap_path).name
+        if not existing_mcap_path.is_file() or not same_recorded_content(
+            str(existing_mcap_path), mcap_path
+        ):
+            # A genuine conflict (different content under the same
+            # robot_run_id) -- never silently resolved, re-raise.
+            raise
+        final_dir = existing_final_dir
+        final_mcap_path = existing_mcap_path
+        digest_hex = _sha256_file(existing_mcap_path)
+        # The existing bag keeps its own receipt (recording of record).
+        # It must still describe the bytes beside it and the run this
+        # attempt captured; a bag without a receipt predates receipts
+        # and is left as it is -- a receipt is written only atomically
+        # with finalize, never added afterwards.
+        existing_receipt = read_capture_receipt(existing_final_dir)
+        if existing_receipt is not None:
+            if existing_receipt.recording.checksum != f"sha256:{digest_hex}":
+                raise CaptureReceiptConflictError(
+                    f"capture receipt of {existing_final_dir} does not match "
+                    f"the checksum of {existing_mcap_path}"
+                )
+            check_existing_receipt_converges(existing_receipt, receipt)
+        shutil.rmtree(Path(mcap_path).parent, ignore_errors=True)
+
+    result = CaptureResult(
+        robot_id=robot_id,
+        robot_run_id=robot_run_id,
+        path=final_mcap_path,
+        message_count=writer.stats.message_count,
+        partition=run_filter.partition,
+        first_offset=first_offset,
+        last_offset=last_offset,
+        first_sequence=tracker.first_sequence,
+        last_sequence=tracker.last_sequence,
+        sha256=digest_hex,
+        per_channel_counts=dict(writer.stats.per_channel_counts),
+        receipt_path=(
+            final_dir / CAPTURE_RECEIPT_FILENAME
+            if (final_dir / CAPTURE_RECEIPT_FILENAME).is_file()
+            else None
+        ),
+    )
+
+    # Only now -- after the MCAP has been validated and durably,
+    # atomically finalized on disk -- is it safe to acknowledge
+    # these Kafka records as consumed. Never before.
+    await consumer.commit()
+    return result

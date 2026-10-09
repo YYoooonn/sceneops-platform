@@ -74,7 +74,7 @@ Kafka adapter (the only code that imports confluent_kafka)
   config.py       StreamingSettings (bootstrap servers / topic / consumer group / client id)
   wire.py         pure Kafka key / headers / value mapping -- no broker needed
   producer.py     KafkaTelemetryProducer
-  consumer.py     KafkaTelemetryConsumer, EnvelopeDecodeError
+  consumer.py     KafkaTelemetryConsumer (subscribe, or assign() at a KafkaStartPosition), EnvelopeDecodeError
 ```
 
 The package depends only on `sceneops-core`. It defines no RobotRun, Scene or Episode
@@ -848,6 +848,7 @@ packages/sceneops-recording/sceneops_recording/capture/
   finalize.py            temp/final bag directory lifecycle
   receipt_io.py          capture receipt write / read / convergence check
   group_id.py            run-scoped consumer-group derivation
+  ownership.py           exclusive local ownership of a run (flock)
   consumer.py            RunFilter, SequenceTracker, CaptureResult, run_capture()
 apps/capture/sceneops_capture/cli.py   CLI entry point (run_capture, finalizes on RUN_END)
 packages/sceneops-recording/tests/capture/   pytest, runs only inside the capture image (make streaming-test)
@@ -1004,6 +1005,7 @@ is that whole directory. Layout, per `robot_run_id`, under one capture `output_r
 ```text
 <output_root>/.partial/<robot_run_id>/   -- write target (in progress)
 <output_root>/<robot_run_id>/            -- finalized (atomically renamed)
+<output_root>/.locks/<robot_run_id>.lock -- ownership lock (§26)
 ```
 
 `prepare_partial_bag_dir()` (`finalize.py`) never appends to or resumes a
@@ -1060,7 +1062,8 @@ bridge that has not started) the guard measures consumer progress, so a
 healthy scan is never taken for idleness; after `RUN_START` it measures run
 progress only, so other runs' traffic never keeps alive a run whose `RUN_END`
 is not coming. The clock starts when the capture starts, so S must cover the
-consumer-group join (about 3 s on a new group) and any wait for the bridge. A
+consumer-group join (about 3 s on a new group; there is none with a start
+position, §26) and any wait for the bridge. A
 topic that stays busy with other runs' records while the target `RUN_START`
 never arrives is not bounded by the guard.
 
@@ -1083,13 +1086,23 @@ commit                                 partial and finds the final file. It conv
                                        stays the recording of record, the offsets are
                                        committed. Different content under the same run id
                                        fails with FinalBagExistsError and commits nothing.
-Re-run of a finalized, committed run   the run is read again from the beginning (the committed
-                                       offset is a completion marker, never a start position),
-                                       meets the final file and converges as above, committing
-                                       the same offset again. Its cost is a full scan.
+Re-run of a finalized, committed run   the run is read again from its start position (the
+                                       committed offset is a completion marker, never a start
+                                       position), meets the final file and converges as above,
+                                       committing the same offset again. Without a start
+                                       position its cost is a full scan.
+Start position not usable              the partition does not exist, or the offset is below the
+                                       low watermark or not below the log end: StartPositionError
+                                       before any file is touched. An offset that leaves the
+                                       retained log mid-capture is a consumer error
+                                       (auto.offset.reset=error), never a reset.
+Second Capture of a run that is        RunAlreadyOwnedError at once; the live attempt's
+already being captured (same           .partial directory is not touched. The lock disappears
+output root)                           with the owning process, SIGKILL included.
 Run records no longer on the topic     RUN_START is never observed: with an idle guard the
 (retention) or the run never started   capture fails (RunStartNotObservedError), without one
-                                       it waits for RUN_START.
+                                       it waits for RUN_START. With a start position the wait
+                                       ends at the log end seen at startup (below).
 Same robot_run_id streamed twice       a second RUN_START before the first RUN_END fails
                                        (RunLifecycleError). A second session after the first
                                        RUN_END is never read (Capture ends at the first
@@ -1119,11 +1132,58 @@ CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
 auto.offset.reset = "earliest"   -- correctness-first: a capture that
   starts after some of a run's messages were already published must
   still see all of them, not just whatever arrives from "now".
-start_from_beginning = True      -- every assignment starts at the beginning of
-  the topic, whatever the group has committed: the committed offset is written
-  once, after finalize, so it only ever points past the run's RUN_END.
+start_from_beginning = True      -- without a start position, every assignment starts
+  at the beginning of the topic, whatever the group has committed: the committed
+  offset is written once, after finalize, so it only ever points past the run's
+  RUN_END.
 enable.auto.commit = False       -- required; see §21.
 ```
+
+**Start position and ownership.** Where an attempt reads is chosen by the
+caller, never by the consumer group:
+
+```text
+no start position   subscribe to the topic, every partition from the beginning
+                    (a consumer-group join of ~3 s on a new group, then a scan of the
+                    history; the amplification is the topic's whole history)
+KafkaStartPosition  assign() exactly one partition at one offset: no group join, no
+(topic, partition,  rebalance, no record of any other partition. Runtime information of
+offset)             one attempt (sceneops_streaming.contracts), not RobotRun identity.
+                    `python -m sceneops_capture --start-position TOPIC:PARTITION:OFFSET`
+```
+
+The offset is normally that of the run's `RUN_START`. It is validated, never
+repaired: before the first read the consumer checks that the topic and
+partition exist and that the offset lies in `[low watermark, high watermark)`
+(`StartPositionError` otherwise), and it never falls back to `earliest`. The
+position may be earlier than `RUN_START` (other runs' records are skipped,
+§29); a position after `RUN_START` fails at the run's first telemetry record,
+and a position after the whole run, or on a partition that does not hold it,
+fails with `RunStartNotObservedError` once the log end seen at startup has been
+consumed without `RUN_START` (a position that came from a delivered `RUN_START`
+always finds it below that end). Records of the run from any other partition
+fail with `PartitionInvariantError`. The start position topic must be the
+configured telemetry topic.
+
+With `assign()` the group id only names the group that the completion commit is
+written to. The commit is that of a standalone consumer, so it fails if another
+member of the same run-scoped group is subscribed -- a no-position attempt of the
+same run running at the same time, which the ownership lock below excludes on one
+capture root. Nothing about partition ownership or the start offset depends on
+the group; removing the completion commit altogether is a separate decision.
+
+**Ownership.** One Capture attempt owns one RobotRun. `run_capture` holds an
+advisory `flock` on `<output_root>/.locks/<robot_run_id>.lock`
+(`ownership.py`) from before `.partial/<run>` is touched until after the commit.
+A second attempt for the same run on the same output root fails immediately
+with `RunAlreadyOwnedError` (naming the holder's pid) instead of discarding the
+live attempt's partial bag. The kernel releases the lock with the owning process
+(exit, crash, SIGKILL), so a restart needs no cleanup and no timeout; lock files
+are never deleted and are ignored by `scan_capture_volume`. Scope: attempts that
+share one filesystem on which `flock` is honoured (a local disk, one Docker
+volume); it is not a lease across hosts. Kafka decides neither which Capture
+instance handles a run nor when it starts: the launcher starts one attempt, and
+that attempt owns the run locally and reads its explicitly assigned partition.
 
 **Run-scoped consumer groups (`packages/sceneops-recording/sceneops_recording/capture/group_id.py`).** Every
 capture attempt derives its own Kafka `group.id` from the base above and
@@ -1163,8 +1223,9 @@ Not a `RobotRun` -- it describes a local file and its Kafka provenance
 only; nothing here is a canonical record (§18). The CLI prints it and one
 `capture_summary` JSON line for orchestration.
 
-**Out of scope:** multi-instance coordination, durable session recovery and
-exactly-once capture beyond one invocation's commit-after-finalize ordering
+**Out of scope:** scheduling or coordination of Capture instances across hosts,
+durable session recovery and exactly-once capture beyond one invocation's
+commit-after-finalize ordering
 -- a reliability boundary for later work, matching Part 1's own DLQ/retry
 deferral (§7).
 
@@ -1317,7 +1378,7 @@ The receipt does not repeat the declaration. For a finalized run it equals
 the accepted range; `finalization.reason == explicit_run_end` means a
 `RUN_END` whose count matched.
 
-A start position other than the beginning of the topic is a lower bound on
+A start position (§26) other than the beginning of the topic is a lower bound on
 the offset of `RUN_START`, never a claim about the run: other runs' records
 before `RUN_START` are skipped, and a position after `RUN_START` fails at the
 first telemetry record of the run instead of producing a recording that lacks
@@ -1452,6 +1513,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - `SESSION_CONTROL_CHANNEL` constant: `packages/sceneops-streaming/sceneops_streaming/constants.py`
 - Bridge lifecycle-event publishing: `integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py`, `integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py`
 - Control-envelope handling and RUN_END finalization in capture (`control_tracker`, `RunEndNotObservedError`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
+- Start position and ownership (`KafkaStartPosition`, pinned `assign()`, `own_run`): `packages/sceneops-streaming/sceneops_streaming/consumer.py`, `packages/sceneops-recording/sceneops_recording/capture/ownership.py`, `packages/sceneops-streaming/tests/test_consumer.py`, `packages/sceneops-recording/tests/capture/test_pinned_capture.py`, `packages/sceneops-recording/tests/capture/test_pinned_start_integration.py`, `packages/sceneops-recording/tests/test_run_ownership.py`
 - Run lifecycle and RUN_END completeness (`RunLifecycle`, `RunLifecycleError`, `RunIncompleteError`, `check_run_complete`): `packages/sceneops-recording/sceneops_recording/capture/lifecycle.py`, `packages/sceneops-recording/tests/capture/test_run_lifecycle.py`, `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py`
 - Real-Kafka lifecycle integration (solo and interleaved runs): `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py` and `tests/streaming/test_bridge_capture_lifecycle.py`
 - Point-in-time design/benchmark record: [Multi-run streaming architecture study](../history/streaming-multirun-phase7-study.md)

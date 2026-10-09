@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 
-from confluent_kafka import OFFSET_BEGINNING
+from confluent_kafka import OFFSET_BEGINNING, KafkaException, TopicPartition
 from confluent_kafka import Consumer as ConfluentConsumer
 
 
 from .config import StreamingSettings
-from .contracts import ConsumedTelemetryEnvelope
-from .errors import EnvelopeDecodeError
+from .contracts import ConsumedTelemetryEnvelope, KafkaStartPosition
+from .errors import EnvelopeDecodeError, StartPositionError
 from .wire import decode_envelope
 
 # Default size of the bounded internal fetch buffer (see poll()'s
@@ -26,6 +26,9 @@ from .wire import decode_envelope
 # package's existing policy for acks/retries/linger.ms/etc.,
 # config.py's own docstring).
 DEFAULT_POLL_BATCH_SIZE = 64
+
+# Bound on the metadata and watermark requests that validate a start position.
+START_VALIDATION_TIMEOUT_SECONDS = 10.0
 
 
 def _assign_from_beginning(consumer: ConfluentConsumer, partitions: list) -> None:
@@ -63,6 +66,21 @@ class KafkaTelemetryConsumer:
     For a caller whose commit only marks "this unit of work completed", never
     "continue from here" (the run-scoped capture): resuming past a committed
     unit would find none of its records.
+
+    ``start_position`` pins the consumer to one partition at one offset
+    (``KafkaStartPosition``): the partition is ``assign()``ed directly, so the
+    consumer never joins its group, is never rebalanced and reads nothing but
+    that partition. The position is validated against the live log before the
+    constructor returns (``StartPositionError``: unknown topic or partition,
+    offset below the low watermark, offset at or after the log end), and
+    ``auto.offset.reset`` is forced to ``error`` so an offset that leaves the
+    retained log later surfaces as an error instead of a silent reset. The
+    group id then only names the group that ``commit()`` records progress in:
+    commits are those of a standalone consumer, so they fail if another member
+    of the same group is subscribed. ``end_offset`` is the partition's high
+    watermark when the position was validated (the records the position is
+    expected to find already exist below it). Mutually exclusive with
+    ``start_from_beginning``.
 
     **Internal fetch batching (Phase 7.0.1).** ``poll()``'s PUBLIC
     contract is unchanged: one call returns one decoded record (or
@@ -120,8 +138,20 @@ class KafkaTelemetryConsumer:
         enable_auto_commit: bool = True,
         poll_batch_size: int = DEFAULT_POLL_BATCH_SIZE,
         start_from_beginning: bool = False,
+        start_position: KafkaStartPosition | None = None,
     ) -> None:
-        self._topic = topic or settings.telemetry_topic
+        if start_position is not None and start_from_beginning:
+            raise ValueError("start_position and start_from_beginning are exclusive")
+        if start_position is not None and topic not in (None, start_position.topic):
+            raise ValueError(
+                f"topic={topic!r} contradicts start_position.topic={start_position.topic!r}"
+            )
+        self._topic = (
+            start_position.topic
+            if start_position
+            else (topic or settings.telemetry_topic)
+        )
+        self.end_offset: int | None = None
         self._last_message: object | None = None
         self._poll_batch_size = poll_batch_size
         self._buffer: list = []
@@ -129,14 +159,73 @@ class KafkaTelemetryConsumer:
             {
                 "bootstrap.servers": settings.bootstrap_servers,
                 "group.id": group_id or settings.consumer_group_id,
-                "auto.offset.reset": auto_offset_reset,
+                "auto.offset.reset": (
+                    "error" if start_position is not None else auto_offset_reset
+                ),
                 "enable.auto.commit": enable_auto_commit,
             }
         )
-        if start_from_beginning:
+        if start_position is not None:
+            try:
+                self.end_offset = self._validate_start(start_position)
+            except BaseException:
+                self._consumer.close()
+                raise
+            self._consumer.assign(
+                [
+                    TopicPartition(
+                        start_position.topic,
+                        start_position.partition,
+                        start_position.offset,
+                    )
+                ]
+            )
+        elif start_from_beginning:
             self._consumer.subscribe([self._topic], on_assign=_assign_from_beginning)
         else:
             self._consumer.subscribe([self._topic])
+
+    def _validate_start(self, position: KafkaStartPosition) -> int:
+        """Returns the partition's high watermark."""
+        timeout = START_VALIDATION_TIMEOUT_SECONDS
+        try:
+            topic_metadata = self._consumer.list_topics(
+                position.topic, timeout=timeout
+            ).topics.get(position.topic)
+        except KafkaException as exc:
+            raise StartPositionError(
+                f"cannot read metadata of topic {position.topic!r}: {exc}"
+            ) from exc
+        if topic_metadata is None or topic_metadata.error is not None:
+            raise StartPositionError(f"topic {position.topic!r} does not exist")
+        if position.partition not in topic_metadata.partitions:
+            raise StartPositionError(
+                f"topic {position.topic!r} has no partition {position.partition} "
+                f"(partitions: {sorted(topic_metadata.partitions)})"
+            )
+
+        try:
+            low, high = self._consumer.get_watermark_offsets(
+                TopicPartition(position.topic, position.partition),
+                timeout=timeout,
+                cached=False,
+            )
+        except KafkaException as exc:
+            raise StartPositionError(
+                f"cannot read watermarks of {position.topic}[{position.partition}]: "
+                f"{exc}"
+            ) from exc
+        if position.offset < low:
+            raise StartPositionError(
+                f"offset {position.offset} of {position.topic}[{position.partition}] "
+                f"is below the low watermark {low}: no longer retained"
+            )
+        if position.offset >= high:
+            raise StartPositionError(
+                f"offset {position.offset} of {position.topic}[{position.partition}] "
+                f"is not in the log (high watermark {high})"
+            )
+        return high
 
     async def poll(
         self, timeout_seconds: float = 1.0

@@ -31,3 +31,9 @@ class EnvelopeDecodeError(ValueError):
         if topic is not None:
             location = f" [{topic}:{partition}@{offset}]"
         super().__init__(f"{message}{location}")
+
+
+class StartPositionError(RuntimeError):
+    """A ``KafkaStartPosition`` cannot be used: its topic or partition does not
+    exist, or its offset is outside the retained log (below the low watermark,
+    or at/after the end). The consumer never substitutes another position."""

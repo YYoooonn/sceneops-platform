@@ -192,6 +192,18 @@ def test_unrecognized_entries_are_reported_not_scanned(tmp_path):
     )
 
 
+def test_run_ownership_locks_are_not_entries_of_the_volume(tmp_path):
+    from sceneops_recording.capture.ownership import own_run
+
+    finalized(tmp_path, "run-1")
+    with own_run(tmp_path, "run-1"), own_run(tmp_path, "run-2"):
+        report = scan_capture_volume(tmp_path)
+
+    assert (tmp_path / ".locks" / "run-2.lock").is_file()
+    assert [run.run_id for run in report.runs] == ["run-1"]
+    assert report.unrecognized_entries == ()
+
+
 def test_missing_capture_root_fails_loudly(tmp_path):
     with pytest.raises(RecordingValidationError):
         scan_capture_volume(tmp_path / "nowhere")

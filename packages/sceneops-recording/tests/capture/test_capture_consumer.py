@@ -226,6 +226,7 @@ def _install_fake_consumer(monkeypatch, queue):
         auto_offset_reset,
         enable_auto_commit,
         start_from_beginning,
+        start_position,
     ):
         # Run-scoped (Phase 6.6.1), never the bare base literally -- every
         # test in this file targets robot_run_id="run-1", so the derived

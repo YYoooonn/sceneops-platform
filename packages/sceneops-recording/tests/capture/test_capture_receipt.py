@@ -91,6 +91,7 @@ def _install(monkeypatch, queue) -> list[_FakeConsumer]:
         auto_offset_reset,
         enable_auto_commit,
         start_from_beginning,
+        start_position,
     ):
         assert group_id.startswith(CAPTURE_CONSUMER_GROUP_ID + "-")
         consumer = _FakeConsumer(queue)

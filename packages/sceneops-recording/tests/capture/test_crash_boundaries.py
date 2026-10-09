@@ -83,6 +83,7 @@ def _install_fake_consumer(monkeypatch, queue):
         auto_offset_reset,
         enable_auto_commit,
         start_from_beginning,
+        start_position,
     ):
         # Run-scoped (Phase 6.6.1) -- see test_capture_consumer.py's
         # identical factory for why this checks "derived from" rather

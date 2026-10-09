@@ -8,6 +8,7 @@ Layout, per ``robot_run_id``, under one capture ``output_root``:
 
     <output_root>/.partial/<robot_run_id>/   -- write target (in progress)
     <output_root>/<robot_run_id>/            -- finalized (atomically renamed)
+    <output_root>/.locks/<robot_run_id>.lock -- single-owner lock (ownership.py)
 
 ``os.replace()`` is atomic only within a single filesystem, which is
 guaranteed here because both paths share ``output_root``.
@@ -30,6 +31,10 @@ def partial_bag_path(output_root: Path, robot_run_id: str) -> Path:
 
 def final_bag_path(output_root: Path, robot_run_id: str) -> Path:
     return output_root / robot_run_id
+
+
+def run_lock_path(output_root: Path, robot_run_id: str) -> Path:
+    return output_root / ".locks" / f"{robot_run_id}.lock"
 
 
 def prepare_partial_bag_dir(output_root: Path, robot_run_id: str) -> Path:

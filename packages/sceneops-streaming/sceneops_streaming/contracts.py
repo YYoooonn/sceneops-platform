@@ -26,6 +26,30 @@ class ConsumedTelemetryEnvelope:
     offset: int
 
 
+@dataclass(frozen=True)
+class KafkaStartPosition:
+    """Where a pinned consumer starts reading: one partition of one topic at
+    one offset.
+
+    Execution information for a single consume attempt -- never part of a
+    RobotRun's canonical identity or metadata. The offset is a validated hint,
+    not a promise: ``KafkaTelemetryConsumer`` checks it against the live log and
+    fails with ``StartPositionError`` instead of resetting to another position.
+    """
+
+    topic: str
+    partition: int
+    offset: int
+
+    def __post_init__(self) -> None:
+        if not self.topic:
+            raise ValueError("topic must not be empty")
+        if self.partition < 0:
+            raise ValueError(f"partition must be >= 0, got {self.partition}")
+        if self.offset < 0:
+            raise ValueError(f"offset must be >= 0, got {self.offset}")
+
+
 @runtime_checkable
 class TelemetryProducer(Protocol):
     """Port-like contract for publishing telemetry, mirroring

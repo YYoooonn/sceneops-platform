@@ -9,7 +9,9 @@ abort guard, not a finalization policy: when the run shows no activity for that
 long before RUN_END, the capture fails (non-zero exit) without finalizing or
 committing Kafka offsets, so a bridge that was killed cannot leave a truncated
 recording that looks complete. The partial bag stays; re-running the capture
-discards it and rebuilds the run from the beginning of the topic.
+discards it and rebuilds the run from the start position (the beginning of the
+topic when none is given). Only one capture of a run can run at a time on an output
+root; a second one fails at once.
 
 The finalized bag directory holds the MCAP and a ``capture_receipt.json``
 (acquisition metadata, ADR-008) that ``publish --from-capture`` reads, so
@@ -32,8 +34,11 @@ import json
 import sys
 from pathlib import Path
 
-from sceneops_streaming import build_channel_registry
-from sceneops_streaming import StreamingSettings
+from sceneops_streaming import (
+    KafkaStartPosition,
+    StreamingSettings,
+    build_channel_registry,
+)
 
 from sceneops_recording.capture.consumer import run_capture
 
@@ -65,12 +70,32 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=float,
         help="Abort (without finalizing) after this many seconds without progress "
         "before the run's RUN_END: before RUN_START, no record of any run "
-        "arrives (covers the consumer group join, ~3 s); after it, no record of "
-        "this run arrives, whatever other runs publish. Default: wait for "
-        "RUN_END.",
+        "arrives (without --start-position this covers the consumer group join, "
+        "~3 s); after it, no record of this run arrives, whatever other runs "
+        "publish. Default: wait for RUN_END.",
+    )
+    parser.add_argument(
+        "--start-position",
+        type=_start_position,
+        metavar="TOPIC:PARTITION:OFFSET",
+        help="Read exactly this partition from this offset (normally the offset of "
+        "the run's RUN_START) instead of scanning the whole topic from the "
+        "beginning: no consumer-group join, no rebalance. A position that is not "
+        "in the retained log, or that does not lead to the run's RUN_START, fails "
+        "the capture; it is never replaced by another position.",
     )
     parser.add_argument("--poll-timeout-seconds", type=float, default=1.0)
     return parser.parse_args(argv)
+
+
+def _start_position(text: str) -> KafkaStartPosition:
+    try:
+        topic, partition, offset = text.rsplit(":", 2)
+        return KafkaStartPosition(topic, int(partition), int(offset))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected TOPIC:PARTITION:OFFSET, got {text!r}: {exc}"
+        ) from exc
 
 
 async def _main_async(args: argparse.Namespace) -> int:
@@ -85,6 +110,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         registry=build_channel_registry(args.channels_file),
         stop_on_run_end=True,
         robot_platform=args.robot_platform,
+        start=args.start_position,
     )
 
     print("CaptureResult:")
