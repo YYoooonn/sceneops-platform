@@ -316,7 +316,9 @@ class StreamingBridgeNode(Node):
         self._lifecycle_sequence += 1
         return seq
 
-    def _publish_lifecycle_event(self, event_type: RunEventType) -> None:
+    def _publish_lifecycle_event(
+        self, event_type: RunEventType, *, telemetry_count: int | None = None
+    ) -> None:
         """Best-effort -- a control event failing to publish must never
         crash bridge startup/shutdown or abort telemetry publishing. A RUN_END
         that fails to publish leaves the run unfinalizable by capture, which
@@ -335,6 +337,7 @@ class StreamingBridgeNode(Node):
                 robot_id=self._robot_id,
                 robot_run_id=self._robot_run_id,
                 sequence_number=self._next_lifecycle_sequence_number(),
+                telemetry_count=telemetry_count,
             )
             self._bridge.publish(envelope)
         except Exception as exc:
@@ -424,20 +427,28 @@ class StreamingBridgeNode(Node):
         close producer -> destroy node.
 
         RUN_END is only published once every telemetry record the producer
-        accepted has been acknowledged by the broker. RUN_END carries no
-        record count, so one that follows lost tail telemetry would make the
-        truncated stream look complete to capture; withholding it makes
-        capture refuse the run. (A message that failed before reaching the
-        producer leaves a sequence gap, which capture already rejects.) It is published on the SAME producer instance as
-        the telemetry, after it, never on a separate possibly-racing
-        connection.
+        accepted has been acknowledged by the broker, and it declares
+        ``telemetry_count``: the number of telemetry sequence numbers this
+        bridge assigned. That is the size of the sequence space, so it counts
+        a message that failed before reaching the producer (``failed_count``)
+        as well as the delivered ones; capture then sees the loss as a
+        sequence gap or, at the tail, as a count mismatch, and refuses the
+        run. Delivery failure withholds RUN_END (the broker may never have
+        stored a record the count includes); a pre-producer failure does not,
+        because the declared count already makes capture reject it with a
+        specific error. The count is final here: the caller has stopped
+        spinning, so no callback can assign another sequence number. It is
+        published on the SAME producer instance as the telemetry, after it,
+        never on a separate possibly-racing connection.
 
         This is the GRACEFUL path only -- a hard kill (SIGKILL, crash)
         never reaches this method, so that run never gets a RUN_END and
         capture refuses to finalize it."""
         if self._emit_lifecycle_events:
             if self._telemetry_fully_delivered(timeout_seconds):
-                self._publish_lifecycle_event(RunEventType.RUN_END)
+                self._publish_lifecycle_event(
+                    RunEventType.RUN_END, telemetry_count=self._sequence
+                )
             else:
                 self.get_logger().error(
                     "telemetry was not fully delivered -- RUN_END withheld so "

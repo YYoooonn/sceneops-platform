@@ -11,6 +11,7 @@ Runs only inside the capture image (needs the ROS 2 interface definitions + mcap
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import pytest
 from sceneops_streaming import (
@@ -33,7 +34,9 @@ from sceneops_recording.capture.finalize import (
     final_bag_path,
     partial_bag_path,
 )
+from sceneops_recording.capture.validation import McapValidationError
 from sceneops_recording.capture.lifecycle import (
+    RunIncompleteError,
     RunLifecycle,
     RunLifecycleError,
     RunPhase,
@@ -247,7 +250,7 @@ def _normal_run(first_offset: int = 0):
         _c(START, 0, first_offset),
         _t(0, first_offset + 1),
         _t(1, first_offset + 2),
-        _c(END, 1, first_offset + 3),
+        _c(END, 1, first_offset + 3, telemetry_count=2),
     ]
 
 
@@ -266,7 +269,13 @@ def test_normal_run_finalizes_on_run_end_and_commits_once(tmp_path, install) -> 
 def test_telemetry_before_run_start_fails_at_the_first_record(
     tmp_path, install
 ) -> None:
-    queue = [_t(0, 0), _t(1, 1), _c(START, 0, 2), _t(2, 3), _c(END, 1, 4)]
+    queue = [
+        _t(0, 0),
+        _t(1, 1),
+        _c(START, 0, 2),
+        _t(2, 3),
+        _c(END, 1, 4, telemetry_count=3),
+    ]
     created = install(queue)
 
     with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
@@ -283,7 +292,7 @@ def test_missing_run_start_with_run_end_present_fails_on_the_first_record(
     """The bridge's RUN_START never reached the topic: telemetry starts at
     sequence 0 and RUN_END is control sequence 1. The sequence trackers alone
     only notice this at RUN_END ("first control sequence was 1")."""
-    created = install([_t(0, 0), _t(1, 1), _c(END, 1, 2)])
+    created = install([_t(0, 0), _t(1, 1), _c(END, 1, 2, telemetry_count=2)])
 
     with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
         _capture(tmp_path)
@@ -292,7 +301,7 @@ def test_missing_run_start_with_run_end_present_fails_on_the_first_record(
 
 
 def test_run_end_without_run_start_is_rejected(tmp_path, install) -> None:
-    created = install([_c(END, 0, 0)])
+    created = install([_c(END, 0, 0, telemetry_count=0)])
 
     with pytest.raises(RunLifecycleError, match="RUN_END in phase armed"):
         _capture(tmp_path)
@@ -305,7 +314,7 @@ def test_start_after_run_start_is_a_lifecycle_failure_not_a_sequence_error(
 ) -> None:
     """A start position past RUN_START: the first record of the run it reads
     is mid-run telemetry."""
-    created = install([_t(3, 5), _t(4, 6), _c(END, 1, 7)])
+    created = install([_t(3, 5), _t(4, 6), _c(END, 1, 7, telemetry_count=5)])
 
     with pytest.raises(RunLifecycleError, match="precedes RUN_START"):
         _capture(tmp_path)
@@ -321,7 +330,7 @@ def test_start_before_run_start_skips_other_runs_and_captures_the_run(
     queue = [
         _c(START, 0, 0, run_id="other"),
         _t(0, 1, run_id="other"),
-        _c(END, 1, 2, run_id="other"),
+        _c(END, 1, 2, run_id="other", telemetry_count=0),
         *_normal_run(first_offset=3),
     ]
     created = install(queue)
@@ -343,7 +352,12 @@ def test_missing_run_end_is_not_finalized(tmp_path, install) -> None:
 
 
 def test_immediate_duplicate_run_start_is_skipped(tmp_path, install) -> None:
-    queue = [_c(START, 0, 0), _c(START, 0, 1), _t(0, 2), _c(END, 1, 3)]
+    queue = [
+        _c(START, 0, 0),
+        _c(START, 0, 1),
+        _t(0, 2),
+        _c(END, 1, 3, telemetry_count=1),
+    ]
     created = install(queue)
 
     result = _capture(tmp_path)
@@ -355,7 +369,13 @@ def test_immediate_duplicate_run_start_is_skipped(tmp_path, install) -> None:
 def test_run_start_repeated_after_telemetry_is_a_second_session(
     tmp_path, install
 ) -> None:
-    queue = [_c(START, 0, 0), _t(0, 1), _c(START, 0, 2), _t(1, 3), _c(END, 1, 4)]
+    queue = [
+        _c(START, 0, 0),
+        _t(0, 1),
+        _c(START, 0, 2),
+        _t(1, 3),
+        _c(END, 1, 4, telemetry_count=2),
+    ]
     created = install(queue)
 
     with pytest.raises(RunLifecycleError, match="immediate redelivery"):
@@ -367,7 +387,13 @@ def test_run_start_repeated_after_telemetry_is_a_second_session(
 def test_second_run_start_with_the_next_control_sequence_is_rejected(
     tmp_path, install
 ) -> None:
-    queue = [_c(START, 0, 0), _t(0, 1), _c(START, 1, 2), _t(1, 3), _c(END, 2, 4)]
+    queue = [
+        _c(START, 0, 0),
+        _t(0, 1),
+        _c(START, 1, 2),
+        _t(1, 3),
+        _c(END, 2, 4, telemetry_count=2),
+    ]
     created = install(queue)
 
     with pytest.raises(RunLifecycleError, match="exactly one streaming session"):
@@ -376,27 +402,151 @@ def test_second_run_start_with_the_next_control_sequence_is_rejected(
     _assert_nothing_finalized_or_committed(tmp_path, created[0])
 
 
-def test_run_end_repeating_run_start_exactly_is_not_taken_for_a_duplicate(
+def test_run_end_at_run_starts_control_sequence_is_a_conflict(
     tmp_path, install
 ) -> None:
-    """RUN_START and RUN_END at the same control sequence carry the same
-    payload; the sequence tracker alone would skip the RUN_END as a duplicate
-    and the capture would wait for an end that already arrived."""
-    created = install([_c(START, 0, 0), _t(0, 1), _c(END, 0, 2)])
+    """RUN_END declares a count, so its payload can never equal RUN_START's: at
+    the same control sequence the tracker rejects it as a conflicting
+    redelivery instead of skipping it as a duplicate."""
+    created = install([_c(START, 0, 0), _t(0, 1), _c(END, 0, 2, telemetry_count=1)])
 
-    with pytest.raises(RunLifecycleError):
+    with pytest.raises(SequenceIntegrityError, match="conflicting redelivery"):
         _capture(tmp_path)
 
     _assert_nothing_finalized_or_committed(tmp_path, created[0])
 
 
 def test_telemetry_gap_inside_a_started_run_fails(tmp_path, install) -> None:
-    created = install([_c(START, 0, 0), _t(0, 1), _t(2, 2), _c(END, 1, 3)])
+    created = install(
+        [_c(START, 0, 0), _t(0, 1), _t(2, 2), _c(END, 1, 3, telemetry_count=3)]
+    )
 
     with pytest.raises(SequenceIntegrityError, match="gap"):
         _capture(tmp_path)
 
     _assert_nothing_finalized_or_committed(tmp_path, created[0])
+
+
+# ---------------------------------------------------------------------
+# Completeness: RUN_END's declared telemetry_count against what was observed
+# ---------------------------------------------------------------------
+
+
+def _run_with_count(declared: int, telemetry: int, **kw):
+    return [
+        _c(START, 0, 0),
+        *[_t(i, 1 + i) for i in range(telemetry)],
+        _c(END, 1, 1 + telemetry, telemetry_count=declared, **kw),
+    ]
+
+
+def test_run_end_count_matching_the_observed_telemetry_finalizes(
+    tmp_path, install
+) -> None:
+    created = install(_run_with_count(declared=4, telemetry=4))
+
+    result = _capture(tmp_path)
+
+    assert result.message_count == 4
+    assert created[0].committed is True
+
+
+def test_missing_tail_telemetry_is_rejected_by_the_declared_count(
+    tmp_path, install
+) -> None:
+    """Telemetry 0..999 then RUN_END(2000): nothing is out of order, only the
+    count shows 1000 records never arrived."""
+    created = install(_run_with_count(declared=2000, telemetry=1000))
+
+    with pytest.raises(
+        RunIncompleteError, match=r"declares 2000 .* observed 1000: 1000 missing"
+    ):
+        _capture(tmp_path)
+
+    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+    assert partial_bag_path(tmp_path, "run-1").exists()
+
+
+def test_run_end_declaring_less_than_observed_is_rejected(tmp_path, install) -> None:
+    created = install(_run_with_count(declared=2, telemetry=4))
+
+    with pytest.raises(RunIncompleteError, match="2 more than the producer assigned"):
+        _capture(tmp_path)
+
+    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+
+
+def test_incomplete_error_is_a_lifecycle_error() -> None:
+    assert issubclass(RunIncompleteError, RunLifecycleError)
+
+
+def test_zero_telemetry_run_declaring_telemetry_is_rejected(tmp_path, install) -> None:
+    created = install(_run_with_count(declared=3, telemetry=0))
+
+    with pytest.raises(RunIncompleteError, match="declares 3 .* observed 0"):
+        _capture(tmp_path)
+
+    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+
+
+def test_zero_telemetry_run_with_matching_count_still_has_no_recording(
+    tmp_path, install
+) -> None:
+    """Completeness holds (0 == 0); the empty recording is refused by the MCAP
+    validation, not by the closing contract."""
+    created = install(_run_with_count(declared=0, telemetry=0))
+
+    with pytest.raises(McapValidationError, match="zero messages"):
+        _capture(tmp_path)
+
+    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+
+
+@pytest.mark.parametrize("payload", [b"{}", b"not json", b'{"telemetry_count": "2"}'])
+def test_run_end_without_a_valid_count_is_rejected(tmp_path, install, payload) -> None:
+    queue = _run_with_count(declared=2, telemetry=2)
+    queue[-1] = dataclasses.replace(
+        queue[-1], envelope=queue[-1].envelope.model_copy(update={"payload": payload})
+    )
+    created = install(queue)
+
+    with pytest.raises(RunLifecycleError, match="RUN_END (payload|must declare)"):
+        _capture(tmp_path)
+
+    _assert_nothing_finalized_or_committed(tmp_path, created[0])
+
+
+def test_exact_duplicate_telemetry_does_not_inflate_the_count(
+    tmp_path, install
+) -> None:
+    queue = _run_with_count(declared=3, telemetry=3)
+    queue.insert(3, queue[2])  # redelivery of telemetry sequence 1
+    created = install(queue)
+
+    result = _capture(tmp_path)
+
+    assert result.message_count == 3
+    assert created[0].committed is True
+
+
+def test_conflicting_run_end_after_the_first_is_never_read(tmp_path, install) -> None:
+    good = _run_with_count(declared=2, telemetry=2)
+    stale = _c(END, 1, 4, telemetry_count=99)
+    created = install([*good, stale])
+
+    result = _capture(tmp_path)
+
+    assert result.message_count == 2
+    assert created[0].remaining == 1
+
+
+def test_rejected_incomplete_run_is_rejected_again_on_replay(tmp_path, install) -> None:
+    queue = _run_with_count(declared=9, telemetry=3)
+    for _ in range(2):
+        created = install(queue)
+        with pytest.raises(RunIncompleteError):
+            _capture(tmp_path)
+        _assert_nothing_finalized_or_committed(tmp_path, created[-1])
 
 
 def test_retry_after_a_mid_run_crash_rebuilds_the_whole_run(tmp_path, install) -> None:
@@ -510,7 +660,11 @@ def test_other_runs_traffic_does_not_keep_a_dead_run_alive(tmp_path, install) ->
 
 def test_a_slow_but_live_run_is_never_idle(tmp_path, install) -> None:
     """One record every 5 s against a 10 s guard, for 50 s."""
-    queue = [_c(START, 0, 0), *[_t(i, 1 + i) for i in range(10)], _c(END, 1, 11)]
+    queue = [
+        _c(START, 0, 0),
+        *[_t(i, 1 + i) for i in range(10)],
+        _c(END, 1, 11, telemetry_count=10),
+    ]
     created = install(queue, tick=5.0)
 
     result = _capture(tmp_path, idle_timeout_seconds=10)

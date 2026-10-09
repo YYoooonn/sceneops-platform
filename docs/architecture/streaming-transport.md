@@ -159,9 +159,9 @@ a record whose delivery finally fails (message.timeout.ms)
 
 Only a delivery report without error means a record is durable on the
 broker; `publish` returning means nothing about delivery. The ROS2 bridge
-publishes `RUN_END` only after a `flush` that raised nothing (§14), because
-a `RUN_END` that follows lost tail telemetry is indistinguishable from the
-end of a complete run on the topic alone. No exactly-once claim is made
+publishes `RUN_END` only after a `flush` that raised nothing (§14): a record
+whose delivery failed may never have reached the broker although the
+`RUN_END` count (§28) includes it. No exactly-once claim is made
 end-to-end -- Kafka delivery and canonical-side idempotency (e.g. a dedup key
 when this feeds `RobotRun`/MCAP) are separate concerns.
 
@@ -652,8 +652,9 @@ timeout_sec=0.5)`) checks it every 0.5s. For a finite source,
 `--exit-after-idle-seconds N` ends the loop once at least one message was
 bridged and none arrived for `N` seconds. On shutdown: stop spinning (no
 new callbacks) -> flush the producer, bounded by a timeout -> publish `RUN_END`
-only if that flush reported no delivery failure (capture finalizes a run only
-on its `RUN_END`, so withholding it makes capture refuse the run) -> flush and
+only if that flush reported no delivery failure, declaring `telemetry_count`
+(§28; capture finalizes a run only on its `RUN_END`, so withholding it makes
+capture refuse the run) -> flush and
 close the producer -> print one `bridge_summary` JSON line (published
 and failed counts, per channel) -> `node.destroy_node()` ->
 `rclpy.shutdown()`. If any message failed during the run, the process exits
@@ -989,6 +990,11 @@ do -- per §21's ordering, nothing gets finalized or committed, so a
 restart safely rebuilds the run from the beginning of the topic rather than
 silently accepting corrupted sequencing.
 
+The tracker proves that what arrived is a gap-free prefix `0..K-1`. It cannot
+prove that `K` is the end of the run: records lost after the last one it saw
+leave nothing to compare against. `RUN_END`'s `telemetry_count` (§28) supplies
+the end.
+
 ## 25. Temp/final file lifecycle
 
 The capture writer writes into a *directory* holding one `.mcap` file --
@@ -1092,7 +1098,8 @@ Bridge killed without RUN_END          no RUN_END arrives; the idle-timeout guar
                                        capture (RunEndNotObservedError): nothing is finalized
                                        or committed, the .partial directory stays, and a re-run
                                        discards it and rebuilds from Kafka.
-Bridge message failure                 counted and logged; the sequence gap fails the capture.
+Bridge message failure                 counted and logged; the sequence gap fails the capture,
+                                       and a failed last message fails it on the RUN_END count.
 Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized or committed.
 partition spread, unsupported channel
 Kafka retention                        capture can only rebuild what the topic still holds.
@@ -1209,13 +1216,45 @@ sees these records too; `is_control_envelope()` makes them trivially
 filterable by any consumer that doesn't care about lifecycle.
 
 A control envelope's `sequence_number` does not share that run's
-telemetry sequence counter -- the bridge reads its own, independent
-live counter without incrementing it, so `RUN_START` always lands at
-sequence_number `0`, the same position the first real telemetry
-message also needs in its own space (§29 covers why this is safe).
+telemetry sequence counter -- the bridge numbers control events with its
+own, independent counter, so `RUN_START` always lands at
+sequence_number `0` and `RUN_END` at `1`, while the first real telemetry
+message also needs `0` in its own space (§29 covers why this is safe).
 
 Capture finalizes a run only on its `RUN_END` (§26), so a bridge publishes both
 events -- `RUN_END` only after its telemetry was fully delivered (§14).
+
+**Closing state.** `RUN_END`'s payload is a JSON object with a required
+integer `telemetry_count >= 0` (and an optional `reason`); `RUN_START`'s
+payload carries no count. `telemetry_count` is the number of telemetry
+sequence numbers the producer assigned to the run.
+
+```text
+telemetry sequence_number   one counter per robot_run_id, across every channel,
+                            assigned by the bridge to each message it receives
+                            (the transport arrival order), starting at 0
+telemetry_count == N        the run's telemetry is exactly sequence numbers 0..N-1
+telemetry_count == 0        the run bridged nothing
+```
+
+The counter advances for every received message, including one the bridge then
+fails to forward, so `telemetry_count` is the size of the sequence space, not
+the number of delivered records. A message that failed before reaching the
+producer therefore appears to Capture as a gap, or, when it was the last one,
+as a count larger than what arrived.
+
+Because the sequence space is dense, `telemetry_count` and "last telemetry
+sequence" state the same fact (`last = count - 1`, undefined for zero); the
+count is the one carried, since it is also defined for an empty run. Per-channel
+counts, a digest or a last source timestamp are not carried: no loss mode of the
+transport is exposed by them that the dense global sequence and the count do not
+already expose.
+
+The bridge computes the count after it stopped spinning (no callback can assign
+another sequence number) and publishes `RUN_END` only after the telemetry flush
+reported no delivery failure. The count is not a claim that every counted
+record is durable, only that all records of the sequence space were produced
+and, with a clean flush, delivered.
 
 ## 29. Control envelopes in capture
 
@@ -1251,10 +1290,32 @@ RUN_START mandatory                      yes; the first record of the run that C
 telemetry or RUN_END before RUN_START    fails, rather than being discovered at RUN_END
 RUN_START redelivered immediately        skipped (a producer retry); after any other record
   after itself, same sequence/payload      of the run it is a second session and fails
-RUN_END repeating RUN_START's bytes      fails (the payload does not encode the event type)
+RUN_END without a valid                  fails (RunLifecycleError)
+  telemetry_count
+RUN_END's telemetry_count differs from   fails (RunIncompleteError): tail telemetry lost, or
+  the telemetry Capture accepted           a RUN_END that does not describe this stream
+RUN_END at RUN_START's control sequence  fails (SequenceIntegrityError, conflicting
+                                           redelivery: the payloads differ)
 unrecognized future control event        sequence validated, otherwise ignored
 telemetry after RUN_END                  not detectable: Capture stops at RUN_END
 ```
+
+**Completeness.** When `RUN_END` is consumed, Capture compares its
+`telemetry_count` with the number of distinct telemetry sequence numbers the
+tracker accepted (`last_sequence + 1`, 0 if none; exact redeliveries do not
+count twice). A mismatch raises `RunIncompleteError`, a `RunLifecycleError`,
+before the MCAP is validated, the receipt written, anything finalized or an
+offset committed. Together with §24, a finalized run is a gap-free,
+in-order telemetry sequence `0..N-1` that the producer declared to be all of
+its telemetry. A run with `telemetry_count == 0` and no telemetry is complete
+but has no recording to finalize: the MCAP validation refuses an empty file.
+Records the bridge never received (lost in DDS before the bridge's callback) are
+outside the sequence space and not covered.
+
+The receipt does not repeat the declaration. For a finalized run it equals
+`message_count`, and `kafka.first_sequence`/`kafka.last_sequence` already record
+the accepted range; `finalization.reason == explicit_run_end` means a
+`RUN_END` whose count matched.
 
 A start position other than the beginning of the topic is a lower bound on
 the offset of `RUN_START`, never a claim about the run: other runs' records
@@ -1387,11 +1448,11 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 
 **Run lifecycle:**
 
-- Lifecycle control envelopes (`RunEventType`, `build_control_envelope`/`is_control_envelope`/`parse_run_event`): `packages/sceneops-streaming/sceneops_streaming/control.py`, `packages/sceneops-streaming/tests/test_control.py`
+- Lifecycle control envelopes (`RunEventType`, `build_control_envelope`/`is_control_envelope`/`parse_run_event`/`parse_run_end_telemetry_count`): `packages/sceneops-streaming/sceneops_streaming/control.py`, `packages/sceneops-streaming/tests/test_control.py`
 - `SESSION_CONTROL_CHANNEL` constant: `packages/sceneops-streaming/sceneops_streaming/constants.py`
 - Bridge lifecycle-event publishing: `integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py`, `integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py`
 - Control-envelope handling and RUN_END finalization in capture (`control_tracker`, `RunEndNotObservedError`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
-- Run lifecycle (`RunLifecycle`, `RunLifecycleError`): `packages/sceneops-recording/sceneops_recording/capture/lifecycle.py`, `packages/sceneops-recording/tests/capture/test_run_lifecycle.py`, `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py`
+- Run lifecycle and RUN_END completeness (`RunLifecycle`, `RunLifecycleError`, `RunIncompleteError`, `check_run_complete`): `packages/sceneops-recording/sceneops_recording/capture/lifecycle.py`, `packages/sceneops-recording/tests/capture/test_run_lifecycle.py`, `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py`
 - Real-Kafka lifecycle integration (solo and interleaved runs): `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py` and `tests/streaming/test_bridge_capture_lifecycle.py`
 - Point-in-time design/benchmark record: [Multi-run streaming architecture study](../history/streaming-multirun-phase7-study.md)
 

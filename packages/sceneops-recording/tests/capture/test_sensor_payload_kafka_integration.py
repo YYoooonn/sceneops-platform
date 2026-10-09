@@ -95,6 +95,7 @@ def test_camera_and_lidar_sized_payloads_round_trip_through_capture(tmp_path) ->
                 robot_id=robot,
                 robot_run_id=run,
                 sequence_number=1,
+                telemetry_count=len(payloads),
             )
         )
         await producer.close()
@@ -180,6 +181,7 @@ def test_zero_source_timestamp_round_trips_through_real_kafka_and_capture(
                 robot_id=robot,
                 robot_run_id=run,
                 sequence_number=1,
+                telemetry_count=1,
             )
         )
         await producer.close()

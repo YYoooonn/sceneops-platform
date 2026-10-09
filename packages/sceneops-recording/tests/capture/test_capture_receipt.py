@@ -184,13 +184,14 @@ def test_explicit_run_end_reason(tmp_path, monkeypatch) -> None:
 
     run_id = "run-1"
 
-    def control(event_type, sequence_number, offset):
+    def control(event_type, sequence_number, offset, telemetry_count=None):
         return ConsumedTelemetryEnvelope(
             envelope=build_control_envelope(
                 event_type=event_type,
                 robot_id="robot-1",
                 robot_run_id=run_id,
                 sequence_number=sequence_number,
+                telemetry_count=telemetry_count,
             ),
             key=run_id.encode(),
             topic=TOPIC,
@@ -201,7 +202,7 @@ def test_explicit_run_end_reason(tmp_path, monkeypatch) -> None:
     queue = [
         control(RunEventType.RUN_START, 0, 9),
         *_queue(run_id),
-        control(RunEventType.RUN_END, 1, 13),
+        control(RunEventType.RUN_END, 1, 13, telemetry_count=3),
     ]
     _install(monkeypatch, queue)
 

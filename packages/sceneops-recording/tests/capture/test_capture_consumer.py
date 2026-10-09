@@ -71,6 +71,7 @@ def _control(
     partition: int = 0,
     offset: int = 0,
     reason: str | None = None,
+    telemetry_count: int | None = None,
 ):
     # NOTE: build_control_envelope's payload only ever encodes `reason`
     # (e.g. b"{}" for every call that omits one) -- it does NOT encode
@@ -88,6 +89,7 @@ def _control(
         robot_run_id=robot_run_id,
         sequence_number=sequence_number,
         reason=reason,
+        telemetry_count=telemetry_count,
     )
     return _consumed(envelope, partition=partition, offset=offset)
 
@@ -422,7 +424,7 @@ def test_run_capture_handles_run_start_telemetry_run_end(tmp_path, monkeypatch) 
         _control(RunEventType.RUN_START, sequence_number=0, offset=0),
         _consumed(telemetry[0], offset=1),
         _consumed(telemetry[1], offset=2),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=3),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=3, telemetry_count=2),
     ]
     created = _install_fake_consumer(monkeypatch, queue)
 
@@ -464,7 +466,7 @@ def test_run_capture_mcap_contains_no_control_channel_records(
     queue = [
         _control(RunEventType.RUN_START, sequence_number=0, offset=0),
         _consumed(_envelope(sequence_number=0), offset=1),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=2),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=2, telemetry_count=1),
     ]
     _install_fake_consumer(monkeypatch, queue)
 
@@ -490,7 +492,7 @@ def test_run_capture_control_events_interleaved_with_telemetry(
         _consumed(_envelope(sequence_number=0), offset=1),
         _consumed(_envelope(sequence_number=1), offset=2),
         _consumed(_envelope(sequence_number=2), offset=3),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=4),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=4, telemetry_count=3),
     ]
     _install_fake_consumer(monkeypatch, queue)
 
@@ -517,7 +519,7 @@ def test_run_capture_detects_gap_in_control_event_sequence(
         _consumed(_envelope(sequence_number=0), offset=1),
         # Control stream jumps straight to sequence 5 -- a gap in the
         # control space specifically; telemetry's own sequence is fine.
-        _control(RunEventType.RUN_END, sequence_number=5, offset=2),
+        _control(RunEventType.RUN_END, sequence_number=5, offset=2, telemetry_count=1),
     ]
     created = _install_fake_consumer(monkeypatch, queue)
 
@@ -613,7 +615,7 @@ def test_run_capture_stop_on_run_end_finalizes_exactly_at_run_end(
     queue = [
         _control(RunEventType.RUN_START, sequence_number=0, offset=0),
         *[_consumed(fx, offset=1 + i) for i, fx in enumerate(telemetry)],
-        _control(RunEventType.RUN_END, sequence_number=1, offset=4),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=4, telemetry_count=3),
         # Anything after RUN_END is outside this capture.
         _consumed(_envelope(sequence_number=3), offset=5),
     ]
@@ -694,7 +696,7 @@ def test_run_capture_retry_after_unfinished_attempt_finalizes_on_run_end(
     complete = [
         *truncated,
         _consumed(_envelope(sequence_number=1), offset=2),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=3),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=3, telemetry_count=2),
     ]
     created = _install_fake_consumer(monkeypatch, complete)
     result = asyncio.run(

@@ -15,6 +15,7 @@ Kafka broker (``make streaming-up``).
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 
@@ -26,6 +27,8 @@ from nav_msgs.msg import Odometry
 from rclpy.serialization import serialize_message
 
 from sceneops_recording.capture.consumer import run_capture
+from sceneops_recording.capture.finalize import final_bag_path
+from sceneops_recording.capture.lifecycle import RunIncompleteError
 from sceneops_recording.capture_receipt import (
     FinalizationReason,
     load_canonical_capture_receipt,
@@ -101,6 +104,7 @@ async def _records_of_run(settings: StreamingSettings, robot_run_id: str) -> lis
                     "control": event,
                     "channel": envelope.channel,
                     "sequence": envelope.sequence_number,
+                    "payload": envelope.payload,
                 }
             )
             if event is RunEventType.RUN_END:
@@ -173,6 +177,8 @@ def test_real_bridge_run_is_run_start_telemetry_run_end_and_the_receipt_spans_it
     assert len(telemetry) == telemetry_count
     assert [r["sequence"] for r in telemetry] == list(range(telemetry_count))
     assert [r["sequence"] for r in control] == [0, 1]
+    # RUN_END states the size of the telemetry sequence space the bridge assigned.
+    assert json.loads(control[1]["payload"]) == {"telemetry_count": telemetry_count}
     assert {r["partition"] for r in records} == {records[0]["partition"]}
     # The only run on its topic: its records are one contiguous offset range.
     offsets = [r["offset"] for r in records]
@@ -195,3 +201,48 @@ def test_real_bridge_run_is_run_start_telemetry_run_end_and_the_receipt_spans_it
         telemetry_count - 1,
     )
     assert _mcap_channels(result.path) == {"/vehicle/odom"}
+
+
+def test_real_bridge_tail_message_failure_is_refused_by_capture(
+    tmp_path, ros_context
+) -> None:
+    """The bridge's last message fails before reaching the producer, so the
+    telemetry on the topic is a gap-free 0..N-1 prefix and nothing in it is out of
+    order. RUN_END still declares N+1: capture refuses the run on the count."""
+    invocation = uuid.uuid4().hex[:10]
+    robot_id = f"robot-{invocation}"
+    robot_run_id = f"lifecycle-bridge-tail-{invocation}"
+    settings = StreamingSettings(telemetry_topic=_unique_test_topic())
+    delivered = 4
+    odometry_spec = next(
+        spec for spec in DEFAULT_REGISTRY if spec.topic == "/vehicle/odom"
+    )
+
+    node = StreamingBridgeNode(
+        robot_id=robot_id,
+        robot_run_id=robot_run_id,
+        producer_bridge=_AsyncProducerBridge(settings=settings),
+        emit_lifecycle_events=True,
+    )
+    try:
+        for sequence in range(delivered):
+            node._handle_message(odometry_spec, serialize_message(_odometry(sequence)))
+        node._handle_message(odometry_spec, b"not a CDR odometry message")
+        node.shutdown()
+    finally:
+        node.destroy_node()
+    assert (node.published_count, node.failed_count) == (delivered, 1)
+
+    with pytest.raises(RunIncompleteError, match=r"declares 5 .* observed 4"):
+        asyncio.run(
+            run_capture(
+                settings=settings,
+                robot_id=robot_id,
+                robot_run_id=robot_run_id,
+                output_root=tmp_path,
+                stop_on_run_end=True,
+                idle_timeout_seconds=60,
+                poll_timeout_seconds=2.0,
+            )
+        )
+    assert not final_bag_path(tmp_path, robot_run_id).exists()

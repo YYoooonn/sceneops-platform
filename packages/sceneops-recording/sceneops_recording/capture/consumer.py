@@ -31,7 +31,9 @@ used.
 A lifecycle-governed capture (``stop_on_run_end``) additionally enforces the
 run's RUN_START -> telemetry -> RUN_END order (``lifecycle.py``): telemetry or
 RUN_END before RUN_START and a second RUN_START fail like a sequence violation,
-and a missing RUN_END is never finalized. Without ``stop_on_run_end`` (count-
+and a missing RUN_END is never finalized. RUN_END must declare the run's
+``telemetry_count`` and Capture finalizes only if it observed exactly that many
+telemetry records (``RunIncompleteError``). Without ``stop_on_run_end`` (count-
 bounded synthetic runs) control events are only sequence-validated.
 """
 
@@ -65,7 +67,9 @@ from sceneops_streaming import (
     DEFAULT_REGISTRY,
     ChannelRegistry,
     ConsumedTelemetryEnvelope,
+    RunEndPayloadError,
     is_control_envelope,
+    parse_run_end_telemetry_count,
     parse_run_event,
 )
 from sceneops_streaming.config import StreamingSettings
@@ -78,7 +82,7 @@ from .finalize import (
     prepare_partial_bag_dir,
 )
 from .group_id import derive_capture_group_id
-from .lifecycle import RunLifecycle, RunPhase
+from .lifecycle import RunLifecycle, RunLifecycleError, RunPhase, check_run_complete
 from .writer import McapCaptureWriter
 from .receipt_io import (
     CaptureReceiptConflictError,
@@ -244,6 +248,12 @@ class _SequenceTracker:
     @property
     def last_sequence(self) -> int | None:
         return self._last_sequence
+
+    @property
+    def accepted_count(self) -> int:
+        """Distinct sequence numbers accepted. Acceptance requires 0..N-1
+        without gaps, so this is ``last_sequence + 1``."""
+        return 0 if self._last_sequence is None else self._last_sequence + 1
 
 
 _monotonic = time.monotonic
@@ -439,6 +449,17 @@ async def run_capture(
                             parse_run_event(envelope), redelivery=not is_new_control
                         )
                         run_ended = lifecycle.phase is RunPhase.ENDED
+                        if run_ended:
+                            # Before anything is validated, finalized or
+                            # committed: the producer's declared closing
+                            # state against what this capture observed.
+                            try:
+                                declared = parse_run_end_telemetry_count(envelope)
+                            except RunEndPayloadError as exc:
+                                raise RunLifecycleError(str(exc)) from exc
+                            check_run_complete(
+                                declared=declared, observed=tracker.accepted_count
+                            )
                     if first_offset is None:
                         first_offset = consumed.offset
                     last_offset = consumed.offset

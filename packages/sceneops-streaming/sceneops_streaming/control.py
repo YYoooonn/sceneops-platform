@@ -37,10 +37,18 @@ ones) now sees these records too -- mitigated by the reserved channel
 making them trivially filterable/ignorable by any consumer that
 doesn't care about lifecycle.
 
+**Closing state.** ``RUN_END`` declares ``telemetry_count``: the number of
+telemetry sequence numbers the producer assigned to the run, i.e. the size of
+the dense ``0..N-1`` sequence space its telemetry occupies (zero for a run
+that bridged nothing). It is the one fact a consumer cannot derive from the
+telemetry it received, because it is about telemetry that did not arrive: a
+consumer that saw ``0..N-1`` and is told the producer assigned ``N`` knows the
+stream is complete. ``RUN_START`` carries nothing.
+
 Not a canonical/domain concept -- ``RunEventType`` and
-``build_control_envelope``/``is_control_envelope``/``parse_control_event``
-are transport-level only, matching where ``TelemetryEnvelope`` itself
-lives.
+``build_control_envelope``/``is_control_envelope``/``parse_run_event``/
+``parse_run_end_telemetry_count`` are transport-level only, matching where
+``TelemetryEnvelope`` itself lives.
 """
 
 from __future__ import annotations
@@ -75,6 +83,10 @@ _EVENT_BY_MESSAGE_TYPE: dict[str, RunEventType] = {
 }
 
 
+class RunEndPayloadError(ValueError):
+    """A ``RUN_END`` payload does not declare a valid ``telemetry_count``."""
+
+
 def build_control_envelope(
     *,
     event_type: RunEventType,
@@ -82,6 +94,7 @@ def build_control_envelope(
     robot_run_id: str,
     sequence_number: int = 0,
     reason: str | None = None,
+    telemetry_count: int | None = None,
 ) -> TelemetryEnvelope:
     """Build one control-event envelope, ready to publish through the
     same ``TelemetryProducer``/topic as any other telemetry.
@@ -102,8 +115,25 @@ def build_control_envelope(
     sensor reading); its own emission IS the event, the same reasoning
     ``/mission/status``'s synthetic replay-boundary timestamps already
     document (``streaming-transport.md`` §11.1).
+
+    ``telemetry_count`` is mandatory for ``RUN_END`` and not accepted for
+    ``RUN_START`` (see the module docstring); it is the producer's declaration,
+    not something this function can check.
     """
-    payload = json.dumps({"reason": reason}).encode("utf-8") if reason else b"{}"
+    fields: dict[str, object] = {}
+    if event_type is RunEventType.RUN_END:
+        if telemetry_count is None:
+            raise ValueError("RUN_END must declare telemetry_count")
+        if isinstance(telemetry_count, bool) or telemetry_count < 0:
+            raise ValueError(
+                f"telemetry_count must be an integer >= 0, got {telemetry_count!r}"
+            )
+        fields["telemetry_count"] = telemetry_count
+    elif telemetry_count is not None:
+        raise ValueError(f"{event_type.value} does not carry telemetry_count")
+    if reason:
+        fields["reason"] = reason
+    payload = json.dumps(fields, sort_keys=True).encode("utf-8")
     return TelemetryEnvelope(
         robot_id=robot_id,
         robot_run_id=robot_run_id,
@@ -135,3 +165,21 @@ def parse_run_event(envelope: TelemetryEnvelope) -> RunEventType | None:
     if not is_control_envelope(envelope):
         return None
     return _EVENT_BY_MESSAGE_TYPE.get(envelope.message_type)
+
+
+def parse_run_end_telemetry_count(envelope: TelemetryEnvelope) -> int:
+    """The ``telemetry_count`` a ``RUN_END`` envelope declares. Raises
+    ``RunEndPayloadError`` for an envelope that is not a ``RUN_END`` or whose
+    payload is not a JSON object with an integer ``telemetry_count >= 0``."""
+    if parse_run_event(envelope) is not RunEventType.RUN_END:
+        raise RunEndPayloadError("envelope is not a RUN_END control event")
+    try:
+        payload = json.loads(envelope.payload)
+    except ValueError as exc:
+        raise RunEndPayloadError(f"RUN_END payload is not JSON: {exc}") from exc
+    count = payload.get("telemetry_count") if isinstance(payload, dict) else None
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise RunEndPayloadError(
+            f"RUN_END must declare an integer telemetry_count >= 0, got {count!r}"
+        )
+    return count

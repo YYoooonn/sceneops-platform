@@ -9,6 +9,12 @@ A lifecycle-governed capture (``run_capture(stop_on_run_end=True)``) enforces
     CAPTURING  RUN_START seen; telemetry is accepted
     ENDED      RUN_END seen; Capture consumes nothing further
 
+RUN_END declares how many telemetry sequence numbers the producer assigned
+(``telemetry_count``). Capture accepts the run only if it observed exactly that
+many -- the telemetry tracker has already proven they are the dense 0..N-1
+sequence, so a matching count proves nothing at the head, in the middle or at the
+tail was lost. See ``check_run_complete``.
+
 Everything after ENDED (validate, receipt, atomic finalize, Kafka commit) is
 linear code in ``consumer.run_capture``, not event-driven, so it is not a
 phase here. The invariant that matters across it is that no offset is
@@ -39,6 +45,28 @@ class RunLifecycleError(RuntimeError):
     """The target run's records violate its RUN_START -> telemetry -> RUN_END
     lifecycle (telemetry or RUN_END before RUN_START, a second RUN_START, a
     record after RUN_END). Nothing is finalized or committed."""
+
+
+class RunIncompleteError(RunLifecycleError):
+    """RUN_END declares a telemetry count different from what Capture observed
+    (telemetry lost after the last record Capture saw, or a RUN_END that does not
+    describe this stream). Nothing is finalized or committed."""
+
+
+def check_run_complete(*, declared: int, observed: int) -> None:
+    """``declared`` is RUN_END's ``telemetry_count``; ``observed`` is the number
+    of distinct telemetry sequence numbers Capture accepted (0..observed-1)."""
+    if declared == observed:
+        return
+    detail = (
+        f"{declared - observed} missing after the last observed record"
+        if declared > observed
+        else f"{observed - declared} more than the producer assigned"
+    )
+    raise RunIncompleteError(
+        f"RUN_END declares {declared} telemetry record(s) but Capture observed "
+        f"{observed}: {detail}"
+    )
 
 
 class RunLifecycle:

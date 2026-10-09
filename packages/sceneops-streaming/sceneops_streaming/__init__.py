@@ -11,9 +11,11 @@ from .config import StreamingSettings, get_settings
 from .consumer import KafkaTelemetryConsumer
 from .contracts import ConsumedTelemetryEnvelope, TelemetryConsumer, TelemetryProducer
 from .control import (
+    RunEndPayloadError,
     RunEventType,
     build_control_envelope,
     is_control_envelope,
+    parse_run_end_telemetry_count,
     parse_run_event,
 )
 from .envelope import EnvelopeEncoding, TelemetryEnvelope, TelemetryEnvelopeVersion
@@ -30,6 +32,7 @@ __all__ = [
     "EnvelopeEncoding",
     "KafkaTelemetryConsumer",
     "KafkaTelemetryProducer",
+    "RunEndPayloadError",
     "RunEventType",
     "StreamingSettings",
     "TelemetryConsumer",
@@ -42,5 +45,6 @@ __all__ = [
     "get_settings",
     "is_control_envelope",
     "load_channel_file",
+    "parse_run_end_telemetry_count",
     "parse_run_event",
 ]

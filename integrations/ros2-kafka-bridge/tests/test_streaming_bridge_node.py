@@ -39,6 +39,7 @@ from sceneops_streaming import (  # noqa: E402
     TelemetryEnvelope,
     TimestampRule,
     build_channel_registry,
+    parse_run_end_telemetry_count,
     parse_run_event,
 )
 
@@ -672,9 +673,63 @@ class TestLifecycleEvents:
         finally:
             node.destroy_node()
 
+    def _lifecycle_node(self, fake_bridge):
+        return StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+
+    def test_run_end_declares_the_number_of_telemetry_sequence_numbers(
+        self, fake_bridge
+    ):
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            _handle(node, "/vehicle/imu", _make_imu(1, 0))
+            _handle(node, "/vehicle/odom", _make_odometry(2, 0))
+            node.shutdown()
+
+            run_end = fake_bridge.published[-1]
+            assert parse_run_event(run_end) is RunEventType.RUN_END
+            assert parse_run_end_telemetry_count(run_end) == 3
+            telemetry = [e.sequence_number for e in fake_bridge.published[1:-1]]
+            assert telemetry == [0, 1, 2]  # the declared space is 0..count-1
+        finally:
+            node.destroy_node()
+
+    def test_run_end_of_a_run_with_no_telemetry_declares_zero(self, fake_bridge):
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+
+            _start, run_end = fake_bridge.published
+            assert parse_run_end_telemetry_count(run_end) == 0
+        finally:
+            node.destroy_node()
+
+    def test_run_end_count_includes_a_message_that_failed_before_the_producer(
+        self, fake_bridge
+    ):
+        """A tail message the bridge failed to forward leaves no gap capture
+        could see; the declared count keeps it visible."""
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            _handle(node, "/vehicle/status", BatteryState())  # zero stamp: fails
+            assert (node.published_count, node.failed_count) == (1, 1)
+            node.shutdown()
+
+            telemetry = fake_bridge.published[1:-1]
+            assert [e.sequence_number for e in telemetry] == [0]
+            assert parse_run_end_telemetry_count(fake_bridge.published[-1]) == 2
+        finally:
+            node.destroy_node()
+
     def test_run_end_is_withheld_when_telemetry_delivery_failed(self, fake_bridge):
-        """RUN_END carries no record count: published after lost tail
-        telemetry it would make a truncated stream look complete."""
+        """Delivery is unconfirmed, so the broker may not hold records the
+        count includes; no RUN_END makes capture refuse the run."""
         fake_bridge.flush_error = RuntimeError("simulated delivery failure")
         node = StreamingBridgeNode(
             robot_id=ROBOT_ID,

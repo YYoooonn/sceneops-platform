@@ -23,11 +23,14 @@ from mcap.reader import make_reader
 
 from sceneops_recording.capture.consumer import (
     CAPTURE_CONSUMER_GROUP_ID,
+    RunEndNotObservedError,
+    SequenceIntegrityError,
     run_capture,
 )
 from sceneops_recording.capture.finalize import final_bag_path
 from sceneops_recording.capture.group_id import derive_capture_group_id
-from sceneops_recording.capture.lifecycle import RunLifecycleError
+from sceneops_recording.capture.lifecycle import RunIncompleteError, RunLifecycleError
+from sceneops_recording.capture.validation import McapValidationError
 from sceneops_recording.capture_receipt import FinalizationReason
 from sceneops_recording.capture.receipt_io import read_capture_receipt
 from sceneops_streaming import (
@@ -97,6 +100,7 @@ def test_run_capture_handles_real_lifecycle_enabled_stream(tmp_path) -> None:
                 robot_id=robot_id,
                 robot_run_id=robot_run_id,
                 sequence_number=1,
+                telemetry_count=telemetry_count,
             )
         )
         await producer.flush()
@@ -150,13 +154,14 @@ def test_run_capture_handles_real_lifecycle_events_interleaved_with_another_run(
                 )
             )
 
-        async def end(run_id):
+        async def end(run_id, telemetry_count):
             await producer.publish(
                 build_control_envelope(
                     event_type=RunEventType.RUN_END,
                     robot_id=f"robot-{run_id}",
                     robot_run_id=run_id,
                     sequence_number=1,
+                    telemetry_count=telemetry_count,
                 )
             )
 
@@ -173,9 +178,9 @@ def test_run_capture_handles_real_lifecycle_events_interleaved_with_another_run(
         await telem(other_id, 0)
         await telem(other_id, 1)
         await telem(target_id, 1)
-        await end(target_id)
+        await end(target_id, 2)
         await telem(other_id, 2)
-        await end(other_id)
+        await end(other_id, 3)
         await producer.flush()
         await producer.close()
 
@@ -223,8 +228,25 @@ def _committed_offset(topic: str, partition: int, robot_run_id: str) -> int:
 
 
 async def _publish_session(
-    topic: str, robot_id: str, run_id: str, *, telemetry: int, run_start: bool = True
+    topic: str,
+    robot_id: str,
+    run_id: str,
+    *,
+    telemetry: int,
+    run_start: bool = True,
+    declared: int | None = None,
+    sequences: list[int] | None = None,
+    run_end: bool = True,
+    run_end_payload: bytes | None = None,
+    extra_run_ends: int = 0,
 ) -> None:
+    """One session as a bridge publishes it. The keyword arguments inject the
+    faults of the completeness tests: ``declared`` (the count RUN_END states, by
+    default the telemetry published), ``sequences`` (the exact telemetry
+    sequence numbers published, to drop, repeat or reorder records),
+    ``run_end=False`` (a producer that died first), ``run_end_payload`` (a
+    RUN_END whose payload is replaced, e.g. with no count) and
+    ``extra_run_ends`` (redelivered RUN_ENDs)."""
     producer = KafkaTelemetryProducer(settings=StreamingSettings(telemetry_topic=topic))
     if run_start:
         await producer.publish(
@@ -234,18 +256,24 @@ async def _publish_session(
                 robot_run_id=run_id,
             )
         )
-    for seq in range(telemetry):
+    for seq in sequences if sequences is not None else range(telemetry):
         await producer.publish(
             _envelope(robot_run_id=run_id, robot_id=robot_id, sequence_number=seq)
         )
-    await producer.publish(
-        build_control_envelope(
+    if run_end:
+        run_end_envelope = build_control_envelope(
             event_type=RunEventType.RUN_END,
             robot_id=robot_id,
             robot_run_id=run_id,
             sequence_number=1,
+            telemetry_count=telemetry if declared is None else declared,
         )
-    )
+        if run_end_payload is not None:
+            run_end_envelope = run_end_envelope.model_copy(
+                update={"payload": run_end_payload}
+            )
+        for _ in range(1 + extra_run_ends):
+            await producer.publish(run_end_envelope)
     await producer.flush()
     await producer.close()
 
@@ -324,3 +352,174 @@ def test_rerun_of_a_finalized_and_committed_run_converges(tmp_path) -> None:
         first.last_offset,
     )
     assert _committed_offset(topic, first.partition, run_id) == committed
+
+
+# ---------------------------------------------------------------------
+# Completeness: an incomplete stream never finalizes (real broker)
+# ---------------------------------------------------------------------
+
+
+def _assert_not_finalized_or_committed(tmp_path, topic, run_id) -> None:
+    assert not final_bag_path(tmp_path, run_id).exists()
+    assert _committed_offset(topic, 0, run_id) == OFFSET_INVALID
+
+
+def _run_incomplete(tmp_path, label, error, match, **session):
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-{label}-{invocation}"
+    topic = _unique_test_topic()
+    asyncio.run(_publish_session(topic, robot_id, run_id, **session))
+
+    with pytest.raises(error, match=match):
+        asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+
+    _assert_not_finalized_or_committed(tmp_path, topic, run_id)
+
+
+def test_missing_tail_telemetry_is_not_finalized(tmp_path) -> None:
+    """RUN_START, telemetry 0..4, [5..9 lost], RUN_END(10): every record that
+    arrived is in order, so only the declared count exposes the loss."""
+    _run_incomplete(
+        tmp_path,
+        "tail",
+        RunIncompleteError,
+        "declares 10 telemetry record.*observed 5",
+        telemetry=5,
+        declared=10,
+    )
+
+
+def test_missing_middle_telemetry_is_not_finalized(tmp_path) -> None:
+    _run_incomplete(
+        tmp_path,
+        "middle",
+        SequenceIntegrityError,
+        "sequence gap",
+        telemetry=0,
+        sequences=[0, 1, 2, 5, 6],
+        declared=7,
+    )
+
+
+def test_reordered_telemetry_is_not_finalized(tmp_path) -> None:
+    _run_incomplete(
+        tmp_path,
+        "reordered",
+        SequenceIntegrityError,
+        "sequence gap",
+        telemetry=0,
+        sequences=[0, 2, 1, 3],
+        declared=4,
+    )
+
+
+def test_run_end_declaring_fewer_than_observed_is_not_finalized(tmp_path) -> None:
+    _run_incomplete(
+        tmp_path,
+        "overcount",
+        RunIncompleteError,
+        "more than the producer assigned",
+        telemetry=5,
+        declared=3,
+    )
+
+
+def test_run_end_without_a_count_is_not_finalized(tmp_path) -> None:
+    _run_incomplete(
+        tmp_path,
+        "nocount",
+        RunLifecycleError,
+        "telemetry_count",
+        telemetry=5,
+        run_end_payload=b"{}",
+    )
+
+
+def test_zero_telemetry_run_is_complete_but_has_no_recording(tmp_path) -> None:
+    """RUN_START, RUN_END(0): the count matches, so completeness holds, but a
+    recording of no messages is still refused (McapValidationError)."""
+    _run_incomplete(
+        tmp_path, "empty", McapValidationError, "zero messages", telemetry=0
+    )
+
+
+def test_zero_telemetry_run_declaring_telemetry_is_incomplete(tmp_path) -> None:
+    _run_incomplete(
+        tmp_path,
+        "emptylie",
+        RunIncompleteError,
+        "declares 4 telemetry record.*observed 0",
+        telemetry=0,
+        declared=4,
+    )
+
+
+def test_duplicate_telemetry_does_not_change_the_count(tmp_path) -> None:
+    """A producer-level redelivery of the previous record is skipped; the run
+    still has exactly the declared number of distinct sequence numbers."""
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-dup-{invocation}"
+    topic = _unique_test_topic()
+    asyncio.run(
+        _publish_session(
+            topic, robot_id, run_id, telemetry=0, sequences=[0, 1, 1, 2], declared=3
+        )
+    )
+
+    result = asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+
+    assert result.message_count == 3
+    assert (result.first_sequence, result.last_sequence) == (0, 2)
+
+
+def test_duplicate_run_end_is_not_read_after_the_first(tmp_path) -> None:
+    """Capture ends at the first RUN_END; a redelivered one stays on the topic
+    unread, and the committed offset is the one past the first."""
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-dupend-{invocation}"
+    topic = _unique_test_topic()
+    asyncio.run(
+        _publish_session(topic, robot_id, run_id, telemetry=3, extra_run_ends=1)
+    )
+
+    result = asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+
+    assert result.message_count == 3
+    assert result.last_offset - result.first_offset + 1 == 3 + 2
+    assert _committed_offset(topic, result.partition, run_id) == result.last_offset + 1
+
+
+def test_producer_that_died_before_run_end_is_not_finalized(tmp_path) -> None:
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-died-{invocation}"
+    topic = _unique_test_topic()
+    asyncio.run(_publish_session(topic, robot_id, run_id, telemetry=5, run_end=False))
+
+    with pytest.raises(RunEndNotObservedError):
+        asyncio.run(
+            run_capture(
+                settings=StreamingSettings(telemetry_topic=topic),
+                robot_id=robot_id,
+                robot_run_id=run_id,
+                output_root=tmp_path,
+                stop_on_run_end=True,
+                idle_timeout_seconds=10,
+                poll_timeout_seconds=1.0,
+            )
+        )
+
+    _assert_not_finalized_or_committed(tmp_path, topic, run_id)
+
+
+def test_replay_after_a_rejected_attempt_is_rejected_again(tmp_path) -> None:
+    """The verdict is a function of the log: a capture restarted after a
+    rejected attempt reads the same records and rejects them the same way."""
+    invocation = uuid.uuid4().hex[:10]
+    robot_id, run_id = f"robot-{invocation}", f"lifecycle-replay-{invocation}"
+    topic = _unique_test_topic()
+    asyncio.run(_publish_session(topic, robot_id, run_id, telemetry=5, declared=9))
+
+    for _ in range(2):
+        with pytest.raises(RunIncompleteError):
+            asyncio.run(_governed_capture(topic, robot_id, run_id, tmp_path))
+        _assert_not_finalized_or_committed(tmp_path, topic, run_id)
