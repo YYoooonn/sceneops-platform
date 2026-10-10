@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from confluent_kafka import KafkaError, KafkaException
@@ -8,12 +9,14 @@ from confluent_kafka import KafkaError, KafkaException
 from sceneops_streaming import (
     DeliveredRecord,
     DeliveryError,
+    ProducerQueueFullError,
     StreamingSettings,
     TelemetryEnvelope,
 )
 from sceneops_streaming import producer as producer_module
 from sceneops_streaming.envelope import EnvelopeEncoding
 from sceneops_streaming.producer import KafkaTelemetryProducer
+from sceneops_streaming.wire import encode_envelope
 
 
 class FakeMessage:
@@ -47,14 +50,27 @@ class FakeConfluentProducer:
         self.polls = 0
         self.partition = 2
         self.next_offset = 100
+        # librdkafka's queue: a slot is freed only when its report is served by
+        # poll(); produce() raises BufferError while ``capacity`` are occupied.
+        self.capacity: int | None = None
+        self.calls: list[str] = []
+        self.accepted: list[bytes] = []
         FakeConfluentProducer.instances.append(self)
 
     def produce(self, *, topic, key, value, headers, on_delivery) -> None:
+        self.calls.append("produce")
+        if self.capacity is not None and len(self.pending) >= self.capacity:
+            raise BufferError("Local: Queue full")
+        self.accepted.append(value)
         self.pending.append((topic, on_delivery))
 
-    def poll(self, _timeout: float) -> int:
+    def poll(self, timeout: float) -> int:
         self.polls += 1
-        if self.ack_on_poll is not None and self.polls >= self.ack_on_poll:
+        self.calls.append(f"poll({'0' if timeout == 0 else 'wait'})")
+        settles = self.ack_on_poll is not None and self.polls >= self.ack_on_poll
+        if timeout > 0 and not settles and self.capacity is not None:
+            time.sleep(timeout)  # a real poll() blocks until its timeout
+        if settles:
             self._settle(error=self.fail_with)
         return 0
 
@@ -183,3 +199,125 @@ def test_publish_stays_asynchronous(fake_producer):
     asyncio.run(fake_producer.publish(_envelope()))
 
     assert len(fake_producer.fake.pending) == 1
+
+
+def _publish_all(producer: KafkaTelemetryProducer, envelopes) -> None:
+    async def scenario() -> None:
+        for envelope in envelopes:
+            await producer.publish(envelope)
+
+    asyncio.run(scenario())
+
+
+def test_publish_serves_delivery_reports_before_every_produce(fake_producer):
+    _publish_all(fake_producer, [_envelope(0), _envelope(1)])
+
+    # A queue slot is freed only by serving the report; produce() never does.
+    assert fake_producer.fake.calls == ["poll(0)", "produce", "poll(0)", "produce"]
+
+
+def test_a_full_queue_is_waited_on_and_the_record_is_then_accepted_in_order(
+    fake_producer,
+):
+    fake = fake_producer.fake
+    fake.capacity = 1
+    fake.ack_on_poll = 3  # the slot is freed by the third poll, i.e. while waiting
+    envelopes = [_envelope(0), _envelope(1)]
+
+    _publish_all(fake_producer, envelopes)
+
+    # The second produce hit BufferError, waited in poll() and was then
+    # accepted -- once, and after the first record.
+    assert fake.calls == [
+        "poll(0)",
+        "produce",
+        "poll(0)",
+        "produce",
+        "poll(wait)",
+        "produce",
+    ]
+    assert fake.accepted == [encode_envelope(e).value for e in envelopes]
+
+
+def test_a_queue_that_stays_full_rejects_the_record_after_a_bounded_wait(monkeypatch):
+    FakeConfluentProducer.instances.clear()
+    monkeypatch.setattr(producer_module, "ConfluentProducer", FakeConfluentProducer)
+    producer = KafkaTelemetryProducer(
+        settings=StreamingSettings(bootstrap_servers="unused:9092"),
+        topic="t",
+        queue_full_timeout_seconds=0.2,
+    )
+    fake = FakeConfluentProducer.instances[-1]
+    fake.capacity = 1
+    fake.ack_on_poll = None  # the broker never answers
+    _publish_all(producer, [_envelope(0)])
+
+    started = time.monotonic()
+    with pytest.raises(ProducerQueueFullError):
+        _publish_all(producer, [_envelope(1)])
+    waited = time.monotonic() - started
+
+    assert 0.2 <= waited < 1.0
+    # The wait is blocking poll() calls, not produce() retried in a loop.
+    assert fake.calls.count("produce") - 1 <= fake.calls.count("poll(wait)") + 1 <= 4
+    assert len(fake.accepted) == 1  # the rejected record was not queued
+
+
+def test_flush_speaks_only_for_accepted_records(monkeypatch):
+    """A rejected record leaves no trace in the producer: flush succeeds, so the
+    caller that saw ProducerQueueFullError must remember it."""
+    FakeConfluentProducer.instances.clear()
+    monkeypatch.setattr(producer_module, "ConfluentProducer", FakeConfluentProducer)
+    producer = KafkaTelemetryProducer(
+        settings=StreamingSettings(bootstrap_servers="unused:9092"),
+        topic="t",
+        queue_full_timeout_seconds=0.05,
+    )
+    fake = FakeConfluentProducer.instances[-1]
+    fake.capacity = 1
+    fake.ack_on_poll = None
+
+    async def scenario() -> None:
+        await producer.publish(_envelope(0))
+        with pytest.raises(ProducerQueueFullError):
+            await producer.publish(_envelope(1))
+        await producer.flush()  # delivers the one accepted record
+
+    asyncio.run(scenario())
+
+    assert len(fake.accepted) == 1
+
+
+def test_a_full_queue_refuses_at_once_after_a_record_exhausted_the_wait(monkeypatch):
+    """The first refusal waits; the stream already has a gap, so the following
+    records of a source that keeps producing are refused without waiting until a
+    record is accepted again."""
+    FakeConfluentProducer.instances.clear()
+    monkeypatch.setattr(producer_module, "ConfluentProducer", FakeConfluentProducer)
+    producer = KafkaTelemetryProducer(
+        settings=StreamingSettings(bootstrap_servers="unused:9092"),
+        topic="t",
+        queue_full_timeout_seconds=0.2,
+    )
+    fake = FakeConfluentProducer.instances[-1]
+    fake.capacity = 1
+    fake.ack_on_poll = None
+    _publish_all(producer, [_envelope(0)])
+
+    with pytest.raises(ProducerQueueFullError):
+        _publish_all(producer, [_envelope(1)])
+    started = time.monotonic()
+    for sequence in range(2, 12):
+        with pytest.raises(ProducerQueueFullError):
+            _publish_all(producer, [_envelope(sequence)])
+    assert time.monotonic() - started < 0.1
+
+    # The broker answers again: the next record is accepted, and a later full
+    # queue is waited on again.
+    fake.ack_on_poll = 1
+    _publish_all(producer, [_envelope(12)])
+    fake.ack_on_poll = None
+    started = time.monotonic()
+    with pytest.raises(ProducerQueueFullError):
+        _publish_all(producer, [_envelope(13)])
+    assert time.monotonic() - started >= 0.2

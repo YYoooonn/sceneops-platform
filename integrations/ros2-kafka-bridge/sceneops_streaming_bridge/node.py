@@ -188,16 +188,18 @@ class _AsyncProducerBridge:
     ``publish_timeout_seconds`` -- there is no queue of this bridge's own;
     the only buffering in this data path is librdkafka's own internal
     client queue (inside ``KafkaTelemetryProducer``/``confluent_kafka``),
-    which is bounded by its own default configuration. A stalled or
-    unreachable broker surfaces as a timeout/exception in the ROS2
-    callback (caught and logged by ``StreamingBridgeNode``) rather than
-    growing unboundedly in this bridge's memory or silently dropping the
-    message.
+    bounded at 1 GiB / 100,000 messages. The bridge never slows the source:
+    while the broker is slow or unreachable the records accumulate in that
+    queue. Once it is full, ``publish()`` waits for a slot for half the publish
+    timeout, then raises ``ProducerQueueFullError`` -- the half leaves room for
+    the producer to give its verdict before this thread stops waiting for it, so
+    a record is never queued after its caller was told it failed. The callback
+    (``StreamingBridgeNode``) counts the failure; the sequence number the
+    message took is a gap in the stream, which capture rejects.
 
     This is a deliberately simple design for the expected message volume
     (one nuScenes CAN-replay scene, ~a few thousand messages over tens of
-    seconds), which never approaches librdkafka's default buffer
-    capacity. Whether this remains sufficient at materially higher
+    seconds). Whether it remains sufficient at materially higher
     throughput is left to future benchmarking work, not decided here.
     """
 
@@ -205,7 +207,10 @@ class _AsyncProducerBridge:
         self, *, settings: StreamingSettings, publish_timeout_seconds: float = 5.0
     ) -> None:
         self._publish_timeout_seconds = publish_timeout_seconds
-        self._producer = KafkaTelemetryProducer(settings=settings)
+        self._producer = KafkaTelemetryProducer(
+            settings=settings,
+            queue_full_timeout_seconds=publish_timeout_seconds / 2,
+        )
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever, daemon=True, name="kafka-producer-loop"
@@ -315,6 +320,10 @@ class StreamingBridgeNode(Node):
 
         self.published_count = 0
         self.failed_count = 0
+        # True once the producer could not confirm that everything it accepted
+        # (telemetry, RUN_END) reached the broker; the process then exits
+        # non-zero even though no message failed on its own.
+        self.delivery_unconfirmed = False
         self.published_by_channel: dict[str, int] = {}
         self.failed_by_channel: dict[str, int] = {}
         # Monotonic time of the latest bridged message; None until the
@@ -535,6 +544,11 @@ class StreamingBridgeNode(Node):
         published on the SAME producer instance as the telemetry, after it,
         never on a separate possibly-racing connection.
 
+        A delivery the producer could not confirm (the flush failed, or closing
+        the producer failed) sets ``delivery_unconfirmed``, which makes
+        ``main()`` exit non-zero. ``close()`` flushes again and a delivery error is
+        reported only once, so a later success never clears the flag.
+
         This is the GRACEFUL path only -- a hard kill (SIGKILL, crash)
         never reaches this method, so that run never gets a RUN_END and
         capture refuses to finalize it."""
@@ -544,11 +558,21 @@ class StreamingBridgeNode(Node):
                     RunEventType.RUN_END, telemetry_count=self._sequence
                 )
             else:
+                self.delivery_unconfirmed = True
                 self.get_logger().error(
                     "telemetry was not fully delivered -- RUN_END withheld so "
                     "capture refuses this run"
                 )
-        self._bridge.close(timeout_seconds=timeout_seconds)
+        try:
+            self._bridge.close(timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            # close() flushes again: a delivery error was reported once by the
+            # first flush and is gone, so this one succeeding proves nothing
+            # about the earlier outcome -- delivery_unconfirmed is sticky.
+            self.delivery_unconfirmed = True
+            self.get_logger().error(
+                f"closing the producer failed: {type(exc).__name__}: {exc}"
+            )
 
     def _telemetry_fully_delivered(self, timeout_seconds: float) -> bool:
         try:
@@ -674,7 +698,7 @@ def main() -> None:
         node.destroy_node()
         rclpy.shutdown()
 
-    if node.failed_count > 0:
+    if node.failed_count > 0 or node.delivery_unconfirmed:
         raise SystemExit(1)
 
 

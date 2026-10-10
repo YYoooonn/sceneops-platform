@@ -53,3 +53,11 @@ class DeliveryError(RuntimeError):
     """The broker did not acknowledge a published record (for example its
     ``message.timeout.ms`` expired). The record is not stored, unless a late
     attempt still succeeds -- see ``TelemetryProducer.publish_and_wait``."""
+
+
+class ProducerQueueFullError(RuntimeError):
+    """A record was not accepted: librdkafka's client-side queue was full and
+    stayed full for the producer's ``queue_full_timeout_seconds`` (or an earlier
+    record had already waited that long and no record has been accepted since,
+    so this one is refused at once). Nothing was queued, so the record exists
+    only in the caller, and a later record that is accepted leaves a gap."""

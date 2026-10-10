@@ -108,8 +108,8 @@ test-integration:
 #   recovery    acquisition-recovery fault injection + full-lifecycle acceptance + Job
 #               worker loss under the ownership lease + lost broker messages
 #               (makefiles/recovery.mk), same disposable database + bucket, own Redis/workers
-#   kafka       real-Kafka transport: bridge + capture tests in their ROS 2 images, then the
-#               transport smoke (makefiles/streaming.mk); needs `make streaming-up`
+#   kafka       real-Kafka transport: bridge + capture tests in their ROS 2 images, the producer
+#               under a frozen broker, then the transport smoke (makefiles/streaming.mk); needs `make streaming-up`
 #   boundaries  isolation boundaries: the acquisition integration (own uv project, I-36 import
 #               boundary), the LeRobot adapter (own uv project), the acquisition images
 #               and the raw-source mount boundary of the runtime services
@@ -144,7 +144,7 @@ infra-suite-pipelines:
 		--ignore=tests/infrastructure/unit -v
 
 .PHONY: infra-suite-kafka
-infra-suite-kafka: streaming-test smoke-streaming
+infra-suite-kafka: streaming-test streaming-producer-test smoke-streaming
 
 .PHONY: infra-suite-boundaries
 infra-suite-boundaries: check-runtime-boundary acquisition-image-check acquisition-test lerobot-test

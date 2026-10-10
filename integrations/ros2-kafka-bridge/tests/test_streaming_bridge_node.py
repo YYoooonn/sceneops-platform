@@ -37,10 +37,12 @@ from sceneops_streaming import (  # noqa: E402
     DeliveredRecord,
     EnvelopeEncoding,
     KafkaStartPosition,
+    ProducerQueueFullError,
     RunEventType,
     TelemetryEnvelope,
     TimestampRule,
     build_channel_registry,
+    is_control_envelope,
     parse_run_end_telemetry_count,
     parse_run_event,
 )
@@ -761,6 +763,78 @@ class TestLifecycleEvents:
             assert parse_run_event(fake_bridge.published[0]) is RunEventType.RUN_START
             assert fake_bridge.published[1].channel == "/vehicle/odom"
             assert fake_bridge.closed
+        finally:
+            node.destroy_node()
+
+    def test_a_message_the_full_producer_queue_rejected_is_a_failure_with_a_gap(
+        self, fake_bridge
+    ):
+        """A record the producer refused never reached librdkafka: the bridge
+        counts it, the run keeps its sequence number as a gap, and RUN_END
+        still declares it, so no flush result can make the run look complete."""
+        node = self._lifecycle_node(fake_bridge)
+        original_publish = fake_bridge.publish
+        refusals = iter([False, True, False])
+
+        def publish(envelope):
+            if not is_control_envelope(envelope) and next(refusals):
+                raise ProducerQueueFullError("queue stayed full")
+            original_publish(envelope)
+
+        fake_bridge.publish = publish
+        try:
+            for second in (1, 2, 3):
+                _handle(node, "/vehicle/odom", _make_odometry(second, 0))
+            assert (node.published_count, node.failed_count) == (2, 1)
+            node.shutdown()
+
+            telemetry = fake_bridge.published[1:-1]
+            assert [e.sequence_number for e in telemetry] == [0, 2]
+            assert parse_run_end_telemetry_count(fake_bridge.published[-1]) == 3
+            assert node.delivery_unconfirmed is False  # a flush succeeded
+        finally:
+            node.destroy_node()
+
+    def test_unconfirmed_delivery_is_recorded_when_the_flush_fails(self, fake_bridge):
+        fake_bridge.flush_error = RuntimeError("simulated delivery failure")
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+            assert node.delivery_unconfirmed is True
+        finally:
+            node.destroy_node()
+
+    def test_a_later_successful_close_does_not_clear_unconfirmed_delivery(
+        self, fake_bridge
+    ):
+        """close() flushes again, and a delivery error is reported only once,
+        so the second flush can succeed after the first one failed."""
+        fake_bridge.flush_error = RuntimeError("simulated delivery failure")
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+            assert fake_bridge.closed
+            assert node.delivery_unconfirmed is True
+        finally:
+            node.destroy_node()
+
+    def test_a_failing_close_is_recorded_and_never_raises(self, fake_bridge):
+        def close(timeout_seconds=10.0):
+            raise TimeoutError("3 telemetry record(s) still undelivered")
+
+        fake_bridge.close = close
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()  # must not raise: the summary line still has to print
+            assert node.delivery_unconfirmed is True
+        finally:
+            node.destroy_node()
+
+    def test_a_confirmed_shutdown_is_not_marked_unconfirmed(self, fake_bridge):
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+            assert node.delivery_unconfirmed is False
         finally:
             node.destroy_node()
 

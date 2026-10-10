@@ -157,6 +157,19 @@ a record whose delivery finally fails (message.timeout.ms)
   so the stream has a gap -- a delivery error invalidates the run's stream
 ```
 
+**Queue full.** librdkafka's client-side queue is bounded (1 GiB / 100,000
+messages). A slot is released only when the record's delivery report has been served,
+and only `poll()` and `flush()` serve reports -- `produce()` never does, so a queue
+full of already-delivered records stays full until polled. `publish` therefore serves
+reports before every produce; if the queue is still full it waits in `poll()` (blocking,
+not spinning) for up to `queue_full_timeout_seconds` (default 1.0 s) for a slot, then
+raises `ProducerQueueFullError`. That record was not accepted: nothing was queued, a
+later accepted record leaves a gap in the stream, and a retry cannot duplicate or
+reorder. After one record has exhausted the wait, further records are refused at once
+until one is accepted again. `flush` speaks only for accepted records, so it succeeds
+after such a rejection: the caller that saw the error owns the knowledge that a record
+is missing.
+
 `publish_and_wait` publishes one record and returns only once its own delivery
 report arrived, as a `DeliveredRecord(topic, partition, offset)` (the position the
 broker stored it at); a failed delivery raises `DeliveryError`, no report in time
@@ -623,13 +636,29 @@ RobotRun identity (`run-stream-ref-<corpus>-<fixture>`).
 `KafkaTelemetryProducer` on a dedicated background asyncio event loop for
 the node's whole lifetime. A ROS2 callback's `publish()` call blocks the
 calling (ROS2 callback) thread for at most `--publish-timeout-seconds`
-(default 5.0s) waiting for the coroutine to complete on that loop. There is
-no queue of the bridge's own besides the DDS subscription history (keep-all,
-§13) and librdkafka's internal client queue, bounded by its own default
-configuration. A stalled/unreachable broker surfaces as a timeout or
-exception in the callback (caught, logged, counted -- never silently
-dropped); a sustained input rate above what the bridge can forward shows up
-as growing DDS-side memory, not as silent loss.
+(default 5.0s) waiting for the coroutine to complete on that loop. The bridge
+has no queue of its own; the buffering in this data path is librdkafka's
+client queue (bounded at 1 GiB / 100,000 messages) and the DDS subscription
+history (keep-all, §13). The bridge does not slow the source: a callback returns
+as soon as the producer accepted the record, so while the broker is slow or
+unreachable the records accumulate in librdkafka's queue, not in DDS, until a
+bound is hit. From there:
+
+```text
+queue not full             publish returns at once; delivery is asynchronous
+queue full, slot frees     the callback waits for it (up to half of --publish-timeout-seconds,
+                           so the producer answers before the bridge stops waiting), then the
+                           record is accepted
+queue full for longer      ProducerQueueFullError: the callback counts a failed message, its
+                           sequence number is a gap (capture rejects the run), and following
+                           records are refused at once until the broker drains the queue
+accepted, never delivered  message.timeout.ms (300 s) -> delivery error, reported by the flush
+```
+
+The bridge exits non-zero in every one of these failures. Records still queued when
+the process exits are lost with it, which is why a run with a refused or unconfirmed
+record is never finalized (§28). There is no application-level flow control: the
+source cannot be slowed and the bridge cannot see Kafka state beyond its own queue.
 
 *Measured (scope: one nuScenes v1.0-mini scene, scene-0061, 8,897 messages,
 about 356 MB, 20 channels incl. six cameras and a 20 Hz lidar; Apple-silicon
@@ -687,8 +716,11 @@ only if that flush reported no delivery failure, declaring `telemetry_count`
 capture refuse the run) -> flush and
 close the producer -> print one `bridge_summary` JSON line (published
 and failed counts, per channel) -> `node.destroy_node()` ->
-`rclpy.shutdown()`. If any message failed during the run, the process exits
-non-zero.
+`rclpy.shutdown()`. The process exits non-zero if any message failed during the run
+(including a record the producer refused because its queue was full) or if delivery
+was not confirmed: the flush before `RUN_END` failed (`RUN_END` is withheld) or closing
+the producer failed. `close()` flushes again and a delivery error is reported only
+once, so a later successful flush never clears the unconfirmed state.
 
 **Failure semantics:** `_handle_message` wraps decode/timestamp/publish in
 one `try`/`except Exception`. On failure: increment the failed count, log a
@@ -698,7 +730,9 @@ processing subsequent messages -- never crash the node, never silently
 drop. Every received message takes its sequence number before anything can
 fail, so a message the bridge drops leaves a sequence gap, which capture
 rejects: a bridge failure makes the run's recording fail rather than silently
-come out incomplete. "Unsupported
+come out incomplete. A record the producer refused (`ProducerQueueFullError`) is such a
+failure; because the bridge keeps its sequence number, neither a successful `flush` nor
+a `RUN_END` can make the run look complete. "Unsupported
 message type" cannot occur at runtime by construction: the node only ever
 subscribes to registry topics. No DLQ, no persistent retry storage --
 deferred to a reliability boundary, matching the transport's own
@@ -1150,6 +1184,13 @@ Bridge killed without RUN_END          no RUN_END arrives; the idle-timeout guar
                                        and rebuilds from Kafka.
 Bridge message failure                 counted and logged; the sequence gap fails the capture,
                                        and a failed last message fails it on the RUN_END count.
+Broker unreachable until the producer  records refused while the queue is full are bridge message
+queue is full                          failures (above); the bridge exits non-zero. Once the broker
+                                       returns the producer accepts records again, so the run has a
+                                       gap in the middle (SequenceIntegrityError), not a stuck tail.
+Broker unreachable at shutdown         the telemetry flush fails: RUN_END is withheld, the idle-timeout
+                                       guard aborts the capture (RunEndNotObservedError) and the
+                                       bridge exits non-zero.
 Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized.
 partition spread, unsupported channel
 Kafka retention                        capture can only rebuild what the topic still holds

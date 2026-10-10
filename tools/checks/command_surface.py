@@ -80,6 +80,7 @@ HELPERS = {
     "streaming-compare",
     "reference-data-verify",
     "streaming-test",
+    "streaming-producer-test",
     "smoke-streaming",
     "acquisition-test",
     "lerobot-test",

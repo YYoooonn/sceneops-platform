@@ -201,7 +201,7 @@ make check-commands                the command surface is consistent (no pytest,
     point. It needs no canonical baseline. The suites share one harness (`tests/infrastructure/recovery_support.py`);
     `RECOVERY_TESTS=<path>` runs one module.
   - `kafka` runs the ROS 2 bridge (`integrations/ros2-kafka-bridge`) and capture tests in the
-    `streaming-bridge` and `capture` images (real-Kafka integration included, `make streaming-test`) and then the transport smoke, which publishes a deterministic
+    `streaming-bridge` and `capture` images (real-Kafka integration included, `make streaming-test`), the producer against a throwaway broker it freezes with `docker pause` (`make streaming-producer-test`; needs Docker and the broker image, not the compose broker) and then the transport smoke, which publishes a deterministic
     sequence and verifies envelope recovery, per-RobotRun ordering and partitioning. It needs
     `make streaming-up` and creates no domain data.
   - `boundaries` runs the isolation boundaries: the dataset-acquisition integration's tests,

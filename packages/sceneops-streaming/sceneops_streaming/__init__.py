@@ -28,6 +28,7 @@ from .envelope import EnvelopeEncoding, TelemetryEnvelope, TelemetryEnvelopeVers
 from .errors import (
     DeliveryError,
     EnvelopeDecodeError,
+    ProducerQueueFullError,
     ReplayExpiredError,
     StartPositionError,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "KafkaStartPosition",
     "KafkaTelemetryConsumer",
     "KafkaTelemetryProducer",
+    "ProducerQueueFullError",
     "ReplayExpiredError",
     "RunEndPayloadError",
     "RunEventType",

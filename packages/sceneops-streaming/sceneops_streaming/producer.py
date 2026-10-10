@@ -10,7 +10,7 @@ from confluent_kafka import Producer as ConfluentProducer
 from .config import StreamingSettings
 from .contracts import DeliveredRecord
 from .envelope import TelemetryEnvelope
-from .errors import DeliveryError
+from .errors import DeliveryError, ProducerQueueFullError
 from .wire import EncodedTelemetryRecord, encode_envelope
 
 
@@ -28,6 +28,12 @@ class KafkaTelemetryProducer:
     acknowledged it -- call ``flush`` to block until every buffered record
     is actually delivered (or raise on a delivery failure).
 
+    A record librdkafka refuses because its queue is full is not accepted:
+    ``publish`` raises ``ProducerQueueFullError`` and the record exists nowhere
+    else. ``flush`` only speaks for accepted records, so it succeeds after such
+    a rejection; the caller that saw the error owns the knowledge that a record
+    is missing.
+
     The producer is idempotent. Within one producer instance, broker
     retries (connection loss, lost responses, request timeouts) neither
     duplicate nor reorder records of a partition. A record whose delivery
@@ -42,8 +48,15 @@ class KafkaTelemetryProducer:
         *,
         settings: StreamingSettings,
         topic: str | None = None,
+        queue_full_timeout_seconds: float = 1.0,
     ) -> None:
         self._topic = topic or settings.telemetry_topic
+        self._queue_full_timeout_seconds = queue_full_timeout_seconds
+        # Set when a record exhausted its queue-full wait, cleared by the next
+        # record that is accepted. While set, a full queue refuses at once: the
+        # stream already has a gap, and a source that keeps producing against an
+        # unreachable broker must not be slowed to one record per wait.
+        self._queue_stayed_full = False
         self._producer = ConfluentProducer(
             {
                 "bootstrap.servers": settings.bootstrap_servers,
@@ -61,16 +74,38 @@ class KafkaTelemetryProducer:
         await asyncio.to_thread(self._produce_sync, record)
 
     def _produce_sync(self, record: EncodedTelemetryRecord) -> None:
-        self._producer.produce(
-            topic=self._topic,
-            key=record.key,
-            value=record.value,
-            headers=record.headers,
-            on_delivery=self._on_delivery,
-        )
-        # Services the delivery-report queue without blocking -- keeps
-        # librdkafka's internal queue from filling up on a long publish burst.
+        # A queue slot is released only when the record's delivery report is
+        # served, and only poll()/flush() serve reports -- produce() never does.
+        # Serving them first keeps the queue holding only records still in
+        # flight; without it a full queue never drains, even once the broker is
+        # healthy again.
         self._producer.poll(0)
+        wait = 0.0 if self._queue_stayed_full else self._queue_full_timeout_seconds
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                self._producer.produce(
+                    topic=self._topic,
+                    key=record.key,
+                    value=record.value,
+                    headers=record.headers,
+                    on_delivery=self._on_delivery,
+                )
+                self._queue_stayed_full = False
+                return
+            except BufferError:
+                # Rejected atomically: nothing was queued, so retrying cannot
+                # duplicate or reorder. Waiting in poll() (not spinning on
+                # produce()) is bounded, and returns as soon as a report frees
+                # a slot.
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._queue_stayed_full = True
+                    raise ProducerQueueFullError(
+                        f"Kafka producer queue is full (waited {wait}s); the "
+                        "record was not accepted"
+                    ) from None
+                self._producer.poll(remaining)
 
     async def publish_and_wait(
         self, envelope: TelemetryEnvelope, timeout_seconds: float = 10.0
