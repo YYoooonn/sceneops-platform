@@ -62,9 +62,9 @@ async def test_register_handler_reports_canonical_members(scene_world):
     result = await _registered(scene_world, "a", "b")
     assert result.registered_scene_count == 2
     assert result.scene_ids == result.created_scene_ids
-    assert set(result.scene_ids) == set(scene_world.scenes.committed)
+    assert set(result.scene_ids) == set(scene_world.scenes.members())
     assert result.manifest_artifact_ids == [
-        scene_world.scenes.committed[s].manifest_artifact_id for s in result.scene_ids
+        scene_world.scenes.members()[s].manifest_artifact_id for s in result.scene_ids
     ]
 
 
@@ -73,7 +73,7 @@ async def test_validate_pins_the_assessed_revision_and_writes_no_scene_state(
 ):
     registered = await _registered(scene_world, "a")
     scene_id = registered.scene_ids[0]
-    record_before = scene_world.scenes.committed[scene_id]
+    record_before = scene_world.scenes.members()[scene_id]
     scene_world.context.dataset_store.reset_mock()
 
     result = await ValidateSceneJobHandler().run(
@@ -103,7 +103,7 @@ async def test_validate_pins_the_assessed_revision_and_writes_no_scene_state(
         r.scene_id is None and r.manifest_artifact_id is None
         for r in scene_world.scene_runs
     )
-    assert scene_world.scenes.committed[scene_id] == record_before
+    assert scene_world.scenes.members()[scene_id] == record_before
     assert scene_world.context.dataset_store.method_calls == []
 
 
@@ -115,7 +115,10 @@ async def test_validate_blocking_result_is_reported_not_written_to_the_record(
         JobHandlerRequest(
             job=_job(),
             params=ValidateSceneJobParams(
-                scene_ids=registered.scene_ids, require_target_channels=["RADAR_FRONT"]
+                dataset_id="ds",
+                dataset_version="v1",
+                scene_ids=registered.scene_ids,
+                require_target_channels=["RADAR_FRONT"],
             ),
             context=scene_world.context,
         )
@@ -126,7 +129,7 @@ async def test_validate_blocking_result_is_reported_not_written_to_the_record(
     assert per_scene[0].missing_channel_count == 1
     assert (
         "status"
-        not in scene_world.scenes.committed[registered.scene_ids[0]].model_dump()
+        not in scene_world.scenes.members()[registered.scene_ids[0]].model_dump()
     )
 
 
@@ -138,13 +141,15 @@ async def test_validate_fails_loudly_for_unregistered_or_inconsistent_scenes(
         await ValidateSceneJobHandler().run(
             JobHandlerRequest(
                 job=_job(),
-                params=ValidateSceneJobParams(scene_ids=["scene-unknown"]),
+                params=ValidateSceneJobParams(
+                    dataset_id="ds", dataset_version="v1", scene_ids=["scene-unknown"]
+                ),
                 context=scene_world.context,
             )
         )
 
-    scene_id = next(iter(scene_world.scenes.committed))
-    record = scene_world.scenes.committed[scene_id]
+    scene_id = next(iter(scene_world.scenes.members()))
+    record = scene_world.scenes.members()[scene_id]
     scene_world.artifacts[record.manifest_artifact_id] = scene_world.artifacts[
         record.manifest_artifact_id
     ].model_copy(update={"checksum": "sha256:" + "f" * 64})
@@ -152,7 +157,9 @@ async def test_validate_fails_loudly_for_unregistered_or_inconsistent_scenes(
         await ValidateSceneJobHandler().run(
             JobHandlerRequest(
                 job=_job(),
-                params=ValidateSceneJobParams(scene_ids=[scene_id]),
+                params=ValidateSceneJobParams(
+                    dataset_id="ds", dataset_version="v1", scene_ids=[scene_id]
+                ),
                 context=scene_world.context,
             )
         )
@@ -173,7 +180,9 @@ async def test_profile_pins_revision_and_counts_observations(scene_world):
     result = await ProfileSceneJobHandler().run(
         JobHandlerRequest(
             job=_job(),
-            params=ProfileSceneJobParams(scene_ids=registered.scene_ids),
+            params=ProfileSceneJobParams(
+                dataset_id="ds", dataset_version="v1", scene_ids=registered.scene_ids
+            ),
             context=scene_world.context,
         )
     )
@@ -185,7 +194,7 @@ async def test_profile_pins_revision_and_counts_observations(scene_world):
         r.scene_id: r for r in scene_world.scene_runs if r.scene_id is not None
     }
     for scene_id in registered.scene_ids:
-        record = scene_world.scenes.committed[scene_id]
+        record = scene_world.scenes.members()[scene_id]
         assert per_scene[scene_id].assessed(
             manifest_artifact_id=record.manifest_artifact_id,
             manifest_checksum=record.manifest_checksum,

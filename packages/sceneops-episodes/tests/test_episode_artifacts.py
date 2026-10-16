@@ -34,6 +34,7 @@ from sceneops_episodes.artifacts import (
 def _store(tmp_path) -> EpisodeArtifactStore:
     return EpisodeArtifactStore(
         artifact_store=LocalArtifactStore(root_uri=str(tmp_path)),
+        canonical_root_uri=str(tmp_path / "canonical"),
         dataset_root_uri=str(tmp_path / "datasets"),
         payload_root_uri=str(tmp_path / "payloads"),
     )
@@ -51,12 +52,15 @@ class TestCanonicalEpisodeManifestStorage:
         store = _store(tmp_path)
         manifest = _manifest()
         published = await store.publish_canonical_manifest(
-            dataset_id="d1", dataset_version="v1", episode_id="ep-1", manifest=manifest
+            episode_id="ep-1", manifest=manifest
         )
         data = manifest.to_canonical_bytes()
         assert published.checksum == "sha256:" + hashlib.sha256(data).hexdigest()
-        assert published.uri.endswith(
-            f"episodes/ep-1/manifest-{hashlib.sha256(data).hexdigest()}.json"
+        # Unit-scoped: the key names the revision and no DatasetVersion.
+        assert published.uri == str(
+            tmp_path
+            / "canonical"
+            / f"episodes/ep-1/manifest-{hashlib.sha256(data).hexdigest()}.json"
         )
         assert (
             await store.read_pinned_manifest(
@@ -68,7 +72,7 @@ class TestCanonicalEpisodeManifestStorage:
     @pytest.mark.asyncio
     async def test_republishing_identical_bytes_converges(self, tmp_path) -> None:
         store = _store(tmp_path)
-        args = dict(dataset_id="d1", dataset_version="v1", episode_id="ep-1")
+        args = dict(episode_id="ep-1")
         a = await store.publish_canonical_manifest(manifest=_manifest(), **args)
         b = await store.publish_canonical_manifest(manifest=_manifest(), **args)
         assert a == b
@@ -76,7 +80,7 @@ class TestCanonicalEpisodeManifestStorage:
     @pytest.mark.asyncio
     async def test_revisions_coexist_and_keys_are_write_once(self, tmp_path) -> None:
         store = _store(tmp_path)
-        args = dict(dataset_id="d1", dataset_version="v1", episode_id="ep-1")
+        args = dict(episode_id="ep-1")
         a = await store.publish_canonical_manifest(manifest=_manifest(0.0), **args)
         b = await store.publish_canonical_manifest(manifest=_manifest(1.0), **args)
         assert a.uri != b.uri

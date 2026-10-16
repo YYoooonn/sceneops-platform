@@ -7,6 +7,7 @@ tests/scenes/test_recording_scene_vertical_integration.py."""
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import sys
 from datetime import UTC, datetime
@@ -119,10 +120,11 @@ async def test_whole_recording_builds_and_registers_one_scene_sharing_the_payloa
     result = await _build(world, config)
 
     assert result.scene_count == 1
-    assert result.unit_keys == ["recording"]
+    (unit_key,) = result.unit_keys
+    assert unit_key.startswith("whole_recording-") and unit_key.endswith("/recording")
     assert result.payload_artifact_count == result.created_payload_count == 8
     await _register(world, result)
-    assert [r.unit_key for r in world.scenes.committed.values()] == ["recording"]
+    assert [r.unit_key for r in world.scenes.members().values()] == [unit_key]
 
     again = await _build(world, config, "job-2")
     assert again.manifest_artifact_ids == result.manifest_artifact_ids
@@ -133,7 +135,9 @@ async def test_build_publishes_payloads_and_manifests_then_registers(world):
     result = await _build(world)
 
     assert result.scene_count == 2
-    assert result.unit_keys == ["segment-000000", "segment-000001"]
+    # Grid windows 1 and 2 of the 1 s fixed-duration segmentation.
+    assert [k.rsplit("/", 1)[1] for k in result.unit_keys] == ["1", "2"]
+    assert len({k.rsplit("/", 1)[0] for k in result.unit_keys}) == 1
     assert result.recording_checksum == world.recording_checksum
     assert result.payload_artifact_count == result.created_payload_count == 8
     payloads = [
@@ -149,12 +153,15 @@ async def test_build_publishes_payloads_and_manifests_then_registers(world):
         assert f"/observation_payloads/{RUN_ID}/" in payload.uri
     manifests = [world.artifacts[i] for i in result.manifest_artifact_ids]
     assert {m.kind for m in manifests} == {ArtifactKind.SCENE_MANIFEST}
-    # The builder writes no membership.
-    assert world.scenes.committed == {}
+    # Manifests are keyed by unit, not by DatasetVersion.
+    assert all("/canonical/scenes/" in m.uri for m in manifests)
+    assert all(m.dataset_id is None and m.dataset_version is None for m in manifests)
+    # The builder writes no unit, revision or membership.
+    assert world.scenes.committed == ({}, {})
 
     registered = await _register(world, result)
     assert registered.registered_scene_count == 2
-    records = list(world.scenes.committed.values())
+    records = list(world.scenes.members().values())
     assert {r.robot_run_id for r in records} == {RUN_ID}
     assert {r.unit_key for r in records} == set(result.unit_keys)
     assert {r.window_clock for r in records} == {"sensor.header_stamp"}
@@ -206,20 +213,27 @@ async def test_conflicting_artifact_record_fails(world):
         await _build(world, job_id="job-2")
 
 
-async def test_changed_config_conflicts_then_replaces(world):
-    await _register(world, await _build(world))
-    before = dict(world.scenes.committed)
+async def test_another_segmentation_is_other_units(world):
+    """A coarser segmentation cuts other windows, so it yields other units,
+    not revisions of the 1 s ones; with replace the DatasetVersion unpins the
+    old units and pins the new one, and every revision stays registered."""
+    first = await _build(world)
+    await _register(world, first)
+    before = copy.deepcopy(world.scenes.committed)
 
     coarser = await _build(world, build_config(duration_ns=10_000_000_000), "job-2")
     assert coarser.created_payload_count == 0  # payload identity is config-free
+    assert not set(coarser.unit_keys) & set(first.unit_keys)
     with pytest.raises(SceneRegistrationConflictError):
         await _register(world, coarser)
     assert world.scenes.committed == before
 
     replaced = await _register(world, coarser, replace=True)
-    assert len(replaced.removed_scene_ids) == 1
-    assert len(replaced.replaced_scene_ids) == 1
-    assert [r.unit_key for r in world.scenes.committed.values()] == ["segment-000000"]
+    assert len(replaced.removed_scene_ids) == 2
+    assert replaced.replaced_scene_ids == []
+    assert len(replaced.created_scene_ids) == 1
+    assert [r.unit_key for r in world.scenes.members().values()] == coarser.unit_keys
+    assert len(world.scenes.revisions()) == 3
 
 
 async def test_non_conformant_recording_fails_before_planning(world):

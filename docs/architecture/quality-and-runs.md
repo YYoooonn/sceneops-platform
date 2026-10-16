@@ -25,14 +25,15 @@ execution rather than a recurring quality check against a stable record.
 ## 2. Scene quality and readiness
 
 Readiness is derived, never stored: `sceneops_core.scenes.readiness` takes
-the newest succeeded `SceneValidationRunRecord` **that assessed the Scene's
-current manifest revision** (`manifest_artifact_id` + `manifest_checksum`
-on the run equal the SceneRecord's). Runs of any other revision are ignored,
-so replacing a Scene's manifest resets it to `unknown` until the new
-revision is validated.
+the newest succeeded `SceneValidationRunRecord` **that assessed the revision
+being reported** — the one a DatasetVersion member pins
+(`manifest_artifact_id` + `manifest_checksum` on the run equal the
+revision's). A Scene has no current revision. Runs of any other revision of
+the unit are ignored, so a newly pinned revision is `unknown` until it is
+validated.
 
 ```text
-readiness = UNKNOWN   if no succeeded validation run of the current revision exists
+readiness = UNKNOWN   if no succeeded validation run of the revision exists
           | BLOCKED   if should_block_pipeline, or validation_status in {failed, error}
           | WARNING   if validation_status == "warning"
           | READY     if validation_status == "ready"
@@ -41,8 +42,8 @@ readiness = UNKNOWN   if no succeeded validation run of the current revision exi
 
 The API (`apps/api/app/domains/scenes/quality.py`), scenario mining and the
 detection readiness gate all use this one derivation. The dataset-level API
-reads the latest current-revision runs in one query
-(`SceneRunRepository.latest_succeeded_for_current_revisions`). Detection
+reads the latest runs of every member's pinned revision in one query
+(`SceneRunRepository.latest_succeeded_for_member_revisions`). Detection
 checks the revisions its sample views pin and refuses to run if any of
 them is `blocked`.
 
@@ -73,11 +74,12 @@ readiness = UNKNOWN   if no validation run exists
 
 Episode has no `selectable_for_*` concept yet — there is no downstream
 consumer (equivalent to Scene's detection evaluation) that selects episodes
-by quality today. `EpisodeRecord` has no status (see
+by quality today. Episode units and revisions have no status (see
 [Episode domain](./episode-domain.md) §5). Like Scene run records, a
-per-episode run record pins the `manifest_artifact_id` + `manifest_checksum`
-it assessed (CHECK `ck_episode_run_records_revision_pin`); a replaced
-Episode reports `unknown` until its new revision is validated.
+per-episode run record pins the registered revision it assessed
+(`manifest_artifact_id` + `manifest_checksum`, CHECK
+`ck_episode_run_records_revision_pin`, FK to the revision); a newly pinned
+revision reports `unknown` until it is validated.
 
 ## 4. Scenario curation and readiness
 

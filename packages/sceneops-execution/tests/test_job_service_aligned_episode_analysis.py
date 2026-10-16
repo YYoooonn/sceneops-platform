@@ -228,7 +228,9 @@ class TestUnrelatedJobTypeRegression:
         )
 
         class _Episodes:
-            async def get(self, episode_id):
+            async def get_member_revision(
+                self, *, dataset_id, dataset_version, episode_id
+            ):
                 return current if episode_id == EPISODE_ID else None
 
         service, artifacts = _service(episode_repository=_Episodes())

@@ -20,13 +20,11 @@ async def list_scenes(
     *,
     service: SceneServiceDep,
     pagination: PaginationDep,
-    dataset_id: str | None = None,
-    dataset_version: str | None = None,
     robot_run_id: str | None = None,
 ) -> SceneListResponse:
+    """Scene units; the Scenes of a DatasetVersion, each at the revision it
+    pins, are listed under the DatasetVersion."""
     return await service.list_scenes(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
         robot_run_id=robot_run_id,
         limit=pagination.limit,
         offset=pagination.offset,
@@ -43,11 +41,14 @@ async def get_scene(scene_id: str, service: SceneServiceDep) -> SceneDetailRespo
 
 @router.get("/{scene_id}/quality", response_model=SceneQualityResponse)
 async def get_scene_quality(
-    scene_id: str, service: SceneServiceDep
+    scene_id: str, dataset_id: str, dataset_version: str, service: SceneServiceDep
 ) -> SceneQualityResponse:
-    result = await service.get_scene_quality(scene_id)
+    """Quality of the revision of the Scene that the DatasetVersion pins."""
+    result = await service.get_scene_quality(
+        scene_id, dataset_id=dataset_id, dataset_version=dataset_version
+    )
     if result is None:
-        raise_not_found("Scene", scene_id)
+        raise_not_found("Scene member", f"{scene_id} in {dataset_id}:{dataset_version}")
     return result
 
 

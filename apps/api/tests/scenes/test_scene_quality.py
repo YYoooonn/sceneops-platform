@@ -1,28 +1,43 @@
 """Scene quality builder (pure): readiness comes only from run records that
-assessed the Scene's current manifest revision. Labels and detection
+assessed exactly the revision a DatasetVersion pins. Labels and detection
 selectability are not Scene quality (ADR-007 §33)."""
 
 from __future__ import annotations
 
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes import SceneReadiness
-from sceneops_core.scenes.schemas import project_scene_record
+from sceneops_core.provenance import manifest_artifact_id_for
+from sceneops_core.scenes.schemas import project_scene_revision, scene_id_for
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
 )
 from sceneops_core.scenes.testing import build_scene_manifest
 
-from app.domains.scenes.quality import build_scene_quality, compute_scene_readiness
+from app.domains.scenes.quality import (
+    build_scene_quality as _build_scene_quality,
+)
+from app.domains.scenes.quality import compute_scene_readiness
 
 
-def _scene(*, revision: str = "art-rev-1"):
-    manifest = build_scene_manifest()
-    return project_scene_record(
+def build_scene_quality(scene, validation_run=None, profile_run=None):
+    return _build_scene_quality(
+        scene,
         dataset_id="ds",
         dataset_version="v1",
+        validation_run=validation_run,
+        profile_run=profile_run,
+    )
+
+
+def _scene():
+    manifest = build_scene_manifest()
+    return project_scene_revision(
         manifest=manifest,
-        manifest_artifact_id=revision,
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=scene_id_for(manifest.lineage.source),
+            manifest_checksum=manifest.checksum(),
+        ),
         manifest_checksum=manifest.checksum(),
     )
 
@@ -65,6 +80,7 @@ def test_ready_scene_quality():
     quality = build_scene_quality(scene, _validation(scene), _profile(scene))
 
     assert quality.readiness == SceneReadiness.READY
+    assert (quality.dataset_id, quality.dataset_version) == ("ds", "v1")
     assert quality.manifest_artifact_id == scene.manifest_artifact_id
     assert quality.counts.model_dump() == {
         "keyframe_count": 2,
@@ -101,9 +117,13 @@ def test_blocking_and_warning_validation():
     assert warning.readiness == SceneReadiness.WARNING
 
 
-def test_runs_for_a_previous_revision_are_ignored():
-    scene = _scene(revision="art-rev-2")
-    stale = ("art-rev-1", scene.manifest_checksum)
+def test_runs_for_another_revision_are_ignored():
+    scene = _scene()
+    other = "sha256:" + "0" * 64
+    stale = (
+        manifest_artifact_id_for(unit_id=scene.scene_id, manifest_checksum=other),
+        other,
+    )
     quality = build_scene_quality(
         scene,
         _validation(scene, status="ready", revision=stale),

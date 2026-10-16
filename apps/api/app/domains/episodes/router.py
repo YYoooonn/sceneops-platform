@@ -12,8 +12,9 @@ from app.domains.episodes.schemas import (
     EpisodeQualityResponse,
 )
 
-# Read-only: Episode membership is written by the recording_episode_building
-# pipeline's registrar, validation / profiling run through pipelines.
+# Read-only: Episode units, revisions and members are written by the
+# recording_episode_building pipeline's registrar, validation / profiling run
+# through pipelines.
 
 router = APIRouter()
 
@@ -23,13 +24,9 @@ async def list_episodes(
     *,
     service: EpisodeServiceDep,
     pagination: PaginationDep,
-    dataset_id: str | None = None,
-    dataset_version: str | None = None,
     robot_run_id: str | None = None,
 ) -> EpisodeListResponse:
     return await service.list_episodes(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
         robot_run_id=robot_run_id,
         limit=pagination.limit,
         offset=pagination.offset,
@@ -48,21 +45,31 @@ async def get_episode(
 
 @router.get("/{episode_id}/manifest", response_model=EpisodeManifestResponse)
 async def get_episode_manifest(
-    episode_id: str, service: EpisodeServiceDep
+    episode_id: str, dataset_id: str, dataset_version: str, service: EpisodeServiceDep
 ) -> EpisodeManifestResponse:
-    """The Episode's current canonical manifest revision: asynchronous
-    observation / state / action / event streams, each in its own clock."""
-    result = await service.get_episode_manifest(episode_id)
+    """The canonical manifest revision of the Episode that the DatasetVersion
+    pins: asynchronous observation / state / action / event streams, each in
+    its own clock."""
+    result = await service.get_episode_manifest(
+        episode_id, dataset_id=dataset_id, dataset_version=dataset_version
+    )
     if result is None:
-        raise_not_found("Episode", episode_id)
+        raise_not_found(
+            "Episode member", f"{episode_id} in {dataset_id}:{dataset_version}"
+        )
     return result
 
 
 @router.get("/{episode_id}/quality", response_model=EpisodeQualityResponse)
 async def get_episode_quality(
-    episode_id: str, service: EpisodeServiceDep
+    episode_id: str, dataset_id: str, dataset_version: str, service: EpisodeServiceDep
 ) -> EpisodeQualityResponse:
-    result = await service.get_episode_quality(episode_id)
+    """Quality of the revision of the Episode that the DatasetVersion pins."""
+    result = await service.get_episode_quality(
+        episode_id, dataset_id=dataset_id, dataset_version=dataset_version
+    )
     if result is None:
-        raise_not_found("Episode", episode_id)
+        raise_not_found(
+            "Episode member", f"{episode_id} in {dataset_id}:{dataset_version}"
+        )
     return result

@@ -1,5 +1,6 @@
-"""A mocked WorkerContext holding registered Episodes: EpisodeRecords, their
-EPISODE_MANIFEST ArtifactRecords and the manifest bytes behind them."""
+"""A mocked WorkerContext holding registered Episodes: Episode revisions
+pinned by the DatasetVersion ``d1/v1``, their EPISODE_MANIFEST
+ArtifactRecords and the manifest bytes behind them."""
 
 from __future__ import annotations
 
@@ -12,10 +13,12 @@ from sceneops_core.artifacts.schemas import (
 )
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
-    EpisodeRecord,
+    EpisodeRevisionRecord,
+    episode_id_for,
     load_canonical_episode_manifest,
-    project_episode_record,
+    project_episode_revision,
 )
+from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_core.episodes.testing import action, episode_manifest, observation, state
 from sceneops_core.jobs.schemas import JobManifest, JobStatus, JobType
 
@@ -38,14 +41,15 @@ def sample_manifest(unit_key: str = "recording") -> EpisodeManifest:
     )
 
 
-def register(manifest: EpisodeManifest, *, dataset_id="d1", version="v1"):
+def register(manifest: EpisodeManifest):
     data = manifest.to_canonical_bytes()
     checksum = manifest.checksum()
-    record = project_episode_record(
-        dataset_id=dataset_id,
-        dataset_version=version,
+    record = project_episode_revision(
         manifest=manifest,
-        manifest_artifact_id=f"episode-manifest-{manifest.lineage.source.unit_key}",
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=episode_id_for(manifest.lineage.source),
+            manifest_checksum=checksum,
+        ),
         manifest_checksum=checksum,
     )
     artifact = ArtifactRecord(
@@ -81,8 +85,12 @@ class MemoryArtifactStore:
 
 
 def make_context(
-    registered: list[tuple[EpisodeRecord, ArtifactRecord, bytes]],
+    registered: list[tuple[EpisodeRevisionRecord, ArtifactRecord, bytes]],
+    *,
+    dataset_id: str = "d1",
+    version: str = "v1",
 ) -> MagicMock:
+    """Every registered revision is a member of ``dataset_id/version``."""
     records = {r.episode_id: r for r, _, _ in registered}
     artifacts = {a.artifact_id: a for _, a, _ in registered}
     blobs = {a.uri: d for _, a, d in registered}
@@ -102,7 +110,24 @@ def make_context(
 
     context = MagicMock()
     context.blobs = blobs
-    context.episode_store.get = AsyncMock(side_effect=lambda eid: records.get(eid))
+
+    def member(*, dataset_id: str, dataset_version: str, episode_id: str):
+        if (dataset_id, dataset_version) != (pinned_by[0], pinned_by[1]):
+            return None
+        return records.get(episode_id)
+
+    def revision(*, episode_id: str, manifest_checksum: str):
+        record = records.get(episode_id)
+        return (
+            record if record and record.manifest_checksum == manifest_checksum else None
+        )
+
+    pinned_by = (dataset_id, version)
+    context.episode_store.get = AsyncMock(
+        side_effect=lambda eid: records[eid].unit() if eid in records else None
+    )
+    context.episode_store.get_member_revision = AsyncMock(side_effect=member)
+    context.episode_store.get_revision = AsyncMock(side_effect=revision)
     context.artifact_record_store.get = AsyncMock(
         side_effect=lambda aid: artifacts.get(aid)
     )

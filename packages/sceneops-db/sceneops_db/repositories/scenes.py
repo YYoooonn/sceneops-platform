@@ -4,18 +4,20 @@ from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from sceneops_core.runs.schemas import RunStatus, RunType
-from sceneops_core.scenes.schemas import SceneRecord
+from sceneops_core.scenes.schemas import SceneRecord, SceneRevisionRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
 )
+
+from .revisions import RevisionRegistration
 
 SceneRunRecord: TypeAlias = SceneValidationRunRecord | SceneProfileRunRecord
 
 
 @dataclass(frozen=True)
 class SceneMembershipSummary:
-    """Aggregate of one DatasetVersion's SceneRecord rows."""
+    """Aggregate of the Scene revisions one DatasetVersion pins."""
 
     scene_count: int
     keyframe_count: int
@@ -25,34 +27,49 @@ class SceneMembershipSummary:
 
 @runtime_checkable
 class SceneRepository(Protocol):
-    """Read access for everyone; ``insert`` / ``replace_revision`` /
-    ``delete`` are for the Scene registrar only (ADR-007 §17.5)."""
+    """Scene units and their revisions (ADR-015 §3, §6.4). Read access for
+    everyone; ``register_revision`` is for the Scene registrar only, and it
+    only adds rows (``sceneops_db.repositories.revisions``)."""
 
     async def get(self, scene_id: str) -> SceneRecord | None: ...
 
     async def list(
         self,
         *,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[SceneRecord]: ...
 
-    async def list_recording_scope(
-        self, *, dataset_id: str, dataset_version: str, robot_run_id: str
-    ) -> list[SceneRecord]: ...
+    async def get_revision(
+        self, *, scene_id: str, manifest_checksum: str
+    ) -> SceneRevisionRecord | None: ...
+
+    async def list_revisions(self, scene_id: str) -> list[SceneRevisionRecord]: ...
+
+    async def register_revision(
+        self, revision: SceneRevisionRecord
+    ) -> RevisionRegistration[SceneRevisionRecord]: ...
+
+    # --- the revisions a DatasetVersion pins ----------------------------------
+
+    async def get_member_revision(
+        self, *, dataset_id: str, dataset_version: str, scene_id: str
+    ) -> SceneRevisionRecord | None: ...
+
+    async def list_member_revisions(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        robot_run_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[SceneRevisionRecord]: ...
 
     async def summarize_membership(
         self, *, dataset_id: str, dataset_version: str
     ) -> SceneMembershipSummary: ...
-
-    async def insert(self, scene: SceneRecord) -> SceneRecord: ...
-
-    async def replace_revision(self, scene: SceneRecord) -> SceneRecord: ...
-
-    async def delete(self, scene_ids: list[str]) -> int: ...
 
 
 @runtime_checkable
@@ -78,7 +95,7 @@ class SceneRunRepository(Protocol):
         offset: int = 0,
     ) -> list[SceneRunRecord]: ...
 
-    async def latest_succeeded_for_current_revisions(
+    async def latest_succeeded_for_member_revisions(
         self,
         *,
         dataset_id: str,

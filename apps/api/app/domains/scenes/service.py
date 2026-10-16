@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
 from sceneops_core.runs.schemas import RunStatus, RunType
-from sceneops_core.scenes.schemas import SceneRecord
+from sceneops_core.scenes.schemas import SceneRevisionRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
@@ -33,18 +33,12 @@ class SceneService:
     async def list_scenes(
         self,
         *,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> SceneListResponse:
         scenes = await self._repository.list(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            robot_run_id=robot_run_id,
-            limit=limit,
-            offset=offset,
+            robot_run_id=robot_run_id, limit=limit, offset=offset
         )
         return SceneListResponse(scenes=scenes, count=len(scenes))
 
@@ -52,24 +46,31 @@ class SceneService:
         scene = await self._repository.get(scene_id)
         if scene is None:
             return None
-        return SceneDetailResponse(scene=scene)
+        return SceneDetailResponse(
+            scene=scene, revisions=await self._repository.list_revisions(scene_id)
+        )
 
-    async def get_scene_quality(self, scene_id: str) -> SceneQualityResponse | None:
-        scene = await self._repository.get(scene_id)
+    async def get_scene_quality(
+        self, scene_id: str, *, dataset_id: str, dataset_version: str
+    ) -> SceneQualityResponse | None:
+        """Quality of the revision of ``scene_id`` that the DatasetVersion
+        pins; None if the Scene is not one of its members."""
+        scene = await self._repository.get_member_revision(
+            dataset_id=dataset_id, dataset_version=dataset_version, scene_id=scene_id
+        )
         if scene is None:
             return None
 
-        validation_run = await self._latest_current_revision_run(
-            scene, RunType.SCENE_VALIDATION, SceneValidationRunRecord
-        )
-        profile_run = await self._latest_current_revision_run(
-            scene, RunType.SCENE_PROFILE, SceneProfileRunRecord
-        )
-
         return build_scene_quality(
             scene=scene,
-            validation_run=validation_run,
-            profile_run=profile_run,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            validation_run=await self._latest_revision_run(
+                scene, RunType.SCENE_VALIDATION, SceneValidationRunRecord
+            ),
+            profile_run=await self._latest_revision_run(
+                scene, RunType.SCENE_PROFILE, SceneProfileRunRecord
+            ),
         )
 
     async def list_scene_artifacts(
@@ -82,9 +83,9 @@ class SceneService:
             scene_id=scene_id, limit=limit, offset=offset
         )
 
-    async def _latest_current_revision_run(self, scene: SceneRecord, run_type, cls):
-        """Newest succeeded run of ``run_type`` that assessed the Scene's
-        current manifest revision."""
+    async def _latest_revision_run(self, scene: SceneRevisionRecord, run_type, cls):
+        """Newest succeeded run of ``run_type`` that assessed exactly this
+        revision."""
         runs = await self._run_repository.list(
             type=run_type,
             status=RunStatus.SUCCEEDED,

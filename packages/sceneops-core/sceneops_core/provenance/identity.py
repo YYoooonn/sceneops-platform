@@ -41,6 +41,12 @@ _UNIT_ID_DIGEST_HEX_LENGTH: Final = 32
 
 CanonicalDomain = Literal["scene", "episode"]
 CANONICAL_DOMAINS: Final[tuple[CanonicalDomain, ...]] = get_args(CanonicalDomain)
+_SOURCE_KINDS: Final = frozenset(
+    {
+        RecordingSegmentSource.model_fields["source_kind"].default,
+        ContentUnitSource.model_fields["source_kind"].default,
+    }
+)
 _UNIT_ID_RE: Final = re.compile(
     rf"^(?P<domain>{'|'.join(CANONICAL_DOMAINS)})-[0-9a-f]{{{_UNIT_ID_DIGEST_HEX_LENGTH}}}$"
 )
@@ -61,12 +67,33 @@ def canonical_unit_id(
 ) -> str:
     if not isinstance(source, (RecordingSegmentSource, ContentUnitSource)):
         raise TypeError(f"source must be a source binding, got {type(source).__name__}")
+    return unit_id_for(
+        domain=domain,
+        source_kind=source.source_kind,
+        source_id=source.source_id,
+        unit_key=source.unit_key,
+    )
+
+
+def unit_id_for(
+    *, domain: CanonicalDomain, source_kind: str, source_id: str, unit_key: str
+) -> str:
+    """The unit id of the identity inputs a persisted unit keeps (its source
+    kind, source id and unit key), so a stored unit can be checked against
+    its own id without its full source binding."""
+    if source_kind not in _SOURCE_KINDS:
+        raise ValueError(
+            f"source_kind must be one of {sorted(_SOURCE_KINDS)}, got {source_kind!r}"
+        )
+    for name, value in (("source_id", source_id), ("unit_key", unit_key)):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{name} must be a non-empty string, got {value!r}")
     document = {
         "unit_id_schema": UNIT_ID_SCHEMA_V2,
         "domain": _check_domain(domain),
-        "source_kind": source.source_kind,
-        "source_id": source.source_id,
-        "unit_key": source.unit_key,
+        "source_kind": source_kind,
+        "source_id": source_id,
+        "unit_key": unit_key,
     }
     digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
     return f"{domain}-{digest[:_UNIT_ID_DIGEST_HEX_LENGTH]}"
@@ -87,4 +114,5 @@ __all__ = [
     "CanonicalDomain",
     "canonical_unit_id",
     "unit_id_domain",
+    "unit_id_for",
 ]

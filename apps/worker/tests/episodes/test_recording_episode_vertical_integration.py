@@ -181,7 +181,7 @@ class _Vertical:
 
     async def episodes(self, version="v1"):
         async with get_async_sessionmaker()() as session:
-            return await self.context(session).episode_store.list(
+            return await self.context(session).episode_store.list_member_revisions(
                 dataset_id=self.dataset_id, dataset_version=version
             )
 
@@ -211,7 +211,9 @@ async def test_robot_run_to_registered_validated_episodes(vertical, tmp_path):
     built = await vertical.run(
         BuildRecordingEpisodesJobHandler(), vertical.build(run_id)
     )
-    assert built.unit_keys == ["task-mission-1-000"]
+    (unit_key,) = built.unit_keys
+    assert unit_key.startswith("event_markers-")
+    assert unit_key.endswith("/task-mission-1-000")
     assert (built.observation_count, built.state_count, built.action_count) == (3, 4, 3)
     assert built.payload_artifact_count == built.created_payload_count == 3
 

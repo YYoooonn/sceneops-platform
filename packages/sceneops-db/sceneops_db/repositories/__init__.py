@@ -1,5 +1,9 @@
 from .artifacts import ArtifactRepository
-from .datasets import DatasetRepository, DatasetVersionRepository
+from .datasets import (
+    DatasetRepository,
+    DatasetVersionMemberRepository,
+    DatasetVersionRepository,
+)
 from .episodes import EpisodeRepository, EpisodeRunRecord, EpisodeRunRepository
 from .evaluations import EvaluationRunRepository
 from .executions import ExecutionRecordRepository
@@ -7,6 +11,7 @@ from .inference import InferenceRunRepository
 from .jobs import JobEventRepository, JobRepository
 from .model_registry import ModelRepository, ModelVersionRepository
 from .pipelines import PipelineRunRepository, PipelineTaskRunRepository
+from .revisions import RevisionRegistration, UnitIdentityConflictError
 from .robots import (
     MissionRepository,
     RobotRepository,
@@ -33,6 +38,7 @@ __all__ = [
     # datasets
     "DatasetRepository",
     "DatasetVersionRepository",
+    "DatasetVersionMemberRepository",
     # scenes
     "SceneMembershipSummary",
     "SceneRepository",
@@ -42,6 +48,9 @@ __all__ = [
     "EpisodeRepository",
     "EpisodeRunRepository",
     "EpisodeRunRecord",
+    # revisions
+    "RevisionRegistration",
+    "UnitIdentityConflictError",
     # robots
     "RobotRepository",
     "RobotRunRepository",

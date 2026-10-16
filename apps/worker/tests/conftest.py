@@ -11,6 +11,7 @@ resolver instead of a patched one. ``context.artifact_store`` becomes a
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 import uuid
@@ -88,47 +89,96 @@ def register_local_recording(tmp_path):
 
 
 class _StagedSceneStore:
-    """In-memory SceneStore whose writes become visible to other readers
-    only on commit, so registrar all-or-nothing behavior is observable."""
+    """In-memory Scene units, revisions and DatasetVersion pins whose writes
+    become visible to other readers only on commit, so registrar
+    all-or-nothing behavior is observable. Revision registration applies
+    the production decision (``decide_revision_registration``)."""
 
     def __init__(self) -> None:
-        self.committed: dict = {}
-        self.working: dict = {}
+        # (revisions {(scene_id, checksum): record},
+        #  members {(dataset_id, version): {scene_id: checksum}})
+        self.committed: tuple[dict, dict] = ({}, {})
+        self.working: tuple[dict, dict] = ({}, {})
 
     def commit(self) -> None:
-        self.committed = dict(self.working)
+        self.committed = copy.deepcopy(self.working)
 
     def rollback(self) -> None:
-        self.working = dict(self.committed)
+        self.working = copy.deepcopy(self.committed)
+
+    # --- test views -------------------------------------------------------------
+
+    def members(self, dataset_id="ds", version="v1", *, committed=True) -> dict:
+        """{scene_id: pinned revision} of one DatasetVersion."""
+        revisions, members = self.committed if committed else self.working
+        pins = members.get((dataset_id, version), {})
+        return {s: revisions[(s, c)] for s, c in sorted(pins.items())}
+
+    def revisions(self, *, committed=True) -> dict:
+        return dict((self.committed if committed else self.working)[0])
+
+    # --- SceneStore -------------------------------------------------------------
 
     async def get(self, scene_id):
-        return self.working.get(scene_id)
+        revisions = await self.list_revisions(scene_id)
+        return revisions[0].unit() if revisions else None
 
-    async def list(
-        self, *, dataset_id=None, dataset_version=None, robot_run_id=None, **_
-    ):
+    async def list(self, *, robot_run_id=None, **_):
+        units = {
+            r.scene_id: r.unit()
+            for r in self.working[0].values()
+            if robot_run_id is None or r.robot_run_id == robot_run_id
+        }
+        return [units[s] for s in sorted(units)]
+
+    async def get_revision(self, *, scene_id, manifest_checksum):
+        return self.working[0].get((scene_id, manifest_checksum))
+
+    async def list_revisions(self, scene_id):
         return sorted(
-            (
-                s
-                for s in self.working.values()
-                if (dataset_id is None or s.dataset_id == dataset_id)
-                and (dataset_version is None or s.dataset_version == dataset_version)
-                and (robot_run_id is None or s.robot_run_id == robot_run_id)
-            ),
-            key=lambda s: s.scene_id,
+            (r for (s, _), r in self.working[0].items() if s == scene_id),
+            key=lambda r: r.manifest_checksum,
         )
 
-    async def list_recording_scope(self, *, dataset_id, dataset_version, robot_run_id):
-        return await self.list(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            robot_run_id=robot_run_id,
+    async def register_revision(self, revision):
+        from sceneops_core.provenance import (
+            RevisionDecision,
+            decide_revision_registration,
         )
+        from sceneops_db.repositories import RevisionRegistration
+
+        decision = decide_revision_registration(
+            unit_id=revision.scene_id,
+            candidate=revision,
+            registered=await self.list_revisions(revision.scene_id),
+        )
+        key = (revision.scene_id, revision.manifest_checksum)
+        if decision != RevisionDecision.EXISTING_REVISION:
+            self.working[0][key] = revision
+        return RevisionRegistration(decision=decision, revision=self.working[0][key])
+
+    async def get_member_revision(self, *, dataset_id, dataset_version, scene_id):
+        checksum = self.working[1].get((dataset_id, dataset_version), {}).get(scene_id)
+        return None if checksum is None else self.working[0][(scene_id, checksum)]
+
+    async def list_member_revisions(
+        self, *, dataset_id, dataset_version, robot_run_id=None, limit=100, offset=0
+    ):
+        pins = self.working[1].get((dataset_id, dataset_version), {})
+        rows = [
+            self.working[0][(s, c)]
+            for s, c in sorted(pins.items())
+            if robot_run_id is None
+            or self.working[0][(s, c)].robot_run_id == robot_run_id
+        ]
+        return rows[offset : offset + limit]
 
     async def summarize_membership(self, *, dataset_id, dataset_version):
         from sceneops_db.repositories import SceneMembershipSummary
 
-        scenes = await self.list(dataset_id=dataset_id, dataset_version=dataset_version)
+        scenes = await self.list_member_revisions(
+            dataset_id=dataset_id, dataset_version=dataset_version, limit=10**9
+        )
         return SceneMembershipSummary(
             scene_count=len(scenes),
             keyframe_count=sum(s.keyframe_count for s in scenes),
@@ -136,22 +186,20 @@ class _StagedSceneStore:
             observed_channels=sorted({c for s in scenes for c in s.observed_channels}),
         )
 
-    async def insert(self, scene):
-        if scene.scene_id in self.working:
-            raise RuntimeError(f"duplicate scene {scene.scene_id}")
-        self.working[scene.scene_id] = scene
-        return scene
+    # --- DatasetStore member writes ---------------------------------------------
 
-    async def replace_revision(self, scene):
-        if scene.scene_id not in self.working:
-            raise ValueError(f"Scene not found: {scene.scene_id}")
-        self.working[scene.scene_id] = scene
-        return scene
+    async def add_members(self, *, dataset_id, version, members):
+        pins = self.working[1].setdefault((dataset_id, version), {})
+        for member in members:
+            if member.unit_id in pins:
+                raise RuntimeError(f"duplicate member {member.unit_id}")
+            if (member.unit_id, member.manifest_checksum) not in self.working[0]:
+                raise RuntimeError(f"member pins no revision: {member}")
+            pins[member.unit_id] = member.manifest_checksum
 
-    async def delete(self, scene_ids):
-        for scene_id in scene_ids:
-            self.working.pop(scene_id, None)
-        return len(scene_ids)
+    async def remove_members(self, *, dataset_id, version, unit_ids):
+        pins = self.working[1].get((dataset_id, version), {})
+        return sum(pins.pop(u, None) is not None for u in unit_ids)
 
 
 class SceneWorld:
@@ -166,7 +214,7 @@ class SceneWorld:
         self.artifact_store = LocalArtifactStore(root_uri=self.root)
         self.scene_artifact_store = SceneArtifactStore(
             artifact_store=self.artifact_store,
-            dataset_root_uri=f"{self.root}/datasets",
+            canonical_root_uri=f"{self.root}/canonical",
             payload_root_uri=f"{self.root}/observation_payloads",
         )
         self.artifacts: dict = {}
@@ -248,6 +296,10 @@ class SceneWorld:
             self.summaries[(dataset_id, version)] = summary
 
         ctx.dataset_store.lock_version_for_update = AsyncMock(side_effect=lock)
+        ctx.dataset_store.add_members = AsyncMock(side_effect=self.scenes.add_members)
+        ctx.dataset_store.remove_members = AsyncMock(
+            side_effect=self.scenes.remove_members
+        )
         ctx.dataset_store.replace_scene_membership_summary = AsyncMock(
             side_effect=replace_summary
         )
@@ -339,31 +391,24 @@ class SceneWorld:
                 checksum=ref.checksum,
             )
 
-    async def publish(
-        self,
-        manifest,
-        *,
-        dataset_id: str = "ds",
-        version: str = "v1",
-        kind=None,
-        with_payloads: bool = True,
-    ):
+    async def publish(self, manifest, *, kind=None, with_payloads: bool = True):
         """Publish a manifest the way a producer does: payload artifacts,
-        then write-once manifest bytes at the checksum-qualified key plus its
-        SCENE_MANIFEST ArtifactRecord."""
+        then write-once manifest bytes at the unit-scoped, checksum-qualified
+        key plus its SCENE_MANIFEST ArtifactRecord under the revision's
+        deterministic id."""
         if with_payloads:
             await self.register_payloads(manifest)
         from sceneops_core.artifacts.schemas import ArtifactKind
+        from sceneops_core.provenance import manifest_artifact_id_for
         from sceneops_core.scenes.schemas import scene_id_for
 
         scene_id = scene_id_for(manifest.lineage.source)
         published = await self.scene_artifact_store.publish_canonical_manifest(
-            dataset_id=dataset_id,
-            dataset_version=version,
-            scene_id=scene_id,
-            manifest=manifest,
+            scene_id=scene_id, manifest=manifest
         )
-        artifact_id = f"art-scene-{published.checksum[7:23]}"
+        artifact_id = manifest_artifact_id_for(
+            unit_id=scene_id, manifest_checksum=published.checksum
+        )
         from sceneops_core.artifacts.schemas import ArtifactRecord
 
         record = ArtifactRecord(
@@ -375,8 +420,6 @@ class SceneWorld:
             checksum=published.checksum,
             owner_type="scene",
             owner_id=scene_id,
-            dataset_id=dataset_id,
-            dataset_version=version,
             scene_id=scene_id,
         )
         self.artifacts[artifact_id] = record

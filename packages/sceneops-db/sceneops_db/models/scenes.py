@@ -13,42 +13,33 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from sceneops_core.common.checksums import SHA256_CHECKSUM_PATTERN
 from sceneops_db.base import Base
 
 
 class SceneModel(Base):
-    """Canonical Scene membership: one row per registered Scene, projecting
-    the manifest revision named by ``manifest_artifact_id``. Written only by
-    the Scene registrar; there is no status column (ADR-007 §13.3-§13.4)."""
+    """The canonical Scene unit: its id and source binding (ADR-015 §3).
+    Inserted once by the Scene registrar and never updated (a trigger
+    rejects UPDATE); it carries no DatasetVersion, revision or status."""
 
     __tablename__ = "scenes"
     __table_args__ = (
-        # A Scene exists only as a member of an existing DatasetVersion, and
-        # membership is never removed implicitly by deleting the version.
-        ForeignKeyConstraint(
-            ["dataset_id", "dataset_version"],
-            ["dataset_versions.dataset_id", "dataset_versions.version"],
-            ondelete="RESTRICT",
-            name="fk_scenes_dataset_version",
-        ),
-        CheckConstraint(
-            "window_end_timestamp_ns > window_start_timestamp_ns",
-            name="ck_scenes_segment_window",
-        ),
+        # A unit id is a function of (domain, source_kind, source_id,
+        # unit_key), so one source unit has exactly one row; a writer that
+        # derived another id for it fails here instead of forking identity.
+        UniqueConstraint("robot_run_id", "unit_key", name="uq_scenes_source_unit"),
+        CheckConstraint("source_kind = 'recording'", name="ck_scenes_source_kind"),
     )
 
     scene_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
-    dataset_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    dataset_version: Mapped[str] = mapped_column(String(128), nullable=False)
-
-    # The source projection: the RobotRun the Scene was built from and the
-    # producer's unit key within its recording.
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     robot_run_id: Mapped[str] = mapped_column(
         String(128),
         ForeignKey("robot_runs.run_id", ondelete="RESTRICT"),
@@ -56,14 +47,64 @@ class SceneModel(Base):
     )
     unit_key: Mapped[str] = mapped_column(String(256), nullable=False)
 
-    producer_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
 
+
+class SceneRevisionModel(Base):
+    """One registered SceneManifest revision of a Scene unit, keyed
+    ``(scene_id, manifest_checksum)``, projecting that manifest. Inserted
+    once by the Scene registrar and never updated or repointed (a trigger
+    rejects UPDATE); a unit has no current revision."""
+
+    __tablename__ = "scene_revisions"
+    __table_args__ = (
+        # One unit and one producer fingerprint have at most one manifest
+        # checksum (MS-7): a second checksum is a non-deterministic producer.
+        UniqueConstraint(
+            "scene_id", "producer_fingerprint", name="uq_scene_revisions_fingerprint"
+        ),
+        # The manifest ArtifactRecord id is a function of the revision, so
+        # one artifact belongs to exactly one revision.
+        UniqueConstraint(
+            "manifest_artifact_id", name="uq_scene_revisions_manifest_artifact_id"
+        ),
+        # The full pin, the target of every reference to a revision: a pin
+        # whose artifact id and checksum disagree names no revision.
+        UniqueConstraint(
+            "scene_id",
+            "manifest_artifact_id",
+            "manifest_checksum",
+            name="uq_scene_revisions_pin",
+        ),
+        CheckConstraint(
+            "window_end_timestamp_ns > window_start_timestamp_ns",
+            name="ck_scene_revisions_segment_window",
+        ),
+        CheckConstraint(
+            f"manifest_checksum ~ '{SHA256_CHECKSUM_PATTERN}' AND "
+            f"producer_fingerprint ~ '{SHA256_CHECKSUM_PATTERN}'",
+            name="ck_scene_revisions_checksums",
+        ),
+        CheckConstraint(
+            "observation_count >= 0 AND keyframe_count >= 0",
+            name="ck_scene_revisions_counts",
+        ),
+    )
+
+    scene_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("scenes.scene_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    manifest_checksum: Mapped[str] = mapped_column(String(71), primary_key=True)
     manifest_artifact_id: Mapped[str] = mapped_column(
         String(128),
         ForeignKey("artifacts.artifact_id", ondelete="RESTRICT"),
         nullable=False,
     )
-    manifest_checksum: Mapped[str] = mapped_column(String(71), nullable=False)
+    producer_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
 
     # The segment window [start, end) in window_clock, the producer's
     # declared segmentation clock.
@@ -80,12 +121,6 @@ class SceneModel(Base):
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=text("now()"),
-        onupdate=text("now()"),
-    )
 
 
 class SceneRunRecordModel(Base):
@@ -98,6 +133,17 @@ class SceneRunRecordModel(Base):
 
     __tablename__ = "scene_run_records"
     __table_args__ = (
+        # A per-scene row pins a registered revision, by its full pin.
+        ForeignKeyConstraint(
+            ["scene_id", "manifest_artifact_id", "manifest_checksum"],
+            [
+                "scene_revisions.scene_id",
+                "scene_revisions.manifest_artifact_id",
+                "scene_revisions.manifest_checksum",
+            ],
+            ondelete="RESTRICT",
+            name="fk_scene_run_records_revision",
+        ),
         CheckConstraint(
             "(scene_id IS NULL AND manifest_artifact_id IS NULL "
             "AND manifest_checksum IS NULL) OR "
@@ -112,11 +158,7 @@ class SceneRunRecordModel(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
     scene_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    manifest_artifact_id: Mapped[str | None] = mapped_column(
-        String(128),
-        ForeignKey("artifacts.artifact_id", ondelete="RESTRICT"),
-        nullable=True,
-    )
+    manifest_artifact_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     manifest_checksum: Mapped[str | None] = mapped_column(String(71), nullable=True)
 
     dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -164,15 +206,6 @@ class SceneRunRecordModel(Base):
         "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
-
-Index("ix_scenes_dataset", SceneModel.dataset_id, SceneModel.dataset_version)
-Index(
-    "ix_scenes_recording_scope",
-    SceneModel.dataset_id,
-    SceneModel.dataset_version,
-    SceneModel.robot_run_id,
-)
-Index("ix_scenes_manifest_artifact_id", SceneModel.manifest_artifact_id)
 
 Index(
     "ix_scene_run_records_type_status",

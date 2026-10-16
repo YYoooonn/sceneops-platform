@@ -28,7 +28,7 @@ from sceneops_core.sample_views import (
     SceneRevisionRef,
     build_scene_sample_view,
 )
-from sceneops_core.scenes.schemas import SceneRecord
+from sceneops_core.scenes.schemas import SceneRevisionRecord
 
 from sceneops_derived import DerivedManifestIntegrityError
 from sceneops_worker.derived.resolution import resolve_label_set
@@ -179,7 +179,7 @@ class BuildSceneSampleViewsJobHandler(
     @staticmethod
     async def _scenes(
         context: WorkerContext, params: BuildSceneSampleViewsJobParams
-    ) -> list[SceneRecord]:
+    ) -> list[SceneRevisionRecord]:
         records = await list_dataset_version_scenes(
             context,
             dataset_id=params.dataset_id,

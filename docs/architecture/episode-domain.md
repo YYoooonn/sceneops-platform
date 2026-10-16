@@ -28,8 +28,9 @@ RECORDING_EPISODE_BUILDING  (one robot_run_id per run)
 build_recording_episodes   resolve_recording(robot_run_id) -> L1 conformance check
                            -> plan_recording_episodes (pure) -> OBSERVATION_PAYLOAD
                            artifacts -> EPISODE_MANIFEST artifacts (write-once)
-register_episodes          the only writer of EpisodeRecords and of the
-                           DatasetVersion episode_count
+register_episodes          the only writer of Episode units and revisions, and
+                           of the DatasetVersion's Episode members and
+                           episode_count
 validate_episode /         run records pinned to the revision they assessed
 profile_episode
 ```
@@ -84,10 +85,20 @@ stream must be placeable on it (its time is in that clock, or the clock is
 timestamps in another clock are never compared with the window or converted.
 
 ```text
-whole_recording  [earliest, latest + 1)                         unit_key recording
-fixed_duration   [origin + k·d, origin + (k+1)·d), non-empty      unit_key segment-<k>
-event_markers    [start marker, end marker + 1) per task key     unit_key task-<key>-<n>
+whole_recording  [earliest, latest + 1)                          segment recording
+fixed_duration   [k·d, (k+1)·d): grid at the clock's zero, non-empty   segment <k>
+event_markers    [start marker, end marker + 1) per task key      segment task-<key>-<n>
 ```
+
+The unit key carries the segmentation (ADR-015 §6.3,
+`sceneops_core.provenance.segmentation`):
+`unit_key = <policy>-<sha256(boundary document)[:16]>/<segment>`. The boundary
+document is `RecordingEpisodeBuildConfig.segmentation_boundary()`: the policy,
+clock and duration, or for `event_markers` the marker topic, its time policy
+and decoding, the field *paths* behind `key_field` / `state_field`, and the
+start / end values. Another segmentation is other units; another stream or
+field selection under the same segmentation is a new revision of the same
+units.
 
 Unpaired markers (an end without a start, a second start, a start never
 ended) and a build that yields no Episode fail the job. Windows are never
@@ -119,41 +130,53 @@ observations[] states[] actions[] events[]
   appear; labels and outcomes are derived or separately imported.
 
 Manifests are stored write-once at
-`{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/manifest-<sha256>.json`
-and read only through a pinned checksum and a strict canonical parse.
+`{canonical_root}/episodes/{episode_id}/manifest-<sha256>.json` (one object per
+revision, whichever DatasetVersions pin it) and read only through a pinned
+checksum and a strict canonical parse.
 
-## 5. Identity, registration and EpisodeRecord
+## 5. Identity, registration, units and revisions
 
 ```text
 episode_id     episode_id_for(source): f(source_kind, source_id = robot_run_id,
                unit_key); no DatasetVersion (Ingress boundaries §6)
-artifact id    manifest_artifact_id_for(episode_id, manifest_checksum)
-scope          (DatasetVersion, robot_run_id): one producer fingerprint
-same fingerprint            -> unchanged
-different, replace=false    -> conflict, no change
-different, replace=true     -> atomic replacement of the complete set
+revision       (episode_id, manifest_checksum); artifact id
+               manifest_artifact_id_for(episode_id, manifest_checksum)
+revisions      inserted if absent: identical → no-op · new fingerprint → new
+               revision · same fingerprint, other checksum → conflict
+members        scope (DatasetVersion, robot_run_id): one producer fingerprint
+                 same fingerprint            -> unchanged
+                 different, replace=false    -> conflict, no change
+                 different, replace=true     -> unpin / repin / pin the complete set
 ```
 
 `REGISTER_EPISODES` verifies every manifest and payload reference, checks
-that the manifests were built from the RobotRun's recording bytes, then
-locks the DatasetVersion row, applies the scope rule and recomputes
-`episode_count` in one transaction.
+that the manifests were built from the RobotRun's recording bytes, registers
+units and revisions additively, then locks the DatasetVersion row, applies the
+scope rule to its members and recomputes `episode_count` in one transaction.
 
-`EpisodeRecord` projects exactly one manifest revision: `robot_run_id`,
-`unit_key`, `producer_fingerprint`, `manifest_artifact_id`,
-`manifest_checksum`, the window, per-role observed topics and counts. There
-is no status: a record exists iff the Episode is registered. Readiness
-derives from the latest validation run of the **current** revision.
+`EpisodeRecord` (`episodes`) is the unit: `episode_id`, `source_kind`,
+`robot_run_id`, `unit_key`. `EpisodeRevisionRecord` (`episode_revisions`)
+projects one manifest: `manifest_artifact_id`, `manifest_checksum`,
+`producer_fingerprint`, the window, per-role observed topics and counts. Both
+are immutable; there is no status and no current revision. Readiness derives
+from the latest validation run of the revision being assessed, and
+validation, profiling and alignment read the revision a DatasetVersion member
+pins (an unpinned `ALIGN_EPISODE` input needs `dataset_id` /
+`dataset_version`; a pinned one must name a registered revision of the
+Episode). Schema: [Data model](./data-model.md) §3.
 
 ## 6. API
 
 Read-only; building, validation and profiling run through pipelines.
 
 ```text
-GET /api/v1/episodes?dataset_id=&dataset_version=&robot_run_id=
-GET /api/v1/episodes/{episode_id}
-GET /api/v1/episodes/{episode_id}/manifest     current revision, checksum-verified
-GET /api/v1/episodes/{episode_id}/quality      revision-pinned validation / profile
+GET /api/v1/episodes?robot_run_id=                 units
+GET /api/v1/episodes/{episode_id}                  the unit and every revision
+GET /api/v1/episodes/{episode_id}/manifest?dataset_id=&dataset_version=
+                                                   the revision the version pins,
+                                                   checksum-verified
+GET /api/v1/episodes/{episode_id}/quality?dataset_id=&dataset_version=
+                                                   validation / profile of that revision
 GET /api/v1/artifacts?owner_type=episode&owner_id={episode_id}
 ```
 

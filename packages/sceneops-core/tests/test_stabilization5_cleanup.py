@@ -17,12 +17,16 @@ def test_episode_record_has_no_status_task_or_outcome():
     pinned run records (ADR-007 §13.4); a canonical Episode carries no
     manufactured task or outcome label (§31)."""
     import sceneops_core.episodes.schemas.enums as episode_enums
-    from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeRecord
+    from sceneops_core.episodes.schemas import (
+        EpisodeManifest,
+        EpisodeRecord,
+        EpisodeRevisionRecord,
+    )
 
     assert not hasattr(episode_enums, "EpisodeStatus")
     for field in ("status", "task", "outcome"):
-        assert field not in EpisodeRecord.model_fields
-        assert field not in EpisodeManifest.model_fields
+        for model in (EpisodeRecord, EpisodeRevisionRecord, EpisodeManifest):
+            assert field not in model.model_fields
 
 
 def test_scene_record_has_no_status():
@@ -30,10 +34,11 @@ def test_scene_record_has_no_status():
     pin the revision they assessed (ADR-007 §13.4, I-16). Neither a status
     enum nor a status field may come back."""
     import sceneops_core.scenes.schemas.enums as scene_enums
-    from sceneops_core.scenes.schemas import SceneRecord
+    from sceneops_core.scenes.schemas import SceneRecord, SceneRevisionRecord
 
     assert not hasattr(scene_enums, "SceneStatus")
     assert "status" not in SceneRecord.model_fields
+    assert "status" not in SceneRevisionRecord.model_fields
 
 
 def test_paths_module_was_removed():

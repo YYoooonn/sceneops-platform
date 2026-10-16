@@ -6,11 +6,18 @@ from typing import Any
 from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel
-from sceneops_core.episodes.schemas.records import EpisodeRecord
+from sceneops_core.episodes.schemas.records import (
+    EpisodeRecord,
+    EpisodeRevisionRecord,
+)
 
 
 class EpisodeDetailResponse(SceneOpsBaseModel):
+    """An Episode unit and every registered revision of it; none is
+    current."""
+
     episode: EpisodeRecord
+    revisions: list[EpisodeRevisionRecord]
 
 
 class EpisodeListResponse(SceneOpsBaseModel):
@@ -19,8 +26,9 @@ class EpisodeListResponse(SceneOpsBaseModel):
 
 
 class EpisodeManifestResponse(SceneOpsBaseModel):
-    """The canonical EpisodeManifest revision the Episode currently points
-    to, verified against its pinned checksum before it is returned."""
+    """The canonical EpisodeManifest revision of the Episode that one
+    DatasetVersion pins, verified against its checksum before it is
+    returned."""
 
     episode_id: str
     manifest_artifact_id: str
@@ -30,8 +38,8 @@ class EpisodeManifestResponse(SceneOpsBaseModel):
 
 # ── Episode quality summary ──────────────────────────────────────────────────
 #
-# Only run records that assessed the Episode's current manifest revision
-# count (ADR-007 §13.4).
+# Quality describes the revision of an Episode that one DatasetVersion pins;
+# only run records that assessed exactly that revision count.
 
 
 class EpisodeQualityReadiness(StrEnum):

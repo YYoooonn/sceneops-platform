@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from collections.abc import Sequence
+
+from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
+from sceneops_core.datasets.schemas import (
+    DatasetRecord,
+    DatasetVersionMember,
+    DatasetVersionRecord,
+)
+from sceneops_core.provenance import CanonicalDomain
 
 from sceneops_db.converters.datasets import (
     dataset_model_to_record,
@@ -12,7 +19,11 @@ from sceneops_db.converters.datasets import (
     dataset_version_record_to_values,
     make_dataset_version_id,
 )
-from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
+from sceneops_db.models.datasets import (
+    DatasetModel,
+    DatasetVersionMemberModel,
+    DatasetVersionModel,
+)
 
 from ._utils import apply_pagination, apply_values, values_without_none
 
@@ -221,3 +232,74 @@ class PostgresDatasetVersionRepository:
         )
         result = await self._session.execute(stmt)
         return [dataset_version_model_to_record(m) for m in result.scalars().all()]
+
+
+class PostgresDatasetVersionMemberRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
+        domain: CanonicalDomain | None = None,
+    ) -> list[DatasetVersionMember]:
+        stmt = select(DatasetVersionMemberModel).where(
+            DatasetVersionMemberModel.dataset_version_id
+            == make_dataset_version_id(dataset_id, version)
+        )
+        if domain is not None:
+            stmt = stmt.where(DatasetVersionMemberModel.domain == domain)
+        result = await self._session.execute(
+            stmt.order_by(DatasetVersionMemberModel.unit_id)
+        )
+        return [
+            DatasetVersionMember(
+                domain=m.domain,
+                unit_id=m.unit_id,
+                manifest_artifact_id=m.manifest_artifact_id,
+                manifest_checksum=m.manifest_checksum,
+            )
+            for m in result.scalars().all()
+        ]
+
+    async def add(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
+        members: Sequence[DatasetVersionMember],
+    ) -> None:
+        if not members:
+            return
+        version_id = make_dataset_version_id(dataset_id, version)
+        await self._session.execute(
+            insert(DatasetVersionMemberModel),
+            [
+                {
+                    "dataset_version_id": version_id,
+                    "unit_id": m.unit_id,
+                    "domain": m.domain,
+                    "scene_id": m.unit_id if m.domain == "scene" else None,
+                    "episode_id": m.unit_id if m.domain == "episode" else None,
+                    "manifest_artifact_id": m.manifest_artifact_id,
+                    "manifest_checksum": m.manifest_checksum,
+                }
+                for m in members
+            ],
+        )
+
+    async def remove(
+        self, *, dataset_id: str, version: str, unit_ids: Sequence[str]
+    ) -> int:
+        if not unit_ids:
+            return 0
+        result = await self._session.execute(
+            delete(DatasetVersionMemberModel).where(
+                DatasetVersionMemberModel.dataset_version_id
+                == make_dataset_version_id(dataset_id, version),
+                DatasetVersionMemberModel.unit_id.in_(list(unit_ids)),
+            )
+        )
+        return result.rowcount or 0

@@ -11,13 +11,15 @@ only from registered recordings ([ADR-007](../adr/007-canonical-ingestion-archit
 Three things make up a Scene ([ADR-007](../adr/007-canonical-ingestion-architecture.md) §3):
 
 ```text
-SceneManifest   immutable, canonical JSON description of the unit      (Object Storage)
-SceneRecord     DatasetVersion membership + searchable projection      (PostgreSQL)
-payloads        observation bytes, one OBSERVATION_PAYLOAD ArtifactRecord each (Object Storage)
+SceneManifest        immutable, canonical JSON description of one revision   (Object Storage)
+SceneRecord          the unit: id + source binding                           (PostgreSQL)
+SceneRevisionRecord  one registered manifest revision + searchable projection (PostgreSQL)
+payloads             observation bytes, one OBSERVATION_PAYLOAD ArtifactRecord each (Object Storage)
 ```
 
-The manifest is authoritative; the record is an index over exactly one
-registered manifest revision.
+The manifest is authoritative; a revision record is an index over exactly one
+registered manifest. A DatasetVersion holds a Scene only through a member that
+pins one of its revisions ([Data model](./data-model.md) §3).
 
 ## 1. SceneManifest v2
 
@@ -100,34 +102,38 @@ Bytes go through `SceneManifest.to_canonical_bytes()` (the shared canonical
 JSON serializer) and `load_canonical_scene_manifest()`, which rejects bytes
 that parse but are not already canonical.
 
-## 2. SceneRecord
+## 2. Unit and revision records
 
-Schema: `sceneops_core.scenes.schemas.records`; table `scenes`.
+Schemas: `sceneops_core.scenes.schemas.records`; tables `scenes`,
+`scene_revisions` ([Data model](./data-model.md) §3).
 
 ```text
-scene_id               deterministic: f(dataset_id, dataset_version, "scene", robot_run_id, unit_key)
-dataset_id, dataset_version     FK → dataset_versions (RESTRICT)
-robot_run_id           the source RobotRun; FK → robot_runs (RESTRICT)
-unit_key               the producer's unit key within the recording (segment-<k>)
-producer_fingerprint
-manifest_artifact_id   FK → artifacts (RESTRICT): the current revision
-manifest_checksum
-window_clock, window_start_timestamp_ns, window_end_timestamp_ns
-                       the segment window [start, end) in window_clock (NOT NULL,
-                       non-empty)
-observed_channels, observation_count, keyframe_count
-registered_at, updated_at
+SceneRecord (scenes)                 the unit; never updated
+  scene_id             scene_id_for(source): unit_id v2 over (source_kind,
+                       robot_run_id, unit_key); checked against the binding
+  source_kind          recording
+  robot_run_id         the source RobotRun; FK → robot_runs (RESTRICT)
+  unit_key             <segmentation>/<segment> (§6)
+  registered_at
+
+SceneRevisionRecord (scene_revisions)   one registered manifest; never updated
+  scene_id, manifest_checksum          the revision
+  manifest_artifact_id                 manifest_artifact_id_for(scene_id, checksum);
+                                       FK → artifacts (RESTRICT)
+  producer_fingerprint                 at most one checksum per (unit, fingerprint)
+  window_clock, window_start_timestamp_ns, window_end_timestamp_ns
+                                       the segment window [start, end) in window_clock
+  observed_channels, observation_count, keyframe_count
+  registered_at
+  (source_kind, robot_run_id, unit_key: the unit's binding, read from the unit)
 ```
 
-There is no status column. A record exists if and only if the unit is
-registered; its current revision is exactly `manifest_artifact_id`, never
-"the latest manifest". `scene_id` is `scene_id_for(source)`, the unit identity
-of [Ingress boundaries](./ingress-boundaries.md) §6: a function of
-`(source_kind, source_id, unit_key)` that never depends on a DatasetVersion,
-storage location, producer configuration, window or revision.
-`manifest_artifact_id` is derived from `(scene_id, manifest_checksum)`. The
-record still carries exactly one membership, so one source unit is a Scene of
-at most one DatasetVersion ([limitations](./limitations.md) §5).
+There is no status column and no "current" revision: a unit has one or more
+revisions, and every consumer names the revision it reads: one it was given, or
+the one a DatasetVersion member pins. `scene_id` never depends on a
+DatasetVersion, storage location, producer configuration, window or revision
+([Ingress boundaries](./ingress-boundaries.md) §6), so one Scene is pinned by
+any number of DatasetVersions with one manifest object.
 
 The window columns are a projection of the declared segment window, never
 of observation extent, and never define identity. SceneOps does not
@@ -137,41 +143,50 @@ compute a cross-clock interval for any Scene.
 
 `REGISTER_SCENES` (`sceneops_worker.scenes.registration`) takes a
 DatasetVersion and the ids of `SCENE_MANIFEST` ArtifactRecords. It is the
-only writer of `scenes` rows and of the DatasetVersion Scene summary.
+only writer of Scene units and revisions and, until DatasetVersions are
+composed, of a DatasetVersion's Scene members and Scene summary.
 
 ```text
-verify   each artifact is a SCENE_MANIFEST; bytes match its size + checksum;
-         canonical strict parse; every PayloadRef resolves to an
-         OBSERVATION_PAYLOAD ArtifactRecord with exactly its checksum,
-         size_bytes and media_type
-scope    a registration covers one RobotRun, carries one producer fingerprint, and
-         must have been built from that RobotRun's registered recording bytes
-apply    one transaction under the DatasetVersion row lock, on the recording
-         scope (DatasetVersion, robot_run_id): empty → insert · same fingerprint →
-         no-op (whole scope) · different → conflict, or replace=True: delete ids
-         absent from the new set, repoint reused ids, insert new
-         recompute the DatasetVersion summary from membership; commit
+verify     each artifact is a SCENE_MANIFEST whose id is the revision's
+           deterministic id; bytes match its size + checksum; canonical strict
+           parse; every PayloadRef resolves to an OBSERVATION_PAYLOAD
+           ArtifactRecord with exactly its checksum, size_bytes and media_type
+scope      a registration covers one RobotRun, carries one producer fingerprint, and
+           must have been built from that RobotRun's registered recording bytes
+revisions  each unit and revision inserted if absent (decide_revision_registration):
+           identical → no-op · new fingerprint → new revision · same fingerprint,
+           other checksum → conflict (non-deterministic producer); nothing removed
+members    one transaction under the DatasetVersion row lock, on the version's
+           members of this RobotRun: empty → pin the set · same fingerprint →
+           no-op (whole scope) · different → conflict, or replace=True: unpin
+           units absent from the new set, repin reused units, pin new units
+           recompute the DatasetVersion summary from its members; commit
 ```
 
 Any failure rolls the whole registration back; units are never skipped.
 Builds and manifest reads happen before the lock; every decision is made
-after it, so concurrent registrations into one DatasetVersion serialize.
-A recording build that yields no units fails.
+after it, so concurrent registrations into one DatasetVersion serialize;
+concurrent registrations of one unit are decided by the revision unique keys.
+A recording build that yields no units fails. Replacement only changes which
+revision a DatasetVersion pins: every registered revision stays.
 
 Producers own their bytes: a producer writes a manifest with
-`SceneArtifactStore.publish_canonical_manifest` (write-once, checksum-qualified
-key, see [Storage layout](./storage-layout.md)) and registers its
-`SCENE_MANIFEST` ArtifactRecord with its own execution lineage, after
-registering the `OBSERVATION_PAYLOAD` ArtifactRecords its manifest
-references. Registration never writes manifest or payload bytes or
+`SceneArtifactStore.publish_canonical_manifest` (write-once, unit-scoped,
+checksum-qualified key, see [Storage layout](./storage-layout.md)) and registers
+its `SCENE_MANIFEST` ArtifactRecord under `manifest_artifact_id_for(scene_id,
+checksum)`, owned by the Scene and carrying no DatasetVersion, with its own
+execution lineage, after registering the `OBSERVATION_PAYLOAD` ArtifactRecords
+its manifest references. Registration never writes manifest or payload bytes or
 ArtifactRecords.
 
 ## 4. Quality and readiness
 
-`VALIDATE_SCENE` / `PROFILE_SCENE` take `scene_ids`, read each Scene at the
-revision its record points to (`sceneops_worker.scenes.resolver`), and write
-a per-scene run record that pins that revision (`manifest_artifact_id` +
-`manifest_checksum`). They never write a SceneRecord or DatasetVersion state.
+`VALIDATE_SCENE` / `PROFILE_SCENE` take a DatasetVersion and `scene_ids`,
+read each Scene at the revision that version's member pins
+(`sceneops_worker.scenes.resolver.resolve_member_scene`; without a
+DatasetVersion they fail), and write a per-scene run record that pins that
+revision (`manifest_artifact_id` + `manifest_checksum`). They never write a
+unit, revision, member or DatasetVersion state.
 Validation reports per-channel aggregates: required channels without
 observations (blocking), declared channels without observations, keyframes
 missing a required channel (optionally blocking), and missing calibration,
@@ -179,8 +194,8 @@ intrinsics, image size or ego poses.
 
 Readiness (`sceneops_core.scenes.readiness`) is derived from the newest
 succeeded validation run **of the revision being assessed**; runs of any
-other revision are ignored, so a replaced Scene is `unknown` until its new
-revision is validated. See [Quality and run records](./quality-and-runs.md)
+other revision are ignored, so a newly pinned revision is `unknown` until it
+is validated. See [Quality and run records](./quality-and-runs.md)
 §2.
 
 ## 5. Derived consumers
@@ -200,7 +215,7 @@ Everything downstream of registration reads canonical Scenes through a pin:
   revision blocked downstream use. See
   [Derived layer](./derived-layer.md).
 - `EXPORT_ANALYTICS_SNAPSHOT` writes `scenes`, `observations` and `keyframes`
-  tables from verified current revisions. Every timestamp
+  tables from the verified revisions the DatasetVersion pins. Every timestamp
   column is paired with its `source_clock`; observations carry
   `payload_artifact_id`, not a location.
 
@@ -217,7 +232,7 @@ profile_scene            PROFILE_SCENE (optional)
 ```
 
 The builder (`sceneops_scenes.recording_builder`, producer
-`sceneops.recording_scene_builder`, semantics version 1) reads the recording
+`sceneops.recording_scene_builder`, semantics version 3) reads the recording
 only through `resolve_recording(robot_run_id)`, requires it to pass the L1
 conformance suite, and reads messages through
 `sceneops_recording.reader`. Its behavior is a function of
@@ -241,14 +256,24 @@ segmentation   whole_recording { clock } | fixed_duration { clock, duration_ns }
 
   ```text
   whole_recording  [earliest, latest + 1) over every included observation
-                   and pose                                   unit_key recording
-  fixed_duration   [origin + k·d, origin + (k+1)·d), origin at the earliest
-                   included observation; non-empty windows    unit_key segment-<k>
+                   and pose                                   segment recording
+  fixed_duration   [k·d, (k+1)·d): a grid anchored at the clock's zero;
+                   non-empty windows                          segment <k>
   ```
 
   Segmentation only groups: observations, poses, calibration and payload
   identities are the same under either policy, and the policy is part of the
-  producer fingerprint. Every channel and pose source must be placeable on the
+  producer fingerprint.
+- **Unit keys carry the segmentation** (ADR-015 §6.3,
+  `sceneops_core.provenance.segmentation`):
+  `unit_key = <policy>-<sha256(boundary document)[:16]>/<segment>`, where the
+  boundary document is `RecordingSceneBuildConfig.segmentation_boundary()`
+  (policy, clock, duration) and nothing else. Two segmentations of one RobotRun
+  therefore yield different units, while another channel or pose selection
+  under the same segmentation is a new revision of the same units: the
+  fixed-duration grid does not move with the selection. A `whole_recording`
+  window is the extent of the included data, so it may differ between
+  revisions of its one unit. Every channel and pose source must be placeable on the
   segmentation clock: its own time is in it, or the clock is `mcap_log_time` /
   `mcap_publish_time`.
 - **Observations** keep their canonical timestamp in their channel's clock,
@@ -274,17 +299,22 @@ segmentation   whole_recording { clock } | fixed_duration { clock, duration_ns }
 Retries converge: every payload key, manifest key and artifact id is
 deterministic, existing identical bytes and records are reused, and
 anything different fails the job. A changed `build_config` gives a new
-fingerprint, which the registrar rejects unless `replace` is set.
+fingerprint: a new revision of the same units (or, for another segmentation,
+other units), which the registrar registers and pins in place of the
+DatasetVersion's current pins only when `replace` is set.
 
 ## 7. API
 
 ```text
-GET /api/v1/scenes?dataset_id=&dataset_version=&robot_run_id=
-GET /api/v1/scenes/{scene_id}
-GET /api/v1/scenes/{scene_id}/quality                    # current-revision runs only
+GET /api/v1/scenes?robot_run_id=                         # units
+GET /api/v1/scenes/{scene_id}                            # the unit and every revision
+GET /api/v1/scenes/{scene_id}/quality?dataset_id=&dataset_version=
+                                                         # the revision the version pins
+GET /api/v1/datasets/{id}/versions/{v}/scenes            # the revisions the version pins
 GET /api/v1/datasets/{id}/versions/{v}/quality           # dataset-level aggregate
 GET /api/v1/datasets/{id}/versions/{v}/scenes/quality    # paginated per-scene quality
 GET /api/v1/scenes/{scene_id}/artifacts
 ```
 
-Scene membership and summaries cannot be written through the API.
+Scene units, revisions, members and summaries cannot be written through the
+API.

@@ -74,7 +74,7 @@ class ExportAnalyticsSnapshotJobHandler(
                 "Ensure register_scenes has completed before exporting analytics."
             )
 
-        # Every Scene is read at the revision its record pins, verified.
+        # Every Scene is read at the revision its member pins, verified.
         manifests: list[tuple[str, SceneManifest]] = []
         if requested_tables & set(_MANIFEST_TABLE_BUILDERS):
             for scene in all_scene_records:
@@ -85,7 +85,11 @@ class ExportAnalyticsSnapshotJobHandler(
         row_counts: dict[str, int] = {}
 
         if "scenes" in requested_tables:
-            df = build_scenes_table(all_scene_records)
+            df = build_scenes_table(
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                scenes=all_scene_records,
+            )
             tables["scenes"] = await context.analytics_writer.write_table(
                 "scenes", df, dataset_id=dataset_id, dataset_version=dataset_version
             )

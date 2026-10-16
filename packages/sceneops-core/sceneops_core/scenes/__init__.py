@@ -8,9 +8,10 @@ from .schemas import (
     SceneManifest,
     SceneProfileRunRecord,
     SceneRecord,
+    SceneRevisionRecord,
     SceneValidationRunRecord,
     load_canonical_scene_manifest,
-    project_scene_record,
+    project_scene_revision,
     scene_id_for,
 )
 
@@ -20,10 +21,11 @@ __all__ = [
     "SceneProfileRunRecord",
     "SceneReadiness",
     "SceneRecord",
+    "SceneRevisionRecord",
     "SceneValidationRunRecord",
     "derive_scene_readiness",
     "latest_validation_for_revision",
     "load_canonical_scene_manifest",
-    "project_scene_record",
+    "project_scene_revision",
     "scene_id_for",
 ]

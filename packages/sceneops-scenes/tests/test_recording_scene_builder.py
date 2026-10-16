@@ -14,10 +14,10 @@ import pytest
 
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
 from sceneops_core.provenance import PinnedRecording
+from sceneops_core.provenance.segmentation import recording_unit_key
 from sceneops_scenes.recording_builder import (
     RECORDING_SCENE_PRODUCER_ID,
     RecordingSceneBuildError,
-    WHOLE_RECORDING_UNIT_KEY,
     iter_planned_payloads,
     observation_payload_artifact_id,
     plan_recording_scenes,
@@ -57,6 +57,11 @@ def recording(tmp_path):
     return default_recording().write(tmp_path / "recording.mcap")
 
 
+def _key(config: dict, segment: str) -> str:
+    boundary = RecordingSceneBuildConfig.model_validate(config).segmentation_boundary()
+    return recording_unit_key(boundary=boundary, segment=segment)
+
+
 def _observations(plan, topic):
     return [
         o for s in plan.scenes for o in s.manifest.observations if o.channel == topic
@@ -69,7 +74,12 @@ def _observations(plan, topic):
 def test_fixed_duration_segments_on_the_declared_clock(recording):
     plan = _plan(recording)
 
-    assert [s.unit_key for s in plan.scenes] == ["segment-000000", "segment-000001"]
+    # Window k is [k * 1 s, (k + 1) * 1 s) on the segmentation clock.
+    assert [s.unit_key for s in plan.scenes] == [
+        _key(build_config(), "1"),
+        _key(build_config(), "2"),
+    ]
+    assert all(s.unit_key.startswith("fixed_duration-") for s in plan.scenes)
     windows = [
         (
             s.manifest.lineage.source.source_clock,
@@ -78,8 +88,8 @@ def test_fixed_duration_segments_on_the_declared_clock(recording):
         )
         for s in plan.scenes
     ]
-    # Origin = earliest included observation on the segmentation clock
-    # (the first camera header stamp); windows are half-open.
+    # A grid anchored at the clock's zero, not at the first observation;
+    # windows are half-open.
     assert windows == [
         ("sensor.header_stamp", 1_000_000_000, 2_000_000_000),
         ("sensor.header_stamp", 2_000_000_000, 3_000_000_000),
@@ -96,7 +106,11 @@ def test_segmentation_is_deterministic_and_part_of_the_fingerprint(recording):
         s.manifest.to_canonical_bytes() for s in b.scenes
     ]
     coarser = _plan(recording, build_config(duration_ns=10_000_000_000))
-    assert [s.unit_key for s in coarser.scenes] == ["segment-000000"]
+    assert [s.unit_key for s in coarser.scenes] == [
+        _key(build_config(duration_ns=10_000_000_000), "0")
+    ]
+    # Another segmentation is other units: no key is shared.
+    assert not {s.unit_key for s in coarser.scenes} & {s.unit_key for s in a.scenes}
     assert coarser.producer.producer_fingerprint != a.producer.producer_fingerprint
     assert coarser.producer.producer_id == RECORDING_SCENE_PRODUCER_ID
     assert coarser.producer.build_config["segmentation"] == {
@@ -104,6 +118,33 @@ def test_segmentation_is_deterministic_and_part_of_the_fingerprint(recording):
         "duration_ns": 10_000_000_000,
         "policy": "fixed_duration",
     }
+
+
+def test_fixed_windows_do_not_move_with_the_channel_selection(recording):
+    """The unit boundary is the segmentation's alone: dropping the camera
+    (whose stamp is the earliest) keeps every window and unit key, so the
+    lidar-only build is another revision of the same units."""
+    both = _plan(recording)
+    config = build_config()
+    config["channels"] = [c for c in config["channels"] if c["topic"] == LIDAR_TOPIC]
+    lidar_only = _plan(recording, config)
+
+    def windows(plan):
+        return {
+            s.unit_key: (
+                s.manifest.lineage.source.start_timestamp_ns,
+                s.manifest.lineage.source.end_timestamp_ns,
+            )
+            for s in plan.scenes
+        }
+
+    assert min(o.timestamp_ns for o in _observations(lidar_only, LIDAR_TOPIC)) > min(
+        o.timestamp_ns for o in _observations(both, CAMERA_TOPIC)
+    )
+    assert windows(lidar_only) == windows(both)
+    assert (
+        lidar_only.producer.producer_fingerprint != both.producer.producer_fingerprint
+    )
 
 
 def whole_recording_config(*, clock: str = "sensor.header_stamp", **kwargs) -> dict:
@@ -118,7 +159,10 @@ def test_whole_recording_is_one_scene_covering_the_recording(recording):
 
     (scene,) = plan.scenes
     source = scene.manifest.lineage.source
-    assert scene.unit_key == WHOLE_RECORDING_UNIT_KEY == source.unit_key == "recording"
+    assert (
+        scene.unit_key == source.unit_key == _key(whole_recording_config(), "recording")
+    )
+    assert scene.unit_key.startswith("whole_recording-")
     # Half-open [earliest, latest + 1) over every observation and pose on the
     # segmentation clock: the last stamp is the lidar's, 7 ns after its frame.
     assert (
@@ -207,7 +251,11 @@ def test_log_time_segmentation_keeps_source_stamps_unconverted(recording):
     plan = _plan(recording, build_config(clock="mcap_log_time"))
     source = plan.scenes[0].manifest.lineage.source
     assert source.source_clock == "mcap_log_time"
-    assert source.start_timestamp_ns == 1_000_000_000 + LOG_LAG_NS
+    # The first message is received at 1 s + LOG_LAG_NS: grid window 1.
+    assert (source.start_timestamp_ns, source.end_timestamp_ns) == (
+        1_000_000_000,
+        2_000_000_000,
+    )
     camera = _observations(plan, CAMERA_TOPIC)
     assert [o.timestamp_ns for o in camera] == [
         1_000_000_000,

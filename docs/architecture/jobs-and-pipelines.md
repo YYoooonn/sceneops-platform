@@ -75,8 +75,9 @@ sets, categories and the model backend are explicit params; no stage defaults a
 source's vocabulary. See [Derived layer](./derived-layer.md).
 
 **Episode learning.** `EPISODE_LEARNING_DATA_BUILDING` aligns pinned Episode
-revisions (`align_episode` params: `episodes`, each an `episode_id` optionally
-pinned by `source_artifact_id` + `source_manifest_sha256`, and one
+revisions (`align_episode` params: the DatasetVersion, `episodes`, each an
+`episode_id` either resolved to the revision that DatasetVersion pins or pinned by
+`source_artifact_id` + `source_manifest_sha256` to a registered revision, and one
 `alignment_config`) and hands the aligned revisions to `export_learning_data` in the
 export's own input shape (`export_inputs`: episode id, aligned artifact id,
 checksum). The export validates every aligned input and fails rather than

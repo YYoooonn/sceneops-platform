@@ -6,10 +6,11 @@ tools/baselines/canonical/canonical_bootstrap.sh: a caller that registers Episod
 for the same DatasetVersion across several independent operations (one
 REGISTER_EPISODES per RobotRun) must end up
 with DatasetVersionRecord.episode.episode_count equal to the true current
-canonical membership -- never just the count from whichever operation ran
-last. This exercises the real production repositories
-(PostgresEpisodeRepository.count / PostgresDatasetVersionRepository.
-update_episode_summary), not a reimplementation.
+canonical membership (the Episode revisions the version pins) -- never just
+the count from whichever operation ran last. This exercises the real
+production repositories (PostgresEpisodeRepository.count_members /
+PostgresDatasetVersionRepository.update_episode_summary), not a
+reimplementation.
 """
 
 from __future__ import annotations
@@ -18,10 +19,12 @@ import asyncio
 
 import pytest
 
+from sceneops_core.datasets.schemas import DatasetVersionMember
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from sceneops_core.scenes.testing import recording_source
 from sceneops_db.postgres.datasets import (
     PostgresDatasetRepository,
+    PostgresDatasetVersionMemberRepository,
     PostgresDatasetVersionRepository,
 )
 from sceneops_db.postgres.episodes import PostgresEpisodeRepository
@@ -35,26 +38,44 @@ async def _create_dataset(db_session, dataset_id: str) -> None:
     )
 
 
-async def _insert_episode(make, session, *, dataset_id, version, episode_id):
-    """Register the Episode with unit key ``episode_id`` of the dataset's one
-    RobotRun, unless it already is (the registrar's unchanged case)."""
-    record = await make(
-        session,
-        dataset_id=dataset_id,
-        dataset_version=version,
-        robot_run_id=f"run-{dataset_id}",
-        unit_key=episode_id,
-    )
+async def _pin_episode(session, record, *, dataset_id, version) -> None:
+    """The registrar's write for one Episode: register its revision
+    (additive), then pin it unless the version already does."""
     repo = PostgresEpisodeRepository(session)
-    if await repo.get(record.episode_id) is None:
-        await repo.insert(record)
+    await repo.register_revision(record)
+    if (
+        await repo.get_member_revision(
+            dataset_id=dataset_id, dataset_version=version, episode_id=record.episode_id
+        )
+        is None
+    ):
+        await PostgresDatasetVersionMemberRepository(session).add(
+            dataset_id=dataset_id,
+            version=version,
+            members=[
+                DatasetVersionMember(
+                    domain="episode",
+                    unit_id=record.episode_id,
+                    manifest_artifact_id=record.manifest_artifact_id,
+                    manifest_checksum=record.manifest_checksum,
+                )
+            ],
+        )
+
+
+async def _insert_episode(make, session, *, dataset_id, version, episode_id):
+    """Register and pin the Episode with unit key ``episode_id`` of the
+    dataset's one RobotRun, unless it already is (the registrar's unchanged
+    case)."""
+    record = await make(session, robot_run_id=f"run-{dataset_id}", unit_key=episode_id)
+    await _pin_episode(session, record, dataset_id=dataset_id, version=version)
 
 
 async def _register_one_episode_and_refresh_summary(
     db_session, make, *, dataset_id: str, version: str, episode_id: str
 ) -> int:
     """The Episode registrar's recompute-then-write sequence for one
-    registration: insert one EpisodeRecord, recompute the live count and
+    registration: pin one Episode revision, recompute the live count and
     write it as the DatasetVersion summary. Returns the recomputed count."""
     episode_repo = PostgresEpisodeRepository(db_session)
     version_repo = PostgresDatasetVersionRepository(db_session)
@@ -62,7 +83,9 @@ async def _register_one_episode_and_refresh_summary(
     await _insert_episode(
         make, db_session, dataset_id=dataset_id, version=version, episode_id=episode_id
     )
-    count = await episode_repo.count(dataset_id=dataset_id, dataset_version=version)
+    count = await episode_repo.count_members(
+        dataset_id=dataset_id, dataset_version=version
+    )
     await version_repo.update_episode_summary(
         dataset_id=dataset_id, version=version, episode_count=count
     )
@@ -71,7 +94,7 @@ async def _register_one_episode_and_refresh_summary(
 
 @pytest.mark.asyncio
 async def test_independent_registrations_converge_on_true_total(
-    db_session, unique_id, episode_record_for
+    db_session, unique_id, episode_revision_for
 ):
     """SceneOps: three independent register_episode-shaped operations for
     the SAME DatasetVersion (as canonical-bootstrap dispatches once per
@@ -88,7 +111,7 @@ async def test_independent_registrations_converge_on_true_total(
     for i, episode_id in enumerate(["ep-a", "ep-b", "ep-c"], start=1):
         count = await _register_one_episode_and_refresh_summary(
             db_session,
-            episode_record_for,
+            episode_revision_for,
             dataset_id=dataset_id,
             version=version,
             episode_id=episode_id,
@@ -101,7 +124,7 @@ async def test_independent_registrations_converge_on_true_total(
 
 @pytest.mark.asyncio
 async def test_retry_upsert_of_existing_episode_does_not_inflate_count(
-    db_session, unique_id, episode_record_for
+    db_session, unique_id, episode_revision_for
 ):
     """Re-registering (upserting) an already-registered episode must leave
     the aggregate count unchanged -- proves recompute-from-live-count is
@@ -117,7 +140,7 @@ async def test_retry_upsert_of_existing_episode_does_not_inflate_count(
     for episode_id in ["ep-a", "ep-b", "ep-c"]:
         await _register_one_episode_and_refresh_summary(
             db_session,
-            episode_record_for,
+            episode_revision_for,
             dataset_id=dataset_id,
             version=version,
             episode_id=episode_id,
@@ -127,7 +150,7 @@ async def test_retry_upsert_of_existing_episode_does_not_inflate_count(
     # dispatch/retry would.
     count = await _register_one_episode_and_refresh_summary(
         db_session,
-        episode_record_for,
+        episode_revision_for,
         dataset_id=dataset_id,
         version=version,
         episode_id="ep-c",
@@ -140,7 +163,7 @@ async def test_retry_upsert_of_existing_episode_does_not_inflate_count(
 
 @pytest.mark.asyncio
 async def test_scene_and_episode_domains_stay_independent_while_both_grow(
-    db_session, unique_id, scene_record_for, episode_record_for
+    db_session, unique_id, scene_revision_for, episode_revision_for, pin_members
 ):
     """SceneOps: a combined DatasetVersion where both Scene and Episode
     domains grow independently over several operations must never let one
@@ -154,14 +177,16 @@ async def test_scene_and_episode_domains_stay_independent_while_both_grow(
         DatasetVersionRecord(dataset_id=dataset_id, version=version)
     )
 
+    scene_run = unique_id("run")
+
     async def _register_scene(source_unit_key: str) -> None:
-        await scene_repo.insert(
-            await scene_record_for(
-                db_session,
-                dataset_id=dataset_id,
-                dataset_version=version,
-                source=recording_source(unit_key=source_unit_key),
-            )
+        record = await scene_revision_for(
+            db_session,
+            source=recording_source(robot_run_id=scene_run, unit_key=source_unit_key),
+        )
+        await scene_repo.register_revision(record)
+        await pin_members(
+            db_session, dataset_id=dataset_id, version=version, revisions=[record]
         )
 
     async def _refresh_scene_summary() -> int:
@@ -185,14 +210,14 @@ async def test_scene_and_episode_domains_stay_independent_while_both_grow(
     assert await _refresh_scene_summary() == 2
     await _register_one_episode_and_refresh_summary(
         db_session,
-        episode_record_for,
+        episode_revision_for,
         dataset_id=dataset_id,
         version=version,
         episode_id="ep-a",
     )
     await _register_one_episode_and_refresh_summary(
         db_session,
-        episode_record_for,
+        episode_revision_for,
         dataset_id=dataset_id,
         version=version,
         episode_id="ep-b",
@@ -205,7 +230,7 @@ async def test_scene_and_episode_domains_stay_independent_while_both_grow(
     # Add one more Episode -> Scenes must stay 2, Episodes becomes 3.
     await _register_one_episode_and_refresh_summary(
         db_session,
-        episode_record_for,
+        episode_revision_for,
         dataset_id=dataset_id,
         version=version,
         episode_id="ep-c",
@@ -241,19 +266,15 @@ async def _prepare(make, *, dataset_id: str, version: str, episode_id: str):
     """Seed the RobotRun and EPISODE_MANIFEST artifact an Episode needs and
     return its (not inserted) record, committed before any race starts."""
     async with get_async_sessionmaker()() as session:
-        record = await make(
-            session,
-            dataset_id=dataset_id,
-            dataset_version=version,
-            robot_run_id=f"run-{dataset_id}-{episode_id}",
-        )
+        record = await make(session, robot_run_id=f"run-{dataset_id}-{episode_id}")
         await session.commit()
-    return record
+    return record, dataset_id, version
 
 
 async def _register_episode_concurrently(
     *, record, barrier: asyncio.Barrier, use_lock: bool
 ) -> None:
+    record, dataset_id, version = record
     """One independent registration transaction, own session.
 
     ``use_lock=True`` follows the registrar: lock the DatasetVersion row,
@@ -268,29 +289,25 @@ async def _register_episode_concurrently(
         version_repo = PostgresDatasetVersionRepository(session)
         if use_lock:
             await barrier.wait()
-            await version_repo.lock_for_update(
-                dataset_id=record.dataset_id, version=record.dataset_version
-            )
-            await episode_repo.insert(record)
+            await version_repo.lock_for_update(dataset_id=dataset_id, version=version)
+            await _pin_episode(session, record, dataset_id=dataset_id, version=version)
         else:
-            await episode_repo.insert(record)
+            await _pin_episode(session, record, dataset_id=dataset_id, version=version)
             # Rendezvous: both rows inserted (each visible only to its own
             # transaction) before either counts and writes.
             await barrier.wait()
-        count = await episode_repo.count(
-            dataset_id=record.dataset_id, dataset_version=record.dataset_version
+        count = await episode_repo.count_members(
+            dataset_id=dataset_id, dataset_version=version
         )
         await version_repo.update_episode_summary(
-            dataset_id=record.dataset_id,
-            version=record.dataset_version,
-            episode_count=count,
+            dataset_id=dataset_id, version=version, episode_count=count
         )
         await session.commit()
 
 
 @pytest.mark.asyncio
 async def test_concurrent_registrations_without_lock_lose_an_update(
-    unique_id, episode_record_for
+    unique_id, episode_revision_for
 ):
     """Reproduces the exact pre-fix race: two concurrent register_episode
     operations for the same DatasetVersion, neither locking the row, both
@@ -312,7 +329,7 @@ async def test_concurrent_registrations_without_lock_lose_an_update(
 
     records = {
         e: await _prepare(
-            episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
+            episode_revision_for, dataset_id=dataset_id, version=version, episode_id=e
         )
         for e in ("ep-a", "ep-b")
     }
@@ -329,7 +346,7 @@ async def test_concurrent_registrations_without_lock_lose_an_update(
     async with sessionmaker() as verify_session:
         episode_repo = PostgresEpisodeRepository(verify_session)
         version_repo = PostgresDatasetVersionRepository(verify_session)
-        live_count = await episode_repo.count(
+        live_count = await episode_repo.count_members(
             dataset_id=dataset_id, dataset_version=version
         )
         fetched = await version_repo.get(dataset_id=dataset_id, version=version)
@@ -342,7 +359,7 @@ async def test_concurrent_registrations_without_lock_lose_an_update(
 
 @pytest.mark.asyncio
 async def test_concurrent_registrations_with_lock_converge_on_true_total(
-    unique_id, episode_record_for
+    unique_id, episode_revision_for
 ):
     """The actual fix: same forced interleaving as the test above, but with
     the row lock in place -- both transactions must still converge on the
@@ -362,7 +379,7 @@ async def test_concurrent_registrations_with_lock_converge_on_true_total(
 
     records = {
         e: await _prepare(
-            episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
+            episode_revision_for, dataset_id=dataset_id, version=version, episode_id=e
         )
         for e in ("ep-a", "ep-b")
     }
@@ -379,7 +396,7 @@ async def test_concurrent_registrations_with_lock_converge_on_true_total(
     async with sessionmaker() as verify_session:
         episode_repo = PostgresEpisodeRepository(verify_session)
         version_repo = PostgresDatasetVersionRepository(verify_session)
-        live_count = await episode_repo.count(
+        live_count = await episode_repo.count_members(
             dataset_id=dataset_id, dataset_version=version
         )
         fetched = await version_repo.get(dataset_id=dataset_id, version=version)
@@ -390,7 +407,7 @@ async def test_concurrent_registrations_with_lock_converge_on_true_total(
 
 @pytest.mark.asyncio
 async def test_concurrent_scene_and_episode_summary_writes_do_not_clobber(
-    unique_id, scene_record_for, episode_record_for
+    unique_id, scene_revision_for, episode_revision_for, pin_members
 ):
     """A genuinely concurrent Scene-domain write and Episode-domain write
     against the SAME DatasetVersion row (different sessions/transactions)
@@ -416,13 +433,14 @@ async def test_concurrent_scene_and_episode_summary_writes_do_not_clobber(
         async with sessionmaker() as session:
             scene_repo = PostgresSceneRepository(session)
             version_repo = PostgresDatasetVersionRepository(session)
-            record = await scene_record_for(
-                session, dataset_id=dataset_id, dataset_version=version
-            )
-            # Registrar order: lock the DatasetVersion row, then insert.
+            record = await scene_revision_for(session)
+            # Registrar order: lock the DatasetVersion row, then write.
             await barrier.wait()
             await version_repo.lock_for_update(dataset_id=dataset_id, version=version)
-            await scene_repo.insert(record)
+            await scene_repo.register_revision(record)
+            await pin_members(
+                session, dataset_id=dataset_id, version=version, revisions=[record]
+            )
             summary = await scene_repo.summarize_membership(
                 dataset_id=dataset_id, dataset_version=version
             )
@@ -438,7 +456,7 @@ async def test_concurrent_scene_and_episode_summary_writes_do_not_clobber(
 
     records = {
         e: await _prepare(
-            episode_record_for, dataset_id=dataset_id, version=version, episode_id=e
+            episode_revision_for, dataset_id=dataset_id, version=version, episode_id=e
         )
         for e in ("ep-a",)
     }

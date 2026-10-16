@@ -30,15 +30,23 @@ def _now(offset_seconds: float = 0) -> datetime:
 # ── SceneRunRecord ────────────────────────────────────────────────────────────
 
 
-async def _registered_scene(session, unique_id, seed_dataset_version, scene_record_for):
-    """A registered SceneRecord (with its DatasetVersion and manifest
-    ArtifactRecord) so run records can pin a real revision."""
+DATASET_VERSION = "v1"
+
+
+async def _registered_scene(
+    session, unique_id, seed_dataset_version, scene_revision_for, pin_members
+):
+    """A registered Scene revision (with its manifest ArtifactRecord), pinned
+    by a fresh DatasetVersion, so run records can pin a real revision.
+    Returns (revision, dataset_id)."""
     from sceneops_db.postgres.scenes import PostgresSceneRepository
 
     dataset_id = unique_id("ds")
     await seed_dataset_version(session, dataset_id=dataset_id)
-    record = await scene_record_for(session, dataset_id=dataset_id)
-    return await PostgresSceneRepository(session).insert(record)
+    record = await scene_revision_for(session)
+    registered = await PostgresSceneRepository(session).register_revision(record)
+    await pin_members(session, dataset_id=dataset_id, revisions=[record])
+    return registered.revision, dataset_id
 
 
 def _validation(
@@ -49,6 +57,7 @@ def _validation(
     status="ready",
     revision=None,
     run_status=RunStatus.SUCCEEDED,
+    dataset_id=None,
 ):
     artifact_id, checksum = revision or (
         scene.manifest_artifact_id,
@@ -59,8 +68,8 @@ def _validation(
         scene_id=scene.scene_id,
         manifest_artifact_id=artifact_id,
         manifest_checksum=checksum,
-        dataset_id=scene.dataset_id,
-        dataset_version=scene.dataset_version,
+        dataset_id=dataset_id,
+        dataset_version=DATASET_VERSION if dataset_id else None,
         status=run_status,
         validation_status=status,
         created_at=created_at,
@@ -69,10 +78,10 @@ def _validation(
 
 @pytest.mark.asyncio
 async def test_scene_run_create_and_update_keeps_revision_pin(
-    db_session, unique_id, seed_dataset_version, scene_record_for
+    db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
 ):
-    scene = await _registered_scene(
-        db_session, unique_id, seed_dataset_version, scene_record_for
+    scene, dataset_id = await _registered_scene(
+        db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
     )
     repo = PostgresSceneRunRepository(db_session)
     run_id = unique_id("run")
@@ -103,10 +112,10 @@ async def test_scene_run_create_and_update_keeps_revision_pin(
 
 @pytest.mark.asyncio
 async def test_scene_run_list_filters_by_scene_and_revision(
-    db_session, unique_id, seed_dataset_version, scene_record_for
+    db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
 ):
-    scene = await _registered_scene(
-        db_session, unique_id, seed_dataset_version, scene_record_for
+    scene, dataset_id = await _registered_scene(
+        db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
     )
     repo = PostgresSceneRunRepository(db_session)
     pinned = await repo.create(_validation(scene, unique_id("run"), created_at=_now()))
@@ -124,15 +133,17 @@ async def test_scene_run_list_filters_by_scene_and_revision(
 
 
 @pytest.mark.asyncio
-async def test_latest_runs_count_only_the_current_revision(
-    db_session, unique_id, seed_dataset_version, scene_record_for
+async def test_latest_runs_count_only_the_member_revision(
+    db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
 ):
-    """A newer run for a superseded revision must not shadow the current
-    revision's own runs, and an unfinished run never counts."""
+    """A newer run for another revision of the unit must not shadow the runs
+    of the revision the DatasetVersion pins, and an unfinished run never
+    counts."""
+    from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
     from sceneops_db.postgres.scenes import PostgresSceneRepository
 
-    scene = await _registered_scene(
-        db_session, unique_id, seed_dataset_version, scene_record_for
+    scene, dataset_id = await _registered_scene(
+        db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
     )
     repo = PostgresSceneRunRepository(db_session)
     old_revision = (scene.manifest_artifact_id, scene.manifest_checksum)
@@ -140,9 +151,9 @@ async def test_latest_runs_count_only_the_current_revision(
     await repo.create(
         _validation(scene, unique_id("run-a"), created_at=_now(-60), status="ready")
     )
-    current_older = unique_id("run-b")
+    pinned_older = unique_id("run-b")
     await repo.create(
-        _validation(scene, current_older, created_at=_now(-30), status="warning")
+        _validation(scene, pinned_older, created_at=_now(-30), status="warning")
     )
     await repo.create(
         _validation(
@@ -153,44 +164,72 @@ async def test_latest_runs_count_only_the_current_revision(
         )
     )
 
-    latest = await repo.latest_succeeded_for_current_revisions(
-        dataset_id=scene.dataset_id,
-        dataset_version=scene.dataset_version,
-        run_type=RunType.SCENE_VALIDATION,
-    )
-    assert latest[scene.scene_id].run_id == current_older
+    async def latest():
+        return await repo.latest_succeeded_for_member_revisions(
+            dataset_id=dataset_id,
+            dataset_version=DATASET_VERSION,
+            run_type=RunType.SCENE_VALIDATION,
+        )
 
-    # Replace the Scene's revision: the old runs no longer count, even the
-    # newest one, until the new revision is validated.
-    replacement = await scene_record_for(
+    assert (await latest())[scene.scene_id].run_id == pinned_older
+
+    # Repin the unit to another revision: the old revision's runs no longer
+    # count, even the newest one, until the new revision is validated.
+    replacement = await scene_revision_for(
         db_session,
-        dataset_id=scene.dataset_id,
         source=recording_source(
             robot_run_id=scene.robot_run_id, unit_key=scene.unit_key
         ),
-        keyframe_timestamps_ns=(1_000, 2_000, 3_000),
+        build_config={"channels": ["CAM_FRONT"]},
     )
-    await PostgresSceneRepository(db_session).replace_revision(replacement)
+    assert replacement.scene_id == scene.scene_id
+    await PostgresSceneRepository(db_session).register_revision(replacement)
+    await PostgresDatasetVersionMemberRepository(db_session).remove(
+        dataset_id=dataset_id, version=DATASET_VERSION, unit_ids=[scene.scene_id]
+    )
+    await pin_members(db_session, dataset_id=dataset_id, revisions=[replacement])
     await repo.create(
         _validation(scene, unique_id("run-d"), created_at=_now(), revision=old_revision)
     )
-    latest = await repo.latest_succeeded_for_current_revisions(
-        dataset_id=scene.dataset_id,
-        dataset_version=scene.dataset_version,
-        run_type=RunType.SCENE_VALIDATION,
-    )
-    assert scene.scene_id not in latest
+    assert scene.scene_id not in await latest()
 
     newest = unique_id("run-e")
     await repo.create(
         _validation(replacement, newest, created_at=_now(5), status="failed")
     )
-    latest = await repo.latest_succeeded_for_current_revisions(
-        dataset_id=scene.dataset_id,
-        dataset_version=scene.dataset_version,
-        run_type=RunType.SCENE_VALIDATION,
-    )
-    assert latest[scene.scene_id].run_id == newest
+    assert (await latest())[scene.scene_id].run_id == newest
+
+
+@pytest.mark.asyncio
+async def test_a_run_record_must_pin_a_registered_revision(
+    db_session, unique_id, scene_revision_for
+):
+    """The full pin references the revision row: a run of an unregistered
+    revision, or with an artifact id of another revision, is refused."""
+    from sqlalchemy.exc import IntegrityError
+
+    from sceneops_db.postgres.scenes import PostgresSceneRepository
+
+    revision = await scene_revision_for(db_session)
+    repo = PostgresSceneRunRepository(db_session)
+    with pytest.raises(IntegrityError, match="fk_scene_run_records_revision"):
+        async with db_session.begin_nested():
+            await repo.create(
+                _validation(revision, unique_id("run"), created_at=_now())
+            )
+
+    await PostgresSceneRepository(db_session).register_revision(revision)
+    await repo.create(_validation(revision, unique_id("run"), created_at=_now()))
+    with pytest.raises(IntegrityError, match="fk_scene_run_records_revision"):
+        async with db_session.begin_nested():
+            await repo.create(
+                _validation(
+                    revision,
+                    unique_id("run"),
+                    created_at=_now(),
+                    revision=(revision.manifest_artifact_id, "sha256:" + "e" * 64),
+                )
+            )
 
 
 @pytest.mark.asyncio
@@ -213,10 +252,11 @@ async def test_revision_pin_check_constraint(db_session, unique_id):
 # ── EpisodeRunRecord ──────────────────────────────────────────────────────────
 
 
-async def _pinned(db_session, unique_id, seed_dataset_version, episode_record_for):
-    dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
-    record = await episode_record_for(db_session, dataset_id=dataset_id)
+async def _pinned(db_session, unique_id, seed_dataset_version, episode_revision_for):
+    from sceneops_db.postgres.episodes import PostgresEpisodeRepository
+
+    record = await episode_revision_for(db_session)
+    await PostgresEpisodeRepository(db_session).register_revision(record)
     return {
         "episode_id": record.episode_id,
         "manifest_artifact_id": record.manifest_artifact_id,
@@ -226,10 +266,12 @@ async def _pinned(db_session, unique_id, seed_dataset_version, episode_record_fo
 
 @pytest.mark.asyncio
 async def test_episode_run_create_and_update_keeps_the_revision_pin(
-    db_session, unique_id, seed_dataset_version, episode_record_for
+    db_session, unique_id, seed_dataset_version, episode_revision_for
 ):
     repo = PostgresEpisodeRunRepository(db_session)
-    pin = await _pinned(db_session, unique_id, seed_dataset_version, episode_record_for)
+    pin = await _pinned(
+        db_session, unique_id, seed_dataset_version, episode_revision_for
+    )
     run_id = unique_id("run")
     await repo.create(
         EpisodeValidationRunRecord(
@@ -256,12 +298,14 @@ async def test_episode_run_create_and_update_keeps_the_revision_pin(
 
 @pytest.mark.asyncio
 async def test_episode_run_records_are_append_only_across_executions(
-    db_session, unique_id, seed_dataset_version, episode_record_for
+    db_session, unique_id, seed_dataset_version, episode_revision_for
 ):
     """Re-validating the same revision (a new job/run_id) never overwrites or
     removes the prior run row."""
     repo = PostgresEpisodeRunRepository(db_session)
-    pin = await _pinned(db_session, unique_id, seed_dataset_version, episode_record_for)
+    pin = await _pinned(
+        db_session, unique_id, seed_dataset_version, episode_revision_for
+    )
     first, second = unique_id("run"), unique_id("run")
     await repo.create(
         EpisodeValidationRunRecord(

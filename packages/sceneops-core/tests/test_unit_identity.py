@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 import pytest
 
 from sceneops_core.common.ids import robot_run_recording_artifact_id
-from sceneops_core.episodes.schemas import episode_id_for, project_episode_record
+from sceneops_core.episodes.schemas import episode_id_for, project_episode_revision
 from sceneops_core.episodes.testing import action, episode_manifest, state
 from sceneops_core.provenance import (
     InconsistentRevisionsError,
@@ -34,7 +34,7 @@ from sceneops_core.provenance import (
     manifest_artifact_id_for,
     unit_id_domain,
 )
-from sceneops_core.scenes.schemas import project_scene_record, scene_id_for
+from sceneops_core.scenes.schemas import project_scene_revision, scene_id_for
 from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_core.sources import (
     SnapshotDeclaration,
@@ -310,23 +310,14 @@ def test_unit_and_revision_are_separate_identities():
     ) != manifest_artifact_id_for(unit_id=unit_b, manifest_checksum=b.checksum())
 
 
-def test_a_revision_is_the_same_whatever_dataset_version_records_it():
-    manifest = build_scene_manifest()
-    records = [
-        project_scene_record(
-            dataset_id=dataset_id,
-            dataset_version=version,
-            manifest=manifest,
-            manifest_artifact_id=manifest_artifact_id_for(
-                unit_id=scene_id_for(manifest.lineage.source),
-                manifest_checksum=manifest.checksum(),
-            ),
-            manifest_checksum=manifest.checksum(),
-        )
-        for dataset_id, version in (("d", "v1"), ("d", "v2"), ("other", "v1"))
-    ]
-    assert len({r.scene_id for r in records}) == 1
-    assert len({(r.manifest_artifact_id, r.manifest_checksum) for r in records}) == 1
+def test_a_revision_projection_takes_no_dataset_version():
+    for project in (project_scene_revision, project_episode_revision):
+        parameters = set(inspect.signature(project).parameters)
+        assert parameters == {
+            "manifest",
+            "manifest_artifact_id",
+            "manifest_checksum",
+        }
 
 
 def test_the_same_checksum_under_two_units_is_two_revisions():
@@ -489,9 +480,7 @@ def test_decision_rejects_a_malformed_fingerprint():
 
 def _scene_record(manifest):
     unit_id = scene_id_for(manifest.lineage.source)
-    return project_scene_record(
-        dataset_id="d",
-        dataset_version="v1",
+    return project_scene_revision(
         manifest=manifest,
         manifest_artifact_id=manifest_artifact_id_for(
             unit_id=unit_id, manifest_checksum=manifest.checksum()
@@ -538,9 +527,7 @@ def test_episode_records_follow_the_revision_rules():
             build_config=config or None,
         )
         unit_id = episode_id_for(manifest.lineage.source)
-        return project_episode_record(
-            dataset_id="ds",
-            dataset_version="v1",
+        return project_episode_revision(
             manifest=manifest,
             manifest_artifact_id=manifest_artifact_id_for(
                 unit_id=unit_id, manifest_checksum=manifest.checksum()

@@ -1,6 +1,6 @@
 """Pure Postgres/ArtifactStore record -> columnar table builders.
 
-No I/O here — callers load ``SceneRecord`` rows (Postgres) and verified
+No I/O here — callers load ``SceneRevisionRecord`` rows (Postgres) and verified
 ``SceneManifest`` revisions (ArtifactStore) themselves and pass them in.
 Keeping these functions pure makes them trivially unit-testable and reusable
 outside the job/worker runtime (e.g. from a notebook, a future Spark/dbt
@@ -21,7 +21,7 @@ from collections.abc import Sequence
 import polars as pl
 
 from sceneops_core.robots.schemas import MissionRecord, RobotStateRecord
-from sceneops_core.scenes.schemas import SceneManifest, SceneRecord
+from sceneops_core.scenes.schemas import SceneManifest, SceneRevisionRecord
 
 SceneManifests = Sequence[tuple[str, SceneManifest]]
 
@@ -70,11 +70,14 @@ KEYFRAMES_SCHEMA: dict[str, pl.PolarsDataType] = {
 }
 
 
-def build_scenes_table(scenes: list[SceneRecord]) -> pl.DataFrame:
+def build_scenes_table(
+    *, dataset_id: str, dataset_version: str, scenes: list[SceneRevisionRecord]
+) -> pl.DataFrame:
+    """One row per Scene revision the DatasetVersion pins."""
     rows = [
         {
-            "dataset_id": s.dataset_id,
-            "dataset_version": s.dataset_version,
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
             "scene_id": s.scene_id,
             "robot_run_id": s.robot_run_id,
             "unit_key": s.unit_key,

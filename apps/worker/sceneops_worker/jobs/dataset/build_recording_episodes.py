@@ -9,7 +9,7 @@
       -> OBSERVATION_PAYLOAD ArtifactRecords  deterministic ids, shared with Scene
                                               builds of the same RobotRun; reuse or
                                               conflict
-      -> manifests, write-once                checksum-qualified keys
+      -> manifests, write-once                {canonical_root}/episodes/{episode_id}/manifest-<sha256>.json
       -> EPISODE_MANIFEST ArtifactRecords     deterministic ids; reuse or conflict
       -> commit; result.manifest_artifact_ids -> REGISTER_EPISODES
 
@@ -193,14 +193,11 @@ class BuildRecordingEpisodesJobHandler(
         request: JobHandlerRequest[BuildRecordingEpisodesJobParams],
         plan: EpisodeBuildPlan,
     ) -> list[str]:
-        params = request.params
         context = request.context
         artifact_ids: list[str] = []
         for episode in plan.episodes:
             episode_id = episode_id_for(episode.manifest.lineage.source)
             published = await context.episode_artifact_store.publish_canonical_manifest(
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
                 episode_id=episode_id,
                 manifest=episode.manifest,
             )
@@ -219,8 +216,6 @@ class BuildRecordingEpisodesJobHandler(
                 ref=ref,
                 owner_type=ArtifactOwnerType.EPISODE,
                 owner_id=episode_id,
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
                 job_id=request.job.job_id,
                 pipeline_run_id=request.job.pipeline_run_id,
             )

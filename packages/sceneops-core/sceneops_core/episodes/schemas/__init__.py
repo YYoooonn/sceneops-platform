@@ -13,7 +13,12 @@ from .manifests import (
     UnsupportedEpisodeManifestVersionError,
     load_canonical_episode_manifest,
 )
-from .records import EpisodeRecord, episode_id_for, project_episode_record
+from .records import (
+    EpisodeRecord,
+    EpisodeRevisionRecord,
+    episode_id_for,
+    project_episode_revision,
+)
 from .runs import EpisodeProfileRunRecord, EpisodeValidationRunRecord
 
 __all__ = [
@@ -26,6 +31,7 @@ __all__ = [
     "EpisodeOutcome",
     "EpisodeProfileRunRecord",
     "EpisodeRecord",
+    "EpisodeRevisionRecord",
     "EpisodeStream",
     "EpisodeTimeWindow",
     "EpisodeValidationRunRecord",
@@ -34,5 +40,5 @@ __all__ = [
     "UnsupportedEpisodeManifestVersionError",
     "episode_id_for",
     "load_canonical_episode_manifest",
-    "project_episode_record",
+    "project_episode_revision",
 ]

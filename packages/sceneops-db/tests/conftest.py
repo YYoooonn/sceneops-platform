@@ -176,30 +176,53 @@ def seed_robot_run(unique_id):
     return _seed
 
 
-@pytest.fixture()
-def scene_record_for(unique_id, seed_robot_run):
-    """Build a canonical SceneManifest, register its SCENE_MANIFEST
-    ArtifactRecord (and, unless ``seed_run=False``, the RobotRun its source
-    names), and return the SceneRecord projection (not inserted)."""
-    from sceneops_core.artifacts.schemas import (
-        ArtifactKind,
-        ArtifactOwnerType,
-        ArtifactRef,
-    )
-    from sceneops_core.scenes.schemas import project_scene_record, scene_id_for
-    from sceneops_core.scenes.testing import build_scene_manifest, recording_source
+async def _register_manifest_artifact(
+    session,
+    *,
+    artifact_id,
+    kind,
+    uri,
+    data,
+    checksum,
+    owner_type,
+    owner_id,
+    scene_id=None,
+):
+    """The manifest ArtifactRecord a build publishes, once per revision."""
+    from sceneops_core.artifacts.schemas import ArtifactRef
     from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
+
+    repo = PostgresArtifactRefRepository(session)
+    if await repo.get(artifact_id) is not None:
+        return
+    await repo.create(
+        artifact_id=artifact_id,
+        ref=ArtifactRef(
+            kind=kind,
+            uri=uri,
+            media_type="application/json",
+            size_bytes=len(data),
+            checksum=checksum,
+        ),
+        owner_type=owner_type,
+        owner_id=owner_id,
+        scene_id=scene_id,
+    )
+
+
+@pytest.fixture()
+def scene_revision_for(unique_id, seed_robot_run):
+    """Build a canonical SceneManifest, register its SCENE_MANIFEST
+    ArtifactRecord under the revision's deterministic id (and, unless
+    ``seed_run=False``, the RobotRun its source names), and return the
+    SceneRevisionRecord projection (not registered)."""
+    from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactOwnerType
+    from sceneops_core.provenance import manifest_artifact_id_for
+    from sceneops_core.scenes.schemas import project_scene_revision, scene_id_for
+    from sceneops_core.scenes.testing import build_scene_manifest, recording_source
     from sceneops_db.postgres.robots import PostgresRobotRunRepository
 
-    async def _make(
-        session,
-        *,
-        dataset_id: str,
-        dataset_version: str = "v1",
-        source=None,
-        seed_run: bool = True,
-        **manifest_kwargs,
-    ):
+    async def _make(session, *, source=None, seed_run: bool = True, **manifest_kwargs):
         if source is None:
             source = recording_source(robot_run_id=unique_id("run"))
         if (
@@ -216,25 +239,21 @@ def scene_record_for(unique_id, seed_robot_run):
         data = manifest.to_canonical_bytes()
         checksum = manifest.checksum()
         scene_id = scene_id_for(source)
-        artifact_id = unique_id("art-scene-manifest")
-        await PostgresArtifactRefRepository(session).create(
+        artifact_id = manifest_artifact_id_for(
+            unit_id=scene_id, manifest_checksum=checksum
+        )
+        await _register_manifest_artifact(
+            session,
             artifact_id=artifact_id,
-            ref=ArtifactRef(
-                kind=ArtifactKind.SCENE_MANIFEST,
-                uri=f"s3://sceneops-test/scenes/{scene_id}/{artifact_id}.json",
-                media_type="application/json",
-                size_bytes=len(data),
-                checksum=checksum,
-            ),
+            kind=ArtifactKind.SCENE_MANIFEST,
+            uri=f"s3://sceneops-test/canonical/scenes/{scene_id}/{artifact_id}.json",
+            data=data,
+            checksum=checksum,
             owner_type=ArtifactOwnerType.SCENE,
             owner_id=scene_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
             scene_id=scene_id,
         )
-        return project_scene_record(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
+        return project_scene_revision(
             manifest=manifest,
             manifest_artifact_id=artifact_id,
             manifest_checksum=checksum,
@@ -244,35 +263,35 @@ def scene_record_for(unique_id, seed_robot_run):
 
 
 @pytest.fixture()
-def episode_record_for(unique_id, seed_robot_run):
+def episode_revision_for(unique_id, seed_robot_run):
     """Build a canonical EpisodeManifest, register its EPISODE_MANIFEST
-    ArtifactRecord (and, unless ``seed_run=False``, the RobotRun it names),
-    and return the EpisodeRecord projection (not inserted)."""
-    from sceneops_core.artifacts.schemas import (
-        ArtifactKind,
-        ArtifactOwnerType,
-        ArtifactRef,
+    ArtifactRecord under the revision's deterministic id (and, unless
+    ``seed_run=False``, the RobotRun it names), and return the
+    EpisodeRevisionRecord projection (not registered)."""
+    from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactOwnerType
+    from sceneops_core.episodes.schemas import (
+        episode_id_for,
+        project_episode_revision,
     )
-    from sceneops_core.episodes.schemas import episode_id_for, project_episode_record
     from sceneops_core.episodes.testing import action, episode_manifest, state
-    from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
+    from sceneops_core.provenance import manifest_artifact_id_for
     from sceneops_db.postgres.robots import PostgresRobotRunRepository
 
     async def _make(
         session,
         *,
-        dataset_id: str,
-        dataset_version: str = "v1",
         robot_run_id: str | None = None,
         unit_key: str = "recording",
         seed_run: bool = True,
         x: float = 1.0,
+        build_config: dict | None = None,
     ):
         robot_run_id = robot_run_id or unique_id("run")
         manifest = episode_manifest(
             [state("/odom", 0, x=x), action("/control", 5, u=0.1)],
             robot_run_id=robot_run_id,
             unit_key=unit_key,
+            build_config=build_config,
         )
         source = manifest.lineage.source
         if (
@@ -285,28 +304,50 @@ def episode_record_for(unique_id, seed_robot_run):
                 recording_checksum=source.recording_checksum,
             )
         data = manifest.to_canonical_bytes()
+        checksum = manifest.checksum()
         episode_id = episode_id_for(source)
-        artifact_id = unique_id("art-episode-manifest")
-        await PostgresArtifactRefRepository(session).create(
+        artifact_id = manifest_artifact_id_for(
+            unit_id=episode_id, manifest_checksum=checksum
+        )
+        await _register_manifest_artifact(
+            session,
             artifact_id=artifact_id,
-            ref=ArtifactRef(
-                kind=ArtifactKind.EPISODE_MANIFEST,
-                uri=f"s3://sceneops-test/episodes/{episode_id}/{artifact_id}.json",
-                media_type="application/json",
-                size_bytes=len(data),
-                checksum=manifest.checksum(),
-            ),
+            kind=ArtifactKind.EPISODE_MANIFEST,
+            uri=f"s3://sceneops-test/canonical/episodes/{episode_id}/{artifact_id}.json",
+            data=data,
+            checksum=checksum,
             owner_type=ArtifactOwnerType.EPISODE,
             owner_id=episode_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
         )
-        return project_episode_record(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
+        return project_episode_revision(
             manifest=manifest,
             manifest_artifact_id=artifact_id,
-            manifest_checksum=manifest.checksum(),
+            manifest_checksum=checksum,
         )
 
     return _make
+
+
+@pytest.fixture()
+def pin_members():
+    """Pin revisions (Scene or Episode) as members of a DatasetVersion."""
+    from sceneops_core.datasets.schemas import DatasetVersionMember
+    from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
+
+    async def _pin(session, *, dataset_id: str, version: str = "v1", revisions):
+        members = []
+        for revision in revisions:
+            domain = "scene" if hasattr(revision, "scene_id") else "episode"
+            members.append(
+                DatasetVersionMember(
+                    domain=domain,
+                    unit_id=getattr(revision, f"{domain}_id"),
+                    manifest_artifact_id=revision.manifest_artifact_id,
+                    manifest_checksum=revision.manifest_checksum,
+                )
+            )
+        await PostgresDatasetVersionMemberRepository(session).add(
+            dataset_id=dataset_id, version=version, members=members
+        )
+
+    return _pin

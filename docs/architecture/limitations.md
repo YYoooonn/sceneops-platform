@@ -117,15 +117,21 @@ canonical unit except as a converted recording. Current builder bounds:
   field must resolve to a bool, integer, finite float, string or numeric list in every
   message; NaN / Infinity fail the build. Canonical Episodes carry no outcome, success
   label, reward or language instruction.
-- Unit identity is independent of the DatasetVersion, but `scenes` / `episodes` rows
-  fuse the unit, its one current revision and its one DatasetVersion membership. A
-  source unit can therefore be built and registered into at most one DatasetVersion:
-  building the same RobotRun into a second DatasetVersion fails, at the manifest
-  ArtifactRecord (same id, other location) or at the unit's primary key. The
-  registrars apply the recording-scope replace rule, not the revision decision of
-  [Ingress boundaries](./ingress-boundaries.md) §6.
-- Recording unit keys (`recording`, `segment-<k>`, `task-<key>-<n>`) do not carry the
-  segmentation policy, so two segmentations of one RobotRun share unit ids.
+- Units, revisions and DatasetVersion members are stored separately
+  ([Data model](./data-model.md) §3), but DatasetVersions are not yet composed: a
+  DatasetVersion is created empty and filled by the registrars, which pin the revisions
+  of one RobotRun per registration and, with `replace=True`, unpin and repin them
+  (the recording-scope rule). A DatasetVersion's members can therefore still change
+  after creation, and its Scene / Episode summary is recomputed by the registrars
+  under the DatasetVersion row lock. Registered units and revisions are never changed
+  or removed.
+- Consumers that address a Scene or Episode by id (validation, profiling, alignment,
+  the per-unit quality and manifest API) resolve it through a DatasetVersion member
+  and fail without one; a unit has no current revision. Build and register Jobs still
+  take DatasetVersion parameters, and derived aligned-episode keys and per-run reports
+  are still keyed by the DatasetVersion they were produced for.
+- `fixed_duration` windows are a grid anchored at the segmentation clock's zero, so the
+  first and last window of a recording may be partial.
 - The robot telemetry projection (`ingest_robot_states`) reads its own fixed topic set
   and `RobotStateRecord` columns; it is a derived table, not canonical Episode data.
 - Validation scope: the journeys are validated on one nuScenes mini scene

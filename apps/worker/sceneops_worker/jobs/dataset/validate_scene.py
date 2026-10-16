@@ -21,7 +21,7 @@ from sceneops_core.scenes.schemas.runs import SceneValidationRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-from sceneops_worker.scenes.resolver import resolve_registered_scene
+from sceneops_worker.scenes.resolver import resolve_member_scene
 from sceneops_scenes.validation import SceneManifestValidator
 
 _validator = SceneManifestValidator()
@@ -120,8 +120,20 @@ class ValidateSceneJobHandler(
         blocking = False
         report_scenes: list[dict] = []
 
+        if params.dataset_id is None or params.dataset_version is None:
+            raise ValueError(
+                "validate_scene reads the revision each Scene's DatasetVersion pins; "
+                "dataset_id and dataset_version are required"
+            )
+        dataset_id, dataset_version = params.dataset_id, params.dataset_version
+
         for scene_id in params.scene_ids:
-            resolved = await resolve_registered_scene(context, scene_id)
+            resolved = await resolve_member_scene(
+                context,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                scene_id=scene_id,
+            )
             record = resolved.record
             result = _validator.validate(
                 scene_id=scene_id,
@@ -178,8 +190,8 @@ class ValidateSceneJobHandler(
                 owner_type=ArtifactOwnerType.SCENE_VALIDATION_RUN,
                 owner_id=per_scene_run_id,
                 scene_id=scene_id,
-                dataset_id=record.dataset_id,
-                dataset_version=record.dataset_version,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
                 run_id=per_scene_run_id,
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
@@ -190,8 +202,8 @@ class ValidateSceneJobHandler(
                     scene_id=scene_id,
                     manifest_artifact_id=record.manifest_artifact_id,
                     manifest_checksum=record.manifest_checksum,
-                    dataset_id=record.dataset_id,
-                    dataset_version=record.dataset_version,
+                    dataset_id=dataset_id,
+                    dataset_version=dataset_version,
                     status=RunStatus.SUCCEEDED,
                     validation_status=result.status,
                     should_block_pipeline=result.should_block,

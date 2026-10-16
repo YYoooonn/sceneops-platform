@@ -175,7 +175,7 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
 
     async with get_async_sessionmaker()() as session:
         ctx = vertical.context(session)
-        scenes = await ctx.scene_store.list(
+        scenes = await ctx.scene_store.list_member_revisions(
             dataset_id=vertical.dataset_id, dataset_version="v1"
         )
         assert {s.robot_run_id for s in scenes} == {vertical.run_id}
@@ -242,5 +242,8 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
     replaced = await vertical.run(
         RegisterScenesJobHandler(), vertical.register_params(coarser, replace=True)
     )
+    # Another segmentation is other units: both 1 s units are unpinned and
+    # the 10 s unit is pinned; nothing is "repointed".
     assert replaced.registered_scene_count == 1
-    assert len(replaced.removed_scene_ids) == 1
+    assert sorted(replaced.removed_scene_ids) == sorted(scene_ids)
+    assert replaced.replaced_scene_ids == []

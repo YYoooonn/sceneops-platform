@@ -9,7 +9,7 @@
 
 ## 1. Purpose
 
-A registered, quality-scored `EpisodeRecord` is a segmented observation + action
+A registered, quality-scored Episode revision is a segmented observation + action
 window; it has no fixed-frequency timeline, no dense feature tensors and no notion
 of a trajectory window. This layer adds those training semantics on top of
 registered Episodes: temporal alignment, structural validation and profiling, a

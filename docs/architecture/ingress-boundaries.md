@@ -179,10 +179,20 @@ registered revisions already inconsistent, or a       InconsistentRevisionsError
 revision of another unit                              RevisionPinError
 ```
 
-The builders use the unit and manifest artifact ids. The registrars still apply the
-recording-scope rule of the [Scene domain](./scene-domain.md) §3 and
-[Episode domain](./episode-domain.md) §5, not this decision
-([limitations](./limitations.md) §5).
+The builders use the unit and manifest artifact ids. Persistence applies this
+decision: `register_revision` on the Scene and Episode repositories inserts the unit
+and revision if absent and decides against the committed revisions of the unit,
+with the unique keys deciding concurrent registrations
+(`sceneops_db.repositories.revisions`, [Data model](./data-model.md) §3). The
+registrars register every revision this way and apply the recording-scope rule of
+the [Scene domain](./scene-domain.md) §3 and [Episode domain](./episode-domain.md) §5
+only to the DatasetVersion's member pins ([limitations](./limitations.md) §5).
+
+A recording has no native unit key, so a recording builder's unit key carries its
+segmentation: `<policy>-<sha256(boundary document)[:16]>/<segment>`
+(`sceneops_core.provenance.segmentation`, ADR-015 §6.3). The boundary document is
+exactly the configuration that places unit boundaries; channel, stream and field
+selection are not in it, so they change a revision, not the unit.
 
 ## 7. Enforced boundaries
 

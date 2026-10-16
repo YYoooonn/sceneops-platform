@@ -1,4 +1,4 @@
-"""Canonical EpisodeManifest v1 / EpisodeRecord contract (ADR-007 §31)."""
+"""Canonical EpisodeManifest v1 / Episode record contract (ADR-007 §31)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from sceneops_core.episodes.schemas import (
     NonCanonicalEpisodeManifestError,
     episode_id_for,
     load_canonical_episode_manifest,
-    project_episode_record,
+    project_episode_revision,
 )
 from sceneops_core.episodes.testing import (
     action,
@@ -29,6 +29,7 @@ from sceneops_core.episodes.testing import (
     observation,
     state,
 )
+from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_core.runs.schemas import RunStatus
 
 
@@ -150,11 +151,12 @@ class TestManifest:
 class TestRecordAndIdentity:
     def test_record_projects_the_manifest(self) -> None:
         manifest = _asynchronous()
-        record = project_episode_record(
-            dataset_id="ds",
-            dataset_version="v1",
+        record = project_episode_revision(
             manifest=manifest,
-            manifest_artifact_id="episode-manifest-x",
+            manifest_artifact_id=manifest_artifact_id_for(
+                unit_id=episode_id_for(manifest.lineage.source),
+                manifest_checksum=manifest.checksum(),
+            ),
             manifest_checksum=manifest.checksum(),
         )
         assert record.episode_id == episode_id_for(manifest.lineage.source)

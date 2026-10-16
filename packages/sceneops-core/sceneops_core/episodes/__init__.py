@@ -10,10 +10,11 @@ from .schemas import (
     EpisodeOccurrence,
     EpisodeOutcome,
     EpisodeRecord,
+    EpisodeRevisionRecord,
     EpisodeStream,
     episode_id_for,
     load_canonical_episode_manifest,
-    project_episode_record,
+    project_episode_revision,
 )
 
 __all__ = [
@@ -24,10 +25,11 @@ __all__ = [
     "EpisodeOutcome",
     "EpisodeReadiness",
     "EpisodeRecord",
+    "EpisodeRevisionRecord",
     "EpisodeStream",
     "derive_episode_readiness",
     "episode_id_for",
     "latest_run_for_revision",
     "load_canonical_episode_manifest",
-    "project_episode_record",
+    "project_episode_revision",
 ]

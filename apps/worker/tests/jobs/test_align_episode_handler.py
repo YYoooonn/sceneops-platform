@@ -140,12 +140,15 @@ async def test_pinned_checksum_mismatch_blocks_write() -> None:
     context.artifact_record_store.register.assert_not_called()
 
 
-async def test_pin_to_an_artifact_of_another_episode_is_rejected() -> None:
+async def test_pin_to_an_artifact_that_is_no_revision_of_the_episode_is_rejected() -> (
+    None
+):
     record, artifact, _, context = _setup()
-    context.artifact_record_store.get = AsyncMock(
-        return_value=artifact.model_copy(update={"owner_id": "episode-other"})
+    other = artifact.model_copy(
+        update={"artifact_id": "art-other", "checksum": "sha256:" + "e" * 64}
     )
-    with pytest.raises(SourceManifestNotFoundError):
+    context.artifact_record_store.get = AsyncMock(return_value=other)
+    with pytest.raises(SourceManifestNotFoundError, match="not a registered revision"):
         await AlignEpisodeJobHandler().run(_request(context, record.episode_id))
     context.episode_artifact_store.write_aligned_episode.assert_not_called()
 
@@ -160,7 +163,7 @@ async def test_missing_or_changed_bytes_write_nothing() -> None:
 
 async def test_unregistered_episode_raises() -> None:
     _, _, _, context = _setup()
-    with pytest.raises(ValueError, match="Episode not found"):
+    with pytest.raises(ValueError, match="is not a member of"):
         await AlignEpisodeJobHandler().run(_request(context, "episode-missing"))
 
 
@@ -218,16 +221,13 @@ async def test_the_aligned_artifact_id_is_deterministic_per_revision() -> None:
     assert other != _registered_id(first)
 
 
-async def test_the_scope_is_the_episodes_dataset_version_never_a_default() -> None:
+async def test_the_scope_is_the_named_dataset_version_never_a_default() -> None:
     record, _, _, context = _setup()
     await AlignEpisodeJobHandler().run(_request(context, record.episode_id))
     written = context.episode_artifact_store.write_aligned_episode.await_args.kwargs
-    assert (written["dataset_id"], written["dataset_version"]) == (
-        record.dataset_id,
-        record.dataset_version,
-    )
+    assert (written["dataset_id"], written["dataset_version"]) == ("d1", "v1")
 
-    # Params that name another DatasetVersion are rejected.
+    # A DatasetVersion the Episode is not a member of is rejected.
     record, _, _, context = _setup()
     params = AlignEpisodeJobParams(
         episodes=[EpisodeAlignmentInput(episode_id=record.episode_id)],
@@ -240,12 +240,14 @@ async def test_the_scope_is_the_episodes_dataset_version_never_a_default() -> No
         params=params,
         context=context,
     )
-    with pytest.raises(ValueError, match="belongs to"):
+    with pytest.raises(ValueError, match="is not a member of"):
         await AlignEpisodeJobHandler().run(request)
     context.episode_artifact_store.write_aligned_episode.assert_not_called()
 
 
-async def test_params_without_a_dataset_scope_are_accepted() -> None:
+async def test_params_without_a_dataset_scope_are_rejected() -> None:
+    """An Episode may be pinned by many DatasetVersions; which one is
+    aligned is never inferred."""
     record, _, _, context = _setup()
     params = AlignEpisodeJobParams(
         episodes=[EpisodeAlignmentInput(episode_id=record.episode_id)],
@@ -256,8 +258,8 @@ async def test_params_without_a_dataset_scope_are_accepted() -> None:
         params=params,
         context=context,
     )
-    result = await AlignEpisodeJobHandler().run(request)
-    assert result.step_count == 3
+    with pytest.raises(ValueError, match="dataset_id and dataset_version"):
+        await AlignEpisodeJobHandler().run(request)
 
 
 async def test_the_alignment_key_includes_the_effective_clock() -> None:
@@ -295,6 +297,8 @@ def _setup_two():
 def _two_request(context, *episode_ids) -> JobHandlerRequest:
     params = AlignEpisodeJobParams(
         episodes=[EpisodeAlignmentInput(episode_id=e) for e in episode_ids],
+        dataset_id="d1",
+        dataset_version="v1",
         alignment_config=_CONFIG,
     )
     return JobHandlerRequest(
@@ -325,7 +329,7 @@ async def test_every_episode_is_aligned_and_committed_once() -> None:
 
 async def test_a_failing_episode_commits_nothing() -> None:
     first, _, context = _setup_two()
-    with pytest.raises(ValueError, match="Episode not found"):
+    with pytest.raises(ValueError, match="is not a member of"):
         await AlignEpisodeJobHandler().run(
             _two_request(context, first.episode_id, "episode-missing")
         )

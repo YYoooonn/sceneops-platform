@@ -53,14 +53,14 @@ class SceneRunStore:
             offset=offset,
         )
 
-    async def latest_succeeded_for_current_revisions(
+    async def latest_succeeded_for_member_revisions(
         self,
         *,
         dataset_id: str,
         dataset_version: str,
         run_type: RunType,
     ) -> dict[str, SceneRunRecord]:
-        return await self._repo.latest_succeeded_for_current_revisions(
+        return await self._repo.latest_succeeded_for_member_revisions(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             run_type=run_type,

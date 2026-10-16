@@ -22,6 +22,7 @@ from .identity import (
     CanonicalDomain,
     canonical_unit_id,
     unit_id_domain,
+    unit_id_for,
 )
 from .pinned import PinnedContent, PinnedRecording
 from .revisions import (
@@ -84,4 +85,5 @@ __all__ = [
     "normalize_build_config",
     "promote_to_ns",
     "unit_id_domain",
+    "unit_id_for",
 ]

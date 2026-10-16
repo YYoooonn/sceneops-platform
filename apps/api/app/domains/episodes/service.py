@@ -5,12 +5,12 @@ import json
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.episodes.schemas import (
     EpisodeProfileRunRecord,
-    EpisodeRecord,
+    EpisodeRevisionRecord,
     EpisodeValidationRunRecord,
     load_canonical_episode_manifest,
 )
 from sceneops_core.runs.schemas import RunStatus, RunType
-from sceneops_db.queries import resolve_current_episode_manifest_source
+from sceneops_db.queries import resolve_member_episode_manifest_source
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.episodes import EpisodeRepository, EpisodeRunRepository
 from sceneops_storage import ArtifactStore
@@ -29,8 +29,8 @@ class EpisodeManifestUnavailableError(RuntimeError):
 
 
 class EpisodeService:
-    """Read-only Episode resource service. Membership is written only by the
-    REGISTER_EPISODES registrar; validation and profiling are triggered
+    """Read-only Episode resource service. Units, revisions and members are
+    written only by the REGISTER_EPISODES registrar; validation and profiling are triggered
     through pipelines, never here."""
 
     def __init__(
@@ -49,18 +49,12 @@ class EpisodeService:
     async def list_episodes(
         self,
         *,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         robot_run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> EpisodeListResponse:
         episodes = await self._repository.list(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            robot_run_id=robot_run_id,
-            limit=limit,
-            offset=offset,
+            robot_run_id=robot_run_id, limit=limit, offset=offset
         )
         return EpisodeListResponse(episodes=episodes, count=len(episodes))
 
@@ -68,19 +62,24 @@ class EpisodeService:
         episode = await self._repository.get(episode_id)
         if episode is None:
             return None
-        return EpisodeDetailResponse(episode=episode)
+        return EpisodeDetailResponse(
+            episode=episode,
+            revisions=await self._repository.list_revisions(episode_id),
+        )
 
     async def get_episode_manifest(
-        self, episode_id: str
+        self, episode_id: str, *, dataset_id: str, dataset_version: str
     ) -> EpisodeManifestResponse | None:
-        """The current canonical revision (the record's
-        ``manifest_artifact_id``), bytes verified and strictly parsed."""
+        """The revision the DatasetVersion pins, bytes verified and strictly
+        parsed."""
         assert (
             self._artifact_repository is not None and self._artifact_store is not None
         )
-        artifact = await resolve_current_episode_manifest_source(
+        artifact = await resolve_member_episode_manifest_source(
             episode_repository=self._repository,
             artifact_repository=self._artifact_repository,
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
             episode_id=episode_id,
         )
         if artifact is None:
@@ -99,24 +98,32 @@ class EpisodeService:
         )
 
     async def get_episode_quality(
-        self, episode_id: str
+        self, episode_id: str, *, dataset_id: str, dataset_version: str
     ) -> EpisodeQualityResponse | None:
-        episode = await self._repository.get(episode_id)
+        """Quality of the revision of ``episode_id`` that the DatasetVersion
+        pins; None if the Episode is not one of its members."""
+        episode = await self._repository.get_member_revision(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            episode_id=episode_id,
+        )
         if episode is None:
             return None
         return build_episode_quality(
             episode=episode,
-            validation_run=await self._latest_current_revision_run(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            validation_run=await self._latest_revision_run(
                 episode, RunType.EPISODE_VALIDATION, EpisodeValidationRunRecord
             ),
-            profile_run=await self._latest_current_revision_run(
+            profile_run=await self._latest_revision_run(
                 episode, RunType.EPISODE_PROFILE, EpisodeProfileRunRecord
             ),
         )
 
-    async def _latest_current_revision_run(self, episode: EpisodeRecord, run_type, cls):
-        """Newest succeeded run of ``run_type`` that assessed the Episode's
-        current manifest revision."""
+    async def _latest_revision_run(self, episode: EpisodeRevisionRecord, run_type, cls):
+        """Newest succeeded run of ``run_type`` that assessed exactly this
+        revision."""
         if self._run_repository is None:
             return None
         runs = await self._run_repository.list(

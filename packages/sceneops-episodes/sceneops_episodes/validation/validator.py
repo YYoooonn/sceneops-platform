@@ -3,8 +3,8 @@ from __future__ import annotations
 from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
-    EpisodeRecord,
-    project_episode_record,
+    EpisodeRevisionRecord,
+    project_episode_revision,
 )
 
 from .reports import EpisodeValidationIssue, EpisodeValidationResult
@@ -39,14 +39,12 @@ class EpisodeManifestValidator:
     """
 
     def validate(
-        self, *, record: EpisodeRecord, manifest: EpisodeManifest
+        self, *, record: EpisodeRevisionRecord, manifest: EpisodeManifest
     ) -> EpisodeValidationResult:
         issues: list[EpisodeValidationIssue] = []
         checked = ["record_projection", "stream_presence", "action_streams"]
 
-        expected = project_episode_record(
-            dataset_id=record.dataset_id,
-            dataset_version=record.dataset_version,
+        expected = project_episode_revision(
             manifest=manifest,
             manifest_artifact_id=record.manifest_artifact_id,
             manifest_checksum=record.manifest_checksum,
@@ -57,7 +55,7 @@ class EpisodeManifestValidator:
                     EpisodeValidationIssue(
                         type="projection_mismatch",
                         message=(
-                            f"EpisodeRecord.{name}={getattr(record, name)!r} is not the "
+                            f"EpisodeRevisionRecord.{name}={getattr(record, name)!r} is not the "
                             f"manifest's {getattr(expected, name)!r}"
                         ),
                         blocking=True,

@@ -7,7 +7,7 @@
       -> plan_recording_scenes()              complete SceneManifest set + payload plan
       -> payload bytes, write-once            {payload_root}/{robot_run_id}/{artifact_id}
       -> OBSERVATION_PAYLOAD ArtifactRecords  deterministic ids; reuse or conflict
-      -> manifests, write-once                checksum-qualified keys
+      -> manifests, write-once                {canonical_root}/scenes/{scene_id}/manifest-<sha256>.json
       -> SCENE_MANIFEST ArtifactRecords       deterministic ids; reuse or conflict
       -> commit; result.manifest_artifact_ids -> REGISTER_SCENES
 
@@ -200,14 +200,11 @@ class BuildRecordingScenesJobHandler(
         request: JobHandlerRequest[BuildRecordingScenesJobParams],
         plan: SceneBuildPlan,
     ) -> list[str]:
-        params = request.params
         context: WorkerContext = request.context
         artifact_ids: list[str] = []
         for scene in plan.scenes:
             scene_id = scene_id_for(scene.manifest.lineage.source)
             published = await context.scene_artifact_store.publish_canonical_manifest(
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
                 scene_id=scene_id,
                 manifest=scene.manifest,
             )
@@ -226,8 +223,6 @@ class BuildRecordingScenesJobHandler(
                 ref=ref,
                 owner_type=ArtifactOwnerType.SCENE,
                 owner_id=scene_id,
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
                 scene_id=scene_id,
                 job_id=request.job.job_id,
                 pipeline_run_id=request.job.pipeline_run_id,

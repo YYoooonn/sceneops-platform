@@ -16,7 +16,8 @@ Covers:
 from __future__ import annotations
 
 from sceneops_core.runs.schemas import RunStatus
-from sceneops_core.scenes.schemas.records import SceneRecord
+from sceneops_core.provenance import manifest_artifact_id_for, unit_id_for
+from sceneops_core.scenes.schemas.records import SceneRevisionRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
@@ -28,6 +29,16 @@ from app.domains.scenes.quality import build_scene_quality
 _CHECKSUM = "sha256:" + "1" * 64
 
 
+def _id(name: str) -> str:
+    return unit_id_for(
+        domain="scene", source_kind="recording", source_id="run-0", unit_key=name
+    )
+
+
+def _art(name: str) -> str:
+    return manifest_artifact_id_for(unit_id=_id(name), manifest_checksum=_CHECKSUM)
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -35,18 +46,16 @@ def _scene(
     scene_id: str = "scene-001",
     keyframe_count: int = 40,
     observation_count: int = 80,
-) -> SceneRecord:
-    return SceneRecord(
-        scene_id=scene_id,
-        dataset_id="nuscenes",
-        dataset_version="v1.0-mini",
+) -> SceneRevisionRecord:
+    return SceneRevisionRecord(
+        scene_id=_id(scene_id),
         robot_run_id="run-0",
         unit_key=scene_id,
         window_clock="mcap_log_time",
         window_start_timestamp_ns=0,
         window_end_timestamp_ns=20_000_000_000,
         producer_fingerprint="sha256:" + "a" * 64,
-        manifest_artifact_id=f"art-{scene_id}",
+        manifest_artifact_id=_art(scene_id),
         manifest_checksum=_CHECKSUM,
         observation_count=observation_count,
         keyframe_count=keyframe_count,
@@ -61,8 +70,8 @@ def _validation_run(
     return SceneValidationRunRecord(
         run_id=f"val-{scene_id}",
         status=RunStatus.SUCCEEDED,
-        scene_id=scene_id,
-        manifest_artifact_id=f"art-{scene_id}",
+        scene_id=_id(scene_id),
+        manifest_artifact_id=_art(scene_id),
         manifest_checksum=_CHECKSUM,
         validation_status=validation_status,
         should_block_pipeline=should_block_pipeline,
@@ -79,8 +88,8 @@ def _profile_run(
     return SceneProfileRunRecord(
         run_id=f"prof-{scene_id}",
         status=RunStatus.SUCCEEDED,
-        scene_id=scene_id,
-        manifest_artifact_id=f"art-{scene_id}",
+        scene_id=_id(scene_id),
+        manifest_artifact_id=_art(scene_id),
         manifest_checksum=_CHECKSUM,
         keyframe_count=40,
         observation_count=80,
@@ -89,12 +98,16 @@ def _profile_run(
 
 
 def _quality(
-    scene: SceneRecord,
+    scene: SceneRevisionRecord,
     validation_run: SceneValidationRunRecord | None = None,
     profile_run: SceneProfileRunRecord | None = None,
 ):
     return build_scene_quality(
-        scene=scene, validation_run=validation_run, profile_run=profile_run
+        scene=scene,
+        dataset_id="nuscenes",
+        dataset_version="v1.0-mini",
+        validation_run=validation_run,
+        profile_run=profile_run,
     )
 
 

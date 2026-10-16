@@ -4,11 +4,14 @@ from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel
 from sceneops_core.scenes import SceneReadiness
-from sceneops_core.scenes.schemas.records import SceneRecord
+from sceneops_core.scenes.schemas.records import SceneRecord, SceneRevisionRecord
 
 
 class SceneDetailResponse(SceneOpsBaseModel):
+    """A Scene unit and every registered revision of it; none is current."""
+
     scene: SceneRecord
+    revisions: list[SceneRevisionRecord]
 
 
 class SceneListResponse(SceneOpsBaseModel):
@@ -16,11 +19,18 @@ class SceneListResponse(SceneOpsBaseModel):
     count: int
 
 
+class SceneRevisionListResponse(SceneOpsBaseModel):
+    """The Scene revisions a DatasetVersion pins, one per member unit."""
+
+    scenes: list[SceneRevisionRecord]
+    count: int
+
+
 # ── Scene quality summary response ────────────────────────────────────────────
 #
-# Quality is reported for the Scene's current manifest revision only: the
-# validation / profile summaries come from run records that pinned exactly
-# that revision, and readiness is derived from them, never stored. Labels and
+# Quality is reported for one revision of a Scene, the one a DatasetVersion
+# pins: the validation / profile summaries come from run records that pinned
+# exactly that revision, and readiness is derived from them, never stored. Labels and
 # detection selectability are not Scene quality: they belong to derived
 # label sets and sample views (ADR-007 §33).
 

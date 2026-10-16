@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from sceneops_core.artifacts.schemas import PayloadRef
 from sceneops_core.common.checksums import sha256_checksum
-from sceneops_core.provenance import ProducerInfo
+from sceneops_core.provenance import ProducerInfo, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
     SCENE_MANIFEST_SCHEMA_V2,
     NonCanonicalSceneManifestError,
@@ -22,7 +22,7 @@ from sceneops_core.scenes.schemas import (
     SceneTimeWindow,
     UnsupportedSceneManifestVersionError,
     load_canonical_scene_manifest,
-    project_scene_record,
+    project_scene_revision,
     scene_id_for,
 )
 from sceneops_core.scenes.testing import (
@@ -459,11 +459,12 @@ def test_coordinate_frames_and_channels_must_be_sorted_unique():
 
 def test_record_projection_is_derived_from_the_manifest():
     manifest = build_scene_manifest(keyframe_timestamps_ns=(1_000, 3_000))
-    record = project_scene_record(
-        dataset_id="d",
-        dataset_version="v1",
+    record = project_scene_revision(
         manifest=manifest,
-        manifest_artifact_id="art-1",
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=scene_id_for(manifest.lineage.source),
+            manifest_checksum=manifest.checksum(),
+        ),
         manifest_checksum=manifest.checksum(),
     )
     assert record.scene_id == scene_id_for(manifest.lineage.source)
@@ -475,7 +476,9 @@ def test_record_projection_is_derived_from_the_manifest():
         record.window_start_timestamp_ns,
         record.window_end_timestamp_ns,
     ) == ("mcap_log_time", 0, 10_000_000_000)
-    assert not {"source_kind", "external_format"} & set(record.model_dump())
+    assert record.source_kind == "recording"
+    assert "external_format" not in record.model_dump()
+    assert not {"dataset_id", "dataset_version"} & set(record.model_dump())
     assert record.observed_channels == ["CAM_FRONT", "LIDAR_TOP"]
     assert record.observation_count == 5
     assert record.keyframe_count == 2
@@ -488,11 +491,12 @@ def test_recording_record_projects_robot_run_scope():
         source=recording_source(robot_run_id="run-7", unit_key="segment-0003"),
         keyframe_timestamps_ns=(1_000,),
     )
-    record = project_scene_record(
-        dataset_id="d",
-        dataset_version="v1",
+    record = project_scene_revision(
         manifest=manifest,
-        manifest_artifact_id="art-1",
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=scene_id_for(manifest.lineage.source),
+            manifest_checksum=manifest.checksum(),
+        ),
         manifest_checksum=manifest.checksum(),
     )
     assert record.robot_run_id == "run-7"

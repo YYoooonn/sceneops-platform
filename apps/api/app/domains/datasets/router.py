@@ -15,7 +15,7 @@ from app.domains.datasets.schemas import (
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
 )
-from app.domains.scenes.schemas import SceneListResponse
+from app.domains.scenes.schemas import SceneRevisionListResponse
 from app.platform.artifacts.schemas import ArtifactListResponse
 from sceneops_core.datasets.schemas import CreateDatasetRequest
 
@@ -137,13 +137,15 @@ async def list_dataset_scene_quality(
     return result
 
 
-@router.get("/{dataset_id}/versions/{version}/scenes", response_model=SceneListResponse)
+@router.get(
+    "/{dataset_id}/versions/{version}/scenes", response_model=SceneRevisionListResponse
+)
 async def list_dataset_version_scenes(
     dataset_id: str,
     version: str,
     service: DatasetServiceDep,
     pagination: PaginationDep,
-) -> SceneListResponse:
+) -> SceneRevisionListResponse:
     result = await service.list_dataset_version_scenes(
         dataset_id, version, limit=pagination.limit, offset=pagination.offset
     )

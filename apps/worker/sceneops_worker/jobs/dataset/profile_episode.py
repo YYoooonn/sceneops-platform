@@ -21,7 +21,7 @@ from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_episodes.profiling import EpisodeManifestProfiler
-from sceneops_worker.episodes.resolver import resolve_registered_episode
+from sceneops_worker.episodes.resolver import resolve_member_episode
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
 _profiler = EpisodeManifestProfiler()
@@ -103,8 +103,19 @@ class ProfileEpisodeJobHandler(
         topics: dict[str, set[str]] = {name: set() for name in _TOPIC_LISTS}
         episode_profiles: list[dict] = []
 
+        if params.dataset_id is None or params.dataset_version is None:
+            raise ValueError(
+                "profile_episode reads the revision each Episode's DatasetVersion pins; "
+                "dataset_id and dataset_version are required"
+            )
+
         for episode_id in episode_ids:
-            resolved = await resolve_registered_episode(context, episode_id)
+            resolved = await resolve_member_episode(
+                context,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                episode_id=episode_id,
+            )
             record = resolved.record
             result = _profiler.profile(
                 episode_id=episode_id, manifest=resolved.manifest

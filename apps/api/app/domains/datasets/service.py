@@ -30,7 +30,7 @@ from app.domains.datasets.schemas import (
     UpdateDatasetRequest,
 )
 from app.domains.scenes.quality import build_scene_quality
-from app.domains.scenes.schemas import SceneListResponse, SceneQualityResponse
+from app.domains.scenes.schemas import SceneQualityResponse, SceneRevisionListResponse
 
 
 class DatasetService:
@@ -168,16 +168,16 @@ class DatasetService:
 
     async def list_dataset_version_scenes(
         self, dataset_id: str, version: str, *, limit: int = 100, offset: int = 0
-    ) -> SceneListResponse | None:
+    ) -> SceneRevisionListResponse | None:
         record = await self._version_repository.get(
             dataset_id=dataset_id, version=version
         )
         if record is None:
             return None
-        scenes = await self._scene_repository.list(
+        scenes = await self._scene_repository.list_member_revisions(
             dataset_id=dataset_id, dataset_version=version, limit=limit, offset=offset
         )
-        return SceneListResponse(scenes=scenes, count=len(scenes))
+        return SceneRevisionListResponse(scenes=scenes, count=len(scenes))
 
     async def list_scene_quality(
         self,
@@ -228,23 +228,23 @@ class DatasetService:
         version: str,
     ) -> list[SceneQualityResponse]:
         """Fetch all scene quality rows for a dataset version (3 DB queries),
-        using only runs that assessed each Scene's current revision.
+        using only runs that assessed the revision each member pins.
 
         Shared by get_dataset_version_quality and list_scene_quality so both
         endpoints produce consistent counts from the same data.
         """
-        all_scenes = await self._scene_repository.list(
+        all_scenes = await self._scene_repository.list_member_revisions(
             dataset_id=dataset_id, dataset_version=version, limit=10000, offset=0
         )
         latest_validation = (
-            await self._scene_run_repository.latest_succeeded_for_current_revisions(
+            await self._scene_run_repository.latest_succeeded_for_member_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_VALIDATION,
             )
         )
         latest_profile = (
-            await self._scene_run_repository.latest_succeeded_for_current_revisions(
+            await self._scene_run_repository.latest_succeeded_for_member_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_PROFILE,
@@ -253,6 +253,8 @@ class DatasetService:
         return [
             build_scene_quality(
                 scene=s,
+                dataset_id=dataset_id,
+                dataset_version=version,
                 validation_run=latest_validation.get(s.scene_id),
                 profile_run=latest_profile.get(s.scene_id),
             )

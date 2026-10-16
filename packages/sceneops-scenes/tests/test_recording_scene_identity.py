@@ -205,18 +205,25 @@ def test_equivalent_recordings_differ_only_in_provenance(tmp_path):
 
 
 def test_receive_time_segmentation_is_outside_equivalence(tmp_path):
-    """Segmenting on mcap_log_time makes windows depend on the acquisition
-    (§29.12): the windows move with the recorder's receive time while the
-    observations keep their source timestamps."""
+    """Segmenting on mcap_log_time makes Scenes depend on the acquisition
+    (§29.12): the clock grid is fixed, but which window an observation falls
+    in moves with the recorder's receive time, while the observations keep
+    their source timestamps."""
     rec = default_recording()
-    replay, _ = _replayed(rec, receive_delay_ns=37_000_000)
+    replay, _ = _replayed(rec, receive_delay_ns=600_000_000)
     config = build_config(clock="mcap_log_time")
     a = _plan(rec.write(tmp_path / "a.mcap"), BATCH, config)
     b = _plan(replay.write(tmp_path / "b.mcap"), REPLAY, config)
 
-    starts_a = [s.manifest.lineage.source.start_timestamp_ns for s in a.scenes]
-    starts_b = [s.manifest.lineage.source.start_timestamp_ns for s in b.scenes]
-    assert starts_a != starts_b
+    def grouping(plan):
+        return {
+            s.unit_key: sorted(
+                (o.channel, o.timestamp_ns) for o in s.manifest.observations
+            )
+            for s in plan.scenes
+        }
+
+    assert grouping(a) != grouping(b)
     observed = [
         sorted(
             (o.channel, o.timestamp_ns)

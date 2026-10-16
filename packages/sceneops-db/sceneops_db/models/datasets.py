@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -122,3 +124,60 @@ class DatasetVersionModel(Base):
 
 Index("ix_dataset_versions_dataset_id", DatasetVersionModel.dataset_id)
 Index("ix_dataset_versions_status", DatasetVersionModel.status)
+
+
+class DatasetVersionMemberModel(Base):
+    """One member of a DatasetVersion: a pin of exactly one registered Scene
+    or Episode revision (ADR-015 §7). At most one member per unit, so a
+    version pins at most one revision of each unit; the foreign key to the
+    revision's full pin means a member can only name a registered revision,
+    and RESTRICT keeps a pinned revision from being deleted. Rows are never
+    updated (a trigger rejects UPDATE)."""
+
+    __tablename__ = "dataset_version_members"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["scene_id", "manifest_artifact_id", "manifest_checksum"],
+            [
+                "scene_revisions.scene_id",
+                "scene_revisions.manifest_artifact_id",
+                "scene_revisions.manifest_checksum",
+            ],
+            ondelete="RESTRICT",
+            name="fk_dataset_version_members_scene_revision",
+        ),
+        ForeignKeyConstraint(
+            ["episode_id", "manifest_artifact_id", "manifest_checksum"],
+            [
+                "episode_revisions.episode_id",
+                "episode_revisions.manifest_artifact_id",
+                "episode_revisions.manifest_checksum",
+            ],
+            ondelete="RESTRICT",
+            name="fk_dataset_version_members_episode_revision",
+        ),
+        # Exactly one revision reference, the one of the member's domain,
+        # naming the member's own unit.
+        CheckConstraint(
+            "(domain = 'scene' AND scene_id = unit_id AND episode_id IS NULL) OR "
+            "(domain = 'episode' AND episode_id = unit_id AND scene_id IS NULL)",
+            name="ck_dataset_version_members_revision",
+        ),
+    )
+
+    dataset_version_id: Mapped[str] = mapped_column(
+        String(256),
+        ForeignKey("dataset_versions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    unit_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    domain: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    scene_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    episode_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    manifest_artifact_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    manifest_checksum: Mapped[str] = mapped_column(String(71), nullable=False)
+
+
+Index("ix_dataset_version_members_scene_id", DatasetVersionMemberModel.scene_id)
+Index("ix_dataset_version_members_episode_id", DatasetVersionMemberModel.episode_id)

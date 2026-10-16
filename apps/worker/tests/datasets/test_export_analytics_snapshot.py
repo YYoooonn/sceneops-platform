@@ -99,7 +99,7 @@ async def test_exports_all_three_tables_by_default(world):
         "keyframes": 4,
     }
     observations = await _table(world, result.table_uris["observations"])
-    assert set(observations["scene_id"].to_list()) == set(world.scenes.committed)
+    assert set(observations["scene_id"].to_list()) == set(world.scenes.members())
     assert observations["timestamp_ns"].dtype.is_integer()
 
 
@@ -143,9 +143,8 @@ async def test_exporting_changed_data_adds_a_revision_and_keeps_the_old_one(worl
     old_uri = first.table_uris["scenes"]
     old_bytes = await world.artifact_store.read_bytes(old_uri)
 
-    (scene_id,) = world.scenes.working
-    record = world.scenes.working[scene_id]
-    world.scenes.working[scene_id] = record.model_copy(
+    ((key, record),) = world.scenes.working[0].items()
+    world.scenes.working[0][key] = record.model_copy(
         update={"observation_count": record.observation_count + 1}
     )
     second = await _export(world, tables=["scenes"])

@@ -24,6 +24,7 @@ from sceneops_episodes.recording_builder import (
     plan_recording_episodes,
 )
 from sceneops_core.provenance import PinnedRecording
+from sceneops_core.provenance.segmentation import recording_unit_key
 from sceneops_scenes.recording_builder import plan_recording_scenes
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -72,6 +73,13 @@ def recording(tmp_path):
     return episode_recording().write(tmp_path / "episode.mcap")
 
 
+def _key(segment: str, config=None) -> str:
+    boundary = RecordingEpisodeBuildConfig.model_validate(
+        config or episode_build_config()
+    ).segmentation_boundary()
+    return recording_unit_key(boundary=boundary, segment=segment)
+
+
 def _seconds(occurrences) -> list[int]:
     return [(o.timestamp_ns - T0) // S for o in occurrences]
 
@@ -81,7 +89,8 @@ def _seconds(occurrences) -> list[int]:
 
 def test_event_markers_define_one_episode_with_a_source_clock_window(recording):
     plan = _plan(recording)
-    assert [e.unit_key for e in plan.episodes] == ["task-mission-1-000"]
+    assert [e.unit_key for e in plan.episodes] == [_key("task-mission-1-000")]
+    assert plan.episodes[0].unit_key.startswith("event_markers-")
     source = plan.episodes[0].manifest.lineage.source
     assert source.source_clock == CLOCK
     # [running marker, completed marker + 1): the end marker belongs to it.
@@ -143,17 +152,15 @@ def test_observation_payloads_are_canonical_artifacts(recording):
 # --- segmentation and clocks -----------------------------------------------------
 
 
-def test_fixed_duration_windows_are_half_open(recording):
-    plan = _plan(
-        recording,
-        episode_build_config(
-            segmentation={
-                "policy": "fixed_duration",
-                "clock": CLOCK,
-                "duration_ns": 3 * S,
-            }
-        ),
+def test_fixed_duration_windows_are_half_open_on_the_clock_grid(recording):
+    config = episode_build_config(
+        segmentation={
+            "policy": "fixed_duration",
+            "clock": CLOCK,
+            "duration_ns": 3 * S,
+        }
     )
+    plan = _plan(recording, config)
     windows = {
         e.unit_key: (
             (e.manifest.lineage.source.start_timestamp_ns - T0) // S,
@@ -161,26 +168,27 @@ def test_fixed_duration_windows_are_half_open(recording):
         )
         for e in plan.episodes
     }
+    # Window k is [3k s, 3(k + 1) s) on the clock; T0 is 2 s past a multiple
+    # of 3 s, so the grid falls at T0 - 2 s, T0 + 1 s, ...
+    k0 = (T0 - 2 * S) // (3 * S)
     assert windows == {
-        "segment-000000": (0, 3),
-        "segment-000001": (3, 6),
-        "segment-000002": (6, 9),
-        "segment-000003": (9, 12),
+        _key(str(k0), config): (-2, 1),
+        _key(str(k0 + 1), config): (1, 4),
+        _key(str(k0 + 2), config): (4, 7),
+        _key(str(k0 + 3), config): (7, 10),
     }
-    # The observation exactly at t3 is in the second window, not the first.
+    # The state exactly at t1 is in the second window, not the first.
     by_key = {e.unit_key: e.manifest for e in plan.episodes}
-    assert _seconds(by_key["segment-000000"].observations) == [0]
-    assert _seconds(by_key["segment-000001"].observations) == [3]
+    assert _seconds(by_key[_key(str(k0), config)].states) == []
+    assert _seconds(by_key[_key(str(k0 + 1), config)].states) == [1, 2, 2]
 
 
 def test_whole_recording_is_one_episode(recording):
-    plan = _plan(
-        recording,
-        episode_build_config(
-            segmentation={"policy": "whole_recording", "clock": CLOCK}
-        ),
+    config = episode_build_config(
+        segmentation={"policy": "whole_recording", "clock": CLOCK}
     )
-    assert [e.unit_key for e in plan.episodes] == ["recording"]
+    plan = _plan(recording, config)
+    assert [e.unit_key for e in plan.episodes] == [_key("recording", config)]
     source = plan.episodes[0].manifest.lineage.source
     assert (source.start_timestamp_ns, source.end_timestamp_ns) == (T0, T0 + 9 * S + 1)
 
@@ -218,10 +226,10 @@ def test_two_tasks_yield_two_episodes_with_stable_keys(tmp_path):
     ).write(tmp_path / "r.mcap")
     plan = _plan(path)
     assert [e.unit_key for e in plan.episodes] == [
-        "task-mission-1-000",
-        "task-mission-2-000",
+        _key("task-mission-1-000"),
+        _key("task-mission-2-000"),
     ]
-    second = {e.unit_key: e.manifest for e in plan.episodes}["task-mission-2-000"]
+    second = {e.unit_key: e.manifest for e in plan.episodes}[_key("task-mission-2-000")]
     assert _seconds(second.observations) == [3]
     assert _seconds(second.actions) == [5]
 

@@ -27,13 +27,15 @@ path that does not resolve or resolves to a structure or raw bytes, a
 non-finite float, a message without the configured timestamp, unpaired task
 markers, a build that yields no Episode.
 
-Identity rules (frozen by ``semantics_version`` 1):
+Identity rules (frozen by ``semantics_version`` 2):
 
     occurrence_id    <topic slug>-<rank>: rank in the stream's canonical order
                      over the whole recording (canonical timestamp, then MCAP
                      sequence when every message of the stream carries one, then
                      per-stream file order; I-34)
-    unit_key         recording | segment-<window index> | task-<key>-<occurrence>
+    unit_key         <segmentation>/<segment> (sceneops_core.provenance.segmentation):
+                     the segment is ``recording``, the grid window index k of
+                     [k * duration, (k + 1) * duration) or task-<key>-<occurrence>
     payload artifact shared with the Scene builder (sceneops_worker.recordings)
 """
 
@@ -67,6 +69,12 @@ from sceneops_core.episodes.schemas import (
     EpisodeStream,
 )
 from sceneops_core.provenance import INT64_MAX, PinnedRecording, ProducerInfo
+from sceneops_core.provenance.segmentation import (
+    WHOLE_RECORDING_SEGMENT,
+    fixed_duration_index,
+    fixed_duration_window,
+    recording_unit_key,
+)
 from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK, MCAP_PUBLISH_TIME_CLOCK
 from sceneops_recording import (
     RecordingMessage,
@@ -85,9 +93,12 @@ from sceneops_recording.observations.payloads import (
 )
 
 RECORDING_EPISODE_PRODUCER_ID: Final = "sceneops.recording_episode_builder"
-RECORDING_EPISODE_SEMANTICS_VERSION: Final = 1
+# Bump whenever the canonical bytes a build produces change for the same
+# recording and configuration (it enters the producer fingerprint).
+# 2: segmentation-qualified unit keys and clock-anchored fixed-duration
+# windows.
+RECORDING_EPISODE_SEMANTICS_VERSION: Final = 2
 STRING_SCHEMA: Final = "std_msgs/msg/String"
-WHOLE_RECORDING_UNIT_KEY: Final = "recording"
 
 SourceConfig = EpisodeStreamConfig | EpisodeEventSourceConfig
 
@@ -180,7 +191,9 @@ class _Occurrence:
 
 @dataclass(frozen=True)
 class _Window:
-    unit_key: str
+    # The unit within its segmentation; the unit key qualifies it with the
+    # segmentation boundary (recording_unit_key).
+    segment: str
     start_ns: int
     end_ns: int
 
@@ -321,22 +334,12 @@ def _windows(
     if isinstance(segmentation, WholeRecordingSegmentation):
         segment_times = [i.segment_ns for i in items]
         return [
-            _Window(
-                WHOLE_RECORDING_UNIT_KEY, min(segment_times), max(segment_times) + 1
-            )
+            _Window(WHOLE_RECORDING_SEGMENT, min(segment_times), max(segment_times) + 1)
         ]
     if isinstance(segmentation, FixedDurationEpisodeSegmentation):
-        origin = min(i.segment_ns for i in items)
         duration = segmentation.duration_ns
-        indexes = sorted({(i.segment_ns - origin) // duration for i in items})
-        return [
-            _Window(
-                f"segment-{k:06d}",
-                origin + k * duration,
-                origin + (k + 1) * duration,
-            )
-            for k in indexes
-        ]
+        indexes = sorted({fixed_duration_index(i.segment_ns, duration) for i in items})
+        return [_Window(str(k), *fixed_duration_window(k, duration)) for k in indexes]
     assert isinstance(segmentation, EventMarkerSegmentation)
     return _marker_windows(
         segmentation, planner.observed.get(segmentation.event_topic, [])
@@ -384,7 +387,7 @@ def _marker_windows(
         raise RecordingEpisodeBuildError(
             f"task(s) {sorted(open_starts)} start but never end in the recording"
         )
-    return sorted(windows, key=lambda w: (w.start_ns, w.unit_key))
+    return sorted(windows, key=lambda w: (w.start_ns, w.segment))
 
 
 def plan_recording_episodes(
@@ -481,6 +484,7 @@ def plan_recording_episodes(
         EpisodeStreamRole.EVENT: "events",
     }
     clock = config.segmentation_clock()
+    boundary = config.segmentation_boundary()
 
     episodes: list[PlannedEpisode] = []
     for window in windows:
@@ -495,11 +499,12 @@ def plan_recording_episodes(
         for item, occurrence in ranked:
             if window.start_ns <= item.segment_ns < window.end_ns:
                 members[lists[planner.roles[item.topic]]].append(occurrence)
+        unit_key = recording_unit_key(boundary=boundary, segment=window.segment)
         source = revision.segment_source(
             source_clock=clock,
             start_timestamp_ns=window.start_ns,
             end_timestamp_ns=window.end_ns,
-            unit_key=window.unit_key,
+            unit_key=unit_key,
         )
         manifest = EpisodeManifest(
             lineage=EpisodeLineage(source=source, producer=producer),
@@ -512,7 +517,7 @@ def plan_recording_episodes(
                 for name, occurrences in members.items()
             },
         )
-        episodes.append(PlannedEpisode(unit_key=window.unit_key, manifest=manifest))
+        episodes.append(PlannedEpisode(unit_key=unit_key, manifest=manifest))
 
     unit_keys = [e.unit_key for e in episodes]
     if len(unit_keys) != len(set(unit_keys)):

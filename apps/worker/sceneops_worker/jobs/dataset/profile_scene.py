@@ -22,7 +22,7 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_scenes.profiling import SceneManifestProfiler
-from sceneops_worker.scenes.resolver import resolve_registered_scene
+from sceneops_worker.scenes.resolver import resolve_member_scene
 
 _profiler = SceneManifestProfiler()
 
@@ -91,8 +91,20 @@ class ProfileSceneJobHandler(
         all_channels: set[str] = set()
         scene_profiles: list[dict] = []
 
+        if params.dataset_id is None or params.dataset_version is None:
+            raise ValueError(
+                "profile_scene reads the revision each Scene's DatasetVersion pins; "
+                "dataset_id and dataset_version are required"
+            )
+        dataset_id, dataset_version = params.dataset_id, params.dataset_version
+
         for scene_id in params.scene_ids:
-            resolved = await resolve_registered_scene(context, scene_id)
+            resolved = await resolve_member_scene(
+                context,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
+                scene_id=scene_id,
+            )
             record = resolved.record
             result = _profiler.profile(scene_id=scene_id, manifest=resolved.manifest)
 
@@ -135,8 +147,8 @@ class ProfileSceneJobHandler(
                 owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
                 owner_id=per_scene_run_id,
                 scene_id=scene_id,
-                dataset_id=record.dataset_id,
-                dataset_version=record.dataset_version,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
                 run_id=per_scene_run_id,
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
@@ -147,8 +159,8 @@ class ProfileSceneJobHandler(
                     scene_id=scene_id,
                     manifest_artifact_id=record.manifest_artifact_id,
                     manifest_checksum=record.manifest_checksum,
-                    dataset_id=record.dataset_id,
-                    dataset_version=record.dataset_version,
+                    dataset_id=dataset_id,
+                    dataset_version=dataset_version,
                     status=RunStatus.SUCCEEDED,
                     observation_count=result.observation_count,
                     keyframe_count=result.keyframe_count,

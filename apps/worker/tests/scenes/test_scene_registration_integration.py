@@ -1,8 +1,9 @@
 """REGISTER_SCENES against real PostgreSQL and real MinIO: canonical
-manifests published to S3 at checksum-qualified keys, registration in one
-transaction under the DatasetVersion row lock, concurrent registrations
-into one DatasetVersion, and all-or-nothing behavior (ADR-007 §17-§18,
-I-1, I-3, I-10-I-12, I-24).
+manifests published to S3 at unit-scoped, checksum-qualified keys; units and
+revisions registered additively; the recording-scope rule applied to the
+DatasetVersion's pins in one transaction under its row lock; concurrent
+registrations; one revision shared by two DatasetVersions; all-or-nothing
+behavior (ADR-015 §6.4; ADR-007 §17-§18, I-3, I-10, I-11, I-24).
 
 Requires SCENEOPS_DATABASE_URL (a database migrated to head) and a
 reachable MinIO; skips otherwise. Every test commits rows under unique ids
@@ -23,6 +24,7 @@ from sceneops_core.common.ids import (
     robot_run_recording_artifact_id,
 )
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
+from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_core.scenes.schemas import scene_id_for
 from sceneops_core.scenes.testing import (
@@ -51,7 +53,7 @@ class _Env:
         # The RobotRun every default manifest of this environment is built from.
         self.run_id = f"run-{dataset_id}"
 
-    def source(self, unit_key: str = "segment-000000", run_id: str | None = None):
+    def source(self, unit_key: str = "whole_recording-x/recording", run_id=None):
         return recording_source(
             robot_run_id=run_id or self.run_id,
             unit_key=unit_key,
@@ -101,23 +103,21 @@ class _Env:
                 dataset_id=self.dataset_id,
             )
 
-    async def publish(
-        self, manifest, version: str = "v1", *, with_payloads: bool = True
-    ) -> str:
+    async def publish(self, manifest, *, with_payloads: bool = True) -> str:
         """Producer side: payload artifacts, then write-once manifest bytes
-        to MinIO plus the SCENE_MANIFEST ArtifactRecord, committed."""
+        to MinIO at the unit-scoped key plus the SCENE_MANIFEST
+        ArtifactRecord under the revision's id, committed."""
         async with get_async_sessionmaker()() as session:
             ctx = self.context(session)
             if with_payloads:
                 await self.register_payloads(ctx, manifest)
             scene_id = scene_id_for(manifest.lineage.source)
             published = await ctx.scene_artifact_store.publish_canonical_manifest(
-                dataset_id=self.dataset_id,
-                dataset_version=version,
-                scene_id=scene_id,
-                manifest=manifest,
+                scene_id=scene_id, manifest=manifest
             )
-            artifact_id = f"art-scene-{published.checksum[7:39]}"
+            artifact_id = manifest_artifact_id_for(
+                unit_id=scene_id, manifest_checksum=published.checksum
+            )
             if await ctx.artifact_record_store.get(artifact_id) is None:
                 await ctx.artifact_record_store.create(
                     artifact_id=artifact_id,
@@ -130,8 +130,6 @@ class _Env:
                     ),
                     owner_type=ArtifactOwnerType.SCENE,
                     owner_id=scene_id,
-                    dataset_id=self.dataset_id,
-                    dataset_version=version,
                     scene_id=scene_id,
                 )
             await session.commit()
@@ -194,7 +192,7 @@ class _Env:
 
     async def committed(self, version: str = "v1"):
         async with get_async_sessionmaker()() as session:
-            scenes = await PostgresSceneRepository(session).list(
+            scenes = await PostgresSceneRepository(session).list_member_revisions(
                 dataset_id=self.dataset_id, dataset_version=version
             )
             dv = await PostgresDatasetVersionRepository(session).get(
@@ -242,8 +240,8 @@ async def test_recording_scope_lifecycle_on_postgres(env):
         await env.register([rebuilt])
     assert (await env.committed())[0] == scenes
 
-    # With replace the scope becomes exactly the new set: "a" is repointed
-    # in place, "b" is removed, the old revision stays retrievable.
+    # With replace the version's scope becomes exactly the new set: "a" is
+    # repinned, "b" is unpinned; every revision stays registered.
     replaced = await env.register([rebuilt], replace=True)
     scenes_after, dv_after = await env.committed()
     scene_a = replaced.replaced_scene_ids[0]
@@ -251,11 +249,16 @@ async def test_recording_scope_lifecycle_on_postgres(env):
         replaced.removed_scene_ids and replaced.removed_scene_ids[0] not in scenes_after
     )
     assert scenes_after[scene_a].manifest_artifact_id == rebuilt
-    assert scenes_after[scene_a].updated_at >= scenes[scene_a].updated_at
     assert dv_after.scene.scene_count == 1
     async with get_async_sessionmaker()() as session:
         ctx = env.context(session)
         assert await ctx.artifact_record_store.get(first) is not None
+        assert {
+            r.manifest_artifact_id
+            for r in await ctx.scene_store.list_revisions(scene_a)
+        } == {first, rebuilt}
+        removed = replaced.removed_scene_ids[0]
+        assert await ctx.scene_store.list_revisions(removed)
 
 
 async def test_registration_is_atomic_on_postgres(env):
@@ -437,3 +440,45 @@ async def test_payload_artifact_record_metadata_is_verified_on_postgres(
     scenes, dv_after = await env.committed()
     assert scenes == {}
     assert dv_after.scene == dv_before.scene
+
+
+async def test_one_build_is_pinned_by_two_dataset_versions_on_postgres(env):
+    """Unit identity no longer depends on the DatasetVersion: registering the
+    same build into a second version reuses the manifest object, the
+    ArtifactRecord and the revision, and only adds a pin."""
+    await env.seed_dataset_version("v2")
+    manifest = env.manifest(source=env.source("a"))
+    first = await env.publish(manifest)
+    async with get_async_sessionmaker()() as session:
+        uri = (await env.context(session).artifact_record_store.get(first)).uri
+    assert f"/canonical/scenes/{scene_id_for(manifest.lineage.source)}/" in uri
+    again = await env.publish(manifest)  # a second build of the same bytes
+    assert again == first
+
+    one = await env.register([first], version="v1")
+    two = await env.register([first], version="v2")
+
+    assert one.created_scene_ids == two.created_scene_ids
+    (scene_id,) = two.created_scene_ids
+    v1, dv1 = await env.committed("v1")
+    v2, dv2 = await env.committed("v2")
+    assert v1 == v2
+    assert dv1.scene.scene_count == dv2.scene.scene_count == 1
+    async with get_async_sessionmaker()() as session:
+        ctx = env.context(session)
+        assert len(await ctx.scene_store.list_revisions(scene_id)) == 1
+        artifact = await ctx.artifact_record_store.get(first)
+    assert (artifact.dataset_id, artifact.dataset_version) == (None, None)
+
+
+async def test_a_drifting_producer_is_refused_in_any_dataset_version_on_postgres(env):
+    await env.seed_dataset_version("v2")
+    first = await env.publish(env.manifest(source=env.source("a")))
+    drifted = await env.publish(
+        env.manifest(source=env.source("a"), keyframe_timestamps_ns=(1_000,))
+    )
+    await env.register([first], version="v1")
+
+    with pytest.raises(SceneRegistrationConflictError, match="not deterministic"):
+        await env.register([drifted], version="v2")
+    assert (await env.committed("v2"))[0] == {}

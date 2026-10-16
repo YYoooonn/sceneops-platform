@@ -138,7 +138,10 @@ async def test_import_never_touches_scenes(tmp_path) -> None:
     before = scene.manifest_checksum
     doc = label_document("gt", covered=[T0], labels={"a": (T0, 10.0)})
     await _import(harness, await write_document(harness, "gt.json", doc))
-    assert harness.scene_store.records[scene.scene_id].manifest_checksum == before
+    assert [
+        r.manifest_checksum
+        for r in await harness.scene_store.list_revisions(scene.scene_id)
+    ] == [before]
     manifest = await harness.scene_artifact_store.read_pinned_manifest(
         uri=(await harness.artifact_record_store.get(scene.manifest_artifact_id)).uri,
         checksum=before,

@@ -213,9 +213,9 @@ Representative routes:
 ```text
 GET  /health
 GET  /api/v1/datasets/{id}/versions/{v}/quality
-GET  /api/v1/scenes/{scene_id}/quality
-GET  /api/v1/episodes                                  # filter by dataset_id/robot_run_id/mission_id
-GET  /api/v1/episodes/{episode_id}/manifest
+GET  /api/v1/scenes/{scene_id}/quality?dataset_id=&dataset_version=
+GET  /api/v1/episodes                                  # Episode units, filter by robot_run_id
+GET  /api/v1/episodes/{episode_id}/manifest?dataset_id=&dataset_version=
 POST /api/v1/robot-runs:register                       # {manifest_uri} -> REGISTER_ROBOT_RUN Job
 POST /api/v1/pipelines/runs                            # the four pipeline types
 POST /api/v1/pipelines/runs/{id}/execute

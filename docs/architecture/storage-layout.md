@@ -54,6 +54,7 @@ From `.env.example` / `ArtifactSettings` (`sceneops_core/config.py`):
 
 ```text
 {ARTIFACT_ROOT_URI}/
+  canonical/    ArtifactSettings.canonical_prefix   (canonical Scene / Episode manifests)
   datasets/     ArtifactSettings.dataset_prefix
   runs/         ArtifactSettings.run_prefix
   labels/       ArtifactSettings.label_prefix       (label set revisions)
@@ -62,8 +63,8 @@ From `.env.example` / `ArtifactSettings` (`sceneops_core/config.py`):
   observation_payloads/   ArtifactSettings.observation_payload_prefix   (canonical payloads)
 ```
 
-Local: `/data/artifacts/{datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
-S3/MinIO: `s3://sceneops/artifacts/{datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
+Local: `/data/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
+S3/MinIO: `s3://sceneops/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
 
 ### Published robot recordings: write-once per `run_id`
 
@@ -92,18 +93,22 @@ is classified. The contract and the commands are in
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2 and
 [ADR-008](../adr/008-acquisition-lifecycle-reliability.md) §6.
 
-### Scene manifests: write-once, checksum-qualified
+### Scene manifests: write-once, unit-scoped, checksum-qualified
 
 A canonical SceneManifest revision lives at
 
 ```text
-{dataset_root}/{dataset_id}/versions/{version}/scenes/{scene_id}/manifest-{sha256}.json
+{canonical_root}/scenes/{scene_id}/manifest-{sha256}.json
 ```
 
-(`SceneArtifactStore.publish_canonical_manifest`). The key embeds the
-checksum of the canonical bytes, so every revision of a Scene coexists and
-no key is ever overwritten: re-publishing identical bytes is a no-op and a
-key that already holds different bytes is a conflict. Superseded revisions
+(`SceneArtifactStore.publish_canonical_manifest`). The key names the revision
+`(scene_id, manifest_checksum)` and nothing else: no DatasetVersion, so one
+revision is one object however many DatasetVersions pin it. Every revision of
+a Scene coexists and no key is ever overwritten: re-publishing identical bytes
+is a no-op and a key that already holds different bytes is a conflict. Its
+`SCENE_MANIFEST` ArtifactRecord has the revision's deterministic id
+(`manifest_artifact_id_for(scene_id, checksum)`), is owned by the Scene and
+carries no DatasetVersion. Superseded revisions
 stay for lineage; there is no garbage collection. Readers never list this
 prefix to find "the latest" manifest — they follow a pinned
 `manifest_artifact_id` / checksum (see [Scene domain](./scene-domain.md)).
@@ -111,11 +116,12 @@ prefix to find "the latest" manifest — they follow a pinned
 Canonical EpisodeManifest revisions follow the same rule at
 
 ```text
-{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/manifest-{sha256}.json
+{canonical_root}/episodes/{episode_id}/manifest-{sha256}.json
 ```
 
-(`EpisodeArtifactStore.publish_canonical_manifest`); derived aligned-episode
-artifacts sit beside them under `episodes/{episode_id}/aligned/`.
+(`EpisodeArtifactStore.publish_canonical_manifest`). Derived aligned-episode
+artifacts are keyed by the DatasetVersion they were aligned for, under
+`{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/`.
 
 Observation payloads are not addressed by readers through a key
 convention: a manifest references each payload by its

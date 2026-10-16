@@ -19,7 +19,7 @@ from sceneops_core.jobs.schemas import (
     parse_job_params,
 )
 from sceneops_execution.jobs.schemas import JobEventListResponse, JobListResponse
-from sceneops_db.queries import resolve_current_episode_manifest_source
+from sceneops_db.queries import resolve_member_episode_manifest_source
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.episodes import EpisodeRepository
 from sceneops_db.repositories.jobs import (
@@ -161,10 +161,11 @@ class JobService:
     async def _resolve_align_episode_source(
         self, raw_params: dict[str, Any]
     ) -> JsonDict:
-        """Pin each Episode's current canonical revision -- exactly the
-        EPISODE_MANIFEST its record points to (ADR-007 §14.4) -- before the
-        execution key is computed, so an unpinned ALIGN_EPISODE request dedups
-        on source content. A caller-supplied pin always wins."""
+        """Pin each unpinned Episode to the revision its DatasetVersion's
+        member pins -- an Episode has no current revision (ADR-015 §6.4) --
+        before the execution key is computed, so an unpinned ALIGN_EPISODE
+        request dedups on source content. A caller-supplied pin always
+        wins."""
         episodes = raw_params.get("episodes")
         if not isinstance(episodes, list):
             # Let normal Pydantic param validation raise its own clear error.
@@ -182,14 +183,25 @@ class JobService:
             if self._episode_repository is None:
                 raise ValueError("align_episode source resolution needs Episode access")
             episode_id = item["episode_id"]
-            record = await resolve_current_episode_manifest_source(
+            dataset_id = raw_params.get("dataset_id")
+            dataset_version = raw_params.get("dataset_version")
+            if not dataset_id or not dataset_version:
+                raise ValueError(
+                    f"Episode {episode_id!r} is unpinned: align_episode resolves it "
+                    "to the revision its DatasetVersion pins, so dataset_id and "
+                    "dataset_version are required (or pin source_artifact_id)."
+                )
+            record = await resolve_member_episode_manifest_source(
                 episode_repository=self._episode_repository,
                 artifact_repository=self._artifact_repository,
+                dataset_id=dataset_id,
+                dataset_version=dataset_version,
                 episode_id=episode_id,
             )
             if record is None:
                 raise ValueError(
-                    f"Episode {episode_id!r} is not registered — run "
+                    f"Episode {episode_id!r} is not a member of "
+                    f"{dataset_id}:{dataset_version} — run "
                     "recording_episode_building before align_episode."
                 )
             pinned.append(

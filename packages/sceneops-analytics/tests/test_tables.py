@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from sceneops_core.scenes.schemas import project_scene_record
+from sceneops_core.provenance import manifest_artifact_id_for
+from sceneops_core.scenes.schemas import project_scene_revision, scene_id_for
 from sceneops_core.scenes.testing import build_scene_manifest, recording_source
 from sceneops_analytics.tables import (
     TABLE_BUILDERS,
@@ -19,31 +20,41 @@ def _manifest(key: str = "scene-a"):
     )
 
 
+def _revision(manifest):
+    return project_scene_revision(
+        manifest=manifest,
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=scene_id_for(manifest.lineage.source),
+            manifest_checksum=manifest.checksum(),
+        ),
+        manifest_checksum=manifest.checksum(),
+    )
+
+
+def _scenes_table(records):
+    return build_scenes_table(dataset_id="d", dataset_version="v1", scenes=records)
+
+
 def test_table_names():
     assert TABLE_BUILDERS == ("scenes", "observations", "keyframes")
 
 
 def test_build_scenes_table_row_per_scene():
     manifest = _manifest()
-    record = project_scene_record(
-        dataset_id="d",
-        dataset_version="v1",
-        manifest=manifest,
-        manifest_artifact_id="art-1",
-        manifest_checksum=manifest.checksum(),
-    )
-    df = build_scenes_table([record])
+    record = _revision(manifest)
+    df = _scenes_table([record])
     assert df.height == 1
     row = df.row(0, named=True)
+    assert (row["dataset_id"], row["dataset_version"]) == ("d", "v1")
     assert (row["robot_run_id"], row["unit_key"]) == ("run-001", "scene-a")
     assert "source_kind" not in row and "external_format" not in row
-    assert row["manifest_artifact_id"] == "art-1"
+    assert row["manifest_artifact_id"] == record.manifest_artifact_id
     assert (row["observation_count"], row["keyframe_count"]) == (5, 2)
     assert row["observed_channels"] == ["CAM_FRONT", "LIDAR_TOP"]
 
 
 def test_build_scenes_table_empty_is_empty_not_error():
-    assert build_scenes_table([]).height == 0
+    assert _scenes_table([]).height == 0
 
 
 def test_observations_table_keeps_every_observation_with_its_own_time():
@@ -82,14 +93,8 @@ def test_every_timestamp_row_carries_its_own_clock():
 
 def test_scenes_table_carries_the_segment_window():
     manifest = _manifest()
-    record = project_scene_record(
-        dataset_id="d",
-        dataset_version="v1",
-        manifest=manifest,
-        manifest_artifact_id="art-1",
-        manifest_checksum=manifest.checksum(),
-    )
-    row = build_scenes_table([record]).row(0, named=True)
+    record = _revision(manifest)
+    row = _scenes_table([record]).row(0, named=True)
     assert (
         row["window_clock"],
         row["window_start_timestamp_ns"],
