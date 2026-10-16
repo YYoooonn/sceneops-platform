@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
+from sceneops_core.provenance import PinnedRecording
 from sceneops_scenes.recording_builder import (
     RECORDING_SCENE_PRODUCER_ID,
-    RecordingRevision,
     RecordingSceneBuildError,
     WHOLE_RECORDING_UNIT_KEY,
     iter_planned_payloads,
@@ -40,7 +40,7 @@ from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     transform,
 )
 
-REVISION = RecordingRevision(
+REVISION = PinnedRecording(
     robot_run_id="run-001",
     recording_checksum="sha256:" + "1" * 64,
     recording_clock="mcap_log_time",
@@ -234,7 +234,11 @@ def test_windows_never_come_from_robot_run_extent(recording):
         _plan(
             recording,
             build_config(clock="mcap_log_time"),
-            revision=RecordingRevision("run-001", "sha256:" + "1" * 64, "other.clock"),
+            revision=PinnedRecording(
+                robot_run_id="run-001",
+                recording_checksum="sha256:" + "1" * 64,
+                recording_clock="other.clock",
+            ),
         )
     assert plan.scenes[0].manifest.lineage.source.start_timestamp_ns == 1_000_000_000
 
@@ -363,7 +367,11 @@ def test_payload_ids_are_deterministic_and_independent_of_segmentation(recording
     }
     other_run = _plan(
         recording,
-        revision=RecordingRevision("run-002", "sha256:" + "1" * 64, "mcap_log_time"),
+        revision=PinnedRecording(
+            robot_run_id="run-002",
+            recording_checksum="sha256:" + "1" * 64,
+            recording_clock="mcap_log_time",
+        ),
     )
     assert not {p.artifact_id for p in a.payloads.values()} & {
         p.artifact_id for p in other_run.payloads.values()

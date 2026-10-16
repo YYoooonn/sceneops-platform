@@ -38,6 +38,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
+from sceneops_core.provenance import PinnedRecording
 from sceneops_core.scenes.schemas import scene_id_for
 from sceneops_recording import check_l1_recording
 
@@ -50,7 +51,6 @@ from sceneops_worker.recordings.artifact_records import (
 from sceneops_worker.robots.resolver import resolve_recording
 from sceneops_scenes.recording_builder import (
     PlannedPayload,
-    RecordingRevision,
     RecordingSceneBuildError,
     SceneBuildPlan,
     iter_planned_payloads,
@@ -119,7 +119,7 @@ class BuildRecordingScenesJobHandler(
                     f"recording of RobotRun {params.robot_run_id} is not L1-conformant: "
                     f"{details[:5]}"
                 )
-            revision = RecordingRevision(
+            revision = PinnedRecording(
                 robot_run_id=recording.robot_run_id,
                 recording_checksum=recording.checksum,
                 recording_clock=recording.source_clock,

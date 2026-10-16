@@ -18,8 +18,8 @@ from pathlib import Path
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
 from sceneops_core.scenes.schemas import scene_id_for
 from sceneops_core.scenes.testing import semantic_scene_content
+from sceneops_core.provenance import PinnedRecording
 from sceneops_scenes.recording_builder import (
-    RecordingRevision,
     iter_planned_payloads,
     plan_recording_scenes,
 )
@@ -33,8 +33,16 @@ from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     default_recording,
 )
 
-BATCH = RecordingRevision("run-batch", "sha256:" + "a" * 64, "mcap_log_time")
-REPLAY = RecordingRevision("run-replay", "sha256:" + "b" * 64, "mcap_log_time")
+BATCH = PinnedRecording(
+    robot_run_id="run-batch",
+    recording_checksum="sha256:" + "a" * 64,
+    recording_clock="mcap_log_time",
+)
+REPLAY = PinnedRecording(
+    robot_run_id="run-replay",
+    recording_checksum="sha256:" + "b" * 64,
+    recording_clock="mcap_log_time",
+)
 
 
 def _plan(path, revision, config=None):

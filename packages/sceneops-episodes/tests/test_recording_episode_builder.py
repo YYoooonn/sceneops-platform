@@ -23,7 +23,7 @@ from sceneops_episodes.recording_builder import (
     iter_planned_payloads,
     plan_recording_episodes,
 )
-from sceneops_recording.observations.payloads import RecordingRevision
+from sceneops_core.provenance import PinnedRecording
 from sceneops_scenes.recording_builder import plan_recording_scenes
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -50,7 +50,11 @@ from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     default_recording,
 )
 
-REVISION = RecordingRevision("run-ep", "sha256:" + "a" * 64, "mcap_log_time")
+REVISION = PinnedRecording(
+    robot_run_id="run-ep",
+    recording_checksum="sha256:" + "a" * 64,
+    recording_clock="mcap_log_time",
+)
 
 
 def _plan(path, config=None, revision=REVISION):
@@ -265,7 +269,11 @@ def test_equivalent_acquisitions_share_semantic_content(tmp_path):
     a = _plan(rec.write(tmp_path / "a.mcap"))
     b = _plan(
         replay.write(tmp_path / "b.mcap"),
-        revision=RecordingRevision("run-replay", "sha256:" + "b" * 64, "mcap_log_time"),
+        revision=PinnedRecording(
+            robot_run_id="run-replay",
+            recording_checksum="sha256:" + "b" * 64,
+            recording_clock="mcap_log_time",
+        ),
     )
     assert [semantic_episode_content(e.manifest) for e in a.episodes] == [
         semantic_episode_content(e.manifest) for e in b.episodes
@@ -339,7 +347,11 @@ def test_log_time_needs_a_log_time_recording_clock(recording):
         _plan(
             recording,
             config,
-            RecordingRevision("run-ep", "sha256:" + "a" * 64, "other"),
+            PinnedRecording(
+                robot_run_id="run-ep",
+                recording_checksum="sha256:" + "a" * 64,
+                recording_clock="other",
+            ),
         )
 
 

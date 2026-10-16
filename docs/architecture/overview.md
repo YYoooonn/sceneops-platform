@@ -231,6 +231,7 @@ process per run. The rationale and the superseded decisions are in
 | Topic | Document |
 | --- | --- |
 | Entities and relationships | [data-model.md](./data-model.md) |
+| Ingress families, source bindings, canonical builder inputs | [ingress-boundaries.md](./ingress-boundaries.md) |
 | Scene domain | [scene-domain.md](./scene-domain.md) |
 | Episode domain | [episode-domain.md](./episode-domain.md) |
 | Labels, sample views, ScenarioSets, predictions, evaluation, aligned episodes | [derived-layer.md](./derived-layer.md) |

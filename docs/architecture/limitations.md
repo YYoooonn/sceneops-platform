@@ -100,8 +100,11 @@ interface, and nothing stores them.
 
 ## 5. Canonicalization from recordings
 
-Scenes and Episodes are produced only from a registered RobotRun recording. Current
-builder bounds:
+Scenes and Episodes are produced only from a registered RobotRun recording. Dataset
+Integration has its output records, content source binding and builder input
+([Ingress boundaries](./ingress-boundaries.md)) but no snapshot publication,
+registration, native reader or content builder, so no external dataset reaches a
+canonical unit except as a converted recording. Current builder bounds:
 
 - Only ROS 2 (`cdr` / `ros2msg`) messages are decoded. Scene camera payloads must be
   `CompressedImage` (jpeg / png); other Scene channels are stored as their serialized

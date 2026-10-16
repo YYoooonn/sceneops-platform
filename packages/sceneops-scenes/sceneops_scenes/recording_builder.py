@@ -55,13 +55,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from sceneops_core.common.ids import robot_run_recording_artifact_id
-from sceneops_core.provenance import (
-    INT64_MAX,
-    ProducerInfo,
-    RecordingSegmentSource,
-    RecordingSourceRevision,
-)
+from sceneops_core.provenance import INT64_MAX, PinnedRecording, ProducerInfo
 from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
 from sceneops_core.scenes.recording_build import (
     MCAP_PUBLISH_TIME_CLOCK,
@@ -98,7 +92,6 @@ from sceneops_recording.observations.payloads import (
     OBSERVATION_PAYLOAD_ID_SCHEMA_V1,
     PlannedPayload,
     RecordingBuildError,
-    RecordingRevision,
     canonical_order as _canonical_order,
     observation_payload_artifact_id,
     ros2_cdr_media_type,
@@ -199,7 +192,7 @@ class _CameraInfo:
 
 @dataclass
 class _Planner:
-    revision: RecordingRevision
+    revision: PinnedRecording
     config: RecordingSceneBuildConfig
     decoder: Ros2Decoder = field(default_factory=Ros2Decoder)
     channels: dict[str, SceneChannelConfig] = field(init=False)
@@ -496,7 +489,7 @@ class _Planner:
 
 
 def plan_recording_scenes(
-    path: Path, *, revision: RecordingRevision, config: RecordingSceneBuildConfig
+    path: Path, *, revision: PinnedRecording, config: RecordingSceneBuildConfig
 ) -> SceneBuildPlan:
     """Pass 1: the complete Scene set of the recording scope, without
     writing anything."""
@@ -526,10 +519,7 @@ def plan_recording_scenes(
         producer_id=RECORDING_SCENE_PRODUCER_ID,
         semantics_version=RECORDING_SCENE_SEMANTICS_VERSION,
         build_config=config.normalized(),
-        source=RecordingSourceRevision(
-            robot_run_id=revision.robot_run_id,
-            recording_checksum=revision.recording_checksum,
-        ),
+        source=revision.source_revision,
     )
 
     # Canonical observations, identified by their rank in channel order.
@@ -654,12 +644,7 @@ def plan_recording_scenes(
                 f"segment window [{start}, {end}) is outside the int64 time range"
             )
         unit_key = window_unit_key(index)
-        source = RecordingSegmentSource(
-            robot_run_id=revision.robot_run_id,
-            recording_artifact_id=robot_run_recording_artifact_id(
-                revision.robot_run_id
-            ),
-            recording_checksum=revision.recording_checksum,
+        source = revision.segment_source(
             source_clock=segmentation.clock,
             start_timestamp_ns=start,
             end_timestamp_ns=end,
@@ -732,7 +717,6 @@ __all__ = [
     "WHOLE_RECORDING_UNIT_KEY",
     "PlannedPayload",
     "PlannedScene",
-    "RecordingRevision",
     "RecordingSceneBuildError",
     "SceneBuildPlan",
     "extract_payload",

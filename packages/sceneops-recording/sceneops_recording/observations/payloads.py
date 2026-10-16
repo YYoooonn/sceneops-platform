@@ -36,16 +36,6 @@ class RecordingBuildError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class RecordingRevision:
-    """The registered recording being built from (from its RobotRunRecord
-    and recording ArtifactRecord)."""
-
-    robot_run_id: str
-    recording_checksum: str
-    recording_clock: str
-
-
-@dataclass(frozen=True)
 class PlannedPayload:
     artifact_id: str
     topic: str
@@ -177,7 +167,6 @@ __all__ = [
     "OBSERVATION_PAYLOAD_ID_SCHEMA_V1",
     "PlannedPayload",
     "RecordingBuildError",
-    "RecordingRevision",
     "canonical_order",
     "extract_payload",
     "observation_payload_artifact_id",

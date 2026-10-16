@@ -47,7 +47,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.episodes.recording_build import (
     EpisodeEventSourceConfig,
     EpisodeStreamConfig,
@@ -67,12 +66,7 @@ from sceneops_core.episodes.schemas import (
     EpisodeOccurrence,
     EpisodeStream,
 )
-from sceneops_core.provenance import (
-    INT64_MAX,
-    ProducerInfo,
-    RecordingSegmentSource,
-    RecordingSourceRevision,
-)
+from sceneops_core.provenance import INT64_MAX, PinnedRecording, ProducerInfo
 from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK, MCAP_PUBLISH_TIME_CLOCK
 from sceneops_recording import (
     RecordingMessage,
@@ -84,7 +78,6 @@ from sceneops_recording import (
 from sceneops_recording.observations.payloads import (
     PlannedPayload,
     RecordingBuildError,
-    RecordingRevision,
     canonical_order,
     extract_payload,
     plan_payload,
@@ -194,7 +187,7 @@ class _Window:
 
 @dataclass
 class _Planner:
-    revision: RecordingRevision
+    revision: PinnedRecording
     config: RecordingEpisodeBuildConfig
     decoder: Ros2Decoder = field(default_factory=Ros2Decoder)
     sources: dict[str, SourceConfig] = field(init=False)
@@ -395,7 +388,7 @@ def _marker_windows(
 
 
 def plan_recording_episodes(
-    path: Path, *, revision: RecordingRevision, config: RecordingEpisodeBuildConfig
+    path: Path, *, revision: PinnedRecording, config: RecordingEpisodeBuildConfig
 ) -> EpisodeBuildPlan:
     """Pass 1: the complete Episode set of the recording scope, without
     writing anything."""
@@ -418,10 +411,7 @@ def plan_recording_episodes(
         producer_id=RECORDING_EPISODE_PRODUCER_ID,
         semantics_version=RECORDING_EPISODE_SEMANTICS_VERSION,
         build_config=config.normalized(),
-        source=RecordingSourceRevision(
-            robot_run_id=revision.robot_run_id,
-            recording_checksum=revision.recording_checksum,
-        ),
+        source=revision.source_revision,
     )
 
     # Canonical occurrences, identified by their rank in stream order.
@@ -505,12 +495,7 @@ def plan_recording_episodes(
         for item, occurrence in ranked:
             if window.start_ns <= item.segment_ns < window.end_ns:
                 members[lists[planner.roles[item.topic]]].append(occurrence)
-        source = RecordingSegmentSource(
-            robot_run_id=revision.robot_run_id,
-            recording_artifact_id=robot_run_recording_artifact_id(
-                revision.robot_run_id
-            ),
-            recording_checksum=revision.recording_checksum,
+        source = revision.segment_source(
             source_clock=clock,
             start_timestamp_ns=window.start_ns,
             end_timestamp_ns=window.end_ns,

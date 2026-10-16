@@ -42,6 +42,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
+from sceneops_core.provenance import PinnedRecording
 from sceneops_recording import check_l1_recording
 
 from sceneops_episodes.recording_builder import (
@@ -55,7 +56,7 @@ from sceneops_worker.recordings.artifact_records import (
     ArtifactRecordConflictError,
     require_same_artifact as _require_same,
 )
-from sceneops_recording.observations.payloads import PlannedPayload, RecordingRevision
+from sceneops_recording.observations.payloads import PlannedPayload
 from sceneops_worker.robots.resolver import resolve_recording
 
 EPISODE_MANIFEST_ARTIFACT_ID_SCHEMA_V1 = "sceneops.episode_manifest_artifact_id/v1"
@@ -120,7 +121,7 @@ class BuildRecordingEpisodesJobHandler(
                     f"recording of RobotRun {params.robot_run_id} is not L1-conformant: "
                     f"{details[:5]}"
                 )
-            revision = RecordingRevision(
+            revision = PinnedRecording(
                 robot_run_id=recording.robot_run_id,
                 recording_checksum=recording.checksum,
                 recording_clock=recording.source_clock,
