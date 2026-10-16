@@ -17,6 +17,12 @@ and the continuous multi-run capture router is gone too
 remains the record of what was decided and verified at the time; for current behavior
 read [Jobs and pipelines](../architecture/jobs-and-pipelines.md).
 
+**Superseded in part.** [ADR-015](./015-multi-source-platform.md) (accepted, being
+implemented) supersedes Amendment A4's decisions 1, 3, 4 and 5 (§29.2) and invariants I-31
+and I-36. External datasets become canonical sources again as preserved native content,
+and RobotRun stops being the mandatory parent of Scenes and Episodes. ADR-015 also amends
+I-1, I-2, I-10, I-16 and I-17 and retires I-12; its §13 lists every affected section.
+
 This ADR froze the *target* ingestion architecture for SceneOps. At the time
 of acceptance almost none of the target contract was implemented; the amendments
 below record each implementation step, and A9 records the final workflow surface
