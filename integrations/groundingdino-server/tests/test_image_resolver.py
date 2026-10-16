@@ -35,7 +35,57 @@ def test_file_uri_parsed_to_path(tmp_path):
 def test_unsupported_scheme_raises_value_error():
     resolver = _resolver("/data/artifacts")
     with pytest.raises(ValueError, match="Unsupported image URI scheme"):
-        resolver.resolve("s3://bucket/key/img.jpg")
+        resolver.resolve("gs://bucket/key/img.jpg")
+
+
+# ── s3 ─────────────────────────────────────────────────────────────────────────
+
+
+def _png_bytes() -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("L", (2, 3)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _s3_resolver(s3_client) -> ImageResolver:
+    return ImageResolver(allowed_roots=["/data/artifacts"], s3_client=s3_client)
+
+
+def test_s3_uri_without_configured_client_raises():
+    with pytest.raises(RuntimeError, match="S3 image resolution is not configured"):
+        _resolver("/data/artifacts").resolve("s3://bucket/key/img.jpg")
+
+
+def test_s3_uri_reads_object_and_converts_to_rgb():
+    s3_client = MagicMock()
+    s3_client.get_object.return_value = {"Body": MagicMock(read=lambda: _png_bytes())}
+
+    image = _s3_resolver(s3_client).resolve("s3://bucket/key/img.png")
+
+    s3_client.get_object.assert_called_once_with(Bucket="bucket", Key="key/img.png")
+    assert image.mode == "RGB"
+    assert image.size == (2, 3)
+
+
+def test_s3_missing_object_raises_file_not_found():
+    from botocore.exceptions import ClientError
+
+    s3_client = MagicMock()
+    s3_client.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey"}}, "GetObject"
+    )
+
+    with pytest.raises(FileNotFoundError, match="S3 image not found"):
+        _s3_resolver(s3_client).resolve("s3://bucket/missing.png")
+
+
+def test_s3_uri_without_key_raises_value_error():
+    with pytest.raises(ValueError, match="Invalid S3 image URI"):
+        _s3_resolver(MagicMock()).resolve("s3://bucket/")
 
 
 def test_http_scheme_raises_value_error():

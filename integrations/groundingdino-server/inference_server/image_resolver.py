@@ -1,13 +1,10 @@
 """ImageResolver — loads a PIL image from a URI.
 
-Currently supported:
+Supported:
   file:///absolute/path  → /absolute/path on the local filesystem (shared volume)
+  s3://bucket/key        → GetObject through the configured S3 client (MinIO included)
 
-Planned (not yet implemented):
-  s3://bucket/key        → fetch via boto3
-  minio://...            → fetch via minio SDK
-  gs://...               → fetch via google-cloud-storage
-  https://...            → fetch via requests/httpx
+Every other scheme is rejected.
 
 Security: allowed_roots constrains which local paths may be accessed,
 preventing path traversal and access to sensitive files.
@@ -26,7 +23,7 @@ from PIL import Image
 class ImageResolver:
     """Resolves an image_uri to a PIL Image.
 
-    Only file:// URIs are supported. The resolved path must fall within one of
+    file:// and s3:// URIs are supported. A file:// path must fall within one of
     the configured allowed_roots to prevent path traversal attacks.
     """
 
@@ -43,9 +40,11 @@ class ImageResolver:
         """Load and return a PIL Image (RGB) from the given URI.
 
         Raises:
-            ValueError:        URI scheme is not supported (only file://).
+            ValueError:        URI scheme is not file:// or s3://, or an s3:// URI
+                               has no bucket or key, or the object is not an image.
+            RuntimeError:      s3:// URI but no S3 client is configured.
             PermissionError:   Resolved path is outside all allowed roots.
-            FileNotFoundError: File does not exist at the resolved path.
+            FileNotFoundError: File or S3 object does not exist.
         """
         parsed = urlparse(image_uri)
 
