@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.datasets.schemas import (
@@ -25,7 +25,7 @@ from sceneops_db.models.datasets import (
     DatasetVersionModel,
 )
 
-from ._utils import apply_pagination, apply_values, values_without_none
+from ._utils import apply_pagination, apply_values
 
 
 class PostgresDatasetRepository:
@@ -121,100 +121,6 @@ class PostgresDatasetVersionRepository:
         await self._session.refresh(model)
         return dataset_version_model_to_record(model)
 
-    async def lock_for_update(
-        self, *, dataset_id: str, version: str
-    ) -> DatasetVersionRecord:
-        """Acquire a real PostgreSQL row-level lock (``SELECT ... FOR
-        UPDATE``) on this DatasetVersion row for the remainder of the
-        current transaction -- the serialization boundary for aggregate
-        Scene/Episode summary mutation (see
-        docs/architecture/data-model.md §2.0.2).
-
-        Blocks until any other transaction currently holding this same
-        row's lock commits or rolls back. Crucially, this call's own
-        *subsequent* reads within the same transaction (e.g. an
-        ``EpisodeRepository.count()`` called right after) then observe
-        that other transaction's fully committed changes under READ
-        COMMITTED, not a stale pre-lock snapshot -- each new statement
-        gets a fresh read of committed data, and the lock forces "my
-        count, then my write" to never interleave with another
-        transaction's "count, then write" for the same row. This is what
-        makes recompute-then-write safe under concurrent same-
-        DatasetVersion writers (two independent Episode registrations
-        completing at the same time, etc.) without incrementing a delta.
-
-        Raises the same as the other summary-update methods below if the
-        DatasetVersion doesn't exist.
-        """
-        version_id = make_dataset_version_id(dataset_id, version)
-        stmt = (
-            select(DatasetVersionModel)
-            .where(DatasetVersionModel.id == version_id)
-            .with_for_update()
-        )
-        result = await self._session.execute(stmt)
-        model = result.scalar_one_or_none()
-        if model is None:
-            raise ValueError(f"DatasetVersion not found: {dataset_id}/{version}")
-        return dataset_version_model_to_record(model)
-
-    async def replace_scene_membership_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        scene_count: int,
-        keyframe_count: int,
-        observation_count: int,
-        observed_channels: list[str],
-    ) -> DatasetVersionRecord:
-        """Overwrite the Scene membership summary with values recomputed from
-        SceneRecord rows. Only the Scene registrar calls this, under
-        ``lock_for_update`` and in the same transaction as the membership
-        change (ADR-007 §16), so the cache can never drift from membership.
-        Never touches Episode columns or the Scene input columns."""
-        model = await self._get_model_or_raise(dataset_id, version)
-        apply_values(
-            model,
-            {
-                "scene_count": scene_count,
-                "keyframe_count": keyframe_count,
-                "observation_count": observation_count,
-                "observed_channels": list(observed_channels),
-            },
-        )
-        await self._session.flush()
-        await self._session.refresh(model)
-        return dataset_version_model_to_record(model)
-
-    async def update_episode_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        episode_count: int | None = None,
-    ) -> DatasetVersionRecord:
-        """Partial update of Episode-owned columns only. Never touches Scene
-        columns or any generic identity/state column."""
-        model = await self._get_model_or_raise(dataset_id, version)
-
-        episode_values = values_without_none({"episode_count": episode_count})
-        apply_values(model, episode_values)
-        await self._session.flush()
-        await self._session.refresh(model)
-        return dataset_version_model_to_record(model)
-
-    async def _get_model_or_raise(
-        self, dataset_id: str, version: str
-    ) -> DatasetVersionModel:
-        version_id = make_dataset_version_id(dataset_id, version)
-        stmt = select(DatasetVersionModel).where(DatasetVersionModel.id == version_id)
-        result = await self._session.execute(stmt)
-        model = result.scalar_one_or_none()
-        if model is None:
-            raise ValueError(f"DatasetVersion not found: {dataset_id}/{version}")
-        return model
-
     async def list(
         self,
         *,
@@ -289,17 +195,3 @@ class PostgresDatasetVersionMemberRepository:
                 for m in members
             ],
         )
-
-    async def remove(
-        self, *, dataset_id: str, version: str, unit_ids: Sequence[str]
-    ) -> int:
-        if not unit_ids:
-            return 0
-        result = await self._session.execute(
-            delete(DatasetVersionMemberModel).where(
-                DatasetVersionMemberModel.dataset_version_id
-                == make_dataset_version_id(dataset_id, version),
-                DatasetVersionMemberModel.unit_id.in_(list(unit_ids)),
-            )
-        )
-        return result.rowcount or 0

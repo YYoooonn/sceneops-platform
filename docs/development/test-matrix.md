@@ -106,9 +106,7 @@ consumes, so running the workflow again changes nothing it already holds:
 - the LabelSet, sample views, aligned Episodes and learning export are content-pinned
   revisions that converge on retry;
 - the ScenarioSet, InferenceRun and EvaluationRuns of Scene ML carry ids derived from the
-  Dataset (`scset-<dataset>`, `infer-<dataset>`, `eval-<dataset>`, `eval-<dataset>-recheck`);
-- where the platform replaces state (a changed Scene configuration), the test uses the
-  platform's explicit replacement (`replace=True`), never deletion.
+  Dataset (`scset-<dataset>`, `infer-<dataset>`, `eval-<dataset>`, `eval-<dataset>-recheck`).
 
 ### Execution history
 
@@ -223,7 +221,7 @@ treats them as a violation.
 | Alignment of several pinned Episodes; execution-key identity of `align_episode` | unit (`test_align_episode_handler.py`, `packages/sceneops-execution/tests/test_job_service_align_episode.py`) |
 | SceneManifest v2 has no annotation structure; v1 bytes are refused | unit (`packages/sceneops-core/tests/test_scene_manifest.py`) |
 | DatasetVersion carries no channel requirements or metadata | unit + integration (`test_dataset_version_*`, `test_migration_schema.py`) |
-| Canonical Scene / Episode registration, replacement, fail-loud | integration (`apps/worker/tests/{scenes,episodes}/*integration.py`) |
+| Canonical Scene / Episode registration: durability and integrity gate against MinIO, additive revisions, complete pins, concurrency, no DatasetVersion write, fail-loud | unit (`apps/worker/tests/scenes/test_scene_registration.py`); integration (`apps/worker/tests/{scenes,episodes}/*integration.py`) |
 | Acquisition reconciliation: every lifecycle state classified from real MinIO + PostgreSQL facts, unchanged state and identical report on a second run | integration (`apps/worker/tests/robots/test_reconciliation_vertical_integration.py`); classification rules over doubles in `packages/sceneops-acquisition/tests/test_reconciliation.py` |
 | Artifact lifecycle of `robot_runs/`: the reference query by URI, pending rules, O1 / O2 candidates and their grace periods, dangling and corrupt references, conservative handling of malformed publication, deterministic report for a fixed observation time, nothing written | unit over doubles (`packages/sceneops-acquisition/tests/test_artifact_lifecycle.py`); `list_by_uri_prefix` / `list_run_ids_for_root` on real PostgreSQL (`packages/sceneops-db/tests/test_reconciliation_read_repositories.py`); every class built through the real publisher, registrar and capture scan on real MinIO + PostgreSQL, with the one-shot command compared to the in-process report (`apps/worker/tests/robots/test_artifact_lifecycle_vertical_integration.py`) |
 | Acquisition recovery: bounded action per state, abandon-then-replace, the attempt budget across replacement Jobs, dispatch failure, the per-pass bound | unit over doubles (`packages/sceneops-acquisition/tests/test_reconciliation_recovery.py`); `abandon_if_inactive` single winner on real PostgreSQL (`packages/sceneops-db/tests/test_job_abandon.py`); real faults in `tests/infrastructure/test_acquisition_recovery.py` |

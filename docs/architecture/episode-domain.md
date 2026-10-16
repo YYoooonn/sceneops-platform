@@ -28,9 +28,9 @@ RECORDING_EPISODE_BUILDING  (one robot_run_id per run)
 build_recording_episodes   resolve_recording(robot_run_id) -> L1 conformance check
                            -> plan_recording_episodes (pure) -> OBSERVATION_PAYLOAD
                            artifacts -> EPISODE_MANIFEST artifacts (write-once)
-register_episodes          the only writer of Episode units and revisions, and
-                           of the DatasetVersion's Episode members and
-                           episode_count
+register_episodes          the only writer of Episode units and revisions;
+                           returns their complete pins, writes no
+                           DatasetVersion state
 validate_episode /         run records pinned to the revision they assessed
 profile_episode
 ```
@@ -141,18 +141,20 @@ episode_id     episode_id_for(source): f(source_kind, source_id = robot_run_id,
                unit_key); no DatasetVersion (Ingress boundaries §6)
 revision       (episode_id, manifest_checksum); artifact id
                manifest_artifact_id_for(episode_id, manifest_checksum)
-revisions      inserted if absent: identical → no-op · new fingerprint → new
-               revision · same fingerprint, other checksum → conflict
-members        scope (DatasetVersion, robot_run_id): one producer fingerprint
-                 same fingerprint            -> unchanged
-                 different, replace=false    -> conflict, no change
-                 different, replace=true     -> unpin / repin / pin the complete set
+revisions      inserted if absent: identical → no-op · new unit or new
+               fingerprint → insert · same fingerprint, other checksum → conflict
+result         the complete pin (domain, unit_id, manifest_artifact_id,
+               manifest_checksum) of every input revision
 ```
 
-`REGISTER_EPISODES` verifies every manifest and payload reference, checks
-that the manifests were built from the RobotRun's recording bytes, registers
-units and revisions additively, then locks the DatasetVersion row, applies the
-scope rule to its members and recomputes `episode_count` in one transaction.
+`REGISTER_EPISODES` takes the manifest artifacts of one build and applies the
+Scene registrar's gate and rules ([Scene domain](./scene-domain.md) §3): every
+manifest is read back from the store and verified, every payload reference
+resolves to an ArtifactRecord with exactly its integrity metadata whose object
+is present in the store with its recorded size, and the manifests must have
+been built from the RobotRun's recording bytes. Units and revisions are then
+registered additively in one transaction, in unit id order. Registration names
+no DatasetVersion and never writes a member or a summary.
 
 `EpisodeRecord` (`episodes`) is the unit: `episode_id`, `source_kind`,
 `robot_run_id`, `unit_key`. `EpisodeRevisionRecord` (`episode_revisions`)

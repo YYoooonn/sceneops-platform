@@ -35,7 +35,10 @@ revision of its unit (``decide_revision_registration``)::
     another checksum under the candidate fingerprint    NonDeterministicProducerError
 
 Registration only adds: it never deletes or repoints a revision, and a unit
-has no "current" revision. Every consumer addresses a revision.
+has no "current" revision. Every consumer addresses a revision, by its
+complete pin (``RevisionPin``)::
+
+    (domain, unit_id, manifest_artifact_id, manifest_checksum)
 """
 
 from __future__ import annotations
@@ -46,10 +49,13 @@ from collections.abc import Iterable
 from enum import StrEnum
 from typing import Final, Protocol
 
+from pydantic import ConfigDict, StrictStr, model_validator
+
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.checksums import SHA256_CHECKSUM_PATTERN
+from sceneops_core.common.schemas import SceneOpsBaseModel, to_camel
 
-from .identity import unit_id_domain
+from .identity import CanonicalDomain, unit_id_domain
 
 MANIFEST_ARTIFACT_ID_SCHEMA_V1: Final = "sceneops.unit_manifest_artifact_id/v1"
 _MANIFEST_ARTIFACT_ID_DIGEST_HEX_LENGTH: Final = 32
@@ -132,6 +138,35 @@ def check_revision_pin(
         )
 
 
+class RevisionPin(SceneOpsBaseModel):
+    """The complete, immutable reference to one registered revision.
+
+    ``manifest_artifact_id`` is redundant with ``(unit_id,
+    manifest_checksum)`` and is checked against it, so a pin whose fields
+    disagree names no revision and cannot be constructed. The domain is the
+    unit id's own."""
+
+    model_config = ConfigDict(
+        populate_by_name=True, alias_generator=to_camel, extra="forbid", frozen=True
+    )
+
+    domain: CanonicalDomain
+    unit_id: StrictStr
+    manifest_artifact_id: StrictStr
+    manifest_checksum: StrictStr
+
+    @model_validator(mode="after")
+    def _check_pin(self) -> RevisionPin:
+        if unit_id_domain(self.unit_id) != self.domain:
+            raise ValueError(f"unit {self.unit_id!r} is not a {self.domain} unit")
+        check_revision_pin(
+            unit_id=self.unit_id,
+            manifest_artifact_id=self.manifest_artifact_id,
+            manifest_checksum=self.manifest_checksum,
+        )
+        return self
+
+
 def decide_revision_registration(
     *,
     unit_id: str,
@@ -211,6 +246,7 @@ __all__ = [
     "NonDeterministicProducerError",
     "RevisionConflictError",
     "RevisionDecision",
+    "RevisionPin",
     "RevisionPinError",
     "UnitRevisionFacts",
     "check_revision_pin",

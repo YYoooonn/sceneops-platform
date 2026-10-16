@@ -90,7 +90,7 @@ A successful mutating API response means PostgreSQL has committed; operations th
 - **ScenarioSet** — a curated selection over pinned sample views with explicit criteria; an immutable revision.
 - **Prediction / evaluation** — derived results that pin the prediction, label and view revisions they consumed; a prediction and a label in different frames fail instead of being compared.
 - **AlignedEpisode / LearningDataExport** — a derived alignment of a pinned Episode revision on an explicit timeline, and a sharded Parquet export of pinned aligned revisions (LeRobot is a downstream output of an export). See [Robot learning data](docs/architecture/robot-learning-data.md).
-- **DatasetVersion** — canonical membership and scope, with registrar-owned summaries. It holds no channel requirements, no source location and no free-form metadata.
+- **DatasetVersion** — canonical membership: each member pins one registered Scene or Episode revision. Canonical registration never writes one. It holds no channel requirements, no source location and no free-form metadata.
 
 Every derived object is an immutable, checksum-pinned revision: it records the exact revisions it was built from, and a consumer resolves a pin, never "the latest". See [Derived layer](docs/architecture/derived-layer.md).
 

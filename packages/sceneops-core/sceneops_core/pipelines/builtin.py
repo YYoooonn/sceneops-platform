@@ -47,25 +47,21 @@ _BUILD_RECORDING_SCENES_OUTPUTS = [
 _REGISTER_SCENES_OUTPUTS = [
     # scene_ids consumed by validate_scene / profile_scene → REF.
     PipelineTaskOutputSpec(name="scene_ids", kind=_REF, source="scene_ids"),
+    # The complete revision pins of the build → REF.
+    PipelineTaskOutputSpec(name="revisions", kind=_REF, source="revisions"),
     PipelineTaskOutputSpec(
-        name="registered_manifest_artifact_ids",
+        name="new_unit_scene_ids", kind=_SUMMARY, source="new_unit_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="new_revision_scene_ids", kind=_SUMMARY, source="new_revision_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="existing_revision_scene_ids",
         kind=_SUMMARY,
-        source="manifest_artifact_ids",
+        source="existing_revision_scene_ids",
     ),
     PipelineTaskOutputSpec(
-        name="created_scene_ids", kind=_SUMMARY, source="created_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="replaced_scene_ids", kind=_SUMMARY, source="replaced_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="unchanged_scene_ids", kind=_SUMMARY, source="unchanged_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="removed_scene_ids", kind=_SUMMARY, source="removed_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="registered_scene_count", kind=_SUMMARY, source="registered_scene_count"
+        name="revision_count", kind=_SUMMARY, source="revision_count"
     ),
 ]
 
@@ -150,27 +146,23 @@ _BUILD_RECORDING_EPISODES_OUTPUTS = [
 _REGISTER_EPISODES_OUTPUTS = [
     # episode_ids consumed by validate_episode / profile_episode → REF.
     PipelineTaskOutputSpec(name="episode_ids", kind=_REF, source="episode_ids"),
+    # The complete revision pins of the build → REF.
+    PipelineTaskOutputSpec(name="revisions", kind=_REF, source="revisions"),
     PipelineTaskOutputSpec(
-        name="registered_manifest_artifact_ids",
+        name="new_unit_episode_ids", kind=_SUMMARY, source="new_unit_episode_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="new_revision_episode_ids",
         kind=_SUMMARY,
-        source="manifest_artifact_ids",
+        source="new_revision_episode_ids",
     ),
     PipelineTaskOutputSpec(
-        name="created_episode_ids", kind=_SUMMARY, source="created_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="replaced_episode_ids", kind=_SUMMARY, source="replaced_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="unchanged_episode_ids", kind=_SUMMARY, source="unchanged_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="removed_episode_ids", kind=_SUMMARY, source="removed_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="registered_episode_count",
+        name="existing_revision_episode_ids",
         kind=_SUMMARY,
-        source="registered_episode_count",
+        source="existing_revision_episode_ids",
+    ),
+    PipelineTaskOutputSpec(
+        name="revision_count", kind=_SUMMARY, source="revision_count"
     ),
 ]
 
@@ -300,10 +292,9 @@ RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
     name="Recording Scene Building",
     description=(
         "Build the canonical Scenes of one registered RobotRun recording "
-        "(robot_run_id + build_config), register them as the complete set "
-        "of that recording scope in the DatasetVersion, then validate and "
-        "profile the registered revisions. Builds from one RobotRun per run; "
-        "a DatasetVersion spanning several RobotRuns takes several runs."
+        "(robot_run_id + build_config), register them as immutable unit "
+        "revisions, then validate and profile the registered revisions. "
+        "Builds from one RobotRun per run."
     ),
     tasks=[
         PipelineTaskDefinition(
@@ -348,11 +339,10 @@ RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
     name="Recording Episode Building",
     description=(
         "Build the canonical Episodes of one registered RobotRun recording "
-        "(robot_run_id + build_config), register them as the complete set "
-        "of that recording scope in the DatasetVersion, then validate and "
-        "profile the registered revisions. A sibling of "
-        "recording_scene_building: Episodes are built from the recording, "
-        "never from Scenes. Builds from one RobotRun per run."
+        "(robot_run_id + build_config), register them as immutable unit "
+        "revisions, then validate and profile the registered revisions. A "
+        "sibling of recording_scene_building: Episodes are built from the "
+        "recording, never from Scenes. Builds from one RobotRun per run."
     ),
     tasks=[
         PipelineTaskDefinition(

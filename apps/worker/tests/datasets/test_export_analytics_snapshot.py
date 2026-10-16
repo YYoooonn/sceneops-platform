@@ -34,7 +34,6 @@ def _job() -> MagicMock:
 
 @pytest.fixture()
 def world(scene_world):
-    scene_world.add_dataset_version()
     scene_world.context.analytics_writer = AnalyticsTableWriter(
         artifact_store=scene_world.artifact_store,
         root_uri=f"{scene_world.root}/analytics",
@@ -59,17 +58,16 @@ async def _register(world, *keys):
         await world.publish(world.manifest(source=recording_source(unit_key=k)))
         for k in keys
     ]
-    await RegisterScenesJobHandler().run(
+    result = await RegisterScenesJobHandler().run(
         JobHandlerRequest(
             job=_job(),
             params=RegisterScenesJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
                 manifest_artifact_ids=[a.artifact_id for a in artifacts],
             ),
             context=world.context,
         )
     )
+    world.scenes.pin(result.revisions)
 
 
 async def _export(world, tables=None):

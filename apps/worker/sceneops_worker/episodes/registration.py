@@ -1,46 +1,45 @@
 """REGISTER_EPISODES: the only writer of canonical Episode units and
-revisions, and, until DatasetVersions are composed, of a DatasetVersion's
-Episode members and Episode summary (ADR-015 §6.4; ADR-007 §17, §18, §31).
+revisions (ADR-015 §6.4, MS-7).
 
-Input is a DatasetVersion and the ids of EPISODE_MANIFEST ArtifactRecords
-that a producer published. Registration verifies and projects; it never
-writes manifest or payload bytes, and never reads a Scene.
+Input is the ids of the EPISODE_MANIFEST ArtifactRecords of one build (one
+RobotRun, one producer fingerprint). Registration verifies, then adds
+immutable revisions; it never writes manifest or payload bytes, never reads
+a Scene, and never reads or writes a DatasetVersion: membership is a
+separate composition that pins the revisions registration returns.
 
-    E1  for every input artifact: the ArtifactRecord exists and is an
-        EPISODE_MANIFEST; its bytes match the recorded size and checksum and
-        are a canonical EpisodeManifest (strict parse, fingerprint re-derived);
-        every payload reference resolves to an OBSERVATION_PAYLOAD
-        ArtifactRecord with exactly the referenced checksum, size and media type
-    E2  derive each Episode's unit id; reject duplicate units,
-        more than one RobotRun or producer fingerprint, an unregistered
-        RobotRun, or a manifest built from other recording bytes than the
-        RobotRun's
-    E3  one transaction: lock the DatasetVersion row, then
-          revisions  register each unit and revision, additively
-                     (sceneops_db.repositories.revisions)
-          members    re-read the DatasetVersion's members of this RobotRun
-                     (the recording scope) and apply §18.3 to the pins
-            empty                         -> pin the complete set
-            same fingerprint              -> unchanged (whole scope)
-            different, replace=False      -> conflict
-            different, replace=True       -> unpin absent units, repin reused
-                                             units, pin new units
-    E4  recompute the DatasetVersion episode_count from its members; commit
+    E1  durability and integrity gate, for every input artifact, against the
+        ArtifactStore itself and not only against database rows:
+          manifest  the ArtifactRecord exists, is an EPISODE_MANIFEST and
+                    pins a checksum and size; its bytes are read back and
+                    match both, and are a canonical EpisodeManifest (strict
+                    parse, fingerprint re-derived); its id is the revision's
+                    deterministic manifest artifact id
+          payloads  every occurrence payload reference resolves to an
+                    OBSERVATION_PAYLOAD ArtifactRecord with exactly the
+                    referenced checksum, size and media type, and that
+                    record's object is present in the store with its
+                    recorded size (one listing per payload prefix)
+    E2  derive each Episode's unit id; reject duplicate units, more than one
+        RobotRun or producer fingerprint, an unregistered RobotRun, or a
+        manifest built from other recording bytes than the RobotRun's
+    E3  one transaction: register each unit and revision additively
+        (sceneops_db.repositories.revisions), in unit id order; commit
+          same unit + same manifest checksum          -> no-op
+          new unit, or a new producer fingerprint     -> insert
+          same unit + same fingerprint + other checksum
+                                                      -> conflict
 
-E1-E2 failures leave no DB change. Any E3 failure rolls the whole
-transaction back: a registration applies its complete input or nothing,
-and units are never silently skipped. Expensive reads happen before the
-lock; every decision is made after it, against committed state. Revision
-registration needs no lock: its unique keys decide concurrent
-registrations of one unit.
+Failure, retry and concurrency semantics are the Scene registrar's
+(``sceneops_worker.scenes.registration``): E1-E2 failures leave no DB
+change, an E3 failure rolls back the whole input, and the unique keys decide
+concurrent registrations without a lock.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
-from sceneops_core.datasets.schemas import DatasetVersionMember
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
     EpisodeManifestError,
@@ -50,6 +49,8 @@ from sceneops_core.episodes.schemas import (
 from sceneops_core.provenance import (
     InconsistentRevisionsError,
     NonDeterministicProducerError,
+    RevisionDecision,
+    RevisionPin,
 )
 from sceneops_db.repositories import UnitIdentityConflictError
 
@@ -58,6 +59,7 @@ from sceneops_episodes.artifacts import EpisodeManifestIntegrityError
 from sceneops_worker.recordings.payload_refs import (
     PayloadIntegrityError,
     resolve_payload_artifacts,
+    verify_payload_objects,
 )
 
 
@@ -66,26 +68,23 @@ class EpisodeRegistrationError(RuntimeError):
 
 
 class EpisodeManifestRejectedError(EpisodeRegistrationError):
-    """An input artifact is not a verifiable canonical EpisodeManifest."""
+    """An input artifact, or an object it references, failed the durability
+    and integrity gate."""
 
 
 class EpisodeRegistrationScopeError(EpisodeRegistrationError):
-    """The input set is not one well-formed registration scope."""
+    """The input set is not the output of one build of a registered
+    RobotRun."""
 
 
 class EpisodeRegistrationConflictError(EpisodeRegistrationError):
-    """The DatasetVersion pins another revision of the scope and ``replace``
-    is False, or a unit already has another revision under the same
-    producer fingerprint (a non-deterministic producer)."""
+    """A unit already has another revision under the same producer
+    fingerprint (a non-deterministic producer)."""
 
 
-class InconsistentEpisodeMembershipError(EpisodeRegistrationError):
-    """Committed units, revisions or members violate a registrar invariant.
-    Reported, never repaired."""
-
-
-# Upper bound of the members one recording scope may hold.
-_MAX_SCOPE_MEMBERS = 10_000
+class InconsistentEpisodeRegistrationError(EpisodeRegistrationError):
+    """Committed units or revisions violate a registrar invariant. Reported,
+    never repaired."""
 
 
 @dataclass(frozen=True)
@@ -96,24 +95,36 @@ class VerifiedEpisodeManifest:
 
 
 @dataclass(frozen=True)
+class RegisteredEpisodeRevision:
+    decision: RevisionDecision
+    revision: EpisodeRevisionRecord
+
+    @property
+    def pin(self) -> RevisionPin:
+        return self.revision.pin()
+
+
+@dataclass(frozen=True)
 class EpisodeRegistration:
-    dataset_id: str
-    dataset_version: str
-    # The revisions the DatasetVersion pins for the scope after commit.
-    episodes: list[EpisodeRevisionRecord]
-    created_episode_ids: list[str] = field(default_factory=list)
-    replaced_episode_ids: list[str] = field(default_factory=list)
-    unchanged_episode_ids: list[str] = field(default_factory=list)
-    removed_episode_ids: list[str] = field(default_factory=list)
+    robot_run_id: str
+    producer_fingerprint: str
+    # One per input manifest, in unit id order.
+    revisions: list[RegisteredEpisodeRevision]
+
+    @property
+    def pins(self) -> list[RevisionPin]:
+        return [r.pin for r in self.revisions]
+
+    def episode_ids(self, decision: RevisionDecision | None = None) -> list[str]:
+        return [
+            r.revision.episode_id
+            for r in self.revisions
+            if decision is None or r.decision == decision
+        ]
 
 
 async def register_episodes(
-    *,
-    context: WorkerContext,
-    dataset_id: str,
-    dataset_version: str,
-    manifest_artifact_ids: list[str],
-    replace: bool = False,
+    *, context: WorkerContext, manifest_artifact_ids: list[str]
 ) -> EpisodeRegistration:
     if not manifest_artifact_ids:
         raise EpisodeRegistrationScopeError("no episode manifests to register")
@@ -128,27 +139,19 @@ async def register_episodes(
     await _verify_recording_source(context, verified)
 
     try:
-        try:
-            await context.dataset_store.lock_version_for_update(
-                dataset_id=dataset_id, version=dataset_version
-            )
-        except ValueError as exc:
-            raise EpisodeRegistrationScopeError(str(exc)) from exc
-
-        registration = await _apply_recording(
-            context, verified, dataset_id, dataset_version, replace
-        )
-        episode_count = await context.episode_store.count_members(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
-        await context.dataset_store.update_episode_summary(
-            dataset_id=dataset_id, version=dataset_version, episode_count=episode_count
-        )
+        registered = [
+            await _register(context, item)
+            for item in sorted(verified, key=lambda v: v.record.episode_id)
+        ]
         await context.commit()
     except BaseException:
         await context.rollback()
         raise
-    return registration
+    return EpisodeRegistration(
+        robot_run_id=verified[0].record.robot_run_id,
+        producer_fingerprint=verified[0].record.producer_fingerprint,
+        revisions=registered,
+    )
 
 
 async def _verify_manifest(
@@ -175,10 +178,11 @@ async def _verify_manifest(
     except (EpisodeManifestIntegrityError, EpisodeManifestError) as exc:
         raise EpisodeManifestRejectedError(f"artifact {artifact_id}: {exc}") from exc
     try:
-        await resolve_payload_artifacts(
+        payloads = await resolve_payload_artifacts(
             context.artifact_record_store,
             (o.payload for o in manifest.occurrences() if o.payload is not None),
         )
+        await verify_payload_objects(context.artifact_store, payloads.values())
     except PayloadIntegrityError as exc:
         raise EpisodeManifestRejectedError(f"artifact {artifact_id}: {exc}") from exc
     try:
@@ -208,7 +212,7 @@ def _check_input_scope(verified: list[VerifiedEpisodeManifest]) -> None:
     fingerprints = {v.record.producer_fingerprint for v in verified}
     if len(fingerprints) != 1:
         raise EpisodeRegistrationScopeError(
-            "a recording scope has exactly one producer fingerprint, got "
+            "a registration covers one build with one producer fingerprint, got "
             f"{len(fingerprints)}"
         )
 
@@ -228,7 +232,7 @@ async def _verify_recording_source(
         )
     recording = await context.artifact_record_store.get(run.recording_artifact_id)
     if recording is None:
-        raise InconsistentEpisodeMembershipError(
+        raise InconsistentEpisodeRegistrationError(
             f"RobotRun {robot_run_id} references missing recording artifact "
             f"{run.recording_artifact_id}"
         )
@@ -241,83 +245,18 @@ async def _verify_recording_source(
             )
 
 
-async def _apply_recording(
-    context: WorkerContext,
-    verified: list[VerifiedEpisodeManifest],
-    dataset_id: str,
-    dataset_version: str,
-    replace: bool,
-) -> EpisodeRegistration:
-    new_records: list[EpisodeRevisionRecord] = []
-    for item in verified:
-        try:
-            registered = await context.episode_store.register_revision(item.record)
-        except NonDeterministicProducerError as exc:
-            raise EpisodeRegistrationConflictError(str(exc)) from exc
-        except (InconsistentRevisionsError, UnitIdentityConflictError) as exc:
-            raise InconsistentEpisodeMembershipError(str(exc)) from exc
-        new_records.append(registered.revision)
-
-    robot_run_id = new_records[0].robot_run_id
-    fingerprint = new_records[0].producer_fingerprint
-    current = await context.episode_store.list_member_revisions(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        robot_run_id=robot_run_id,
-        limit=_MAX_SCOPE_MEMBERS + 1,
+async def _register(
+    context: WorkerContext, item: VerifiedEpisodeManifest
+) -> RegisteredEpisodeRevision:
+    try:
+        registered = await context.episode_store.register_revision(item.record)
+    except NonDeterministicProducerError as exc:
+        raise EpisodeRegistrationConflictError(str(exc)) from exc
+    except (InconsistentRevisionsError, UnitIdentityConflictError) as exc:
+        raise InconsistentEpisodeRegistrationError(str(exc)) from exc
+    return RegisteredEpisodeRevision(
+        decision=registered.decision, revision=registered.revision
     )
-    if len(current) > _MAX_SCOPE_MEMBERS:
-        raise EpisodeRegistrationScopeError(
-            f"recording scope ({dataset_id}/{dataset_version}, {robot_run_id}) has "
-            f"more than {_MAX_SCOPE_MEMBERS} members"
-        )
-    current_fingerprints = {e.producer_fingerprint for e in current}
-    if len(current_fingerprints) > 1:
-        raise InconsistentEpisodeMembershipError(
-            f"recording scope ({dataset_id}/{dataset_version}, {robot_run_id}) holds "
-            f"{len(current_fingerprints)} producer fingerprints"
-        )
-
-    registration = EpisodeRegistration(
-        dataset_id=dataset_id, dataset_version=dataset_version, episodes=[]
-    )
-    if current and current_fingerprints == {fingerprint}:
-        registration.episodes.extend(current)
-        registration.unchanged_episode_ids.extend(e.episode_id for e in current)
-        return registration
-    if current and not replace:
-        raise EpisodeRegistrationConflictError(
-            f"recording scope ({dataset_id}/{dataset_version}, {robot_run_id}) is "
-            f"registered with producer fingerprint {current_fingerprints.pop()}; the "
-            f"new build has {fingerprint} and replace=False"
-        )
-
-    current_ids = {e.episode_id for e in current}
-    new_ids = {r.episode_id for r in new_records}
-    removed = sorted(current_ids - new_ids)
-    replaced = sorted(current_ids & new_ids)
-    # A member is never updated: repinning a unit is unpin + pin.
-    await context.dataset_store.remove_members(
-        dataset_id=dataset_id, version=dataset_version, unit_ids=removed + replaced
-    )
-    await context.dataset_store.add_members(
-        dataset_id=dataset_id,
-        version=dataset_version,
-        members=[
-            DatasetVersionMember(
-                domain="episode",
-                unit_id=r.episode_id,
-                manifest_artifact_id=r.manifest_artifact_id,
-                manifest_checksum=r.manifest_checksum,
-            )
-            for r in new_records
-        ],
-    )
-    registration.episodes.extend(new_records)
-    registration.removed_episode_ids.extend(removed)
-    registration.replaced_episode_ids.extend(replaced)
-    registration.created_episode_ids.extend(sorted(new_ids - current_ids))
-    return registration
 
 
 __all__ = [
@@ -326,7 +265,8 @@ __all__ = [
     "EpisodeRegistrationConflictError",
     "EpisodeRegistrationError",
     "EpisodeRegistrationScopeError",
-    "InconsistentEpisodeMembershipError",
+    "InconsistentEpisodeRegistrationError",
+    "RegisteredEpisodeRevision",
     "VerifiedEpisodeManifest",
     "register_episodes",
 ]

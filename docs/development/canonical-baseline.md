@@ -117,10 +117,10 @@ DatasetVersion untouched.
   recordings are hashed against the lock only when a RobotRun has to be published, so
   the bootstrap of a complete baseline reads the platform and writes nothing.
 - A Scene / Episode build over an incomplete or changed scope **converges** on the
-  registered revisions (`replace: false`; the registrar reports every unit as
-  unchanged).
-- A changed producer or build configuration fails **loudly at registration**; it
-  never replaces canonical membership.
+  registered revisions (the registrar reports every revision as already registered).
+- A changed build configuration registers new revisions (or, for another
+  segmentation, new units) beside the registered ones; a producer that yields other
+  bytes under the same fingerprint fails **loudly at registration**.
 - Nothing writes PostgreSQL or MinIO directly. Prepared recordings are published
   from the read-only reference mount and never copied into another volume.
 
@@ -149,8 +149,7 @@ Through the API and artifact pins only; it reads the lock but no recording:
   manifest ArtifactRecord carries;
 - every Scene and Episode is validated, profiled and `ready` at its **current**
   revision;
-- the DatasetVersion's registrar-owned Scene and Episode summaries equal the
-  registered membership.
+- the DatasetVersion's Scene and Episode summaries equal its membership.
 
 ## Streaming baseline (Streaming Acquisition)
 

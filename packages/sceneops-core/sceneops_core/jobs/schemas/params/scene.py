@@ -5,7 +5,11 @@ from pydantic import Field
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
 
-from .base import BaseJobParams, RecordingConsumerJobParams
+from .base import (
+    BaseJobParams,
+    RecordingConsumerJobParams,
+    RevisionRegistrationJobParams,
+)
 
 
 class SceneKeyframeValidationConfig(SceneOpsBaseModel):
@@ -65,19 +69,8 @@ class ProfileSceneJobParams(BaseJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class RegisterScenesJobParams(BaseJobParams):
-    """Canonical Scene registration (ADR-007 §17, §18).
-
+class RegisterScenesJobParams(RevisionRegistrationJobParams):
+    """Canonical Scene revision registration (ADR-015 §6.4):
     ``manifest_artifact_ids`` name SCENE_MANIFEST ArtifactRecords; the
-    registrar re-reads and verifies their bytes. A recording-derived input
-    must be the complete unit set of one recording scope.
-    """
-
-    dataset_id: str = Field(min_length=1)
-    dataset_version: str = Field(min_length=1)
-
-    manifest_artifact_ids: list[str] = Field(min_length=1)
-
-    replace: bool = False
-
-    metadata: JsonDict = Field(default_factory=dict)
+    registrar re-reads and verifies their bytes and the objects they
+    reference."""

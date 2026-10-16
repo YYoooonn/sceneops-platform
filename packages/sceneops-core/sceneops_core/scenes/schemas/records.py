@@ -29,6 +29,7 @@ from sceneops_core.common.schemas import SceneOpsBaseModel, to_camel
 from sceneops_core.provenance import (
     ContentUnitSource,
     RecordingSegmentSource,
+    RevisionPin,
     canonical_unit_id,
     check_revision_pin,
     unit_id_for,
@@ -145,6 +146,14 @@ class SceneRevisionRecord(SceneOpsBaseModel):
         return (
             self.manifest_artifact_id == manifest_artifact_id
             and self.manifest_checksum == manifest_checksum
+        )
+
+    def pin(self) -> RevisionPin:
+        return RevisionPin(
+            domain="scene",
+            unit_id=self.scene_id,
+            manifest_artifact_id=self.manifest_artifact_id,
+            manifest_checksum=self.manifest_checksum,
         )
 
 

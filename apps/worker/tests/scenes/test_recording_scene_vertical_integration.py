@@ -3,9 +3,11 @@ PROFILE_SCENE on real PostgreSQL and real MinIO.
 
 The recording is a real ROS 2 CDR MCAP stored in MinIO as a registered
 RobotRun's recording artifact, resolved through ``resolve_recording``.
-Every step runs in its own session, like separate jobs. Requires
+Every step runs in its own session, like separate jobs. Registration names
+no DatasetVersion; validation and profiling read the members that ``pin``
+writes from the registered pins, standing in for a composition. Requires
 SCENEOPS_DATABASE_URL (migrated to head) and a reachable MinIO; skips
-otherwise. Rows are created under unique ids and removed afterwards.
+otherwise.
 """
 
 from __future__ import annotations
@@ -30,7 +32,9 @@ from sceneops_core.jobs.schemas import (
     RegisterScenesJobParams,
     ValidateSceneJobParams,
 )
+from sceneops_core.datasets.schemas import DatasetVersionMember
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
+from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
@@ -41,7 +45,6 @@ from sceneops_worker.jobs.dataset.build_recording_scenes import (
 from sceneops_worker.jobs.dataset.profile_scene import ProfileSceneJobHandler
 from sceneops_worker.jobs.dataset.register_scenes import RegisterScenesJobHandler
 from sceneops_worker.jobs.dataset.validate_scene import ValidateSceneJobHandler
-from sceneops_worker.scenes.registration import SceneRegistrationConflictError
 
 sys.path.insert(0, str(Path(__file__).parent))
 from sceneops_recording.testing.ros2_recordings import build_config, default_recording  # noqa: E402
@@ -142,13 +145,21 @@ class _Vertical:
             build_config=config or build_config(),
         )
 
-    def register_params(self, built, replace=False):
+    def register_params(self, built):
         return RegisterScenesJobParams(
-            dataset_id=self.dataset_id,
-            dataset_version="v1",
-            manifest_artifact_ids=built.manifest_artifact_ids,
-            replace=replace,
+            manifest_artifact_ids=built.manifest_artifact_ids
         )
+
+    async def pin(self, registered, version="v1") -> None:
+        async with get_async_sessionmaker()() as session:
+            await PostgresDatasetVersionMemberRepository(session).add(
+                dataset_id=self.dataset_id,
+                version=version,
+                members=[
+                    DatasetVersionMember(**p.model_dump()) for p in registered.revisions
+                ],
+            )
+            await session.commit()
 
 
 @pytest.fixture()
@@ -171,7 +182,8 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
     registered = await vertical.run(
         RegisterScenesJobHandler(), vertical.register_params(built)
     )
-    assert registered.registered_scene_count == 2
+    assert registered.revision_count == 2
+    await vertical.pin(registered)
 
     async with get_async_sessionmaker()() as session:
         ctx = vertical.context(session)
@@ -197,11 +209,6 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
                 assert "sha256:" + hashlib.sha256(data).hexdigest() == (
                     observation.payload.checksum
                 )
-        version = await ctx.dataset_store.get_version(
-            dataset_id=vertical.dataset_id, version="v1"
-        )
-        assert version.scene.scene_count == 2
-        assert version.scene.observation_count == 8
 
     scene_ids = registered.scene_ids
     validated = await vertical.run(
@@ -228,22 +235,23 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
     unchanged = await vertical.run(
         RegisterScenesJobHandler(), vertical.register_params(again)
     )
-    assert sorted(unchanged.unchanged_scene_ids) == sorted(scene_ids)
+    assert unchanged.revisions == registered.revisions
+    assert unchanged.existing_revision_scene_ids == scene_ids
 
     # Changed build configuration: conflict, then explicit replacement.
     coarser = await vertical.run(
         BuildRecordingScenesJobHandler(),
         vertical.build_params(build_config(duration_ns=10_000_000_000)),
     )
-    with pytest.raises(SceneRegistrationConflictError):
-        await vertical.run(
-            RegisterScenesJobHandler(), vertical.register_params(coarser)
-        )
-    replaced = await vertical.run(
-        RegisterScenesJobHandler(), vertical.register_params(coarser, replace=True)
+    added = await vertical.run(
+        RegisterScenesJobHandler(), vertical.register_params(coarser)
     )
-    # Another segmentation is other units: both 1 s units are unpinned and
-    # the 10 s unit is pinned; nothing is "repointed".
-    assert replaced.registered_scene_count == 1
-    assert sorted(replaced.removed_scene_ids) == sorted(scene_ids)
-    assert replaced.replaced_scene_ids == []
+    # Another segmentation is other units, registered beside the 1 s ones;
+    # the DatasetVersion keeps pinning exactly what it pinned.
+    assert len(added.new_unit_scene_ids) == 1
+    assert not set(added.scene_ids) & set(scene_ids)
+    async with get_async_sessionmaker()() as session:
+        pinned = await vertical.context(session).scene_store.list_member_revisions(
+            dataset_id=vertical.dataset_id, dataset_version="v1"
+        )
+    assert sorted(s.scene_id for s in pinned) == sorted(scene_ids)

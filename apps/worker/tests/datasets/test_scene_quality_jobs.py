@@ -1,8 +1,10 @@
 """REGISTER_SCENES / VALIDATE_SCENE / PROFILE_SCENE handlers.
 
-Validation and profiling read each Scene at the revision its record pins,
-write per-scene run records that pin that revision, and never write a
-SceneRecord or DatasetVersion state (ADR-007 §13.4, §17.5)."""
+Validation and profiling read each Scene at the revision its DatasetVersion
+member pins, write per-scene run records that pin that revision, and never
+write a Scene unit, revision or DatasetVersion state (ADR-015 §6.4). The
+members are set up directly from the pins registration returns, standing in
+for a composition."""
 
 from __future__ import annotations
 
@@ -39,7 +41,6 @@ def _job() -> MagicMock:
 
 
 async def _registered(world, *source_keys):
-    world.add_dataset_version()
     artifacts = [
         await world.publish(world.manifest(source=recording_source(unit_key=key)))
         for key in source_keys
@@ -48,24 +49,43 @@ async def _registered(world, *source_keys):
         JobHandlerRequest(
             job=_job(),
             params=RegisterScenesJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
                 manifest_artifact_ids=[a.artifact_id for a in artifacts],
             ),
             context=world.context,
         )
     )
+    world.scenes.pin(result.revisions)
     return result
 
 
-async def test_register_handler_reports_canonical_members(scene_world):
+async def test_register_handler_reports_complete_revision_pins(scene_world):
     result = await _registered(scene_world, "a", "b")
-    assert result.registered_scene_count == 2
-    assert result.scene_ids == result.created_scene_ids
-    assert set(result.scene_ids) == set(scene_world.scenes.members())
-    assert result.manifest_artifact_ids == [
-        scene_world.scenes.members()[s].manifest_artifact_id for s in result.scene_ids
-    ]
+    assert result.revision_count == 2
+    assert result.scene_ids == result.new_unit_scene_ids == sorted(result.scene_ids)
+    assert result.new_revision_scene_ids == result.existing_revision_scene_ids == []
+    assert [p.unit_id for p in result.revisions] == result.scene_ids
+    revisions = scene_world.scenes.revisions()
+    for pin in result.revisions:
+        assert pin.domain == "scene"
+        assert (
+            revisions[(pin.unit_id, pin.manifest_checksum)].manifest_artifact_id
+            == pin.manifest_artifact_id
+        )
+    assert result.robot_run_id == "run-001"
+    assert (
+        result.producer_fingerprint
+        == next(iter(revisions.values())).producer_fingerprint
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["dataset_id", "datasetVersion", "dataset_version", "replace"]
+)
+def test_register_params_reject_membership_fields(field):
+    with pytest.raises(ValueError, match="DatasetVersion membership"):
+        RegisterScenesJobParams.model_validate(
+            {"manifest_artifact_ids": ["art-1"], field: "x"}
+        )
 
 
 async def test_validate_pins_the_assessed_revision_and_writes_no_scene_state(

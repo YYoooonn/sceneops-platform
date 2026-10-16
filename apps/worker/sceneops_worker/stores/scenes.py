@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.scenes.schemas import SceneRecord, SceneRevisionRecord
 from sceneops_db.postgres import PostgresSceneRepository
-from sceneops_db.repositories import RevisionRegistration, SceneMembershipSummary
+from sceneops_db.repositories import RevisionRegistration
 
 
 class SceneStore:
@@ -62,11 +62,4 @@ class SceneStore:
             robot_run_id=robot_run_id,
             limit=limit,
             offset=offset,
-        )
-
-    async def summarize_membership(
-        self, *, dataset_id: str, dataset_version: str
-    ) -> SceneMembershipSummary:
-        return await self._repo.summarize_membership(
-            dataset_id=dataset_id, dataset_version=dataset_version
         )

@@ -65,10 +65,9 @@ Key fields:
 - `status`: `DatasetVersionStatus` — currently a single value, `registered`
   (see §2.1 below — this is intentional, not a placeholder).
 - `scene_count` / `keyframe_count` / `observation_count` / `observed_channels`:
-  the Scene membership summary, written only by Scene registration.
-- `episode_count`: version-level Episode statistic (`EpisodeVersionSummary`
-  — its own independent rollup, not derived from or overwritten by the
-  Scene fields above; see the aggregate-summary contract below).
+  the Scene membership summary (`SceneVersionSummary`).
+- `episode_count`: the Episode membership summary (`EpisodeVersionSummary`),
+  independent of the Scene fields above. See §2.0.1 for who writes either.
 
 A DatasetVersion holds no channel requirements and no free-form metadata:
 channel requirements are pipeline / job parameters (ADR-007 §16, I-59).
@@ -84,69 +83,19 @@ only from runs of the revision each member pins (see
 `dataset_version_members` — the version's units, each pinned at exactly one
 registered revision (§3).
 
-#### 2.0.1 The aggregate-summary contract
+#### 2.0.1 Members and summaries
 
-`SceneVersionSummary.scene_count` and `EpisodeVersionSummary.episode_count`
-(`packages/sceneops-core/sceneops_core/datasets/schemas/summaries.py`) are
-**cached aggregate projections of that DatasetVersion's current canonical
-membership** — `scene_count` must always equal a live count of the Scene
-members of `(dataset_id, dataset_version)`, and `episode_count` a live
-count of its Episode members, at the moment each was last written. They are
-**not** a metric of the latest ingest/build/register operation
-(`registered_episode_count` on `RegisterEpisodeJobResult`, or the number of
-scenes a single `build_recording_scenes` dispatch happened to build,
-are the correct place for that — job results, never the DatasetVersion
-summary).
-
-Concretely, every writer recomputes from a live repository query
-(`EpisodeRepository.count_members(...)`, `SceneRepository.summarize_membership(...)`)
-rather than incrementing a delta onto the previous cached value — this is what keeps the count correct under retry,
-replacement, duplicate input, and one registration per RobotRun: each
-registration converges on the true total, not just what it touched. Episode
-registration (`REGISTER_EPISODES`) is the sole writer of `episode_count`, in
-the same transaction as the membership change; `build_recording_episodes`
-only produces manifests, never a unit, revision or member. Scene registration (`REGISTER_SCENES`) is the sole writer of the
-Scene summary, in the same transaction as the membership change.
-
-#### 2.0.2 Concurrency: serializing aggregate mutation per DatasetVersion
-
-Recompute-from-live-count (§2.0.1) is correct for any single transaction,
-but two independent transactions recomputing and writing the *same*
-DatasetVersion's aggregate at overlapping times can still both compute a
-now-stale count and both persist it — a classic lost update (e.g. two
-concurrent Episode registrations for the same
-`(dataset_id, dataset_version)`, each seeing only its own not-yet-committed
-insert, both writing the same too-low count).
-
-The fix is a real PostgreSQL row-level lock, not a distributed lock or
-reconciliation process:
-`PostgresDatasetVersionRepository.lock_for_update` issues
-`SELECT ... FOR UPDATE` on the target DatasetVersion row. Both registrars
-(`REGISTER_SCENES`, `REGISTER_EPISODES`) take it (via
-`DatasetStore.lock_version_for_update`) before re-reading their recording
-scope and before inserting any member. The order matters: inserting a
-member takes a `FOR KEY SHARE` lock on the DatasetVersion row through its
-foreign key, which a concurrent registration's `FOR UPDATE` would deadlock
-against if the lock came second. A concurrent registration blocks at the
-lock until the first commits, then observes its committed changes. Scene and Episode summaries occupy disjoint
-columns (`replace_scene_membership_summary`/`update_episode_summary` each
-write only their own domain's columns —
-`values_without_none` + per-attribute `setattr` — so SQLAlchemy's
-unit-of-work only marks the touched attributes dirty and emits an `UPDATE`
-naming only those columns). Postgres's ordinary row-level write lock
-already forces a concurrent Scene write and a concurrent Episode write to
-the same row to serialize with each other without either losing its own
-column's write, lock or no lock — proven by a genuine two-session
-concurrency test, not just reasoned about
-(`packages/sceneops-db/tests/test_episode_summary_aggregation.py`).
-
-**Guarantee after this fix:** committed same-DatasetVersion Episode
-aggregate mutations are fully serialized — the summary written by the last
-transaction to commit always equals live canonical membership at that
-point; the same holds for Scene registration. **Residual limitation:** this
-guarantees correctness of *committed* state; it says nothing about a caller
-observing a value mid-flight between two overlapping transactions
-(ordinary READ COMMITTED behavior).
+Canonical registration (`REGISTER_SCENES`, `REGISTER_EPISODES`) never reads or
+writes a DatasetVersion: it registers revisions and returns their complete pins
+([Scene domain](./scene-domain.md) §3). No production code path writes
+`dataset_version_members` or the summary columns
+([Limitations](./limitations.md) §5). The member repository
+(`DatasetVersionMemberRepository`) offers `list` and `add` only; a member is
+never updated (a trigger rejects UPDATE) and the platform has no operation that
+removes one. The summaries are a projection of the members, computed from the
+projection columns of the revisions they pin
+(`SceneRepository.summarize_membership`, `EpisodeRepository.count_members`),
+never from what one build or registration touched.
 
 ### 2.1 Why `DatasetVersionStatus` has one value
 
@@ -201,6 +150,14 @@ Rules the schema enforces:
   that derived another id for it fails instead of forking identity. The
   manifest ArtifactRecord id is the revision's deterministic id, so one
   artifact belongs to exactly one revision.
+- **Source binding.** Unit rows admit recording sources only (`ck_*_source_kind`,
+  `robot_run_id` NOT NULL). The source-unit key is per source column, so it never
+  relies on a nullable column: a source kind with its own column (a content id)
+  needs its own unique key and a CHECK that exactly the column of the row's
+  `source_kind` is set. One unique key over nullable source columns would not hold
+  (PostgreSQL treats NULLs as distinct), and with `NULLS NOT DISTINCT` it would make
+  equal unit keys of different sources conflict. The registration code compares every
+  unit column with the candidate, not a fixed column list.
 - **Revisions.** A unit has one or more revisions and no "current" one. One unit
   and one producer fingerprint have at most one manifest checksum
   (`uq_*_revisions_fingerprint`, MS-7): a second checksum is a
@@ -209,7 +166,10 @@ Rules the schema enforces:
   `BEFORE UPDATE` trigger (`sceneops_reject_update`) rejects any UPDATE.
 - **Pins.** A member, and a per-unit run record, reference a revision by its
   full pin, so a pin whose artifact id and checksum disagree, or that names no
-  registered revision, is refused. A pinned revision, a unit with revisions, a
+  registered revision, is refused. These composite foreign keys are `MATCH
+  SIMPLE`, which skips the check when any column is NULL, so a CHECK makes the
+  referencing columns all set (a member's domain column, a per-unit run record's
+  pin) or, for a run record's job-level row, all NULL. A pinned revision, a unit with revisions, a
   manifest artifact with a revision, and a DatasetVersion with members cannot
   be deleted (RESTRICT).
 - **Membership.** A DatasetVersion pins at most one revision per unit; one
@@ -217,10 +177,14 @@ Rules the schema enforces:
 
 Registration writes units and revisions only by insert-if-absent and decides
 each candidate with `decide_revision_registration` against the committed
-revisions of its unit (`sceneops_db.repositories.revisions`). Concurrent
-registrations of one unit are decided by the unique keys, not by a lock:
-identical registrations converge on one row, and of two checksums under one
-fingerprint exactly one commits.
+revisions of its unit (`sceneops_db.repositories.revisions`). It writes a
+revision row only after the durability and integrity gate
+([Scene domain](./scene-domain.md) §3), which a foreign key cannot prove.
+Concurrent registrations of one unit are decided by the unique keys, not by a
+lock: identical registrations converge on one row, and of two checksums under
+one fingerprint exactly one commits. A registration inserts its units in unit id
+order, so two overlapping registrations wait for each other instead of
+deadlocking.
 
 `scene_run_records` / `episode_run_records` — unified run tables
 (`scene_validation` / `scene_profile`, `episode_validation` /

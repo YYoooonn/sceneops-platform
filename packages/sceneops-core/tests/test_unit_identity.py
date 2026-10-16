@@ -27,6 +27,7 @@ from sceneops_core.provenance import (
     PinnedRecording,
     RecordingSourceRevision,
     RevisionDecision,
+    RevisionPin,
     RevisionPinError,
     canonical_unit_id,
     check_revision_pin,
@@ -547,3 +548,75 @@ def test_episode_records_follow_the_revision_rules():
 
     assert decide(again, first) is RevisionDecision.EXISTING_REVISION
     assert decide(other, first) is RevisionDecision.NEW_REVISION
+
+
+# --- revision pins -----------------------------------------------------------------
+
+
+def _scene_pin_fields(**overrides) -> dict:
+    manifest = build_scene_manifest()
+    unit_id = scene_id_for(manifest.lineage.source)
+    fields = {
+        "domain": "scene",
+        "unit_id": unit_id,
+        "manifest_artifact_id": manifest_artifact_id_for(
+            unit_id=unit_id, manifest_checksum=manifest.checksum()
+        ),
+        "manifest_checksum": manifest.checksum(),
+    }
+    return {**fields, **overrides}
+
+
+def test_a_revision_record_projects_its_complete_pin():
+    manifest = build_scene_manifest()
+    fields = _scene_pin_fields()
+    record = project_scene_revision(
+        manifest=manifest,
+        manifest_artifact_id=fields["manifest_artifact_id"],
+        manifest_checksum=fields["manifest_checksum"],
+    )
+    assert record.pin() == RevisionPin(**fields)
+
+    episode = episode_manifest([state("/odom", 0, x=1.0)])
+    unit_id = episode_id_for(episode.lineage.source)
+    episode_record = project_episode_revision(
+        manifest=episode,
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=unit_id, manifest_checksum=episode.checksum()
+        ),
+        manifest_checksum=episode.checksum(),
+    )
+    assert episode_record.pin().domain == "episode"
+    assert episode_record.pin().unit_id == unit_id
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"domain": "episode"}, "not a episode unit"),
+        ({"manifest_artifact_id": "scene-manifest-" + "0" * 32}, "is not the revision"),
+        ({"manifest_checksum": "sha256:" + "e" * 64}, "is not the revision"),
+        ({"unit_id": "scene-missing"}, "not a canonical unit id"),
+    ],
+)
+def test_a_pin_whose_fields_disagree_names_no_revision(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        RevisionPin(**_scene_pin_fields(**overrides))
+
+
+def test_a_pin_is_immutable_and_round_trips_by_alias():
+    pin = RevisionPin(**_scene_pin_fields())
+    with pytest.raises(ValueError):
+        pin.unit_id = "scene-" + "0" * 32
+    assert RevisionPin.model_validate(pin.model_dump(by_alias=True)) == pin
+    with pytest.raises(ValueError):
+        RevisionPin(**_scene_pin_fields(), producer_fingerprint="sha256:" + "0" * 64)
+
+
+def test_a_dataset_version_member_is_a_revision_pin():
+    from sceneops_core.datasets.schemas import DatasetVersionMember
+
+    pin = RevisionPin(**_scene_pin_fields())
+    member = DatasetVersionMember(**pin.model_dump())
+    assert isinstance(member, RevisionPin)
+    assert member.model_dump() == pin.model_dump()

@@ -10,7 +10,11 @@ from sceneops_core.episodes.alignment import (
 from sceneops_core.episodes.curation import CurationPolicy
 from sceneops_core.episodes.recording_build import RecordingEpisodeBuildConfig
 
-from .base import BaseJobParams, RecordingConsumerJobParams
+from .base import (
+    BaseJobParams,
+    RecordingConsumerJobParams,
+    RevisionRegistrationJobParams,
+)
 
 
 class BuildRecordingEpisodesJobParams(RecordingConsumerJobParams):
@@ -32,22 +36,11 @@ class BuildRecordingEpisodesJobParams(RecordingConsumerJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class RegisterEpisodesJobParams(BaseJobParams):
-    """Canonical Episode registration (ADR-007 §17, §18).
-
+class RegisterEpisodesJobParams(RevisionRegistrationJobParams):
+    """Canonical Episode revision registration (ADR-015 §6.4):
     ``manifest_artifact_ids`` name EPISODE_MANIFEST ArtifactRecords; the
-    registrar re-reads and verifies their bytes. The input must be the
-    complete unit set of one recording scope.
-    """
-
-    dataset_id: str = Field(min_length=1)
-    dataset_version: str = Field(min_length=1)
-
-    manifest_artifact_ids: list[str] = Field(min_length=1)
-
-    replace: bool = False
-
-    metadata: JsonDict = Field(default_factory=dict)
+    registrar re-reads and verifies their bytes and the objects they
+    reference."""
 
 
 class ValidateEpisodeJobParams(BaseJobParams):

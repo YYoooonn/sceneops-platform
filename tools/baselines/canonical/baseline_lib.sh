@@ -185,15 +185,14 @@ baseline_exact_membership() {
     || [ "$(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id] | sort')" = "$CONTRACT_FIXTURE_IDS" ]
 }
 
-# baseline_build_scope <pipeline-type> <build-task> <register-task> <profile-task> <run-id> <config>
+# baseline_build_scope <pipeline-type> <build-task> <profile-task> <run-id> <config>
 # One pipeline run over one RobotRun's recording scope, in $DATASET_ID/$DATASET_VERSION.
 baseline_build_scope() {
-  local type="$1" build_task="$2" register_task="$3" profile_task="$4" run_id="$5" config="$6"
+  local type="$1" build_task="$2" profile_task="$3" run_id="$4" config="$5"
   local params pipeline
-  params="$(jq -cn --arg b "$build_task" --arg r "$register_task" --arg p "$profile_task" \
+  params="$(jq -cn --arg b "$build_task" --arg p "$profile_task" \
     --arg run "$run_id" --argjson config "$config" '{
       ($b): {robot_run_id: $run, build_config: $config},
-      ($r): {replace: false},
       ($p): {triggered: true}}')"
   pipeline="$(run_pipeline "$API_BASE_URL" "$type" "$DATASET_ID" "$DATASET_VERSION" "$params")"
   assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$pipeline")" \

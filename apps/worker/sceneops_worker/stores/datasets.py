@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from collections.abc import Sequence
-
 from sceneops_core.datasets.schemas import (
     DatasetRecord,
     DatasetVersionMember,
@@ -42,46 +40,6 @@ class DatasetStore:
     ) -> DatasetVersionRecord:
         return await self._versions.create(version)
 
-    async def lock_version_for_update(
-        self, *, dataset_id: str, version: str
-    ) -> DatasetVersionRecord:
-        return await self._versions.lock_for_update(
-            dataset_id=dataset_id, version=version
-        )
-
-    async def replace_scene_membership_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        scene_count: int,
-        keyframe_count: int,
-        observation_count: int,
-        observed_channels: list[str],
-    ) -> DatasetVersionRecord:
-        """Scene registrar only, under ``lock_version_for_update``."""
-        return await self._versions.replace_scene_membership_summary(
-            dataset_id=dataset_id,
-            version=version,
-            scene_count=scene_count,
-            keyframe_count=keyframe_count,
-            observation_count=observation_count,
-            observed_channels=observed_channels,
-        )
-
-    async def update_episode_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        episode_count: int | None = None,
-    ) -> DatasetVersionRecord:
-        return await self._versions.update_episode_summary(
-            dataset_id=dataset_id,
-            version=version,
-            episode_count=episode_count,
-        )
-
     async def list_members(
         self,
         *,
@@ -91,22 +49,4 @@ class DatasetStore:
     ) -> list[DatasetVersionMember]:
         return await self._members.list(
             dataset_id=dataset_id, version=version, domain=domain
-        )
-
-    async def add_members(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        members: Sequence[DatasetVersionMember],
-    ) -> None:
-        """Registrars only, under ``lock_version_for_update``."""
-        await self._members.add(dataset_id=dataset_id, version=version, members=members)
-
-    async def remove_members(
-        self, *, dataset_id: str, version: str, unit_ids: Sequence[str]
-    ) -> int:
-        """Registrars only, under ``lock_version_for_update``."""
-        return await self._members.remove(
-            dataset_id=dataset_id, version=version, unit_ids=unit_ids
         )

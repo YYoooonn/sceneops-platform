@@ -50,3 +50,37 @@ class RecordingConsumerJobParams(BaseJobParams):
                 if name in data:
                     raise ValueError(f"{name} is not accepted: {reason}")
         return data
+
+
+_MEMBERSHIP_REASON = (
+    "canonical registration only registers revisions; DatasetVersion "
+    "membership is a separate composition"
+)
+_REJECTED_REGISTRATION_FIELDS = {
+    "dataset_id": _MEMBERSHIP_REASON,
+    "datasetId": _MEMBERSHIP_REASON,
+    "dataset_version": _MEMBERSHIP_REASON,
+    "datasetVersion": _MEMBERSHIP_REASON,
+    "replace": _MEMBERSHIP_REASON,
+}
+
+
+class RevisionRegistrationJobParams(BaseJobParams):
+    """Params of a canonical revision registration (ADR-015 §6.4).
+
+    ``manifest_artifact_ids`` name the manifest ArtifactRecords of one
+    build. Membership fields are rejected rather than silently ignored, so
+    a stale caller fails loudly instead of believing it changed a
+    DatasetVersion.
+    """
+
+    manifest_artifact_ids: list[str] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_membership(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for name, reason in _REJECTED_REGISTRATION_FIELDS.items():
+                if name in data:
+                    raise ValueError(f"{name} is not accepted: {reason}")
+        return data

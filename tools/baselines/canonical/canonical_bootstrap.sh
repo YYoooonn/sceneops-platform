@@ -89,9 +89,9 @@ for id in $(echo "$BASELINE_FIXTURES" | jq -r '.[].fixture_id'); do
     continue
   fi
   log "--- canonical Scenes and Episodes of $run_id"
-  baseline_build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
+  baseline_build_scope recording_scene_building build_recording_scenes profile_scene \
     "$run_id" "$(scene_build_config)"
-  baseline_build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
+  baseline_build_scope recording_episode_building build_recording_episodes profile_episode \
     "$run_id" "$(episode_build_config)"
 done
 

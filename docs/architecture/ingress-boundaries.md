@@ -38,7 +38,9 @@ BUILD_RECORDING_EPISODES          resolve_recording -> VerifiedRecording (local,
                                   -> PinnedRecording                       builder input
                                   -> manifests: lineage RecordingSegmentSource
                                      + ProducerInfo over RecordingSourceRevision
-REGISTER_SCENES / REGISTER_EPISODES
+REGISTER_SCENES / REGISTER_EPISODES  params manifest_artifact_ids of one build
+                                  -> durability and integrity gate -> unit + revision rows
+                                  -> RevisionPins; no DatasetVersion
 ```
 
 Dataset Integration (only the schemas named below exist; there is no publication,
@@ -184,9 +186,9 @@ decision: `register_revision` on the Scene and Episode repositories inserts the 
 and revision if absent and decides against the committed revisions of the unit,
 with the unique keys deciding concurrent registrations
 (`sceneops_db.repositories.revisions`, [Data model](./data-model.md) §3). The
-registrars register every revision this way and apply the recording-scope rule of
-the [Scene domain](./scene-domain.md) §3 and [Episode domain](./episode-domain.md) §5
-only to the DatasetVersion's member pins ([limitations](./limitations.md) §5).
+registrars register every revision this way after their durability and integrity
+gate and return each revision's complete `RevisionPin`
+([Scene domain](./scene-domain.md) §3, [Episode domain](./episode-domain.md) §5).
 
 A recording has no native unit key, so a recording builder's unit key carries its
 segmentation: `<policy>-<sha256(boundary document)[:16]>/<segment>`

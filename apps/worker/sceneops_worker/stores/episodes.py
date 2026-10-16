@@ -65,8 +65,3 @@ class EpisodeStore:
             limit=limit,
             offset=offset,
         )
-
-    async def count_members(self, *, dataset_id: str, dataset_version: str) -> int:
-        return await self._repo.count_members(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )

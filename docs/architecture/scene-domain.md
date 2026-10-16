@@ -141,34 +141,39 @@ compute a cross-clock interval for any Scene.
 
 ## 3. Registration: the only writer
 
-`REGISTER_SCENES` (`sceneops_worker.scenes.registration`) takes a
-DatasetVersion and the ids of `SCENE_MANIFEST` ArtifactRecords. It is the
-only writer of Scene units and revisions and, until DatasetVersions are
-composed, of a DatasetVersion's Scene members and Scene summary.
+`REGISTER_SCENES` (`sceneops_worker.scenes.registration`) takes the ids of the
+`SCENE_MANIFEST` ArtifactRecords of one build. It is the only writer of Scene
+units and revisions. It names no DatasetVersion and never reads or writes
+members or summaries: a DatasetVersion pins the revisions registration
+returns (ADR-015 §7).
 
 ```text
-verify     each artifact is a SCENE_MANIFEST whose id is the revision's
-           deterministic id; bytes match its size + checksum; canonical strict
-           parse; every PayloadRef resolves to an OBSERVATION_PAYLOAD
-           ArtifactRecord with exactly its checksum, size_bytes and media_type
-scope      a registration covers one RobotRun, carries one producer fingerprint, and
-           must have been built from that RobotRun's registered recording bytes
-revisions  each unit and revision inserted if absent (decide_revision_registration):
-           identical → no-op · new fingerprint → new revision · same fingerprint,
-           other checksum → conflict (non-deterministic producer); nothing removed
-members    one transaction under the DatasetVersion row lock, on the version's
-           members of this RobotRun: empty → pin the set · same fingerprint →
-           no-op (whole scope) · different → conflict, or replace=True: unpin
-           units absent from the new set, repin reused units, pin new units
-           recompute the DatasetVersion summary from its members; commit
+gate       manifest  each artifact is a SCENE_MANIFEST whose id is the revision's
+                     deterministic id; bytes read back from the store match its
+                     size + checksum; canonical strict parse
+           payloads  every PayloadRef resolves to an OBSERVATION_PAYLOAD
+                     ArtifactRecord with exactly its checksum, size_bytes and
+                     media_type, and that record's object is present in the store
+                     with its recorded size (one listing per payload prefix)
+scope      the input is one build: one RobotRun, one producer fingerprint, built
+           from that RobotRun's registered recording bytes
+revisions  one transaction, units in unit id order; each unit and revision
+           inserted if absent (decide_revision_registration): identical → no-op ·
+           new unit or new fingerprint → insert · same fingerprint, other
+           checksum → conflict (non-deterministic producer); commit
+result     the complete pin (domain, unit_id, manifest_artifact_id,
+           manifest_checksum) of every input revision, with its decision
 ```
 
-Any failure rolls the whole registration back; units are never skipped.
-Builds and manifest reads happen before the lock; every decision is made
-after it, so concurrent registrations into one DatasetVersion serialize;
-concurrent registrations of one unit are decided by the revision unique keys.
-A recording build that yields no units fails. Replacement only changes which
-revision a DatasetVersion pins: every registered revision stays.
+A revision row therefore means "registered, and its bytes were present and
+checksum-consistent in the store at registration"; a foreign key to it proves
+registration, and the gate proves the bytes. Gate and scope failures happen
+before the transaction and write nothing; any failure in it rolls the whole
+input back, so units are never skipped. No lock is taken: the unit and revision
+unique keys decide concurrent registrations, which converge when identical and
+fail when they conflict, and inserting in unit id order keeps overlapping
+registrations from deadlocking. Registration never removes or repoints a
+revision. A recording build that yields no units fails.
 
 Producers own their bytes: a producer writes a manifest with
 `SceneArtifactStore.publish_canonical_manifest` (write-once, unit-scoped,
@@ -222,11 +227,12 @@ Everything downstream of registration reads canonical Scenes through a pin:
 ## 6. Producer: RecordingSceneBuilder
 
 `RECORDING_SCENE_BUILDING` builds the Scenes of exactly one RobotRun and
-registers them as the complete set of its recording scope:
+registers them as revisions:
 
 ```text
 build_recording_scenes   BUILD_RECORDING_SCENES (robot_run_id, build_config)
-register_scenes          REGISTER_SCENES (manifest_artifact_ids from the build; replace)
+register_scenes          REGISTER_SCENES (manifest_artifact_ids from the build)
+                         → scene_ids, revisions (complete pins)
 validate_scene           VALIDATE_SCENE (scene_ids from registration)
 profile_scene            PROFILE_SCENE (optional)
 ```
@@ -300,8 +306,8 @@ Retries converge: every payload key, manifest key and artifact id is
 deterministic, existing identical bytes and records are reused, and
 anything different fails the job. A changed `build_config` gives a new
 fingerprint: a new revision of the same units (or, for another segmentation,
-other units), which the registrar registers and pins in place of the
-DatasetVersion's current pins only when `replace` is set.
+other units), which the registrar adds beside the registered ones. No
+DatasetVersion changes.
 
 ## 7. API
 

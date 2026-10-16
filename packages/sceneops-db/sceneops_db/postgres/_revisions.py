@@ -23,8 +23,6 @@ from sceneops_db.repositories.revisions import (
     UnitIdentityConflictError,
 )
 
-_UNIT_BINDING = ("source_kind", "robot_run_id", "unit_key")
-
 
 class _Revision(UnitRevisionFacts, Protocol):
     def projection(self) -> dict[str, Any]: ...
@@ -54,18 +52,19 @@ async def register_unit_revision(
         )
     ).scalar_one_or_none()
     if stored_unit is None:
-        # The insert conflicted on (robot_run_id, unit_key): this source unit
-        # is registered under another id.
+        # The insert conflicted on the source-unit key: this source unit is
+        # registered under another id.
+        binding = {k: v for k, v in unit_values.items() if k != id_column}
         raise UnitIdentityConflictError(
-            f"source unit ({unit_values['robot_run_id']}, {unit_values['unit_key']!r}) "
-            f"is registered under an id other than {unit_id}"
+            f"source unit {binding} is registered under an id other than {unit_id}"
         )
-    for name in _UNIT_BINDING:
-        if getattr(stored_unit, name) != unit_values[name]:
+    # Every column of the unit row is its source binding; a stored unit
+    # must agree with the candidate on all of them.
+    for name, value in unit_values.items():
+        if getattr(stored_unit, name) != value:
             raise UnitIdentityConflictError(
                 f"unit {unit_id} is registered with {name}="
-                f"{getattr(stored_unit, name)!r}, the candidate has "
-                f"{unit_values[name]!r}"
+                f"{getattr(stored_unit, name)!r}, the candidate has {value!r}"
             )
 
     # Two rounds: a lost insert race is decided again against the winner's

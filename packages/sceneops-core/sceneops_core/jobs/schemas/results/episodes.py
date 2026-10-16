@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
+from sceneops_core.provenance import RevisionPin
 
 from .base import BaseJobResult
 
@@ -39,23 +40,21 @@ class BuildRecordingEpisodesJobResult(BaseJobResult):
 
 
 class RegisterEpisodesJobResult(BaseJobResult):
-    """``episode_ids`` / ``manifest_artifact_ids`` are the canonical members
-    of the registered recording scope after commit, each at its current
-    revision. ``removed_episode_ids`` are records of a replaced scope that
-    the new set no longer contains."""
+    """The Episode revisions of one build, each as its complete pin, in
+    unit id order; ``episode_ids`` are their units in the same order. See
+    ``RegisterScenesJobResult`` for the decision lists."""
 
-    dataset_id: str
-    dataset_version: str
+    robot_run_id: str
+    producer_fingerprint: str
 
+    revisions: list[RevisionPin] = Field(default_factory=list)
     episode_ids: list[str] = Field(default_factory=list)
-    manifest_artifact_ids: list[str] = Field(default_factory=list)
 
-    created_episode_ids: list[str] = Field(default_factory=list)
-    replaced_episode_ids: list[str] = Field(default_factory=list)
-    unchanged_episode_ids: list[str] = Field(default_factory=list)
-    removed_episode_ids: list[str] = Field(default_factory=list)
+    new_unit_episode_ids: list[str] = Field(default_factory=list)
+    new_revision_episode_ids: list[str] = Field(default_factory=list)
+    existing_revision_episode_ids: list[str] = Field(default_factory=list)
 
-    registered_episode_count: int = 0
+    revision_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 

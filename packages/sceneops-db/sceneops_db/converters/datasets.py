@@ -98,10 +98,7 @@ def dataset_version_record_to_values(
     summary is present on the record. This matters for create() (an absent
     summary lets the SQL column server_default apply) and, more importantly,
     for update() (an absent summary leaves the existing column value alone
-    instead of resetting it to a summary's zero-value defaults). Production
-    writers never change domain summaries through this path: the Scene
-    registrar uses replace_scene_membership_summary(), Episode registration
-    uses update_episode_summary().
+    instead of resetting it to a summary's zero-value defaults).
     """
     values: dict[str, Any] = {
         "id": make_dataset_version_id(record.dataset_id, record.version),

@@ -45,29 +45,6 @@ class DatasetVersionRepository(Protocol):
 
     async def update(self, version: DatasetVersionRecord) -> DatasetVersionRecord: ...
 
-    async def lock_for_update(
-        self, *, dataset_id: str, version: str
-    ) -> DatasetVersionRecord: ...
-
-    async def replace_scene_membership_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        scene_count: int,
-        keyframe_count: int,
-        observation_count: int,
-        observed_channels: list[str],
-    ) -> DatasetVersionRecord: ...
-
-    async def update_episode_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        episode_count: int | None = None,
-    ) -> DatasetVersionRecord: ...
-
     async def list(
         self,
         *,
@@ -80,7 +57,7 @@ class DatasetVersionRepository(Protocol):
 @runtime_checkable
 class DatasetVersionMemberRepository(Protocol):
     """The revision pins of a DatasetVersion (ADR-015 §7). A member is never
-    updated; ``add`` refuses a second member for a unit already in the
+    updated or removed; ``add`` refuses a second member for a unit already in the
     version and a pin that names no registered revision (foreign key)."""
 
     async def list(
@@ -98,7 +75,3 @@ class DatasetVersionMemberRepository(Protocol):
         version: str,
         members: Sequence[DatasetVersionMember],
     ) -> None: ...
-
-    async def remove(
-        self, *, dataset_id: str, version: str, unit_ids: Sequence[str]
-    ) -> int: ...

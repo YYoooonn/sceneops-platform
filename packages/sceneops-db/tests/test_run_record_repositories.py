@@ -139,7 +139,6 @@ async def test_latest_runs_count_only_the_member_revision(
     """A newer run for another revision of the unit must not shadow the runs
     of the revision the DatasetVersion pins, and an unfinished run never
     counts."""
-    from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
     from sceneops_db.postgres.scenes import PostgresSceneRepository
 
     scene, dataset_id = await _registered_scene(
@@ -173,8 +172,9 @@ async def test_latest_runs_count_only_the_member_revision(
 
     assert (await latest())[scene.scene_id].run_id == pinned_older
 
-    # Repin the unit to another revision: the old revision's runs no longer
-    # count, even the newest one, until the new revision is validated.
+    # Another DatasetVersion pins another revision of the unit: there the old
+    # revision's runs do not count, even the newest one, until the new
+    # revision is validated; the first version still sees its own.
     replacement = await scene_revision_for(
         db_session,
         source=recording_source(
@@ -184,20 +184,30 @@ async def test_latest_runs_count_only_the_member_revision(
     )
     assert replacement.scene_id == scene.scene_id
     await PostgresSceneRepository(db_session).register_revision(replacement)
-    await PostgresDatasetVersionMemberRepository(db_session).remove(
-        dataset_id=dataset_id, version=DATASET_VERSION, unit_ids=[scene.scene_id]
+    await seed_dataset_version(db_session, dataset_id=dataset_id, version="v2")
+    await pin_members(
+        db_session, dataset_id=dataset_id, version="v2", revisions=[replacement]
     )
-    await pin_members(db_session, dataset_id=dataset_id, revisions=[replacement])
+
+    async def latest_v2():
+        return await repo.latest_succeeded_for_member_revisions(
+            dataset_id=dataset_id,
+            dataset_version="v2",
+            run_type=RunType.SCENE_VALIDATION,
+        )
+
+    old_newest = unique_id("run-d")
     await repo.create(
-        _validation(scene, unique_id("run-d"), created_at=_now(), revision=old_revision)
+        _validation(scene, old_newest, created_at=_now(), revision=old_revision)
     )
-    assert scene.scene_id not in await latest()
+    assert scene.scene_id not in await latest_v2()
 
     newest = unique_id("run-e")
     await repo.create(
         _validation(replacement, newest, created_at=_now(5), status="failed")
     )
-    assert (await latest())[scene.scene_id].run_id == newest
+    assert (await latest_v2())[scene.scene_id].run_id == newest
+    assert (await latest())[scene.scene_id].run_id == old_newest
 
 
 @pytest.mark.asyncio

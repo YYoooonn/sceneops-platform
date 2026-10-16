@@ -479,22 +479,11 @@ async def test_membership_summary_and_scope_filter(
         dataset_id=dataset_id, dataset_version="v1", robot_run_id=run_a
     )
     assert [s.scene_id for s in scope] == [a.scene_id]
-
     members = PostgresDatasetVersionMemberRepository(db_session)
-    assert (
-        await members.remove(dataset_id=dataset_id, version="v1", unit_ids=[a.scene_id])
-        == 1
-    )
     assert [
         m.unit_id for m in await members.list(dataset_id=dataset_id, version="v1")
-    ] == [b.scene_id]
-    # Unpinning removes a member, never the revision.
-    assert (
-        await repo.get_revision(
-            scene_id=a.scene_id, manifest_checksum=a.manifest_checksum
-        )
-        is not None
-    )
+    ] == sorted([a.scene_id, b.scene_id])
+    assert not hasattr(members, "remove")
 
 
 # --- concurrency (independent committed sessions) -------------------------------

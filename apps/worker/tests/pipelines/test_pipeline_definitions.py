@@ -82,7 +82,8 @@ class TestRecordingSceneBuildingPipeline:
             o.name for o in tasks["register_scenes"].outputs if o.kind == "ref"
         }
         assert "manifest_artifact_ids" in build_refs
-        assert register_refs == {"scene_ids"}
+        # Downstream tasks read the units; the complete pins are handed on.
+        assert register_refs == {"scene_ids", "revisions"}
 
     def test_validation_can_block_but_never_owns_membership(self) -> None:
         validate = self._tasks()["validate_scene"]

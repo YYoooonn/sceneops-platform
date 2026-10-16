@@ -16,8 +16,9 @@ the candidate's unit, inside the caller's transaction:
 It only adds rows: no unit or revision is ever updated, deleted or
 repointed, and nothing here touches DatasetVersion membership.
 
-Concurrency is decided by the unique keys (unit id, (robot_run_id,
-unit_key), revision pin, (unit id, producer fingerprint)), not by locks.
+Concurrency is decided by the unique keys (unit id, the source-unit key
+(source id, unit_key), revision pin, (unit id, producer fingerprint)), not
+by locks.
 Inserts are ``ON CONFLICT DO NOTHING``, which waits for a concurrent
 uncommitted insert of a conflicting key; the loser re-reads the committed
 revisions (READ COMMITTED) and decides again, so identical registrations

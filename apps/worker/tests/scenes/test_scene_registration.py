@@ -1,10 +1,10 @@
-"""REGISTER_SCENES registrar rules (ADR-015 §6.4; ADR-007 §17-§18, I-10,
-I-11, I-24) against real canonical manifest bytes in a local ArtifactStore
-and a transaction-staged in-memory store of units, revisions and
-DatasetVersion pins. Units and revisions are only added; the recording-scope
-rule applies to the DatasetVersion's pins. Real-PostgreSQL transaction,
-constraint and locking behavior is covered by
-test_scene_registration_integration.py."""
+"""REGISTER_SCENES registrar rules (ADR-015 §6.4, MS-7) against real
+canonical manifest bytes in a local ArtifactStore and a transaction-staged
+in-memory store of units, revisions and DatasetVersion pins. Registration
+adds immutable revisions after the durability and integrity gate and
+returns their complete pins; it never reads or writes a DatasetVersion.
+Real-PostgreSQL / MinIO transaction, constraint and concurrency behavior is
+covered by test_scene_registration_integration.py."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import copy
 import pytest
 
 from sceneops_core.artifacts.schemas import ArtifactKind
-from sceneops_core.scenes.schemas import scene_id_for
+from sceneops_core.provenance import RevisionDecision, RevisionPin
 from sceneops_core.scenes.testing import recording_source
 from sceneops_worker.scenes.registration import (
     SceneManifestRejectedError,
@@ -25,25 +25,21 @@ from sceneops_worker.scenes.registration import (
 RECORDING_CHECKSUM = "sha256:" + "1" * 64
 
 
-async def _register(world, artifacts, *, replace=False, dataset_id="ds", version="v1"):
+async def _register(world, artifacts):
     return await register_scenes(
         context=world.context,
-        dataset_id=dataset_id,
-        dataset_version=version,
         manifest_artifact_ids=[a.artifact_id for a in artifacts],
-        replace=replace,
     )
 
 
-def _summary(world, dataset_id="ds", version="v1"):
-    return world.summaries[(dataset_id, version)]
+def _decisions(registration) -> dict[str, RevisionDecision]:
+    return {r.revision.scene_id: r.decision for r in registration.revisions}
 
 
-# --- one recording scope (§18.3) -------------------------------------------------
+# --- revisions -----------------------------------------------------------------
 
 
-async def test_registers_the_complete_scope_and_recomputes_summary(scene_world):
-    scene_world.add_dataset_version()
+async def test_registers_revisions_and_returns_their_complete_pins(scene_world):
     a = await scene_world.publish(
         scene_world.manifest(source=recording_source(unit_key="a"))
     )
@@ -53,110 +49,90 @@ async def test_registers_the_complete_scope_and_recomputes_summary(scene_world):
         )
     )
 
-    result = await _register(scene_world, [a, b])
+    result = await _register(scene_world, [b, a])
 
-    assert [s.manifest_artifact_id for s in result.scenes] == [
+    committed = scene_world.scenes.revisions()
+    assert len(committed) == 2
+    # One pin per input, in unit id order, each naming a committed revision
+    # with exactly its manifest artifact and checksum.
+    assert [p.unit_id for p in result.pins] == sorted(s for s, _ in committed)
+    for pin in result.pins:
+        assert isinstance(pin, RevisionPin)
+        assert pin.domain == "scene"
+        record = committed[(pin.unit_id, pin.manifest_checksum)]
+        assert pin.manifest_artifact_id == record.manifest_artifact_id
+        assert (
+            pin.manifest_checksum
+            == scene_world.artifacts[pin.manifest_artifact_id].checksum
+        )
+    assert {p.manifest_artifact_id for p in result.pins} == {
         a.artifact_id,
         b.artifact_id,
-    ]
-    assert result.created_scene_ids == sorted(s.scene_id for s in result.scenes)
-    committed = scene_world.scenes.members()
-    assert set(committed) == set(result.created_scene_ids)
-    assert len(scene_world.scenes.revisions()) == 2
-    for record in committed.values():
-        assert (
-            record.manifest_checksum
-            == scene_world.artifacts[record.manifest_artifact_id].checksum
-        )
-    assert _summary(scene_world) == {
-        "scene_count": 2,
-        "keyframe_count": 3,
-        "observation_count": 7,
-        "observed_channels": ["CAM_FRONT", "LIDAR_TOP"],
     }
+    assert set(_decisions(result).values()) == {RevisionDecision.NEW_UNIT}
+    assert result.robot_run_id == "run-001"
     assert scene_world.commits == 1
 
 
-async def test_identical_retry_is_a_no_op(scene_world):
-    scene_world.add_dataset_version()
+async def test_registration_never_reads_or_writes_a_dataset_version(scene_world):
     artifact = await scene_world.publish(scene_world.manifest())
+    scene_world.context.dataset_store.reset_mock()
+
     await _register(scene_world, [artifact])
+
+    assert scene_world.context.dataset_store.mock_calls == []
+    assert scene_world.scenes.committed[1] == {}
+
+
+async def test_identical_retry_converges_on_the_registered_revision(scene_world):
+    artifact = await scene_world.publish(scene_world.manifest())
+    first = await _register(scene_world, [artifact])
+    before = copy.deepcopy(scene_world.scenes.committed)
 
     again = await _register(scene_world, [artifact])
 
-    assert again.created_scene_ids == []
-    assert again.unchanged_scene_ids == [again.scenes[0].scene_id]
-    assert len(scene_world.scenes.members()) == 1
-    assert len(scene_world.scenes.revisions()) == 1
-
-
-async def test_different_revision_conflicts_without_replace_and_changes_nothing(
-    scene_world,
-):
-    scene_world.add_dataset_version()
-    first = await scene_world.publish(scene_world.manifest())
-    await _register(scene_world, [first])
-    before = copy.deepcopy(scene_world.scenes.committed)
-
-    rebuilt = await scene_world.publish(
-        scene_world.manifest(build_config={"channels": ["CAM_FRONT"]})
-    )
-    with pytest.raises(SceneRegistrationConflictError):
-        await _register(scene_world, [rebuilt])
-
-    # The new revision was registered inside the rolled-back transaction.
+    assert again.pins == first.pins
+    assert set(_decisions(again).values()) == {RevisionDecision.EXISTING_REVISION}
     assert scene_world.scenes.committed == before
-    assert scene_world.rollbacks == 1
 
 
-async def test_replace_repins_the_same_unit_and_keeps_both_revisions(scene_world):
-    scene_world.add_dataset_version()
+async def test_a_new_fingerprint_adds_a_revision_and_keeps_the_first(scene_world):
     first = await scene_world.publish(scene_world.manifest())
-    created = (await _register(scene_world, [first])).scenes[0]
+    (created,) = (await _register(scene_world, [first])).pins
 
     rebuilt = await scene_world.publish(
         scene_world.manifest(build_config={"channels": ["CAM_FRONT"]})
     )
-    result = await _register(scene_world, [rebuilt], replace=True)
+    result = await _register(scene_world, [rebuilt])
 
-    assert result.replaced_scene_ids == [created.scene_id]
-    pinned = scene_world.scenes.members()[created.scene_id]
-    assert pinned.manifest_artifact_id == rebuilt.artifact_id
-    assert pinned.producer_fingerprint != created.producer_fingerprint
-    # The unit keeps both revisions: registration never removes one.
+    (pin,) = result.pins
+    assert pin.unit_id == created.unit_id
+    assert pin.manifest_checksum != created.manifest_checksum
+    assert _decisions(result) == {pin.unit_id: RevisionDecision.NEW_REVISION}
     assert sorted(
         r.manifest_artifact_id for r in scene_world.scenes.revisions().values()
     ) == sorted([first.artifact_id, rebuilt.artifact_id])
-    assert first.artifact_id in scene_world.artifacts
 
 
-async def test_one_revision_is_pinned_by_two_dataset_versions(scene_world):
-    """A unit is independent of the DatasetVersion: registering one build
-    into a second version adds a pin, not a unit, revision or artifact."""
-    scene_world.add_dataset_version(version="v1")
-    scene_world.add_dataset_version(version="v2")
-    artifact = await scene_world.publish(scene_world.manifest())
-    artifacts_before = dict(scene_world.artifacts)
+async def test_a_new_revision_never_repoints_an_existing_pin(scene_world):
+    first = await scene_world.publish(scene_world.manifest())
+    (registered,) = (await _register(scene_world, [first])).revisions
+    scene_world.scenes.pin([registered.pin])
 
-    one = await _register(scene_world, [artifact], version="v1")
-    two = await _register(scene_world, [artifact], version="v2")
-
-    assert one.scenes == two.scenes
-    assert two.created_scene_ids == one.created_scene_ids
-    assert scene_world.scenes.members(version="v1") == scene_world.scenes.members(
-        version="v2"
+    rebuilt = await scene_world.publish(
+        scene_world.manifest(build_config={"channels": ["CAM_FRONT"]})
     )
-    assert len(scene_world.scenes.revisions()) == 1
-    assert scene_world.artifacts == artifacts_before
+    await _register(scene_world, [rebuilt])
+
+    pinned = scene_world.scenes.members()[registered.revision.scene_id]
+    assert pinned.manifest_artifact_id == first.artifact_id
 
 
 async def test_a_second_checksum_for_one_fingerprint_is_refused(scene_world):
     """Same unit, same producer fingerprint, other bytes: a non-deterministic
-    producer. It is refused even into a DatasetVersion that pins nothing."""
-    scene_world.add_dataset_version(version="v1")
-    scene_world.add_dataset_version(version="v2")
+    producer."""
     first = await scene_world.publish(scene_world.manifest())
-    await _register(scene_world, [first], version="v1")
+    await _register(scene_world, [first])
     drifted = await scene_world.publish(
         scene_world.manifest(keyframe_timestamps_ns=(1_000,))
     )
@@ -164,12 +140,49 @@ async def test_a_second_checksum_for_one_fingerprint_is_refused(scene_world):
     before = copy.deepcopy(scene_world.scenes.committed)
 
     with pytest.raises(SceneRegistrationConflictError, match="not deterministic"):
-        await _register(scene_world, [drifted], version="v2")
+        await _register(scene_world, [drifted])
+    assert scene_world.scenes.committed == before
+    assert scene_world.rollbacks == 1
+
+
+async def test_registration_is_all_or_nothing(scene_world):
+    a = await scene_world.publish(
+        scene_world.manifest(source=recording_source(unit_key="a"))
+    )
+    await _register(scene_world, [a])
+    before = copy.deepcopy(scene_world.scenes.committed)
+
+    # "c" is new and valid, "a" drifted: neither is committed.
+    batch = [
+        await scene_world.publish(
+            scene_world.manifest(
+                source=recording_source(unit_key=key), keyframe_timestamps_ns=(7,)
+            )
+        )
+        for key in ("a", "c")
+    ]
+    with pytest.raises(SceneRegistrationConflictError):
+        await _register(scene_world, batch)
+
     assert scene_world.scenes.committed == before
 
 
+async def test_separate_builds_register_independently(scene_world):
+    a = await scene_world.publish(
+        scene_world.manifest(source=recording_source(unit_key="a"))
+    )
+    b = await scene_world.publish(
+        scene_world.manifest(source=recording_source(unit_key="b"))
+    )
+    await _register(scene_world, [a])
+
+    result = await _register(scene_world, [b])
+
+    assert set(_decisions(result).values()) == {RevisionDecision.NEW_UNIT}
+    assert len(scene_world.scenes.revisions()) == 2
+
+
 async def test_a_manifest_artifact_id_must_be_the_revisions_own(scene_world):
-    scene_world.add_dataset_version()
     artifact = await scene_world.publish(scene_world.manifest())
     renamed = artifact.model_copy(update={"artifact_id": "art-scene-renamed"})
     scene_world.artifacts[renamed.artifact_id] = renamed
@@ -178,50 +191,7 @@ async def test_a_manifest_artifact_id_must_be_the_revisions_own(scene_world):
     assert scene_world.scenes.revisions(committed=False) == {}
 
 
-async def test_registration_is_all_or_nothing(scene_world):
-    scene_world.add_dataset_version()
-    current = [
-        await scene_world.publish(
-            scene_world.manifest(source=recording_source(unit_key=key))
-        )
-        for key in ("a", "b")
-    ]
-    await _register(scene_world, current)
-    before = copy.deepcopy(scene_world.scenes.committed)
-
-    rebuilt = [
-        await scene_world.publish(
-            scene_world.manifest(
-                source=recording_source(unit_key=key), build_config={"channels": []}
-            )
-        )
-        for key in ("a", "c")
-    ]
-    with pytest.raises(SceneRegistrationConflictError):
-        await _register(scene_world, rebuilt)
-
-    # Nothing of the rejected set is committed and nothing current is removed.
-    assert scene_world.scenes.committed == before
-
-
-async def test_a_partial_input_never_extends_a_registered_scope(scene_world):
-    """The registrar treats its input as the complete set of the scope: a
-    second registration with the same fingerprint but fewer or other units
-    does not add or remove members (§17.5 rule 4)."""
-    scene_world.add_dataset_version()
-    a = await scene_world.publish(
-        scene_world.manifest(source=recording_source(unit_key="a"))
-    )
-    b = await scene_world.publish(
-        scene_world.manifest(source=recording_source(unit_key="b"))
-    )
-    await _register(scene_world, [a])
-    result = await _register(scene_world, [b])
-    assert result.created_scene_ids == []
-    assert [s.unit_key for s in scene_world.scenes.members().values()] == ["a"]
-
-
-# --- recording scope (§18.3) ----------------------------------------------------
+# --- one build of a registered RobotRun (S2) ---------------------------------------
 
 
 def _segment(unit_key, start, end, run_id="run-1"):
@@ -247,47 +217,7 @@ async def _recording_build(world, segments, *, build_config=None):
     ]
 
 
-async def test_recording_scope_lifecycle(scene_world):
-    scene_world.add_dataset_version()
-    scene_world.add_robot_run("run-1", recording_checksum=RECORDING_CHECKSUM)
-
-    first = await _recording_build(
-        scene_world, [_segment("seg-0", 0, 1_000), _segment("seg-1", 1_000, 2_000)]
-    )
-    created = await _register(scene_world, first)
-    assert len(created.created_scene_ids) == 2
-
-    # Same fingerprint: the current complete set is reused.
-    again = await _register(scene_world, first)
-    assert sorted(again.unchanged_scene_ids) == sorted(created.created_scene_ids)
-
-    # A different build of the same recording conflicts without replace.
-    rebuilt = await _recording_build(
-        scene_world,
-        [_segment("seg-0", 0, 1_500), _segment("seg-x", 1_500, 2_000)],
-        build_config={"window_ms": 1500},
-    )
-    with pytest.raises(SceneRegistrationConflictError):
-        await _register(scene_world, rebuilt)
-
-    # With replace the scope is swapped atomically: reused key repointed,
-    # absent key removed, new key inserted, one fingerprint remains.
-    replaced = await _register(scene_world, rebuilt, replace=True)
-    seg0 = scene_id_for(_segment("seg-0", 0, 1))
-    seg1 = scene_id_for(_segment("seg-1", 0, 1))
-    assert replaced.replaced_scene_ids == [seg0]
-    assert replaced.removed_scene_ids == [seg1]
-    assert len(replaced.created_scene_ids) == 1
-    scope = scene_world.scenes.members()
-    assert seg1 not in scope
-    assert len({s.producer_fingerprint for s in scope.values()}) == 1
-    assert _summary(scene_world)["scene_count"] == 2
-    # Unpinned, not deleted: seg-1's revision is still registered.
-    assert seg1 in {s for s, _ in scene_world.scenes.revisions()}
-
-
-async def test_recording_scope_rejects_mixed_runs_and_fingerprints(scene_world):
-    scene_world.add_dataset_version()
+async def test_input_must_be_one_build_of_one_robot_run(scene_world):
     scene_world.add_robot_run("run-1", recording_checksum=RECORDING_CHECKSUM)
     scene_world.add_robot_run("run-2", recording_checksum=RECORDING_CHECKSUM)
 
@@ -308,7 +238,6 @@ async def test_recording_scope_rejects_mixed_runs_and_fingerprints(scene_world):
 
 
 async def test_recording_scene_requires_the_registered_recording_bytes(scene_world):
-    scene_world.add_dataset_version()
     artifacts = await _recording_build(scene_world, [_segment("seg-0", 0, 1_000)])
     with pytest.raises(SceneRegistrationScopeError, match="not registered"):
         await _register(scene_world, artifacts)
@@ -318,11 +247,23 @@ async def test_recording_scene_requires_the_registered_recording_bytes(scene_wor
         await _register(scene_world, artifacts)
 
 
-# --- manifest verification (S1) ------------------------------------------------
+async def test_rejects_duplicate_inputs_and_units(scene_world):
+    artifact = await scene_world.publish(scene_world.manifest())
+    with pytest.raises(SceneRegistrationScopeError, match="duplicates"):
+        await _register(scene_world, [artifact, artifact])
+
+    twin = await scene_world.publish(
+        scene_world.manifest(build_config={"channels": ["CAM_FRONT"]})
+    )
+    with pytest.raises(SceneRegistrationScopeError, match="more than one manifest"):
+        await _register(scene_world, [artifact, twin])
+    assert scene_world.scenes.committed == ({}, {})
 
 
-async def test_rejects_unverifiable_inputs(scene_world):
-    scene_world.add_dataset_version()
+# --- durability and integrity gate (S1): manifest ----------------------------------
+
+
+async def test_rejects_unverifiable_manifests(scene_world):
     with pytest.raises(SceneManifestRejectedError, match="not found"):
         await _register(scene_world, [type("A", (), {"artifact_id": "art-missing"})()])
 
@@ -344,13 +285,20 @@ async def test_rejects_unverifiable_inputs(scene_world):
     assert scene_world.scenes.committed == ({}, {})
 
 
+async def test_rejects_a_manifest_missing_from_the_store(scene_world):
+    artifact = await scene_world.publish(scene_world.manifest())
+    await scene_world.artifact_store.delete_prefix(artifact.uri)
+    with pytest.raises(SceneManifestRejectedError, match="not found"):
+        await _register(scene_world, [artifact])
+    assert scene_world.scenes.committed == ({}, {})
+
+
 async def test_rejects_non_canonical_manifest_bytes(scene_world):
     import json
 
     from sceneops_core.artifacts.schemas import ArtifactRecord
     from sceneops_core.common.checksums import sha256_checksum
 
-    scene_world.add_dataset_version()
     manifest = scene_world.manifest()
     pretty = json.dumps(json.loads(manifest.to_canonical_bytes()), indent=2).encode()
     uri = f"{scene_world.root}/pretty.json"
@@ -364,15 +312,14 @@ async def test_rejects_non_canonical_manifest_bytes(scene_world):
     )
     with pytest.raises(SceneManifestRejectedError, match="canonical"):
         await register_scenes(
-            context=scene_world.context,
-            dataset_id="ds",
-            dataset_version="v1",
-            manifest_artifact_ids=["art-pretty"],
+            context=scene_world.context, manifest_artifact_ids=["art-pretty"]
         )
 
 
+# --- durability and integrity gate (S1): payloads ----------------------------------
+
+
 async def test_rejects_unregistered_payload_artifacts(scene_world):
-    scene_world.add_dataset_version()
     artifact = await scene_world.publish(scene_world.manifest(), with_payloads=False)
     with pytest.raises(SceneManifestRejectedError, match="not registered"):
         await _register(scene_world, [artifact])
@@ -391,10 +338,6 @@ async def test_rejects_unregistered_payload_artifacts(scene_world):
 async def test_payload_ref_must_match_its_artifact_record_exactly(
     scene_world, field, value, message
 ):
-    """The registrar checks every payload reference against the
-    ArtifactRecord's kind and exact integrity metadata; a location is never
-    consulted."""
-    scene_world.add_dataset_version()
     manifest = scene_world.manifest()
     artifact = await scene_world.publish(manifest)
     payload_id = manifest.observations[0].payload.artifact_id
@@ -406,32 +349,59 @@ async def test_payload_ref_must_match_its_artifact_record_exactly(
     assert scene_world.scenes.working == ({}, {})
 
 
-async def test_payload_location_does_not_affect_registration(scene_world):
-    """Moving payload bytes (a different ArtifactRecord uri) changes neither
-    the manifest nor its registration."""
-    scene_world.add_dataset_version()
+async def test_a_payload_record_without_its_object_is_rejected(scene_world):
+    """The gate, not the ArtifactRecord, decides: a registered payload whose
+    object is missing from the store fails registration."""
+    manifest = scene_world.manifest()
+    artifact = await scene_world.publish(manifest)
+    payload = scene_world.artifacts[manifest.observations[0].payload.artifact_id]
+    await scene_world.artifact_store.delete_prefix(payload.uri)
+
+    with pytest.raises(SceneManifestRejectedError, match="has no object"):
+        await _register(scene_world, [artifact])
+    assert scene_world.scenes.working == ({}, {})
+
+
+async def test_a_payload_object_of_another_size_is_rejected(scene_world):
+    manifest = scene_world.manifest()
+    artifact = await scene_world.publish(manifest)
+    payload = scene_world.artifacts[manifest.observations[0].payload.artifact_id]
+    await scene_world.artifact_store.write_bytes(payload.uri, b"x")
+
+    with pytest.raises(SceneManifestRejectedError, match="1 bytes, recorded"):
+        await _register(scene_world, [artifact])
+    assert scene_world.scenes.working == ({}, {})
+
+
+async def test_payload_objects_are_checked_with_one_listing_per_prefix(scene_world):
+    from unittest.mock import MagicMock
+
+    store = scene_world.artifact_store
+    scene_world.context.artifact_store = MagicMock(spec=store, wraps=store)
+    manifest = scene_world.manifest()
+    assert len(manifest.observations) > 1
+    artifact = await scene_world.publish(manifest)
+
+    await _register(scene_world, [artifact])
+
+    listings = scene_world.context.artifact_store.list_objects.call_args_list
+    assert [c.args for c in listings] == [(f"{scene_world.root}/payloads",)]
+
+
+async def test_payload_location_does_not_affect_the_revision(scene_world):
+    """Bytes stored under another key (and a record that says so) register
+    the same revision: the manifest names payloads by id, not location."""
     manifest = scene_world.manifest()
     artifact = await scene_world.publish(manifest)
     for observation in manifest.observations:
         payload_id = observation.payload.artifact_id
-        scene_world.artifacts[payload_id] = scene_world.artifacts[
-            payload_id
-        ].model_copy(update={"uri": f"s3://another-bucket/moved/{payload_id}"})
+        record = scene_world.artifacts[payload_id]
+        moved = f"{scene_world.root}/moved/{payload_id}"
+        await scene_world.artifact_store.write_bytes(
+            moved, await scene_world.artifact_store.read_bytes(record.uri)
+        )
+        scene_world.artifacts[payload_id] = record.model_copy(update={"uri": moved})
+
     result = await _register(scene_world, [artifact])
-    assert len(result.created_scene_ids) == 1
 
-
-async def test_rejects_duplicates_and_missing_dataset_version(scene_world):
-    artifact = await scene_world.publish(scene_world.manifest())
-    with pytest.raises(SceneRegistrationScopeError, match="duplicates"):
-        await _register(scene_world, [artifact, artifact])
-
-    twin = await scene_world.publish(
-        scene_world.manifest(build_config={"channels": ["CAM_FRONT"]})
-    )
-    with pytest.raises(SceneRegistrationScopeError, match="more than one manifest"):
-        await _register(scene_world, [artifact, twin])
-
-    with pytest.raises(SceneRegistrationScopeError, match="DatasetVersion not found"):
-        await _register(scene_world, [artifact])
-    assert scene_world.scenes.committed == ({}, {})
+    assert [p.manifest_artifact_id for p in result.pins] == [artifact.artifact_id]

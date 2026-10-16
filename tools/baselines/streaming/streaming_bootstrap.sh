@@ -203,12 +203,12 @@ process_fixture() {
     t5="$t3"
   else
     stall_watch_start "recording_scene_building $run_id"
-    baseline_build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
+    baseline_build_scope recording_scene_building build_recording_scenes profile_scene \
       "$run_id" "$(scene_build_config)"
     stall_watch_stop
     t4="$(now)"
     stall_watch_start "recording_episode_building $run_id"
-    baseline_build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
+    baseline_build_scope recording_episode_building build_recording_episodes profile_episode \
       "$run_id" "$(episode_build_config)"
     stall_watch_stop
     t5="$(now)"

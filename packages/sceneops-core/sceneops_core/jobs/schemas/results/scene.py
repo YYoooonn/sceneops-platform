@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict
+from sceneops_core.provenance import RevisionPin
 
 from .base import BaseJobResult
 
@@ -63,23 +64,23 @@ class ProfileSceneJobResult(BaseJobResult):
 
 
 class RegisterScenesJobResult(BaseJobResult):
-    """``scene_ids`` / ``manifest_artifact_ids`` are the canonical members
-    of the registered recording scope after commit, each at its current
-    revision (when the fingerprint is unchanged, the already-registered
-    set). ``removed_scene_ids`` are records of a replaced scope that the new
-    set no longer contains."""
+    """The Scene revisions of one build, each as its complete pin, in unit
+    id order; ``scene_ids`` are their units in the same order. Every
+    revision is registered after commit: the ``new_unit`` / ``new_revision``
+    lists name the units whose revision this job inserted, and
+    ``existing_revision`` those whose revision was already registered (a
+    retry, or a rebuild of identical bytes)."""
 
-    dataset_id: str
-    dataset_version: str
+    robot_run_id: str
+    producer_fingerprint: str
 
+    revisions: list[RevisionPin] = Field(default_factory=list)
     scene_ids: list[str] = Field(default_factory=list)
-    manifest_artifact_ids: list[str] = Field(default_factory=list)
 
-    created_scene_ids: list[str] = Field(default_factory=list)
-    replaced_scene_ids: list[str] = Field(default_factory=list)
-    unchanged_scene_ids: list[str] = Field(default_factory=list)
-    removed_scene_ids: list[str] = Field(default_factory=list)
+    new_unit_scene_ids: list[str] = Field(default_factory=list)
+    new_revision_scene_ids: list[str] = Field(default_factory=list)
+    existing_revision_scene_ids: list[str] = Field(default_factory=list)
 
-    registered_scene_count: int = 0
+    revision_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)

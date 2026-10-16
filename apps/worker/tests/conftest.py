@@ -92,7 +92,8 @@ class _StagedSceneStore:
     """In-memory Scene units, revisions and DatasetVersion pins whose writes
     become visible to other readers only on commit, so registrar
     all-or-nothing behavior is observable. Revision registration applies
-    the production decision (``decide_revision_registration``)."""
+    the production decision (``decide_revision_registration``); members are
+    only set up by ``pin``."""
 
     def __init__(self) -> None:
         # (revisions {(scene_id, checksum): record},
@@ -173,33 +174,19 @@ class _StagedSceneStore:
         ]
         return rows[offset : offset + limit]
 
-    async def summarize_membership(self, *, dataset_id, dataset_version):
-        from sceneops_db.repositories import SceneMembershipSummary
+    # --- membership (test setup only) ------------------------------------------
 
-        scenes = await self.list_member_revisions(
-            dataset_id=dataset_id, dataset_version=dataset_version, limit=10**9
-        )
-        return SceneMembershipSummary(
-            scene_count=len(scenes),
-            keyframe_count=sum(s.keyframe_count for s in scenes),
-            observation_count=sum(s.observation_count for s in scenes),
-            observed_channels=sorted({c for s in scenes for c in s.observed_channels}),
-        )
-
-    # --- DatasetStore member writes ---------------------------------------------
-
-    async def add_members(self, *, dataset_id, version, members):
-        pins = self.working[1].setdefault((dataset_id, version), {})
-        for member in members:
-            if member.unit_id in pins:
-                raise RuntimeError(f"duplicate member {member.unit_id}")
-            if (member.unit_id, member.manifest_checksum) not in self.working[0]:
-                raise RuntimeError(f"member pins no revision: {member}")
-            pins[member.unit_id] = member.manifest_checksum
-
-    async def remove_members(self, *, dataset_id, version, unit_ids):
-        pins = self.working[1].get((dataset_id, version), {})
-        return sum(pins.pop(u, None) is not None for u in unit_ids)
+    def pin(self, pins, *, dataset_id="ds", version="v1") -> None:
+        """Commit DatasetVersion members for the RevisionPins a registration
+        returned: stands in for a composition, which registration never
+        performs."""
+        members = self.committed[1].setdefault((dataset_id, version), {})
+        for pin in pins:
+            key = (pin.unit_id, pin.manifest_checksum)
+            if pin.unit_id in members or key not in self.committed[0]:
+                raise RuntimeError(f"cannot pin {key}")
+            members[pin.unit_id] = pin.manifest_checksum
+        self.working = copy.deepcopy(self.committed)
 
 
 class SceneWorld:
@@ -219,8 +206,6 @@ class SceneWorld:
         )
         self.artifacts: dict = {}
         self.scenes = _StagedSceneStore()
-        self.versions: set = set()
-        self.summaries: dict = {}
         self.scene_runs: list = []
         self.robot_runs: dict = {}
         self.commits = 0
@@ -288,22 +273,6 @@ class SceneWorld:
             label_root_uri=f"{self.root}/labels",
         )
 
-        async def lock(*, dataset_id, version):
-            if (dataset_id, version) not in self.versions:
-                raise ValueError(f"DatasetVersion not found: {dataset_id}/{version}")
-
-        async def replace_summary(*, dataset_id, version, **summary):
-            self.summaries[(dataset_id, version)] = summary
-
-        ctx.dataset_store.lock_version_for_update = AsyncMock(side_effect=lock)
-        ctx.dataset_store.add_members = AsyncMock(side_effect=self.scenes.add_members)
-        ctx.dataset_store.remove_members = AsyncMock(
-            side_effect=self.scenes.remove_members
-        )
-        ctx.dataset_store.replace_scene_membership_summary = AsyncMock(
-            side_effect=replace_summary
-        )
-
         async def get_run(run_id):
             return self.robot_runs.get(run_id)
 
@@ -326,9 +295,6 @@ class SceneWorld:
         ctx.commit = AsyncMock(side_effect=commit)
         ctx.rollback = AsyncMock(side_effect=rollback)
         return ctx
-
-    def add_dataset_version(self, dataset_id: str = "ds", version: str = "v1") -> None:
-        self.versions.add((dataset_id, version))
 
     def add_robot_run(self, run_id: str, *, recording_checksum: str) -> None:
         from datetime import UTC, datetime

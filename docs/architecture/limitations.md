@@ -118,13 +118,13 @@ canonical unit except as a converted recording. Current builder bounds:
   message; NaN / Infinity fail the build. Canonical Episodes carry no outcome, success
   label, reward or language instruction.
 - Units, revisions and DatasetVersion members are stored separately
-  ([Data model](./data-model.md) §3), but DatasetVersions are not yet composed: a
-  DatasetVersion is created empty and filled by the registrars, which pin the revisions
-  of one RobotRun per registration and, with `replace=True`, unpin and repin them
-  (the recording-scope rule). A DatasetVersion's members can therefore still change
-  after creation, and its Scene / Episode summary is recomputed by the registrars
-  under the DatasetVersion row lock. Registered units and revisions are never changed
-  or removed.
+  ([Data model](./data-model.md) §3), and canonical registration writes units and
+  revisions only. DatasetVersion composition does not exist: no production code path
+  writes a DatasetVersion's members or summaries. A DatasetVersion created through
+  the API stays empty with zero summaries, and the validation and profiling tasks of
+  the recording pipelines, which resolve units through a DatasetVersion member, fail
+  for the units the same run registered. Registered units and revisions are never
+  changed or removed.
 - Consumers that address a Scene or Episode by id (validation, profiling, alignment,
   the per-unit quality and manifest API) resolve it through a DatasetVersion member
   and fail without one; a unit has no current revision. Build and register Jobs still
