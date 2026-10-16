@@ -457,68 +457,6 @@ def test_coordinate_frames_and_channels_must_be_sorted_unique():
 # --- identity and record projection -------------------------------------------
 
 
-def test_scene_identity_is_deterministic_and_scoped():
-    source = recording_source(robot_run_id="run-1", unit_key="segment-000000")
-    scene_id = scene_id_for(dataset_id="d", dataset_version="v1", source=source)
-    assert scene_id == scene_id_for(dataset_id="d", dataset_version="v1", source=source)
-    assert scene_id.startswith("scene-") and len(scene_id) <= 128
-
-    assert scene_id != scene_id_for(dataset_id="d", dataset_version="v2", source=source)
-    assert scene_id != scene_id_for(
-        dataset_id="d",
-        dataset_version="v1",
-        source=recording_source(robot_run_id="run-2", unit_key="segment-000000"),
-    )
-    # The recording revision and the window are not identity: a rebuild of
-    # the same unit key keeps the id.
-    rebuilt = recording_source(
-        robot_run_id="run-1",
-        unit_key="segment-000000",
-        recording_checksum="sha256:" + "9" * 64,
-        start_timestamp_ns=5,
-        end_timestamp_ns=6,
-        source_clock="sensor.header_stamp",
-    )
-    assert scene_id == scene_id_for(
-        dataset_id="d", dataset_version="v1", source=rebuilt
-    )
-    # Pinned: the identity document is unchanged from when external units
-    # existed (§29.9).
-    assert (
-        scene_id
-        == "scene-"
-        + __import__("hashlib")
-        .sha256(
-            __import__(
-                "sceneops_core.common.canonical_json", fromlist=["x"]
-            ).canonical_json_bytes(
-                {
-                    "unit_id_schema": "sceneops.unit_id/v1",
-                    "domain": "scene",
-                    "dataset_id": "d",
-                    "dataset_version": "v1",
-                    "source": {
-                        "source_kind": "recording",
-                        "robot_run_id": "run-1",
-                        "unit_key": "segment-000000",
-                    },
-                }
-            )
-        )
-        .hexdigest()[:32]
-    )
-
-    a = recording_source(robot_run_id="run-1", unit_key="seg-0")
-    b = recording_source(robot_run_id="run-1", unit_key="seg-1")
-    assert scene_id_for(dataset_id="d", dataset_version="v1", source=a) != scene_id_for(
-        dataset_id="d", dataset_version="v1", source=b
-    )
-    # Ambiguous concatenations cannot collide.
-    assert scene_id_for(
-        dataset_id="d-v", dataset_version="1", source=source
-    ) != scene_id_for(dataset_id="d", dataset_version="v-1", source=source)
-
-
 def test_record_projection_is_derived_from_the_manifest():
     manifest = build_scene_manifest(keyframe_timestamps_ns=(1_000, 3_000))
     record = project_scene_record(
@@ -528,9 +466,7 @@ def test_record_projection_is_derived_from_the_manifest():
         manifest_artifact_id="art-1",
         manifest_checksum=manifest.checksum(),
     )
-    assert record.scene_id == scene_id_for(
-        dataset_id="d", dataset_version="v1", source=manifest.lineage.source
-    )
+    assert record.scene_id == scene_id_for(manifest.lineage.source)
     assert record.robot_run_id == "run-001"
     assert record.unit_key == "segment-0000"
     assert record.producer_fingerprint == manifest.lineage.producer.producer_fingerprint
@@ -576,10 +512,7 @@ def test_producer_info_changes_change_fingerprint_not_identity():
         != b.lineage.producer.producer_fingerprint
     )
     assert a.checksum() != b.checksum()
-    ids = {
-        scene_id_for(dataset_id="d", dataset_version="v1", source=m.lineage.source)
-        for m in (a, b)
-    }
+    ids = {scene_id_for(m.lineage.source) for m in (a, b)}
     assert len(ids) == 1
     assert isinstance(a.lineage.producer, ProducerInfo)
 

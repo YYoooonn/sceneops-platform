@@ -161,7 +161,10 @@ projecting the manifest revision `manifest_artifact_id` names. Written only
 by Scene registration. There is no status column.
 
 Key fields (contract: [Scene domain](./scene-domain.md) §2):
-- `scene_id`: deterministic from `(dataset_id, dataset_version, robot_run_id, unit_key)`.
+- `scene_id`: deterministic from the source binding `(source_kind, robot_run_id,
+  unit_key)`, independent of the DatasetVersion
+  ([Ingress boundaries](./ingress-boundaries.md) §6). The row also holds the one
+  membership, so a Scene belongs to at most one DatasetVersion.
 - `dataset_id`, `dataset_version`: FK to `dataset_versions` (RESTRICT).
 - `robot_run_id` (NOT NULL, FK to `robot_runs`, RESTRICT), `unit_key`,
   `producer_fingerprint`: source and producer projections.

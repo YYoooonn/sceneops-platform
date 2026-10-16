@@ -18,9 +18,9 @@ non-lossy index over observations (``groups``), never instead of them.
 The manifest describes the unit, not its membership: it holds no
 DatasetVersion, scene id, record state or execution context. Identical
 source, producer and build configuration therefore produce byte-identical
-manifests, whatever DatasetVersion registers them. The registrar derives
-the DatasetVersion-scoped ``scene_id`` from (dataset_id, dataset_version,
-robot_run_id, unit_key).
+manifests, whatever DatasetVersion registers them. The unit id is derived
+from the source binding (``scene_id_for``) and the revision is the manifest
+checksum (``sceneops_core.provenance.revisions``); neither is stored here.
 
 Source time is never synchronized or converted: every timestamp is an
 integer nanosecond count in exactly one declared clock. An observation's

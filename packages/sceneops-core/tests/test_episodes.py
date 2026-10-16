@@ -157,21 +157,13 @@ class TestRecordAndIdentity:
             manifest_artifact_id="episode-manifest-x",
             manifest_checksum=manifest.checksum(),
         )
-        assert record.episode_id == episode_id_for(
-            dataset_id="ds", dataset_version="v1", source=manifest.lineage.source
-        )
+        assert record.episode_id == episode_id_for(manifest.lineage.source)
         assert record.robot_run_id == "run-001"
         assert record.unit_key == "recording"
         assert (record.observation_count, record.state_count) == (3, 3)
         assert (record.action_count, record.event_count) == (3, 2)
         assert record.action_topics == ["/control"]
         assert record.window_clock == "sensor.header_stamp"
-
-    def test_episode_id_is_dataset_version_scoped_and_domain_distinct(self) -> None:
-        source = _asynchronous().lineage.source
-        a = episode_id_for(dataset_id="ds", dataset_version="v1", source=source)
-        b = episode_id_for(dataset_id="ds", dataset_version="v2", source=source)
-        assert a != b and a.startswith("episode-")
 
 
 class TestRunPinsAndReadiness:

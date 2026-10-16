@@ -215,9 +215,7 @@ def scene_record_for(unique_id, seed_robot_run):
         manifest = build_scene_manifest(source=source, **manifest_kwargs)
         data = manifest.to_canonical_bytes()
         checksum = manifest.checksum()
-        scene_id = scene_id_for(
-            dataset_id=dataset_id, dataset_version=dataset_version, source=source
-        )
+        scene_id = scene_id_for(source)
         artifact_id = unique_id("art-scene-manifest")
         await PostgresArtifactRefRepository(session).create(
             artifact_id=artifact_id,
@@ -287,9 +285,7 @@ def episode_record_for(unique_id, seed_robot_run):
                 recording_checksum=source.recording_checksum,
             )
         data = manifest.to_canonical_bytes()
-        episode_id = episode_id_for(
-            dataset_id=dataset_id, dataset_version=dataset_version, source=source
-        )
+        episode_id = episode_id_for(source)
         artifact_id = unique_id("art-episode-manifest")
         await PostgresArtifactRefRepository(session).create(
             artifact_id=artifact_id,

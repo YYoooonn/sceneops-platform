@@ -13,6 +13,10 @@ type, and it carries no Scene-, Episode- or source-format-specific field, no
 location, no SourceSnapshot and no execution context. Each domain composes a
 binding into its own lineage.
 
+Each binding names its *source identity* (``source_id``): the RobotRun id
+or the content id, the stable identity a canonical unit is keyed under
+(``sceneops_core.provenance.identity``).
+
 Each binding projects the *source revision* it pins (``source_revision()``):
 the build-level identity of the exact source bytes, without the per-unit key
 or window. The producer fingerprint is computed over that revision
@@ -187,6 +191,12 @@ class RecordingSegmentSource(_ProvenanceModel):
         _check_window(self.start_timestamp_ns, self.end_timestamp_ns)
         return self
 
+    @property
+    def source_id(self) -> str:
+        """The RobotRun is the source identity: one run has exactly one
+        immutable recording, so the checksum is not needed to name it."""
+        return self.robot_run_id
+
     def contains(self, timestamp_ns: int) -> bool:
         """Half-open window membership, in this segment's ``source_clock``."""
         return self.start_timestamp_ns <= timestamp_ns < self.end_timestamp_ns
@@ -244,6 +254,13 @@ class ContentUnitSource(_ProvenanceModel):
         _check_window(self.start_timestamp_ns, self.end_timestamp_ns)
         return self
 
+    @property
+    def source_id(self) -> str:
+        """The content is the source identity. It is a function of the
+        bytes, so every SourceSnapshot that declares them names the same
+        source."""
+        return self.content_id
+
     def contains(self, timestamp_ns: int) -> bool:
         """Half-open window membership, in this unit's ``source_clock``."""
         return self.start_timestamp_ns <= timestamp_ns < self.end_timestamp_ns
@@ -255,6 +272,12 @@ class ContentUnitSource(_ProvenanceModel):
         )
 
 
+SourceBinding: TypeAlias = Annotated[
+    RecordingSegmentSource | ContentUnitSource,
+    Field(discriminator="source_kind"),
+]
+
+
 __all__ = [
     "SHA256_CHECKSUM_PATTERN",
     "UNIT_KEY_MAX_LENGTH",
@@ -262,5 +285,6 @@ __all__ = [
     "ContentUnitSource",
     "RecordingSegmentSource",
     "RecordingSourceRevision",
+    "SourceBinding",
     "SourceRevision",
 ]

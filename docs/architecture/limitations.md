@@ -117,6 +117,15 @@ canonical unit except as a converted recording. Current builder bounds:
   field must resolve to a bool, integer, finite float, string or numeric list in every
   message; NaN / Infinity fail the build. Canonical Episodes carry no outcome, success
   label, reward or language instruction.
+- Unit identity is independent of the DatasetVersion, but `scenes` / `episodes` rows
+  fuse the unit, its one current revision and its one DatasetVersion membership. A
+  source unit can therefore be built and registered into at most one DatasetVersion:
+  building the same RobotRun into a second DatasetVersion fails, at the manifest
+  ArtifactRecord (same id, other location) or at the unit's primary key. The
+  registrars apply the recording-scope replace rule, not the revision decision of
+  [Ingress boundaries](./ingress-boundaries.md) §6.
+- Recording unit keys (`recording`, `segment-<k>`, `task-<key>-<n>`) do not carry the
+  segmentation policy, so two segmentations of one RobotRun share unit ids.
 - The robot telemetry projection (`ingest_robot_states`) reads its own fixed topic set
   and `RobotStateRecord` columns; it is a derived table, not canonical Episode data.
 - Validation scope: the journeys are validated on one nuScenes mini scene

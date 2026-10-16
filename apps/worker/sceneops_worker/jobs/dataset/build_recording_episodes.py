@@ -27,12 +27,10 @@ job. Bytes written by a failed build stay as unreferenced objects (§19).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 
 from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import episode_id_for
@@ -42,7 +40,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.provenance import PinnedRecording
+from sceneops_core.provenance import PinnedRecording, manifest_artifact_id_for
 from sceneops_recording import check_l1_recording
 
 from sceneops_episodes.recording_builder import (
@@ -58,18 +56,6 @@ from sceneops_worker.recordings.artifact_records import (
 )
 from sceneops_recording.observations.payloads import PlannedPayload
 from sceneops_worker.robots.resolver import resolve_recording
-
-EPISODE_MANIFEST_ARTIFACT_ID_SCHEMA_V1 = "sceneops.episode_manifest_artifact_id/v1"
-
-
-def episode_manifest_artifact_id(*, episode_id: str, checksum: str) -> str:
-    document = {
-        "artifact_id_schema": EPISODE_MANIFEST_ARTIFACT_ID_SCHEMA_V1,
-        "episode_id": episode_id,
-        "checksum": checksum,
-    }
-    digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
-    return f"episode-manifest-{digest[:32]}"
 
 
 class BuildRecordingEpisodesJobHandler(
@@ -211,19 +197,15 @@ class BuildRecordingEpisodesJobHandler(
         context = request.context
         artifact_ids: list[str] = []
         for episode in plan.episodes:
-            episode_id = episode_id_for(
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                source=episode.manifest.lineage.source,
-            )
+            episode_id = episode_id_for(episode.manifest.lineage.source)
             published = await context.episode_artifact_store.publish_canonical_manifest(
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
                 episode_id=episode_id,
                 manifest=episode.manifest,
             )
-            artifact_id = episode_manifest_artifact_id(
-                episode_id=episode_id, checksum=published.checksum
+            artifact_id = manifest_artifact_id_for(
+                unit_id=episode_id, manifest_checksum=published.checksum
             )
             ref = ArtifactRef(
                 kind=ArtifactKind.EPISODE_MANIFEST,
@@ -261,5 +243,4 @@ def _payload_ref(planned: PlannedPayload, uri: str) -> ArtifactRef:
 __all__ = [
     "ArtifactRecordConflictError",
     "BuildRecordingEpisodesJobHandler",
-    "episode_manifest_artifact_id",
 ]

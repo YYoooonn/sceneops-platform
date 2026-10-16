@@ -12,14 +12,15 @@
 | --- | --- | --- | --- |
 | **Acquisition** | live / recorded robot data capture, the run lifecycle, recording integrity, publication, `REGISTER_ROBOT_RUN`, the RobotRun | decide units, clocks or channel meaning; name a Scene, Episode or DatasetVersion | `sceneops_core.robots` (`RobotRunManifest`, `RobotRunRecord`) |
 | **Dataset Integration** | external dataset preservation: native bytes (SourceContent) and upstream declarations (SourceSnapshot) | create a RobotRun; interpret, convert or filter inside a file; decide units, clocks or channel meaning | `sceneops_core.sources` (inventory, declaration, descriptor) |
-| **Canonical building** | interpreting one pinned source as Scenes / Episodes: unit boundaries, clock, timestamp normalization, channel meaning, decoding | modify its source; read a snapshot descriptor; name a location | `sceneops_core.provenance` (source bindings, source revisions, pinned builder inputs, producer fingerprint) |
+| **Canonical building** | interpreting one pinned source as Scenes / Episodes: unit boundaries, clock, timestamp normalization, channel meaning, decoding | modify its source; read a snapshot descriptor; name a location | `sceneops_core.provenance` (source bindings, source revisions, pinned builder inputs, producer fingerprint, unit and revision identity) |
 
 Neither ingress family passes through the other, and neither ingress contract imports
 the other or the canonical layer. Canonical building reads both through explicit
 source bindings; there is no common ingestion abstraction and no generic data unit.
-Canonical identity, manifest revisions and DatasetVersion composition are downstream
-of the bindings and are described in the [Scene domain](./scene-domain.md),
-[Episode domain](./episode-domain.md) and [Data model](./data-model.md).
+Unit and revision identity derive from the bindings alone (§6). Registration and
+DatasetVersion membership are downstream of them and are described in the
+[Scene domain](./scene-domain.md), [Episode domain](./episode-domain.md) and
+[Data model](./data-model.md).
 
 ## 2. Process-to-process schema flow
 
@@ -97,8 +98,8 @@ binding projects the source revision the producer fingerprint is computed over.
 
 | `source_kind` | Binding (per unit) | Revision (fingerprint input) |
 | --- | --- | --- |
-| `recording` | `RecordingSegmentSource`: `robot_run_id`, `recording_artifact_id` (= `art-robotrun-<robot_run_id>`), `recording_checksum`, `source_clock`, `[start, end)`, `unit_key` | `RecordingSourceRevision`: `robot_run_id`, `recording_checksum` |
-| `content` | `ContentUnitSource`: `content_id` (= `content_id_for(content_checksum)`), `content_checksum`, `source_clock`, `[start, end)`, `unit_key` (the source's own key, verbatim) | `ContentSourceRevision`: `content_id`, `content_checksum` |
+| `recording` | `RecordingSegmentSource`: `robot_run_id` (= `source_id`), `recording_artifact_id` (= `art-robotrun-<robot_run_id>`), `recording_checksum`, `source_clock`, `[start, end)`, `unit_key` | `RecordingSourceRevision`: `robot_run_id`, `recording_checksum` |
+| `content` | `ContentUnitSource`: `content_id` (= `content_id_for(content_checksum)` = `source_id`), `content_checksum`, `source_clock`, `[start, end)`, `unit_key` (the source's own key, verbatim) | `ContentSourceRevision`: `content_id`, `content_checksum` |
 
 - `SourceRevision` is the closed union of the two revisions, discriminated by
   `source_kind`; `compute_producer_fingerprint` and `ProducerInfo` accept either. The
@@ -108,6 +109,9 @@ binding projects the source revision the producer fingerprint is computed over.
   declaration of the same bytes changes no binding or fingerprint. Which snapshot a
   build read is execution provenance, recorded on that build's Job.
 - No binding carries a location, DatasetVersion or execution context.
+- `SourceBinding` is the closed union of the two bindings. `source_id` is the stable
+  source identity a unit is keyed under: the RobotRun id, or the content id, which is
+  a function of the bytes.
 - `SceneManifest` and `EpisodeManifest` lineage admit `RecordingSegmentSource` only. A
   manifest variant lands together with the builder that produces it, so registration
   and downstream consumers never receive a source kind nothing produces.
@@ -131,7 +135,56 @@ The bytes are not part of the input: each source has a verified resolver that ch
 them against the pinned checksum (`resolve_recording` for recordings). Neither input
 names a DatasetVersion, and `PinnedContent` names no SourceSnapshot.
 
-## 6. Enforced boundaries
+## 6. Unit and revision identity
+
+`sceneops_core.provenance.identity` and `sceneops_core.provenance.revisions`. The two
+identities answer different questions and neither embeds a DatasetVersion, snapshot,
+location or execution context:
+
+```text
+unit_id               <domain>-<sha256(canonical_json({unit_id_schema: "sceneops.unit_id/v2",
+                          domain, source_kind, source_id, unit_key}))[:32]>
+                      domain scene | episode; source_id from the binding
+                      scene_id_for(source) / episode_id_for(source)
+revision              (unit_id, manifest_checksum); manifest_checksum = sha256 of the
+                      canonical manifest bytes
+manifest_artifact_id  <domain>-manifest-<sha256(canonical_json({manifest_artifact_id_schema:
+                          "sceneops.unit_manifest_artifact_id/v1", unit_id,
+                          manifest_checksum}))[:32]>
+```
+
+- A unit is "which logical unit of which source". The source revision checksum, the
+  window, the clock, the producer and its build configuration are not inputs, so a
+  rebuild of the same unit key is the same unit, and identical content declared by
+  several snapshots yields the same units.
+- `source_kind` is an input, so a RobotRun id spelled like a content id never names
+  the same unit.
+- A revision is "which canonical interpretation of that unit". The producer
+  fingerprint determines it: one unit and one fingerprint have at most one manifest
+  checksum.
+- `check_revision_pin` accepts a pin only if its artifact id is the one its
+  `(unit_id, manifest_checksum)` derives.
+
+`decide_revision_registration` is the pure registration decision for one candidate,
+given every registered revision of its unit. It never deletes or repoints a revision,
+and a unit has no current revision:
+
+```text
+nothing registered for the unit                       NEW_UNIT
+candidate manifest_checksum registered                EXISTING_REVISION (no-op; a retry
+                                                      converges here)
+no revision under the candidate fingerprint           NEW_REVISION
+another checksum under the candidate fingerprint      NonDeterministicProducerError
+registered revisions already inconsistent, or a       InconsistentRevisionsError /
+revision of another unit                              RevisionPinError
+```
+
+The builders use the unit and manifest artifact ids. The registrars still apply the
+recording-scope rule of the [Scene domain](./scene-domain.md) §3 and
+[Episode domain](./episode-domain.md) §5, not this decision
+([limitations](./limitations.md) §5).
+
+## 7. Enforced boundaries
 
 `packages/sceneops-core/tests/test_ingress_boundaries.py`:
 
@@ -144,4 +197,5 @@ names a DatasetVersion, and `PinnedContent` names no SourceSnapshot.
 - Scene and Episode manifests reject a content binding.
 
 Record contracts: `test_source_content.py`; bindings, revisions and pinned inputs:
-`test_provenance_sources.py`; fingerprint: `test_producer_fingerprint.py`.
+`test_provenance_sources.py`; fingerprint: `test_producer_fingerprint.py`; unit and
+revision identity and the registration decision: `test_unit_identity.py`.

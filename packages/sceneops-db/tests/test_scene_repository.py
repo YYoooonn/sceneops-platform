@@ -216,19 +216,25 @@ async def test_projection_check_constraints(
 async def test_scenes_persist_across_sessions_and_block_dataset_version_deletion(
     unique_id, seed_dataset_version, scene_record_for
 ):
-    """Committed rows: the same recording unit in two DatasetVersions is two
-    independent Scenes, and a DatasetVersion with members cannot be
-    deleted out from under them."""
+    """Committed rows: Scenes of two DatasetVersions persist independently,
+    and a DatasetVersion with members cannot be deleted out from under
+    them."""
     sessionmaker = get_async_sessionmaker()
     dataset_id = unique_id("ds")
-    source = recording_source(robot_run_id=unique_id("run"), unit_key="segment-000000")
     async with sessionmaker() as session:
         await seed_dataset_version(session, dataset_id=dataset_id, version="v1")
         await seed_dataset_version(session, dataset_id=dataset_id, version="v2")
         repo = PostgresSceneRepository(session)
-        a = await scene_record_for(session, dataset_id=dataset_id, source=source)
+        a = await scene_record_for(
+            session,
+            dataset_id=dataset_id,
+            source=recording_source(robot_run_id=unique_id("run")),
+        )
         b = await scene_record_for(
-            session, dataset_id=dataset_id, dataset_version="v2", source=source
+            session,
+            dataset_id=dataset_id,
+            dataset_version="v2",
+            source=recording_source(robot_run_id=unique_id("run")),
         )
         await repo.insert(a)
         await repo.insert(b)

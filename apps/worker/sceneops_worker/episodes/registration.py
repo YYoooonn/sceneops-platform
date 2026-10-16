@@ -10,7 +10,7 @@ writes manifest or payload bytes, and never reads a Scene.
         are a canonical EpisodeManifest (strict parse, fingerprint re-derived);
         every payload reference resolves to an OBSERVATION_PAYLOAD
         ArtifactRecord with exactly the referenced checksum, size and media type
-    E2  derive each Episode's DatasetVersion-scoped id; reject duplicate units,
+    E2  derive each Episode's unit id; reject duplicate units,
         more than one RobotRun or producer fingerprint, an unregistered
         RobotRun, or a manifest built from other recording bytes than the
         RobotRun's

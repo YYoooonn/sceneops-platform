@@ -8,6 +8,11 @@ holds besides membership and that pointer is derivable from the manifest.
 There is no status, task or outcome: the record exists if and only if the
 unit is registered, and readiness lives in run records that pin the
 revision they assessed. Only the Episode registrar writes records.
+
+``episode_id`` is independent of the DatasetVersion, but the record still
+carries exactly one membership and one revision, so an Episode is a member
+of at most one DatasetVersion until units, revisions and membership are
+persisted separately.
 """
 
 from __future__ import annotations
@@ -17,22 +22,21 @@ from datetime import datetime
 from pydantic import ConfigDict, Field, model_validator
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, to_camel
-from sceneops_core.provenance import RecordingSegmentSource, canonical_unit_id
+from sceneops_core.provenance import (
+    ContentUnitSource,
+    RecordingSegmentSource,
+    canonical_unit_id,
+)
 
 from ..recording_build import EpisodeStreamRole
 from .manifests import EpisodeManifest
 
 
-def episode_id_for(
-    *, dataset_id: str, dataset_version: str, source: RecordingSegmentSource
-) -> str:
-    """Deterministic, DatasetVersion-scoped Episode identity (ADR-007 §18.1)."""
-    return canonical_unit_id(
-        domain="episode",
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        source=source,
-    )
+def episode_id_for(source: RecordingSegmentSource | ContentUnitSource) -> str:
+    """Deterministic Episode unit identity from its source binding alone
+    (ADR-015 §3): the same source unit is one Episode in every DatasetVersion
+    that references it."""
+    return canonical_unit_id(domain="episode", source=source)
 
 
 class EpisodeRecord(SceneOpsBaseModel):
@@ -98,9 +102,7 @@ def project_episode_record(
     source = manifest.lineage.source
     window = manifest.declared_window()
     return EpisodeRecord(
-        episode_id=episode_id_for(
-            dataset_id=dataset_id, dataset_version=dataset_version, source=source
-        ),
+        episode_id=episode_id_for(source),
         dataset_id=dataset_id,
         dataset_version=dataset_version,
         robot_run_id=source.robot_run_id,

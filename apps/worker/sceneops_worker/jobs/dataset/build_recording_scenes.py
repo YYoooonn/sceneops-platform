@@ -25,12 +25,10 @@ garbage collection, §19).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 
 from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import (
     BuildRecordingScenesJobParams,
@@ -38,7 +36,7 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.provenance import PinnedRecording
+from sceneops_core.provenance import PinnedRecording, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import scene_id_for
 from sceneops_recording import check_l1_recording
 
@@ -56,18 +54,6 @@ from sceneops_scenes.recording_builder import (
     iter_planned_payloads,
     plan_recording_scenes,
 )
-
-SCENE_MANIFEST_ARTIFACT_ID_SCHEMA_V1 = "sceneops.scene_manifest_artifact_id/v1"
-
-
-def scene_manifest_artifact_id(*, scene_id: str, checksum: str) -> str:
-    document = {
-        "artifact_id_schema": SCENE_MANIFEST_ARTIFACT_ID_SCHEMA_V1,
-        "scene_id": scene_id,
-        "checksum": checksum,
-    }
-    digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
-    return f"scene-manifest-{digest[:32]}"
 
 
 class BuildRecordingScenesJobHandler(
@@ -218,19 +204,15 @@ class BuildRecordingScenesJobHandler(
         context: WorkerContext = request.context
         artifact_ids: list[str] = []
         for scene in plan.scenes:
-            scene_id = scene_id_for(
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                source=scene.manifest.lineage.source,
-            )
+            scene_id = scene_id_for(scene.manifest.lineage.source)
             published = await context.scene_artifact_store.publish_canonical_manifest(
                 dataset_id=params.dataset_id,
                 dataset_version=params.dataset_version,
                 scene_id=scene_id,
                 manifest=scene.manifest,
             )
-            artifact_id = scene_manifest_artifact_id(
-                scene_id=scene_id, checksum=published.checksum
+            artifact_id = manifest_artifact_id_for(
+                unit_id=scene_id, manifest_checksum=published.checksum
             )
             ref = ArtifactRef(
                 kind=ArtifactKind.SCENE_MANIFEST,
@@ -259,5 +241,4 @@ class BuildRecordingScenesJobHandler(
 __all__ = [
     "ArtifactRecordConflictError",
     "BuildRecordingScenesJobHandler",
-    "scene_manifest_artifact_id",
 ]

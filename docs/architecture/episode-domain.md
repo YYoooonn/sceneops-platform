@@ -125,8 +125,9 @@ and read only through a pinned checksum and a strict canonical parse.
 ## 5. Identity, registration and EpisodeRecord
 
 ```text
-episode_id     canonical_unit_id("episode", dataset_id, dataset_version,
-               robot_run_id, unit_key)
+episode_id     episode_id_for(source): f(source_kind, source_id = robot_run_id,
+               unit_key); no DatasetVersion (Ingress boundaries §6)
+artifact id    manifest_artifact_id_for(episode_id, manifest_checksum)
 scope          (DatasetVersion, robot_run_id): one producer fingerprint
 same fingerprint            -> unchanged
 different, replace=false    -> conflict, no change

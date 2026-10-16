@@ -23,9 +23,9 @@ values.
 The manifest describes the unit, not its membership: no DatasetVersion,
 episode id, record state or execution context. Identical source, producer
 and build configuration produce byte-identical manifests whatever
-DatasetVersion registers them; the registrar derives the DatasetVersion-
-scoped ``episode_id`` from (dataset_id, dataset_version, robot_run_id,
-unit_key).
+DatasetVersion registers them. The unit id is derived from the source
+binding (``episode_id_for``) and the revision is the manifest checksum
+(``sceneops_core.provenance.revisions``); neither is stored here.
 
 Representation conventions fixed by ``sceneops.episode_manifest/v1``:
 

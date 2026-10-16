@@ -97,18 +97,8 @@ def test_same_run_rebuild_is_identical(tmp_path):
         s.manifest.to_canonical_bytes() for s in b.scenes
     ]
     assert _payload_ids(a) == _payload_ids(b)
-    ids = [
-        scene_id_for(
-            dataset_id="d", dataset_version="v1", source=s.manifest.lineage.source
-        )
-        for s in a.scenes
-    ]
-    assert ids == [
-        scene_id_for(
-            dataset_id="d", dataset_version="v1", source=s.manifest.lineage.source
-        )
-        for s in b.scenes
-    ]
+    ids = [scene_id_for(s.manifest.lineage.source) for s in a.scenes]
+    assert ids == [scene_id_for(s.manifest.lineage.source) for s in b.scenes]
 
 
 def test_same_run_identity_ignores_cross_channel_write_order(tmp_path):

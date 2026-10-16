@@ -356,11 +356,7 @@ class SceneWorld:
         from sceneops_core.artifacts.schemas import ArtifactKind
         from sceneops_core.scenes.schemas import scene_id_for
 
-        scene_id = scene_id_for(
-            dataset_id=dataset_id,
-            dataset_version=version,
-            source=manifest.lineage.source,
-        )
+        scene_id = scene_id_for(manifest.lineage.source)
         published = await self.scene_artifact_store.publish_canonical_manifest(
             dataset_id=dataset_id,
             dataset_version=version,

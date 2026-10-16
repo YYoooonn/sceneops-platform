@@ -121,10 +121,13 @@ registered_at, updated_at
 
 There is no status column. A record exists if and only if the unit is
 registered; its current revision is exactly `manifest_artifact_id`, never
-"the latest manifest". `scene_id` comes from
-`sceneops_core.provenance.canonical_unit_id`: a hash of a canonical identity
-document, so it never depends on storage location, producer configuration
-or revision. The same source unit in two DatasetVersions is two Scenes.
+"the latest manifest". `scene_id` is `scene_id_for(source)`, the unit identity
+of [Ingress boundaries](./ingress-boundaries.md) §6: a function of
+`(source_kind, source_id, unit_key)` that never depends on a DatasetVersion,
+storage location, producer configuration, window or revision.
+`manifest_artifact_id` is derived from `(scene_id, manifest_checksum)`. The
+record still carries exactly one membership, so one source unit is a Scene of
+at most one DatasetVersion ([limitations](./limitations.md) §5).
 
 The window columns are a projection of the declared segment window, never
 of observation extent, and never define identity. SceneOps does not

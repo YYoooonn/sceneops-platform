@@ -9,6 +9,11 @@ the manifest stays the only place the unit can be reconstructed from.
 There is no status: the record exists if and only if the unit is
 registered. Validation, profiling and readiness live in run records that
 pin the revision they assessed. Only the Scene registrar writes records.
+
+``scene_id`` is independent of the DatasetVersion, but the record still
+carries exactly one membership and one revision, so a Scene is a member of
+at most one DatasetVersion until units, revisions and membership are
+persisted separately.
 """
 
 from __future__ import annotations
@@ -18,21 +23,20 @@ from datetime import datetime
 from pydantic import ConfigDict, Field, model_validator
 
 from sceneops_core.common.schemas import SceneOpsBaseModel, to_camel
-from sceneops_core.provenance import RecordingSegmentSource, canonical_unit_id
+from sceneops_core.provenance import (
+    ContentUnitSource,
+    RecordingSegmentSource,
+    canonical_unit_id,
+)
 
 from .manifests import SceneManifest
 
 
-def scene_id_for(
-    *, dataset_id: str, dataset_version: str, source: RecordingSegmentSource
-) -> str:
-    """Deterministic, DatasetVersion-scoped Scene identity (ADR-007 §18.1)."""
-    return canonical_unit_id(
-        domain="scene",
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        source=source,
-    )
+def scene_id_for(source: RecordingSegmentSource | ContentUnitSource) -> str:
+    """Deterministic Scene unit identity from its source binding alone
+    (ADR-015 §3): the same source unit is one Scene in every DatasetVersion
+    that references it."""
+    return canonical_unit_id(domain="scene", source=source)
 
 
 class SceneRecord(SceneOpsBaseModel):
@@ -94,9 +98,7 @@ def project_scene_record(
     source = manifest.lineage.source
     window = manifest.declared_window()
     return SceneRecord(
-        scene_id=scene_id_for(
-            dataset_id=dataset_id, dataset_version=dataset_version, source=source
-        ),
+        scene_id=scene_id_for(source),
         dataset_id=dataset_id,
         dataset_version=dataset_version,
         robot_run_id=source.robot_run_id,

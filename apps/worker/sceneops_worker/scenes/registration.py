@@ -11,7 +11,7 @@ writes manifest or payload bytes.
         every observation payload reference resolves to an OBSERVATION_PAYLOAD
         ArtifactRecord with exactly the referenced checksum, size and media
         type
-    S2  derive each Scene's DatasetVersion-scoped id; reject duplicate units,
+    S2  derive each Scene's unit id; reject duplicate units,
         more than one RobotRun or producer fingerprint, an unregistered
         RobotRun, or a manifest built from different recording bytes than
         the RobotRun's

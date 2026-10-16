@@ -137,7 +137,7 @@ def align_episode(
     *,
     episode_id: str,
 ) -> AlignedEpisode:
-    """``episode_id`` is the registered, DatasetVersion-scoped id of the
+    """``episode_id`` is the registered unit id of the
     Episode ``manifest`` describes. Never mutates any input."""
     raw = alignment_samples(manifest, source_context.source_clock)
 

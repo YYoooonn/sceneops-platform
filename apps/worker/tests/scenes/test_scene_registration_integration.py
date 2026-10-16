@@ -110,11 +110,7 @@ class _Env:
             ctx = self.context(session)
             if with_payloads:
                 await self.register_payloads(ctx, manifest)
-            scene_id = scene_id_for(
-                dataset_id=self.dataset_id,
-                dataset_version=version,
-                source=manifest.lineage.source,
-            )
+            scene_id = scene_id_for(manifest.lineage.source)
             published = await ctx.scene_artifact_store.publish_canonical_manifest(
                 dataset_id=self.dataset_id,
                 dataset_version=version,

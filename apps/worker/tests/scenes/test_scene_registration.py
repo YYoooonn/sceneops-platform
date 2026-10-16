@@ -162,20 +162,6 @@ async def test_a_partial_input_never_extends_a_registered_scope(scene_world):
     assert [s.unit_key for s in scene_world.scenes.committed.values()] == ["a"]
 
 
-async def test_same_source_in_two_dataset_versions_is_two_scenes(scene_world):
-    scene_world.add_dataset_version("ds", "v1")
-    scene_world.add_dataset_version("ds", "v2")
-    manifest = scene_world.manifest()
-    in_v1 = await scene_world.publish(manifest, version="v1")
-    in_v2 = await scene_world.publish(manifest, version="v2")
-
-    a = (await _register(scene_world, [in_v1], version="v1")).scenes[0]
-    b = (await _register(scene_world, [in_v2], version="v2")).scenes[0]
-
-    assert a.scene_id != b.scene_id
-    assert a.manifest_checksum == b.manifest_checksum
-
-
 # --- recording scope (§18.3) ----------------------------------------------------
 
 
@@ -228,12 +214,8 @@ async def test_recording_scope_lifecycle(scene_world):
     # With replace the scope is swapped atomically: reused key repointed,
     # absent key removed, new key inserted, one fingerprint remains.
     replaced = await _register(scene_world, rebuilt, replace=True)
-    seg0 = scene_id_for(
-        dataset_id="ds", dataset_version="v1", source=_segment("seg-0", 0, 1)
-    )
-    seg1 = scene_id_for(
-        dataset_id="ds", dataset_version="v1", source=_segment("seg-1", 0, 1)
-    )
+    seg0 = scene_id_for(_segment("seg-0", 0, 1))
+    seg1 = scene_id_for(_segment("seg-1", 0, 1))
     assert replaced.replaced_scene_ids == [seg0]
     assert replaced.removed_scene_ids == [seg1]
     assert len(replaced.created_scene_ids) == 1
