@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — the local broker is configured accordingly, uncommitted. Closes the "Kafka
+Accepted — implemented; the local broker is configured accordingly. Closes the "Kafka
 retention is not configured" gap recorded in [ADR-008](./008-acquisition-lifecycle-reliability.md)
 (B2). The contract is in [Streaming transport](../architecture/streaming-transport.md) §26.1;
 the measurements are in [Kafka replay window study](../history/streaming-retention-study.md)

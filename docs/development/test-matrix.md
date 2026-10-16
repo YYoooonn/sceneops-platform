@@ -22,6 +22,10 @@ Environment commands (`reference-data-bootstrap`, `reference-contract-bootstrap`
 `local-reset`) prepare or reset what these validate and are not tests. Operator diagnostics
 (`check-*`, `disk-report`, …) and `tools/benchmarks/` are not acceptance gates ([below](#operator-tools-and-benchmarks)).
 
+CI (`.github/workflows/ci.yml`) runs the infrastructure-free gates only — `make lint`,
+`make check-commands` and `make test` — on every push to `main` / `dev` and every pull
+request. Every other layer needs real infrastructure and is run locally.
+
 Use the smallest layer that proves a behavior; use real infrastructure whenever
 infrastructure semantics are part of the contract.
 

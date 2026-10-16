@@ -460,9 +460,11 @@ These are the verified gaps and bounds of the current design.
 - **Dispatch and database are not one atomic unit.** A message can be sent without its
   `ExecutionRecord` being committed, and a record can be committed for a message the
   broker then lost; `ExecutionRecord` is an audit of sends, not of deliveries.
-- **Blocking broker sends in async code.** `Celery.send_task` is synchronous; the API's
-  `dispatch_job` / `dispatch_pipeline` and the worker's `ExecutionDispatcher` call it
-  from `async` code, so the event loop waits for the broker round trip.
+- **Synchronous broker sends in the worker.** `Celery.send_task` is synchronous. The
+  API's `dispatch_job` / `dispatch_pipeline` run it on a thread, so a slow broker never
+  stalls the API's shared event loop. The worker's `ExecutionDispatcher` calls it
+  directly from `async` code; each Celery task runs on its own event loop and its lease
+  renews on another thread, so the wait delays only that task's step.
 - **Strictly serial pipeline scheduling.** One task's Job is in flight per run;
   `depends_on_pipeline_task_ids` is not a scheduling graph.
 - **No cancellation.** `CANCELLED` statuses exist, and re-execution and `JobRunner`

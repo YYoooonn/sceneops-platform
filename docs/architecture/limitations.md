@@ -31,8 +31,10 @@ Details and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md) §5, 
 - **Dispatch and PostgreSQL are not one atomic unit**: a message can be sent without
   its `ExecutionRecord` committing, and an `ExecutionRecord` records a send, not a
   delivery.
-- **`Celery.send_task` blocks the event loop** in the API's dispatch backends and in
-  the worker's dispatcher, which both call it from `async` code.
+- **The worker's broker sends are synchronous.** The worker's `ExecutionDispatcher`
+  calls `Celery.send_task` from `async` code; the API's dispatch backends send on a
+  thread instead. A worker task runs alone on its own event loop and renews its lease
+  from another thread, so a slow broker delays only that task's step.
 - **Pipeline tasks run strictly serially**, one Job in flight per run, in definition
   order; there is no parallel scheduling from the dependency graph.
 - **No cancellation** of a Job or PipelineRun, and no scheduler.
@@ -42,10 +44,15 @@ Details and failure windows: [Jobs and pipelines](./jobs-and-pipelines.md) §5, 
 Details: [Streaming transport](./streaming-transport.md) §26, §31 and
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2, §6.
 
-- **Capture replays the whole topic.** Each capture uses its own consumer group and
-  every attempt, a re-run of a finished run included, starts at the beginning of the
-  topic to reach one run's records. The cost grows with topic history; the measurements are
-  single-broker, local-environment records in
+- **A capture without a start position scans the whole topic.** Capture reads by
+  assignment only and keeps no consumer-group progress
+  ([ADR-013](../adr/013-capture-records-no-kafka-progress.md)). Given the run's
+  `RUN_START` position (`--start-position`, which the streaming launcher takes from the
+  bridge's `run_started` line), it reads that one partition from that offset; without
+  one, every attempt, a re-run of a finished run included, reads every partition from
+  the beginning to reach one run's records, and that cost grows with topic history. The
+  position is not persisted: an operator re-run must supply it again or pay the scan.
+  The scan measurements are single-broker, local-environment records in
   [History](../history/streaming-reliability-scale-baseline.md).
 - **The Kafka replay window is a local-development setting.** The local broker keeps a
   run's records for at least 24 h and caps each partition at 20 GiB
