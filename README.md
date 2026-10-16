@@ -288,7 +288,7 @@ The code-verified list is in [`docs/architecture/limitations.md`](docs/architect
 * Sample views associate by nearest / previous only (no pose interpolation); evaluation applies no frame transform between a prediction and a label.
 * Episodes have no label sets; learning export is numeric scalar / vector only.
 * Streamed capture reaches a canonical `RobotRun` through recoverable one-shot commands (`publish-pending`, `reconcile --once --apply`; `make recovery-up` loops them locally), not through a trigger in capture itself; nothing supervises capture, and there is no live robot control.
-* A Job whose worker died, or work whose Celery message was lost, is recovered only while execution recovery runs (`make recovery-up`), and pipeline tasks run strictly serially; capture replays the whole Kafka topic; artifacts are never deleted by the platform.
+* A Job whose worker died, or work whose Celery message was lost, is recovered only while execution recovery runs (`make recovery-up`), and pipeline tasks run strictly serially; a capture started without its run's Kafka start position scans the whole topic; artifacts are never deleted by the platform.
 * DuckDB queries only work against locally downloaded Parquet files.
 * Operations and leaderboard APIs exist, but there is no web UI.
 
