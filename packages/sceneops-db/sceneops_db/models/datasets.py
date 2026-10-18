@@ -14,7 +14,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from sceneops_db.base import Base
 
@@ -39,13 +39,15 @@ class DatasetModel(Base):
         onupdate=text("now()"),
     )
 
-    versions: Mapped[list["DatasetVersionModel"]] = relationship(
-        back_populates="dataset",
-        cascade="all, delete-orphan",
-    )
-
 
 class DatasetVersionModel(Base):
+    """One committed DatasetVersion (ADR-015 §7, MS-8): inserted with all of
+    its ``dataset_version_members`` in one transaction by
+    COMPOSE_DATASET_VERSION, never updated (a trigger rejects UPDATE) and
+    never deleted while it has members (RESTRICT). ``(dataset_id, version)``
+    is bound once to ``composition_checksum``. The summary columns are
+    computed from the member revisions' projections at composition."""
+
     __tablename__ = "dataset_versions"
 
     __table_args__ = (
@@ -54,76 +56,50 @@ class DatasetVersionModel(Base):
             "version",
             name="uq_dataset_versions_dataset_id_version",
         ),
+        CheckConstraint(
+            "composition_checksum ~ '^sha256:[0-9a-f]{64}$'",
+            name="ck_dataset_versions_composition_checksum",
+        ),
+        CheckConstraint(
+            "scene_count >= 0 AND keyframe_count >= 0 AND observation_count >= 0 "
+            "AND episode_count >= 0 AND scene_count + episode_count > 0",
+            name="ck_dataset_versions_counts",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(256), primary_key=True)
 
     dataset_id: Mapped[str] = mapped_column(
         String(128),
-        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        ForeignKey("datasets.dataset_id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
     version: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    status: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="registered",
-        server_default=text("'registered'"),
-        index=True,
-    )
-    scene_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default=text("0"),
-    )
-    # Scene membership summary: written only by the Scene registrar,
-    # recomputed from SceneRecord rows under this row's lock.
-    keyframe_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default=text("0"),
-    )
-    observation_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default=text("0"),
-    )
-    episode_count: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-        server_default=text("0"),
-    )
+    composition_checksum: Mapped[str] = mapped_column(String(71), nullable=False)
+    # How the members were chosen (a RevisionSelector), or NULL when the
+    # composing Job was given explicit pins.
+    selector: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    scene_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    keyframe_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
     observed_channels: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
-        default=list,
         server_default=text("'[]'::jsonb"),
     )
+    episode_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=text("now()"),
-        onupdate=text("now()"),
-    )
-
-    dataset: Mapped[DatasetModel] = relationship(back_populates="versions")
 
 
 Index("ix_dataset_versions_dataset_id", DatasetVersionModel.dataset_id)
-Index("ix_dataset_versions_status", DatasetVersionModel.status)
 
 
 class DatasetVersionMemberModel(Base):

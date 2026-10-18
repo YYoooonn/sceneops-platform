@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.runs.schemas import RunStatus, RunType
@@ -25,10 +26,9 @@ from sceneops_db.models.scenes import (
     SceneRunRecordModel,
 )
 from sceneops_db.repositories.revisions import RevisionRegistration
-from sceneops_db.repositories.scenes import SceneMembershipSummary
 
 from ._revisions import register_unit_revision
-from ._utils import apply_pagination, apply_values, enum_value
+from ._utils import IN_CLAUSE_CHUNK, apply_pagination, apply_values, enum_value
 
 
 class PostgresSceneRepository:
@@ -75,6 +75,27 @@ class PostgresSceneRepository:
     async def list_revisions(self, scene_id: str) -> list[SceneRevisionRecord]:
         return await self._revisions(SceneRevisionModel.scene_id == scene_id)
 
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[SceneRevisionRecord]:
+        unique = sorted(set(keys))
+        found: list[SceneRevisionRecord] = []
+        for start in range(0, len(unique), IN_CLAUSE_CHUNK):
+            found += await self._revisions(
+                tuple_(
+                    SceneRevisionModel.scene_id, SceneRevisionModel.manifest_checksum
+                ).in_(unique[start : start + IN_CLAUSE_CHUNK])
+            )
+        return found
+
+    async def list_source_revisions(
+        self, *, robot_run_id: str, producer_fingerprint: str
+    ) -> list[SceneRevisionRecord]:
+        return await self._revisions(
+            SceneModel.robot_run_id == robot_run_id,
+            SceneRevisionModel.producer_fingerprint == producer_fingerprint,
+        )
+
     async def register_revision(
         self, revision: SceneRevisionRecord
     ) -> RevisionRegistration[SceneRevisionRecord]:
@@ -117,35 +138,6 @@ class PostgresSceneRepository:
             dataset_version_id=make_dataset_version_id(dataset_id, dataset_version),
             limit=limit,
             offset=offset,
-        )
-
-    async def summarize_membership(
-        self, *, dataset_id: str, dataset_version: str
-    ) -> SceneMembershipSummary:
-        pinned = _pinned_by(make_dataset_version_id(dataset_id, dataset_version))
-        totals = (
-            await self._session.execute(
-                select(
-                    func.count(SceneRevisionModel.scene_id),
-                    func.coalesce(func.sum(SceneRevisionModel.keyframe_count), 0),
-                    func.coalesce(func.sum(SceneRevisionModel.observation_count), 0),
-                ).join(*pinned)
-            )
-        ).one()
-        channels = (
-            await self._session.execute(
-                select(
-                    func.jsonb_array_elements_text(SceneRevisionModel.observed_channels)
-                )
-                .join(*pinned)
-                .distinct()
-            )
-        ).scalars()
-        return SceneMembershipSummary(
-            scene_count=int(totals[0]),
-            keyframe_count=int(totals[1]),
-            observation_count=int(totals[2]),
-            observed_channels=sorted(channels),
         )
 
     async def _revisions(

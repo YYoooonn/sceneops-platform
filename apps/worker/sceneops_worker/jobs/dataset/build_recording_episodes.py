@@ -83,15 +83,6 @@ class BuildRecordingEpisodesJobHandler(
     ) -> BuildRecordingEpisodesJobResult:
         params = request.params
         context = request.context
-        version = await context.dataset_store.get_version(
-            dataset_id=params.dataset_id, version=params.dataset_version
-        )
-        if version is None:
-            raise ValueError(
-                "DatasetVersion is not registered: "
-                f"{params.dataset_id}/{params.dataset_version}"
-            )
-
         async with resolve_recording(
             robot_run_id=params.robot_run_id,
             robot_store=context.robot_store,

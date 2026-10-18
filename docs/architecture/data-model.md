@@ -56,24 +56,27 @@ checksum, and a DatasetVersion holds units only through member pins (§3). Predi
 ## 2. Dataset / DatasetVersion
 
 `datasets` — a logical dataset (e.g. `nuscenes`). `dataset_id` is the PK,
-plus a `default_version` pointer.
+plus a `default_version` pointer. A Dataset is a namespace with mutable display
+metadata, not versioned content.
 
-`dataset_versions` — one snapshot per version. `(dataset_id, version)` is
-unique.
+`dataset_versions` — one committed, immutable composition per version
+(ADR-015 §7, MS-8). `(dataset_id, version)` is unique and is bound once to one
+composition.
 
 Key fields:
-- `status`: `DatasetVersionStatus` — currently a single value, `registered`
-  (see §2.1 below — this is intentional, not a placeholder).
+- `composition_checksum`: the identity of the member pins (§2.1).
+- `selector`: the `RevisionSelector` the members were resolved from, or NULL
+  when the composing Job was given explicit pins (§2.1).
 - `scene_count` / `keyframe_count` / `observation_count` / `observed_channels`:
-  the Scene membership summary (`SceneVersionSummary`).
-- `episode_count`: the Episode membership summary (`EpisodeVersionSummary`),
-  independent of the Scene fields above. See §2.0.1 for who writes either.
+  the Scene summary (`SceneVersionSummary`).
+- `episode_count`: the Episode summary (`EpisodeVersionSummary`).
+- `created_at`.
 
-A DatasetVersion holds no channel requirements and no free-form metadata:
-channel requirements are pipeline / job parameters (ADR-007 §16, I-59).
-
-A DatasetVersion carries no source location or source format; it relates
-to RobotRuns only through its units' provenance. `datasets` has no `type`.
+A DatasetVersion has no status and no update time: if its row exists, it is
+complete. It holds no channel requirements and no free-form metadata; channel
+requirements are pipeline / job parameters (ADR-007 §16, I-59). It carries no
+source location or source format and relates to RobotRuns only through its
+units' provenance. `datasets` has no `type`.
 
 A DatasetVersion caches no quality result. Scene and Episode readiness are
 derived from run records (`scene_run_records` / `episode_run_records`),
@@ -83,33 +86,75 @@ only from runs of the revision each member pins (see
 `dataset_version_members` — the version's units, each pinned at exactly one
 registered revision (§3).
 
-#### 2.0.1 Members and summaries
+Schema rules: the summary columns have no default, are non-negative and count at
+least one member (`ck_dataset_versions_counts`); `composition_checksum` is a
+sha256 (`ck_dataset_versions_composition_checksum`); a `BEFORE UPDATE` trigger
+(`sceneops_reject_update`) rejects any UPDATE; a Dataset with versions and a
+version with members cannot be deleted (RESTRICT).
 
-Canonical registration (`REGISTER_SCENES`, `REGISTER_EPISODES`) never reads or
-writes a DatasetVersion: it registers revisions and returns their complete pins
-([Scene domain](./scene-domain.md) §3). No production code path writes
-`dataset_version_members` or the summary columns
-([Limitations](./limitations.md) §5). The member repository
-(`DatasetVersionMemberRepository`) offers `list` and `add` only; a member is
-never updated (a trigger rejects UPDATE) and the platform has no operation that
-removes one. The summaries are a projection of the members, computed from the
-projection columns of the revisions they pin
-(`SceneRepository.summarize_membership`, `EpisodeRepository.count_members`),
-never from what one build or registration touched.
+### 2.1 Composition
 
-### 2.1 Why `DatasetVersionStatus` has one value
+`COMPOSE_DATASET_VERSION` is the only writer of `dataset_versions` and
+`dataset_version_members` (`sceneops_worker.datasets.composition`). It is a Job,
+submitted through `POST /api/v1/jobs`; no dataset route writes a version.
 
-`DatasetVersionStatus` used to carry Scene-workflow-specific values
-(`INGESTING`/`INGESTED`/`VALIDATING`/`PROFILING`/`READY`/`FAILED`/
-`DEPRECATED`). All were removed — some had zero writers ever, the rest were
-exclusively Scene-domain transitions that don't generalize to Episode (which
-has its own, independent quality model). A `DatasetVersion` is now a
-domain-agnostic parent record; per-domain processing state lives in that
-domain's pipeline/job/run records and summary artifacts, not on this shared
-row. Downstream readiness checks (e.g. "can I run detection prediction
-against this version?") use explicit domain-scoped prerequisite functions
-(`predict_detection.py`/`evaluate_detection.py`'s
-`_require_scene_dataset_ready`) instead of branching on this field.
+```text
+params    dataset_id (an existing Dataset), dataset_version (the new name),
+          exactly one of
+            pins       the complete list of RevisionPins, at most one per unit
+            selector   RevisionSelector {sources: [RevisionSourceClause]}
+stage     reads only: resolve the input to registered revisions once; every
+          pin must match a revision row exactly; a selector clause must select
+          at least one revision; at most one revision per unit; at least one
+          member; composition_checksum and summaries
+converge  name exists + same composition_checksum      -> no-op (created = false)
+          name exists + other composition_checksum     -> fail
+commit    one transaction: the version row, then every member row
+result    dataset_id, dataset_version, composition_checksum, created,
+          member_count, scene_count, episode_count
+```
+
+```text
+composition_checksum = "sha256:" + sha256(canonical_json({
+    "composition_schema": "sceneops.dataset_version_composition/v1",
+    "members":            sorted [[domain, unit_id, manifest_checksum], ...]
+}))
+```
+
+The checksum covers the set of pins only: not their order, the selector, the
+version name or anything mutable. `manifest_artifact_id` is a function of
+`(unit_id, manifest_checksum)`, so it adds nothing. Two versions may have equal
+compositions under different names.
+
+`RevisionSourceClause {domain, robot_run_id, producer_fingerprint}` selects every
+revision of a `domain` unit sourced from `robot_run_id` and registered under
+`producer_fingerprint`. One unit and one fingerprint have at most one revision
+(MS-7), so a clause selects at most one revision per unit; clauses are unique and
+kept in canonical order, and their union is the selection. A selector is resolved
+once, by the composing Job, and stored beside the members it resolved to. It is
+never re-resolved, so registering more revisions later never changes a version.
+
+Summaries are computed once, in the composing Job, from the projections of the
+member revisions (`summarize_composition`). A domain with no member has no
+summary (`scene` / `episode` is null).
+
+Failure and concurrency:
+
+- **Rows only.** Composition writes no object and reads none. It relies on revision
+  registration's durability gate (§3), not on the members' foreign keys, for the
+  bytes a member references.
+- **No partial version.** Staging writes nothing; the commit is one transaction, so
+  an invalid pin (even the last one), a crash or a failed commit leaves no version row
+  and no member.
+- **Races.** The version row is inserted first. A concurrent composition of the same
+  name waits on its key, fails when the first commits, and re-runs the convergence
+  check against the committed version. No row lock is taken: nothing writes a version
+  after commit.
+- **Job retries.** Job state and the composition are separate commits. A Job whose
+  composition committed but whose success was never recorded is reclaimed
+  (ADR-010) and re-run, and the re-run converges as a no-op. That convergence, not a
+  fence, makes duplicate execution safe. Params keep pins in canonical order, so
+  reordered pins share one execution key.
 
 ## 3. Units, revisions and DatasetVersion membership
 

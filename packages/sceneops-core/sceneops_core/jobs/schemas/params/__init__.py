@@ -1,5 +1,6 @@
 from .base import BaseJobParams
 from .dataset import (
+    ComposeDatasetVersionJobParams,
     ExportAnalyticsSnapshotJobParams,
 )
 from .detection import (
@@ -62,6 +63,7 @@ __all__ = [
     "SceneKeyframeValidationConfig",
     "MineScenariosJobParams",
     "ScoreScenarioReadinessJobParams",
+    "ComposeDatasetVersionJobParams",
     "ExportAnalyticsSnapshotJobParams",
     "PredictDetectionJobParams",
     "EvaluateDetectionJobParams",

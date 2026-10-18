@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
-from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import (
     CreateDatasetRequest,
     DatasetRecord,
-    DatasetVersionRecord,
 )
 from sceneops_core.runs.schemas import RunType
 from sceneops_db.repositories.artifacts import ArtifactRepository
@@ -20,7 +18,6 @@ from app.domains.datasets.quality import (
     build_dataset_version_quality_from_aggregate,
 )
 from app.domains.datasets.schemas import (
-    CreateDatasetVersionBody,
     DatasetDetailResponse,
     DatasetListResponse,
     DatasetSceneQualityListResponse,
@@ -105,37 +102,6 @@ class DatasetService:
             dataset_id=dataset_id, limit=limit, offset=offset
         )
         return DatasetVersionListResponse(versions=versions, count=len(versions))
-
-    async def create_dataset_version(
-        self, dataset_id: str, body: CreateDatasetVersionBody
-    ) -> DatasetVersionDetailResponse | None:
-        dataset = await self._repository.get(dataset_id)
-        if dataset is None:
-            return None
-        # This endpoint is used as an upsert (e.g. e2e scripts re-POST it).
-        # A freshly constructed record has
-        # created_at/updated_at=None, which repository.update() would write
-        # through verbatim onto an existing row and violate the NOT NULL
-        # constraint — so preserve the original created_at and stamp a fresh
-        # updated_at explicitly rather than relying on server_default/onupdate
-        # (those only fire when a column is left unset, not set to None).
-        #
-        # The generic upsert below passes scene=None so it leaves every
-        # registrar-owned Scene column alone.
-        existing = await self._version_repository.get(
-            dataset_id=dataset_id, version=body.version
-        )
-        now = utc_now()
-        version = await self._version_repository.upsert(
-            DatasetVersionRecord(
-                dataset_id=dataset_id,
-                version=body.version,
-                status=body.status,
-                created_at=existing.created_at if existing is not None else now,
-                updated_at=now,
-            )
-        )
-        return DatasetVersionDetailResponse(version=version)
 
     async def get_dataset_version(
         self, dataset_id: str, version: str

@@ -11,7 +11,7 @@ import hashlib
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -69,7 +69,6 @@ async def world(scene_world, tmp_path):
         manifest_artifact_id=f"art-robotrunmanifest-{RUN_ID}",
         manifest_checksum="sha256:" + "0" * 64,
     )
-    scene_world.context.dataset_store.get_version = AsyncMock(return_value=object())
     scene_world.recording_checksum = checksum
     return scene_world
 

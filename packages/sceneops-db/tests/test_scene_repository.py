@@ -22,14 +22,23 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from sceneops_core.datasets.schemas import DatasetVersionMember
+from sceneops_core.datasets.schemas import (
+    DatasetRecord,
+    DatasetVersionMember,
+    DatasetVersionRecord,
+    SceneVersionSummary,
+)
 from sceneops_core.provenance import (
     InconsistentRevisionsError,
     NonDeterministicProducerError,
     RevisionDecision,
 )
 from sceneops_core.scenes.testing import recording_source
-from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
+from sceneops_db.postgres.datasets import (
+    PostgresDatasetRepository,
+    PostgresDatasetVersionMemberRepository,
+    PostgresDatasetVersionRepository,
+)
 from sceneops_db.postgres.scenes import PostgresSceneRepository
 from sceneops_db.repositories import UnitIdentityConflictError
 from sceneops_db.session import get_async_sessionmaker
@@ -268,24 +277,26 @@ async def test_unit_and_revision_constraints(
         "UPDATE scene_revisions SET observation_count = 0 WHERE scene_id = :scene",
         "UPDATE dataset_version_members SET manifest_checksum = manifest_checksum "
         "WHERE unit_id = :scene",
+        "UPDATE dataset_versions SET scene_count = scene_count "
+        "WHERE dataset_id = :dataset",
     ],
 )
 async def test_units_revisions_and_members_are_immutable(
     db_session,
     unique_id,
-    seed_dataset_version,
     scene_revision_for,
-    pin_members,
+    compose_version,
     statement,
 ):
     dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
     revision = await scene_revision_for(db_session)
     await PostgresSceneRepository(db_session).register_revision(revision)
-    await pin_members(db_session, dataset_id=dataset_id, revisions=[revision])
+    await compose_version(db_session, dataset_id=dataset_id, revisions=[revision])
 
     async def update():
-        await db_session.execute(text(statement), {"scene": revision.scene_id})
+        await db_session.execute(
+            text(statement), {"scene": revision.scene_id, "dataset": dataset_id}
+        )
 
     await _fails(db_session, DBAPIError, "immutable", update)
 
@@ -304,22 +315,24 @@ async def test_units_revisions_and_members_are_immutable(
             "DELETE FROM dataset_versions WHERE dataset_id = :dataset",
             "dataset_version_members",
         ),
+        (
+            "DELETE FROM datasets WHERE dataset_id = :dataset",
+            "fk_dataset_versions_dataset_id",
+        ),
     ],
 )
 async def test_referenced_rows_cannot_be_deleted(
     db_session,
     unique_id,
-    seed_dataset_version,
     scene_revision_for,
-    pin_members,
+    compose_version,
     statement,
     constraint,
 ):
     dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
     revision = await scene_revision_for(db_session)
     await PostgresSceneRepository(db_session).register_revision(revision)
-    await pin_members(db_session, dataset_id=dataset_id, revisions=[revision])
+    await compose_version(db_session, dataset_id=dataset_id, revisions=[revision])
 
     async def delete():
         await db_session.execute(
@@ -339,17 +352,15 @@ async def test_referenced_rows_cannot_be_deleted(
 
 @pytest.mark.asyncio
 async def test_one_revision_is_pinned_by_two_dataset_versions(
-    db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
+    db_session, unique_id, scene_revision_for, compose_version
 ):
     dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id, version="v1")
-    await seed_dataset_version(db_session, dataset_id=dataset_id, version="v2")
     revision = await scene_revision_for(db_session)
     repo = PostgresSceneRepository(db_session)
     await repo.register_revision(revision)
 
     for version in ("v1", "v2"):
-        await pin_members(
+        await compose_version(
             db_session, dataset_id=dataset_id, version=version, revisions=[revision]
         )
 
@@ -364,12 +375,30 @@ async def test_one_revision_is_pinned_by_two_dataset_versions(
     assert len(await repo.list_revisions(revision.scene_id)) == 1
 
 
+def _member(revision) -> DatasetVersionMember:
+    return DatasetVersionMember.model_validate(revision.pin().model_dump())
+
+
+def _version(dataset_id: str, *, scene_count: int = 1) -> DatasetVersionRecord:
+    return DatasetVersionRecord(
+        dataset_id=dataset_id,
+        version="v1",
+        composition_checksum="sha256:" + "c" * 64,
+        scene=SceneVersionSummary(scene_count=scene_count),
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_version_pins_at_most_one_revision_per_unit(
-    db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
+    db_session, unique_id, scene_revision_for
 ):
+    """The member key (dataset_version_id, unit_id) refuses a second revision
+    of one unit even when the composer's own check is bypassed; the whole
+    insert fails and leaves no version."""
     dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
+    await PostgresDatasetRepository(db_session).create(
+        DatasetRecord(dataset_id=dataset_id)
+    )
     source = recording_source(robot_run_id=unique_id("run"))
     one = await scene_revision_for(db_session, source=source)
     two = await scene_revision_for(
@@ -378,47 +407,44 @@ async def test_a_version_pins_at_most_one_revision_per_unit(
     repo = PostgresSceneRepository(db_session)
     await repo.register_revision(one)
     await repo.register_revision(two)
-    await pin_members(db_session, dataset_id=dataset_id, revisions=[one])
+    versions = PostgresDatasetVersionRepository(db_session)
 
     await _fails(
         db_session,
         IntegrityError,
         "dataset_version_members_pkey",
-        lambda: pin_members(db_session, dataset_id=dataset_id, revisions=[two]),
+        lambda: versions.insert(
+            _version(dataset_id, scene_count=2), [_member(one), _member(two)]
+        ),
     )
-    pinned = await repo.get_member_revision(
-        dataset_id=dataset_id, dataset_version="v1", scene_id=one.scene_id
-    )
-    assert pinned.manifest_checksum == one.manifest_checksum
+    assert await versions.get(dataset_id=dataset_id, version="v1") is None
 
 
 @pytest.mark.asyncio
 async def test_a_member_must_name_a_registered_revision(
-    db_session, unique_id, seed_dataset_version, scene_revision_for
+    db_session, unique_id, scene_revision_for
 ):
     """The foreign key covers the full pin: an artifact id and checksum that
-    name no registered revision of the unit are refused."""
+    name no registered revision of the unit are refused, and the version
+    row inserted before the member goes with it."""
     dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
-    revision = await scene_revision_for(db_session)
-    members = PostgresDatasetVersionMemberRepository(db_session)
-    pin = DatasetVersionMember(
-        domain="scene",
-        unit_id=revision.scene_id,
-        manifest_artifact_id=revision.manifest_artifact_id,
-        manifest_checksum=revision.manifest_checksum,
+    await PostgresDatasetRepository(db_session).create(
+        DatasetRecord(dataset_id=dataset_id)
     )
+    revision = await scene_revision_for(db_session)
+    versions = PostgresDatasetVersionRepository(db_session)
 
     # Not registered yet.
     await _fails(
         db_session,
         IntegrityError,
         "fk_dataset_version_members_scene_revision",
-        lambda: members.add(dataset_id=dataset_id, version="v1", members=[pin]),
+        lambda: versions.insert(_version(dataset_id), [_member(revision)]),
     )
+    assert await versions.get(dataset_id=dataset_id, version="v1") is None
 
     await PostgresSceneRepository(db_session).register_revision(revision)
-    await members.add(dataset_id=dataset_id, version="v1", members=[pin])
+    await versions.insert(_version(dataset_id), [_member(revision)])
 
     async def wrong_domain():
         await db_session.execute(
@@ -442,15 +468,11 @@ async def test_a_member_must_name_a_registered_revision(
 
 
 @pytest.mark.asyncio
-async def test_membership_summary_and_scope_filter(
-    db_session, unique_id, seed_dataset_version, scene_revision_for, pin_members
+async def test_member_queries_and_scope_filter(
+    db_session, unique_id, scene_revision_for, compose_version
 ):
     dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
     repo = PostgresSceneRepository(db_session)
-    empty = await repo.summarize_membership(dataset_id=dataset_id, dataset_version="v1")
-    assert (empty.scene_count, empty.observed_channels) == (0, [])
-
     run_a, run_b = unique_id("run"), unique_id("run")
     a = await scene_revision_for(
         db_session, source=recording_source(robot_run_id=run_a, unit_key="a")
@@ -466,15 +488,12 @@ async def test_membership_summary_and_scope_filter(
     )
     for revision in (a, b, unpinned):
         await repo.register_revision(revision)
-    await pin_members(db_session, dataset_id=dataset_id, revisions=[a, b])
+    version = await compose_version(db_session, dataset_id=dataset_id, revisions=[a, b])
 
-    summary = await repo.summarize_membership(
-        dataset_id=dataset_id, dataset_version="v1"
-    )
-    assert summary.scene_count == 2
-    assert summary.keyframe_count == a.keyframe_count + b.keyframe_count
-    assert summary.observation_count == a.observation_count + b.observation_count
-    assert summary.observed_channels == ["CAM_BACK", "CAM_FRONT", "LIDAR_TOP"]
+    assert version.scene.scene_count == 2
+    assert version.scene.keyframe_count == a.keyframe_count + b.keyframe_count
+    assert version.scene.observed_channels == ["CAM_BACK", "CAM_FRONT", "LIDAR_TOP"]
+    assert version.episode is None
     scope = await repo.list_member_revisions(
         dataset_id=dataset_id, dataset_version="v1", robot_run_id=run_a
     )
@@ -483,7 +502,51 @@ async def test_membership_summary_and_scope_filter(
     assert [
         m.unit_id for m in await members.list(dataset_id=dataset_id, version="v1")
     ] == sorted([a.scene_id, b.scene_id])
-    assert not hasattr(members, "remove")
+    for absent in ("add", "remove", "update"):
+        assert not hasattr(members, absent)
+
+
+@pytest.mark.asyncio
+async def test_revision_lookup_by_pin_and_by_source(
+    db_session, unique_id, scene_revision_for
+):
+    repo = PostgresSceneRepository(db_session)
+    run = unique_id("run")
+    a = await scene_revision_for(
+        db_session, source=recording_source(robot_run_id=run, unit_key="a")
+    )
+    b = await scene_revision_for(
+        db_session, source=recording_source(robot_run_id=run, unit_key="b")
+    )
+    other_build = await scene_revision_for(
+        db_session,
+        source=recording_source(robot_run_id=run, unit_key="a"),
+        build_config={"channels": ["CAM_FRONT"]},
+    )
+    for revision in (a, b, other_build):
+        await repo.register_revision(revision)
+
+    found = await repo.get_revisions(
+        [
+            (b.scene_id, b.manifest_checksum),
+            (a.scene_id, a.manifest_checksum),
+            (a.scene_id, "sha256:" + "0" * 64),
+        ]
+    )
+    assert {r.pin() for r in found} == {a.pin(), b.pin()}
+    assert len(found) == 2
+    assert await repo.get_revisions([]) == []
+
+    by_source = await repo.list_source_revisions(
+        robot_run_id=run, producer_fingerprint=a.producer_fingerprint
+    )
+    assert sorted(r.scene_id for r in by_source) == sorted([a.scene_id, b.scene_id])
+    assert [
+        r.pin()
+        for r in await repo.list_source_revisions(
+            robot_run_id=run, producer_fingerprint=other_build.producer_fingerprint
+        )
+    ] == [other_build.pin()]
 
 
 # --- concurrency (independent committed sessions) -------------------------------

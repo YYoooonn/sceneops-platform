@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.episodes.schemas import EpisodeRecord, EpisodeRevisionRecord
@@ -27,7 +28,7 @@ from sceneops_db.models.episodes import (
 from sceneops_db.repositories.revisions import RevisionRegistration
 
 from ._revisions import register_unit_revision
-from ._utils import apply_pagination, apply_values, enum_value
+from ._utils import IN_CLAUSE_CHUNK, apply_pagination, apply_values, enum_value
 
 
 class PostgresEpisodeRepository:
@@ -74,6 +75,28 @@ class PostgresEpisodeRepository:
     async def list_revisions(self, episode_id: str) -> list[EpisodeRevisionRecord]:
         return await self._revisions(EpisodeRevisionModel.episode_id == episode_id)
 
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[EpisodeRevisionRecord]:
+        unique = sorted(set(keys))
+        found: list[EpisodeRevisionRecord] = []
+        for start in range(0, len(unique), IN_CLAUSE_CHUNK):
+            found += await self._revisions(
+                tuple_(
+                    EpisodeRevisionModel.episode_id,
+                    EpisodeRevisionModel.manifest_checksum,
+                ).in_(unique[start : start + IN_CLAUSE_CHUNK])
+            )
+        return found
+
+    async def list_source_revisions(
+        self, *, robot_run_id: str, producer_fingerprint: str
+    ) -> list[EpisodeRevisionRecord]:
+        return await self._revisions(
+            EpisodeModel.robot_run_id == robot_run_id,
+            EpisodeRevisionModel.producer_fingerprint == producer_fingerprint,
+        )
+
     async def register_revision(
         self, revision: EpisodeRevisionRecord
     ) -> RevisionRegistration[EpisodeRevisionRecord]:
@@ -117,20 +140,6 @@ class PostgresEpisodeRepository:
             limit=limit,
             offset=offset,
         )
-
-    async def count_members(self, *, dataset_id: str, dataset_version: str) -> int:
-        """Exact count of the Episode revisions a DatasetVersion pins (a SQL
-        COUNT, never a paginated list length)."""
-        stmt = (
-            select(func.count())
-            .select_from(DatasetVersionMemberModel)
-            .where(
-                DatasetVersionMemberModel.dataset_version_id
-                == make_dataset_version_id(dataset_id, dataset_version),
-                DatasetVersionMemberModel.domain == "episode",
-            )
-        )
-        return (await self._session.execute(stmt)).scalar_one()
 
     async def _revisions(
         self,

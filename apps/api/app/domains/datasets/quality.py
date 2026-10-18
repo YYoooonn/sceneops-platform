@@ -58,7 +58,6 @@ def build_dataset_version_quality_from_aggregate(
     return DatasetVersionQualityResponse(
         dataset_id=version.dataset_id,
         version=version.version,
-        status=str(getattr(version.status, "value", version.status)),
         readiness=readiness,
         counts=DatasetVersionQualityCounts(
             scene_count=scene_count,

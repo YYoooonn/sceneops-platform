@@ -10,8 +10,7 @@ class JobType(StrEnum):
     # ── scene-level jobs ──
     VALIDATE_SCENE = "validate_scene"
     PROFILE_SCENE = "profile_scene"
-    # The only writer of SceneRecord membership and DatasetVersion Scene
-    # summaries (ADR-007 §17.5).
+    # The only writer of canonical Scene units and revisions (ADR-015 §6.4).
     REGISTER_SCENES = "register_scenes"
 
     # ── derived L3 inputs (ADR-007 §33) ──
@@ -25,6 +24,8 @@ class JobType(StrEnum):
     SCORE_SCENARIO_READINESS = "score_scenario_readiness"
 
     # ── dataset version-level jobs ──
+    # The only writer of DatasetVersions and their members (ADR-015 §7).
+    COMPOSE_DATASET_VERSION = "compose_dataset_version"
     EXPORT_ANALYTICS_SNAPSHOT = "export_analytics_snapshot"
 
     # ── detection ──

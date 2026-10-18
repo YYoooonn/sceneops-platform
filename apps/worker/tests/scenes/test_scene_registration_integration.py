@@ -24,8 +24,8 @@ from sceneops_core.common.ids import (
     robot_run_manifest_artifact_id,
     robot_run_recording_artifact_id,
 )
-from sceneops_core.datasets.schemas import DatasetVersionMember
-from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
+from sceneops_core.datasets.schemas import DatasetRecord
+from sceneops_core.jobs.schemas import ComposeDatasetVersionJobParams
 from sceneops_core.provenance import RevisionDecision, manifest_artifact_id_for
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_core.scenes.schemas import scene_id_for
@@ -37,9 +37,9 @@ from sceneops_core.scenes.testing import (
 from sceneops_db.models.artifacts import ArtifactModel
 from sceneops_db.models.datasets import DatasetVersionMemberModel, DatasetVersionModel
 from sceneops_db.models.scenes import SceneModel, SceneRevisionModel
-from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.datasets.composition import compose_dataset_version
 from sceneops_worker.scenes.registration import (
     SceneManifestRejectedError,
     SceneRegistrationConflictError,
@@ -279,15 +279,13 @@ async def test_registration_never_touches_a_dataset_version(env, unique_id):
     async with get_async_sessionmaker()() as session:
         ctx = env.context(session)
         await ctx.dataset_store.create_dataset(DatasetRecord(dataset_id=dataset_id))
-        await ctx.dataset_store.create_version(
-            DatasetVersionRecord(dataset_id=dataset_id, version="v1")
-        )
-        await PostgresDatasetVersionMemberRepository(session).add(
-            dataset_id=dataset_id,
-            version="v1",
-            members=[DatasetVersionMember(**pin.model_dump())],
-        )
         await session.commit()
+        await compose_dataset_version(
+            context=ctx,
+            params=ComposeDatasetVersionJobParams(
+                dataset_id=dataset_id, dataset_version="v1", pins=[pin]
+            ),
+        )
 
     async def snapshot():
         async with get_async_sessionmaker()() as session:
@@ -301,7 +299,7 @@ async def test_registration_never_touches_a_dataset_version(env, unique_id):
                     for m in members
                 ),
                 sorted(
-                    (v.id, v.scene_count, v.episode_count, v.updated_at)
+                    (v.id, v.composition_checksum, v.scene_count, v.episode_count)
                     for v in versions
                 ),
             )

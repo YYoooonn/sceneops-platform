@@ -1,6 +1,7 @@
 from .align_episode import AlignEpisodeJobHandler
 from .build_recording_episodes import BuildRecordingEpisodesJobHandler
 from .build_recording_scenes import BuildRecordingScenesJobHandler
+from .compose_dataset_version import ComposeDatasetVersionJobHandler
 from .curate_episodes import CurateEpisodesJobHandler
 from .export_analytics_snapshot import ExportAnalyticsSnapshotJobHandler
 from .export_learning_data import ExportLearningDataJobHandler
@@ -19,6 +20,7 @@ __all__ = [
     "RegisterScenesJobHandler",
     "ValidateSceneJobHandler",
     "ProfileSceneJobHandler",
+    "ComposeDatasetVersionJobHandler",
     "ExportAnalyticsSnapshotJobHandler",
     "BuildRecordingEpisodesJobHandler",
     "RegisterEpisodesJobHandler",

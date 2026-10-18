@@ -29,8 +29,9 @@ from sceneops_core.common.ids import (
     robot_run_manifest_artifact_id,
     robot_run_recording_artifact_id,
 )
-from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
+from sceneops_core.datasets.schemas.records import DatasetRecord
 from sceneops_core.jobs.schemas import (
+    ComposeDatasetVersionJobParams,
     BuildRecordingEpisodesJobParams,
     BuildRecordingScenesJobParams,
     ProfileEpisodeJobParams,
@@ -38,12 +39,11 @@ from sceneops_core.jobs.schemas import (
     RegisterScenesJobParams,
     ValidateEpisodeJobParams,
 )
-from sceneops_core.datasets.schemas import DatasetVersionMember
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
-from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
 from sceneops_db.session import get_async_sessionmaker
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.datasets.composition import compose_dataset_version
 from sceneops_episodes import recording_builder as episode_builder_module
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset import build_recording_episodes as build_job_module
@@ -110,10 +110,6 @@ class _Vertical:
             await ctx.dataset_store.create_dataset(
                 DatasetRecord(dataset_id=self.dataset_id)
             )
-            for version in ("v1", "v2"):
-                await ctx.dataset_store.create_version(
-                    DatasetVersionRecord(dataset_id=self.dataset_id, version=version)
-                )
             await ctx.robot_store.create_robot_if_absent(
                 RobotRecord(robot_id=self.robot_id)
             )
@@ -181,15 +177,16 @@ class _Vertical:
         )
 
     async def pin(self, registered, version="v1") -> None:
+        """COMPOSE_DATASET_VERSION of the registration's pins."""
         async with get_async_sessionmaker()() as session:
-            await PostgresDatasetVersionMemberRepository(session).add(
-                dataset_id=self.dataset_id,
-                version=version,
-                members=[
-                    DatasetVersionMember(**p.model_dump()) for p in registered.revisions
-                ],
+            await compose_dataset_version(
+                context=self.context(session),
+                params=ComposeDatasetVersionJobParams(
+                    dataset_id=self.dataset_id,
+                    dataset_version=version,
+                    pins=registered.revisions,
+                ),
             )
-            await session.commit()
 
     async def episodes(self, version="v1"):
         async with get_async_sessionmaker()() as session:

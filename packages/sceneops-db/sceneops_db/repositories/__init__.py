@@ -1,6 +1,7 @@
 from .artifacts import ArtifactRepository
 from .datasets import (
     DatasetRepository,
+    DatasetVersionExistsError,
     DatasetVersionMemberRepository,
     DatasetVersionRepository,
 )
@@ -20,7 +21,6 @@ from .robots import (
 )
 from .scenarios import ScenarioRunRecord, ScenarioRunRepository, ScenarioSetRepository
 from .scenes import (
-    SceneMembershipSummary,
     SceneRepository,
     SceneRunRecord,
     SceneRunRepository,
@@ -37,10 +37,10 @@ __all__ = [
     "ExecutionRecordRepository",
     # datasets
     "DatasetRepository",
+    "DatasetVersionExistsError",
     "DatasetVersionRepository",
     "DatasetVersionMemberRepository",
     # scenes
-    "SceneMembershipSummary",
     "SceneRepository",
     "SceneRunRepository",
     "SceneRunRecord",

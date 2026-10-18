@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sceneops_core.datasets.schemas import RevisionSelector
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from sceneops_core.datasets.schemas.summaries import (
     EpisodeVersionSummary,
@@ -9,8 +10,6 @@ from sceneops_core.datasets.schemas.summaries import (
 )
 
 from sceneops_db.models.datasets import DatasetModel, DatasetVersionModel
-
-from ._utils import enum_to_value
 
 
 def make_dataset_version_id(dataset_id: str, version: str) -> str:
@@ -62,28 +61,19 @@ def _episode_version_summary_from_model(
     return None if summary.is_unset() else summary
 
 
-def _scene_summary_to_values(summary: SceneVersionSummary) -> dict[str, Any]:
-    return {
-        "scene_count": summary.scene_count,
-        "keyframe_count": summary.keyframe_count,
-        "observation_count": summary.observation_count,
-        "observed_channels": summary.observed_channels,
-    }
-
-
-def _episode_summary_to_values(summary: EpisodeVersionSummary) -> dict[str, Any]:
-    return {"episode_count": summary.episode_count}
-
-
 def dataset_version_model_to_record(
     model: DatasetVersionModel,
 ) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_id=model.dataset_id,
         version=model.version,
-        status=model.status,
+        composition_checksum=model.composition_checksum,
+        selector=(
+            RevisionSelector.model_validate(model.selector)
+            if model.selector is not None
+            else None
+        ),
         created_at=model.created_at,
-        updated_at=model.updated_at,
         scene=_scene_version_summary_from_model(model),
         episode=_episode_version_summary_from_model(model),
     )
@@ -92,24 +82,27 @@ def dataset_version_model_to_record(
 def dataset_version_record_to_values(
     record: DatasetVersionRecord,
 ) -> dict[str, Any]:
-    """Flatten a DatasetVersionRecord back to dataset_versions columns.
-
-    Scene/episode-owned columns are only included when the corresponding
-    summary is present on the record. This matters for create() (an absent
-    summary lets the SQL column server_default apply) and, more importantly,
-    for update() (an absent summary leaves the existing column value alone
-    instead of resetting it to a summary's zero-value defaults).
-    """
+    """Flatten a DatasetVersionRecord to the columns of its one INSERT. An
+    absent domain summary is that domain's zero summary: the columns have no
+    default, so a composition always states every count."""
+    scene = record.scene or SceneVersionSummary()
+    episode = record.episode or EpisodeVersionSummary()
     values: dict[str, Any] = {
         "id": make_dataset_version_id(record.dataset_id, record.version),
         "dataset_id": record.dataset_id,
         "version": record.version,
-        "status": enum_to_value(record.status),
-        "created_at": record.created_at,
-        "updated_at": record.updated_at,
+        "composition_checksum": record.composition_checksum,
+        "selector": (
+            record.selector.model_dump(mode="json")
+            if record.selector is not None
+            else None
+        ),
+        "scene_count": scene.scene_count,
+        "keyframe_count": scene.keyframe_count,
+        "observation_count": scene.observation_count,
+        "observed_channels": scene.observed_channels,
+        "episode_count": episode.episode_count,
     }
-    if record.scene is not None:
-        values.update(_scene_summary_to_values(record.scene))
-    if record.episode is not None:
-        values.update(_episode_summary_to_values(record.episode))
+    if record.created_at is not None:
+        values["created_at"] = record.created_at
     return values

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.datasets.schemas import (
@@ -16,6 +18,10 @@ from sceneops_db.postgres import (
 
 
 class DatasetStore:
+    """Datasets and committed DatasetVersions. ``insert_version`` belongs to
+    COMPOSE_DATASET_VERSION (``sceneops_worker.datasets.composition``); no
+    other job writes a DatasetVersion or its members."""
+
     def __init__(self, session: AsyncSession) -> None:
         self._datasets = PostgresDatasetRepository(session)
         self._versions = PostgresDatasetVersionRepository(session)
@@ -35,10 +41,12 @@ class DatasetStore:
     ) -> DatasetVersionRecord | None:
         return await self._versions.get(dataset_id=dataset_id, version=version)
 
-    async def create_version(
-        self, version: DatasetVersionRecord
+    async def insert_version(
+        self,
+        version: DatasetVersionRecord,
+        members: Sequence[DatasetVersionMember],
     ) -> DatasetVersionRecord:
-        return await self._versions.create(version)
+        return await self._versions.insert(version, members)
 
     async def list_members(
         self,

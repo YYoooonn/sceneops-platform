@@ -118,18 +118,23 @@ canonical unit except as a converted recording. Current builder bounds:
   message; NaN / Infinity fail the build. Canonical Episodes carry no outcome, success
   label, reward or language instruction.
 - Units, revisions and DatasetVersion members are stored separately
-  ([Data model](./data-model.md) §3), and canonical registration writes units and
-  revisions only. DatasetVersion composition does not exist: no production code path
-  writes a DatasetVersion's members or summaries. A DatasetVersion created through
-  the API stays empty with zero summaries, and the validation and profiling tasks of
-  the recording pipelines, which resolve units through a DatasetVersion member, fail
-  for the units the same run registered. Registered units and revisions are never
-  changed or removed.
+  ([Data model](./data-model.md) §3). Canonical registration writes units and
+  revisions only, and a DatasetVersion exists only as an immutable composition
+  committed by a `COMPOSE_DATASET_VERSION` Job ([Data model](./data-model.md) §2.1).
+  No pipeline submits that Job: the recording pipelines still name a DatasetVersion
+  that cannot exist before its members are registered, so their validation and
+  profiling tasks, which resolve units through a DatasetVersion member, fail for the
+  units the same run registered. Registered units and revisions are never changed or
+  removed.
 - Consumers that address a Scene or Episode by id (validation, profiling, alignment,
   the per-unit quality and manifest API) resolve it through a DatasetVersion member
-  and fail without one; a unit has no current revision. Build and register Jobs still
-  take DatasetVersion parameters, and derived aligned-episode keys and per-run reports
-  are still keyed by the DatasetVersion they were produced for.
+  and fail without one; a unit has no current revision. Build Jobs still take
+  DatasetVersion parameters, which they only echo in their result, and derived
+  aligned-episode keys and per-run reports are still keyed by the DatasetVersion
+  they were produced for.
+- A composition selector selects by RobotRun and producer fingerprint only. A
+  composition is one PostgreSQL transaction; the largest composition tested has a
+  handful of members, which is a test scope, not a supported maximum.
 - `fixed_duration` windows are a grid anchored at the segmentation clock's zero, so the
   first and last window of a recording may be partial.
 - The robot telemetry projection (`ingest_robot_states`) reads its own fixed topic set
@@ -158,8 +163,6 @@ canonical unit except as a converted recording. Current builder bounds:
   [External integration runtime](./external-integration-runtime.md) §4).
 - `JOB_STEP_DEFINITIONS_BY_TYPE` is declarative: only the first step's status is
   updated at runtime ([Jobs and pipelines](./jobs-and-pipelines.md) §6).
-- `DatasetVersionStatus` has exactly one value, `registered`, by design: processing
-  state lives in Job, Pipeline and run records ([Data model](./data-model.md) §2.1).
 
 ## 7. Product scope
 

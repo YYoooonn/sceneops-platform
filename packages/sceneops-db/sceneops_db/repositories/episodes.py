@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from sceneops_core.episodes.schemas import (
@@ -37,6 +38,20 @@ class EpisodeRepository(Protocol):
 
     async def list_revisions(self, episode_id: str) -> list[EpisodeRevisionRecord]: ...
 
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[EpisodeRevisionRecord]:
+        """The registered revisions among ``(episode_id, manifest_checksum)``
+        keys, in key order; a key that names no revision is absent."""
+        ...
+
+    async def list_source_revisions(
+        self, *, robot_run_id: str, producer_fingerprint: str
+    ) -> list[EpisodeRevisionRecord]:
+        """Every revision of a unit sourced from ``robot_run_id`` registered
+        under ``producer_fingerprint``: at most one per unit."""
+        ...
+
     async def register_revision(
         self, revision: EpisodeRevisionRecord
     ) -> RevisionRegistration[EpisodeRevisionRecord]: ...
@@ -56,8 +71,6 @@ class EpisodeRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRevisionRecord]: ...
-
-    async def count_members(self, *, dataset_id: str, dataset_version: str) -> int: ...
 
 
 @runtime_checkable

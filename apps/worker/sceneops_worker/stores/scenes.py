@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sceneops_core.scenes.schemas import SceneRecord, SceneRevisionRecord
@@ -34,6 +36,18 @@ class SceneStore:
 
     async def list_revisions(self, scene_id: str) -> list[SceneRevisionRecord]:
         return await self._repo.list_revisions(scene_id)
+
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[SceneRevisionRecord]:
+        return await self._repo.get_revisions(keys)
+
+    async def list_source_revisions(
+        self, *, robot_run_id: str, producer_fingerprint: str
+    ) -> list[SceneRevisionRecord]:
+        return await self._repo.list_source_revisions(
+            robot_run_id=robot_run_id, producer_fingerprint=producer_fingerprint
+        )
 
     async def register_revision(
         self, revision: SceneRevisionRecord

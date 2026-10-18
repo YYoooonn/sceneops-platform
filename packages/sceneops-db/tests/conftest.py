@@ -86,31 +86,6 @@ async def db_session():
 
 
 @pytest.fixture()
-def seed_dataset_version():
-    """Create a Dataset + DatasetVersion row (Scenes reference their
-    DatasetVersion by foreign key)."""
-    from sceneops_core.datasets.schemas.records import (
-        DatasetRecord,
-        DatasetVersionRecord,
-    )
-    from sceneops_db.postgres.datasets import (
-        PostgresDatasetRepository,
-        PostgresDatasetVersionRepository,
-    )
-
-    async def _seed(session, *, dataset_id: str, version: str = "v1") -> None:
-        if await PostgresDatasetRepository(session).get(dataset_id) is None:
-            await PostgresDatasetRepository(session).create(
-                DatasetRecord(dataset_id=dataset_id)
-            )
-        await PostgresDatasetVersionRepository(session).create(
-            DatasetVersionRecord(dataset_id=dataset_id, version=version)
-        )
-
-    return _seed
-
-
-@pytest.fixture()
 def seed_robot_run(unique_id):
     """Create a registered RobotRun (Robot + both RobotRun ArtifactRecords +
     RobotRunRecord) so recording-derived Scenes can reference it."""
@@ -329,25 +304,39 @@ def episode_revision_for(unique_id, seed_robot_run):
 
 
 @pytest.fixture()
-def pin_members():
-    """Pin revisions (Scene or Episode) as members of a DatasetVersion."""
-    from sceneops_core.datasets.schemas import DatasetVersionMember
-    from sceneops_db.postgres.datasets import PostgresDatasetVersionMemberRepository
+def compose_version():
+    """Commit-free stand-in for COMPOSE_DATASET_VERSION: inserts one complete
+    DatasetVersion of registered ``revisions`` (Scene or Episode records)
+    through the repository's only write, creating the Dataset if absent."""
+    from sceneops_core.datasets.composition import (
+        composition_checksum,
+        composition_members,
+        summarize_composition,
+    )
+    from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
+    from sceneops_db.postgres.datasets import (
+        PostgresDatasetRepository,
+        PostgresDatasetVersionRepository,
+    )
 
-    async def _pin(session, *, dataset_id: str, version: str = "v1", revisions):
-        members = []
-        for revision in revisions:
-            domain = "scene" if hasattr(revision, "scene_id") else "episode"
-            members.append(
-                DatasetVersionMember(
-                    domain=domain,
-                    unit_id=getattr(revision, f"{domain}_id"),
-                    manifest_artifact_id=revision.manifest_artifact_id,
-                    manifest_checksum=revision.manifest_checksum,
-                )
+    async def _compose(session, *, dataset_id: str, version: str = "v1", revisions):
+        if await PostgresDatasetRepository(session).get(dataset_id) is None:
+            await PostgresDatasetRepository(session).create(
+                DatasetRecord(dataset_id=dataset_id)
             )
-        await PostgresDatasetVersionMemberRepository(session).add(
-            dataset_id=dataset_id, version=version, members=members
+        scenes = [r for r in revisions if hasattr(r, "scene_id")]
+        episodes = [r for r in revisions if hasattr(r, "episode_id")]
+        members = composition_members(r.pin() for r in revisions)
+        scene, episode = summarize_composition(scenes=scenes, episodes=episodes)
+        return await PostgresDatasetVersionRepository(session).insert(
+            DatasetVersionRecord(
+                dataset_id=dataset_id,
+                version=version,
+                composition_checksum=composition_checksum(members),
+                scene=scene,
+                episode=episode,
+            ),
+            members,
         )
 
-    return _pin
+    return _compose

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from sceneops_core.runs.schemas import RunStatus, RunType
@@ -13,16 +13,6 @@ from sceneops_core.scenes.schemas.runs import (
 from .revisions import RevisionRegistration
 
 SceneRunRecord: TypeAlias = SceneValidationRunRecord | SceneProfileRunRecord
-
-
-@dataclass(frozen=True)
-class SceneMembershipSummary:
-    """Aggregate of the Scene revisions one DatasetVersion pins."""
-
-    scene_count: int
-    keyframe_count: int
-    observation_count: int
-    observed_channels: list[str]
 
 
 @runtime_checkable
@@ -47,6 +37,20 @@ class SceneRepository(Protocol):
 
     async def list_revisions(self, scene_id: str) -> list[SceneRevisionRecord]: ...
 
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[SceneRevisionRecord]:
+        """The registered revisions among ``(scene_id, manifest_checksum)``
+        keys, in key order; a key that names no revision is absent."""
+        ...
+
+    async def list_source_revisions(
+        self, *, robot_run_id: str, producer_fingerprint: str
+    ) -> list[SceneRevisionRecord]:
+        """Every revision of a unit sourced from ``robot_run_id`` registered
+        under ``producer_fingerprint``: at most one per unit."""
+        ...
+
     async def register_revision(
         self, revision: SceneRevisionRecord
     ) -> RevisionRegistration[SceneRevisionRecord]: ...
@@ -66,10 +70,6 @@ class SceneRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[SceneRevisionRecord]: ...
-
-    async def summarize_membership(
-        self, *, dataset_id: str, dataset_version: str
-    ) -> SceneMembershipSummary: ...
 
 
 @runtime_checkable

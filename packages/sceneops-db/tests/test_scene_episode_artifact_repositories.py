@@ -76,22 +76,24 @@ async def test_episode_revisions_accumulate_and_a_drifting_producer_fails(
 
 @pytest.mark.asyncio
 async def test_episode_members_pin_revisions_per_dataset_version(
-    db_session, unique_id, seed_dataset_version, episode_revision_for, pin_members
+    db_session, unique_id, episode_revision_for, compose_version
 ):
     dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id, version="v1")
-    await seed_dataset_version(db_session, dataset_id=dataset_id, version="v2")
     run_id = unique_id("run")
     a = await episode_revision_for(db_session, robot_run_id=run_id, unit_key="a")
     b = await episode_revision_for(db_session, robot_run_id=run_id, unit_key="b")
     repo = PostgresEpisodeRepository(db_session)
     for revision in (a, b):
         await repo.register_revision(revision)
-    await pin_members(db_session, dataset_id=dataset_id, version="v1", revisions=[a, b])
-    await pin_members(db_session, dataset_id=dataset_id, version="v2", revisions=[a])
+    v1 = await compose_version(
+        db_session, dataset_id=dataset_id, version="v1", revisions=[a, b]
+    )
+    v2 = await compose_version(
+        db_session, dataset_id=dataset_id, version="v2", revisions=[a]
+    )
 
-    assert await repo.count_members(dataset_id=dataset_id, dataset_version="v1") == 2
-    assert await repo.count_members(dataset_id=dataset_id, dataset_version="v2") == 1
+    assert (v1.episode.episode_count, v2.episode.episode_count) == (2, 1)
+    assert v1.scene is None
     assert [
         e.episode_id
         for e in await repo.list_member_revisions(

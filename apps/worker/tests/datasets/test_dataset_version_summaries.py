@@ -1,13 +1,11 @@
-"""Tests for the DatasetVersion scene/episode summary split
-(SceneOps V2 Request 02/03/04).
+"""The flat ``dataset_versions`` row <-> nested DatasetVersionRecord
+converters.
 
-A DatasetVersion is scene-only, episode-only, mixed, or neither depending on
-whether the underlying flat columns for each domain are still at their
-untouched defaults — see SceneVersionSummary.is_unset()/
-EpisodeVersionSummary.is_unset(). As of Request 03, DatasetVersionRecord has
-no flat top-level duplicates of these fields at all — scene/episode are the
-only way to read them. A DatasetVersion carries no source location or
-source format (ADR-007 §29.16).
+A DatasetVersion is scene-only, episode-only or mixed depending on which
+domains it has members of; a domain with none has no summary (its columns
+are zero). scene/episode are the only way to read the summaries. A
+DatasetVersion carries no source location, source format or lifecycle
+status (ADR-015 §7).
 """
 
 from __future__ import annotations
@@ -28,14 +26,14 @@ def _model(**overrides) -> DatasetVersionModel:
         id="d:v1",
         dataset_id="d",
         version="v1",
-        status="registered",
+        composition_checksum="sha256:" + "c" * 64,
+        selector=None,
         scene_count=0,
         keyframe_count=0,
         observation_count=0,
         episode_count=0,
         observed_channels=[],
         created_at=_NOW,
-        updated_at=_NOW,
     )
     base.update(overrides)
     return DatasetVersionModel(**base)
@@ -74,11 +72,23 @@ class TestMixed:
         assert record.episode.episode_count == 1
 
 
-class TestNeither:
-    def test_untouched_version_has_no_summaries(self) -> None:
-        record = dataset_version_model_to_record(_model())
-        assert record.scene is None
-        assert record.episode is None
+class TestSelector:
+    def test_selector_round_trips_through_jsonb(self) -> None:
+        selector = {
+            "sources": [
+                {
+                    "domain": "scene",
+                    "robot_run_id": "run-1",
+                    "producer_fingerprint": "sha256:" + "f" * 64,
+                }
+            ]
+        }
+        record = dataset_version_model_to_record(
+            _model(scene_count=1, selector=selector)
+        )
+        assert record.selector.sources[0].robot_run_id == "run-1"
+        assert dataset_version_record_to_values(record)["selector"] == selector
+        assert dataset_version_model_to_record(_model(episode_count=1)).selector is None
 
 
 class TestNoWorkflowConfiguration:
@@ -100,7 +110,6 @@ class TestRoundTrip:
 
     def test_full_round_trip_preserves_all_fields(self) -> None:
         model = _model(
-            status="registered",
             scene_count=5,
             keyframe_count=10,
             observation_count=20,
@@ -113,7 +122,8 @@ class TestRoundTrip:
         for field in (
             "dataset_id",
             "version",
-            "status",
+            "composition_checksum",
+            "selector",
             "scene_count",
             "keyframe_count",
             "observation_count",
@@ -122,6 +132,8 @@ class TestRoundTrip:
         ):
             assert values[field] == getattr(model, field), field
         for removed in (
+            "status",
+            "updated_at",
             "manifest_uri",
             "input_source_root_uri",
             "source_dataset_id",

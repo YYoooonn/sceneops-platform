@@ -5,7 +5,6 @@ from enum import StrEnum
 from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel
-from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
 from app.domains.scenes.schemas import SceneQualityResponse
 
@@ -13,16 +12,6 @@ from app.domains.scenes.schemas import SceneQualityResponse
 class UpdateDatasetRequest(SceneOpsBaseModel):
     name: str | None = None
     description: str | None = None
-
-
-class CreateDatasetVersionBody(SceneOpsBaseModel):
-    """POST body for creating a dataset version.
-
-    dataset_id is intentionally omitted — it comes from the path parameter.
-    """
-
-    version: str
-    status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED
 
 
 class DatasetDetailResponse(SceneOpsBaseModel):
@@ -89,7 +78,6 @@ class DatasetVersionQualityResponse(SceneOpsBaseModel):
 
     dataset_id: str
     version: str
-    status: str
     readiness: DatasetQualityReadiness = DatasetQualityReadiness.UNKNOWN
 
     counts: DatasetVersionQualityCounts = Field(

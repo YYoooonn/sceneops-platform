@@ -230,7 +230,9 @@ class Harness:
         self.dataset_store = SimpleNamespace(
             get_version=AsyncMock(
                 side_effect=lambda dataset_id, version: DatasetVersionRecord(
-                    dataset_id=dataset_id, version=version
+                    dataset_id=dataset_id,
+                    version=version,
+                    composition_checksum="sha256:" + "c" * 64,
                 )
             )
         )

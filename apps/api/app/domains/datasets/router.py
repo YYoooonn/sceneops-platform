@@ -6,7 +6,6 @@ from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.domains.datasets.dependencies import DatasetServiceDep
 from app.domains.datasets.schemas import (
-    CreateDatasetVersionBody,
     DatasetDetailResponse,
     DatasetListResponse,
     DatasetSceneQualityListResponse,
@@ -70,22 +69,6 @@ async def list_dataset_versions(
     result = await service.list_dataset_versions(
         dataset_id, limit=pagination.limit, offset=pagination.offset
     )
-    if result is None:
-        raise_not_found("Dataset", dataset_id)
-    return result
-
-
-@router.post(
-    "/{dataset_id}/versions",
-    response_model=DatasetVersionDetailResponse,
-    status_code=201,
-)
-async def create_dataset_version(
-    dataset_id: str,
-    body: CreateDatasetVersionBody,
-    service: DatasetServiceDep,
-) -> DatasetVersionDetailResponse:
-    result = await service.create_dataset_version(dataset_id, body)
     if result is None:
         raise_not_found("Dataset", dataset_id)
     return result

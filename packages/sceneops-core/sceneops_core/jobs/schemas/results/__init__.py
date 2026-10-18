@@ -1,5 +1,6 @@
 from .base import BaseJobResult
 from .dataset import (
+    ComposeDatasetVersionJobResult,
     ExportAnalyticsSnapshotJobResult,
 )
 from .detection import EvaluateDetectionJobResult, PredictDetectionJobResult
@@ -52,6 +53,7 @@ __all__ = [
     "RegisterScenesJobResult",
     "MineScenariosJobResult",
     "ScoreScenarioReadinessJobResult",
+    "ComposeDatasetVersionJobResult",
     "ExportAnalyticsSnapshotJobResult",
     "PredictDetectionJobResult",
     "EvaluateDetectionJobResult",
