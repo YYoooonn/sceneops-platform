@@ -92,6 +92,23 @@ sha256 (`ck_dataset_versions_composition_checksum`); a `BEFORE UPDATE` trigger
 (`sceneops_reject_update`) rejects any UPDATE; a Dataset with versions and a
 version with members cannot be deleted (RESTRICT).
 
+PostgreSQL also enforces the membership itself, for any SQL, not only for the
+repository's single write:
+
+```text
+complete     dataset_versions_members_complete: a deferred constraint trigger checks
+             every inserted version row at commit; its scene / episode member rows
+             must number exactly scene_count / episode_count, so a positive count
+             without members cannot commit
+closed       dataset_version_members_closed: a member is inserted only in the
+             transaction that inserted its version row (decided from the version
+             row's xmin, savepoints included); a member of a committed version is
+             refused
+undeletable  dataset_version_members_undeletable: a member row is never deleted;
+             UPDATE is refused by sceneops_reject_update; with members RESTRICTing
+             their version, a committed version cannot be deleted either
+```
+
 ### 2.1 Composition
 
 `COMPOSE_DATASET_VERSION` is the only writer of `dataset_versions` and
@@ -235,7 +252,9 @@ deadlocking.
 (`scene_validation` / `scene_profile`, `episode_validation` /
 `episode_profile`). A per-unit row pins the revision it assessed
 (`fk_*_run_records_revision` to the full pin); a job-level aggregate row has
-neither a unit nor a pin (CHECK `ck_*_run_records_revision_pin`).
+neither a unit nor a pin (CHECK `ck_*_run_records_revision_pin`). Run records
+name no DatasetVersion: a revision is assessed once, however many versions pin
+it.
 
 ## 4. Episode projection
 

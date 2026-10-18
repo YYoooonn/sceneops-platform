@@ -173,9 +173,6 @@ class EpisodeRunRecordModel(Base):
     manifest_artifact_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     manifest_checksum: Mapped[str | None] = mapped_column(String(71), nullable=True)
 
-    dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    dataset_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
-
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_task_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     job_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -227,11 +224,6 @@ Index(
     EpisodeRunRecordModel.episode_id,
     EpisodeRunRecordModel.manifest_artifact_id,
     EpisodeRunRecordModel.created_at,
-)
-Index(
-    "ix_episode_run_records_dataset",
-    EpisodeRunRecordModel.dataset_id,
-    EpisodeRunRecordModel.dataset_version,
 )
 Index("ix_episode_run_records_job_id", EpisodeRunRecordModel.job_id)
 Index("ix_episode_run_records_pipeline_run_id", EpisodeRunRecordModel.pipeline_run_id)

@@ -161,9 +161,6 @@ class SceneRunRecordModel(Base):
     manifest_artifact_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     manifest_checksum: Mapped[str | None] = mapped_column(String(71), nullable=True)
 
-    dataset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    dataset_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
-
     pipeline_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     pipeline_task_run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     job_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -218,11 +215,6 @@ Index(
     SceneRunRecordModel.scene_id,
     SceneRunRecordModel.manifest_artifact_id,
     SceneRunRecordModel.created_at,
-)
-Index(
-    "ix_scene_run_records_dataset",
-    SceneRunRecordModel.dataset_id,
-    SceneRunRecordModel.dataset_version,
 )
 Index("ix_scene_run_records_job_id", SceneRunRecordModel.job_id)
 Index("ix_scene_run_records_pipeline_run_id", SceneRunRecordModel.pipeline_run_id)

@@ -54,7 +54,6 @@ def _validation(
     status="ready",
     revision=None,
     run_status=RunStatus.SUCCEEDED,
-    dataset_id=None,
 ):
     artifact_id, checksum = revision or (
         scene.manifest_artifact_id,
@@ -65,8 +64,6 @@ def _validation(
         scene_id=scene.scene_id,
         manifest_artifact_id=artifact_id,
         manifest_checksum=checksum,
-        dataset_id=dataset_id,
-        dataset_version=DATASET_VERSION if dataset_id else None,
         status=run_status,
         validation_status=status,
         created_at=created_at,

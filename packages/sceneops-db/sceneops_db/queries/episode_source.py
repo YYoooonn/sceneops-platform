@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
+from sceneops_core.episodes.schemas import EpisodeRevisionRecord
 
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.episodes import EpisodeRepository
@@ -34,6 +35,16 @@ async def resolve_member_episode_manifest_source(
     )
     if revision is None:
         return None
+    return await episode_revision_manifest_source(
+        artifact_repository=artifact_repository, revision=revision
+    )
+
+
+async def episode_revision_manifest_source(
+    *, artifact_repository: ArtifactRepository, revision: EpisodeRevisionRecord
+) -> ArtifactRecord:
+    """The EPISODE_MANIFEST ArtifactRecord of one registered revision,
+    checked against the revision's pin."""
     artifact = await artifact_repository.get(revision.manifest_artifact_id)
     if (
         artifact is None
@@ -41,7 +52,7 @@ async def resolve_member_episode_manifest_source(
         or artifact.checksum != revision.manifest_checksum
     ):
         raise InconsistentEpisodeRevisionError(
-            f"Episode {episode_id} revision {revision.manifest_checksum} names "
+            f"Episode {revision.episode_id} revision {revision.manifest_checksum} names "
             f"manifest artifact {revision.manifest_artifact_id}, which is missing "
             "or does not match"
         )

@@ -56,7 +56,7 @@ manifest_uri() { # <artifact-id>
 }
 unit_uris() { # <scenes|episodes> <dataset-id> <version> <run-id> -> JSON array of manifest URIs
   local ids id
-  ids="$(api_get "$API_BASE_URL" "/$1?dataset_id=$2&dataset_version=$3&limit=500" \
+  ids="$(api_get "$API_BASE_URL" "/datasets/$2/versions/$3/$1?limit=500" \
     | jq -r --arg r "$4" "[.$1[] | select(.robotRunId == \$r) | .manifestArtifactId] | sort | .[]")"
   for id in $ids; do manifest_uri "$id"; done | jq -R . | jq -sc .
 }

@@ -13,13 +13,13 @@ class BuildRecordingEpisodesJobResult(BaseJobResult):
 
     ``manifest_artifact_ids`` are the EPISODE_MANIFEST ArtifactRecords of
     every Episode of the recording scope, in unit-key order, for
-    REGISTER_EPISODES. ``payload_artifact_count`` counts the distinct
+    REGISTER_EPISODES. Each id is ``manifest_artifact_id_for(unit_id,
+    manifest_checksum)``: it names one write-once manifest object and its
+    exact bytes, and the registrar re-derives it from the bytes it reads. ``payload_artifact_count`` counts the distinct
     OBSERVATION_PAYLOAD artifacts they reference; ``created_payload_count``
     those this execution registered (the rest already existed with
     identical bytes, e.g. extracted by a Scene build of the same RobotRun)."""
 
-    dataset_id: str
-    dataset_version: str
     robot_run_id: str
     recording_checksum: str
     producer_fingerprint: str

@@ -14,8 +14,8 @@
       -> commit; result.manifest_artifact_ids -> REGISTER_EPISODES
 
 The builder owns its output bytes and ArtifactRecords; it never writes an
-EpisodeRecord or DatasetVersion state (§17.5 rule 2), and it never reads a
-Scene.
+Episode unit or revision (§17.5 rule 2), never reads or writes a
+DatasetVersion, and never reads a Scene.
 
 Failure and retry: every key and artifact id is deterministic, so a retry
 after a crash between writing bytes and committing ArtifactRecords
@@ -70,13 +70,7 @@ class BuildRecordingEpisodesJobHandler(
         return BuildRecordingEpisodesJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": inputs.dataset.dataset_version
-            if inputs.dataset
-            else None,
-            **inputs.params,
-        }
+        return dict(inputs.params)
 
     async def run(
         self, request: JobHandlerRequest[BuildRecordingEpisodesJobParams]
@@ -115,8 +109,6 @@ class BuildRecordingEpisodesJobHandler(
         await context.commit()
 
         return BuildRecordingEpisodesJobResult(
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             robot_run_id=params.robot_run_id,
             recording_checksum=revision.recording_checksum,
             producer_fingerprint=plan.producer.producer_fingerprint,

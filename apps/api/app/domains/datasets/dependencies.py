@@ -8,6 +8,7 @@ from app.core.repositories import (
     ArtifactRepositoryDep,
     DatasetRepositoryDep,
     DatasetVersionRepositoryDep,
+    EpisodeRepositoryDep,
     SceneRepositoryDep,
     SceneRunRepositoryDep,
 )
@@ -19,6 +20,7 @@ def get_dataset_service(
     version_repository: DatasetVersionRepositoryDep,
     scene_repository: SceneRepositoryDep,
     scene_run_repository: SceneRunRepositoryDep,
+    episode_repository: EpisodeRepositoryDep,
     artifact_repository: ArtifactRepositoryDep,
 ) -> DatasetService:
     return DatasetService(
@@ -26,6 +28,7 @@ def get_dataset_service(
         version_repository=version_repository,
         scene_repository=scene_repository,
         scene_run_repository=scene_run_repository,
+        episode_repository=episode_repository,
         artifact_repository=artifact_repository,
     )
 

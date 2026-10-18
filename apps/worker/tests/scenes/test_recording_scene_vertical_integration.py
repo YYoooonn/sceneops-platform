@@ -136,8 +136,6 @@ class _Vertical:
 
     def build_params(self, config=None):
         return BuildRecordingScenesJobParams(
-            dataset_id=self.dataset_id,
-            dataset_version="v1",
             robot_run_id=self.run_id,
             build_config=config or build_config(),
         )
@@ -211,15 +209,11 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
     scene_ids = registered.scene_ids
     validated = await vertical.run(
         ValidateSceneJobHandler(),
-        ValidateSceneJobParams(
-            dataset_id=vertical.dataset_id, dataset_version="v1", scene_ids=scene_ids
-        ),
+        ValidateSceneJobParams(revisions=registered.revisions),
     )
     profiled = await vertical.run(
         ProfileSceneJobHandler(),
-        ProfileSceneJobParams(
-            dataset_id=vertical.dataset_id, dataset_version="v1", scene_ids=scene_ids
-        ),
+        ProfileSceneJobParams(revisions=registered.revisions),
     )
     assert validated.checked_scene_count == 2
     assert profiled.observation_count == 8

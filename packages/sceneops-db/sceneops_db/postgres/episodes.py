@@ -213,8 +213,6 @@ class PostgresEpisodeRunRepository:
         status: RunStatus | None = None,
         episode_id: str | None = None,
         manifest_artifact_id: str | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         job_id: str | None = None,
         pipeline_run_id: str | None = None,
         limit: int = 100,
@@ -231,10 +229,6 @@ class PostgresEpisodeRunRepository:
             stmt = stmt.where(
                 EpisodeRunRecordModel.manifest_artifact_id == manifest_artifact_id
             )
-        if dataset_id is not None:
-            stmt = stmt.where(EpisodeRunRecordModel.dataset_id == dataset_id)
-        if dataset_version is not None:
-            stmt = stmt.where(EpisodeRunRecordModel.dataset_version == dataset_version)
         if job_id is not None:
             stmt = stmt.where(EpisodeRunRecordModel.job_id == job_id)
         if pipeline_run_id is not None:

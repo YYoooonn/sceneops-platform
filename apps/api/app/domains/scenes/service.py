@@ -10,6 +10,7 @@ from sceneops_core.scenes.schemas.runs import (
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
 
+from app.core.revisions import RevisionAddress
 from app.domains.scenes.quality import build_scene_quality
 from app.domains.scenes.schemas import (
     SceneDetailResponse,
@@ -51,20 +52,29 @@ class SceneService:
         )
 
     async def get_scene_quality(
-        self, scene_id: str, *, dataset_id: str, dataset_version: str
+        self, scene_id: str, address: RevisionAddress
     ) -> SceneQualityResponse | None:
-        """Quality of the revision of ``scene_id`` that the DatasetVersion
-        pins; None if the Scene is not one of its members."""
-        scene = await self._repository.get_member_revision(
-            dataset_id=dataset_id, dataset_version=dataset_version, scene_id=scene_id
-        )
+        """Quality of the addressed revision of ``scene_id``; None if no
+        such revision is registered (or the DatasetVersion does not pin
+        one)."""
+        if address.manifest_checksum is not None:
+            scene = await self._repository.get_revision(
+                scene_id=scene_id, manifest_checksum=address.manifest_checksum
+            )
+        else:
+            assert address.dataset_id and address.dataset_version
+            scene = await self._repository.get_member_revision(
+                dataset_id=address.dataset_id,
+                dataset_version=address.dataset_version,
+                scene_id=scene_id,
+            )
         if scene is None:
             return None
 
         return build_scene_quality(
             scene=scene,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
+            dataset_id=address.dataset_id,
+            dataset_version=address.dataset_version,
             validation_run=await self._latest_revision_run(
                 scene, RunType.SCENE_VALIDATION, SceneValidationRunRecord
             ),

@@ -54,13 +54,6 @@ class SceneStore:
     ) -> RevisionRegistration[SceneRevisionRecord]:
         return await self._repo.register_revision(revision)
 
-    async def get_member_revision(
-        self, *, dataset_id: str, dataset_version: str, scene_id: str
-    ) -> SceneRevisionRecord | None:
-        return await self._repo.get_member_revision(
-            dataset_id=dataset_id, dataset_version=dataset_version, scene_id=scene_id
-        )
-
     async def list_member_revisions(
         self,
         *,

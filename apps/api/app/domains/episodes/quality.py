@@ -48,8 +48,8 @@ def _assessed(episode: EpisodeRevisionRecord, run: _R | None) -> _R | None:
 def build_episode_quality(
     episode: EpisodeRevisionRecord,
     *,
-    dataset_id: str,
-    dataset_version: str,
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
     validation_run: EpisodeValidationRunRecord | None = None,
     profile_run: EpisodeProfileRunRecord | None = None,
 ) -> EpisodeQualityResponse:

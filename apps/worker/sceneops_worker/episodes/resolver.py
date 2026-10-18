@@ -1,7 +1,7 @@
 """Resolve a registered Episode revision to its verified manifest.
 
 Every consumer of canonical Episode content goes through here: a revision
-(given, or the one a DatasetVersion member pins) -> ``manifest_artifact_id``
+(a pin, or the one a DatasetVersion member pins) -> ``manifest_artifact_id``
 -> ArtifactRecord -> bytes verified against the pinned checksum -> strict
 canonical parse. An Episode unit has no current revision, so a consumer
 always names the revision it reads; it never resolves "the latest
@@ -10,10 +10,12 @@ manifest" by location, creation time or registration order (ADR-015 §6.4).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
 from sceneops_core.episodes.schemas import EpisodeManifest, EpisodeRevisionRecord
+from sceneops_core.provenance import RevisionPin
 
 from sceneops_worker.core.context import WorkerContext
 
@@ -34,18 +36,22 @@ class ResolvedEpisode:
     manifest: EpisodeManifest
 
 
-async def resolve_member_episode(
-    context: WorkerContext, *, dataset_id: str, dataset_version: str, episode_id: str
-) -> ResolvedEpisode:
-    """The revision of ``episode_id`` that the DatasetVersion pins."""
-    record = await context.episode_store.get_member_revision(
-        dataset_id=dataset_id, dataset_version=dataset_version, episode_id=episode_id
+async def resolve_episode_revisions(
+    context: WorkerContext, pins: Sequence[RevisionPin]
+) -> list[ResolvedEpisode]:
+    """The registered revision of every pin, in pin order; see
+    ``sceneops_worker.scenes.resolver.resolve_scene_revisions``."""
+    records = await context.episode_store.get_revisions(
+        [(p.unit_id, p.manifest_checksum) for p in pins]
     )
-    if record is None:
+    by_pin = {r.pin(): r for r in records}
+    unregistered = [p for p in pins if p not in by_pin]
+    if unregistered:
         raise EpisodeNotRegisteredError(
-            f"Episode {episode_id} is not a member of {dataset_id}/{dataset_version}"
+            "pins name no registered Episode revision: "
+            + ", ".join(f"{p.unit_id}@{p.manifest_checksum}" for p in unregistered)
         )
-    return await resolve_registered_episode(context, record)
+    return [await resolve_registered_episode(context, by_pin[p]) for p in pins]
 
 
 async def resolve_registered_episode(
@@ -78,6 +84,6 @@ __all__ = [
     "EpisodeNotRegisteredError",
     "InconsistentEpisodeStateError",
     "ResolvedEpisode",
-    "resolve_member_episode",
+    "resolve_episode_revisions",
     "resolve_registered_episode",
 ]

@@ -197,21 +197,22 @@ process_fixture() {
   fi
 
   t3="$(now)"
-  if baseline_fixture_complete "$run_id"; then
-    log "  Scene and Episode of $run_id are built and ready: reused"
+  if [ "$COMPOSED" = 1 ]; then
+    log "  Scenes and Episodes of $run_id are members of $DATASET_ID/$DATASET_VERSION: reused"
     t4="$t3"
     t5="$t3"
   else
     stall_watch_start "recording_scene_building $run_id"
-    baseline_build_scope recording_scene_building build_recording_scenes profile_scene \
-      "$run_id" "$(scene_build_config)"
+    scenes="$(baseline_build_scope recording_scene_building build_recording_scenes \
+      register_scenes profile_scene "$run_id" "$(scene_build_config)")"
     stall_watch_stop
     t4="$(now)"
     stall_watch_start "recording_episode_building $run_id"
-    baseline_build_scope recording_episode_building build_recording_episodes profile_episode \
-      "$run_id" "$(episode_build_config)"
+    episodes="$(baseline_build_scope recording_episode_building build_recording_episodes \
+      register_episodes profile_episode "$run_id" "$(episode_build_config)")"
     stall_watch_stop
     t5="$(now)"
+    PINS="$(jq -cn --argjson a "$PINS" --argjson s "$scenes" --argjson e "$episodes" '$a + $s + $e')"
   fi
   diag="$(jq -cn --arg id "$id" --arg run "$run_id" --arg action "$action" \
     --argjson replay "$replay_s" --argjson capture "$capture_s" \
@@ -246,6 +247,11 @@ fi
 log "  $(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id]')"
 
 baseline_ensure_dataset "Streaming baseline $BASELINE_ID"
+# A composed DatasetVersion is complete and immutable: its fixtures are not built
+# again. Otherwise every fixture's revision pins are collected for one composition.
+COMPOSED=0
+baseline_version_composed && COMPOSED=1
+PINS='[]'
 
 # Collected into an array first: a docker container inside a `while read` loop would
 # consume the remaining fixtures from stdin. (No mapfile: the host bash may be 3.2.)
@@ -255,6 +261,11 @@ for fixture in "${fixtures[@]}"; do
   process_fixture "$fixture"
   [ "$ACQUIRING" = 0 ] || log "streaming_storage $(streaming_storage)"
 done
+
+if [ "$COMPOSED" = 0 ]; then
+  log "--- compose $DATASET_ID/$DATASET_VERSION ($(echo "$PINS" | jq length) revisions)"
+  baseline_compose "$PINS"
+fi
 
 log "--- verify"
 streaming_verify "$API_BASE_URL"

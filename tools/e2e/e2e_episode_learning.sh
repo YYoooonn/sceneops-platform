@@ -77,7 +77,7 @@ lerobot() {
 trap 'rm -rf "$LEROBOT_DIR_HOST"' EXIT
 
 episodes_json() {
-  api_get "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500"
+  api_get "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION/episodes?limit=500"
 }
 
 episode_revisions() {

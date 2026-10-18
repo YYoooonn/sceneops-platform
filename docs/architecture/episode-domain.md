@@ -19,8 +19,9 @@ the first stage of the `EPISODE_LEARNING_DATA_BUILDING` pipeline; see
 ## 1. Pipeline
 
 ```text
-RECORDING_EPISODE_BUILDING  (one robot_run_id per run)
-  build_recording_episodes -> register_episodes -> validate_episode
+RECORDING_EPISODE_BUILDING  (one robot_run_id per run, no DatasetVersion scope)
+  build_recording_episodes -> register_episodes -> compose_dataset_version (optional)
+                                                -> validate_episode
                                                 -> profile_episode (optional)
 ```
 
@@ -29,16 +30,18 @@ build_recording_episodes   resolve_recording(robot_run_id) -> L1 conformance che
                            -> plan_recording_episodes (pure) -> OBSERVATION_PAYLOAD
                            artifacts -> EPISODE_MANIFEST artifacts (write-once)
 register_episodes          the only writer of Episode units and revisions;
-                           returns their complete pins, writes no
+                           returns their complete pins (revisions), writes no
                            DatasetVersion state
-validate_episode /         run records pinned to the revision they assessed
-profile_episode
+compose_dataset_version    optional: exactly those pins, into the version the
+                           run names ({dataset_id, dataset_version})
+validate_episode /         the pinned revisions; run records pinned to the
+profile_episode            revision they assessed
 ```
 
-The job takes `dataset_id`, `dataset_version`, `robot_run_id` and
-`build_config` only; recording URIs, paths and robot ids are rejected. A
-DatasetVersion spanning several RobotRuns takes one pipeline run per
-RobotRun.
+The build job takes `robot_run_id` and `build_config` only; recording URIs,
+paths, robot ids and DatasetVersion fields are rejected. A DatasetVersion
+spanning several RobotRuns is one `COMPOSE_DATASET_VERSION` of the pins their
+runs registered ([Jobs and pipelines](./jobs-and-pipelines.md) §2).
 
 ## 2. Build configuration
 
@@ -161,24 +164,30 @@ no DatasetVersion and never writes a member or a summary.
 projects one manifest: `manifest_artifact_id`, `manifest_checksum`,
 `producer_fingerprint`, the window, per-role observed topics and counts. Both
 are immutable; there is no status and no current revision. Readiness derives
-from the latest validation run of the revision being assessed, and
-validation, profiling and alignment read the revision a DatasetVersion member
-pins (an unpinned `ALIGN_EPISODE` input needs `dataset_id` /
-`dataset_version`; a pinned one must name a registered revision of the
+from the latest validation run of the revision being assessed. Validation
+and profiling take revision pins (`revisions`, one per unit) and read no
+DatasetVersion. Alignment is version-scoped: it aligns members of one
+DatasetVersion, and an unpinned `ALIGN_EPISODE` input resolves to the revision
+that version pins (a pinned one must name a registered revision of the
 Episode). Schema: [Data model](./data-model.md) §3.
 
 ## 6. API
 
-Read-only; building, validation and profiling run through pipelines.
+Read-only; building, validation and profiling run through pipelines, composition
+through `COMPOSE_DATASET_VERSION`. A revision-level read names its revision by
+`manifest_checksum` or through a DatasetVersion that pins it, exactly one of the
+two.
 
 ```text
 GET /api/v1/episodes?robot_run_id=                 units
 GET /api/v1/episodes/{episode_id}                  the unit and every revision
+GET /api/v1/episodes/{episode_id}/manifest?manifest_checksum=
+                                                   one revision, checksum-verified; or
 GET /api/v1/episodes/{episode_id}/manifest?dataset_id=&dataset_version=
-                                                   the revision the version pins,
-                                                   checksum-verified
-GET /api/v1/episodes/{episode_id}/quality?dataset_id=&dataset_version=
+                                                   the revision the version pins
+GET /api/v1/episodes/{episode_id}/quality?manifest_checksum=   (or ?dataset_id=&dataset_version=)
                                                    validation / profile of that revision
+GET /api/v1/datasets/{id}/versions/{v}/episodes    the revisions the version pins
 GET /api/v1/artifacts?owner_type=episode&owner_id={episode_id}
 ```
 

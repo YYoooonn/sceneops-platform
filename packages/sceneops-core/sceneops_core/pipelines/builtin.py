@@ -45,9 +45,9 @@ _BUILD_RECORDING_SCENES_OUTPUTS = [
 ]
 
 _REGISTER_SCENES_OUTPUTS = [
-    # scene_ids consumed by validate_scene / profile_scene → REF.
     PipelineTaskOutputSpec(name="scene_ids", kind=_REF, source="scene_ids"),
-    # The complete revision pins of the build → REF.
+    # The complete revision pins of the build, consumed by
+    # compose_dataset_version, validate_scene and profile_scene → REF.
     PipelineTaskOutputSpec(name="revisions", kind=_REF, source="revisions"),
     PipelineTaskOutputSpec(
         name="new_unit_scene_ids", kind=_SUMMARY, source="new_unit_scene_ids"
@@ -64,6 +64,33 @@ _REGISTER_SCENES_OUTPUTS = [
         name="revision_count", kind=_SUMMARY, source="revision_count"
     ),
 ]
+
+_COMPOSE_DATASET_VERSION_OUTPUTS = [
+    PipelineTaskOutputSpec(name="dataset_id", kind=_REF, source="dataset_id"),
+    PipelineTaskOutputSpec(name="dataset_version", kind=_REF, source="dataset_version"),
+    PipelineTaskOutputSpec(
+        name="composition_checksum", kind=_REF, source="composition_checksum"
+    ),
+    PipelineTaskOutputSpec(name="created", kind=_SUMMARY, source="created"),
+    PipelineTaskOutputSpec(name="member_count", kind=_SUMMARY, source="member_count"),
+]
+
+
+def _compose_task(*, order: int, register_task_id: str) -> PipelineTaskDefinition:
+    """The optional composition stage of a recording pipeline: runs only
+    when the run names its target, ``{"compose_dataset_version":
+    {"dataset_id": ..., "dataset_version": ...}}``, and composes exactly the
+    revisions the register stage returned."""
+    return PipelineTaskDefinition(
+        pipeline_task_id="compose_dataset_version",
+        name="Compose dataset version",
+        order=order,
+        job_type=JobType.COMPOSE_DATASET_VERSION,
+        depends_on_pipeline_task_ids=[register_task_id],
+        optional=True,
+        outputs=_COMPOSE_DATASET_VERSION_OUTPUTS,
+    )
+
 
 _VALIDATE_SCENE_OUTPUTS = [
     PipelineTaskOutputSpec(
@@ -144,9 +171,9 @@ _BUILD_RECORDING_EPISODES_OUTPUTS = [
 ]
 
 _REGISTER_EPISODES_OUTPUTS = [
-    # episode_ids consumed by validate_episode / profile_episode → REF.
     PipelineTaskOutputSpec(name="episode_ids", kind=_REF, source="episode_ids"),
-    # The complete revision pins of the build → REF.
+    # The complete revision pins of the build, consumed by
+    # compose_dataset_version, validate_episode and profile_episode → REF.
     PipelineTaskOutputSpec(name="revisions", kind=_REF, source="revisions"),
     PipelineTaskOutputSpec(
         name="new_unit_episode_ids", kind=_SUMMARY, source="new_unit_episode_ids"
@@ -293,9 +320,12 @@ RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
     description=(
         "Build the canonical Scenes of one registered RobotRun recording "
         "(robot_run_id + build_config), register them as immutable unit "
-        "revisions, then validate and profile the registered revisions. "
-        "Builds from one RobotRun per run."
+        "revisions, optionally compose exactly those revisions into a new "
+        "DatasetVersion, then validate and profile the registered revisions. "
+        "Builds from one RobotRun per run; the run itself names no "
+        "DatasetVersion."
     ),
+    dataset_version_scope=False,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="build_recording_scenes",
@@ -312,10 +342,11 @@ RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
             depends_on_pipeline_task_ids=["build_recording_scenes"],
             outputs=_REGISTER_SCENES_OUTPUTS,
         ),
+        _compose_task(order=2, register_task_id="register_scenes"),
         PipelineTaskDefinition(
             pipeline_task_id="validate_scene",
             name="Validate scenes",
-            order=2,
+            order=3,
             job_type=JobType.VALIDATE_SCENE,
             depends_on_pipeline_task_ids=["register_scenes"],
             outputs=_VALIDATE_SCENE_OUTPUTS,
@@ -324,7 +355,7 @@ RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
         PipelineTaskDefinition(
             pipeline_task_id="profile_scene",
             name="Profile scenes",
-            order=3,
+            order=4,
             job_type=JobType.PROFILE_SCENE,
             depends_on_pipeline_task_ids=["register_scenes"],
             optional=True,
@@ -340,10 +371,13 @@ RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
     description=(
         "Build the canonical Episodes of one registered RobotRun recording "
         "(robot_run_id + build_config), register them as immutable unit "
-        "revisions, then validate and profile the registered revisions. A "
-        "sibling of recording_scene_building: Episodes are built from the "
-        "recording, never from Scenes. Builds from one RobotRun per run."
+        "revisions, optionally compose exactly those revisions into a new "
+        "DatasetVersion, then validate and profile the registered revisions. "
+        "A sibling of recording_scene_building: Episodes are built from the "
+        "recording, never from Scenes. Builds from one RobotRun per run; the "
+        "run itself names no DatasetVersion."
     ),
+    dataset_version_scope=False,
     tasks=[
         PipelineTaskDefinition(
             pipeline_task_id="build_recording_episodes",
@@ -360,10 +394,11 @@ RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
             depends_on_pipeline_task_ids=["build_recording_episodes"],
             outputs=_REGISTER_EPISODES_OUTPUTS,
         ),
+        _compose_task(order=2, register_task_id="register_episodes"),
         PipelineTaskDefinition(
             pipeline_task_id="validate_episode",
             name="Validate episodes",
-            order=2,
+            order=3,
             job_type=JobType.VALIDATE_EPISODE,
             depends_on_pipeline_task_ids=["register_episodes"],
             outputs=_VALIDATE_EPISODE_OUTPUTS,
@@ -372,7 +407,7 @@ RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
         PipelineTaskDefinition(
             pipeline_task_id="profile_episode",
             name="Profile episodes",
-            order=3,
+            order=4,
             job_type=JobType.PROFILE_EPISODE,
             depends_on_pipeline_task_ids=["register_episodes"],
             optional=True,

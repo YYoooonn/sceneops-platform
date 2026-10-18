@@ -11,6 +11,7 @@ from sceneops_db.repositories.datasets import (
     DatasetRepository,
     DatasetVersionRepository,
 )
+from sceneops_db.repositories.episodes import EpisodeRepository
 from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
 
 from app.domains.datasets.quality import (
@@ -26,6 +27,7 @@ from app.domains.datasets.schemas import (
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
 )
+from app.domains.episodes.schemas import EpisodeRevisionListResponse
 from app.domains.scenes.quality import build_scene_quality
 from app.domains.scenes.schemas import SceneQualityResponse, SceneRevisionListResponse
 
@@ -38,12 +40,14 @@ class DatasetService:
         version_repository: DatasetVersionRepository,
         scene_repository: SceneRepository,
         scene_run_repository: SceneRunRepository,
+        episode_repository: EpisodeRepository,
         artifact_repository: ArtifactRepository,
     ) -> None:
         self._repository = repository
         self._version_repository = version_repository
         self._scene_repository = scene_repository
         self._scene_run_repository = scene_run_repository
+        self._episode_repository = episode_repository
         self._artifact_repository = artifact_repository
 
     async def list_datasets(
@@ -144,6 +148,19 @@ class DatasetService:
             dataset_id=dataset_id, dataset_version=version, limit=limit, offset=offset
         )
         return SceneRevisionListResponse(scenes=scenes, count=len(scenes))
+
+    async def list_dataset_version_episodes(
+        self, dataset_id: str, version: str, *, limit: int = 100, offset: int = 0
+    ) -> EpisodeRevisionListResponse | None:
+        record = await self._version_repository.get(
+            dataset_id=dataset_id, version=version
+        )
+        if record is None:
+            return None
+        episodes = await self._episode_repository.list_member_revisions(
+            dataset_id=dataset_id, dataset_version=version, limit=limit, offset=offset
+        )
+        return EpisodeRevisionListResponse(episodes=episodes, count=len(episodes))
 
     async def list_scene_quality(
         self,

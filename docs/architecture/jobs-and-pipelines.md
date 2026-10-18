@@ -37,11 +37,13 @@ A Pipeline exists only where multi-stage orchestration, retry and lineage justif
 it. SceneOps has exactly four; every other operation is a Job (§2.1).
 
 ```text
-RECORDING_SCENE_BUILDING          RobotRun -> Scenes
-  build_recording_scenes -> register_scenes -> validate_scene -> profile_scene (optional)
+RECORDING_SCENE_BUILDING          RobotRun -> Scene revisions [-> DatasetVersion]
+  build_recording_scenes -> register_scenes -> compose_dataset_version (optional)
+                         -> validate_scene -> profile_scene (optional)
 
-RECORDING_EPISODE_BUILDING        RobotRun -> Episodes
-  build_recording_episodes -> register_episodes -> validate_episode -> profile_episode (optional)
+RECORDING_EPISODE_BUILDING        RobotRun -> Episode revisions [-> DatasetVersion]
+  build_recording_episodes -> register_episodes -> compose_dataset_version (optional)
+                           -> validate_episode -> profile_episode (optional)
 
 SCENE_ML_EVALUATION               pinned label sets + policy + configs -> views -> ScenarioSet -> prediction -> evaluation
   build_scene_sample_views -> mine_scenarios -> score_scenario_readiness
@@ -51,17 +53,34 @@ EPISODE_LEARNING_DATA_BUILDING    pinned Episodes + alignment config -> AlignedE
   align_episode -> export_learning_data
 ```
 
-**Canonical building (RobotRun -> Scene / Episode).** `RECORDING_SCENE_BUILDING`
-builds the canonical Scenes of one registered RobotRun (`build_recording_scenes`
-params: `robot_run_id`, `build_config`) and hands the complete set to
-`register_scenes` through the `manifest_artifact_ids` REF; `register_scenes` hands
-`scene_ids` to the quality stages. `RECORDING_EPISODE_BUILDING` is its Episode
-sibling: `build_recording_episodes` hands the complete Episode set to
-`register_episodes` (`manifest_artifact_ids`), which hands `episode_ids` to
-`validate_episode` / `profile_episode`. One run covers one RobotRun; a DatasetVersion
-spanning several RobotRuns takes several runs. The two pipelines never depend on
-each other and share the RobotRun's `OBSERVATION_PAYLOAD` artifacts. See
+**Canonical building (RobotRun -> Scene / Episode), Build -> Register -> Compose.**
+`RECORDING_SCENE_BUILDING` builds the canonical Scenes of one registered RobotRun
+(`build_recording_scenes` params: `robot_run_id`, `build_config`; nothing else) and
+hands the complete set to `register_scenes` through the `manifest_artifact_ids` REF.
+Each id is `manifest_artifact_id_for(unit_id, manifest_checksum)`, a reference to one
+write-once manifest object and its exact bytes. `register_scenes` registers the
+revisions and hands their complete pins (`revisions`: domain, unit id, manifest
+artifact id, manifest checksum) to the later stages. `RECORDING_EPISODE_BUILDING` is
+its Episode sibling (`build_recording_episodes` -> `register_episodes` -> the same
+stages). One run covers one RobotRun. The two pipelines never depend on each other
+and share the RobotRun's `OBSERVATION_PAYLOAD` artifacts. See
 [Scene domain](./scene-domain.md) and [Episode domain](./episode-domain.md).
+
+A recording run executes in no DatasetVersion: `POST /pipelines/runs` refuses a
+`dataset_id` / `dataset_version` for these two types (`PipelineDefinition.dataset_version_scope`),
+and their build, register, validate and profile params refuse DatasetVersion fields.
+The DatasetVersion is produced only by the optional `compose_dataset_version` stage. It
+runs only when the run names its target, `params.compose_dataset_version =
+{dataset_id, dataset_version}`, and composes exactly the `revisions` the register stage
+returned, so a pipeline never composes something other than what it built. Members in
+its params (`pins`, `selector`) are refused. Its Job carries the target as its
+`dataset_id` / `dataset_version`. The stage converges when the name is already bound to
+the same pins. When the name is bound to other pins the stage fails, and the run fails
+before validation. A DatasetVersion of several RobotRuns, or of both domains, is one
+standalone `COMPOSE_DATASET_VERSION` Job over the register stages' pins
+(`tools/baselines/canonical/` does this), never several runs composing one name.
+`validate_*` / `profile_*` take the same `revisions` and assess exactly those
+revisions, with or without a composition (§2.1, [Quality and run records](./quality-and-runs.md)).
 
 **Scene ML.** `SCENE_ML_EVALUATION` consumes registered Scenes, an explicit
 sample-view policy and pinned label set revisions. Each stage pins the revisions it
@@ -90,7 +109,7 @@ Reusable single operations are plain Jobs (`POST /jobs`, then
 
 ```text
 REGISTER_ROBOT_RUN        POST /robot-runs:register (create + dispatch)
-COMPOSE_DATASET_VERSION   revision pins or a selector -> one immutable DatasetVersion (Data model §2.1)
+COMPOSE_DATASET_VERSION   revision pins or a selector -> one immutable DatasetVersion (Data model §2.1); also the optional stage of the two building pipelines
 IMPORT_LABELS             a label document -> an independent, pinned LabelSet revision
 BUILD_SCENE_SAMPLE_VIEWS  Scenes + policy + label sets -> pinned views (also the first stage of SCENE_ML_EVALUATION)
 MINE_SCENARIOS /          ScenarioSet curation and readiness scoring over pinned views
@@ -105,7 +124,10 @@ CURATE_EPISODES           a selection policy over one learning export (read by S
 EXPORT_ANALYTICS_SNAPSHOT Scene analytical Parquet tables of a DatasetVersion
 INGEST_ROBOT_STATES /     robot telemetry projection of a RobotRun
   EXPORT_ROBOT_ANALYTICS_SNAPSHOT
-BUILD_RECORDING_* / REGISTER_* / VALIDATE_* / PROFILE_*   the stages of the two building pipelines, also dispatchable alone
+BUILD_RECORDING_* / REGISTER_* / VALIDATE_* / PROFILE_*   the stages of the two building pipelines, also dispatchable alone:
+                          build robot_run_id + build_config -> manifest_artifact_ids;
+                          register manifest_artifact_ids -> revisions (pins);
+                          validate / profile revisions (pins of one domain, one per unit)
 ```
 
 A job that is a pipeline stage and the standalone job of the same type are the same
@@ -116,7 +138,7 @@ handler (`JobHandlerRegistry`).
 
 Each task's outputs are classified by `PipelineTaskOutputKind` (`builtin.py`):
 
-- `REF` — a reference the next task consumes as input (for example `episode_ids`,
+- `REF` — a reference the next task consumes as input (for example `revisions`,
   `validation_run_id`); the connective tissue between tasks.
 - `SUMMARY` — aggregate statistics recorded on the task result (for example
   `scene_count`, `issue_count`).

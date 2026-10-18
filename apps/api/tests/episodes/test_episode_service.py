@@ -22,6 +22,7 @@ from sceneops_core.episodes.testing import action, episode_manifest, state
 from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_core.runs.schemas import RunStatus
 
+from app.core.revisions import RevisionAddress
 from app.domains.episodes.schemas import EpisodeQualityReadiness
 from app.domains.episodes.service import EpisodeManifestUnavailableError, EpisodeService
 
@@ -70,6 +71,17 @@ class FakeEpisodes:
     async def get_member_revision(self, *, dataset_id, dataset_version, episode_id):
         pinned = self.members.get((dataset_id, dataset_version), [])
         return next((r for r in pinned if r.episode_id == episode_id), None)
+
+    async def get_revision(self, *, episode_id, manifest_checksum):
+        return next(
+            (
+                r
+                for r in self.records
+                if (r.episode_id, r.manifest_checksum)
+                == (episode_id, manifest_checksum)
+            ),
+            None,
+        )
 
     async def list(self, *, robot_run_id=None, limit=100, offset=0):
         units = {r.episode_id: r.unit() for r in self.records}
@@ -147,7 +159,7 @@ def _validation(record, status="ready", **pin):
     )
 
 
-V1 = {"dataset_id": "d1", "dataset_version": "v1"}
+V1 = RevisionAddress(dataset_id="d1", dataset_version="v1")
 
 
 async def test_list_lists_units_filters_and_paginates() -> None:
@@ -180,23 +192,30 @@ async def test_manifest_is_the_verified_revision_the_version_pins() -> None:
     pinned = _registered()
     other = _registered(u=0.2)
     service = _service([pinned, other], members={("d1", "v1"): [pinned[0]]})
-    response = await service.get_episode_manifest(pinned[0].episode_id, **V1)
+    response = await service.get_episode_manifest(pinned[0].episode_id, V1)
     assert response.manifest_artifact_id == pinned[0].manifest_artifact_id
     assert response.manifest["actions"][0]["values"] == {"u": 0.1}
-    assert await service.get_episode_manifest("episode-missing", **V1) is None
+    assert await service.get_episode_manifest("episode-missing", V1) is None
     assert (
         await service.get_episode_manifest(
-            pinned[0].episode_id, dataset_id="d1", dataset_version="v2"
+            pinned[0].episode_id, RevisionAddress(dataset_id="d1", dataset_version="v2")
         )
         is None
     )
+    # Addressed by its checksum, a revision no DatasetVersion pins is read too.
+    unpinned = await service.get_episode_manifest(
+        other[0].episode_id,
+        RevisionAddress(manifest_checksum=other[0].manifest_checksum),
+    )
+    assert unpinned.manifest_artifact_id == other[0].manifest_artifact_id
+    assert unpinned.manifest["actions"][0]["values"] == {"u": 0.2}
 
 
 async def test_manifest_with_changed_bytes_is_refused() -> None:
     record, artifact, data = _registered()
     service = _service([(record, artifact, data + b" ")])
     with pytest.raises(EpisodeManifestUnavailableError):
-        await service.get_episode_manifest(record.episode_id, **V1)
+        await service.get_episode_manifest(record.episode_id, V1)
 
 
 async def test_quality_counts_only_the_pinned_revision() -> None:
@@ -211,15 +230,21 @@ async def test_quality_counts_only_the_pinned_revision() -> None:
         manifest_checksum=other,
     )
     service = _service([(record, artifact, data)], runs=[old_run])
-    quality = await service.get_episode_quality(record.episode_id, **V1)
+    quality = await service.get_episode_quality(record.episode_id, V1)
     assert quality.readiness == EpisodeQualityReadiness.UNKNOWN
     assert quality.blocking_reasons == ["validation_missing"]
 
     service = _service([(record, artifact, data)], runs=[old_run, _validation(record)])
-    quality = await service.get_episode_quality(record.episode_id, **V1)
+    quality = await service.get_episode_quality(record.episode_id, V1)
     assert (quality.dataset_id, quality.dataset_version) == ("d1", "v1")
     assert quality.readiness == EpisodeQualityReadiness.READY
     assert quality.counts.state_count == 1 and quality.counts.action_count == 1
+
+    by_revision = await service.get_episode_quality(
+        record.episode_id, RevisionAddress(manifest_checksum=record.manifest_checksum)
+    )
+    assert (by_revision.dataset_id, by_revision.dataset_version) == (None, None)
+    assert by_revision.readiness == EpisodeQualityReadiness.READY
 
 
 async def test_quality_blocked_and_profile_summary() -> None:
@@ -236,7 +261,7 @@ async def test_quality_blocked_and_profile_summary() -> None:
     service = _service(
         [(record, artifact, data)], runs=[_validation(record, "failed"), profile]
     )
-    quality = await service.get_episode_quality(record.episode_id, **V1)
+    quality = await service.get_episode_quality(record.episode_id, V1)
     assert quality.readiness == EpisodeQualityReadiness.BLOCKED
     assert quality.profile.window_duration_ns == 6
-    assert await service.get_episode_quality("episode-missing", **V1) is None
+    assert await service.get_episode_quality("episode-missing", V1) is None

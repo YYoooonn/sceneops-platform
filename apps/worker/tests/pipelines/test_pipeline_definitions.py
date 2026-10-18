@@ -5,6 +5,7 @@ from __future__ import annotations
 from sceneops_core.pipelines.builtin import (
     BUILTIN_PIPELINE_DEFINITIONS,
     EPISODE_LEARNING_DATA_BUILDING_PIPELINE,
+    RECORDING_EPISODE_BUILDING_PIPELINE,
     RECORDING_SCENE_BUILDING_PIPELINE,
     SCENE_ML_EVALUATION_PIPELINE,
 )
@@ -55,8 +56,8 @@ class TestFinalPipelineSurface:
 
 
 class TestRecordingSceneBuildingPipeline:
-    """RobotRun -> canonical Scenes -> registration -> validation / profile
-    (ADR-007 §17.3, §29.2)."""
+    """RobotRun -> canonical Scenes -> registration -> optional composition
+    -> validation / profile (ADR-015 §6.7, §7)."""
 
     def _tasks(self):
         return {t.pipeline_task_id: t for t in RECORDING_SCENE_BUILDING_PIPELINE.tasks}
@@ -64,13 +65,24 @@ class TestRecordingSceneBuildingPipeline:
     def test_task_chain(self) -> None:
         tasks = self._tasks()
         assert [
-            (t.pipeline_task_id, t.job_type, t.depends_on_pipeline_task_ids)
+            (t.pipeline_task_id, t.job_type, t.depends_on_pipeline_task_ids, t.optional)
             for t in sorted(tasks.values(), key=lambda t: t.order)
         ] == [
-            ("build_recording_scenes", JobType.BUILD_RECORDING_SCENES, []),
-            ("register_scenes", JobType.REGISTER_SCENES, ["build_recording_scenes"]),
-            ("validate_scene", JobType.VALIDATE_SCENE, ["register_scenes"]),
-            ("profile_scene", JobType.PROFILE_SCENE, ["register_scenes"]),
+            ("build_recording_scenes", JobType.BUILD_RECORDING_SCENES, [], False),
+            (
+                "register_scenes",
+                JobType.REGISTER_SCENES,
+                ["build_recording_scenes"],
+                False,
+            ),
+            (
+                "compose_dataset_version",
+                JobType.COMPOSE_DATASET_VERSION,
+                ["register_scenes"],
+                True,
+            ),
+            ("validate_scene", JobType.VALIDATE_SCENE, ["register_scenes"], False),
+            ("profile_scene", JobType.PROFILE_SCENE, ["register_scenes"], True),
         ]
 
     def test_refs_hand_the_complete_set_to_the_registrar(self) -> None:
@@ -92,6 +104,58 @@ class TestRecordingSceneBuildingPipeline:
     def test_no_default_build_configuration(self) -> None:
         """Canonical semantics come only from explicit pipeline params."""
         assert self._tasks()["build_recording_scenes"].default_params == {}
+
+
+class TestRecordingPipelinesNameNoDatasetVersion:
+    """Build and registration have no DatasetVersion; a recording pipeline
+    composes one only when its compose stage is named, and composes exactly
+    the revisions its register stage returned."""
+
+    def test_the_run_has_no_dataset_version_scope(self) -> None:
+        for definition in (
+            RECORDING_SCENE_BUILDING_PIPELINE,
+            RECORDING_EPISODE_BUILDING_PIPELINE,
+        ):
+            assert definition.dataset_version_scope is False
+        for definition in (
+            SCENE_ML_EVALUATION_PIPELINE,
+            EPISODE_LEARNING_DATA_BUILDING_PIPELINE,
+        ):
+            assert definition.dataset_version_scope is True
+
+    def test_episode_pipeline_mirrors_the_scene_chain(self) -> None:
+        assert [
+            (t.pipeline_task_id, t.depends_on_pipeline_task_ids, t.optional)
+            for t in sorted(
+                RECORDING_EPISODE_BUILDING_PIPELINE.tasks, key=lambda t: t.order
+            )
+        ] == [
+            ("build_recording_episodes", [], False),
+            ("register_episodes", ["build_recording_episodes"], False),
+            ("compose_dataset_version", ["register_episodes"], True),
+            ("validate_episode", ["register_episodes"], False),
+            ("profile_episode", ["register_episodes"], True),
+        ]
+
+    def test_compose_and_the_assessments_consume_the_register_pins(self) -> None:
+        for definition, register in (
+            (RECORDING_SCENE_BUILDING_PIPELINE, "register_scenes"),
+            (RECORDING_EPISODE_BUILDING_PIPELINE, "register_episodes"),
+        ):
+            tasks = {t.pipeline_task_id: t for t in definition.tasks}
+            refs = {o.name for o in tasks[register].outputs if o.kind == "ref"}
+            assert "revisions" in refs
+            compose_refs = {
+                o.name
+                for o in tasks["compose_dataset_version"].outputs
+                if o.kind == "ref"
+            }
+            assert compose_refs == {
+                "dataset_id",
+                "dataset_version",
+                "composition_checksum",
+            }
+            assert tasks["compose_dataset_version"].default_params == {}
 
 
 class TestLegacySceneIngressRemoved:

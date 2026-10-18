@@ -87,8 +87,6 @@ class SceneRunRepository(Protocol):
         status: RunStatus | None = None,
         scene_id: str | None = None,
         manifest_artifact_id: str | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         job_id: str | None = None,
         pipeline_run_id: str | None = None,
         limit: int = 100,

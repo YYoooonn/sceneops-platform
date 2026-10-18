@@ -25,10 +25,16 @@ class EpisodeListResponse(SceneOpsBaseModel):
     count: int
 
 
+class EpisodeRevisionListResponse(SceneOpsBaseModel):
+    """The Episode revisions a DatasetVersion pins, one per member unit."""
+
+    episodes: list[EpisodeRevisionRecord]
+    count: int
+
+
 class EpisodeManifestResponse(SceneOpsBaseModel):
-    """The canonical EpisodeManifest revision of the Episode that one
-    DatasetVersion pins, verified against its checksum before it is
-    returned."""
+    """One canonical EpisodeManifest revision of the Episode, verified
+    against its checksum before it is returned."""
 
     episode_id: str
     manifest_artifact_id: str
@@ -38,8 +44,9 @@ class EpisodeManifestResponse(SceneOpsBaseModel):
 
 # ── Episode quality summary ──────────────────────────────────────────────────
 #
-# Quality describes the revision of an Episode that one DatasetVersion pins;
-# only run records that assessed exactly that revision count.
+# Quality describes one revision of an Episode, named by its manifest
+# checksum or by a DatasetVersion that pins it; only run records that
+# assessed exactly that revision count.
 
 
 class EpisodeQualityReadiness(StrEnum):
@@ -79,9 +86,12 @@ class EpisodeProfileQualitySummary(SceneOpsBaseModel):
 
 
 class EpisodeQualityResponse(SceneOpsBaseModel):
+    """``dataset_id`` / ``dataset_version`` are set when the revision was
+    addressed through a DatasetVersion."""
+
     episode_id: str
-    dataset_id: str
-    dataset_version: str
+    dataset_id: str | None = None
+    dataset_version: str | None = None
     manifest_artifact_id: str
     manifest_checksum: str
 

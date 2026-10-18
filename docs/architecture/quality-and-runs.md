@@ -15,7 +15,9 @@ Each run record is scoped either to a whole job (the `*_id` foreign key is
 single item (`scene_id`/`episode_id` set, meaning "just this one"). A
 `validate_scene`/`validate_episode` job run typically writes both: one
 job-level aggregate row, and one per-item row for each scene/episode it
-checked.
+checked. The jobs take the revisions to assess as complete pins
+(`revisions`, at most one per unit) and read no DatasetVersion; Scene and
+Episode run records carry no `dataset_id` / `dataset_version`.
 
 `InferenceRun`/`EvaluationRun` are a different shape — each is its own
 single row (not an append-only "run record" pattern), since an inference
@@ -26,9 +28,10 @@ execution rather than a recurring quality check against a stable record.
 
 Readiness is derived, never stored: `sceneops_core.scenes.readiness` takes
 the newest succeeded `SceneValidationRunRecord` **that assessed the revision
-being reported** — the one a DatasetVersion member pins
-(`manifest_artifact_id` + `manifest_checksum` on the run equal the
-revision's). A Scene has no current revision. Runs of any other revision of
+being reported** — the one named by its manifest checksum, or the one a
+DatasetVersion member pins (`manifest_artifact_id` + `manifest_checksum` on the
+run equal the revision's). `GET /scenes/{id}/quality` takes exactly one of
+`manifest_checksum` or `dataset_id` + `dataset_version` (`app.core.revisions`). A Scene has no current revision. Runs of any other revision of
 the unit are ignored, so a newly pinned revision is `unknown` until it is
 validated.
 
@@ -61,8 +64,8 @@ aggregate over every scene's quality in that version — readiness buckets
 
 `apps/api/app/domains/episodes/quality.py` follows the same shape, derived
 purely from the latest succeeded `EpisodeValidationRunRecord` of the
-Episode's **current** manifest revision (profile data enriches the response
-but doesn't drive readiness):
+addressed revision, named the same way as a Scene's (profile data enriches the
+response but doesn't drive readiness):
 
 ```text
 readiness = UNKNOWN   if no validation run exists

@@ -141,6 +141,9 @@ class _StagedSceneStore:
             key=lambda r: r.manifest_checksum,
         )
 
+    async def get_revisions(self, keys):
+        return [self.working[0][k] for k in keys if k in self.working[0]]
+
     async def register_revision(self, revision):
         from sceneops_core.provenance import (
             RevisionDecision,
@@ -157,10 +160,6 @@ class _StagedSceneStore:
         if decision != RevisionDecision.EXISTING_REVISION:
             self.working[0][key] = revision
         return RevisionRegistration(decision=decision, revision=self.working[0][key])
-
-    async def get_member_revision(self, *, dataset_id, dataset_version, scene_id):
-        checksum = self.working[1].get((dataset_id, dataset_version), {}).get(scene_id)
-        return None if checksum is None else self.working[0][(scene_id, checksum)]
 
     async def list_member_revisions(
         self, *, dataset_id, dataset_version, robot_run_id=None, limit=100, offset=0

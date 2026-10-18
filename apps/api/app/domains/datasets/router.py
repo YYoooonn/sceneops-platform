@@ -14,6 +14,7 @@ from app.domains.datasets.schemas import (
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
 )
+from app.domains.episodes.schemas import EpisodeRevisionListResponse
 from app.domains.scenes.schemas import SceneRevisionListResponse
 from app.platform.artifacts.schemas import ArtifactListResponse
 from sceneops_core.datasets.schemas import CreateDatasetRequest
@@ -130,6 +131,24 @@ async def list_dataset_version_scenes(
     pagination: PaginationDep,
 ) -> SceneRevisionListResponse:
     result = await service.list_dataset_version_scenes(
+        dataset_id, version, limit=pagination.limit, offset=pagination.offset
+    )
+    if result is None:
+        raise_not_found("Dataset version", f"{dataset_id}:{version}")
+    return result
+
+
+@router.get(
+    "/{dataset_id}/versions/{version}/episodes",
+    response_model=EpisodeRevisionListResponse,
+)
+async def list_dataset_version_episodes(
+    dataset_id: str,
+    version: str,
+    service: DatasetServiceDep,
+    pagination: PaginationDep,
+) -> EpisodeRevisionListResponse:
+    result = await service.list_dataset_version_episodes(
         dataset_id, version, limit=pagination.limit, offset=pagination.offset
     )
     if result is None:

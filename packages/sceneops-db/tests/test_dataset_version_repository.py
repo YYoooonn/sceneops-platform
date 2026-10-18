@@ -3,7 +3,8 @@
 A version row is written only together with all its members, by
 ``PostgresDatasetVersionRepository.insert``, and never changed afterwards.
 The repository has no method that creates an empty version, updates one or
-adds a member to an existing one. Every expected failure runs in a
+adds a member to an existing one, and PostgreSQL refuses each of those from
+any SQL (migration e9b5d3a7c2f4). Every expected failure runs in a
 savepoint so the test session stays usable.
 """
 
@@ -188,6 +189,153 @@ async def test_a_committed_version_is_immutable(
     for absent in ("create", "upsert", "update", "delete"):
         assert not hasattr(PostgresDatasetVersionRepository, absent)
     assert not hasattr(PostgresDatasetVersionMemberRepository, "add")
+
+
+_RAW_VERSION = text(
+    "INSERT INTO dataset_versions (id, dataset_id, version, composition_checksum, "
+    "scene_count, keyframe_count, observation_count, episode_count) "
+    "VALUES (:id, :d, 'v1', :c, :scenes, 0, 0, 0)"
+)
+_RAW_MEMBER = text(
+    "INSERT INTO dataset_version_members (dataset_version_id, unit_id, domain, "
+    "scene_id, manifest_artifact_id, manifest_checksum) "
+    "VALUES (:id, :u, 'scene', :u, :a, :c)"
+)
+
+
+def _raw_member(version_id, revision) -> dict:
+    return {
+        "id": version_id,
+        "u": revision.scene_id,
+        "a": revision.manifest_artifact_id,
+        "c": revision.manifest_checksum,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_version_cannot_commit_without_the_members_it_counts(
+    db_session, unique_id, scene_revision_for
+):
+    """The CHECK only requires a positive count; the deferred trigger
+    requires the member rows themselves, per domain, at commit.
+    SET CONSTRAINTS ... IMMEDIATE runs that commit-time check here."""
+    dataset_id = await _dataset(db_session, unique_id)
+    revision = await scene_revision_for(db_session)
+    await PostgresSceneRepository(db_session).register_revision(revision)
+    version_id = f"{dataset_id}:v1"
+    checksum = composition_checksum([revision.pin()])
+
+    async def counted_but_empty():
+        await db_session.execute(
+            _RAW_VERSION,
+            {"id": version_id, "d": dataset_id, "c": checksum, "scenes": 1},
+        )
+        await db_session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+    async def fewer_members_than_counted():
+        await db_session.execute(
+            _RAW_VERSION,
+            {"id": version_id, "d": dataset_id, "c": checksum, "scenes": 2},
+        )
+        await db_session.execute(_RAW_MEMBER, _raw_member(version_id, revision))
+        await db_session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+    await _fails(db_session, DBAPIError, "0 scene and 0 episode", counted_but_empty)
+    await _fails(
+        db_session, DBAPIError, "1 scene and 0 episode", fewer_members_than_counted
+    )
+    assert (
+        await PostgresDatasetVersionRepository(db_session).get(
+            dataset_id=dataset_id, version="v1"
+        )
+        is None
+    )
+
+    # The repository's own write satisfies the check.
+    await PostgresDatasetVersionRepository(db_session).insert(
+        _record(dataset_id, revisions=[revision]), [_member(revision)]
+    )
+    await db_session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+
+@pytest.mark.asyncio
+async def test_the_membership_of_a_committed_version_is_closed_and_undeletable(
+    unique_id, scene_revision_for
+):
+    """After commit, no member is added to, removed from or changed in a
+    version, by any SQL; the version therefore cannot be deleted either."""
+    sessionmaker = get_async_sessionmaker()
+    async with sessionmaker() as session:
+        dataset_id = await _dataset(session, unique_id)
+        one = await scene_revision_for(session)
+        two = await scene_revision_for(session)
+        await PostgresSceneRepository(session).register_revision(one)
+        await PostgresSceneRepository(session).register_revision(two)
+        await PostgresDatasetVersionRepository(session).insert(
+            _record(dataset_id, revisions=[one]), [_member(one)]
+        )
+        await session.commit()
+    version_id = f"{dataset_id}:v1"
+
+    async with sessionmaker() as session:
+
+        async def add():
+            await session.execute(_RAW_MEMBER, _raw_member(version_id, two))
+
+        async def remove():
+            await session.execute(
+                text(
+                    "DELETE FROM dataset_version_members "
+                    "WHERE dataset_version_id = :id"
+                ),
+                {"id": version_id},
+            )
+
+        async def repoint():
+            await session.execute(
+                text(
+                    "UPDATE dataset_version_members SET unit_id = :u "
+                    "WHERE dataset_version_id = :id"
+                ),
+                {"id": version_id, "u": two.scene_id},
+            )
+
+        async def drop_version():
+            await session.execute(
+                text("DELETE FROM dataset_versions WHERE id = :id"), {"id": version_id}
+            )
+
+        await _fails(session, DBAPIError, "membership is immutable", add)
+        await _fails(session, DBAPIError, "never deleted", remove)
+        await _fails(session, DBAPIError, "immutable", repoint)
+        await _fails(session, DBAPIError, "dataset_version_members", drop_version)
+        await session.rollback()
+
+    async with sessionmaker() as session:
+        members = await PostgresDatasetVersionMemberRepository(session).list(
+            dataset_id=dataset_id, version="v1"
+        )
+    assert [m.unit_id for m in members] == [one.scene_id]
+
+
+@pytest.mark.asyncio
+async def test_a_member_is_never_deleted_even_before_commit(
+    db_session, unique_id, scene_revision_for
+):
+    dataset_id = await _dataset(db_session, unique_id)
+    revision = await scene_revision_for(db_session)
+    await PostgresSceneRepository(db_session).register_revision(revision)
+    await PostgresDatasetVersionRepository(db_session).insert(
+        _record(dataset_id, revisions=[revision]), [_member(revision)]
+    )
+
+    async def remove():
+        await db_session.execute(
+            text("DELETE FROM dataset_version_members WHERE unit_id = :u"),
+            {"u": revision.scene_id},
+        )
+
+    await _fails(db_session, DBAPIError, "never deleted", remove)
 
 
 @pytest.mark.asyncio

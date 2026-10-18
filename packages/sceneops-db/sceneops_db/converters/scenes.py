@@ -119,8 +119,6 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
         scene_id=model.scene_id,
         manifest_artifact_id=model.manifest_artifact_id,
         manifest_checksum=model.manifest_checksum,
-        dataset_id=model.dataset_id,
-        dataset_version=model.dataset_version,
     )
     s = model.summary or {}
 
@@ -154,8 +152,6 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
         "scene_id": record.scene_id,
         "manifest_artifact_id": record.manifest_artifact_id,
         "manifest_checksum": record.manifest_checksum,
-        "dataset_id": record.dataset_id,
-        "dataset_version": record.dataset_version,
     }
 
     if isinstance(record, SceneValidationRunRecord):

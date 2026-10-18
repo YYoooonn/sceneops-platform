@@ -173,10 +173,11 @@ make check-commands                the command surface is consistent (no pytest,
   `pipelines`). `pipelines` and `recovery` fail, never skip, when their infrastructure
   is missing, and the selection changes no suite's isolation:
   - `pipelines` runs `tests/infrastructure` on a disposable execution runtime:
-    execution-key dedup / force, convergence of an unchanged rebuild,
-    conflict-then-explicit-replacement, resumption of a blocked pipeline, recovery
-    of a failed one, concurrent runs over one scope and the orchestrator that
-    executed them. These tests re-execute pipelines on purpose and the platform keeps every
+    execution-key dedup / force, convergence of an unchanged rebuild, additive
+    revisions of a changed configuration beside immutable composed DatasetVersions,
+    composition convergence and refused rebinding, resumption of a blocked pipeline,
+    recovery of a failed one, concurrent runs over one scope and composition, and the
+    orchestrator that executed them. These tests re-execute pipelines on purpose and the platform keeps every
     Job and PipelineRun that results, so the command creates the disposable database and
     bucket of `make test-integration`, starts an API, Celery workers and a Redis of its own
     on them (compose project `sceneops-test`, `compose/test-runtime.yaml`), seeds the one

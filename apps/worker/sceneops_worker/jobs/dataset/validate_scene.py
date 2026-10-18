@@ -21,7 +21,7 @@ from sceneops_core.scenes.schemas.runs import SceneValidationRunRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
-from sceneops_worker.scenes.resolver import resolve_member_scene
+from sceneops_worker.scenes.resolver import resolve_scene_revisions
 from sceneops_scenes.validation import SceneManifestValidator
 
 _validator = SceneManifestValidator()
@@ -33,12 +33,12 @@ class ValidateSceneJobHandler(
     ],
     JobHandler[ValidateSceneJobParams, ValidateSceneJobResult],
 ):
-    """Validates registered Scenes at the revision each SceneRecord points to
-    when the job reads it. Each per-scene run record pins that revision.
+    """Validates pinned Scene revisions. Each per-scene run record pins the
+    revision it assessed.
 
-    Validation never changes membership or a SceneRecord, and caches nothing
-    on the DatasetVersion: readiness is derived from these run records for
-    the current revision (ADR-007 §13.4, §17.5)."""
+    Validation reads no DatasetVersion and never changes a unit, a revision
+    or a membership: readiness is derived per revision from these run
+    records (ADR-015 §6.4)."""
 
     @property
     def job_type(self) -> JobType:
@@ -49,14 +49,7 @@ class ValidateSceneJobHandler(
         return ValidateSceneJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": inputs.dataset.dataset_version
-            if inputs.dataset
-            else None,
-            **inputs.params,
-            "scene_ids": inputs.refs.get("scene_ids") or [],
-        }
+        return {**inputs.params, "revisions": inputs.refs.get("revisions") or []}
 
     def build_initial_record(
         self,
@@ -67,8 +60,6 @@ class ValidateSceneJobHandler(
     ) -> SceneValidationRunRecord:
         return SceneValidationRunRecord(
             run_id=default_validation_run_id(job.job_id),
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
             pipeline_task_run_id=job.pipeline_task_run_id,
@@ -87,54 +78,15 @@ class ValidateSceneJobHandler(
     ) -> tuple[SceneValidationRunRecord, ValidateSceneJobResult]:
         run_id = initial_record.run_id
 
-        if not params.scene_ids:
-            failed_record = initial_record.model_copy(
-                update={
-                    "status": RunStatus.SUCCEEDED,
-                    "validation_status": "failed",
-                    "should_block_pipeline": True,
-                    "issue_count": 1,
-                    "error_count": 1,
-                    "warning_count": 0,
-                    "finished_at": utc_now(),
-                }
-            )
-            return failed_record, ValidateSceneJobResult(
-                status="failed",
-                should_block_pipeline=True,
-                checked_scene_count=0,
-                issue_count=1,
-                metadata={
-                    "issues": [
-                        {
-                            "code": "empty_scene_input",
-                            "message": "validate_scene requires at least one scene_id.",
-                        }
-                    ]
-                },
-            )
-
         total_issues = 0
         total_blocking = 0
         total_warnings = 0
         blocking = False
         report_scenes: list[dict] = []
 
-        if params.dataset_id is None or params.dataset_version is None:
-            raise ValueError(
-                "validate_scene reads the revision each Scene's DatasetVersion pins; "
-                "dataset_id and dataset_version are required"
-            )
-        dataset_id, dataset_version = params.dataset_id, params.dataset_version
-
-        for scene_id in params.scene_ids:
-            resolved = await resolve_member_scene(
-                context,
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
-                scene_id=scene_id,
-            )
+        for resolved in await resolve_scene_revisions(context, params.revisions):
             record = resolved.record
+            scene_id = record.scene_id
             result = _validator.validate(
                 scene_id=scene_id,
                 manifest=resolved.manifest,
@@ -190,8 +142,6 @@ class ValidateSceneJobHandler(
                 owner_type=ArtifactOwnerType.SCENE_VALIDATION_RUN,
                 owner_id=per_scene_run_id,
                 scene_id=scene_id,
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
                 run_id=per_scene_run_id,
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
@@ -202,8 +152,6 @@ class ValidateSceneJobHandler(
                     scene_id=scene_id,
                     manifest_artifact_id=record.manifest_artifact_id,
                     manifest_checksum=record.manifest_checksum,
-                    dataset_id=dataset_id,
-                    dataset_version=dataset_version,
                     status=RunStatus.SUCCEEDED,
                     validation_status=result.status,
                     should_block_pipeline=result.should_block,
@@ -242,7 +190,7 @@ class ValidateSceneJobHandler(
                 {
                     "run_id": run_id,
                     "job_id": job.job_id,
-                    "checked_scene_count": len(params.scene_ids),
+                    "checked_scene_count": len(params.revisions),
                     "total_issues": total_issues,
                     "should_block_pipeline": blocking,
                     "status": overall_status,
@@ -252,8 +200,6 @@ class ValidateSceneJobHandler(
             media_type="application/json",
             owner_type=ArtifactOwnerType.SCENE_VALIDATION_RUN,
             owner_id=run_id,
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             run_id=run_id,
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
@@ -275,7 +221,7 @@ class ValidateSceneJobHandler(
         return succeeded_record, ValidateSceneJobResult(
             status=overall_status,
             should_block_pipeline=blocking,
-            checked_scene_count=len(params.scene_ids),
+            checked_scene_count=len(params.revisions),
             issue_count=total_issues,
             validation_run_id=run_id,
             report_uri=report_uri,

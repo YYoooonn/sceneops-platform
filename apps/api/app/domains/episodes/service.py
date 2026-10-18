@@ -10,11 +10,12 @@ from sceneops_core.episodes.schemas import (
     load_canonical_episode_manifest,
 )
 from sceneops_core.runs.schemas import RunStatus, RunType
-from sceneops_db.queries import resolve_member_episode_manifest_source
+from sceneops_db.queries import episode_revision_manifest_source
 from sceneops_db.repositories.artifacts import ArtifactRepository
 from sceneops_db.repositories.episodes import EpisodeRepository, EpisodeRunRepository
 from sceneops_storage import ArtifactStore
 
+from app.core.revisions import RevisionAddress
 from app.domains.episodes.quality import build_episode_quality
 from app.domains.episodes.schemas import (
     EpisodeDetailResponse,
@@ -68,22 +69,18 @@ class EpisodeService:
         )
 
     async def get_episode_manifest(
-        self, episode_id: str, *, dataset_id: str, dataset_version: str
+        self, episode_id: str, address: RevisionAddress
     ) -> EpisodeManifestResponse | None:
-        """The revision the DatasetVersion pins, bytes verified and strictly
-        parsed."""
+        """The addressed revision, bytes verified and strictly parsed."""
         assert (
             self._artifact_repository is not None and self._artifact_store is not None
         )
-        artifact = await resolve_member_episode_manifest_source(
-            episode_repository=self._repository,
-            artifact_repository=self._artifact_repository,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            episode_id=episode_id,
-        )
-        if artifact is None:
+        revision = await self._revision(episode_id, address)
+        if revision is None:
             return None
+        artifact = await episode_revision_manifest_source(
+            artifact_repository=self._artifact_repository, revision=revision
+        )
         data = await self._artifact_store.read_bytes(artifact.uri)
         if sha256_checksum(data) != artifact.checksum:
             raise EpisodeManifestUnavailableError(
@@ -98,27 +95,38 @@ class EpisodeService:
         )
 
     async def get_episode_quality(
-        self, episode_id: str, *, dataset_id: str, dataset_version: str
+        self, episode_id: str, address: RevisionAddress
     ) -> EpisodeQualityResponse | None:
-        """Quality of the revision of ``episode_id`` that the DatasetVersion
-        pins; None if the Episode is not one of its members."""
-        episode = await self._repository.get_member_revision(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            episode_id=episode_id,
-        )
+        """Quality of the addressed revision of ``episode_id``; None if no
+        such revision is registered (or the DatasetVersion does not pin
+        one)."""
+        episode = await self._revision(episode_id, address)
         if episode is None:
             return None
         return build_episode_quality(
             episode=episode,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
+            dataset_id=address.dataset_id,
+            dataset_version=address.dataset_version,
             validation_run=await self._latest_revision_run(
                 episode, RunType.EPISODE_VALIDATION, EpisodeValidationRunRecord
             ),
             profile_run=await self._latest_revision_run(
                 episode, RunType.EPISODE_PROFILE, EpisodeProfileRunRecord
             ),
+        )
+
+    async def _revision(
+        self, episode_id: str, address: RevisionAddress
+    ) -> EpisodeRevisionRecord | None:
+        if address.manifest_checksum is not None:
+            return await self._repository.get_revision(
+                episode_id=episode_id, manifest_checksum=address.manifest_checksum
+            )
+        assert address.dataset_id and address.dataset_version
+        return await self._repository.get_member_revision(
+            dataset_id=address.dataset_id,
+            dataset_version=address.dataset_version,
+            episode_id=episode_id,
         )
 
     async def _latest_revision_run(self, episode: EpisodeRevisionRecord, run_type, cls):

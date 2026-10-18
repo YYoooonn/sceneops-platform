@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
+from app.core.revisions import RevisionAddressDep
 from app.domains.scenes.dependencies import SceneServiceDep
 from app.domains.scenes.schemas import (
     SceneDetailResponse,
@@ -41,14 +42,13 @@ async def get_scene(scene_id: str, service: SceneServiceDep) -> SceneDetailRespo
 
 @router.get("/{scene_id}/quality", response_model=SceneQualityResponse)
 async def get_scene_quality(
-    scene_id: str, dataset_id: str, dataset_version: str, service: SceneServiceDep
+    scene_id: str, address: RevisionAddressDep, service: SceneServiceDep
 ) -> SceneQualityResponse:
-    """Quality of the revision of the Scene that the DatasetVersion pins."""
-    result = await service.get_scene_quality(
-        scene_id, dataset_id=dataset_id, dataset_version=dataset_version
-    )
+    """Quality of one revision of the Scene: the one ``manifest_checksum``
+    names, or the one the DatasetVersion pins."""
+    result = await service.get_scene_quality(scene_id, address)
     if result is None:
-        raise_not_found("Scene member", f"{scene_id} in {dataset_id}:{dataset_version}")
+        raise_not_found("Scene revision", address.describe(scene_id))
     return result
 
 

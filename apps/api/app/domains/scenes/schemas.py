@@ -28,9 +28,9 @@ class SceneRevisionListResponse(SceneOpsBaseModel):
 
 # ── Scene quality summary response ────────────────────────────────────────────
 #
-# Quality is reported for one revision of a Scene, the one a DatasetVersion
-# pins: the validation / profile summaries come from run records that pinned
-# exactly that revision, and readiness is derived from them, never stored. Labels and
+# Quality is reported for one revision of a Scene, named by its manifest
+# checksum or by a DatasetVersion that pins it: the validation / profile
+# summaries come from run records that pinned exactly that revision, and readiness is derived from them, never stored. Labels and
 # detection selectability are not Scene quality: they belong to derived
 # label sets and sample views (ADR-007 §33).
 
@@ -67,9 +67,12 @@ class SceneProfileQualitySummary(SceneOpsBaseModel):
 
 
 class SceneQualityResponse(SceneOpsBaseModel):
+    """Quality of one Scene revision. ``dataset_id`` / ``dataset_version``
+    are set when the revision was addressed through a DatasetVersion."""
+
     scene_id: str
-    dataset_id: str
-    dataset_version: str
+    dataset_id: str | None = None
+    dataset_version: str | None = None
     manifest_artifact_id: str
     manifest_checksum: str
 

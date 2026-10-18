@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
+from app.core.revisions import RevisionAddressDep
 from app.domains.episodes.dependencies import EpisodeServiceDep
 from app.domains.episodes.schemas import (
     EpisodeDetailResponse,
@@ -12,9 +13,9 @@ from app.domains.episodes.schemas import (
     EpisodeQualityResponse,
 )
 
-# Read-only: Episode units, revisions and members are written by the
-# recording_episode_building pipeline's registrar, validation / profiling run
-# through pipelines.
+# Read-only: Episode units and revisions are written by the registrar,
+# DatasetVersion members by composition, validation / profile runs by their
+# jobs.
 
 router = APIRouter()
 
@@ -45,31 +46,25 @@ async def get_episode(
 
 @router.get("/{episode_id}/manifest", response_model=EpisodeManifestResponse)
 async def get_episode_manifest(
-    episode_id: str, dataset_id: str, dataset_version: str, service: EpisodeServiceDep
+    episode_id: str, address: RevisionAddressDep, service: EpisodeServiceDep
 ) -> EpisodeManifestResponse:
-    """The canonical manifest revision of the Episode that the DatasetVersion
-    pins: asynchronous observation / state / action / event streams, each in
-    its own clock."""
-    result = await service.get_episode_manifest(
-        episode_id, dataset_id=dataset_id, dataset_version=dataset_version
-    )
+    """One canonical manifest revision of the Episode (the one
+    ``manifest_checksum`` names, or the one the DatasetVersion pins):
+    asynchronous observation / state / action / event streams, each in its
+    own clock."""
+    result = await service.get_episode_manifest(episode_id, address)
     if result is None:
-        raise_not_found(
-            "Episode member", f"{episode_id} in {dataset_id}:{dataset_version}"
-        )
+        raise_not_found("Episode revision", address.describe(episode_id))
     return result
 
 
 @router.get("/{episode_id}/quality", response_model=EpisodeQualityResponse)
 async def get_episode_quality(
-    episode_id: str, dataset_id: str, dataset_version: str, service: EpisodeServiceDep
+    episode_id: str, address: RevisionAddressDep, service: EpisodeServiceDep
 ) -> EpisodeQualityResponse:
-    """Quality of the revision of the Episode that the DatasetVersion pins."""
-    result = await service.get_episode_quality(
-        episode_id, dataset_id=dataset_id, dataset_version=dataset_version
-    )
+    """Quality of one revision of the Episode: the one ``manifest_checksum``
+    names, or the one the DatasetVersion pins."""
+    result = await service.get_episode_quality(episode_id, address)
     if result is None:
-        raise_not_found(
-            "Episode member", f"{episode_id} in {dataset_id}:{dataset_version}"
-        )
+        raise_not_found("Episode revision", address.describe(episode_id))
     return result

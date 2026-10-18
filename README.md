@@ -61,12 +61,12 @@ A Pipeline exists only where multi-stage orchestration, retry and lineage justif
 
 | Pipeline                         | Stages                                                                                              |
 | -------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `recording_scene_building`       | RobotRun → `build_recording_scenes` → `register_scenes` → `validate_scene` → `profile_scene`        |
-| `recording_episode_building`     | RobotRun → `build_recording_episodes` → `register_episodes` → `validate_episode` → `profile_episode` |
+| `recording_scene_building`       | RobotRun → `build_recording_scenes` → `register_scenes` → `compose_dataset_version` (optional) → `validate_scene` → `profile_scene` |
+| `recording_episode_building`     | RobotRun → `build_recording_episodes` → `register_episodes` → `compose_dataset_version` (optional) → `validate_episode` → `profile_episode` |
 | `scene_ml_evaluation`            | pinned label sets + policy → `build_scene_sample_views` → `mine_scenarios` → `score_scenario_readiness` → `predict_detection` → `evaluate_detection` |
 | `episode_learning_data_building` | pinned Episodes + config → `align_episode` → `export_learning_data`                                  |
 
-Single operations are atomic Jobs (`POST /jobs`): `register_robot_run`, `import_labels`, `build_scene_sample_views`, `mine_scenarios`, `predict_detection`, `evaluate_detection`, `align_episode`, `validate_aligned_episode`, `profile_aligned_episode`, `export_learning_data`, `curate_episodes`, and the robot-telemetry and analytics-snapshot jobs. A job that is a pipeline stage is the same handler as the atomic job. Details: [`docs/architecture/jobs-and-pipelines.md`](docs/architecture/jobs-and-pipelines.md).
+Single operations are atomic Jobs (`POST /jobs`): `register_robot_run`, `compose_dataset_version` (the only way a DatasetVersion is created), `import_labels`, `build_scene_sample_views`, `mine_scenarios`, `predict_detection`, `evaluate_detection`, `align_episode`, `validate_aligned_episode`, `profile_aligned_episode`, `export_learning_data`, `curate_episodes`, and the robot-telemetry and analytics-snapshot jobs. A job that is a pipeline stage is the same handler as the atomic job. Details: [`docs/architecture/jobs-and-pipelines.md`](docs/architecture/jobs-and-pipelines.md).
 
 ```text
 PipelineRun → PipelineTaskRun → durable Job → asynchronous dispatch → Celery worker → JobRunner → domain handler
@@ -213,9 +213,10 @@ Representative routes:
 ```text
 GET  /health
 GET  /api/v1/datasets/{id}/versions/{v}/quality
-GET  /api/v1/scenes/{scene_id}/quality?dataset_id=&dataset_version=
+GET  /api/v1/scenes/{scene_id}/quality?manifest_checksum=   # or ?dataset_id=&dataset_version=
 GET  /api/v1/episodes                                  # Episode units, filter by robot_run_id
-GET  /api/v1/episodes/{episode_id}/manifest?dataset_id=&dataset_version=
+GET  /api/v1/episodes/{episode_id}/manifest?manifest_checksum=
+GET  /api/v1/datasets/{id}/versions/{v}/episodes       # the revisions a version pins
 POST /api/v1/robot-runs:register                       # {manifest_uri} -> REGISTER_ROBOT_RUN Job
 POST /api/v1/pipelines/runs                            # the four pipeline types
 POST /api/v1/pipelines/runs/{id}/execute

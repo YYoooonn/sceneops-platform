@@ -27,13 +27,23 @@ class ComposeDatasetVersionJobHandler(
         return ComposeDatasetVersionJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
-            **inputs.params,
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": (
-                inputs.dataset.dataset_version if inputs.dataset else None
-            ),
-        }
+        """A pipeline stage composes exactly the revisions its register stage
+        returned (the ``revisions`` REF) into the version its task params
+        name. Members given in the task params are refused: they would
+        compose something other than what the run built."""
+        named = sorted({"pins", "selector"} & inputs.params.keys())
+        if named:
+            raise ValueError(
+                f"compose_dataset_version in a pipeline composes the revisions "
+                f"its register stage returned; {named} are not accepted"
+            )
+        pins = inputs.refs.get("revisions")
+        if not pins:
+            raise ValueError(
+                "compose_dataset_version has no revisions to compose: its "
+                "register stage returned none"
+            )
+        return {**inputs.params, "pins": pins}
 
     async def run(
         self,

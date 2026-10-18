@@ -6,11 +6,8 @@ from sceneops_core.jobs.schemas.params.scene import (
     SceneKeyframeValidationConfig,
     ValidateSceneJobParams,
 )
-from sceneops_core.pipelines.schemas import (
-    DatasetInputRef,
-    PipelineInputRef,
-    PipelineTaskInputs,
-)
+from sceneops_core.pipelines.schemas import PipelineInputRef, PipelineTaskInputs
+from sceneops_core.provenance import RevisionPin, manifest_artifact_id_for, unit_id_for
 from sceneops_worker.jobs.dataset.validate_scene import ValidateSceneJobHandler
 
 
@@ -28,10 +25,25 @@ class TestSceneKeyframeValidationConfig:
         assert cfg.block_on_keyframe_missing_channels is True
 
 
+_UNIT = unit_id_for(
+    domain="scene", source_kind="recording", source_id="run-1", unit_key="p/0"
+)
+_CHECKSUM = "sha256:" + "a" * 64
+PIN = RevisionPin(
+    domain="scene",
+    unit_id=_UNIT,
+    manifest_checksum=_CHECKSUM,
+    manifest_artifact_id=manifest_artifact_id_for(
+        unit_id=_UNIT, manifest_checksum=_CHECKSUM
+    ),
+)
+
+
 class TestValidateSceneJobParams:
     def test_defaults(self) -> None:
-        params = ValidateSceneJobParams()
-        assert params.scene_ids == []
+        params = ValidateSceneJobParams(revisions=[PIN])
+        assert params.revisions == [PIN]
+        assert params.require_target_channels == []
         assert params.keyframe_validation.validate_keyframes is True
 
     def test_scenes_are_named_by_id_not_manifest_uri(self) -> None:
@@ -44,7 +56,7 @@ class TestValidateSceneJobParams:
 
     def test_require_target_channels(self) -> None:
         params = ValidateSceneJobParams(
-            require_target_channels=["CAM_FRONT", "LIDAR_TOP"]
+            revisions=[PIN], require_target_channels=["CAM_FRONT", "LIDAR_TOP"]
         )
         assert params.require_target_channels == ["CAM_FRONT", "LIDAR_TOP"]
 
@@ -65,7 +77,6 @@ def _make_validate_inputs(
             pipeline_task_id="validate_scene",
             pipeline_task_run_id="ptr-002",
         ),
-        dataset=DatasetInputRef(dataset_id="ds-001", dataset_version="v1"),
         params=params or {},
         refs=refs or {},
     )
@@ -86,7 +97,10 @@ class TestValidateSceneJobHandlerBuildParams:
         result = self._handler().build_job_params(_make_validate_inputs())
         assert not result.get("require_target_channels")
 
-    def test_scene_ids_from_refs(self) -> None:
-        inputs = _make_validate_inputs(refs={"scene_ids": ["scene-a", "scene-b"]})
+    def test_the_revisions_are_the_register_stage_pins(self) -> None:
+        pins = [PIN.model_dump(mode="json")]
+        inputs = _make_validate_inputs(refs={"revisions": pins, "scene_ids": [_UNIT]})
         result = self._handler().build_job_params(inputs)
-        assert result["scene_ids"] == ["scene-a", "scene-b"]
+        assert result["revisions"] == pins
+        assert not {"scene_ids", "dataset_id", "dataset_version"} & result.keys()
+        assert ValidateSceneJobParams.model_validate(result).revisions == [PIN]

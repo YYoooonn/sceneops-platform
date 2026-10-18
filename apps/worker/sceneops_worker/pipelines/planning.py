@@ -43,13 +43,17 @@ class PipelineJobPlanner:
             inputs=inputs,
         )
 
+        # A Job's DatasetVersion is the run's scope, or else the one its own
+        # params name (a recording pipeline's composition stage), as for a
+        # standalone Job.
         return JobManifest(
             job_id=generate_job_id(),
             type=task.job_type,
             # Submitted by the orchestrator as soon as it is created.
             status=JobStatus.QUEUED,
-            dataset_id=pipeline_run.dataset_id,
-            dataset_version=pipeline_run.dataset_version,
+            dataset_id=pipeline_run.dataset_id or params.get("dataset_id"),
+            dataset_version=pipeline_run.dataset_version
+            or params.get("dataset_version"),
             params=params,
             steps=create_initial_job_steps(task.job_type),
             pipeline_run_id=pipeline_run.pipeline_run_id,

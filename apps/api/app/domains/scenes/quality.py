@@ -35,8 +35,8 @@ from app.domains.scenes.schemas import (
 def build_scene_quality(
     scene: SceneRevisionRecord,
     *,
-    dataset_id: str,
-    dataset_version: str,
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
     validation_run: SceneValidationRunRecord | None = None,
     profile_run: SceneProfileRunRecord | None = None,
 ) -> SceneQualityResponse:

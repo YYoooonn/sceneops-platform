@@ -186,12 +186,15 @@ ArtifactRecords.
 
 ## 4. Quality and readiness
 
-`VALIDATE_SCENE` / `PROFILE_SCENE` take a DatasetVersion and `scene_ids`,
-read each Scene at the revision that version's member pins
-(`sceneops_worker.scenes.resolver.resolve_member_scene`; without a
-DatasetVersion they fail), and write a per-scene run record that pins that
-revision (`manifest_artifact_id` + `manifest_checksum`). They never write a
-unit, revision, member or DatasetVersion state.
+`VALIDATE_SCENE` / `PROFILE_SCENE` take `revisions`: complete Scene revision
+pins, at most one per unit. They read each pinned revision exactly
+(`sceneops_worker.scenes.resolver.resolve_scene_revisions`; a pin that names no
+registered revision fails the job before anything is assessed) and write a
+per-scene run record that pins that revision (`manifest_artifact_id` +
+`manifest_checksum`). They read no DatasetVersion: a revision is assessed once,
+however many versions pin it. They never write a unit, revision, member or
+DatasetVersion state. Unit ids without a pin (`scene_ids`) and DatasetVersion
+fields are refused.
 Validation reports per-channel aggregates: required channels without
 observations (blocking), declared channels without observations, keyframes
 missing a required channel (optionally blocking), and missing calibration,
@@ -231,10 +234,13 @@ registers them as revisions:
 
 ```text
 build_recording_scenes   BUILD_RECORDING_SCENES (robot_run_id, build_config)
+                         → manifest_artifact_ids
 register_scenes          REGISTER_SCENES (manifest_artifact_ids from the build)
                          → scene_ids, revisions (complete pins)
-validate_scene           VALIDATE_SCENE (scene_ids from registration)
-profile_scene            PROFILE_SCENE (optional)
+compose_dataset_version  COMPOSE_DATASET_VERSION (optional: the run names
+                         {dataset_id, dataset_version}; pins = revisions)
+validate_scene           VALIDATE_SCENE (revisions from registration)
+profile_scene            PROFILE_SCENE (optional; revisions from registration)
 ```
 
 The builder (`sceneops_scenes.recording_builder`, producer
@@ -314,8 +320,10 @@ DatasetVersion changes.
 ```text
 GET /api/v1/scenes?robot_run_id=                         # units
 GET /api/v1/scenes/{scene_id}                            # the unit and every revision
+GET /api/v1/scenes/{scene_id}/quality?manifest_checksum=
+                                                         # quality of one revision, or
 GET /api/v1/scenes/{scene_id}/quality?dataset_id=&dataset_version=
-                                                         # the revision the version pins
+                                                         # of the revision the version pins
 GET /api/v1/datasets/{id}/versions/{v}/scenes            # the revisions the version pins
 GET /api/v1/datasets/{id}/versions/{v}/quality           # dataset-level aggregate
 GET /api/v1/datasets/{id}/versions/{v}/scenes/quality    # paginated per-scene quality

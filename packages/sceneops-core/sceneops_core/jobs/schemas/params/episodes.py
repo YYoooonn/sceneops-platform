@@ -12,23 +12,20 @@ from sceneops_core.episodes.recording_build import RecordingEpisodeBuildConfig
 
 from .base import (
     BaseJobParams,
-    RecordingConsumerJobParams,
+    RecordingBuildJobParams,
+    RevisionAssessmentJobParams,
     RevisionRegistrationJobParams,
 )
 
 
-class BuildRecordingEpisodesJobParams(RecordingConsumerJobParams):
+class BuildRecordingEpisodesJobParams(RecordingBuildJobParams):
     """One registered RobotRun recording -> the complete canonical Episode
-    set of its recording scope (ADR-007 §17.4, §29.10, §31).
+    set of its recording scope (ADR-007 §17.4, §29.10, §31; ADR-015 §6.7).
 
     The recording is identified only by ``robot_run_id`` and read through
     the verified recording resolver; ``build_config`` is the producer's
-    whole semantic configuration. The DatasetVersion only scopes where
-    manifests are published and does not affect their bytes.
+    whole semantic configuration. No DatasetVersion is involved.
     """
-
-    dataset_id: str = Field(min_length=1)
-    dataset_version: str = Field(min_length=1)
 
     robot_run_id: str = Field(min_length=1)
     build_config: RecordingEpisodeBuildConfig
@@ -43,26 +40,24 @@ class RegisterEpisodesJobParams(RevisionRegistrationJobParams):
     reference."""
 
 
-class ValidateEpisodeJobParams(BaseJobParams):
-    """Validate registered Episodes. Each Episode is assessed at the manifest
-    revision its record points to when the job reads it, and the per-episode
-    run record pins that revision."""
+_EPISODE_UNIT_ID_FIELDS = ("episode_id", "episodeId", "episode_ids", "episodeIds")
 
-    episode_id: str | None = None
-    episode_ids: list[str] = Field(default_factory=list)
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
+class ValidateEpisodeJobParams(RevisionAssessmentJobParams):
+    """Validate pinned Episode revisions; each per-episode run record pins
+    the revision it assessed."""
+
+    domain = "episode"
+    _unit_id_fields = _EPISODE_UNIT_ID_FIELDS
 
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class ProfileEpisodeJobParams(BaseJobParams):
-    episode_id: str | None = None
-    episode_ids: list[str] = Field(default_factory=list)
+class ProfileEpisodeJobParams(RevisionAssessmentJobParams):
+    """Profile pinned Episode revisions; see ``ValidateEpisodeJobParams``."""
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
+    domain = "episode"
+    _unit_id_fields = _EPISODE_UNIT_ID_FIELDS
 
     metadata: JsonDict = Field(default_factory=dict)
 

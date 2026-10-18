@@ -1,5 +1,5 @@
 """A mocked WorkerContext holding registered Episodes: Episode revisions
-pinned by the DatasetVersion ``d1/v1``, their EPISODE_MANIFEST
+(also pinned by the DatasetVersion ``d1/v1``), their EPISODE_MANIFEST
 ArtifactRecords and the manifest bytes behind them."""
 
 from __future__ import annotations
@@ -128,6 +128,13 @@ def make_context(
     )
     context.episode_store.get_member_revision = AsyncMock(side_effect=member)
     context.episode_store.get_revision = AsyncMock(side_effect=revision)
+    context.episode_store.get_revisions = AsyncMock(
+        side_effect=lambda keys: [
+            r
+            for e, c in keys
+            if (r := revision(episode_id=e, manifest_checksum=c)) is not None
+        ]
+    )
     context.artifact_record_store.get = AsyncMock(
         side_effect=lambda aid: artifacts.get(aid)
     )

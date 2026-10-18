@@ -215,8 +215,6 @@ class PostgresSceneRunRepository:
         status: RunStatus | None = None,
         scene_id: str | None = None,
         manifest_artifact_id: str | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         job_id: str | None = None,
         pipeline_run_id: str | None = None,
         limit: int = 100,
@@ -233,10 +231,6 @@ class PostgresSceneRunRepository:
             stmt = stmt.where(
                 SceneRunRecordModel.manifest_artifact_id == manifest_artifact_id
             )
-        if dataset_id is not None:
-            stmt = stmt.where(SceneRunRecordModel.dataset_id == dataset_id)
-        if dataset_version is not None:
-            stmt = stmt.where(SceneRunRecordModel.dataset_version == dataset_version)
         if job_id is not None:
             stmt = stmt.where(SceneRunRecordModel.job_id == job_id)
         if pipeline_run_id is not None:

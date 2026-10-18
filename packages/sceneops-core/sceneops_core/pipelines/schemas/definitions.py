@@ -70,4 +70,9 @@ class PipelineDefinition(SceneOpsBaseModel):
 
     tasks: list[PipelineTaskDefinition]
 
+    # Whether a run executes in a DatasetVersion scope (the run's
+    # dataset_id / dataset_version). A pipeline without one reads no
+    # DatasetVersion, and a run request that names one is refused.
+    dataset_version_scope: bool = True
+
     metadata: JsonDict = Field(default_factory=dict)

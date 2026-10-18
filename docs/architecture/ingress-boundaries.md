@@ -33,7 +33,7 @@ apps/publisher                  recording object, then RobotRunManifest v1 (publ
 REGISTER_ROBOT_RUN              params {manifest_uri}
                                 -> RobotRunRecord + ROBOT_RUN_RECORDING / ROBOT_RUN_MANIFEST
                                    ArtifactRecords, one transaction
-BUILD_RECORDING_SCENES /        params dataset_id, dataset_version, robot_run_id, build_config
+BUILD_RECORDING_SCENES /        params robot_run_id, build_config (no DatasetVersion)
 BUILD_RECORDING_EPISODES          resolve_recording -> VerifiedRecording (local, checksum-verified)
                                   -> PinnedRecording                       builder input
                                   -> manifests: lineage RecordingSegmentSource
@@ -41,6 +41,8 @@ BUILD_RECORDING_EPISODES          resolve_recording -> VerifiedRecording (local,
 REGISTER_SCENES / REGISTER_EPISODES  params manifest_artifact_ids of one build
                                   -> durability and integrity gate -> unit + revision rows
                                   -> RevisionPins; no DatasetVersion
+COMPOSE_DATASET_VERSION         params dataset_id, dataset_version, pins | selector
+                                  -> one immutable DatasetVersion + members, one transaction
 ```
 
 Dataset Integration (only the schemas named below exist; there is no publication,

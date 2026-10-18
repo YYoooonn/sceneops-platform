@@ -1,7 +1,7 @@
 """Resolve a registered Scene revision to its verified manifest.
 
 Every consumer of canonical Scene content goes through here: a revision
-(given, or the one a DatasetVersion member pins) -> ``manifest_artifact_id``
+(a pin, or the one a DatasetVersion member pins) -> ``manifest_artifact_id``
 -> ArtifactRecord -> bytes verified against the pinned checksum -> strict
 canonical parse. A Scene unit has no current revision, so a consumer always
 names the revision it reads; it never resolves "the latest manifest" by
@@ -10,9 +10,11 @@ location or by registration order (ADR-015 §6.4).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
+from sceneops_core.provenance import RevisionPin
 from sceneops_core.scenes.schemas import SceneManifest, SceneRevisionRecord
 
 from sceneops_worker.core.context import WorkerContext
@@ -34,18 +36,24 @@ class ResolvedScene:
     manifest: SceneManifest
 
 
-async def resolve_member_scene(
-    context: WorkerContext, *, dataset_id: str, dataset_version: str, scene_id: str
-) -> ResolvedScene:
-    """The revision of ``scene_id`` that the DatasetVersion pins."""
-    record = await context.scene_store.get_member_revision(
-        dataset_id=dataset_id, dataset_version=dataset_version, scene_id=scene_id
+async def resolve_scene_revisions(
+    context: WorkerContext, pins: Sequence[RevisionPin]
+) -> list[ResolvedScene]:
+    """The registered revision of every pin, in pin order. A pin must match
+    its revision row exactly (unit, manifest checksum and manifest artifact
+    id); a pin that names no registered revision fails before any manifest
+    is read."""
+    records = await context.scene_store.get_revisions(
+        [(p.unit_id, p.manifest_checksum) for p in pins]
     )
-    if record is None:
+    by_pin = {r.pin(): r for r in records}
+    unregistered = [p for p in pins if p not in by_pin]
+    if unregistered:
         raise SceneNotRegisteredError(
-            f"Scene {scene_id} is not a member of {dataset_id}/{dataset_version}"
+            "pins name no registered Scene revision: "
+            + ", ".join(f"{p.unit_id}@{p.manifest_checksum}" for p in unregistered)
         )
-    return await resolve_registered_scene(context, record)
+    return [await resolve_registered_scene(context, by_pin[p]) for p in pins]
 
 
 async def resolve_registered_scene(
@@ -103,6 +111,6 @@ __all__ = [
     "ResolvedScene",
     "SceneNotRegisteredError",
     "list_dataset_version_scenes",
-    "resolve_member_scene",
     "resolve_registered_scene",
+    "resolve_scene_revisions",
 ]

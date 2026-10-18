@@ -121,20 +121,17 @@ canonical unit except as a converted recording. Current builder bounds:
   ([Data model](./data-model.md) §3). Canonical registration writes units and
   revisions only, and a DatasetVersion exists only as an immutable composition
   committed by a `COMPOSE_DATASET_VERSION` Job ([Data model](./data-model.md) §2.1).
-  No pipeline submits that Job: the recording pipelines still name a DatasetVersion
-  that cannot exist before its members are registered, so their validation and
-  profiling tasks, which resolve units through a DatasetVersion member, fail for the
-  units the same run registered. Registered units and revisions are never changed or
-  removed.
-- Consumers that address a Scene or Episode by id (validation, profiling, alignment,
-  the per-unit quality and manifest API) resolve it through a DatasetVersion member
-  and fail without one; a unit has no current revision. Build Jobs still take
-  DatasetVersion parameters, which they only echo in their result, and derived
-  aligned-episode keys and per-run reports are still keyed by the DatasetVersion
-  they were produced for.
+  A recording pipeline composes only the revisions of its own single RobotRun and
+  domain; a version of several RobotRuns or of both domains is a standalone
+  composition. Registered units and revisions are never changed or removed.
+- Validation and profiling address revisions by pin. Alignment and everything derived
+  from it (aligned-episode keys, learning exports, curation) are scoped to the
+  DatasetVersion they were produced for: an aligned revision of the same Episode
+  revision is written again under each DatasetVersion that aligns it.
 - A composition selector selects by RobotRun and producer fingerprint only. A
-  composition is one PostgreSQL transaction; the largest composition tested has a
-  handful of members, which is a test scope, not a supported maximum.
+  composition is one PostgreSQL transaction, whose commit-time membership check counts
+  each version's members once; the largest composition tested has a handful of
+  members, which is a test scope, not a supported maximum.
 - `fixed_duration` windows are a grid anchored at the segmentation clock's zero, so the
   first and last window of a recording may be partial.
 - The robot telemetry projection (`ingest_robot_states`) reads its own fixed topic set

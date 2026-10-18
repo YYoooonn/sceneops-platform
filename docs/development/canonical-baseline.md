@@ -85,10 +85,13 @@ fixtures are acted on**: the baseline is always the
 | `FIXTURE=scene-0103` | `scene-0103` | `ref-nuscenes-mini-full-10` |
 
 `smoke-1` is `scene-0061` of the full baseline, never a second baseline with
-RobotRuns and a DatasetVersion of its own. `canonical-verify` on a selection that is
-a part of the baseline requires the selected RobotRuns (and everything of the
-DatasetVersion to belong to a RobotRun of the baseline's robot); on the whole scope
-it requires exactly the contract's.
+RobotRuns of its own. A DatasetVersion is immutable and one name is one
+composition, so a selection composes the version named after it: `baseline` for the
+contract's whole scope (`nuscenes-mini-full-10`), `baseline-<scope or fixture>` for a
+part of it (`baseline-smoke-1`, `baseline-scene-0103`). `DATASET_VERSION` overrides
+the name. `canonical-verify` on a selection that is a part of the baseline requires
+the selected RobotRuns (and everything of the DatasetVersion to belong to a RobotRun
+of the baseline's robot); on the whole scope it requires exactly the contract's.
 
 `BASELINE_ID` names everything the baseline owns:
 
@@ -96,15 +99,15 @@ it requires exactly the contract's.
 | --- | --- |
 | RobotRun (one per fixture) | `run-<BASELINE_ID>-<fixture>` |
 | Robot | `robot-<BASELINE_ID>` |
-| DatasetVersion | `sceneops-<BASELINE_ID>` / `baseline` |
+| DatasetVersion | `sceneops-<BASELINE_ID>` / `baseline` (whole scope) or `baseline-<selection>` |
 
 A baseline of any other `BASELINE_ID` registers RobotRuns that are not part of the
 reference contract. Only a disposable runtime may hold them
 (`DISPOSABLE_RUNTIME=1`; see [test-matrix.md](./test-matrix.md#test-state-classes));
-the bootstrap refuses otherwise. `DATASET_ID` may name another DatasetVersion: the
-bootstrap then builds the Scenes and Episodes of the (reference) RobotRuns into it
-and registers no RobotRun, which is how the L3 journeys keep the reference
-DatasetVersion untouched.
+the bootstrap refuses otherwise. `DATASET_ID` may name another Dataset: the
+bootstrap then composes the Scenes and Episodes of the (reference) RobotRuns into a
+version of it and registers no RobotRun, which is how the L3 journeys keep the
+reference Dataset untouched.
 
 ## create-or-verify
 
@@ -112,15 +115,19 @@ DatasetVersion untouched.
   pin exactly the fixture's locked recording (sha256 and size): a mismatch fails
   loudly. Recovery from a mismatched baseline is an explicit `make local-reset`
   and rebuild.
-- A RobotRun whose Scenes and Episodes are all in the DatasetVersion, validated,
-  profiled and ready is **reused as it is**: no build pipeline runs over it. The cached
-  recordings are hashed against the lock only when a RobotRun has to be published, so
-  the bootstrap of a complete baseline reads the platform and writes nothing.
-- A Scene / Episode build over an incomplete or changed scope **converges** on the
-  registered revisions (the registrar reports every revision as already registered).
+- An existing DatasetVersion is complete and immutable: it is **verified, and nothing
+  is built**. The cached recordings are hashed against the lock only when a RobotRun
+  has to be published, so the bootstrap of a complete baseline reads the platform and
+  writes nothing.
+- Otherwise every fixture's Scene and Episode pipelines run without a DatasetVersion
+  (an identical succeeded run is reused, not run again; a re-run **converges** on the
+  registered revisions), and one `COMPOSE_DATASET_VERSION` composes the version of
+  exactly the revision pins their register stages returned.
 - A changed build configuration registers new revisions (or, for another
-  segmentation, new units) beside the registered ones; a producer that yields other
-  bytes under the same fingerprint fails **loudly at registration**.
+  segmentation, new units) beside the registered ones, and composing them under an
+  existing name fails **loudly at composition** (a name is never rebound); a producer
+  that yields other bytes under the same fingerprint fails **loudly at
+  registration**.
 - Nothing writes PostgreSQL or MinIO directly. Prepared recordings are published
   from the read-only reference mount and never copied into another volume.
 
@@ -128,6 +135,7 @@ DatasetVersion untouched.
 
 The bootstrap and `canonical-verify` print the same JSON, deterministic for an
 unchanged baseline: `baseline_id`, `robot_id`, `dataset_id`, `dataset_version`,
+`composition_checksum`,
 `reference` (corpus, scope or fixture), `robot_run_ids`, the Scene and Episode ids
 and counts, `totals` (fixtures, RobotRuns, Scenes, Episodes, recording bytes,
 messages) and, per fixture, `fixture_id`, `source_unit`, `robot_run_id`,
@@ -147,8 +155,8 @@ Through the API and artifact pins only; it reads the lock but no recording:
 - every Scene and Episode of the DatasetVersion belongs to one of those runs, every
   fixture has the expected number of each (`baseline_shape.json`), and each pins exactly the checksum its
   manifest ArtifactRecord carries;
-- every Scene and Episode is validated, profiled and `ready` at its **current**
-  revision;
+- every Scene and Episode is validated, profiled and `ready` at the revision the
+  DatasetVersion pins;
 - the DatasetVersion's Scene and Episode summaries equal its membership.
 
 ## Streaming baseline (Streaming Acquisition)
@@ -166,6 +174,7 @@ locked reference MCAP (one per fixture)
   -> reconcile --once --apply  submits REGISTER_ROBOT_RUN
   -> one streamed RobotRun per fixture
   -> recording_scene_building / recording_episode_building   (config/baselines/, whole_recording)
+  -> COMPOSE_DATASET_VERSION   the register stages' pins
   -> verify                    read back through the API
 ```
 

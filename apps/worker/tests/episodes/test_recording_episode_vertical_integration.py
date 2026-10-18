@@ -163,10 +163,8 @@ class _Vertical:
             await session.commit()
         return run_id
 
-    def build(self, run_id, config=None, version="v1"):
+    def build(self, run_id, config=None):
         return BuildRecordingEpisodesJobParams(
-            dataset_id=self.dataset_id,
-            dataset_version=version,
             robot_run_id=run_id,
             build_config=config or episode_build_config(),
         )
@@ -264,19 +262,11 @@ async def test_robot_run_to_registered_validated_episodes(vertical, tmp_path):
 
     validated = await vertical.run(
         ValidateEpisodeJobHandler(),
-        ValidateEpisodeJobParams(
-            dataset_id=vertical.dataset_id,
-            dataset_version="v1",
-            episode_ids=registered.episode_ids,
-        ),
+        ValidateEpisodeJobParams(revisions=registered.revisions),
     )
     profiled = await vertical.run(
         ProfileEpisodeJobHandler(),
-        ProfileEpisodeJobParams(
-            dataset_id=vertical.dataset_id,
-            dataset_version="v1",
-            episode_ids=registered.episode_ids,
-        ),
+        ProfileEpisodeJobParams(revisions=registered.revisions),
     )
     assert validated.status == "ready"
     assert profiled.action_count == 3
@@ -392,8 +382,6 @@ async def test_scene_and_episode_building_are_independent_in_either_order(
 
     def scene_params(run_id):
         return BuildRecordingScenesJobParams(
-            dataset_id=vertical.dataset_id,
-            dataset_version="v1",
             robot_run_id=run_id,
             build_config=scene_build_config(),
         )

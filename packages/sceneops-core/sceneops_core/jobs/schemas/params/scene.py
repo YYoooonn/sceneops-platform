@@ -6,8 +6,8 @@ from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
 
 from .base import (
-    BaseJobParams,
-    RecordingConsumerJobParams,
+    RecordingBuildJobParams,
+    RevisionAssessmentJobParams,
     RevisionRegistrationJobParams,
 )
 
@@ -19,18 +19,14 @@ class SceneKeyframeValidationConfig(SceneOpsBaseModel):
     block_on_keyframe_missing_channels: bool = False
 
 
-class BuildRecordingScenesJobParams(RecordingConsumerJobParams):
+class BuildRecordingScenesJobParams(RecordingBuildJobParams):
     """One registered RobotRun recording -> the complete canonical Scene set
-    of its recording scope (ADR-007 §17.3, §29.10).
+    of its recording scope (ADR-007 §17.3, §29.10; ADR-015 §6.7).
 
     The recording is identified only by ``robot_run_id`` and read through
     the verified recording resolver; ``build_config`` is the producer's
-    whole semantic configuration. The DatasetVersion only scopes where
-    manifests are published and does not affect their bytes.
+    whole semantic configuration. No DatasetVersion is involved.
     """
-
-    dataset_id: str = Field(min_length=1)
-    dataset_version: str = Field(min_length=1)
 
     robot_run_id: str = Field(min_length=1)
     build_config: RecordingSceneBuildConfig
@@ -38,15 +34,12 @@ class BuildRecordingScenesJobParams(RecordingConsumerJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class ValidateSceneJobParams(BaseJobParams):
-    """Validate registered Scenes. Each Scene is assessed at the manifest
-    revision its record points to when the job reads it, and the per-scene
-    run record pins that revision."""
+class ValidateSceneJobParams(RevisionAssessmentJobParams):
+    """Validate pinned Scene revisions; each per-scene run record pins the
+    revision it assessed."""
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
-    scene_ids: list[str] = Field(default_factory=list)
+    domain = "scene"
+    _unit_id_fields = ("scene_ids", "sceneIds")
 
     require_target_channels: list[str] = Field(default_factory=list)
 
@@ -57,14 +50,11 @@ class ValidateSceneJobParams(BaseJobParams):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class ProfileSceneJobParams(BaseJobParams):
-    """Profile registered Scenes at their current revision; see
-    ``ValidateSceneJobParams``."""
+class ProfileSceneJobParams(RevisionAssessmentJobParams):
+    """Profile pinned Scene revisions; see ``ValidateSceneJobParams``."""
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
-    scene_ids: list[str] = Field(default_factory=list)
+    domain = "scene"
+    _unit_id_fields = ("scene_ids", "sceneIds")
 
     metadata: JsonDict = Field(default_factory=dict)
 

@@ -78,8 +78,6 @@ async def _build(world, config=None, job_id="job-1"):
         JobHandlerRequest(
             job=_job(job_id),
             params=BuildRecordingScenesJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
                 robot_run_id=RUN_ID,
                 build_config=config or build_config(),
             ),
@@ -251,8 +249,6 @@ def test_params_reject_a_caller_supplied_recording():
     with pytest.raises(ValueError, match="robot_run_id"):
         BuildRecordingScenesJobParams.model_validate(
             {
-                "dataset_id": "ds",
-                "dataset_version": "v1",
                 "robot_run_id": RUN_ID,
                 "mcap_uri": "s3://elsewhere/recording.mcap",
                 "build_config": build_config(),

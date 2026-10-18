@@ -27,6 +27,7 @@ from sceneops_core.scenes.schemas.runs import (
     SceneValidationRunRecord,
 )
 
+from app.core.revisions import RevisionAddress
 from app.domains.scenes.service import SceneService
 
 
@@ -64,6 +65,16 @@ class FakeSceneRepository:
         pinned = self.members.get((dataset_id, dataset_version), [])
         return next((r for r in pinned if r.scene_id == scene_id), None)
 
+    async def get_revision(self, *, scene_id, manifest_checksum):
+        return next(
+            (
+                r
+                for r in self.revisions
+                if (r.scene_id, r.manifest_checksum) == (scene_id, manifest_checksum)
+            ),
+            None,
+        )
+
 
 class FakeSceneRunRepository:
     def __init__(self, runs: list | None = None) -> None:
@@ -86,8 +97,6 @@ class FakeSceneRunRepository:
         status: RunStatus | None = None,
         scene_id: str | None = None,
         manifest_artifact_id: str | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         job_id: str | None = None,
         pipeline_run_id: str | None = None,
         limit: int = 100,
@@ -301,10 +310,9 @@ async def test_list_scene_artifacts_pagination():
 # ── get_scene_quality (lineage: correct run records feed the response) ───────
 
 
-@pytest.mark.asyncio
 async def _quality(service, scene_id, dataset_id="nuscenes", version="v1"):
     return await service.get_scene_quality(
-        scene_id, dataset_id=dataset_id, dataset_version=version
+        scene_id, RevisionAddress(dataset_id=dataset_id, dataset_version=version)
     )
 
 
@@ -397,3 +405,26 @@ async def test_get_scene_quality_without_pinned_revision_runs_is_unknown():
     result = await _quality(service, scene.scene_id)
     assert result.validation is None
     assert result.readiness == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_get_scene_quality_by_revision_needs_no_dataset_version():
+    """A revision is assessed once, whatever pins it: addressed by its
+    checksum, the same runs count and no DatasetVersion is reported."""
+    scene = _scene("s1")
+    validation = _pinned(
+        SceneValidationRunRecord, "val-1", scene, validation_status="ready"
+    )
+    service, _, _ = _service(scenes=[scene], runs=[validation], members={})
+
+    result = await service.get_scene_quality(
+        scene.scene_id, RevisionAddress(manifest_checksum=scene.manifest_checksum)
+    )
+    assert result is not None
+    assert (result.dataset_id, result.dataset_version) == (None, None)
+    assert result.manifest_checksum == scene.manifest_checksum
+    assert result.validation.run_id == "val-1"
+    assert result.readiness == "ready"
+
+    unknown = RevisionAddress(manifest_checksum="sha256:" + "1" * 64)
+    assert await service.get_scene_quality(scene.scene_id, unknown) is None
