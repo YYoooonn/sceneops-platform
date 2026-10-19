@@ -13,7 +13,7 @@ Scene (RecordingSceneBuildConfig)
   payload        compressed_image: sha256 / size of CompressedImage.data, media type
                  from `format` (jpeg -> image/jpeg); ros2_message: sha256 / size of
                  the recorded CDR message, media type
-                 application/x.ros2-cdr.<package>.msg.<Type>
+                 application/x.ros2-cdr.<package>.msg.<type, lowercased>
   calibration    per channel: the static transform ego frame -> channel frame;
                  camera_intrinsic = CameraInfo K (3 x 3); image_size = CameraInfo
                  width / height
@@ -81,10 +81,12 @@ def _media_type_for(entry: Entry, extraction: str) -> tuple[str, str, int]:
         assert entry.image_checksum is not None and entry.image_size_bytes is not None
         return entry.image_checksum, media, entry.image_size_bytes
     if extraction == "ros2_message":
+        # ADR-007 §30.4: the type is lowercased (media types are lowercase);
+        # ROS 2 package names already are (REP 144).
         package, _, type_name = entry.schema_name.partition("/msg/")
         return (
             entry.message_checksum,
-            f"application/x.ros2-cdr.{package}.msg.{type_name}",
+            f"application/x.ros2-cdr.{package}.msg.{type_name.lower()}",
             entry.message_size,
         )
     raise ExpectationError(f"unknown payload extraction {extraction!r}")

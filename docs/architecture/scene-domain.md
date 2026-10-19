@@ -293,7 +293,8 @@ segmentation   whole_recording { clock } | fixed_duration { clock, duration_ns }
   `observation_id = <topic slug>-<rank>`.
 - **Payloads.** `compressed_image` stores CompressedImage `data` unchanged
   (`image/jpeg`, `image/png`). `ros2_message` stores the recorded CDR message
-  bytes (`application/x.ros2-cdr.<package>.msg.<type>`, e.g. PointCloud2).
+  bytes (`application/x.ros2-cdr.<package>.msg.<type, lowercased>`, e.g.
+  `application/x.ros2-cdr.sensor_msgs.msg.pointcloud2`).
   Each payload is a write-once `OBSERVATION_PAYLOAD` artifact at
   `{artifact_root}/observation_payloads/{robot_run_id}/{artifact_id}`, owned
   by the RobotRun. Its id derives from (robot_run_id, topic, per-topic file

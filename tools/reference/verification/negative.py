@@ -117,7 +117,8 @@ def _first(obs: dict[str, Any], domain: str, run_id: str) -> str:
 
 # ── Platform controls ────────────────────────────────────────────────────────
 # ctx: run_id (a Recording Import run), other_run_id (another RobotRun of the
-# observation), dataset_key (the DatasetVersion holding run_id's units).
+# observation), foreign_run_id (an observed RobotRun whose units are outside
+# dataset_key, or None), dataset_key (the DatasetVersion holding run_id's units).
 
 
 def _drop_observation(obs, ctx):
@@ -248,10 +249,37 @@ def _missing_member(obs, ctx):
     _recompose(version)
 
 
+def _foreign_unit(obs, run_id):
+    """A registered Episode of a RobotRun outside the contract: a copy of run_id's
+    first Episode bound to another run, its revision pin recomputed for its id."""
+    original = obs["units"]["episode"][_first(obs, "episode", run_id)]
+    foreign_run = f"{run_id}-foreign"
+    unit_id = rules.unit_id(
+        domain="episode",
+        source_kind="recording",
+        source_id=foreign_run,
+        unit_key=original["record"]["unit_key"],
+    )
+    unit = copy.deepcopy(original)
+    unit["record"].update(episode_id=unit_id, robot_run_id=foreign_run)
+    for revision in unit["revisions"]:
+        revision.update(unit_id=unit_id, robot_run_id=foreign_run)
+        revision["manifest_artifact_id"] = rules.manifest_artifact_id(
+            unit_id=unit_id, manifest_checksum=revision["manifest_checksum"]
+        )
+    obs["units"]["episode"][unit_id] = unit
+    return unit_id
+
+
 def _foreign_member(obs, ctx):
     """A unit of another RobotRun composed into the version (counts kept consistent)."""
     version = obs["dataset_versions"][ctx["dataset_key"]]
-    unit_id = _first(obs, "episode", ctx["other_run_id"])
+    foreign_run = ctx.get("foreign_run_id")
+    unit_id = (
+        _first(obs, "episode", foreign_run)
+        if foreign_run
+        else _foreign_unit(obs, ctx["run_id"])
+    )
     revision = obs["units"]["episode"][unit_id]["revisions"][0]
     version["members"].append(
         {

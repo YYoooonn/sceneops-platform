@@ -338,7 +338,17 @@ the broker's retention expires it. There is no automated cleanup and no selectiv
 platform state. `make disk-report` is read-only and shows the host headroom (the streaming
 bootstrap stops below `MIN_FREE_GIB`, default 6, on the host and the Docker VM), the
 generated directories, the SceneOps volumes, the Kafka log, disposable-test leftovers and
-what Docker could reclaim. Reclaim in this order, stopping when there is room:
+what Docker could reclaim.
+
+The Docker VM's filesystem, not the host's, is usually the binding limit: PostgreSQL and
+MinIO share it, so when a bootstrap fills it, PostgreSQL stops for every database on the
+server (the reference one included) and cannot finish crash recovery until there is room
+again; `docker start sceneops-postgres-1` then replays its WAL. The canonical bootstrap has
+no headroom check. The full Recording Import baseline of the 10-fixture corpus stores about
+7.2 GB in MinIO (4.07 GB of recordings and 3.16 GB of payloads, measured 2026-10-19 on a
+58.4 GB VM). Objects deleted from MinIO, a dropped disposable bucket included, stay in
+`.minio.sys/tmp` until MinIO purges them a few minutes later. Reclaim in this order,
+stopping when there is room:
 
 | Target | Safe? | How |
 | --- | --- | --- |

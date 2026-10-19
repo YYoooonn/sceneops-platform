@@ -73,7 +73,7 @@ Rules from [Scene domain](../architecture/scene-domain.md) §1 and §6,
 | Scene segment | `whole_recording`: one unit, segment `recording`, window `[earliest, latest + 1)` over every included observation and pose on the segmentation clock |
 | Episode segments | `event_markers`: markers in canonical order; a start opens a task key and an end closes it; window `[start, end + 1)`; segment `task-<key>-<NNN>`, `NNN` = 0-based count of that key's earlier windows |
 | unit id | `<domain>-<sha256(canonical_json({unit_id_schema: "sceneops.unit_id/v2", domain, source_kind: "recording", source_id: robot_run_id, unit_key}))[:32]>` |
-| Scene observations | one per message of each configured channel; timestamp = header stamp; canonical order timestamp, MCAP sequence, file order; payload `compressed_image` = sha256 / size of `CompressedImage.data` (`image/jpeg`), `ros2_message` = sha256 / size of the recorded CDR message (`application/x.ros2-cdr.<pkg>.msg.<Type>`); `image_size` = CameraInfo size; no ego pose association |
+| Scene observations | one per message of each configured channel; timestamp = header stamp; canonical order timestamp, MCAP sequence, file order; payload `compressed_image` = sha256 / size of `CompressedImage.data` (`image/jpeg`), `ros2_message` = sha256 / size of the recorded CDR message (`application/x.ros2-cdr.<pkg>.msg.<type, lowercased>`, ADR-007 §30.4); `image_size` = CameraInfo size; no ego pose association |
 | Scene calibration / frames / poses | extrinsic = static `ego → channel frame`; intrinsic = CameraInfo `K`; frames = ego, world, channel frames (sensor); poses = every configured `parent → child` transform at its own stamp; no keyframe groups |
 | Episode streams | topic, role, recorded schema name, clock, fields, `has_payload` |
 | Episode occurrences | every message whose time (header stamp or payload field) lies in the window; values = the selected field paths as decoded (an integer stays an integer); observation payloads as for Scenes |
@@ -113,9 +113,15 @@ that observation passes.
 make reference-verify-sources [FIXTURE=<id>]   raw nuScenes <-> recordings <-> lock <-> labels   no stack
 make reference-expectations [WRITE=1]          derive and compare (WRITE=1: replace the file)   no stack
 make reference-verify-selftest                 synthetic state passes, every control detected   no stack
-make reference-verify [DEEP=1]                 the platform's contract state, read-only
+make reference-verify [DEEP=1] [MODE=<mode>]   the platform's contract state, read-only
 make reference-contract-verify                 the contract state check; runs reference-verify
 ```
+
+`MODE=recording_import` (or `streaming_acquisition`) verifies one ingestion mode: its
+RobotRuns, units and DatasetVersion only, with the platform controls applied in that
+scope (a binding is moved to another fixture's run, a foreign member is a unit outside
+the contract). The report lists the `modes` it covers; a single-mode report is
+evidence about that mode, not the contract's acceptance.
 
 `sources` needs `data/raw/nuscenes` (`NUSCENES_DATAROOT`) and the prepared corpus;
 the others need the prepared corpus only. Each prints one JSON report

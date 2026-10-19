@@ -39,14 +39,16 @@ def verify_platform(
     derive_captured: Any = None,
     deep: bool = False,
     fixtures: list[str] | None = None,
+    modes: tuple[str, ...] = MODES,
 ) -> None:
     """``derived``: per fixture, the expectations of the locked recording.
     ``captured``: per streaming run id, the facts of its stored recording;
-    ``derive_captured(facts)`` derives a ``Derived`` from them."""
+    ``derive_captured(facts)`` derives a ``Derived`` from them. ``modes``: the
+    ingestion modes verified; the others are neither expected nor checked."""
     contract = sources.contract
     units = contract["units"]
     selected = fixtures or sources.fixture_ids()
-    for mode in MODES:
+    for mode in modes:
         spec = contract["ingestion_modes"][mode]
         expected_members: dict[str, str] = {}
         for fid in sources.fixture_ids():

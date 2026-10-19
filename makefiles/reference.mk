@@ -93,12 +93,15 @@ reference-contract-bootstrap:
 #                               detected (proves the checks, not the platform). No stack.
 # reference-verify           -- the running platform's contract state against the
 #                               derivation, then the platform negative controls
-#                               (read-only; DEEP=1 also hashes every payload object).
-#                               `reference-contract-verify` runs it.
+#                               (read-only; DEEP=1 also hashes every payload object;
+#                               MODE=recording_import|streaming_acquisition verifies
+#                               one ingestion mode, which is not the contract's
+#                               acceptance). `reference-contract-verify` runs it.
 # --------------------
 
 WRITE ?=
 DEEP  ?=
+MODE  ?=
 REFERENCE_VERIFY := uv run --no-sync python -I tools/reference/reference_verify.py
 
 .PHONY: reference-verify-sources
@@ -115,4 +118,4 @@ reference-verify-selftest:
 
 .PHONY: reference-verify
 reference-verify:
-	@$(REFERENCE_VERIFY_ENV) $(REFERENCE_VERIFY) verify $(if $(DEEP),--deep)
+	@$(REFERENCE_VERIFY_ENV) $(REFERENCE_VERIFY) verify $(if $(DEEP),--deep) $(if $(MODE),--mode $(MODE))

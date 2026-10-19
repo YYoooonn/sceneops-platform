@@ -152,7 +152,8 @@ def test_scene_expectation_follows_the_documented_rules() -> None:
     ]
     assert camera["payload"]["checksum"] == rules.checksum(b"\xff\xd8\xffa0")
     lidar = scene.observations["/lidar/top/points"][0]["payload"]
-    assert lidar["media_type"] == "application/x.ros2-cdr.sensor_msgs.msg.PointCloud2"
+    # ADR-007 §30.4: the recorded type sensor_msgs/msg/PointCloud2 is named lowercased.
+    assert lidar["media_type"] == "application/x.ros2-cdr.sensor_msgs.msg.pointcloud2"
     assert scene.coordinate_frames == [
         ["base_link", "ego"],
         ["cam_front", "sensor"],
@@ -240,6 +241,42 @@ def test_every_platform_negative_control_is_detected(tiny_world, control) -> Non
         },
     )
     codes = {v["code"] for v in _codes(tiny_world, corrupted, fixtures=["fx-a"])}
+    assert codes & control.codes, f"{control.name}: observed {sorted(codes)}"
+
+
+RECORDING_ONLY = ("recording_import",)
+
+
+def test_a_recording_import_state_passes_when_only_that_mode_is_verified(
+    tiny_world,
+) -> None:
+    sources, derived, _, captured = tiny_world
+    obs = reference_verify.synthetic_observation(sources, derived, RECORDING_ONLY)
+    assert set(obs["robot_runs"]) == {
+        sources.run_id("recording_import", fid) for fid in sources.fixture_ids()
+    }
+    found = reference_verify._verify(
+        sources, obs, derived, captured={}, deep=True, modes=RECORDING_ONLY
+    )
+    assert found.ok, found.violations[:3]
+    # The same state is not the whole contract.
+    assert not reference_verify._verify(
+        sources, obs, derived, captured={}, deep=True
+    ).ok
+
+
+@pytest.mark.parametrize("control", negative.PLATFORM_CONTROLS, ids=lambda c: c.name)
+def test_every_platform_negative_control_is_detected_for_recording_import_only(
+    tiny_world, control
+) -> None:
+    sources, derived, _, _ = tiny_world
+    obs = reference_verify.synthetic_observation(sources, derived, RECORDING_ONLY)
+    corrupted = copy.deepcopy(obs)
+    control.apply(corrupted, reference_verify.control_context(sources, RECORDING_ONLY))
+    codes = reference_verify._verify(
+        sources, corrupted, derived, captured={}, deep=True, fixtures=["fx-a"],
+        modes=RECORDING_ONLY,
+    ).codes()  # fmt: skip
     assert codes & control.codes, f"{control.name}: observed {sorted(codes)}"
 
 
