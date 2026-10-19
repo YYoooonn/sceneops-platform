@@ -22,13 +22,21 @@ Recording Import baseline) are not copied from the reference environment: the su
 (`tools/baselines/canonical/canonical_bootstrap.sh`) against this runtime's API, publishing the
 locked recording into the disposable bucket (`SCENEOPS_WORKER_ARTIFACT__ROOT_URI`).
 
+With ``streaming`` the project also loads `compose/test-streaming.yaml`: a Kafka
+broker, a capture volume and the replay / bridge / Capture / publisher services of
+its own, so a streamed RobotRun is acquired through the production path
+(tools/baselines/streaming/streaming_lib.sh, STREAMING_RUNTIME=disposable) without
+touching the reference environment's broker, Kafka log or capture volume.
+
 A run killed before it could stop the runtime leaves its containers behind; the next
-`up` removes them first (the project name is fixed), exactly like the disposable
-database and bucket are recreated.
+`up` removes them first (the project name is fixed, and `down` always covers the
+streaming services and volumes too), exactly like the disposable database and bucket
+are recreated.
 """
 
 from __future__ import annotations
 
+import json
 import socket
 import subprocess
 import time
@@ -46,6 +54,10 @@ from disposable_env import (
 
 PROJECT = "sceneops-test"
 COMPOSE_FILE = REPO_ROOT / "compose" / "test-runtime.yaml"
+STREAMING_COMPOSE_FILE = REPO_ROOT / "compose" / "test-streaming.yaml"
+# compose/test-streaming.yaml's services started per command (`docker compose run`).
+ONESHOT_PROFILE = "oneshot"
+STREAMING_KAFKA = "test-kafka:9092"
 
 # How the shared servers are addressed from inside the compose network.
 CONTAINER_POSTGRES = "postgres:5432"
@@ -69,6 +81,7 @@ class ExecutionRuntime:
     environment: DisposableEnvironment
     env_file: str = ".env.local"
     api_port: int = field(default_factory=free_port)
+    streaming: bool = False
 
     # ── configuration ────────────────────────────────────────────────────────
 
@@ -120,26 +133,38 @@ class ExecutionRuntime:
             SCENEOPS_WORKER_ARTIFACT__ROOT_URI=self.artifact_root_uri,
             ENV_FILE=self.env_file,
         )
+        if self.streaming:
+            # streaming_lib.sh drives this project's streaming services itself, so
+            # it needs the variables the compose files interpolate (checked again).
+            env = self.compose_environment(env)
+            env["STREAMING_RUNTIME"] = "disposable"
         check_environment(env)
         return env
 
     # ── compose ──────────────────────────────────────────────────────────────
 
-    def _compose_command(self, *args: str) -> list[str]:
-        command = [
-            "docker", "compose",
-            "-p", PROJECT,
-            "-f", str(COMPOSE_FILE),
+    def _compose_command(self, *args: str, streaming: bool | None = None) -> list[str]:
+        files = [COMPOSE_FILE]
+        if self.streaming if streaming is None else streaming:
+            files.append(STREAMING_COMPOSE_FILE)
+        command = ["docker", "compose", "-p", PROJECT]
+        for path in files:
+            command += ["-f", str(path)]
+        command += [
             "--project-directory", str(REPO_ROOT),
             "--env-file", str(REPO_ROOT / self.env_file),
         ]  # fmt: skip
         return command + list(args)
 
     def _compose(
-        self, *args: str, base: dict[str, str], check: bool = True
+        self,
+        *args: str,
+        base: dict[str, str],
+        check: bool = True,
+        streaming: bool | None = None,
     ) -> subprocess.CompletedProcess:
         result = subprocess.run(
-            self._compose_command(*args),
+            self._compose_command(*args, streaming=streaming),
             cwd=REPO_ROOT,
             env=self.compose_environment(base),
             capture_output=True,
@@ -179,11 +204,14 @@ class ExecutionRuntime:
             raise
 
     def down(self, base: dict[str, str]) -> None:
-        """Stop and remove every container, network attachment and volume of the
-        project. Absent is fine."""
+        """Stop and remove every container, network and volume of the project, the
+        streaming ones included whether or not this runtime started them (a killed
+        streaming run leaves its broker and volumes). Absent is fine."""
         self._compose(
-            "down", "--volumes", "--remove-orphans", "--timeout", "5", base=base
-        )
+            "--profile", ONESHOT_PROFILE,
+            "down", "--volumes", "--remove-orphans", "--timeout", "5",
+            base=base, streaming=True,
+        )  # fmt: skip
 
     # ── readiness ────────────────────────────────────────────────────────────
 
@@ -215,7 +243,10 @@ class ExecutionRuntime:
         result = self._compose("ps", "--format", "{{.Service}} {{.State}}", base=base)
         states = dict(line.split(" ", 1) for line in result.stdout.splitlines() if line)
         down = {service: state for service, state in states.items() if state != "running"}
-        if down or not {"test-worker-jobs", "test-worker-pipeline"} <= states.keys():
+        required = {"test-worker-jobs", "test-worker-pipeline"}
+        if self.streaming:
+            required.add("test-kafka")
+        if down or not required <= states.keys():
             raise ExecutionRuntimeError(f"runtime services not running: {down or states}")
 
     def verify_isolation(self, base: dict[str, str]) -> None:
@@ -243,3 +274,45 @@ class ExecutionRuntime:
                         f"{service} holds {name}={actual!r}, expected {expected!r}: "
                         "the runtime is not isolated from the reference environment"
                     )
+        if self.streaming:
+            self._verify_streaming_isolation(base)
+
+    def _verify_streaming_isolation(self, base: dict[str, str]) -> None:
+        """The one-shot streaming services are not running yet: read the
+        configuration `docker compose run` will start them with."""
+        result = self._compose(
+            "--profile", ONESHOT_PROFILE, "config", "--format", "json", base=base
+        )  # fmt: skip
+        problems = streaming_isolation_problems(
+            json.loads(result.stdout)["services"], self.artifact_root_uri
+        )
+        if problems:
+            raise NotDisposableError(
+                "the streaming services are not isolated from the reference "
+                f"environment: {problems}"
+            )
+
+
+def streaming_isolation_problems(
+    services: dict[str, dict], artifact_root_uri: str
+) -> list[str]:
+    """What in a resolved compose configuration would let the streaming path reach
+    the reference environment: the broker address of the bridge and Capture, the
+    ArtifactStore root of the publisher, and the networks of the DDS / Kafka
+    participants."""
+    problems = []
+    for name in ("test-streaming-bridge", "test-capture"):
+        env = services.get(name, {}).get("environment") or {}
+        if env.get("SCENEOPS_STREAMING_KAFKA_BOOTSTRAP_SERVERS") != STREAMING_KAFKA:
+            problems.append(f"{name} does not use {STREAMING_KAFKA}")
+    root = (
+        (services.get("test-recording-publisher", {}).get("environment") or {})
+        .get("SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI")
+    )
+    if root != artifact_root_uri:
+        problems.append(f"test-recording-publisher writes to {root!r}")
+    for name in ("test-kafka", "test-streaming-bridge", "test-capture", "test-dataset-replay"):
+        networks = set(services.get(name, {}).get("networks") or {})
+        if networks != {"streaming"}:
+            problems.append(f"{name} is on networks {sorted(networks)}, not only the private one")
+    return problems

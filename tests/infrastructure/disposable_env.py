@@ -23,7 +23,7 @@ pytest session start, a suite whose environment points anywhere else
 
 CLI (run from the repository root):
 
-    python tests/infrastructure/disposable_env.py run -- <command...>
+    python tests/infrastructure/disposable_env.py run [--runtime | --streaming] -- <command...>
     python tests/infrastructure/disposable_env.py create | drop | status
 """
 
@@ -323,6 +323,7 @@ class DisposableEnvironment:
         command: list[str],
         *,
         runtime: bool = False,
+        streaming: bool = False,
         env_file: str = ".env.local",
     ) -> int:
         """create -> [start the execution runtime] -> command -> [stop it] -> drop.
@@ -332,13 +333,15 @@ class DisposableEnvironment:
 
         ``runtime`` also starts an execution runtime (execution_runtime.py) on the
         disposable database and bucket, for suites that generate execution
-        history; the suite sees its API."""
+        history; the suite sees its API. ``streaming`` also starts the runtime's
+        streaming acquisition path (Kafka, capture volume, replay / bridge /
+        Capture / publisher; compose/test-streaming.yaml) and implies ``runtime``."""
         process: subprocess.Popen | None = None
         execution = None
-        if runtime:
+        if runtime or streaming:
             from execution_runtime import ExecutionRuntime
 
-            execution = ExecutionRuntime(self, env_file=env_file)
+            execution = ExecutionRuntime(self, env_file=env_file, streaming=streaming)
         child_base = self.child_environment(dict(os.environ))
 
         def _forward_sigterm(signum, _frame):
@@ -399,6 +402,12 @@ def _parse(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="run: also start the disposable execution runtime (execution_runtime.py)",
     )
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        help="run: the execution runtime with its own streaming acquisition path "
+        "(compose/test-streaming.yaml); implies --runtime",
+    )
     parser.add_argument("--env-file", default=os.environ.get("ENV_FILE", ".env.local"))
     parser.add_argument("--database", default=DEFAULT_DATABASE)
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
@@ -436,7 +445,10 @@ def main(argv: list[str] | None = None) -> int:
             print("disposable_env: run needs a command after `--`", file=sys.stderr)
             return 2
         return environment.run(
-            args.command, runtime=args.runtime, env_file=args.env_file
+            args.command,
+            runtime=args.runtime,
+            streaming=args.streaming,
+            env_file=args.env_file,
         )
     if args.action == "create":
         environment.create()

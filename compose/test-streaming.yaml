@@ -1,0 +1,124 @@
+# The streaming acquisition path of the disposable execution runtime
+# (tests/infrastructure/execution_runtime.py, `disposable_env.py run --streaming`):
+# loaded next to compose/test-runtime.yaml in the same compose project
+# (`sceneops-test`), never from compose.yaml.
+#
+# A streamed RobotRun is acquired here exactly as on the reference stack
+# (tools/baselines/streaming/streaming_lib.sh with STREAMING_RUNTIME=disposable):
+#
+#   test-dataset-replay -> ROS 2 -> test-streaming-bridge -> test-kafka -> test-capture
+#     -> test-acquisition-recordings -> test-recording-publisher (publish-pending)
+#     -> test-worker-jobs (reconcile --apply) -> the disposable database and bucket
+#
+# Nothing of the reference environment's streaming state is used: the broker, its
+# log volume and the capture volume are the project's own and are removed with it
+# (`down --volumes`). Replay, bridge, Kafka and Capture talk only on the project's
+# private `streaming` network, so DDS discovery and the `test-kafka` address never
+# reach the reference network; only the publisher joins that network, to reach the
+# shared MinIO server, and writes only under the runner's TEST_ARTIFACT_ROOT_URI.
+# Same images as compose/streaming.yaml and compose/acquisition.yaml (built there).
+# Only test-kafka is long-running and started by `up`; the `oneshot` services are
+# started per command with `docker compose run`.
+
+x-test-kafka-client: &test-kafka-client
+  # Overrides the in-network broker address of .env.local.
+  SCENEOPS_STREAMING_KAFKA_BOOTSTRAP_SERVERS: test-kafka:9092
+
+services:
+  test-kafka:
+    image: apache/kafka:3.9.2
+    pull_policy: never
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://:9093,PLAINTEXT://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://test-kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@test-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # The reference broker's replay window and timestamp type (compose/streaming.yaml).
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_ROLL_HOURS: 1
+      KAFKA_LOG_RETENTION_BYTES: 21474836480
+      KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: LogAppendTime
+    # No published port: only the project's own containers reach it.
+    volumes:
+      - test-kafka-data:/var/lib/kafka/data
+    networks:
+      - streaming
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  test-streaming-bridge:
+    image: sceneops-platform/streaming-bridge:local
+    pull_policy: never
+    env_file:
+      - .env.local
+    environment: *test-kafka-client
+    volumes:
+      - ./config/channels:/workspace/channels:ro
+    networks:
+      - streaming
+    profiles:
+      - oneshot
+
+  test-capture:
+    image: sceneops-platform/capture:local
+    pull_policy: never
+    env_file:
+      - .env.local
+    environment: *test-kafka-client
+    volumes:
+      - ./config/channels:/workspace/channels:ro
+      - test-acquisition-recordings:/recordings
+    networks:
+      - streaming
+    profiles:
+      - oneshot
+
+  test-dataset-replay:
+    image: sceneops-platform/dataset-replay:local
+    pull_policy: never
+    volumes:
+      # The locked recording only; no source dataset is mounted.
+      - ./config/reference:/config/reference:ro
+      - ${REFERENCE_DATA_ROOT:-./data/reference}:/reference:ro
+    networks:
+      - streaming
+    profiles:
+      - oneshot
+
+  test-recording-publisher:
+    image: sceneops-platform/publisher:local
+    pull_policy: never
+    command: ["--help"]
+    environment:
+      SCENEOPS_PUBLISHER_ARTIFACT__BACKEND: ${SCENEOPS_WORKER_ARTIFACT__BACKEND:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI: ${TEST_ARTIFACT_ROOT_URI:?}
+      SCENEOPS_PUBLISHER_ARTIFACT__ENDPOINT_URL: ${SCENEOPS_WORKER_ARTIFACT__ENDPOINT_URL:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__REGION: ${SCENEOPS_WORKER_ARTIFACT__REGION:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID: ${SCENEOPS_WORKER_ARTIFACT__ACCESS_KEY_ID:-}
+      SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY: ${SCENEOPS_WORKER_ARTIFACT__SECRET_ACCESS_KEY:-}
+    volumes:
+      - test-acquisition-recordings:/recordings:ro
+    # The default network: compose/test-runtime.yaml's sceneops-network, for MinIO.
+    profiles:
+      - oneshot
+
+networks:
+  streaming: {}
+
+volumes:
+  test-kafka-data:
+  test-acquisition-recordings:

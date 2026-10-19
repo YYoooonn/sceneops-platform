@@ -22,6 +22,7 @@ import tiny_recording as tiny  # noqa: E402
 from verification import cdr, negative, observation, rules  # noqa: E402
 from verification.contract import (  # noqa: E402
     REPO_ROOT,
+    ContractError,
     check_expectations,
     derive,
     expectations_document,
@@ -276,6 +277,82 @@ def test_every_platform_negative_control_is_detected_for_recording_import_only(
     codes = reference_verify._verify(
         sources, corrupted, derived, captured={}, deep=True, fixtures=["fx-a"],
         modes=RECORDING_ONLY,
+    ).codes()  # fmt: skip
+    assert codes & control.codes, f"{control.name}: observed {sorted(codes)}"
+
+
+STREAMING_ONLY = ("streaming_acquisition",)
+
+
+def _one_fixture_streaming(world):
+    sources, derived, _, captured = world
+    one = {"fx-a": derived["fx-a"]}
+    obs = reference_verify.synthetic_observation(sources, one, STREAMING_ONLY, ["fx-a"])
+    return sources, one, obs, captured
+
+
+def test_a_one_fixture_composition_is_its_own_baseline_version(tiny_world) -> None:
+    sources = tiny_world[0]
+    contract = sources.dataset_key("streaming_acquisition")
+    assert sources.dataset_key("streaming_acquisition", ["fx-a"]) == (
+        contract.split("/")[0] + "/baseline-fx-a"
+    )
+    assert sources.dataset_key("streaming_acquisition", ["fx-b", "fx-a"]) == contract
+    with pytest.raises(ContractError):
+        sources.dataset_key("streaming_acquisition", ["fx-a", "fx-x"])
+
+
+def test_a_one_fixture_streaming_state_passes_only_in_its_own_scope(tiny_world) -> None:
+    sources, one, obs, captured = _one_fixture_streaming(tiny_world)
+    assert set(obs["robot_runs"]) == {sources.run_id("streaming_acquisition", "fx-a")}
+    assert set(obs["dataset_versions"]) == {
+        sources.dataset_key("streaming_acquisition", ["fx-a"])
+    }
+    found = reference_verify._verify(
+        sources, obs, one, captured=captured, deep=True, modes=STREAMING_ONLY,
+        selection=["fx-a"],
+    )  # fmt: skip
+    assert found.ok, found.violations[:3]
+    # It is neither the mode's contract composition nor the whole contract.
+    _, derived, _, _ = tiny_world
+    whole_mode = reference_verify._verify(
+        sources, obs, derived, captured=captured, deep=True, modes=STREAMING_ONLY
+    )
+    assert "dataset_version_missing" in whole_mode.codes()
+    assert not reference_verify._verify(
+        sources, obs, derived, captured=captured, deep=True
+    ).ok
+
+
+def test_a_streamed_run_whose_capture_was_not_read_back_fails(tiny_world) -> None:
+    sources, one, obs, _ = _one_fixture_streaming(tiny_world)
+    found = reference_verify._verify(
+        sources,
+        obs,
+        one,
+        captured={},
+        deep=True,
+        modes=STREAMING_ONLY,
+        selection=["fx-a"],
+    )
+    assert "streaming_content" in found.codes()
+
+
+@pytest.mark.parametrize("control", negative.PLATFORM_CONTROLS, ids=lambda c: c.name)
+def test_every_platform_negative_control_is_detected_for_one_streamed_fixture(
+    tiny_world, control
+) -> None:
+    """A one-fixture composition holds one Scene and one Episode, and the run the
+    controls corrupt is a streamed one."""
+    sources, one, obs, captured = _one_fixture_streaming(tiny_world)
+    ctx = reference_verify.control_context(sources, STREAMING_ONLY, ["fx-a"])
+    assert ctx["run_id"] == sources.run_id("streaming_acquisition", "fx-a")
+    assert ctx["other_run_id"] == sources.run_id("streaming_acquisition", "fx-b")
+    corrupted = copy.deepcopy(obs)
+    control.apply(corrupted, ctx)
+    codes = reference_verify._verify(
+        sources, corrupted, one, captured=captured, deep=True, fixtures=["fx-a"],
+        modes=STREAMING_ONLY, selection=["fx-a"],
     ).codes()  # fmt: skip
     assert codes & control.codes, f"{control.name}: observed {sorted(codes)}"
 

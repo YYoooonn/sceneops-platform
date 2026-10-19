@@ -139,6 +139,7 @@ help:
 	@echo "  make artifact-lifecycle-once [ARGS=..]  Read-only lifecycle classification of robot_runs/ objects (ADR-008 §6; deletes nothing)"
 	@echo "  make acquisition-status [ARGS=..]       Read-only operational report: a derived AcquisitionStatus per run + aggregates (ADR-008 §7)"
 	@echo "  make disk-report                        Read-only: host headroom, volumes, Kafka log, test leftovers, what Docker could reclaim"
+	@echo "  make capacity-preflight [MODE=..] [REFERENCE_SCOPE=..|FIXTURE=..]   Read-only: does a reference workload fit the Docker VM's free space (exit 1: no)"
 	@echo ""
 	@echo "Benchmarks (tools/benchmarks/README.md) are measurement tooling, not acceptance; no Make command runs one."
 	@echo ""

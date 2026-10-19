@@ -80,13 +80,16 @@ def stub(tmp_path):
     return tmp_path
 
 
-def _run(stub: Path, script: str, timeout: float = 30) -> subprocess.CompletedProcess:
+def _run(
+    stub: Path, script: str, timeout: float = 30, **extra: str
+) -> subprocess.CompletedProcess:
     env = {
         "PATH": f"{stub / 'bin'}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
         "DOCKER_LOG": str(stub / "docker.log"),
         "STUB_DIR": str(stub),
         "ENV_FILE": "unused",
         "REFERENCE_CORPUS": "corpus",
+        **extra,
     }
     prelude = f"""
         set -uo pipefail
@@ -107,14 +110,24 @@ def _docker_calls(stub: Path) -> list[str]:
     return log.read_text().splitlines() if log.exists() else []
 
 
-def _acquire(stub: Path) -> subprocess.CompletedProcess:
+def _acquire(stub: Path, **extra: str) -> subprocess.CompletedProcess:
     return _run(
         stub,
         """
         streaming_acquire '{"fixture_id": "f"}' run-1 robot-1 /recordings/c bridge-t capture-t
         echo "START_POSITION=$START_POSITION"
         """,
+        **extra,
     )
+
+
+DISPOSABLE = {
+    "STREAMING_RUNTIME": "disposable",
+    "REPO_ROOT": str(REPO_ROOT),
+    "TEST_DATABASE_URL": "postgresql+asyncpg://u:p@postgres:5432/sceneops_test",
+    "TEST_ARTIFACT_ROOT_URI": "s3://sceneops-test/artifacts",
+    "TEST_API_PORT": "18000",
+}
 
 
 def test_wait_run_started_returns_the_position_among_other_output(stub):
@@ -194,3 +207,42 @@ def test_a_late_run_started_line_is_waited_for(stub):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == RUN_STARTED["start_position"]
+
+
+def test_the_disposable_runtime_runs_every_step_on_its_own_services(stub):
+    (stub / "bridge.log").write_text(
+        "run_started " + json.dumps(RUN_STARTED) + "\n" + READY + "\n"
+    )
+
+    result = _acquire(stub, **DISPOSABLE)
+
+    assert result.returncode == 0, result.stderr
+    compose = [c for c in _docker_calls(stub) if c.startswith("compose ")]
+    assert compose
+    for call in compose:
+        # Never the reference project: always the disposable one, both its files.
+        assert call.startswith("compose -p sceneops-test -f "), call
+        assert "compose/test-runtime.yaml" in call and "compose/test-streaming.yaml" in call
+    joined = "\n".join(compose)
+    for service in ("test-streaming-bridge", "test-capture", "test-dataset-replay"):
+        assert f"-T {service}" in joined, service
+    assert "-T capture " not in joined and "-T streaming-bridge " not in joined
+
+
+def test_the_disposable_runtime_refuses_to_start_outside_its_runner(stub):
+    result = _run(
+        stub,
+        "echo reached",
+        STREAMING_RUNTIME="disposable",
+        REPO_ROOT=str(REPO_ROOT),
+    )
+    assert result.returncode != 0
+    assert "reached" not in result.stdout
+    assert "disposable_env.py run --streaming" in result.stderr
+    assert _docker_calls(stub) == []
+
+
+def test_an_unknown_runtime_is_refused(stub):
+    result = _run(stub, "echo reached", STREAMING_RUNTIME="golden")
+    assert result.returncode == 2
+    assert "reached" not in result.stdout

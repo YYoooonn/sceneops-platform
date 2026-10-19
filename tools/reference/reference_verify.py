@@ -12,7 +12,8 @@
     verify     the running platform's contract state (FastAPI + object store,
                read-only) against the derived expectations, then every platform
                negative control on a copy of what was collected; --mode limits it
-               to one ingestion mode (the report names the modes it covers)
+               to one ingestion mode, --fixture to one fixture's RobotRuns and its
+               baseline-<fixture> DatasetVersion (the report names both)
 
 Rules: docs/development/reference-verification.md. Each command prints one JSON
 report (sceneops.reference_verification_report/1) on stdout and exits non-zero
@@ -234,10 +235,13 @@ def cmd_derive(args: argparse.Namespace) -> int:
 
 
 def synthetic_observation(
-    sources: Sources, derived: dict[str, Derived], modes: tuple[str, ...] = MODES
+    sources: Sources,
+    derived: dict[str, Derived],
+    modes: tuple[str, ...] = MODES,
+    selection: list[str] | None = None,
 ) -> dict[str, Any]:
-    """The platform state the rules describe, for every contract run of ``modes``
-    (test double)."""
+    """The platform state the rules describe, for every run of ``modes`` over the
+    fixtures of ``derived``, composed as ``selection`` names it (test double)."""
     obs = synthetic.empty()
     for mode in modes:
         spec = sources.contract["ingestion_modes"][mode]
@@ -250,7 +254,9 @@ def synthetic_observation(
         summary = summary_for(
             [d.scene for d in derived.values()], [d.episodes for d in derived.values()]
         )
-        synthetic.add_dataset_version(obs, sources.dataset_key(mode), pins, summary)
+        synthetic.add_dataset_version(
+            obs, sources.dataset_key(mode, selection), pins, summary
+        )
     return obs
 
 
@@ -263,6 +269,7 @@ def _verify(
     deep: bool,
     fixtures: list[str] | None = None,
     modes: tuple[str, ...] = MODES,
+    selection: list[str] | None = None,
 ) -> Findings:
     f = Findings()
     verify_platform(
@@ -275,27 +282,34 @@ def _verify(
         deep=deep,
         fixtures=fixtures,
         modes=modes,
+        selection=selection,
     )
     return f
 
 
-def control_context(sources: Sources, modes: tuple[str, ...]) -> dict[str, Any]:
-    """What the platform controls corrupt: the first fixture's Recording Import run.
-    The other RobotRun a binding is moved to is the same fixture's Streaming
-    Acquisition run, or the second fixture's when only Recording Import is
-    verified; a foreign member is that streaming run's Episode, or a fabricated
-    unit outside the contract when no observed run lies outside the version."""
-    first, second = sources.fixture_ids()[:2]
-    streaming = "streaming_acquisition" in modes
+def control_context(
+    sources: Sources, modes: tuple[str, ...], selection: list[str] | None = None
+) -> dict[str, Any]:
+    """What the platform controls corrupt: the first selected fixture's run of the
+    first verified mode (Recording Import when it is verified). The other RobotRun a
+    binding is moved to is the same fixture's Streaming Acquisition run when both
+    modes are verified, else another contract fixture's run of that mode; a foreign
+    member is that streaming run's Episode, or a fabricated unit outside the
+    contract when no observed run lies outside the version."""
+    selection = selection or sources.fixture_ids()
+    first = selection[0]
+    other = next(fid for fid in sources.fixture_ids() if fid != first)
+    primary = modes[0]
+    both = set(modes) == set(MODES)
     return {
-        "run_id": sources.run_id("recording_import", first),
+        "run_id": sources.run_id(primary, first),
         "other_run_id": sources.run_id("streaming_acquisition", first)
-        if streaming
-        else sources.run_id("recording_import", second),
+        if both
+        else sources.run_id(primary, other),
         "foreign_run_id": sources.run_id("streaming_acquisition", first)
-        if streaming
+        if both
         else None,
-        "dataset_key": sources.dataset_key("recording_import"),
+        "dataset_key": sources.dataset_key(primary, selection),
     }
 
 
@@ -306,14 +320,16 @@ def _controls(
     captured: dict[str, Any],
     deep: bool,
     modes: tuple[str, ...] = MODES,
+    selection: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    fid = sources.fixture_ids()[0]
+    fid = (selection or sources.fixture_ids())[0]
     _log(f"--- negative controls on {fid}")
     return negative.run_platform_controls(
         obs,
-        control_context(sources, modes),
+        control_context(sources, modes, selection),
         lambda corrupted: _verify(
-            sources, corrupted, derived, captured=captured, deep=True, fixtures=[fid], modes=modes
+            sources, corrupted, derived, captured=captured, deep=True, fixtures=[fid], modes=modes,
+            selection=selection,
         ).codes(),
     )  # fmt: skip
 
@@ -340,12 +356,16 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 def cmd_verify(args: argparse.Namespace) -> int:
     sources = load_sources()
     modes = tuple(m for m in MODES if m in (args.mode or MODES))
-    derived = _derive_all(sources, _cache_root(args), sources.fixture_ids())
+    # One fixture: its RobotRuns and its own baseline-<fixture> composition.
+    selection = _fixtures(sources, args)
+    partial = selection != sources.fixture_ids()
+    derived = _derive_all(sources, _cache_root(args), selection)
     findings = Findings()
     check_expectations(
         findings,
         read_json(sources.expectations_path),
         expectations_document(sources, derived),
+        fixtures=selection if partial else None,
     )
     if args.observation_in:
         obs = json.loads(Path(args.observation_in).read_text())
@@ -357,7 +377,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         captured = {}
         streaming = {
             sources.run_id("streaming_acquisition", fid)
-            for fid in sources.fixture_ids()
+            for fid in selection
             if "streaming_acquisition" in modes
         }
 
@@ -370,28 +390,32 @@ def cmd_verify(args: argparse.Namespace) -> int:
         obs = observation.collect(
             observation.HttpApi(os.environ.get("API_BASE_URL", "http://localhost:8000"), os.environ.get("API_PREFIX", "/api/v1")),
             observation.S3Store.from_env(),
-            robot_run_ids=[sources.run_id(m, fid) for m in modes for fid in sources.fixture_ids()],
-            dataset_versions=[tuple(sources.dataset_key(m).split("/", 1)) for m in modes],
+            robot_run_ids=[sources.run_id(m, fid) for m in modes for fid in selection],
+            dataset_versions=[tuple(sources.dataset_key(m, selection).split("/", 1)) for m in modes],
             deep=args.deep,
             recording_sink=sink,
         )  # fmt: skip
     if args.observation_out:
         observation.write_observation(obs, Path(args.observation_out))
     platform = _verify(
-        sources, obs, derived, captured=captured, deep=args.deep, modes=modes
-    )
+        sources, obs, derived, captured=captured, deep=args.deep, modes=modes,
+        selection=selection,
+    )  # fmt: skip
     findings.violations += platform.violations
     for code, n in platform.checked.items():
         findings.checked[code] = findings.checked.get(code, 0) + n
     controls = (
-        _controls(sources, obs, derived, captured, args.deep, modes)
+        _controls(sources, obs, derived, captured, args.deep, modes, selection)
         if platform.ok
         else None
     )
     if controls is None:
         _log("negative controls are run only on a platform state that passes")
-    # A report of fewer modes is not the contract's acceptance; it says so.
-    return _report("verify", findings, controls, deep=args.deep, modes=list(modes))
+    # A report of fewer modes or fixtures is not the contract's acceptance; it says so.
+    return _report(
+        "verify", findings, controls, deep=args.deep, modes=list(modes),
+        fixtures=selection, dataset_versions=[sources.dataset_key(m, selection) for m in modes],
+    )  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,6 +461,11 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         choices=MODES,
         help="verify only this ingestion mode (repeatable; default: every mode)",
+    )
+    p.add_argument(
+        "--fixture",
+        help="verify only this fixture's RobotRuns and its baseline-<fixture> "
+        "DatasetVersion (default: the whole contract)",
     )
     p.set_defaults(func=cmd_verify)
     args = parser.parse_args(argv)

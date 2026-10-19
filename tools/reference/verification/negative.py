@@ -116,9 +116,18 @@ def _first(obs: dict[str, Any], domain: str, run_id: str) -> str:
 
 
 # ── Platform controls ────────────────────────────────────────────────────────
-# ctx: run_id (a Recording Import run), other_run_id (another RobotRun of the
-# observation), foreign_run_id (an observed RobotRun whose units are outside
-# dataset_key, or None), dataset_key (the DatasetVersion holding run_id's units).
+# ctx: run_id (a run of the first verified mode), other_run_id (another RobotRun),
+# foreign_run_id (an observed RobotRun whose units are outside dataset_key, or None),
+# dataset_key (the DatasetVersion holding run_id's units).
+
+
+def _other_member(
+    members: list[dict[str, Any]], member: dict[str, Any]
+) -> dict[str, Any]:
+    """Another member, of the same domain when the version has one: a one-fixture
+    composition holds a single Scene."""
+    others = [m for m in members if m["unit_id"] != member["unit_id"]]
+    return sorted(others, key=lambda m: m["domain"] != member["domain"])[0]
 
 
 def _drop_observation(obs, ctx):
@@ -165,11 +174,7 @@ def _wrong_pin(obs, ctx):
     another unit's revision, with a self-consistent artifact id)."""
     version = obs["dataset_versions"][ctx["dataset_key"]]
     member = next(m for m in version["members"] if m["domain"] == "scene")
-    donor = next(
-        m
-        for m in version["members"]
-        if m["domain"] == "scene" and m["unit_id"] != member["unit_id"]
-    )
+    donor = _other_member(version["members"], member)
     member["manifest_checksum"] = donor["manifest_checksum"]
     member["manifest_artifact_id"] = rules.manifest_artifact_id(
         unit_id=member["unit_id"], manifest_checksum=donor["manifest_checksum"]
@@ -179,8 +184,10 @@ def _wrong_pin(obs, ctx):
 
 def _pin_artifact_mismatch(obs, ctx):
     version = obs["dataset_versions"][ctx["dataset_key"]]
-    members = [m for m in version["members"] if m["domain"] == "scene"]
-    members[0]["manifest_artifact_id"] = members[1]["manifest_artifact_id"]
+    member = next(m for m in version["members"] if m["domain"] == "scene")
+    member["manifest_artifact_id"] = _other_member(version["members"], member)[
+        "manifest_artifact_id"
+    ]
 
 
 def _relative_rebase(obs, ctx):
@@ -533,7 +540,7 @@ PLATFORM_CONTROLS: tuple[Control, ...] = tuple(
         ),
         (
             "substituted_recording",
-            "a Recording Import run pins another recording (consistent)",
+            "the RobotRun pins another recording (consistent)",
             {"robot_run_recording", "source_binding"},
             _substituted_recording,
         ),

@@ -149,6 +149,25 @@ baseline_all_registered() {
   done
 }
 
+# baseline_capacity_preflight <mode> — before the first write, refuse when the Docker VM
+# cannot hold what the selection's unregistered fixtures will add
+# (tools/dev/capacity_preflight.py). Exhausting the VM's disk stops the shared PostgreSQL
+# server; a refusal here has written nothing. Registered RobotRuns whose builds are
+# still pending are not estimated.
+baseline_capacity_preflight() {
+  local id report pending=()
+  for id in $(echo "$BASELINE_FIXTURES" | jq -r '.[].fixture_id'); do
+    baseline_run_registered "$(baseline_run_id "$id")" || pending+=(--fixture "$id")
+  done
+  [ "${#pending[@]}" -gt 0 ] || return 0
+  report="$(python3 "$REPO_ROOT/tools/dev/capacity_preflight.py" --corpus "$REFERENCE_CORPUS" \
+    --mode "$1" "${pending[@]}")" || {
+    [ -z "$report" ] || log "capacity_preflight $report"
+    fail "not enough free space for $1 of $(( ${#pending[@]} / 2 )) fixture(s) (capacity_preflight above; docs/development/local-development.md#disk-hygiene)"
+  }
+  log "capacity_preflight $report"
+}
+
 # baseline_ensure_dataset <name> — the Dataset exists (a namespace; its versions
 # are only ever composed). Nothing is written when it already does.
 baseline_ensure_dataset() {

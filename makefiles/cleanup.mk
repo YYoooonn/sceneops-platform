@@ -9,6 +9,15 @@
 disk-report:
 	@ENV_FILE=$(ENV_FILE) tools/dev/disk_report.sh
 
+.PHONY: capacity-preflight
+# Read-only: would a reference workload fit? MODE=recording_import|streaming_acquisition
+# (default streaming_acquisition) over FIXTURE=<id> or REFERENCE_SCOPE=<scope>, estimated
+# from the corpus lock against the Docker VM's free space (tools/dev/capacity_preflight.py;
+# the baseline bootstraps run the same check before their first write). Exit 1: it does not fit.
+capacity-preflight:
+	@python3 tools/dev/capacity_preflight.py --mode $(or $(MODE),streaming_acquisition) \
+		$(if $(FIXTURE),--fixture $(FIXTURE),--scope $(REFERENCE_SCOPE))
+
 .PHONY: prepare-data
 prepare-data:
 	mkdir -p data/raw data/runs data/artifacts data/inputs cache/hf

@@ -113,15 +113,42 @@ that observation passes.
 make reference-verify-sources [FIXTURE=<id>]   raw nuScenes <-> recordings <-> lock <-> labels   no stack
 make reference-expectations [WRITE=1]          derive and compare (WRITE=1: replace the file)   no stack
 make reference-verify-selftest                 synthetic state passes, every control detected   no stack
-make reference-verify [DEEP=1] [MODE=<mode>]   the platform's contract state, read-only
+make reference-verify [DEEP=1] [MODE=<mode>] [FIXTURE=<id>]   the platform's contract state, read-only
 make reference-contract-verify                 the contract state check; runs reference-verify
 ```
 
 `MODE=recording_import` (or `streaming_acquisition`) verifies one ingestion mode: its
 RobotRuns, units and DatasetVersion only, with the platform controls applied in that
 scope (a binding is moved to another fixture's run, a foreign member is a unit outside
-the contract). The report lists the `modes` it covers; a single-mode report is
-evidence about that mode, not the contract's acceptance.
+the contract). `FIXTURE=<id>` (`verify --fixture`) verifies one fixture's RobotRuns and
+units and the DatasetVersion the baseline bootstraps compose for that selection,
+`<dataset>/baseline-<id>` ([canonical-baseline.md](./canonical-baseline.md)), held to
+exactly that fixture's units and summaries; the controls then run on that fixture, and
+the two that need a second member of one domain use the version's other unit. The
+report lists the `modes`, `fixtures` and `dataset_versions` it covers; a report of one
+mode or one fixture is evidence about that scope, not the contract's acceptance.
+
+### A streamed fixture on a disposable runtime
+
+The streaming path can be verified without the reference environment: the disposable
+execution runtime with its own streaming services (`disposable_env.py run --streaming`,
+[test-matrix.md](./test-matrix.md#the-disposable-execution-runtime)) runs the streaming
+bootstrap under the contract's identity and the verifier against it, and drops
+everything afterwards:
+
+```text
+POSTGRES_USER=… POSTGRES_PASSWORD=… MINIO_ENDPOINT_URL=http://localhost:9000 \
+MINIO_ROOT_USER=… MINIO_ROOT_PASSWORD=… \
+uv run python tests/infrastructure/disposable_env.py run --streaming \
+    --database sceneops_test_<name> --bucket sceneops-test-<name> -- sh -c '
+  FIXTURE=scene-0061 tools/baselines/streaming/streaming_bootstrap.sh &&
+  uv run --no-sync python -I tools/reference/reference_verify.py verify --deep \
+      --mode streaming_acquisition --fixture scene-0061'
+```
+
+Build the images first (`make acquisition-image`, `make streaming-ros-build`); the
+bootstrap's capacity preflight refuses a selection the Docker VM cannot hold
+([local-development.md](./local-development.md#disk-hygiene)).
 
 `sources` needs `data/raw/nuscenes` (`NUSCENES_DATAROOT`) and the prepared corpus;
 the others need the prepared corpus only. Each prints one JSON report
@@ -154,3 +181,7 @@ platform.
   and the Recovery workflows.
 - A saved observation (`verify --observation-in`) carries no captured recordings, so
   its Streaming Acquisition runs fail with `streaming_content`.
+- **Captured recordings.** A streamed RobotRun pins its capture, whose `log_time` and
+  `publish_time` are Capture's receive times; the rules compare the content derived
+  from it (header stamps, payload bytes, decoded values), not those two fields. A
+  selection is the whole contract or one fixture; other partial selections are refused.

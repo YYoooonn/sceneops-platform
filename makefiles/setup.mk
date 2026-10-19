@@ -38,7 +38,7 @@ UNIT_TEST_SUITES := apps/worker/tests apps/api/tests integrations/groundingdino-
 	packages/sceneops-evaluation/tests packages/sceneops-execution/tests \
 	packages/sceneops-inference/tests packages/sceneops-recording/tests \
 	packages/sceneops-scenes/tests packages/sceneops-streaming/tests \
-	tools/checks/tests tools/reference/tests tools/e2e/tests tests/infrastructure/unit
+	tools/checks/tests tools/dev/tests tools/reference/tests tools/e2e/tests tests/infrastructure/unit
 
 .PHONY: test
 # All infrastructure-independent automated tests -- no Postgres/MinIO/network/

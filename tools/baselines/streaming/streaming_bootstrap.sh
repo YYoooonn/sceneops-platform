@@ -37,9 +37,16 @@
 # registered and byte-identical to its capture, the transient capture files
 # are removed; the durable state is in the ArtifactStore and PostgreSQL.
 #
-# Disk: each fixture needs headroom for its capture, its Kafka records and its
-# artifacts. The bootstrap stops before a fixture when the host or the Docker VM
-# has less than MIN_FREE_GIB (default 6) free.
+# Disk: before the first fixture is streamed, the capacity preflight
+# (tools/dev/capacity_preflight.py) refuses a selection whose recordings, payloads,
+# Kafka log and capture the Docker VM cannot hold with margin; during the run the
+# bootstrap still stops before a fixture when the host or the Docker VM has less than
+# MIN_FREE_GIB (default 6) free.
+#
+# Runtime: STREAMING_RUNTIME=disposable (set by `disposable_env.py run --streaming`)
+# runs the whole path on the disposable execution runtime's own broker, capture volume,
+# workers, database and bucket (tools/baselines/streaming/streaming_lib.sh); the default
+# is the reference stack.
 #
 # stdout: one JSON summary (streaming_verify), deterministic for an unchanged
 # baseline. Progress and per-fixture diagnostics (`streaming_fixture {json}`,
@@ -92,7 +99,7 @@ stall_watch_start() {
     log "pipeline_slow $(jq -cn --arg l "$1" --arg t "$(date -u +%FT%TZ)" --argjson s "$STALL_REPORT_SECONDS" \
       '{label: $l, still_running_after_seconds: $s, at: $t}')"
     log "pipeline_slow_stats $(docker stats --no-stream --format '{{json .}}' | jq -sc '[.[] | {name: .Name, cpu: .CPUPerc, mem: .MemUsage}]')"
-    for svc in worker-pipeline worker-jobs; do
+    for svc in "$SVC_WORKER_PIPELINE" "$SVC_WORKER_JOBS"; do
       log "pipeline_slow_log $svc: $("${COMPOSE[@]}" logs --no-color --tail 15 "$svc" 2>&1 | cut -c1-300 | tr '\n' '|')"
     done
   ) &
@@ -150,7 +157,7 @@ acquire_fixture() {
 resume_capture() {
   local run_id="$1" capture_root="$2" summary
   docker rm -f "$CAPTURE" >/dev/null 2>&1 || true
-  "${COMPOSE[@]}" run -d --name "$CAPTURE" -T capture \
+  "${COMPOSE[@]}" run -d --name "$CAPTURE" -T "$SVC_CAPTURE" \
     --robot-id "$ROBOT_ID" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
     --output-root "$capture_root" --idle-timeout-seconds 60 >/dev/null
   [ "$(docker wait "$CAPTURE")" = 0 ] || fail "the resumed capture of $run_id failed (its RUN_END may never have reached Kafka: remove the capture and the run's partial state by hand)"
@@ -168,7 +175,7 @@ process_fixture() {
   action=reused
   if ! api_get "$API_BASE_URL" "/robot-runs/$run_id" >/dev/null 2>&1; then
     disk_guard
-    "${COMPOSE[@]}" run --rm -T --entrypoint mkdir capture -p "$capture_root" </dev/null
+    "${COMPOSE[@]}" run --rm -T --entrypoint mkdir "$SVC_CAPTURE" -p "$capture_root" </dev/null
     scan="$(streaming_scan "$capture_root")"
     state="$(streaming_run_state "$run_id" "$scan")"
     log "--- $id: $run_id is $state"
@@ -238,11 +245,12 @@ if ! baseline_all_registered; then
     | grep -E 'sceneops_capture|sceneops_streaming_bridge|publication-recovery|registration-recovery' || true)"
   [ -z "$ACTIVE" ] || fail "an unrelated capture, bridge or recovery loop is running (stop it first, e.g. make recovery-down):
 $ACTIVE"
-  "${COMPOSE[@]}" up -d --wait kafka >/dev/null 2>&1 || fail "Kafka did not become healthy"
+  "${COMPOSE[@]}" up -d --wait "$SVC_KAFKA" >/dev/null 2>&1 || fail "Kafka did not become healthy"
   log "  Kafka up; no capture, bridge or recovery container running"
   log "streaming_storage $(streaming_storage)"
   log "--- a RobotRun has to be streamed: cached recordings verified against the lock"
   baseline_resolve full
+  baseline_capacity_preflight streaming_acquisition
 fi
 log "  $(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id]')"
 

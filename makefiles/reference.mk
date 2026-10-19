@@ -95,8 +95,9 @@ reference-contract-bootstrap:
 #                               derivation, then the platform negative controls
 #                               (read-only; DEEP=1 also hashes every payload object;
 #                               MODE=recording_import|streaming_acquisition verifies
-#                               one ingestion mode, which is not the contract's
-#                               acceptance). `reference-contract-verify` runs it.
+#                               one ingestion mode, FIXTURE=<id> one fixture and its
+#                               baseline-<fixture> DatasetVersion; neither is the
+#                               contract's acceptance). `reference-contract-verify` runs it.
 # --------------------
 
 WRITE ?=
@@ -118,4 +119,5 @@ reference-verify-selftest:
 
 .PHONY: reference-verify
 reference-verify:
-	@$(REFERENCE_VERIFY_ENV) $(REFERENCE_VERIFY) verify $(if $(DEEP),--deep) $(if $(MODE),--mode $(MODE))
+	@$(REFERENCE_VERIFY_ENV) $(REFERENCE_VERIFY) verify $(if $(DEEP),--deep) $(if $(MODE),--mode $(MODE)) \
+		$(if $(FIXTURE),--fixture $(FIXTURE))

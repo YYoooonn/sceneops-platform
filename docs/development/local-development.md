@@ -319,6 +319,7 @@ SceneOps contract, and a green result proves nothing about correctness. Correctn
 | `make worker-run-job JOB_ID=…` / `worker-advance-pipeline PIPELINE_RUN_ID=…` | run one Job through `JobRunner`, or take one `PipelineOrchestrator` step, by hand through the worker CLI (`sceneops-worker jobs run`, `sceneops-worker pipelines advance`) |
 | `make reconcile-once` / `reconcile-apply` / `artifact-lifecycle-once` / `acquisition-status` | one acquisition-reconciliation pass; read-only lifecycle and status reports ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)); these run `sceneops-worker acquisition reconcile / artifact-lifecycle / status` in the `worker-jobs` container |
 | `make disk-report` | disk headroom and what could be reclaimed (below) |
+| `make capacity-preflight [MODE=…] [REFERENCE_SCOPE=…\|FIXTURE=…]` | whether a reference workload fits the Docker VM's free space (below); exit 1 when it does not |
 
 `make check-commands` is different in kind: it is static, needs no stack, and is part of how
 the command surface itself is kept consistent.
@@ -343,8 +344,29 @@ what Docker could reclaim.
 The Docker VM's filesystem, not the host's, is usually the binding limit: PostgreSQL and
 MinIO share it, so when a bootstrap fills it, PostgreSQL stops for every database on the
 server (the reference one included) and cannot finish crash recovery until there is room
-again; `docker start sceneops-postgres-1` then replays its WAL. The canonical bootstrap has
-no headroom check. The full Recording Import baseline of the 10-fixture corpus stores about
+again; `docker start sceneops-postgres-1` then replays its WAL.
+
+Both baseline bootstraps therefore run a capacity preflight
+(`tools/dev/capacity_preflight.py`, also `make capacity-preflight`) before their first write
+and stop, having written nothing, when the Docker VM cannot hold what the selection's
+unregistered fixtures will add. The estimate is computed from each fixture's locked
+recording size R:
+
+| Store | Recording Import | Streaming Acquisition |
+| --- | --- | --- |
+| MinIO (recording + payloads, manifests, run records) | 1.85 R | 1.85 R |
+| Kafka log (kept for the 24 h replay window, so it accumulates over the run) | — | 1.33 R |
+| capture volume (one capture at a time, removed once registered) | — | the largest R |
+
+The workload is refused unless the free space is at least the sum with a 25 % margin, plus
+1 GiB for PostgreSQL's WAL (`max_wal_size`) and a 2 GiB floor; the host volume must keep the
+floor. The free space is measured inside the running PostgreSQL container, the filesystem
+whose exhaustion the check prevents, and the check fails closed when it cannot measure. The
+ratios are measurements of the reference workload under `config/baselines/`, not bounds for
+other build configurations, and builds still pending for already registered RobotRuns are
+not estimated. For the 10-fixture corpus it requires 11.8 GiB free for Recording Import and
+18.7 GiB for Streaming Acquisition (one fixture, `scene-0061`: 4.7 GiB); the streaming bootstrap's `MIN_FREE_GIB` check before
+each fixture still applies during the run. The full Recording Import baseline stores about
 7.2 GB in MinIO (4.07 GB of recordings and 3.16 GB of payloads, measured 2026-10-19 on a
 58.4 GB VM). Objects deleted from MinIO, a dropped disposable bucket included, stay in
 `.minio.sys/tmp` until MinIO purges them a few minutes later. Reclaim in this order,
@@ -352,7 +374,7 @@ stopping when there is room:
 
 | Target | Safe? | How |
 | --- | --- | --- |
-| Disposable test resources (`sceneops_test`, `sceneops-test`, compose project `sceneops-test`) | always; a run removes its own, a killed run leaves them | `uv run python tests/infrastructure/disposable_env.py drop`, `docker compose -p sceneops-test down -v` |
+| Disposable test resources (`sceneops_test*`, `sceneops-test*`, compose project `sceneops-test` with its `sceneops-test_test-kafka-data` and `sceneops-test_test-acquisition-recordings` volumes) | always; a run removes its own, a killed run leaves them and the next run removes them | `uv run python tests/infrastructure/disposable_env.py drop [--database … --bucket …]`; containers by the project label (`docker ps -aq --filter label=com.docker.compose.project=sceneops-test \| xargs docker rm -f -v`), then the two volumes by exact name |
 | Stopped containers, dangling images | yes | `docker container prune`, `docker image prune` |
 | Docker build cache | yes; the next image build is slower | `docker builder prune` (`--filter until=168h` keeps the recent layers) |
 | Generated `./data` output, Python caches | yes; `data/raw` and `data/reference` are untouched | `make clean-artifacts`, `make clean-python` |

@@ -14,8 +14,10 @@ revision     pin self-consistent; manifest bytes read back, canonical, checksum 
              content = what the recording and the build configuration determine
 payloads     every reference resolves to its record and stored object; one artifact
              per recorded message and extraction, shared by Scene and Episode
-DatasetVersion  exactly the mode's expected units, registered pins, composition
-             checksum recomputed from the pins, summaries from the expectations
+DatasetVersion  exactly the mode's expected units of the selection (the contract's
+             version, or one fixture's baseline-<fixture>), registered pins,
+             composition checksum recomputed from the pins, summaries from the
+             expectations
 ```
 """
 
@@ -40,18 +42,25 @@ def verify_platform(
     deep: bool = False,
     fixtures: list[str] | None = None,
     modes: tuple[str, ...] = MODES,
+    selection: list[str] | None = None,
 ) -> None:
     """``derived``: per fixture, the expectations of the locked recording.
     ``captured``: per streaming run id, the facts of its stored recording;
     ``derive_captured(facts)`` derives a ``Derived`` from them. ``modes``: the
-    ingestion modes verified; the others are neither expected nor checked."""
+    ingestion modes verified; the others are neither expected nor checked.
+    ``selection``: the fixtures each mode's DatasetVersion is composed of (every
+    contract fixture by default; one fixture is its ``baseline-<fixture>``
+    version). ``fixtures``: the part of the selection whose RobotRuns and units are
+    checked (default: all of it); the DatasetVersion is always held to the whole
+    selection."""
     contract = sources.contract
     units = contract["units"]
-    selected = fixtures or sources.fixture_ids()
+    composed = selection or sources.fixture_ids()
+    selected = fixtures or composed
     for mode in modes:
         spec = contract["ingestion_modes"][mode]
         expected_members: dict[str, str] = {}
-        for fid in sources.fixture_ids():
+        for fid in composed:
             d = derived[fid]
             ids = expected_unit_ids(sources, mode, fid, d)
             expected_members.update({u: "scene" for u in ids["scene"]})
@@ -159,11 +168,11 @@ def verify_platform(
         checks.check_dataset_version(
             f.scoped(layer="platform", mode=mode, fixture_id=None),
             obs,
-            sources.dataset_key(mode),
+            sources.dataset_key(mode, composed),
             expected_members,
             checks.summary_for(
-                [derived[x].scene for x in sources.fixture_ids()],
-                [derived[x].episodes for x in sources.fixture_ids()],
+                [derived[x].scene for x in composed],
+                [derived[x].episodes for x in composed],
             ),
         )
 

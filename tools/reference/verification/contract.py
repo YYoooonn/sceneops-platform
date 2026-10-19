@@ -67,9 +67,18 @@ class Sources:
             baseline_id=spec["baseline_id"], fixture_id=fixture_id
         )
 
-    def dataset_key(self, mode: str) -> str:
+    def dataset_key(self, mode: str, selection: list[str] | None = None) -> str:
+        """The DatasetVersion a mode's selection is composed into: the contract's
+        version for every fixture, ``baseline-<fixture>`` for one fixture (the
+        baseline bootstraps' name for a part of the contract, canonical-baseline.md)."""
         spec = self.contract["ingestion_modes"][mode]
-        return f"{spec['dataset_id']}/{spec['dataset_version']}"
+        if selection is None or sorted(selection) == sorted(self.fixture_ids()):
+            return f"{spec['dataset_id']}/{spec['dataset_version']}"
+        if len(selection) == 1 and selection[0] in self.fixture_ids():
+            return f"{spec['dataset_id']}/baseline-{selection[0]}"
+        raise ContractError(
+            f"a selection is every contract fixture or one of them, not {selection}"
+        )
 
     def locked(self, fixture_id: str) -> dict[str, Any]:
         return self.lock["fixtures"][fixture_id]

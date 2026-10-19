@@ -185,6 +185,22 @@ refuses to run against an API that a make target did not start. A run killed bef
 could tear down leaves containers; the next start removes them first (the project name is
 fixed), like the database and bucket.
 
+`run --streaming` adds the streaming acquisition path to the same project
+(`compose/test-streaming.yaml`): a Kafka broker with the reference broker's replay window
+and timestamp type, its own log and capture volumes, and the replay, bridge, Capture and
+publisher services of the reference images. Replay, bridge, broker and Capture are only on
+the project's private network, so DDS discovery and the broker address never reach the
+reference network; the publisher writes only under the runner's ArtifactStore root, and
+reconciliation runs in the runtime's own job worker. The runner reads back the resolved
+configuration of these one-shot services before the command starts, and `down` always
+removes the streaming containers and volumes, whether or not the run started them. The
+streaming bootstrap targets this project when `STREAMING_RUNTIME=disposable` (which the
+runner sets), so a streamed RobotRun of the contract's identity is acquired, registered,
+built and composed through the production path without the reference broker, Kafka log,
+capture volume, workers, database or bucket
+([reference-verification.md](./reference-verification.md#a-streamed-fixture-on-a-disposable-runtime)).
+No `make test-infrastructure` suite uses it.
+
 ### Reference checks and test-owned identities
 
 Test-owned identities carry the reserved `test-` namespace: `run-test-*` and
@@ -242,6 +258,8 @@ treats them as a violation.
 | Scene / Episode independence and payload sharing: one payload set per RobotRun, reused by the Episode build, ids independent of build configuration | unit (`test_scene_and_episode_builders_are_independent_siblings`); integration (`test_recording_episode_vertical_integration.py`, `test_recording_scene_vertical_integration.py`) |
 | Disposable test environment: only `sceneops_test*` / `sceneops-test*` accepted, the reference names refused by the runner and by the pytest plugin, `test-integration` and the `recovery` suite wired through the runner | unit (`tests/infrastructure/unit/test_disposable_env.py`); create, migrate, drop and rerun after an interruption are exercised by the two commands themselves |
 | Disposable execution runtime: every service of `compose/test-runtime.yaml` takes its database, ArtifactStore root and broker from the runner (own Redis, loopback ports, no reference service name), a publisher aimed at the reference bucket is refused, the `pipelines` suite wired through the runner, `SUITE=` dispatch; the running processes hold the disposable settings | unit (`tests/infrastructure/unit/test_execution_runtime.py`); the running API and workers are read back by the runner on every start (`verify_isolation`) |
+| Disposable streaming path: own broker (no published port, the reference replay window), own log and capture volumes, the DDS / Kafka participants on a private network, the publisher's root from the runner, `down` covering a killed streaming run; the launcher drives only that project and refuses to start outside the runner | unit (`tests/infrastructure/unit/test_execution_runtime.py`, `tools/e2e/tests/test_streaming_launcher.py`); the resolved configuration is read back on every `--streaming` start |
+| Capacity preflight: the estimate per mode from the lock, refusal when the Docker VM or the host cannot hold it, never passing without a measurement, not below the measured MinIO and Kafka sizes | unit (`tools/dev/tests/test_capacity_preflight.py`); both baseline bootstraps run it before their first write |
 | Four-pipeline surface and task chains | unit (`apps/worker/tests/pipelines/test_pipeline_definitions.py`) |
 | MinIO selective Parquet reads | integration (`packages/sceneops-analytics/tests/test_selective_reads_minio_integration.py`) |
 | Recording Import / Streaming Acquisition equivalence of the registered RobotRuns | E2E (`e2e-streaming-equivalence`, read-only); the verifier's identity, timing, canonical and negative-control decisions in `tools/e2e/tests` |

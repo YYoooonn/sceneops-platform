@@ -32,7 +32,9 @@
 # revisions) and the version is composed of their pins. A changed producer or
 # configuration registers other revisions, and composing them under an existing
 # name fails loudly instead of rebinding it. The cached recordings are hashed
-# against the lock only when a RobotRun has to be published. Recovery from a
+# against the lock only when a RobotRun has to be published, and the capacity
+# preflight (tools/dev/capacity_preflight.py) refuses the run before its first write
+# when the Docker VM cannot hold what is still to be published. Recovery from a
 # mismatched baseline is an explicit `make local-reset` + rebuild.
 #
 # Identity: the golden reference contract's recording_import baseline
@@ -73,6 +75,7 @@ baseline_resolve lock-only
 if ! baseline_all_registered; then
   log "--- a RobotRun has to be published: cached recordings verified against the lock"
   baseline_resolve full
+  baseline_capacity_preflight recording_import
 fi
 log "  $(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id]')"
 

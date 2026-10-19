@@ -54,6 +54,7 @@ fi
 section "disposable test resources"
 leftover="$(docker ps -a --filter label=com.docker.compose.project=sceneops-test -q | wc -l | tr -d ' ')"
 echo "  sceneops-test compose project containers: ${leftover} (a killed test run leaves them; the next run removes them)"
+docker volume ls -q --filter label=com.docker.compose.project=sceneops-test | sed 's/^/  sceneops-test volume: /'
 uv run --frozen python tests/infrastructure/disposable_env.py status 2>/dev/null \
   || echo "  disposable_env.py status unavailable (PostgreSQL / MinIO not reachable)"
 

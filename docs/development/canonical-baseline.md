@@ -218,12 +218,18 @@ transient capture files of that run are removed from the recordings volume; the
 durable state is in the ArtifactStore and PostgreSQL. A capture that is not provably
 published is kept.
 
-Before each fixture it would replay, the bootstrap requires `MIN_FREE_GIB` (default 6)
-free on both the host volume and the Docker VM disk, and otherwise stops; it resumes
-from the durable state when re-run. Per fixture it logs `streaming_fixture {json}`
+Before the first fixture it would replay, the capacity preflight refuses the selection
+when the Docker VM cannot hold what its unregistered fixtures will add
+([local-development.md](./local-development.md#disk-hygiene)); the canonical bootstrap
+runs the same check before it publishes. Before each fixture it would replay, the
+bootstrap also requires `MIN_FREE_GIB` (default 6) free on both the host volume and the
+Docker VM disk, and otherwise stops; it resumes from the durable state when re-run.
+`STREAMING_RUNTIME=disposable` runs the whole path on the disposable execution runtime's
+streaming services instead of the reference stack
+([test-matrix.md](./test-matrix.md#the-disposable-execution-runtime)). Per fixture it logs `streaming_fixture {json}`
 (action and replay, capture, publish-and-register, Scene build and Episode build
-seconds) and `streaming_storage {json}` (free space, MinIO, Kafka and recordings
-sizes) on stderr. A pipeline still running after `STALL_REPORT_SECONDS` (default 240)
+seconds), `capacity_preflight {json}` and `streaming_storage {json}` (free space, the
+MinIO and PostgreSQL servers' data, Kafka and recordings sizes) on stderr. A pipeline still running after `STALL_REPORT_SECONDS` (default 240)
 is reported with worker CPU, memory and log tails; a rejected pipeline execute is
 reported with its HTTP status.
 
