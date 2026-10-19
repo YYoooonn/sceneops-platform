@@ -7,15 +7,20 @@ scope, ingested once through each ingestion mode, under a deterministic identity
 This module
 
   * validates the contract against its sources (corpus definition, corpus lock,
-    baseline build configuration),
-  * evaluates observed platform state against it (pure functions, no I/O),
+    baseline shape, the expectations derived from the locked recordings),
+  * evaluates observed platform state against it (pure functions, no I/O):
+    membership is what the contract DatasetVersions pin, and each RobotRun's units
+    must be exactly the derived unit ids,
   * collects that state read-only through FastAPI, the existing baseline
-    verifiers and the registered RobotRun manifests,
+    verifiers, the registered RobotRun manifests and the source-grounded verifier
+    (reference_verify.py, docs/development/reference-verification.md),
   * converges the platform on it by composing the existing bootstrap commands.
 
 The contract layer is the only place that states how many RobotRuns, Scenes or
-Episodes the reference state has, and which Scene policy produced them. Generic
-SceneOps logic knows none of it. Host Python, standard library only.
+Episodes the reference state has. Unit keys and ids are not stated here: they are
+derived from the locked recordings and the build configurations
+(reference_expectations.json). Generic SceneOps logic knows none of it. Host
+Python, standard library only; the source-grounded verifier runs through `uv run`.
 
 Subcommands: show | validate | verify | bootstrap | pair | fingerprint
 (see docs/development/reference-contract.md)
@@ -24,6 +29,7 @@ Subcommands: show | validate | verify | bootstrap | pair | fingerprint
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -38,7 +44,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CORPUS_DIR = REPO_ROOT / "config" / "reference" / "nuscenes-mini-v1"
 BASELINE_CONFIG_DIR = REPO_ROOT / "config" / "baselines"
 
-CONTRACT_SCHEMA = "sceneops.reference_contract/1"
+CONTRACT_SCHEMA = "sceneops.reference_contract/2"
 REPORT_SCHEMA = "sceneops.reference_contract_report/1"
 # The ingestion modes a contract states, in bootstrap order. A mode is how a
 # recording reaches a RobotRun; preparing the source (nuScenes -> MCAP) is not one.
@@ -175,10 +181,13 @@ def validate_contract(
     contract: dict[str, Any],
     corpus: dict[str, Any],
     lock: dict[str, Any],
-    scene_build_config: dict[str, Any],
     baseline_shape: dict[str, Any],
+    expectations: dict[str, Any] | None = None,
+    lock_checksum: str | None = None,
 ) -> list[Violation]:
-    """Internal consistency of the contract and agreement with what it references."""
+    """Internal consistency of the contract and agreement with what it references:
+    the corpus, its lock, the baseline shape and the source-grounded expectations
+    derived from the locked recordings (reference_expectations.json)."""
     out: list[Violation] = []
     fixtures = contract["fixtures"]
     ids = [f["fixture_id"] for f in fixtures]
@@ -257,17 +266,8 @@ def validate_contract(
             )
 
     units = contract["units"]
-    if (
-        scene_build_config.get("segmentation", {}).get("policy")
-        != units["scene_policy"]
-    ):
-        out.append(
-            _violation(
-                "config_mismatch",
-                f"config/baselines/scene_build_config.json segments by "
-                f"{scene_build_config.get('segmentation', {}).get('policy')!r}, the contract expects {units['scene_policy']!r}",
-            )
-        )
+    if expectations is not None:
+        out += _validate_expectations(contract, lock, expectations, lock_checksum)
     if (
         baseline_shape.get("scenes_per_robot_run"),
         baseline_shape.get("episodes_per_robot_run"),
@@ -299,6 +299,58 @@ def validate_contract(
     return out
 
 
+def _validate_expectations(
+    contract: dict[str, Any],
+    lock: dict[str, Any],
+    expectations: dict[str, Any],
+    lock_checksum: str | None,
+) -> list[Violation]:
+    """The committed expectations belong to this contract and this lock. Whether they
+    are still what the rules derive is `reference_verify.py derive` (expectations_drift)."""
+    out: list[Violation] = []
+    if expectations.get("corpus_id") != contract["corpus"]["corpus_id"]:
+        out.append(_violation("expectations_mismatch", "the expectations name another corpus"))
+    if lock_checksum is not None and expectations.get("derived_from", {}).get("corpus_lock") != lock_checksum:
+        out.append(
+            _violation(
+                "expectations_stale",
+                "reference_expectations.json was derived from another corpus lock: "
+                "re-derive it (python tools/reference/reference_verify.py derive --write)",
+            )
+        )
+    fixtures = expectations.get("fixtures", {})
+    if sorted(fixtures) != sorted(f["fixture_id"] for f in contract["fixtures"]):
+        out.append(_violation("expectations_mismatch", "the expectations cover other fixtures than the contract"))
+    units = contract["units"]
+    for f in contract["fixtures"]:
+        fid = f["fixture_id"]
+        entry = fixtures.get(fid)
+        if entry is None:
+            continue
+        locked = lock.get("fixtures", {}).get(fid, {}).get("recording", {})
+        if entry["recording"]["sha256"] != locked.get("sha256"):
+            out.append(_violation("expectations_stale", "derived from another recording than the lock's", fixture_id=fid))
+        for mode in MODES:
+            ids = entry["units"][mode]
+            if (len(ids["scene"]), len(ids["episode"])) != (units["scenes_per_robot_run"], units["episodes_per_robot_run"]):
+                out.append(
+                    _violation(
+                        "config_mismatch",
+                        f"the build configurations yield {len(ids['scene'])} Scene(s) / {len(ids['episode'])} Episode(s) "
+                        f"per RobotRun, the contract expects {units['scenes_per_robot_run']} / {units['episodes_per_robot_run']}",
+                        mode,
+                        fid,
+                    )
+                )
+    return out
+
+
+def expected_unit_ids(expectations: dict[str, Any] | None, mode: str, fixture_id: str) -> dict[str, list[str]] | None:
+    if expectations is None:
+        return None
+    return expectations["fixtures"][fixture_id]["units"][mode]
+
+
 # ── Observed state against the contract (pure) ───────────────────────────────
 
 _KIND_TEMPORARY = re.compile(r"^run-(e2e|test)-")
@@ -322,16 +374,30 @@ def _by_run(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def _contract_units(
-    contract: dict[str, Any], mode: str, rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def _unit_id(row: dict[str, Any]) -> str:
+    return row.get("sceneId") or row["episodeId"]
+
+
+def _kind(row: dict[str, Any]) -> str:
+    return "scenes" if "sceneId" in row else "episodes"
+
+
+def _members_of(obs: dict[str, Any], key: str, kind: str) -> set[str]:
+    return set(obs.get("members", {}).get(key, {}).get(kind, []))
+
+
+def _dataset_key(contract: dict[str, Any], mode: str) -> str:
     spec = contract["ingestion_modes"][mode]
-    return [
-        r
-        for r in rows
-        if r.get("datasetId") == spec["dataset_id"]
-        and r.get("datasetVersion") == spec["dataset_version"]
-    ]
+    return f"{spec['dataset_id']}/{spec['dataset_version']}"
+
+
+def _contract_units(
+    contract: dict[str, Any], mode: str, rows: list[dict[str, Any]], obs: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The units the mode's DatasetVersion pins (membership is the version's, never a
+    field of the unit)."""
+    key = _dataset_key(contract, mode)
+    return [r for r in rows if _unit_id(r) in _members_of(obs, key, _kind(r))]
 
 
 def conflicts(contract: dict[str, Any], obs: dict[str, Any]) -> list[Violation]:
@@ -380,12 +446,12 @@ def conflicts(contract: dict[str, Any], obs: dict[str, Any]) -> list[Violation]:
             ("Scene", obs["scenes"], "sceneId"),
             ("Episode", obs["episodes"], "episodeId"),
         ):
-            for unit in _contract_units(contract, mode, units):
+            for unit in _contract_units(contract, mode, units, obs):
                 if unit["robotRunId"] not in expected:
                     out.append(
                         _violation(
                             "foreign_unit",
-                            f"{kind} {unit[key]} in the contract dataset {spec['dataset_id']!r} belongs to non-contract RobotRun {unit['robotRunId']!r}",
+                            f"{kind} {unit[key]} in the contract DatasetVersion {_dataset_key(contract, mode)!r} belongs to non-contract RobotRun {unit['robotRunId']!r}",
                             mode,
                         )
                     )
@@ -406,19 +472,14 @@ def inventory(contract: dict[str, Any], obs: dict[str, Any]) -> dict[str, Any]:
         for r in sorted(obs["robot_runs"], key=lambda r: r["runId"])
         if r["runId"] not in contract_ids
     ]
-    contract_datasets = {
-        (
-            contract["ingestion_modes"][m]["dataset_id"],
-            contract["ingestion_modes"][m]["dataset_version"],
-        )
-        for m in MODES
-    }
+    contract_keys = {_dataset_key(contract, m) for m in MODES}
+    contract_datasets = {contract["ingestion_modes"][m]["dataset_id"] for m in MODES}
 
     def outside(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             u
             for u in units
-            if (u["datasetId"], u["datasetVersion"]) not in contract_datasets
+            if not any(_unit_id(u) in _members_of(obs, k, _kind(u)) for k in contract_keys)
         ]
 
     def orphans(units: list[dict[str, Any]], key: str) -> list[str]:
@@ -428,12 +489,14 @@ def inventory(contract: dict[str, Any], obs: dict[str, Any]) -> dict[str, Any]:
     for r in non_contract:
         kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
     non_contract_datasets = sorted(
-        d for d in obs.get("datasets", []) if d not in {x for x, _ in contract_datasets}
+        d for d in obs.get("datasets", []) if d not in contract_datasets
     )
 
     def derived(units: list[dict[str, Any]]) -> int:
+        """Units pinned by a DatasetVersion of the derived test namespace."""
+        keys = [k for k in obs.get("members", {}) if k.startswith(DERIVED_TEST_NAMESPACE)]
         return sum(
-            1 for u in units if u["datasetId"].startswith(DERIVED_TEST_NAMESPACE)
+            1 for u in units if any(_unit_id(u) in _members_of(obs, k, _kind(u)) for k in keys)
         )
 
     return {
@@ -460,13 +523,20 @@ def evaluate(
     lock: dict[str, Any],
     obs: dict[str, Any],
     require_pristine: bool = False,
+    expectations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The contract report for an observation.
 
-    obs: robot_runs / scenes / episodes (FastAPI rows, all of them), datasets
-    (ids), facts ({run_id: registered manifest facts} of the registered contract
+    obs: robot_runs / scenes / episodes (FastAPI rows, all of them; each unit row
+    with its `revisions`), datasets (ids), members ({"<dataset>/<version>":
+    {scenes, episodes}} unit ids of every DatasetVersion), facts ({run_id: registered manifest facts} of the registered contract
     RobotRuns) and baselines ({mode: {ok, summary, error}} from the existing
-    baseline verifiers).
+    baseline verifiers) and source_grounded ({ok, ...}, the summary of
+    `reference_verify.py verify`, when it ran).
+
+    expectations: the derived reference_expectations.json; with it, each RobotRun's
+    Scenes and Episodes must be exactly the expected unit ids, and each unit must
+    have exactly `revisions_per_unit` revisions.
 
     Validity is the contract's alone: the 20 RobotRuns, their Scenes and Episodes. State
     outside it is reported, never a violation, so the contract stays valid while fixed
@@ -492,8 +562,8 @@ def evaluate(
     for mode in MODES:
         spec = contract["ingestion_modes"][mode]
         mode_entries = [e for e in entries if e["mode"] == mode]
-        scenes = _by_run(_contract_units(contract, mode, obs["scenes"]))
-        episodes = _by_run(_contract_units(contract, mode, obs["episodes"]))
+        scenes = _by_run(_contract_units(contract, mode, obs["scenes"], obs))
+        episodes = _by_run(_contract_units(contract, mode, obs["episodes"], obs))
         counts = {"robot_runs": 0, "scenes": 0, "episodes": 0}
 
         for e in mode_entries:
@@ -515,27 +585,35 @@ def evaluate(
             counts["robot_runs"] += 1
 
             run_scenes, run_episodes = scenes.get(rid, []), episodes.get(rid, [])
-            if len(run_scenes) != units["scenes_per_robot_run"] or any(
-                s["unitKey"] != units["scene_unit_key"] for s in run_scenes
+            expected_ids = expected_unit_ids(expectations, mode, fid)
+            for kind, rows, per_run, code in (
+                ("scene", run_scenes, units["scenes_per_robot_run"], "scene_shape"),
+                ("episode", run_episodes, units["episodes_per_robot_run"], "episode_shape"),
             ):
-                violations.append(
-                    _violation(
-                        "scene_shape",
-                        f"{rid} has Scenes {[s['unitKey'] for s in run_scenes]}, the contract expects "
-                        f"{units['scenes_per_robot_run']} {units['scene_policy']} Scene(s) with unit key {units['scene_unit_key']!r}",
-                        mode,
-                        fid,
+                ids = sorted(_unit_id(r) for r in rows)
+                if len(ids) != per_run or (
+                    expected_ids is not None and ids != sorted(expected_ids[kind])
+                ):
+                    violations.append(
+                        _violation(
+                            code,
+                            f"{rid} has {kind}s {ids} in its DatasetVersion, the contract expects "
+                            + (str(sorted(expected_ids[kind])) if expected_ids is not None else f"{per_run}"),
+                            mode,
+                            fid,
+                        )
                     )
-                )
-            if len(run_episodes) != units["episodes_per_robot_run"]:
-                violations.append(
-                    _violation(
-                        "episode_shape",
-                        f"{rid} has {len(run_episodes)} Episode(s), the contract expects {units['episodes_per_robot_run']}",
-                        mode,
-                        fid,
-                    )
-                )
+                for r in rows:
+                    revisions = r.get("revisions", [])
+                    if len(revisions) != units["revisions_per_unit"]:
+                        violations.append(
+                            _violation(
+                                "revision_count",
+                                f"{kind} {_unit_id(r)} has {len(revisions)} revision(s), the contract expects {units['revisions_per_unit']}",
+                                mode,
+                                fid,
+                            )
+                        )
             counts["scenes"] += len(run_scenes)
             counts["episodes"] += len(run_episodes)
 
@@ -603,6 +681,14 @@ def evaluate(
         for key, value in counts.items():
             totals[key] += value
 
+    grounded = obs.get("source_grounded")
+    if grounded is not None and not grounded.get("ok"):
+        violations.append(
+            _violation(
+                "source_grounded",
+                f"the source-grounded verification failed: {grounded.get('error') or grounded.get('summary')}",
+            )
+        )
     if totals != contract["expected_totals"]:
         violations.append(
             _violation(
@@ -654,8 +740,8 @@ def evaluate(
             "version": contract["contract_version"],
             "corpus": contract["corpus"]["corpus_id"],
             "scope": contract["corpus"]["scope"],
-            "scene_policy": units["scene_policy"],
         },
+        "source_grounded": obs.get("source_grounded"),
         "totals": {"expected": contract["expected_totals"], "observed": totals},
         "modes": mode_report,
         "state": state,
@@ -784,15 +870,22 @@ def snapshot(contract: dict[str, Any], obs: dict[str, Any]) -> dict[str, Any]:
             if r["runId"] in contract_ids
         },
         "units": {
-            u[key]: [u["robotRunId"], u.get("manifestChecksum"), u.get("updatedAt")]
-            for units, key in (
-                (obs["scenes"], "sceneId"),
-                (obs["episodes"], "episodeId"),
-            )
-            for u in units
+            _unit_id(u): _unit_print(u)
+            for u in [*obs["scenes"], *obs["episodes"]]
             if u["robotRunId"] in contract_ids
         },
     }
+
+
+def _unit_print(u: dict[str, Any]) -> list[Any]:
+    """A unit row and its revisions: units and revisions are never updated, so this
+    changes exactly when a unit or a revision is added, removed or rewritten."""
+    return [
+        u["robotRunId"],
+        u.get("unitKey"),
+        u.get("registeredAt"),
+        sorted([r.get("manifestChecksum"), r.get("registeredAt")] for r in u.get("revisions", [])),
+    ]
 
 
 def platform_fingerprint(state: dict[str, Any]) -> dict[str, Any]:
@@ -811,22 +904,9 @@ def platform_fingerprint(state: dict[str, Any]) -> dict[str, Any]:
             for r in state["robot_runs"]
         },
         "datasets": sorted(state["datasets"]),
-        "scenes": {
-            u["sceneId"]: [
-                u["robotRunId"],
-                u.get("manifestChecksum"),
-                u.get("updatedAt"),
-            ]
-            for u in state["scenes"]
-        },
-        "episodes": {
-            u["episodeId"]: [
-                u["robotRunId"],
-                u.get("manifestChecksum"),
-                u.get("updatedAt"),
-            ]
-            for u in state["episodes"]
-        },
+        "dataset_versions": {k: {kind: sorted(v) for kind, v in m.items()} for k, m in sorted(state.get("members", {}).items())},
+        "scenes": {u["sceneId"]: _unit_print(u) for u in state["scenes"]},
+        "episodes": {u["episodeId"]: _unit_print(u) for u in state["episodes"]},
     }
 
 
@@ -842,11 +922,11 @@ def golden_fingerprint(
     fingerprint = platform_fingerprint(state)
     in_contract = {
         key: {
-            u[key_name]
+            _unit_id(u)
             for mode in MODES
-            for u in _contract_units(contract, mode, state[key])
+            for u in _contract_units(contract, mode, state[key], state)
         }
-        for key, key_name in (("scenes", "sceneId"), ("episodes", "episodeId"))
+        for key in ("scenes", "episodes")
     }
     return {
         "counts": {
@@ -881,12 +961,12 @@ def plan(contract: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any]]:
         else:
             scenes = [
                 s
-                for s in _contract_units(contract, e["mode"], obs["scenes"])
+                for s in _contract_units(contract, e["mode"], obs["scenes"], obs)
                 if s["robotRunId"] == rid
             ]
             episodes = [
                 s
-                for s in _contract_units(contract, e["mode"], obs["episodes"])
+                for s in _contract_units(contract, e["mode"], obs["episodes"], obs)
                 if s["robotRunId"] == rid
             ]
             complete = (
@@ -949,13 +1029,26 @@ def _paged(path: str, key: str) -> list[dict[str, Any]]:
 
 
 def collect_state() -> dict[str, Any]:
-    """RobotRuns, Scenes, Episodes and Datasets through the FastAPI control plane."""
-    return {
+    """RobotRuns, Scene / Episode units with their revisions, Datasets and the unit ids
+    every DatasetVersion pins, through the FastAPI control plane."""
+    state: dict[str, Any] = {
         "robot_runs": _paged("/robot-runs", "robotRuns"),
         "scenes": _paged("/scenes", "scenes"),
         "episodes": _paged("/episodes", "episodes"),
         "datasets": [d["datasetId"] for d in _paged("/datasets", "datasets")],
+        "members": {},
     }
+    for kind, key in (("scenes", "sceneId"), ("episodes", "episodeId")):
+        for unit in state[kind]:
+            unit["revisions"] = _api(f"/{kind}/{unit[key]}").get("revisions", [])
+    for dataset in state["datasets"]:
+        for version in _api(f"/datasets/{dataset}/versions").get("versions", []):
+            base = f"/datasets/{dataset}/versions/{version['version']}"
+            state["members"][f"{dataset}/{version['version']}"] = {
+                "scenes": [r["sceneId"] for r in _paged(f"{base}/scenes", "scenes")],
+                "episodes": [r["episodeId"] for r in _paged(f"{base}/episodes", "episodes")],
+            }
+    return state
 
 
 def collect_facts(registered_run_ids: list[str]) -> dict[str, Any]:
@@ -1028,22 +1121,61 @@ def collect_observation(contract: dict[str, Any]) -> dict[str, Any]:
         [e["robot_run_id"] for e in expand(contract) if e["robot_run_id"] in registered]
     )
     obs["baselines"] = {mode: run_baseline_verifier(contract, mode) for mode in MODES}
+    obs["source_grounded"] = run_source_grounded_verifier()
     return obs
+
+
+def run_source_grounded_verifier() -> dict[str, Any]:
+    """`reference_verify.py verify`: the contract's platform state against what the
+    documented rules derive from the locked recordings, plus its negative controls
+    (docs/development/reference-verification.md). It needs the repository
+    environment (zstandard, boto3), so it runs through `uv run`."""
+    command = ["uv", "run", "--no-sync", "python", "-I", str(REPO_ROOT / "tools/reference/reference_verify.py"), "verify"]
+    done = subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT, check=False)
+    try:
+        report = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        lines = [line for line in done.stderr.splitlines() if line.strip()]
+        return {"ok": False, "error": lines[-1] if lines else f"exit {done.returncode}"}
+    return {
+        "ok": bool(report.get("ok")) and done.returncode == 0,
+        "summary": {
+            "check_count": report.get("check_count"),
+            "violations": len(report.get("violations", [])),
+            "negative_controls": len(report.get("negative_controls") or []),
+            "undetected_controls": report.get("undetected_controls"),
+        },
+        "error": None,
+    }
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
 
 
 def _sources() -> tuple[
-    dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]
+    dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], str
 ]:
+    """contract, corpus, lock, baseline shape, expectations, sha256 of the lock bytes."""
+    contract = load_contract()
+    lock_path = CORPUS_DIR / "corpus.lock.json"
+    try:
+        lock_checksum = "sha256:" + hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ContractError(f"cannot read {lock_path}: {exc}") from exc
     return (
-        load_contract(),
+        contract,
         _read_json(CORPUS_DIR / "corpus.json"),
-        _read_json(CORPUS_DIR / "corpus.lock.json"),
-        _read_json(BASELINE_CONFIG_DIR / "scene_build_config.json"),
+        _read_json(lock_path),
         _read_json(BASELINE_CONFIG_DIR / "baseline_shape.json"),
+        load_expectations(contract),
+        lock_checksum,
     )
+
+
+def load_expectations(contract: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The derived reference_expectations.json the contract names."""
+    contract = contract or load_contract()
+    return _read_json(CORPUS_DIR / contract["expectations"])
 
 
 def _emit(document: Any) -> None:
@@ -1060,8 +1192,8 @@ def _require_valid() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def _load_valid() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    contract, corpus, lock, scene_config, shape = _sources()
-    problems = validate_contract(contract, corpus, lock, scene_config, shape)
+    contract, corpus, lock, shape, expectations, lock_checksum = _sources()
+    problems = validate_contract(contract, corpus, lock, shape, expectations, lock_checksum)
     for p in problems:
         _log(f"❌ [{p['code']}] {p['message']}")
     if problems:
@@ -1085,7 +1217,7 @@ def cmd_show(_: argparse.Namespace) -> int:
 def cmd_validate(_: argparse.Namespace) -> int:
     contract, _lock = _require_valid()
     _log(
-        f"✅ reference contract v{contract['contract_version']} is consistent with the corpus lock and baseline configuration"
+        f"✅ reference contract v{contract['contract_version']} is consistent with the corpus lock, the baseline shape and the derived expectations"
     )
     return 0
 
@@ -1125,6 +1257,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         lock,
         collect_observation(contract),
         require_pristine=getattr(args, "require_pristine", False),
+        expectations=load_expectations(contract),
     )
     _emit(report)
     _report_log(report)
@@ -1192,6 +1325,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         lock,
         observation,
         require_pristine=getattr(args, "require_pristine", False),
+        expectations=load_expectations(contract),
     )
     for kind in ("robot_runs", "units"):
         for key in changes[kind]["changed"] + changes[kind]["removed"]:

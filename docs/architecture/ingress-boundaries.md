@@ -193,7 +193,8 @@ gate and return each revision's complete `RevisionPin`
 ([Scene domain](./scene-domain.md) §3, [Episode domain](./episode-domain.md) §5).
 
 A recording has no native unit key, so a recording builder's unit key carries its
-segmentation: `<policy>-<sha256(boundary document)[:16]>/<segment>`
+segmentation: `<policy>-<sha256(canonical_json({recording_segmentation_schema:
+"sceneops.recording_segmentation/v1", **boundary document}))[:16]>/<segment>`
 (`sceneops_core.provenance.segmentation`, ADR-015 §6.3). The boundary document is
 exactly the configuration that places unit boundaries; channel, stream and field
 selection are not in it, so they change a revision, not the unit.

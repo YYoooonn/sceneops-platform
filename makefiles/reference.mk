@@ -61,12 +61,58 @@ ifneq ($(REQUIRE_CLEAN),)
 $(error REQUIRE_CLEAN was renamed REQUIRE_PRISTINE (docs/development/reference-contract.md))
 endif
 
+# The object store the source-grounded verifier reads (read-only).
+REFERENCE_VERIFY_ENV := API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
+	MINIO_ENDPOINT_URL="http://localhost:$${MINIO_API_PORT:-9000}" \
+	MINIO_ROOT_USER=$(MINIO_ROOT_USER) MINIO_ROOT_PASSWORD=$(MINIO_ROOT_PASSWORD)
+
 .PHONY: reference-contract-verify
 reference-contract-verify:
-	@ENV_FILE=$(ENV_FILE) API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
+	@ENV_FILE=$(ENV_FILE) $(REFERENCE_VERIFY_ENV) \
 		python3 tools/reference/reference_contract.py verify $(if $(REQUIRE_PRISTINE),--require-pristine)
 
 .PHONY: reference-contract-bootstrap
 reference-contract-bootstrap:
 	@MAKE=$(MAKE) ENV_FILE=$(ENV_FILE) API_BASE_URL=$(API_BASE_URL) API_PREFIX=$(API_PREFIX) \
 		python3 tools/reference/reference_contract.py bootstrap $(if $(REQUIRE_PRISTINE),--require-pristine)
+
+# --------------------
+# Source-grounded verification (tools/reference/reference_verify.py,
+# docs/development/reference-verification.md). Expectations are derived from the
+# raw inputs by the documented rules, never from platform output.
+#
+# reference-verify-sources   -- raw nuScenes tables and files <-> locked recordings
+#                               <-> corpus lock <-> reference labels, then the
+#                               source negative controls. Needs data/raw/nuscenes
+#                               (NUSCENES_DATAROOT) and the prepared corpus; no stack.
+# reference-expectations     -- re-derive reference_expectations.json from the
+#                               locked recordings and compare it with the committed
+#                               file; WRITE=1 replaces it. No stack.
+# reference-verify-selftest  -- a synthetic platform state built from the derivation
+#                               passes and every platform negative control is
+#                               detected (proves the checks, not the platform). No stack.
+# reference-verify           -- the running platform's contract state against the
+#                               derivation, then the platform negative controls
+#                               (read-only; DEEP=1 also hashes every payload object).
+#                               `reference-contract-verify` runs it.
+# --------------------
+
+WRITE ?=
+DEEP  ?=
+REFERENCE_VERIFY := uv run --no-sync python -I tools/reference/reference_verify.py
+
+.PHONY: reference-verify-sources
+reference-verify-sources:
+	@$(REFERENCE_VERIFY) sources $(if $(FIXTURE),--fixture $(FIXTURE))
+
+.PHONY: reference-expectations
+reference-expectations:
+	@$(REFERENCE_VERIFY) derive $(if $(WRITE),--write)
+
+.PHONY: reference-verify-selftest
+reference-verify-selftest:
+	@$(REFERENCE_VERIFY) selftest
+
+.PHONY: reference-verify
+reference-verify:
+	@$(REFERENCE_VERIFY_ENV) $(REFERENCE_VERIFY) verify $(if $(DEEP),--deep)

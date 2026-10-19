@@ -90,16 +90,20 @@ timestamps in another clock are never compared with the window or converted.
 ```text
 whole_recording  [earliest, latest + 1)                          segment recording
 fixed_duration   [k·d, (k+1)·d): grid at the clock's zero, non-empty   segment <k>
-event_markers    [start marker, end marker + 1) per task key      segment task-<key>-<n>
+event_markers    [start marker, end marker + 1) per task key      segment task-<key>-<NNN>
 ```
+
+`<NNN>` is the 0-based count of that task key's earlier windows in marker order,
+zero-padded to three digits (`task-mission-a-000`, `task-mission-a-001`).
 
 The unit key carries the segmentation (ADR-015 §6.3,
 `sceneops_core.provenance.segmentation`):
 `unit_key = <policy>-<sha256(boundary document)[:16]>/<segment>`. The boundary
 document is `RecordingEpisodeBuildConfig.segmentation_boundary()`: the policy,
 clock and duration, or for `event_markers` the marker topic, its time policy
-and decoding, the field *paths* behind `key_field` / `state_field`, and the
-start / end values. Another segmentation is other units; another stream or
+(`source`, `clock`, `field`, null when unused) and decoding, the field *paths*
+behind `key_field` / `state_field` (`key_path`, `state_path`), and the sorted,
+unique start / end values. Another segmentation is other units; another stream or
 field selection under the same segmentation is a new revision of the same
 units.
 
