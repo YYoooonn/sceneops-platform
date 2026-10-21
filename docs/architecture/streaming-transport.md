@@ -1180,8 +1180,17 @@ Same robot_run_id streamed twice       a second RUN_START before the first RUN_E
                                        RUN_END), so Capture neither records nor detects it.
 Bridge killed without RUN_END          no RUN_END arrives; the idle-timeout guard aborts the
                                        capture (RunEndNotObservedError): nothing is finalized,
-                                       the .partial directory stays, and a re-run discards it
-                                       and rebuilds from Kafka.
+                                       the .partial directory stays, and a re-run discards it,
+                                       reads the same records and aborts the same way. The run
+                                       cannot be recovered from Kafka; it is streamed again.
+Same robot_run_id streamed again after the aborted session stays in the log. Capture
+an aborted session (no RUN_END),       pinned to the new RUN_START records exactly the new
+partial bag cleared                    session. An attempt that starts before it (a scan, or the
+                                       aborted session's position) meets the aborted session
+                                       first: telemetry followed by a second RUN_START fails
+                                       (RunLifecycleError) and nothing is finalized; with no
+                                       telemetry in between, the repeated RUN_START is an exact
+                                       redelivery and the new session is recorded.
 Bridge message failure                 counted and logged; the sequence gap fails the capture,
                                        and a failed last message fails it on the RUN_END count.
 Broker unreachable until the producer  records refused while the queue is full are bridge message

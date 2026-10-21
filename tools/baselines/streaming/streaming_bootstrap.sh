@@ -30,7 +30,10 @@
 #   capture finalized / published / registration pending -> publish-pending and/or
 #                                                           reconcile --apply: never replayed again
 #   capture unfinished (interrupted)                     -> resumed by re-running the capture
-#                                                           from Kafka's committed offsets
+#                                                           without a start position: the run is
+#                                                           rebuilt from the retained Kafka log,
+#                                                           scanned from the beginning (Capture
+#                                                           records no progress in Kafka, ADR-013)
 #   nothing                                              -> replayed (streamed)
 #   any other reconciler state                           -> fails and names it
 # A registered RobotRun is never replayed over. Once a run's recording is

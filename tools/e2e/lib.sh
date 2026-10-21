@@ -170,10 +170,12 @@ assert_pipeline_succeeded() {
 
 # run_pipeline <api> <type> <dataset-id> <dataset-version> <params-json> [extra-json]
 # Create, dispatch and wait for one PipelineRun (force=true: always a fresh
-# run, unless extra-json says {"force": false}: then an identical succeeded run is
-# returned and not dispatched again). An empty dataset id / version names no
-# DatasetVersion scope, as a recording pipeline requires. Prints the
-# pipeline_run_id; the caller asserts on its status.
+# run, unless extra-json says {"force": false}: then an identical pending, queued,
+# running or succeeded run is returned instead). A succeeded run is not dispatched
+# again and a running one is only waited for: the API refuses to execute either, and
+# a running one is what an interrupted caller re-running the same request finds. An
+# empty dataset id / version names no DatasetVersion scope, as a recording pipeline
+# requires. Prints the pipeline_run_id; the caller asserts on its status.
 run_pipeline() {
   local api_base_url="$1" type="$2" dataset_id="$3" dataset_version="$4" params="$5"
   local extra="${6:-}" payload created run_id
@@ -185,10 +187,14 @@ run_pipeline() {
      + (if $v == "" then {} else {dataset_version: $v} end) + $extra')"
   created="$(create_pipeline_run "$api_base_url" "$payload")"
   run_id="$(extract_pipeline_run_id "$created")"
-  if [ "$(echo "$created" | jq -r '.pipelineRun.status')" != succeeded ]; then
-    dispatch_pipeline_run "$api_base_url" "$run_id" >/dev/null
-    poll_pipeline_terminal "$api_base_url" "$run_id" "$POLL_ATTEMPTS" 5 >/dev/null
-  fi
+  case "$(echo "$created" | jq -r '.pipelineRun.status')" in
+    succeeded) ;;
+    running) poll_pipeline_terminal "$api_base_url" "$run_id" "$POLL_ATTEMPTS" 5 >/dev/null ;;
+    *)
+      dispatch_pipeline_run "$api_base_url" "$run_id" >/dev/null
+      poll_pipeline_terminal "$api_base_url" "$run_id" "$POLL_ATTEMPTS" 5 >/dev/null
+      ;;
+  esac
   echo "$run_id"
 }
 

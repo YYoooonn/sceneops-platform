@@ -489,6 +489,53 @@ def test_restart_after_an_incomplete_attempt_rebuilds_from_the_same_position(
     assert_leaves_no_group_state(topic, start.partition, run)
 
 
+@pytest.mark.parametrize("aborted_telemetry", [0, 3])
+def test_a_run_streamed_again_after_an_aborted_session_is_captured_from_its_new_run_start(
+    tmp_path, topic, aborted_telemetry
+):
+    """A bridge killed before RUN_END leaves an aborted session of the run in the
+    log; the run is then streamed again under the same id (after its partial bag
+    was cleared). Pinned to the new RUN_START, Capture records exactly the new
+    session. An attempt that starts before it (a scan, or the aborted session's
+    position) meets the aborted session first: telemetry followed by a second
+    RUN_START is refused and nothing is finalized; with no telemetry in between,
+    the repeated RUN_START is an exact redelivery and the new session is recorded."""
+    run = "run-streamed-again"
+    pub = Publisher(topic)
+    pub.run_start(run)
+    for seq in range(aborted_telemetry):
+        pub.telemetry(run, seq)
+    pub.flush()
+    aborted = pub.start_of(run)
+
+    pub.run_start(run)
+    for seq in range(5):
+        pub.telemetry(run, seq)
+    pub.run_end(run, 5)
+    pub.flush()
+    again, end = pub.start_of(run), pub.end_of(run)
+    assert again.partition == aborted.partition
+    assert again.offset == aborted.offset + aborted_telemetry + 1
+
+    result = _capture(tmp_path / "pinned", topic, run, again.start)
+    assert (result.first_offset, result.last_offset) == (again.offset, end.offset)
+    assert result.message_count == 5
+
+    for name, start in (("scan", None), ("aborted", aborted.start)):
+        root = tmp_path / name
+        if aborted_telemetry:
+            with pytest.raises(RunLifecycleError, match="not an immediate redelivery"):
+                _capture(root, topic, run, start)
+            assert not final_bag_path(root, run).exists()
+        else:
+            result = _capture(root, topic, run, start)
+            assert (result.first_offset, result.last_offset) == (
+                aborted.offset,
+                end.offset,
+            )
+            assert result.message_count == 5
+
+
 def test_retry_of_a_finalized_run_converges_on_the_same_bag(tmp_path, topic):
     runs, pub = _publish_three_runs(topic)
     run = runs[0]

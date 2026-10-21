@@ -207,9 +207,9 @@ never replayed over.
 | State of the fixture's run | Action |
 | --- | --- |
 | RobotRun registered; one Scene and one Episode, validated, profiled, ready | reused |
-| RobotRun registered; Scene or Episode missing or not ready | built (converges on registered revisions) |
+| RobotRun registered; Scene or Episode missing or not ready | built (converges on registered revisions; a build still running from an interrupted bootstrap is waited for, not started again) |
 | capture finalized or published, registration pending / active / stalled / transiently failed | `publish-pending` and `reconcile --apply`; not replayed |
-| capture unfinished (interrupted) | capture resumed from Kafka's committed offsets; not replayed |
+| capture unfinished (interrupted) | Capture re-run without a start position: it discards the partial bag and rebuilds the run from the retained Kafka records, reading every partition from the beginning of the log (Capture records no progress in Kafka, [ADR-013](../adr/013-capture-records-no-kafka-progress.md)); not replayed |
 | nothing | replayed (streamed) |
 | any other reconciler state (conflict, integrity incident, permanent failure) | fails and names the state; the bootstrap repairs nothing |
 
@@ -274,8 +274,20 @@ fixture by `make e2e-streaming-equivalence`, which reads the two registered Robo
 - The streamed recording's checksum is specific to the execution that captured it
   and is not reproducible; the baseline is verified by its registered facts, not by
   a fixed checksum.
-- An interrupted capture resumes only if the run's RUN_END is already in Kafka; if the
-  replay itself was interrupted, the run's partial state is cleared by hand.
+- An interrupted capture resumes only if the run's RUN_END is already in Kafka. If the
+  replay or the bridge was interrupted before RUN_END, the resumed capture aborts on its
+  idle guard and nothing is published; the run's partial bag
+  (`<capture root>/.partial/<run>`) is then removed by hand and the next bootstrap streams
+  the fixture again under the same RobotRun id, with Capture pinned to the new RUN_START.
+  The aborted session stays in the Kafka log until retention expires it, so a later
+  resume of that run, which scans from the beginning of the log, fails at the second
+  RUN_START and finalizes nothing; the fixture is then streamed again the same way
+  ([Streaming transport](../architecture/streaming-transport.md), restart and failure
+  behavior).
+- A resumed capture is not held to the replay, bridge and receipt-offset checks of a
+  fresh stream (the containers that produced it are gone); the registered run is held to
+  the lock's message and per-channel counts by `streaming-verify` and to its content by
+  the reference verifier.
 
 ## Where baselines are used
 
