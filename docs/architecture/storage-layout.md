@@ -61,10 +61,16 @@ From `.env.example` / `ArtifactSettings` (`sceneops_core/config.py`):
   analytical/   ArtifactSettings.analytics_prefix   (Parquet analytics layer)
   robot_runs/   ArtifactSettings.robot_run_prefix   (published robot recordings)
   observation_payloads/   ArtifactSettings.observation_payload_prefix   (canonical payloads)
+  sources/      ArtifactSettings.source_prefix      (preserved external sources)
 ```
 
-Local: `/data/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
-S3/MinIO: `s3://sceneops/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
+Local: `/data/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads,sources}/...`
+S3/MinIO: `s3://sceneops/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads,sources}/...`
+
+Keys are passed to the backends verbatim. `S3ArtifactStore` takes everything after the
+bucket as the key, so characters a URI parser would read as a query, fragment or
+escape (`?`, `#`, `%`) and `+` are ordinary key characters; MinIO round trips them
+(`packages/sceneops-storage/tests/test_s3_artifact_store.py`).
 
 ### Published robot recordings: write-once per `run_id`
 
@@ -92,6 +98,31 @@ young, or its registration is unfinished, or a capture source still exists),
 is classified. The contract and the commands are in
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2 and
 [ADR-008](../adr/008-acquisition-lifecycle-reliability.md) §6.
+
+### Preserved sources: write-once per content and per declaration
+
+`publish-snapshot` (`sceneops_sources.publication`, database-free) writes under the
+source root (default `{ARTIFACT_ROOT_URI}/sources`, `ArtifactSettings.source_root_uri`):
+
+```text
+{source_root}/contents/{content_id}/files/{path}          each preserved file, byte for byte
+{source_root}/contents/{content_id}/inventory.json        SourceContentInventory
+{source_root}/snapshots/{snapshot_id}/descriptor.json     SourceSnapshotDescriptor, written last
+```
+
+Every key is write-once: identical bytes are reused, different bytes are a conflict,
+never an overwrite. `path` is the source's own relative path, verbatim. Files and the
+inventory are stored once per content however many declarations name it; a
+descriptor exists once per declaration. A content's file location is derived from
+its registered inventory ArtifactRecord (`dirname(inventory uri)/files/{path}`), so no
+reader needs a root setting. `REGISTER_SOURCE_SNAPSHOT` reads descriptors only under
+the configured source root, and records `SOURCE_CONTENT_INVENTORY` and
+`SOURCE_SNAPSHOT_DESCRIPTOR` ArtifactRecords; the files are covered by the inventory and
+have no record of their own.
+
+Files and an inventory without a descriptor (an interrupted publication), and a
+descriptor whose registration was refused, are unreferenced objects. They are not
+classified and nothing deletes them ([limitations](./limitations.md) §3).
 
 ### Scene manifests: write-once, unit-scoped, checksum-qualified
 
@@ -232,13 +263,14 @@ label document read by `IMPORT_LABELS`) is read through its own
 Local: /data/inputs
 ```
 
-Raw source datasets (`./data/raw/nuscenes`) are not a runtime input. They are
-read only by the acquisition and reference-preparation containers
-(`dataset-acquisition`, `reference-data`), which turn them into locked reference
-MCAPs and labels. No API, worker, inference, replay, ROS 2 or LeRobot service
-mounts `./data/raw`, and the object store holds no raw mirror: platform objects
-live under `s3://sceneops/artifacts/`. Recordings enter
-the platform through the Recording Publisher (see
+Raw source datasets (`./data/raw/...`) are not a runtime input. They are read by the
+acquisition and reference-preparation containers (`dataset-acquisition`,
+`reference-data`), which turn them into locked reference MCAPs and labels, and by
+`publish-snapshot`, which copies a declared selection into `sources/` (above). No API,
+worker, inference, replay, ROS 2 or LeRobot service mounts `./data/raw`: the workers
+read preserved sources only from the object store, verified against their inventory.
+Platform objects live under `s3://sceneops/artifacts/`. Recordings enter the platform
+through the Recording Publisher (see
 [Robot data ingestion](../workflows/robot-run-and-mcap.md)).
 
 ## 4. What the layout does *not* encode

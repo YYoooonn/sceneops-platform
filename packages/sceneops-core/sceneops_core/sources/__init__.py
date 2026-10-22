@@ -21,6 +21,18 @@ from .content import (
     validate_content_id,
     validate_source_path,
 )
+from .registry import (
+    ContentFormatConflictError,
+    InconsistentSourceRegistryError,
+    RegistrationOutcome,
+    SnapshotContentConflictError,
+    SnapshotDescriptorConflictError,
+    SourceContentRecord,
+    SourceRegistrationError,
+    SourceSnapshotRecord,
+    decide_content_registration,
+    decide_snapshot_registration,
+)
 from .selection import (
     SourceSelectionError,
     include_pattern_matches,
@@ -28,6 +40,7 @@ from .selection import (
     validate_include_pattern,
 )
 from .snapshot import (
+    SNAPSHOT_ID_PATTERN,
     SNAPSHOT_ID_SCHEMA_V1,
     SOURCE_SNAPSHOT_DESCRIPTOR_SCHEMA_V1,
     SnapshotDeclaration,
@@ -36,11 +49,23 @@ from .snapshot import (
     SourceSnapshotError,
     load_canonical_source_snapshot_descriptor,
     snapshot_id_for,
+    validate_snapshot_id,
 )
 
 __all__ = [
+    "ContentFormatConflictError",
+    "InconsistentSourceRegistryError",
+    "RegistrationOutcome",
+    "SnapshotContentConflictError",
+    "SnapshotDescriptorConflictError",
+    "SourceContentRecord",
+    "SourceRegistrationError",
+    "SourceSnapshotRecord",
+    "decide_content_registration",
+    "decide_snapshot_registration",
     "CONTENT_ID_PATTERN",
     "CONTENT_ID_SCHEMA_V1",
+    "SNAPSHOT_ID_PATTERN",
     "SNAPSHOT_ID_SCHEMA_V1",
     "SOURCE_CONTENT_INVENTORY_SCHEMA_V1",
     "SOURCE_SNAPSHOT_DESCRIPTOR_SCHEMA_V1",
@@ -61,5 +86,6 @@ __all__ = [
     "snapshot_id_for",
     "validate_content_id",
     "validate_include_pattern",
+    "validate_snapshot_id",
     "validate_source_path",
 ]

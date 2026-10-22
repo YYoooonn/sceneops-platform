@@ -104,9 +104,15 @@ APPS: dict[str, set[str]] = {
         "sceneops_derived",
         "sceneops_inference",
         "sceneops_evaluation",
+        "sceneops_sources",
     },
     "sceneops_capture": {"sceneops_core", "sceneops_streaming", "sceneops_recording"},
-    "sceneops_publisher": {"sceneops_core", "sceneops_storage", "sceneops_recording"},
+    "sceneops_publisher": {
+        "sceneops_core",
+        "sceneops_storage",
+        "sceneops_recording",
+        "sceneops_sources",
+    },
 }
 
 # (module prefix of a package) -> workspace packages that module alone may import on top

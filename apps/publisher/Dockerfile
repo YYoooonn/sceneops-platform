@@ -16,6 +16,7 @@ COPY pyproject.toml uv.lock ./
 COPY packages/sceneops-core/pyproject.toml ./packages/sceneops-core/pyproject.toml
 COPY packages/sceneops-storage/pyproject.toml ./packages/sceneops-storage/pyproject.toml
 COPY packages/sceneops-recording/pyproject.toml ./packages/sceneops-recording/pyproject.toml
+COPY packages/sceneops-sources/pyproject.toml ./packages/sceneops-sources/pyproject.toml
 COPY apps/publisher/pyproject.toml ./apps/publisher/pyproject.toml
 RUN uv sync --package sceneops-publisher --frozen --no-dev --no-install-workspace
 
@@ -23,6 +24,7 @@ RUN uv sync --package sceneops-publisher --frozen --no-dev --no-install-workspac
 COPY packages/sceneops-core ./packages/sceneops-core
 COPY packages/sceneops-storage ./packages/sceneops-storage
 COPY packages/sceneops-recording ./packages/sceneops-recording
+COPY packages/sceneops-sources ./packages/sceneops-sources
 COPY apps/publisher ./apps/publisher
 RUN uv sync --package sceneops-publisher --frozen --no-dev
 

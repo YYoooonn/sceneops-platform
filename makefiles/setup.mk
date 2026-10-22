@@ -114,7 +114,10 @@ test-integration:
 #   boundaries  isolation boundaries: the acquisition integration (own uv project, I-36 import
 #               boundary), the LeRobot adapter (own uv project), the acquisition images
 #               and the raw-source mount boundary of the runtime services
-INFRA_SUITES := pipelines recovery kafka boundaries
+#   sources     source preservation of the reference snapshots (pusht, the nuScenes
+#               scene-0061 slice): publish-snapshot + REGISTER_SOURCE_SNAPSHOT on a
+#               disposable execution runtime, after the snapshot capacity preflight
+INFRA_SUITES := pipelines recovery kafka boundaries sources
 SUITE ?= pipelines
 
 .PHONY: test-infrastructure
@@ -142,7 +145,24 @@ infra-suite-pipelines:
 	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) tests/infrastructure \
 		--ignore=tests/infrastructure/test_acquisition_recovery.py \
 		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
+		--ignore=tests/infrastructure/test_source_preservation_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
+
+REFERENCE_SNAPSHOTS := lerobot-pusht nuscenes-scene-0061
+
+.PHONY: infra-suite-sources
+# Source preservation acceptance (ADR-015 §5): the snapshots of
+# config/reference/source-snapshots.json are published by the Publisher process into a
+# disposable bucket and registered by REGISTER_SOURCE_SNAPSHOT Jobs on a disposable
+# execution runtime, and checked against the raw trees hashed independently. Refused
+# first when the snapshots do not fit the Docker VM. Prerequisites: `make local-up` (the
+# servers and images), `make reference-source-fetch` (pusht) and the nuScenes v1.0-mini
+# tree at data/raw/nuscenes. A skip here is a failure.
+infra-suite-sources:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="$(REFERENCE_SNAPSHOTS)"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_source_preservation_acceptance.py -v
 
 .PHONY: infra-suite-kafka
 infra-suite-kafka: streaming-test streaming-producer-test smoke-streaming

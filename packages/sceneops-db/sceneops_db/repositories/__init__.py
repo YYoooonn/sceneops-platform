@@ -20,6 +20,7 @@ from .robots import (
     RobotStateRepository,
 )
 from .scenarios import ScenarioRunRecord, ScenarioRunRepository, ScenarioSetRepository
+from .sources import SourceRegistration, SourceRegistryRepository
 from .scenes import (
     SceneRepository,
     SceneRunRecord,
@@ -56,6 +57,9 @@ __all__ = [
     "RobotRunRepository",
     "MissionRepository",
     "RobotStateRepository",
+    # sources
+    "SourceRegistration",
+    "SourceRegistryRepository",
     # scenarios
     "ScenarioSetRepository",
     "ScenarioRunRepository",

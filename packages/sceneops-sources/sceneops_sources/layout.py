@@ -15,19 +15,20 @@ its snapshot (D11), so a reader needs no root setting of its own.
 
 from __future__ import annotations
 
-import re
 from typing import Final
 
 from sceneops_core.artifacts.contracts import ArtifactStore
-from sceneops_core.sources import validate_content_id, validate_source_path
-from sceneops_core.sources.snapshot import SNAPSHOT_ID_PREFIX
+from sceneops_core.sources import (
+    validate_content_id,
+    validate_snapshot_id,
+    validate_source_path,
+)
 
 CONTENTS_SEGMENT: Final = "contents"
 SNAPSHOTS_SEGMENT: Final = "snapshots"
 FILES_SEGMENT: Final = "files"
 INVENTORY_OBJECT_NAME: Final = "inventory.json"
 DESCRIPTOR_OBJECT_NAME: Final = "descriptor.json"
-_SNAPSHOT_ID_RE: Final = re.compile(rf"^{SNAPSHOT_ID_PREFIX}[0-9a-f]{{32}}$")
 
 
 class SourceLayoutError(ValueError):
@@ -99,8 +100,10 @@ def parse_descriptor_uri(uri: str) -> tuple[str, str]:
     root, _, segment = head.rpartition("/")
     if segment != SNAPSHOTS_SEGMENT or not root:
         raise SourceLayoutError(f"{uri} is not under a {SNAPSHOTS_SEGMENT}/ prefix")
-    if not _SNAPSHOT_ID_RE.fullmatch(snapshot_id):
-        raise SourceLayoutError(f"{uri} does not name a snapshot id")
+    try:
+        validate_snapshot_id(snapshot_id)
+    except ValueError as exc:
+        raise SourceLayoutError(f"{uri} does not name a snapshot id") from exc
     return root, snapshot_id
 
 

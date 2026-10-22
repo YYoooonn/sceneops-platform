@@ -33,6 +33,7 @@ from sceneops_db.repositories.scenarios import (
     ScenarioSetRepository,
 )
 from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
+from sceneops_db.repositories.sources import SourceRegistryRepository
 
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.datasets import (
@@ -55,6 +56,7 @@ from sceneops_db.postgres.pipelines import (
     PostgresPipelineRunRepository,
     PostgresPipelineTaskRunRepository,
 )
+from sceneops_db.postgres.sources import PostgresSourceRegistryRepository
 from sceneops_db.postgres.robots import (
     PostgresMissionRepository,
     PostgresRobotRepository,
@@ -254,4 +256,16 @@ RobotRunRepositoryDep = Annotated[RobotRunRepository, Depends(get_robot_run_repo
 MissionRepositoryDep = Annotated[MissionRepository, Depends(get_mission_repository)]
 RobotStateRepositoryDep = Annotated[
     RobotStateRepository, Depends(get_robot_state_repository)
+]
+
+
+# --- domains: sources ---
+
+
+def get_source_registry_repository(session: DbSessionDep) -> SourceRegistryRepository:
+    return PostgresSourceRegistryRepository(session)
+
+
+SourceRegistryRepositoryDep = Annotated[
+    SourceRegistryRepository, Depends(get_source_registry_repository)
 ]

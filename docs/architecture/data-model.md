@@ -25,6 +25,9 @@ Robot
      +- Mission
      +- RobotState (time series)
 
+SourceContent (preserved native bytes)
+ +- SourceSnapshot (one per upstream declaration of those bytes)
+
 LabelSet (immutable revisions)
 SceneSampleView (one revision per Scene revision and policy)
 ScenarioSet (immutable revision pinning views)
@@ -317,6 +320,40 @@ Episodes do not read them: `build_recording_episodes` reads the recording
 itself through the shared recording reader, as configured by its build
 configuration (see [Episode domain](./episode-domain.md)).
 
+### 5.1 SourceContent / SourceSnapshot (Source Registry)
+
+The Dataset Integration counterpart of RobotRun registration (ADR-015 §5): the
+preserved bytes of an external dataset and the upstream declarations that name them.
+Records come into existence only through `REGISTER_SOURCE_SNAPSHOT`
+([Ingress boundaries](./ingress-boundaries.md) §3.1), which inserts a content together
+with its first snapshot in one transaction:
+
+```text
+source_contents    content_id (PK), format, content_checksum (unique),
+                   inventory_artifact_id (FK artifacts, unique, RESTRICT),
+                   file_count > 0, total_bytes >= 0, registered_at
+source_snapshots   snapshot_id (PK), (content_id, format) (FK source_contents, RESTRICT),
+                   upstream, upstream_revision, selection_checksum,
+                   descriptor_artifact_id (FK artifacts, unique, RESTRICT),
+                   descriptor_checksum, registered_at
+```
+
+Neither record has a status, a DatasetVersion, a RobotRun or a location: the inventory
+and descriptor URIs live on their `SOURCE_CONTENT_INVENTORY` (owner `source_content`)
+and `SOURCE_SNAPSHOT_DESCRIPTOR` (owner `source_snapshot`) ArtifactRecords, whose ids
+derive from the content and snapshot ids. The preserved files have no row of their
+own; the inventory is their registry. PostgreSQL enforces, beside the registrar:
+
+- no row of either table is ever updated, and a snapshot is never deleted;
+- a content commits only with at least one snapshot (deferred constraint trigger), and
+  its snapshots RESTRICT it, so every registered content keeps its declarations;
+- a snapshot references `(content_id, format)`, so the bytes of a content can only be
+  declared under the format its first registration fixed;
+- the identifier and checksum formats (CHECK).
+
+Several snapshots of one content are deduplication, not a conflict; one content is
+listed with all its declarations by `GET /source-snapshots?content_id=`.
+
 ## 6. ScenarioSet
 
 `scenario_sets` — one immutable ScenarioSet revision mined from a specific
@@ -415,8 +452,8 @@ platform. `kind` (`ArtifactKind`), `uri`, `backend` identify what and
 where; ownership is either the polymorphic `owner_type`/`owner_id` pair, or
 one of the direct FK-style columns (`dataset_id`/`scene_id`/
 `scenario_set_id`/`run_id`/`job_id`/`pipeline_run_id`). `size_bytes`/
-`checksum` are nullable columns. Recording registration, observation payloads,
-analytics tables and every derived artifact populate them, and a derived
+`checksum` are nullable columns. Recording and source registration, observation
+payloads, analytics tables and every derived artifact populate them, and a derived
 record's id is derived from its checksum — see
 [Storage layout](./storage-layout.md).
 

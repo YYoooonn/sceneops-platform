@@ -11,6 +11,8 @@ estimated peak with a margin.
 
     python3 tools/dev/capacity_preflight.py --mode recording_import|streaming_acquisition \\
         (--fixture <id> ... | --scope <scope>) [--corpus nuscenes-mini-v1]
+    uv run python tools/dev/capacity_preflight.py --mode source_snapshot \\
+        --snapshot <id> ...
 
 Estimate, per fixture, from its locked recording size R (corpus.lock.json):
 
@@ -21,6 +23,12 @@ Estimate, per fixture, from its locked recording size R (corpus.lock.json):
                24 h replay window, so it accumulates over the whole run
     capture    the largest R of the streamed fixtures: one capture at a time, removed
                once its recording is provably registered
+
+A source snapshot (config/reference/source-snapshots.json) is estimated from its
+content instead: the files its declaration selects from its local tree, by the
+same selection rules publication applies (sceneops_sources, so this mode runs in
+the workspace environment), stored once in MinIO. Its inventory and descriptor
+are small beside them, and nothing else is written.
 
     required = (MinIO + Kafka + capture) x (1 + MARGIN) + POSTGRES_RESERVE + FLOOR
 
@@ -52,7 +60,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPORT_SCHEMA = "sceneops.capacity_preflight/1"
-MODES = ("recording_import", "streaming_acquisition")
+SNAPSHOT_MODE = "source_snapshot"
+MODES = ("recording_import", "streaming_acquisition", SNAPSHOT_MODE)
+SNAPSHOTS_FILE = REPO_ROOT / "config/reference/source-snapshots.json"
 GIB = 1024**3
 
 # Bytes of the objects derived from a recording (payloads, manifests, run records) over
@@ -105,10 +115,13 @@ class Estimate:
 
 
 def estimate(mode: str, recording_sizes: list[int]) -> Estimate:
-    """What a workload of ``mode`` over recordings of these sizes adds at its peak."""
+    """What a workload of ``mode`` over recordings (or, for a source snapshot,
+    content files) of these sizes adds at its peak."""
     if mode not in MODES:
         raise PreflightError(f"unknown mode {mode!r}; one of {list(MODES)}")
     total = sum(recording_sizes)
+    if mode == SNAPSHOT_MODE:
+        return Estimate(minio_bytes=total, kafka_bytes=0, capture_peak_bytes=0)
     streaming = mode == "streaming_acquisition"
     return Estimate(
         minio_bytes=math.ceil(total * (1 + DERIVED_RATIO)),
@@ -167,6 +180,32 @@ def resolve_fixtures(
     return {f: int(locked[f]["recording"]["size_bytes"]) for f in fixtures}
 
 
+def resolve_snapshots(document: dict, names: list[str]) -> dict[str, list[int]]:
+    """snapshot id -> the sizes of the files its declaration selects from its
+    local tree. Fails when the tree is missing or a pattern matches nothing,
+    exactly as publication would."""
+    from sceneops_core.sources import SnapshotSelection
+    from sceneops_sources import SourceTreeError, select_files
+
+    declared = document.get("snapshots", {})
+    unknown = [name for name in names if name not in declared]
+    if unknown:
+        raise PreflightError(
+            f"unknown snapshots {unknown}; one of {sorted(declared)} ({SNAPSHOTS_FILE})"
+        )
+    sizes: dict[str, list[int]] = {}
+    for name in names:
+        entry = declared[name]
+        root = REPO_ROOT / entry["local_root"]
+        selection = SnapshotSelection(include=tuple(sorted(entry["include"])))
+        try:
+            paths = select_files(root, selection)
+        except SourceTreeError as exc:
+            raise PreflightError(f"snapshot {name}: {exc}") from exc
+        sizes[name] = [(root / path).stat().st_size for path in paths]
+    return sizes
+
+
 # ── measurement ──────────────────────────────────────────────────────────────
 
 
@@ -200,19 +239,44 @@ def main(argv: list[str] | None = None) -> int:
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--fixture", action="append", default=[])
     selection.add_argument("--scope")
+    selection.add_argument(
+        "--snapshot",
+        action="append",
+        default=[],
+        help=f"a source snapshot of {SNAPSHOTS_FILE.relative_to(REPO_ROOT)} "
+        f"(--mode {SNAPSHOT_MODE} only; repeatable)",
+    )
     parser.add_argument("--corpus", default="nuscenes-mini-v1")
     args = parser.parse_args(argv)
+    if (args.mode == SNAPSHOT_MODE) != bool(args.snapshot):
+        parser.error(f"--snapshot is required by, and only by, --mode {SNAPSHOT_MODE}")
 
     container = os.environ.get("POSTGRES_CONTAINER", "sceneops-postgres-1")
     corpus_dir = REPO_ROOT / "config/reference" / args.corpus
     try:
-        sizes = resolve_fixtures(
-            _read_json(corpus_dir / "corpus.json"),
-            _read_json(corpus_dir / "corpus.lock.json"),
-            fixtures=args.fixture,
-            scope=args.scope,
-        )
-        required = estimate(args.mode, list(sizes.values()))
+        if args.snapshot:
+            files = resolve_snapshots(_read_json(SNAPSHOTS_FILE), args.snapshot)
+            workload: dict[str, object] = {
+                "mode": args.mode,
+                "snapshots": sorted(files),
+                "file_count": sum(len(f) for f in files.values()),
+                "content_bytes": sum(sum(f) for f in files.values()),
+            }
+            required = estimate(args.mode, [s for f in files.values() for s in f])
+        else:
+            sizes = resolve_fixtures(
+                _read_json(corpus_dir / "corpus.json"),
+                _read_json(corpus_dir / "corpus.lock.json"),
+                fixtures=args.fixture,
+                scope=args.scope,
+            )
+            workload = {
+                "mode": args.mode,
+                "corpus": args.corpus,
+                "fixtures": sorted(sizes),
+                "recording_bytes": sum(sizes.values()),
+            }
+            required = estimate(args.mode, list(sizes.values()))
         vm_free = docker_vm_free_bytes(container)
     except PreflightError as exc:
         print(f"capacity_preflight: {exc}", file=sys.stderr)
@@ -227,12 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                 "schema": REPORT_SCHEMA,
                 "ok": ok,
                 "reason": reason,
-                "workload": {
-                    "mode": args.mode,
-                    "corpus": args.corpus,
-                    "fixtures": sorted(sizes),
-                    "recording_bytes": sum(sizes.values()),
-                },
+                "workload": workload,
                 "estimate": required.as_dict(),
                 "measured": {
                     "docker_vm_free_bytes": vm_free,

@@ -10,6 +10,7 @@ from .pipelines import PipelineRunModel, PipelineTaskRunModel
 from .robots import MissionModel, RobotModel, RobotRunModel, RobotStateModel
 from .scenarios import ScenarioRunRecordModel, ScenarioSetModel
 from .scenes import SceneModel, SceneRevisionModel, SceneRunRecordModel
+from .sources import SourceContentModel, SourceSnapshotModel
 
 __all__ = [
     # jobs
@@ -37,6 +38,9 @@ __all__ = [
     "RobotRunModel",
     "MissionModel",
     "RobotStateModel",
+    # sources
+    "SourceContentModel",
+    "SourceSnapshotModel",
     # scenarios
     "ScenarioSetModel",
     "ScenarioRunRecordModel",

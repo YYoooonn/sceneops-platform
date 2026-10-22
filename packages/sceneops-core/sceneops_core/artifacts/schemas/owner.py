@@ -14,6 +14,8 @@ class ArtifactOwnerType(StrEnum):
     MODEL_VERSION = "model_version"
     ROBOT_RUN = "robot_run"
     LABEL_SET = "label_set"
+    SOURCE_CONTENT = "source_content"
+    SOURCE_SNAPSHOT = "source_snapshot"
     # platform
     JOB = "job"
     PIPELINE_RUN = "pipeline_run"

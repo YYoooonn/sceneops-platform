@@ -97,6 +97,11 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("verify_recording", "Verify published recording"),
         step("register_robot_run", "Register artifacts and RobotRun"),
     ],
+    JobType.REGISTER_SOURCE_SNAPSHOT: [
+        step("load_descriptor", "Load and verify the snapshot descriptor"),
+        step("verify_content", "Verify the content inventory and files"),
+        step("register_snapshot", "Register content and snapshot"),
+    ],
     JobType.INGEST_ROBOT_STATES: [
         step("load_rosbag", "Load rosbag/MCAP file"),
         step("extract_robot_states", "Extract robot states"),

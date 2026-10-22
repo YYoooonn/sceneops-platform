@@ -32,6 +32,7 @@ operator) are execution history and have no field here.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterable
 from typing import Final, Literal
 
@@ -59,7 +60,9 @@ from .selection import select_paths, validate_include_pattern
 SOURCE_SNAPSHOT_DESCRIPTOR_SCHEMA_V1: Final = "sceneops.source_snapshot_descriptor/v1"
 SNAPSHOT_ID_SCHEMA_V1: Final = "sceneops.snapshot_id/v1"
 SNAPSHOT_ID_PREFIX: Final = "snapshot-"
+SNAPSHOT_ID_PATTERN: Final = rf"^{SNAPSHOT_ID_PREFIX}[0-9a-f]{{32}}$"
 _ID_DIGEST_HEX_LENGTH: Final = 32
+_SNAPSHOT_ID_RE: Final = re.compile(SNAPSHOT_ID_PATTERN)
 
 
 class SourceSnapshotError(ValueError):
@@ -131,6 +134,12 @@ def snapshot_id_for(declaration: SnapshotDeclaration) -> str:
     return f"{SNAPSHOT_ID_PREFIX}{digest[:_ID_DIGEST_HEX_LENGTH]}"
 
 
+def validate_snapshot_id(value: str) -> str:
+    if not isinstance(value, str) or not _SNAPSHOT_ID_RE.fullmatch(value):
+        raise ValueError(f"snapshot_id must match {SNAPSHOT_ID_PATTERN}, got {value!r}")
+    return value
+
+
 class SourceSnapshotDescriptor(_SnapshotModel):
     """The published record of one declaration, bound once to one content."""
 
@@ -176,6 +185,7 @@ def load_canonical_source_snapshot_descriptor(data: bytes) -> SourceSnapshotDesc
 
 
 __all__ = [
+    "SNAPSHOT_ID_PATTERN",
     "SNAPSHOT_ID_PREFIX",
     "SNAPSHOT_ID_SCHEMA_V1",
     "SOURCE_SNAPSHOT_DESCRIPTOR_SCHEMA_V1",
@@ -185,4 +195,5 @@ __all__ = [
     "SourceSnapshotError",
     "load_canonical_source_snapshot_descriptor",
     "snapshot_id_for",
+    "validate_snapshot_id",
 ]

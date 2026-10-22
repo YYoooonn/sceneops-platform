@@ -229,7 +229,11 @@ class S3ArtifactStore(ArtifactStore):
         bucket = parsed.netloc
         if not bucket:
             raise ValueError(f"S3 artifact URI is missing a bucket: {uri}")
-        return bucket, parsed.path.lstrip("/")
+        # The key is everything after the bucket, verbatim. urlparse's path
+        # stops at '?' and '#', which are ordinary characters in an object
+        # key (preserved source file names keep them), so it is not used.
+        key = uri.split("://", 1)[1][len(bucket) :]
+        return bucket, key.lstrip("/")
 
     @staticmethod
     def _is_not_found(error: ClientError) -> bool:

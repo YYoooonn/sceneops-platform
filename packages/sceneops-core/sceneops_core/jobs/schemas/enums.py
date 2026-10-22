@@ -35,6 +35,9 @@ class JobType(StrEnum):
     # ── robot recording registration ──
     REGISTER_ROBOT_RUN = "register_robot_run"
 
+    # ── source preservation registration (ADR-015 §5) ──
+    REGISTER_SOURCE_SNAPSHOT = "register_source_snapshot"
+
     # ── robot runtime ──
     INGEST_ROBOT_STATES = "ingest_robot_states"
     EXPORT_ROBOT_ANALYTICS_SNAPSHOT = "export_robot_analytics_snapshot"

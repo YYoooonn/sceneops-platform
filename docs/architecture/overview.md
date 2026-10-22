@@ -47,16 +47,22 @@ MinIO / S3) changes without call-site changes ([ADR-002](../adr/002-object-stora
 ## 2. Domain structure
 
 ```text
-Acquisition -> RobotRun (ingestion boundary)
+Acquisition         -> RobotRun (ingestion boundary)
+Dataset Integration -> SourceContent + SourceSnapshot (preserved external sources)
 RobotRun    -> Scene     (canonical, source-faithful)
 RobotRun    -> Episode   (canonical, task-oriented)
 Scene       -> labels / sample views / ScenarioSets / predictions / evaluations
 Episode     -> AlignedEpisode -> LearningDataExport
 ```
 
-- **RobotRun** is the single ingestion boundary: one finalized, published,
-  verified recording, created only by `REGISTER_ROBOT_RUN`. Nothing downstream of it
-  knows whether the recording arrived by batch import or by streaming acquisition.
+- **RobotRun** is the ingestion boundary of every canonical unit today: one finalized,
+  published, verified recording, created only by `REGISTER_ROBOT_RUN`. Nothing
+  downstream of it knows whether the recording arrived by batch import or by streaming
+  acquisition.
+- **SourceContent / SourceSnapshot** preserve an external dataset's native bytes and
+  the upstream declarations that name them, created only by `REGISTER_SOURCE_SNAPSHOT`.
+  They are not converted to recordings, and no Scene or Episode is built from them yet.
+  See [Ingress boundaries](./ingress-boundaries.md).
 - **Scene** and **Episode** are sibling derived domains over the same RobotRun, each
   with its own build, registration, validation and quality contract. They share
   platform infrastructure (Jobs, Pipelines, ArtifactStore), not a model: there is no

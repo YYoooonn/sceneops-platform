@@ -29,12 +29,14 @@ from .episodes import (
     ValidateEpisodeJobResult,
 )
 from .scenario import MineScenariosJobResult, ScoreScenarioReadinessJobResult
+from .sources import RegisterSourceSnapshotJobResult
 
 __all__ = [
     "BaseJobResult",
     "ImportLabelsJobResult",
     "BuildSceneSampleViewsJobResult",
     "RegisterRobotRunJobResult",
+    "RegisterSourceSnapshotJobResult",
     "IngestRobotStatesJobResult",
     "ExportRobotAnalyticsSnapshotJobResult",
     "BuildRecordingEpisodesJobResult",

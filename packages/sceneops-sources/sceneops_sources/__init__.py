@@ -15,6 +15,7 @@ from .content_files import (
     LocalContentFiles,
     StoredContentFiles,
     load_stored_inventory,
+    verify_stored_content,
 )
 from .layout import (
     SourceLayoutError,
@@ -63,4 +64,5 @@ __all__ = [
     "parse_descriptor_uri",
     "publish_snapshot",
     "select_files",
+    "verify_stored_content",
 ]

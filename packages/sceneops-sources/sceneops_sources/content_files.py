@@ -12,12 +12,16 @@ is returned. A path the inventory does not list is refused, never read.
   and accepted only when its ``content_checksum`` is the pinned one (from the
   registered content), so the stored inventory cannot redefine the content.
 
+``verify_stored_content`` is the check behind a content's first
+registration: the stored files are exactly the inventory, byte for byte.
+
 A verified path stays valid only while nothing else writes the directory:
 the work directory belongs to one build.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from collections.abc import Iterable
@@ -34,7 +38,7 @@ from sceneops_core.sources import (
 )
 from sceneops_storage import ArtifactNotFoundError
 
-from .layout import content_file_uri, content_id_of_inventory_uri
+from .layout import content_file_uri, content_files_prefix, content_id_of_inventory_uri
 from .tree import hash_file
 
 
@@ -138,6 +142,66 @@ async def load_stored_inventory(
             f"{inventory_uri} holds the inventory of {inventory.content_id}"
         )
     return inventory
+
+
+async def verify_stored_content(
+    store: ArtifactStore,
+    *,
+    inventory_uri: str,
+    inventory: SourceContentInventory,
+    read_concurrency: int = 8,
+) -> None:
+    """Require the stored files of a content to be exactly its inventory.
+
+    One listing of the content's files prefix must hold one object per
+    inventory entry with the entry's size and nothing else; then every object
+    is read back and its sha256 compared. Raises ``ContentFileMissingError``
+    or ``ContentFileIntegrityError`` naming the first offending files. Whole
+    objects are read into memory (M3.0 D12), at most ``read_concurrency`` at
+    a time."""
+    prefix = content_files_prefix(inventory_uri)
+    expected = {
+        content_file_uri(inventory_uri, entry.path): entry for entry in inventory.files
+    }
+    listed = {obj.uri: obj.size_bytes for obj in await store.list_objects(prefix)}
+    missing = sorted(set(expected) - set(listed))
+    if missing:
+        raise ContentFileMissingError(
+            f"{len(missing)} file(s) of {inventory.content_id} are not stored, "
+            f"e.g. {missing[:5]}"
+        )
+    unexpected = sorted(set(listed) - set(expected))
+    wrong_size = sorted(
+        uri for uri, entry in expected.items() if listed[uri] != entry.size_bytes
+    )
+    if unexpected or wrong_size:
+        raise ContentFileIntegrityError(
+            f"stored files of {inventory.content_id} differ from the inventory: "
+            f"{len(wrong_size)} with another size (e.g. {wrong_size[:5]}), "
+            f"{len(unexpected)} not inventoried (e.g. {unexpected[:5]})"
+        )
+
+    semaphore = asyncio.Semaphore(read_concurrency)
+
+    async def _checksum_mismatch(uri: str, entry: SourceFileEntry) -> str | None:
+        async with semaphore:
+            data = await store.read_bytes(uri)
+        if len(data) != entry.size_bytes or sha256_checksum(data) != entry.sha256:
+            return uri
+        return None
+
+    mismatched = sorted(
+        uri
+        for uri in await asyncio.gather(
+            *(_checksum_mismatch(uri, entry) for uri, entry in expected.items())
+        )
+        if uri is not None
+    )
+    if mismatched:
+        raise ContentFileIntegrityError(
+            f"{len(mismatched)} stored file(s) of {inventory.content_id} differ "
+            f"from their inventory sha256, e.g. {mismatched[:5]}"
+        )
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -247,4 +311,5 @@ __all__ = [
     "LocalContentFiles",
     "StoredContentFiles",
     "load_stored_inventory",
+    "verify_stored_content",
 ]

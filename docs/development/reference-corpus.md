@@ -180,6 +180,22 @@ make reference-source-verify [SOURCE=lerobot-pusht]
   skips, naming the command, when the copy is absent). No container or stack is
   involved; only `fetch` uses the network.
 
+### Reference source snapshots
+
+`config/reference/source-snapshots.json` declares the snapshots the platform is accepted
+on (`make test-infrastructure SUITE=sources`): for each, the local root, the declaration
+(`format`, `upstream`, `upstream_revision`, `include`) and its annotations.
+
+| Snapshot | Declaration | Selected |
+| --- | --- | --- |
+| `lerobot-pusht` | `lerobot`, `lerobot/pusht`, the pinned commit, the raw-source pin's include patterns, `license=mit` | the 7 locked files, 7,684,382 bytes |
+| `nuscenes-scene-0061` | `nuscenes`, `nuscenes`, `v1.0-mini`; `LICENSE`, `can_bus/scene-0061_*`, `maps/*`, `samples/*/n015-2018-07-24-11-22-45+0800__*`, `sweeps/*/n015-2018-07-24-11-22-45+0800__*`, `v1.0-mini/*`; `license=nuscenes-terms-of-use` | 2,989 files, 519,531,462 bytes: the tables, maps and licence, the readings of scene-0061's log (the only scene of that log) and its 8 CAN extracts |
+
+The pusht entry restates its raw-source pin (`tools/dev/tests/test_capacity_preflight.py`
+keeps them equal). The nuScenes slice is read from the local v1.0-mini tree, which has no
+lock; the acceptance suite derives its expectations by walking and hashing that tree.
+The slice is its own content, so its ids differ from those of a full v1.0-mini snapshot.
+
 ## Limitations
 
 - The lock pins the tool's package versions, not the host. Byte-identical

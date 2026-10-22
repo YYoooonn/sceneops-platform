@@ -319,7 +319,7 @@ SceneOps contract, and a green result proves nothing about correctness. Correctn
 | `make worker-run-job JOB_ID=…` / `worker-advance-pipeline PIPELINE_RUN_ID=…` | run one Job through `JobRunner`, or take one `PipelineOrchestrator` step, by hand through the worker CLI (`sceneops-worker jobs run`, `sceneops-worker pipelines advance`) |
 | `make reconcile-once` / `reconcile-apply` / `artifact-lifecycle-once` / `acquisition-status` | one acquisition-reconciliation pass; read-only lifecycle and status reports ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)); these run `sceneops-worker acquisition reconcile / artifact-lifecycle / status` in the `worker-jobs` container |
 | `make disk-report` | disk headroom and what could be reclaimed (below) |
-| `make capacity-preflight [MODE=…] [REFERENCE_SCOPE=…\|FIXTURE=…]` | whether a reference workload fits the Docker VM's free space (below); exit 1 when it does not |
+| `make capacity-preflight [MODE=…] [REFERENCE_SCOPE=…\|FIXTURE=…\|SNAPSHOTS="…"]` | whether a reference workload fits the Docker VM's free space (below); exit 1 when it does not |
 
 `make check-commands` is different in kind: it is static, needs no stack, and is part of how
 the command surface itself is kept consistent.
@@ -364,7 +364,12 @@ floor. The free space is measured inside the running PostgreSQL container, the f
 whose exhaustion the check prevents, and the check fails closed when it cannot measure. The
 ratios are measurements of the reference workload under `config/baselines/`, not bounds for
 other build configurations, and builds still pending for already registered RobotRuns are
-not estimated. For the 10-fixture corpus it requires 11.8 GiB free for Recording Import and
+not estimated. A source snapshot (`MODE=source_snapshot SNAPSHOTS="<id> …"`, the
+declarations of `config/reference/source-snapshots.json`) is estimated from its content
+instead: the files its declaration selects from its local tree, by the selection rules
+publication applies, stored once in MinIO (so this mode runs in the workspace
+environment). `SUITE=sources` runs it for `lerobot-pusht` and `nuscenes-scene-0061`
+(2,996 files, 527,215,844 bytes): 3.6 GiB required. For the 10-fixture corpus it requires 11.8 GiB free for Recording Import and
 18.7 GiB for Streaming Acquisition (one fixture, `scene-0061`: 4.7 GiB); the streaming bootstrap's `MIN_FREE_GIB` check before
 each fixture still applies during the run. The full Recording Import baseline stores about
 7.2 GB in MinIO (4.07 GB of recordings and 3.16 GB of payloads, measured 2026-10-19 on a

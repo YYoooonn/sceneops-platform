@@ -2,9 +2,9 @@
 
 > How data enters SceneOps and how the two ingress families meet canonical building.
 > Decision rationale: [ADR-015](../adr/015-multi-source-platform.md). Acquisition is
-> implemented end to end. Dataset Integration exists as its output contracts and the
-> canonical inputs that read them; no process produces or consumes them yet
-> ([limitations](./limitations.md) §5).
+> implemented end to end. Dataset Integration preserves and registers external sources
+> (`publish-snapshot`, `REGISTER_SOURCE_SNAPSHOT`); no native reader or content builder
+> consumes them yet ([limitations](./limitations.md) §5).
 
 ## 1. Responsibilities
 
@@ -45,16 +45,19 @@ COMPOSE_DATASET_VERSION         params dataset_id, dataset_version, pins | selec
                                   -> one immutable DatasetVersion + members, one transaction
 ```
 
-Dataset Integration (only the schemas named below exist; there is no publication,
-registration or snapshot build process yet):
+Dataset Integration (preservation and registration implemented, §3.1; the snapshot
+build exists only as its builder input contracts):
 
 ```text
 local source tree + SnapshotDeclaration
-publication                     files under content_id, SourceContentInventory,
+apps/publisher publish-snapshot files under content_id, SourceContentInventory,
                                 then SourceSnapshotDescriptor (publication marker)
-registration                    SourceContent + SourceSnapshot records
+REGISTER_SOURCE_SNAPSHOT        params {descriptor_uri}
+                                  -> SourceContent + SourceSnapshot records and their
+                                     SOURCE_CONTENT_INVENTORY / SOURCE_SNAPSHOT_DESCRIPTOR
+                                     ArtifactRecords, one transaction
 snapshot build                  snapshot_id -> content_id once (recorded on the Job)
-                                  -> PinnedContent                         builder input
+  (not implemented)               -> PinnedContent                         builder input
                                   -> manifests: lineage ContentUnitSource
                                      + ProducerInfo over ContentSourceRevision
 ```
@@ -94,6 +97,63 @@ SourceSnapshotDescriptor sceneops.source_snapshot_descriptor/v1
   inventory records the result.
 - The format's own version is not declared; a format reader derives it from the bytes.
   Retrieval facts (local path, URL, time, operator) have no field.
+
+### 3.1 Publication and registration
+
+`publish-snapshot` (`sceneops_sources.publication`, run by `apps/publisher`) is
+database-free. It selects the declared files from a local tree (symbolic links are never
+followed; every pattern must match a file), hashes them into the inventory, refuses a
+declaration already published with another descriptor, and then writes, write-once:
+every file under its content id (bytes already stored are reused), the inventory, and
+the descriptor last. Without a descriptor nothing is published, and a re-run reuses
+every object it finds. Object keys: [Storage layout](./storage-layout.md) §3.
+
+`REGISTER_SOURCE_SNAPSHOT {descriptor_uri}` (`sceneops_worker/sources/registration.py`)
+is the only writer of the Source Registry ([Data model](./data-model.md) §5.1). It
+reads, verifies and records; it never writes an object:
+
+```text
+S1 trusted location   the URI is exactly {configured source root}/snapshots/{snapshot_id}/
+                      descriptor.json (ArtifactSettings.source_root_uri); the inventory
+                      is read from that root, never from a caller-supplied location
+S2 descriptor         present, canonical, and the descriptor of that snapshot id
+S3 snapshot known     same content and descriptor -> no-op, nothing else is read
+S4 inventory          present, canonical, the descriptor's content; the declared
+                      selection selects exactly the inventoried paths, each pattern
+                      at least one
+S5 content known      same format -> reused: its files were verified at its first
+                      registration and are write-once; the inventory has its checksum
+   content new        one listing of its files prefix holds exactly the inventory
+                      (sizes), then every object is read back and hashed
+S6 one transaction    inventory ArtifactRecord + content (if new), descriptor
+                      ArtifactRecord + snapshot; commit
+```
+
+Every record is inserted only if absent and then decided against the stored row
+(`decide_content_registration`, `decide_snapshot_registration`):
+
+| Case | Content | Snapshot | Result |
+| --- | --- | --- | --- |
+| new declaration of new bytes | inserted | inserted | `created` / `created` |
+| new declaration of registered bytes | reused | inserted | `existing` / `created` |
+| same declaration, bytes and descriptor | reused | no-op | `existing` / `existing` |
+| same declaration, other bytes | — | — | `SnapshotContentConflictError` |
+| same declaration, other descriptor (annotations) | — | — | `SnapshotDescriptorConflictError` |
+| registered bytes under another format | — | — | `ContentFormatConflictError` |
+
+A conflict, a verification failure or a crash before commit writes no row. Concurrent
+registrations are decided by the primary keys, not by locks: the insert of a key
+another transaction holds waits for it, and the loser decides again against the
+committed row, so identical registrations converge and conflicting ones fail. The Job
+result names `snapshot_id` and `content_id` and whether each record was `created` or
+`existing`; the Job is the registering execution, recorded as the `job_id` of the
+ArtifactRecords it inserted. A crash after the descriptor is recovered by registering
+again. The records are read through `GET /source-snapshots[?content_id=]`,
+`GET /source-snapshots/{snapshot_id}` and `GET /source-contents/{content_id}`; the Job
+is submitted through the Jobs API.
+
+Registration verifies preservation only. A format without a builder registers, and
+whether a builder supports the format version in the bytes is decided at build time.
 
 ## 4. Source bindings and revisions
 
@@ -213,4 +273,9 @@ selection are not in it, so they change a revision, not the unit.
 
 Record contracts: `test_source_content.py`; bindings, revisions and pinned inputs:
 `test_provenance_sources.py`; fingerprint: `test_producer_fingerprint.py`; unit and
-revision identity and the registration decision: `test_unit_identity.py`.
+revision identity and the registration decision: `test_unit_identity.py`. Source
+Registry decisions: `test_source_registry.py`; publication:
+`packages/sceneops-sources/tests`; registration: `apps/worker/tests/sources` (with
+real MinIO and PostgreSQL in `*_integration.py`); the PostgreSQL invariants and races:
+`packages/sceneops-db/tests/test_source_registry_repository.py`; the reference
+snapshots end to end: `make test-infrastructure SUITE=sources`.

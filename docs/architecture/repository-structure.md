@@ -54,7 +54,7 @@ how it is run.
 | `apps/api` | FastAPI control plane: resources, Job / Pipeline create and dispatch | `uvicorn app.main:app` | `api` |
 | `apps/worker` | Celery workers (`JobRunner`, `PipelineOrchestrator`, job handlers) and the `sceneops-worker` CLI: `jobs`, `pipelines`, `recover`, `execution-status`, `acquisition reconcile / status / artifact-lifecycle` | `celery -A sceneops_worker.celery_app.celery_app worker`, `sceneops-worker` | `worker-jobs`, `worker-pipeline` (queues), `worker-cli`, `execution-recovery`, `registration-recovery` |
 | `apps/capture` | Capture: Kafka -> run lifecycle -> MCAP + capture receipt, one process per `robot_run_id` | `python -m sceneops_capture` | `capture` |
-| `apps/publisher` | Database-free Publisher: finalized MCAP + receipt -> ArtifactStore objects; `check`, `scan-capture`, `publish-pending` | `python -m sceneops_publisher` | `recording-publisher`, `reference-conformance`, `publication-recovery` |
+| `apps/publisher` | Database-free Publisher: finalized MCAP + receipt -> ArtifactStore objects; `publish-snapshot` (a declared selection of a local source tree -> preserved source objects); `check`, `scan-capture`, `publish-pending` | `python -m sceneops_publisher` | `recording-publisher`, `reference-conformance`, `publication-recovery` |
 
 `apps/worker` is one codebase deployed as several containers that differ only in
 command and queue. Execution recovery (`sceneops-worker recover`) is a worker command

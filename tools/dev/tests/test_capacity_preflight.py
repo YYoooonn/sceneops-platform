@@ -179,3 +179,72 @@ def test_the_command_never_passes_without_a_measurement(tmp_path):
     assert result.returncode == 2
     assert result.stdout == ""
     assert "cannot measure" in result.stderr
+
+
+# ── source snapshots ─────────────────────────────────────────────────────────
+
+SNAPSHOTS = json.loads(
+    (REPO_ROOT / "config/reference/source-snapshots.json").read_text()
+)
+
+
+def test_a_snapshot_stores_its_content_once_and_nothing_else():
+    e = preflight.estimate("source_snapshot", [100, 300])
+    assert (e.minio_bytes, e.kafka_bytes, e.capture_peak_bytes) == (400, 0, 0)
+
+
+def test_a_snapshot_that_does_not_fit_the_docker_vm_is_refused():
+    """The M3.0 estimate for pusht + the scene-0061 slice: 0.49 GiB of content
+    needs ~3.6 GiB free with the margin, WAL reserve and floor."""
+    e = preflight.estimate("source_snapshot", [7_684_382, 519_531_462])
+    assert 3.6 * GIB < e.required_free_bytes < 3.7 * GIB
+    ok, reason = preflight.decide(
+        e, docker_vm_free_bytes=e.required_free_bytes - 1, host_free_bytes=100 * GIB
+    )
+    assert not ok and "Docker VM" in reason
+
+
+def test_snapshot_sizes_come_from_the_selected_local_files(tmp_path, monkeypatch):
+    root = tmp_path / "tree"
+    for path, size in {"a/x.bin": 3, "a/y.bin": 5, "b/z.bin": 7}.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(b"0" * size)
+    monkeypatch.setattr(preflight, "REPO_ROOT", tmp_path)
+    document = {"snapshots": {"s": {"local_root": "tree", "include": ["a/**"]}}}
+
+    assert preflight.resolve_snapshots(document, ["s"]) == {"s": [3, 5]}
+    with pytest.raises(preflight.PreflightError, match="unknown snapshots"):
+        preflight.resolve_snapshots(document, ["t"])
+    document["snapshots"]["s"]["include"] = ["c/**"]
+    with pytest.raises(preflight.PreflightError, match="match no file"):
+        preflight.resolve_snapshots(document, ["s"])
+
+
+def test_the_pusht_snapshot_declares_its_pinned_raw_source():
+    """The reference declaration of pusht is the raw-source pin, so the bytes it
+    preserves are the locked ones."""
+    entry = SNAPSHOTS["snapshots"]["lerobot-pusht"]
+    pin = json.loads(
+        (REPO_ROOT / "config/reference/lerobot-pusht/source.json").read_text()
+    )
+    assert entry["local_root"] == pin["local_root"]
+    assert entry["upstream"] == pin["origin"]["repo"]
+    assert entry["upstream_revision"] == pin["origin"]["revision"]
+    assert sorted(entry["include"]) == sorted(pin["include"])
+    assert entry["annotations"] == {"license": pin["license"]}
+
+
+def test_snapshot_mode_requires_snapshots_and_only_it_takes_them(tmp_path):
+    result = _run(
+        tmp_path,
+        _df(50 * 1024 * 1024),
+        "--mode",
+        "source_snapshot",
+        "--scope",
+        "smoke-1",
+    )
+    assert result.returncode == 2
+    result = _run(
+        tmp_path, _df(50 * 1024 * 1024), "--mode", "recording_import", "--snapshot", "x"
+    )
+    assert result.returncode == 2

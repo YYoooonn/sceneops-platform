@@ -30,6 +30,13 @@ class ArtifactSettings(StorageSettings):
     robot_run_prefix: str = "robot_runs"
     observation_payload_prefix: str = "observation_payloads"
     label_prefix: str = "labels"
+    # Preserved external sources (ADR-015 §5): the one trusted root that
+    # publish-snapshot writes under and REGISTER_SOURCE_SNAPSHOT reads from.
+    source_prefix: str = "sources"
+
+    @property
+    def source_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.source_prefix)
 
     @property
     def dataset_root_uri(self) -> str:

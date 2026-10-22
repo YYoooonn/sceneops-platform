@@ -36,12 +36,14 @@ from .episodes import (
     ValidateEpisodeJobParams,
 )
 from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
+from .sources import RegisterSourceSnapshotJobParams
 
 __all__ = [
     "BaseJobParams",
     "ImportLabelsJobParams",
     "BuildSceneSampleViewsJobParams",
     "RegisterRobotRunJobParams",
+    "RegisterSourceSnapshotJobParams",
     "IngestRobotStatesJobParams",
     "ExportRobotAnalyticsSnapshotJobParams",
     "BuildRecordingEpisodesJobParams",

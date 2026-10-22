@@ -32,6 +32,7 @@ from sceneops_worker.jobs.robots import (
     IngestRobotStatesJobHandler,
     RegisterRobotRunJobHandler,
 )
+from sceneops_worker.jobs.sources import RegisterSourceSnapshotJobHandler
 from sceneops_worker.jobs.scenarios import (
     MineScenariosJobHandler,
     ScoreScenarioReadinessJobHandler,
@@ -79,6 +80,7 @@ def create_default_job_handler_registry() -> JobHandlerRegistry:
             MineScenariosJobHandler(),
             ScoreScenarioReadinessJobHandler(),
             RegisterRobotRunJobHandler(),
+            RegisterSourceSnapshotJobHandler(),
             IngestRobotStatesJobHandler(),
             ExportRobotAnalyticsSnapshotJobHandler(),
             BuildRecordingEpisodesJobHandler(),

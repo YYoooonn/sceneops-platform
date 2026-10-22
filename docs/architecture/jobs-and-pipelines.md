@@ -109,6 +109,7 @@ Reusable single operations are plain Jobs (`POST /jobs`, then
 
 ```text
 REGISTER_ROBOT_RUN        POST /robot-runs:register (create + dispatch)
+REGISTER_SOURCE_SNAPSHOT  a published snapshot descriptor -> SourceContent + SourceSnapshot (Ingress boundaries §3.1)
 COMPOSE_DATASET_VERSION   revision pins or a selector -> one immutable DatasetVersion (Data model §2.1); also the optional stage of the two building pipelines
 IMPORT_LABELS             a label document -> an independent, pinned LabelSet revision
 BUILD_SCENE_SAMPLE_VIEWS  Scenes + policy + label sets -> pinned views (also the first stage of SCENE_ML_EVALUATION)
@@ -445,6 +446,10 @@ never creates its own `ArtifactRecord` for that object:
   `OBSERVATION_PAYLOAD` records; payload ids are shared with Scene builds of the same
   RobotRun, so whichever runs first creates them. `register_episodes` re-reads and
   verifies, never creates.
+- Database-free publishers write bytes outside any Job, so their registration Job
+  records them after verifying the bytes: `REGISTER_ROBOT_RUN` the recording and its
+  manifest, `REGISTER_SOURCE_SNAPSHOT` the content inventory (once per content) and
+  the snapshot descriptor. Preserved source files have no record of their own.
 
 Publication is content-pinned and convergent
 (`apps/worker/sceneops_worker/derived/publication.py`, `ArtifactRecordStore.register`):

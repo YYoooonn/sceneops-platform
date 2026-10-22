@@ -19,8 +19,10 @@ from .robots import (
 )
 from .scenarios import PostgresScenarioRunRepository, PostgresScenarioSetRepository
 from .scenes import PostgresSceneRepository, PostgresSceneRunRepository
+from .sources import PostgresSourceRegistryRepository
 
 __all__ = [
+    "PostgresSourceRegistryRepository",
     "PostgresJobRepository",
     "PostgresJobEventRepository",
     "PostgresPipelineRunRepository",

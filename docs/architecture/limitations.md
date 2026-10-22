@@ -94,7 +94,17 @@ Details: [Streaming transport](./streaming-transport.md) §26, §31 and
   `delete_prefix` operation, but no application code path calls it. Objects under
   `robot_runs/` are classified (`referenced` / `pending` / `orphan_candidate` /
   `integrity_incident`) and nothing else; no other prefix is classified, and superseded
-  derived revisions stay.
+  derived revisions stay. Under `sources/` this includes files and inventories of an
+  interrupted publication and descriptors whose registration was refused.
+- **Preserved sources are moved whole through memory.** `publish-snapshot` reads,
+  uploads and reads back one file at a time, and the first registration of a content
+  reads every file back to hash it (8 at a time). The largest file measured is the
+  6.9 MB pusht video; LeRobot v3 targets files of up to 500 MB, which would need
+  streaming transfer. Measured on the local stack for the 0.48 GiB scene-0061 slice:
+  publication 47–53 s, first registration ~4 s
+  ([Source preservation verification](../history/source-preservation-verification.md)).
+- **A source descriptor cannot be corrected.** One declaration with other annotations
+  is a conflict; there is no correction or annotation record (ADR-015 OQ-10).
 - **No "latest revision of a logical artifact" lookup.** A derived artifact is a
   checksum-pinned revision, and consumers resolve a pin they were given. Nothing
   answers "the newest revision of this logical artifact"; because a revision is never
@@ -112,10 +122,10 @@ interface, and nothing stores them.
 ## 5. Canonicalization from recordings
 
 Scenes and Episodes are produced only from a registered RobotRun recording. Dataset
-Integration has its output records, content source binding and builder input
-([Ingress boundaries](./ingress-boundaries.md)) but no snapshot publication,
-registration, native reader or content builder, so no external dataset reaches a
-canonical unit except as a converted recording. Current builder bounds:
+Integration preserves and registers external sources and has the content source
+binding and builder input ([Ingress boundaries](./ingress-boundaries.md)), but no
+native reader or content builder, so no external dataset reaches a canonical unit
+except as a converted recording. Current builder bounds:
 
 - Only ROS 2 (`cdr` / `ros2msg`) messages are decoded. Scene camera payloads must be
   `CompressedImage` (jpeg / png); other Scene channels are stored as their serialized

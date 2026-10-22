@@ -27,6 +27,7 @@ from sceneops_worker.stores.runs import (
 )
 from sceneops_worker.stores.scenarios import ScenarioStore
 from sceneops_worker.stores.scenes import SceneStore
+from sceneops_worker.stores.sources import SourceStore
 
 
 _artifact_store: ArtifactStore | None = None
@@ -99,6 +100,7 @@ def create_worker_context(
         episode_store=EpisodeStore(session),
         scenario_store=ScenarioStore(session),
         model_store=ModelStore(session),
+        source_store=SourceStore(session),
         artifact_record_store=ArtifactRecordStore(session),
         runs=RunStores(
             inference=InferenceRunStore(session),
