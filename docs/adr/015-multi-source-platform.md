@@ -35,6 +35,15 @@ R7  Artifact durability and integrity are established by revision registration, 
     row proves registration happened, not that bytes are durable              §6.4, §7
 ```
 
+**Amended (2026-10-22, M3.0).** OQ-1, OQ-2, OQ-3, OQ-5, OQ-6, OQ-9 and OQ-10 are decided
+(§16) on the evidence of
+[Native dataset integration architecture](../history/multi-source-native-integration-architecture.md),
+read from real LeRobot v3.0 and nuScenes v1.0-mini data at HEAD `4b11e5e`. The decisions
+change the text of §6.2 (LeRobot time, recording clock origin), §6.4 (content files in the
+registration gate), §6.5 (media types of preserved files, inline values), §6.6 (frame
+timeline, component names, transition streams), §6.7 (unit selection), §9 (label anchor),
+§14 (rejected alternatives) and §15. OQ-7 and OQ-8 stay open. R1–R7 are unchanged.
+
 This ADR supersedes, in
 [ADR-007](./007-canonical-ingestion-architecture.md) Amendment A4, decisions 1, 3, 4 and 5 of
 §29.2 and invariants I-31 and I-36. It amends I-1, I-2, I-10, I-16 and I-17 and retires
@@ -383,10 +392,10 @@ comparable with each other.
 
 | Source | Clock domain | Normalization |
 | --- | --- | --- |
-| RobotRun recording | per channel as declared by `build_config` (`header_stamp`, `log_time`, …); origin `source` unless the config declares `unix_epoch` | CURRENT rule, unchanged values |
+| RobotRun recording | per channel as declared by `build_config` (`header_stamp`, `log_time`, …); origin `source` for every clock, set by the recording builders, not configurable (OQ-9) | CURRENT rule, unchanged values |
 | nuScenes sensors and ego poses | `nuscenes.timestamp`, origin `unix_epoch`, resolution 1,000 ns | integer µs → ns by `promote_to_ns`, exact. All 31,206 `ego_pose` timestamps equal their `sample_data` timestamps (probe §2), so one clock is justified |
 | nuScenes CAN | not canonicalized in M2–M5 (preserved in the snapshot only). If it is canonicalized later, it gets its own clock id until a shared hardware clock with the sensors is verified | — |
-| LeRobot | `lerobot.frame_time`, origin `unit` | `t_ns = round_half_even(frame_index · 10⁹ / fps)`; the recorded float32 `timestamp` and `frame_index` are kept as stream fields; OPEN: OQ-2 |
+| LeRobot | `lerobot.frame_time`, origin `unit`, resolution 1 ns | `t_ns = round_half_even(frame_index · 10⁹ / fps)`, with `fps` declared once on the Episode's frame timeline (§6.6). An occurrence's frame index is recovered exactly from `t_ns`, so the recorded float32 `timestamp` and `frame_index` are not kept as values. The builder rejects a dataset whose `timestamp` is not `float32(frame_index / fps)` on every row instead of snapping it to a grid (OQ-2) |
 
 Rules:
 
@@ -397,6 +406,9 @@ Rules:
     samples, plus 1 ns.
   - LeRobot: `[0, t(length − 1) + 1)` in the unit's own origin.
 - A timestamp in another domain is never compared with a window.
+- **A sampling rate is not a clock property.** A clock domain says what zero means and which
+  timestamps are comparable. A frame rate says how one unit sampled its clock, and it is
+  declared on that unit's frame timeline (§6.6), never on the clock domain.
 
 ### 6.3 Unit keys
 
@@ -405,7 +417,8 @@ Rules:
   units, not revisions of misaligned ones.
 - SourceContent: the native unit key, verbatim (nuScenes `scene.token`, LeRobot
   `episode_index`). It is read from the bytes, so every snapshot of the same content
-  yields the same keys. OPEN: OQ-5.
+  yields the same keys (OQ-5). The LeRobot key is `str(episode_index)`, decimal without
+  padding. `scene.name` is display data and enters no identity or manifest.
 
 ### 6.4 Revisions and registration
 
@@ -434,8 +447,10 @@ artifact refs   each ArtifactPayloadRef resolves to an ArtifactRecord with exact
                 checksum, size and media type                                 CURRENT
                 and the object is present in the store with that size        NEW
                 (one listing per payload prefix; CURRENT checks records only)
-source refs     each SourceFileRef matches the content inventory entry, and the content is
-                registered (its files were fully hashed then)                 NEW
+source refs     each SourceFileRef matches the content inventory entry (path, size, sha256),
+                the content is registered (its files were fully hashed then), and the
+                file object is present in the store with its inventory size
+                (one listing per content prefix)                              NEW
 payload bytes   hashed by read-back when published (write_once,
                 ObservationPayloadStore) or when content was registered, and re-verified
                 on every pinned read                                          CURRENT / NEW
@@ -470,9 +485,14 @@ PayloadRef (union)
   Episodes already are. This is canonicalization, not preservation, and it must be exact:
   float32 values serialize as the decimal of their exact float64 widening and read back
   bit-identically. Images are `SourceFileRef`s with a frame selector into the preserved
-  MP4. OPEN: OQ-3 (inline values at scale).
-- Resolution verifies the content inventory entry's checksum, size and media type, then
-  reads from the content store. Content files are SceneOps-owned, so I-24 holds.
+  MP4. Values stay inline (OQ-3); no native column reference type exists.
+- The inventory is format-independent and records no media type. The format-specific
+  builder assigns `media_type` from source-format evidence and fails when that evidence
+  disagrees: nuScenes from the channel's `sensor.modality` and the file suffix (its
+  `fileformat` is `pcd` for both lidar and radar), LeRobot from the feature's `video` dtype
+  and the `.mp4` suffix. The media type is part of the manifest and its checksum.
+- Resolution verifies the content inventory entry's checksum and size, then reads from the
+  content store. Content files are SceneOps-owned, so I-24 holds.
 
 ### 6.6 Manifest changes
 
@@ -483,6 +503,18 @@ SceneManifest v3 and EpisodeManifest v2 make these changes:
 - Payloads become the §6.5 union.
 - Observations, keyframe groups and occurrences gain an optional verbatim `native_ref`
   (nuScenes `sample_data.token` / `sample.token`, LeRobot global `index`).
+- An Episode sampled on a frame grid declares one optional `frame_timeline {clock, fps,
+  frame_count}`. `fps` is stored there once. Every occurrence on that clock lies at
+  `round_half_even(k · 10⁹ / fps)` for exactly one frame index `k` in `[0, frame_count)`, and
+  the window is `[0, t(frame_count − 1) + 1)`. Recording Episodes are asynchronous and
+  declare none.
+- A selected Episode field gains an optional `component_names`: the source's names of a
+  vector value's dimensions, in source order. Every value of that field then has exactly that
+  length.
+- Episode streams gain the role `transition`: a per-frame signal about the step from a frame
+  to the next (LeRobot `next.*`). It has one occurrence per frame, at the frame the source
+  records it on, with values verbatim in their source type. The manifest derives no event
+  from it; an event view is derived downstream only where its meaning is unambiguous.
 
 No membership, status, location or snapshot descriptor enters a manifest.
 
@@ -508,6 +540,10 @@ no unit fails (unchanged).
   with the same config produces the same manifests and is a no-op at registration.
 - **Format support.** A builder rejects a format, or a format version found in the bytes,
   that it does not support.
+- **Unit selection.** A snapshot pipeline takes an optional `unit_keys`. It is execution
+  scope, not build configuration, so it never enters the producer fingerprint. A manifest
+  depends only on its own unit, so building a subset yields the same revisions. A selected
+  unit whose files are not in the inventory fails the build; it is never skipped.
 
 ## 7. DatasetVersion
 
@@ -663,7 +699,7 @@ Other rules:
 | Alignment results (`AlignedEpisode`, `SceneSampleView`) | one revision + policy | built on §8; recipe key = scope pin + policy + semantics version; carry the clock domain |
 | ScenarioSet | sample views | unchanged |
 | EpisodeSet | Episode revisions + recorded criteria | new: the Episode-side selection, analogous to ScenarioSet; curation produces one |
-| LabelSet | anchors | the anchor becomes `(source_kind, source_id, channel, clock, timestamp_ns)` with `source_id` = `robot_run_id` or `content_id`; a `unit`-origin anchor also names its unit; nuScenes `sample_annotation` imports natively against content-sourced Scenes |
+| LabelSet | anchors | the anchor becomes `(source_kind, source_id, channel, clock, timestamp_ns)` with `source_id` = `robot_run_id` or `content_id`; a `unit`-origin anchor also names its unit; an anchor may carry `group_ref`, the `native_ref` of the source-defined group it annotates. nuScenes `sample_annotation` imports natively against content-sourced Scenes (OQ-6), anchored on its sample: `LIDAR_TOP` at `sample.timestamp` with `group_ref = sample.token`. The anchor resolves against the Scene manifest's observation and keyframe group, never through a sample view or a camera association |
 | LearningDataExport | aligned revisions | unchanged identity; task comes from canonical Episode streams where the source has one; timestamps keep their clock domain |
 
 Each resource records the DatasetVersion it was selected from, when it was, so it can be
@@ -817,8 +853,13 @@ only through independent verification (R5):
   look comparable across episodes and with epoch clocks.
 - **One persisted generic "aligned view" for every scope.** Rejected for now: it would erase
   Episode / Scene output semantics. The shared part is the engine and the stream contract.
-- **Native column references for numeric streams instead of inline values.** Deferred to
-  measurement (OQ-3).
+- **Native column references for numeric streams instead of inline values.** Rejected on
+  measurement (OQ-3): the heaviest probed episode is 2.8–3.5 MB inline.
+- **The frame rate on the clock domain.** Rejected (OQ-2): it would make one unit's sampling
+  rate part of what decides comparability.
+- **LeRobot `next.*` as event streams.** Rejected (§6.6): a per-frame signal is not a
+  sequence of events. In pusht, `next.done` is true on the last two frames of all 206
+  episodes, so a derived "end" event would be wrong.
 
 ## 15. Consequences
 
@@ -837,9 +878,11 @@ Negative / costs:
 - Every Scene and Episode id changes (unit_id v2). The golden contract is regenerated and
   verified against raw inputs (§12), not migrated.
 - A second publication / registration path to operate and recover.
-- Snapshot storage duplicates the raw source once (9.4 GB for nuScenes mini).
-- Clock domains are new contract surface, and every recording build config gains an
-  explicit origin.
+- Snapshot storage duplicates the selected source once (5.05 GiB for nuScenes mini with
+  the CAN extracts of its own scenes; the 9.4 GB raw tree includes 4.63 GB of CAN data for
+  every nuScenes scene).
+- Clock domains are new contract surface. Every recording manifest declares its clocks with
+  origin `source`; build configs do not change (OQ-9).
 - An upstream release with changed bytes creates new units. Correspondence across releases
   with different bytes needs a separate derived relation, which does not exist yet.
   Byte-identical releases share content and units.
@@ -849,24 +892,43 @@ Negative / costs:
 
 ## 16. Open questions
 
+Decisions marked M3.0 were taken on 2026-10-22. Alternatives, measurements and tradeoffs
+are in the
+[M3.0 record](../history/multi-source-native-integration-architecture.md) §3.
+
 ```text
-OQ-1  Snapshot storage: always copy (recommended for v1) vs. pinned in-place reference for
-      content-addressed remote stores.
-OQ-2  LeRobot time: frame_index-derived ns with half-even rounding (recommended) vs. a rational
-      (frame_index, fps) clock vs. float32 timestamp × 10⁹ (rejected: inherits float32 error).
-OQ-3  Inline numeric values vs. native column references for high-rate Episodes; decide on
-      measured manifest size (aloha_static_coffee: 50 fps, 1,100 frames × 42 floats per episode).
+OQ-1  DECIDED (M3.0): always copy into SceneOps storage. No in-place reference, field or
+      resolver in M3–M5. The declaration's selection keeps storage proportional.
+OQ-2  DECIDED (M3.0): t_ns = round_half_even(frame_index · 10⁹ / fps) on lerobot.frame_time,
+      origin unit. fps is declared once on the Episode frame timeline, not on the clock
+      domain; frame indices are recovered from t_ns and not stored per occurrence. A
+      recorded timestamp that is not float32(frame_index / fps) is rejected, not snapped
+      (§6.2, §6.6). Rejected: a rational clock (breaks integer ns), float32 timestamp × 10⁹
+      (off the grid on 80–96 % of probed frames, by up to 916 ns).
+OQ-3  DECIDED (M3.0): inline numeric values; no native column reference type. Revisit only
+      when a measured episode manifest exceeds ~64 MiB or ~2 s strict load.
 OQ-4  DECIDED (R1): immutable at creation; staged inside COMPOSE_DATASET_VERSION; no draft.
-OQ-5  nuScenes unit key: scene.token (recommended: the source's identity key) vs. scene.name.
-OQ-6  Native nuScenes label import into LabelSet in M3 vs. keeping render-labels on the
-      acquisition path only.
-OQ-7  Whether the reference corpus moves its Scene fixtures to native nuScenes snapshots
-      while RobotRun Scenes stay covered by the streaming equivalence journey.
-OQ-8  LeRobot v2.x support and multi-file / multi-task episodes (not probed).
-OQ-9  The origin each existing recording build config declares (source vs. unix_epoch) for
-      header_stamp and mcap_log_time channels; default `source` until a config asserts more.
-OQ-10 Correcting a descriptor annotation (e.g. a licence) for an already registered
-      declaration: today a conflict. Options: an append-only, separately identified
-      annotation record per snapshot (recommended, if ever needed) vs. a new selection /
-      declaration. Not needed before M3.
+OQ-5  DECIDED (M3.0): nuScenes unit key = scene.token; LeRobot = str(episode_index).
+OQ-6  DECIDED (M3.0): native nuScenes labels are imported in M3, as its last slice,
+      anchored on the sample (LIDAR_TOP at sample.timestamp, group_ref = sample.token) and
+      resolved against the Scene manifest, independently of any sample view (§9).
+      render-labels stays the label path for RobotRun Scenes.
+OQ-7  OPEN until M5: whether the reference corpus moves its Scene fixtures to native
+      nuScenes snapshots while RobotRun Scenes stay covered by the streaming equivalence
+      journey. It needs the full mini snapshot (~9.3 GiB of Docker VM space with margins).
+OQ-8  OPEN: LeRobot v2.x is unsupported (the builder rejects it). Multi-file and multi-task
+      episodes follow the reader rules but stay unprobed until a dataset with them is pinned.
+OQ-9  DECIDED (M3.0): every recording clock has origin source, set by the recording
+      builders with no configuration field. unix_epoch is used only for content clocks whose
+      format defines an epoch the data agrees with (nuscenes.timestamp). A recording
+      unix_epoch assertion is added as an explicit build-config field only when a consumer
+      needs cross-RobotRun comparison.
+OQ-10 DECIDED (M3.0): no correction mechanism; one declaration with another descriptor
+      stays a conflict. Reference descriptors carry one annotation, license. A correction,
+      if ever needed, is an append-only, separately identified annotation record per
+      snapshot, never a descriptor rewrite.
 ```
+
+The M3.0 record's contract details D1–D14 are accepted as M3 implementation contracts.
+D3 (builder-assigned media types), D8 (`component_names`) and D9 (`transition` streams) are
+decided as written in §6.5 and §6.6.
