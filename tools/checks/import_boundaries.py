@@ -58,6 +58,9 @@ PACKAGES: dict[str, set[str]] = {
     # Recording: capture (Kafka -> MCAP) and publication of finalized recordings.
     # `sceneops_streaming` is reached only from the `capture` subpackage.
     "sceneops_recording": {"sceneops_core", "sceneops_storage", "sceneops_streaming"},
+    # Dataset Integration source preservation: selection, inventories, database-free
+    # snapshot publication, verified content file access. No dataset SDK, no database.
+    "sceneops_sources": {"sceneops_core", "sceneops_storage"},
     # Execution of durable Jobs and Pipelines over PostgreSQL.
     "sceneops_execution": {"sceneops_core", "sceneops_db"},
     # Acquisition lifecycle: reconciliation, status, artifact lifecycle.

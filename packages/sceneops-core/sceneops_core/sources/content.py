@@ -61,6 +61,12 @@ def validate_source_path(value: str) -> str:
     ``/``, a backslash separator) is rejected rather than rewritten.
     """
     validate_verbatim_key(value, field="path", max_length=SOURCE_PATH_MAX_LENGTH)
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        # An undecodable file name (a surrogate escape) has no canonical
+        # JSON spelling, so it cannot enter an inventory.
+        raise ValueError(f"path must be valid UTF-8, got {value!r}") from exc
     if "\\" in value:
         raise ValueError(f"path must use '/' separators, got {value!r}")
     if value.startswith("/"):

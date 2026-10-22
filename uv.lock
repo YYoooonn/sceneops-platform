@@ -32,6 +32,7 @@ members = [
     "sceneops-publisher",
     "sceneops-recording",
     "sceneops-scenes",
+    "sceneops-sources",
     "sceneops-storage",
     "sceneops-streaming",
     "sceneops-streaming-bridge",
@@ -1878,6 +1879,21 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "sceneops-core", editable = "packages/sceneops-core" },
     { name = "sceneops-recording", editable = "packages/sceneops-recording" },
+    { name = "sceneops-storage", editable = "packages/sceneops-storage" },
+]
+
+[[package]]
+name = "sceneops-sources"
+version = "0.1.0"
+source = { editable = "packages/sceneops-sources" }
+dependencies = [
+    { name = "sceneops-core" },
+    { name = "sceneops-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "sceneops-core", editable = "packages/sceneops-core" },
     { name = "sceneops-storage", editable = "packages/sceneops-storage" },
 ]
 

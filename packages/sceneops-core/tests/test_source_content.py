@@ -303,6 +303,113 @@ def test_descriptor_canonical_bytes_round_trip_and_checksum():
         load_canonical_source_snapshot_descriptor(reordered)
 
 
+def test_inventory_paths_must_be_utf8():
+    with pytest.raises(ValidationError, match="UTF-8"):
+        _entry("data/\udcff.bin")  # os.fsdecode of an undecodable name
+
+
+# --- Selection dialect (D1) -----------------------------------------------------
+
+PUSHT_TREE = (
+    ".gitattributes",
+    "README.md",
+    "data/chunk-000/file-000.parquet",
+    "meta/episodes/chunk-000/file-000.parquet",
+    "meta/info.json",
+    "meta/stats.json",
+    "meta/tasks.parquet",
+    "videos/observation.image/chunk-000/file-000.mp4",
+)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("README.md", ["README.md"]),
+        ("meta/*.json", ["meta/info.json", "meta/stats.json"]),
+        ("meta/*", ["meta/info.json", "meta/stats.json", "meta/tasks.parquet"]),
+        (
+            "meta/**",
+            [
+                "meta/episodes/chunk-000/file-000.parquet",
+                "meta/info.json",
+                "meta/stats.json",
+                "meta/tasks.parquet",
+            ],
+        ),
+        (
+            "**/file-000.parquet",
+            [
+                "data/chunk-000/file-000.parquet",
+                "meta/episodes/chunk-000/file-000.parquet",
+            ],
+        ),
+        ("**/README.md", ["README.md"]),  # '**' matches zero segments
+        ("*", [".gitattributes", "README.md"]),  # '*' matches a leading '.'
+        ("meta/????.json", ["meta/info.json"]),
+        (
+            "videos/**/chunk-???/*.mp4",
+            ["videos/observation.image/chunk-000/file-000.mp4"],
+        ),
+        ("readme.md", []),  # case-sensitive
+        ("data", []),  # whole path, never a prefix
+    ],
+)
+def test_include_pattern_matches_whole_paths(pattern, expected):
+    from sceneops_core.sources import include_pattern_matches
+
+    assert [p for p in PUSHT_TREE if include_pattern_matches(pattern, p)] == expected
+
+
+def test_reference_pusht_selection_preserves_all_but_gitattributes():
+    selection = SnapshotSelection(
+        include=("README.md", "data/**", "meta/**", "videos/**")
+    )
+    assert selection.select(reversed(PUSHT_TREE)) == PUSHT_TREE[1:]
+
+
+def test_selection_fails_when_a_pattern_matches_nothing():
+    from sceneops_core.sources import SourceSelectionError
+
+    selection = SnapshotSelection(include=("data/**", "vidoes/**"))
+    with pytest.raises(SourceSelectionError, match="vidoes"):
+        selection.select(PUSHT_TREE)
+
+
+def test_selection_matches_control_characters_so_validation_rejects_them():
+    selection = SnapshotSelection(include=("data/*",))
+    assert selection.select(["data/a\nb"]) == ("data/a\nb",)
+    with pytest.raises(ValidationError):
+        _entry("data/a\nb")
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "data/[ab].bin",
+        "data/{a,b}.bin",
+        "!data/**",
+        "data\\*.bin",
+        "data/a**",
+        "**b/x",
+        "data//x",
+        "./data/**",
+        "data/../meta/**",
+        "data/",
+    ],
+)
+def test_selection_rejects_patterns_outside_the_dialect(pattern):
+    with pytest.raises(ValidationError):
+        SnapshotSelection(include=(pattern,))
+
+
+def test_dialect_rejection_also_applies_to_a_loaded_descriptor():
+    payload = _descriptor().model_dump(mode="json")
+    payload["declaration"]["selection"]["include"] = ["data/[ab]"]
+    with pytest.raises(SourceSnapshotError, match="reserved"):
+        load_canonical_source_snapshot_descriptor(_canonical(payload))
+
+
 # --- ADR-015 §3 case table, at the identity level ------------------------------
 # Registration (not implemented here) decides reuse / no-op / conflict from
 # exactly these ids; the table is only decidable if they separate as below.

@@ -1,0 +1,13 @@
+{
+  "schema": "sceneops.raw_source/1",
+  "source_id": "lerobot-pusht",
+  "origin": {
+    "host": "huggingface",
+    "repo_type": "dataset",
+    "repo": "lerobot/pusht",
+    "revision": "7628202a2180972f291ba1bc6723834921e72c19"
+  },
+  "include": ["README.md", "data/**", "meta/**", "videos/**"],
+  "local_root": "data/raw/lerobot/pusht",
+  "license": "mit"
+}

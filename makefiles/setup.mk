@@ -37,7 +37,8 @@ UNIT_TEST_SUITES := apps/worker/tests apps/api/tests integrations/groundingdino-
 	packages/sceneops-episodes/tests \
 	packages/sceneops-evaluation/tests packages/sceneops-execution/tests \
 	packages/sceneops-inference/tests packages/sceneops-recording/tests \
-	packages/sceneops-scenes/tests packages/sceneops-streaming/tests \
+	packages/sceneops-scenes/tests packages/sceneops-sources/tests \
+	packages/sceneops-streaming/tests \
 	tools/checks/tests tools/dev/tests tools/reference/tests tools/e2e/tests tests/infrastructure/unit
 
 .PHONY: test

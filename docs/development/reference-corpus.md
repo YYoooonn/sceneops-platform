@@ -140,6 +140,46 @@ Changing the definition, the source or the tool makes `verify` fail until the
 change is deliberately locked with `UPDATE_LOCK=1`. A changed tool identity must
 re-lock every fixture of the corpus.
 
+## Pinned raw sources
+
+Some sources enter SceneOps as preserved native files rather than as an acquisition
+recording (Dataset Integration, [ADR-015](../adr/015-multi-source-platform.md)). Their
+raw copy is pinned the same way the corpus is: a hand-written definition and a
+generated lock in Git, and a local, git-ignored copy that is checked against the lock.
+
+```text
+config/reference/lerobot-pusht/source.json        hand-written definition      (Git)
+config/reference/lerobot-pusht/source.lock.json   generated checksum lock      (Git)
+data/raw/lerobot/pusht/                           the pinned copy              (local, git-ignored)
+```
+
+The definition names the upstream (`lerobot/pusht` on Hugging Face), its full commit
+revision, the include patterns (`README.md`, `data/**`, `meta/**`, `videos/**`) and the
+local root. The lock lists every selected file with its path, size and sha256, plus the
+checksum the upstream publishes for it: the LFS sha256 of an LFS file, the git blob sha1
+of any other file. A download is accepted only when it agrees with both, so the lock is
+evidence of the upstream bytes, not a record of whatever was downloaded. pusht at
+`7628202a2180972f291ba1bc6723834921e72c19` is 7 files and 7,684,382 bytes.
+
+```text
+make reference-source-fetch  [SOURCE=lerobot-pusht] [UPDATE_LOCK=1]
+make reference-source-verify [SOURCE=lerobot-pusht]
+```
+
+- `fetch` downloads every locked file missing from the local root at the pinned
+  revision, verifies it against the lock and writes it with a temporary file, fsync
+  and an atomic rename. Then it verifies the whole local tree. A present file is never
+  overwritten. With `UPDATE_LOCK=1` it first re-lists the upstream at the pinned
+  revision, applies the include patterns and rewrites the lock; nothing else writes it.
+- `verify` runs offline and writes nothing. It fails on a changed, missing or
+  unexpected local file (a stray `.DS_Store` included) and on a definition that
+  changed since the lock was written.
+- `tools/reference/raw_source.py` uses the Python standard library only and imports
+  no SceneOps package, so its checksums are independent expectations for the tests
+  that read the pinned copy (`packages/sceneops-sources/tests/test_pusht_preservation.py`
+  skips, naming the command, when the copy is absent). No container or stack is
+  involved; only `fetch` uses the network.
+
 ## Limitations
 
 - The lock pins the tool's package versions, not the host. Byte-identical

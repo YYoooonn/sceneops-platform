@@ -33,6 +33,30 @@ reference-data-verify:
 		tools/reference/reference_data.sh verify
 
 # --------------------
+# Pinned raw sources (config/reference/<source>/source.json, tools/reference/raw_source.py)
+#
+# reference-source-fetch   -- download the locked files of SOURCE missing under its
+#                             local_root (data/raw/..., git-ignored) at the pinned
+#                             upstream revision and verify the local tree against
+#                             source.lock.json. UPDATE_LOCK=1 re-locks from the
+#                             upstream listing; nothing else ever writes the lock.
+# reference-source-verify  -- the same local checks, offline and read-only.
+#
+# Standard library only; no container, no stack.
+# --------------------
+
+SOURCE     ?= lerobot-pusht
+RAW_SOURCE := python3 -I tools/reference/raw_source.py
+
+.PHONY: reference-source-fetch
+reference-source-fetch:
+	@$(RAW_SOURCE) fetch --source $(SOURCE) $(if $(UPDATE_LOCK),--update-lock)
+
+.PHONY: reference-source-verify
+reference-source-verify:
+	@$(RAW_SOURCE) verify --source $(SOURCE)
+
+# --------------------
 # Golden reference contract (config/reference/<corpus>/reference_contract.json,
 # docs/development/reference-contract.md)
 #

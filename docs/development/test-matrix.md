@@ -36,6 +36,7 @@ The terms the commands, scripts and documents share:
 | Term | Meaning | Commands |
 | --- | --- | --- |
 | Source Preparation | nuScenes → the locked MCAP corpus under `data/reference`; touches no PostgreSQL, MinIO, Redis or Kafka | `reference-data-bootstrap` (`reference-data-verify` re-checks it) |
+| Raw source pin | an upstream dataset (`lerobot/pusht`) copied at a pinned revision into `data/raw`, checked against a committed lock of its upstream checksums; touches no PostgreSQL, MinIO, Redis or Kafka ([reference-corpus.md](./reference-corpus.md#pinned-raw-sources)) | `reference-source-fetch` (`reference-source-verify` re-checks it) |
 | Recording Import | an existing MCAP → a RobotRun | `canonical-bootstrap`, composed by the contract bootstrap |
 | Streaming Acquisition | a locked MCAP replayed through ROS 2 → Kafka → capture → publish → a RobotRun | `streaming-bootstrap`, composed by the contract bootstrap |
 | RobotRun boundary | both modes end at a registered RobotRun; Scenes, Episodes and everything derived start from it and do not depend on the mode | `e2e-streaming-equivalence` proves the two RobotRuns of a fixture are equivalent |

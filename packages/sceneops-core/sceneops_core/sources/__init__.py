@@ -21,6 +21,12 @@ from .content import (
     validate_content_id,
     validate_source_path,
 )
+from .selection import (
+    SourceSelectionError,
+    include_pattern_matches,
+    select_paths,
+    validate_include_pattern,
+)
 from .snapshot import (
     SNAPSHOT_ID_SCHEMA_V1,
     SOURCE_SNAPSHOT_DESCRIPTOR_SCHEMA_V1,
@@ -43,13 +49,17 @@ __all__ = [
     "SourceContentError",
     "SourceContentInventory",
     "SourceFileEntry",
+    "SourceSelectionError",
     "SourceSnapshotDescriptor",
     "SourceSnapshotError",
     "content_checksum_for",
     "content_id_for",
+    "include_pattern_matches",
     "load_canonical_source_content_inventory",
     "load_canonical_source_snapshot_descriptor",
+    "select_paths",
     "snapshot_id_for",
     "validate_content_id",
+    "validate_include_pattern",
     "validate_source_path",
 ]

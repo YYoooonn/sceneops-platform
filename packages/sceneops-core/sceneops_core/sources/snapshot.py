@@ -32,6 +32,7 @@ operator) are execution history and have no field here.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from typing import Final, Literal
 
 from pydantic import (
@@ -52,7 +53,8 @@ from sceneops_core.common.identifiers import (
 )
 
 from ._canonical import load_canonical_model
-from .content import SOURCE_PATH_MAX_LENGTH, validate_content_id
+from .content import validate_content_id
+from .selection import select_paths, validate_include_pattern
 
 SOURCE_SNAPSHOT_DESCRIPTOR_SCHEMA_V1: Final = "sceneops.source_snapshot_descriptor/v1"
 SNAPSHOT_ID_SCHEMA_V1: Final = "sceneops.snapshot_id/v1"
@@ -70,9 +72,10 @@ class _SnapshotModel(BaseModel):
 
 class SnapshotSelection(_SnapshotModel):
     """Which files of the source tree were preserved, so what was *not*
-    preserved is explicit. Patterns are relative to the source root and kept
-    verbatim; their matching is applied by publication, which records the
-    result as the content inventory."""
+    preserved is explicit. Patterns are relative to the source root, kept
+    verbatim and written in the ``selection`` dialect (D1); publication
+    applies them to the source tree and records the result as the content
+    inventory."""
 
     include: tuple[StrictStr, ...] = Field(min_length=1)
 
@@ -80,14 +83,7 @@ class SnapshotSelection(_SnapshotModel):
     @classmethod
     def _check_include(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         for pattern in value:
-            validate_verbatim_key(
-                pattern, field="include pattern", max_length=SOURCE_PATH_MAX_LENGTH
-            )
-            if pattern.startswith("/"):
-                raise ValueError(
-                    f"include pattern must be relative to the source root, got "
-                    f"{pattern!r}"
-                )
+            validate_include_pattern(pattern)
         if list(value) != sorted(set(value)):
             raise ValueError("include patterns must be sorted and unique")
         return value
@@ -95,6 +91,11 @@ class SnapshotSelection(_SnapshotModel):
     @property
     def selection_checksum(self) -> str:
         return sha256_checksum(canonical_json_bytes(self.model_dump(mode="json")))
+
+    def select(self, candidates: Iterable[str]) -> tuple[str, ...]:
+        """The candidate paths this selection preserves, sorted; fails when
+        any pattern matches none of them."""
+        return select_paths(self.include, candidates)
 
 
 class SnapshotDeclaration(_SnapshotModel):
