@@ -65,6 +65,17 @@ Details: [Streaming transport](./streaming-transport.md) §26, §31 and
   that stops before `RUN_END` finalizes and commits nothing and is re-run by an
   operator. There is no multi-instance coordination, and capture-session state is not
   durable.
+- **A run whose `RUN_END` never reached Kafka is recovered by hand.** Its records cannot
+  complete it: every Capture of the run aborts on the idle guard and finalizes nothing
+  ([Streaming transport](./streaming-transport.md), "Restart and failure behavior").
+  Reconciliation and `make acquisition-status` classify it `capture_unfinished`
+  (health `pending`, no operator action), the same as a capture still in progress, so
+  only its age shows that it was abandoned; the streaming bootstrap's resume fails on
+  it. The operator removes the run's `.partial` directory and streams the run again
+  under the same `robot_run_id`. The aborted session stays in the topic until
+  retention, so a later Capture of that run that starts before the new `RUN_START`
+  (a scan without a start position) fails with `RunLifecycleError`; the new position
+  is not persisted. Nothing removes a partial capture or re-streams automatically.
 - **Capture does not trigger publication or registration.** `publish-pending` and
   `reconcile --once --apply` must be invoked (`make recovery-up` loops them locally).
   Legacy finalized bags without a receipt, conflicts, integrity incidents and a
