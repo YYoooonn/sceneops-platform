@@ -184,25 +184,30 @@ def _content_lineage(lineage: dict) -> dict:
     }
 
 
-@pytest.mark.parametrize(
-    ("model", "manifest"),
-    [
-        (SceneManifest, lambda: build_scene_manifest()),
-        (
-            EpisodeManifest,
-            lambda: episode_manifest(occurrences=[observation("/camera/front", 10)]),
-        ),
-    ],
-)
-def test_manifests_admit_content_bindings_only_with_a_content_builder(model, manifest):
-    """No dormant branch: until a content builder produces ContentUnitSource
-    lineage, registration and every consumer see recording sources only."""
-    payload = json.loads(manifest().to_canonical_bytes())
-    model.model_validate(payload)
+def test_scene_manifests_admit_content_bindings_only_with_a_content_builder():
+    """No dormant branch: until a content Scene builder produces
+    ContentUnitSource lineage, Scene registration and every Scene consumer see
+    recording sources only."""
+    payload = json.loads(build_scene_manifest().to_canonical_bytes())
+    SceneManifest.model_validate(payload)
     with pytest.raises(ValidationError) as rejected:
-        model.model_validate(
+        SceneManifest.model_validate(
             {**payload, "lineage": _content_lineage(payload["lineage"])}
         )
     assert ("lineage", "source", "source_kind") in {
         error["loc"] for error in rejected.value.errors()
     }
+
+
+def test_episode_manifests_admit_either_source_binding():
+    """The LeRobot Episode builder produces ContentUnitSource lineage, so the
+    Episode schema admits both bindings of the union."""
+    payload = json.loads(
+        episode_manifest(
+            occurrences=[observation("/camera/front", 10)]
+        ).to_canonical_bytes()
+    )
+    content = EpisodeManifest.model_validate(
+        {**payload, "lineage": _content_lineage(payload["lineage"])}
+    )
+    assert content.lineage.source.source_kind == "content"

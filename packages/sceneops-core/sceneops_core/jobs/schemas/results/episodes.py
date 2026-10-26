@@ -39,12 +39,47 @@ class BuildRecordingEpisodesJobResult(BaseJobResult):
     metadata: JsonDict = Field(default_factory=dict)
 
 
+class BuildSnapshotEpisodesJobResult(BaseJobResult):
+    """The Episodes built from the content of one SourceSnapshot.
+
+    ``snapshot_id`` is the declaration this build read and ``content_id`` /
+    ``content_checksum`` the bytes it resolved to: the build's execution
+    provenance (ADR-015 §4, MS-14), recorded here and never in a manifest.
+    ``manifest_artifact_ids`` are the EPISODE_MANIFEST ArtifactRecords of
+    the built units, in unit-key order, for REGISTER_EPISODES; a build of the
+    same content through another snapshot finds them already recorded, with
+    the Job that first produced them."""
+
+    snapshot_id: str
+    content_id: str
+    content_checksum: str
+    producer_fingerprint: str
+
+    unit_keys: list[str] = Field(default_factory=list)
+    manifest_artifact_ids: list[str] = Field(default_factory=list)
+    # How many of manifest_artifact_ids this execution recorded.
+    created_manifest_count: int = 0
+
+    episode_count: int = 0
+    observation_count: int = 0
+    state_count: int = 0
+    action_count: int = 0
+    event_count: int = 0
+    transition_count: int = 0
+    features: list[str] = Field(default_factory=list)
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
 class RegisterEpisodesJobResult(BaseJobResult):
     """The Episode revisions of one build, each as its complete pin, in
-    unit id order; ``episode_ids`` are their units in the same order. See
-    ``RegisterScenesJobResult`` for the decision lists."""
+    unit id order; ``episode_ids`` are their units in the same order. One
+    build reads one source: ``source_kind`` / ``source_id`` name it (a
+    RobotRun or a SourceContent). See ``RegisterScenesJobResult`` for the
+    decision lists."""
 
-    robot_run_id: str
+    source_kind: str
+    source_id: str
     producer_fingerprint: str
 
     revisions: list[RevisionPin] = Field(default_factory=list)
@@ -78,11 +113,13 @@ class ProfileEpisodeJobResult(BaseJobResult):
     state_count: int = 0
     action_count: int = 0
     event_count: int = 0
+    transition_count: int = 0
 
     observation_topics: list[str] = Field(default_factory=list)
     state_topics: list[str] = Field(default_factory=list)
     action_topics: list[str] = Field(default_factory=list)
     event_topics: list[str] = Field(default_factory=list)
+    transition_topics: list[str] = Field(default_factory=list)
 
     profile_run_id: str | None = None
     report_uri: str | None = None

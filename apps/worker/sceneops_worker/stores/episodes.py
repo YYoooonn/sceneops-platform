@@ -21,10 +21,15 @@ class EpisodeStore:
         return await self._repo.get(episode_id)
 
     async def list(
-        self, *, robot_run_id: str | None = None, limit: int = 100, offset: int = 0
+        self,
+        *,
+        robot_run_id: str | None = None,
+        content_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[EpisodeRecord]:
         return await self._repo.list(
-            robot_run_id=robot_run_id, limit=limit, offset=offset
+            robot_run_id=robot_run_id, content_id=content_id, limit=limit, offset=offset
         )
 
     async def get_revision(
@@ -43,10 +48,12 @@ class EpisodeStore:
         return await self._repo.get_revisions(keys)
 
     async def list_source_revisions(
-        self, *, robot_run_id: str, producer_fingerprint: str
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
     ) -> list[EpisodeRevisionRecord]:
         return await self._repo.list_source_revisions(
-            robot_run_id=robot_run_id, producer_fingerprint=producer_fingerprint
+            source_kind=source_kind,
+            source_id=source_id,
+            producer_fingerprint=producer_fingerprint,
         )
 
     async def register_revision(

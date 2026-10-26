@@ -83,7 +83,8 @@ async def test_insert_writes_the_version_and_all_members_together(
         sources=[
             RevisionSourceClause(
                 domain="scene",
-                robot_run_id=scene.robot_run_id,
+                source_kind="recording",
+                source_id=scene.robot_run_id,
                 producer_fingerprint=scene.producer_fingerprint,
             )
         ]
@@ -285,8 +286,7 @@ async def test_the_membership_of_a_committed_version_is_closed_and_undeletable(
         async def remove():
             await session.execute(
                 text(
-                    "DELETE FROM dataset_version_members "
-                    "WHERE dataset_version_id = :id"
+                    "DELETE FROM dataset_version_members WHERE dataset_version_id = :id"
                 ),
                 {"id": version_id},
             )

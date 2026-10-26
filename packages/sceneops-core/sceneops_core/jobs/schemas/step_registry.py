@@ -120,6 +120,12 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("publish_observation_payloads", "Publish observation payloads"),
         step("publish_episode_manifests", "Publish episode manifests"),
     ],
+    JobType.BUILD_SNAPSHOT_EPISODES: [
+        step("resolve_snapshot", "Resolve the snapshot to its registered content"),
+        step("materialize_content", "Materialize verified content files"),
+        step("plan_episodes", "Plan episodes"),
+        step("publish_episode_manifests", "Publish episode manifests"),
+    ],
     JobType.REGISTER_EPISODES: [
         step("verify_episode_manifests", "Verify episode manifests"),
         step("resolve_identity_scope", "Resolve identity and scope"),

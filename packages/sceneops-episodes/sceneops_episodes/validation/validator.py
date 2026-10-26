@@ -11,7 +11,9 @@ from .reports import EpisodeValidationIssue, EpisodeValidationResult
 
 _PROJECTED_FIELDS = (
     "episode_id",
+    "source_kind",
     "robot_run_id",
+    "content_id",
     "unit_key",
     "producer_fingerprint",
     "window_clock",
@@ -21,10 +23,12 @@ _PROJECTED_FIELDS = (
     "state_topics",
     "action_topics",
     "event_topics",
+    "transition_topics",
     "observation_count",
     "state_count",
     "action_count",
     "event_count",
+    "transition_count",
 )
 
 
@@ -101,5 +105,6 @@ class EpisodeManifestValidator:
             state_count=len(manifest.states),
             action_count=len(manifest.actions),
             event_count=len(manifest.events),
+            transition_count=len(manifest.transitions),
             issues=issues,
         )

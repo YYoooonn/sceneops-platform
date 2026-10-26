@@ -194,13 +194,14 @@ async def _resolve_selector(
             context.scene_store if clause.domain == "scene" else context.episode_store
         )
         selected = await store.list_source_revisions(
-            robot_run_id=clause.robot_run_id,
+            source_kind=clause.source_kind,
+            source_id=clause.source_id,
             producer_fingerprint=clause.producer_fingerprint,
         )
         if not selected:
             raise CompositionInputError(
                 f"selector clause selects no registered {clause.domain} revision: "
-                f"robot_run_id={clause.robot_run_id}, "
+                f"{clause.source_kind} source {clause.source_id}, "
                 f"producer_fingerprint={clause.producer_fingerprint}"
             )
         (scenes if clause.domain == "scene" else episodes).extend(selected)

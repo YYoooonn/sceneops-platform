@@ -69,7 +69,7 @@ from pydantic import (
     model_validator,
 )
 
-from sceneops_core.artifacts.schemas.payload import PayloadRef
+from sceneops_core.artifacts.schemas.payload import ArtifactPayloadRef
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.common.identifiers import (
@@ -217,7 +217,7 @@ class SceneObservation(_ManifestModel):
     observation_id: LocalId
     channel: VerbatimKey
     timestamp_ns: SourceTimestampNs
-    payload: PayloadRef
+    payload: ArtifactPayloadRef
     calibration_id: LocalId | None = None
     ego_pose_id: LocalId | None = None
     image_size: ImageSize | None = None

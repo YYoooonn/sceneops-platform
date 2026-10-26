@@ -89,10 +89,12 @@ class PostgresSceneRepository:
         return found
 
     async def list_source_revisions(
-        self, *, robot_run_id: str, producer_fingerprint: str
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
     ) -> list[SceneRevisionRecord]:
+        if source_kind != "recording":
+            return []
         return await self._revisions(
-            SceneModel.robot_run_id == robot_run_id,
+            SceneModel.robot_run_id == source_id,
             SceneRevisionModel.producer_fingerprint == producer_fingerprint,
         )
 

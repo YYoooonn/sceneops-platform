@@ -142,15 +142,20 @@ def test_summaries_aggregate_member_projections_per_domain():
 # --- selector ------------------------------------------------------------------------
 
 
-def _clause(domain="scene", run="run-1", fingerprint=FINGERPRINT):
-    return {"domain": domain, "robot_run_id": run, "producer_fingerprint": fingerprint}
+def _clause(domain="scene", run="run-1", fingerprint=FINGERPRINT, kind="recording"):
+    return {
+        "domain": domain,
+        "source_kind": kind,
+        "source_id": run,
+        "producer_fingerprint": fingerprint,
+    }
 
 
 def test_selector_clauses_are_canonical_and_unique():
     selector = RevisionSelector.model_validate(
         {"sources": [_clause("scene", "run-2"), _clause("episode", "run-1")]}
     )
-    assert [(c.domain, c.robot_run_id) for c in selector.sources] == [
+    assert [(c.domain, c.source_id) for c in selector.sources] == [
         ("episode", "run-1"),
         ("scene", "run-2"),
     ]
@@ -165,6 +170,8 @@ def test_selector_clauses_are_canonical_and_unique():
     [
         _clause(domain="robot_run"),
         _clause(run=""),
+        _clause(kind="snapshot"),
+        {**_clause(), "robot_run_id": "run-1"},
         _clause(fingerprint="abc"),
         {**_clause(), "dataset_version": "v1"},
     ],

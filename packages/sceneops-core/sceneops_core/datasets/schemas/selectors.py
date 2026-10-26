@@ -9,7 +9,8 @@ later.
 
     RevisionSourceClause   every revision registered for one source under
                            one producer fingerprint, in one domain:
-                             units of domain whose source is robot_run_id
+                             units of domain whose source is (source_kind,
+                               source_id): a RobotRun or a SourceContent
                              revision.producer_fingerprint == producer_fingerprint
                            One unit and one fingerprint have at most one
                            revision (MS-7), so a clause selects at most one
@@ -20,6 +21,8 @@ later.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import ConfigDict, Field, StrictStr, field_validator
 
@@ -36,11 +39,17 @@ class RevisionSourceClause(SceneOpsBaseModel):
     model_config = _FROZEN
 
     domain: CanonicalDomain
-    robot_run_id: StrictStr = Field(min_length=1)
+    source_kind: Literal["recording", "content"]
+    source_id: StrictStr = Field(min_length=1)
     producer_fingerprint: StrictStr = Field(pattern=SHA256_CHECKSUM_PATTERN)
 
-    def sort_key(self) -> tuple[str, str, str]:
-        return (self.domain, self.robot_run_id, self.producer_fingerprint)
+    def sort_key(self) -> tuple[str, str, str, str]:
+        return (
+            self.domain,
+            self.source_kind,
+            self.source_id,
+            self.producer_fingerprint,
+        )
 
 
 class RevisionSelector(SceneOpsBaseModel):

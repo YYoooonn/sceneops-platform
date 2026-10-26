@@ -538,15 +538,27 @@ async def test_revision_lookup_by_pin_and_by_source(
     assert await repo.get_revisions([]) == []
 
     by_source = await repo.list_source_revisions(
-        robot_run_id=run, producer_fingerprint=a.producer_fingerprint
+        source_kind="recording",
+        source_id=run,
+        producer_fingerprint=a.producer_fingerprint,
     )
     assert sorted(r.scene_id for r in by_source) == sorted([a.scene_id, b.scene_id])
     assert [
         r.pin()
         for r in await repo.list_source_revisions(
-            robot_run_id=run, producer_fingerprint=other_build.producer_fingerprint
+            source_kind="recording",
+            source_id=run,
+            producer_fingerprint=other_build.producer_fingerprint,
         )
     ] == [other_build.pin()]
+    assert (
+        await repo.list_source_revisions(
+            source_kind="content",
+            source_id=run,
+            producer_fingerprint=a.producer_fingerprint,
+        )
+        == []
+    )
 
 
 # --- concurrency (independent committed sessions) -------------------------------

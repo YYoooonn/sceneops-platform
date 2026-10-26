@@ -43,10 +43,12 @@ class SceneStore:
         return await self._repo.get_revisions(keys)
 
     async def list_source_revisions(
-        self, *, robot_run_id: str, producer_fingerprint: str
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
     ) -> list[SceneRevisionRecord]:
         return await self._repo.list_source_revisions(
-            robot_run_id=robot_run_id, producer_fingerprint=producer_fingerprint
+            source_kind=source_kind,
+            source_id=source_id,
+            producer_fingerprint=producer_fingerprint,
         )
 
     async def register_revision(

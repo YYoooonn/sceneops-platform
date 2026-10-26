@@ -145,3 +145,29 @@ reference-verify-selftest:
 reference-verify:
 	@$(REFERENCE_VERIFY_ENV) $(REFERENCE_VERIFY) verify $(if $(DEEP),--deep) $(if $(MODE),--mode $(MODE)) \
 		$(if $(FIXTURE),--fixture $(FIXTURE))
+
+# --------------------
+# LeRobot Episodes from the pinned pusht snapshot (tools/reference/lerobot_verify.py,
+# docs/development/reference-verification.md "LeRobot Episodes"). The expectations are
+# derived from the raw tree at data/raw/lerobot/pusht by the documented rules.
+#
+# reference-verify-lerobot-selftest  -- a synthetic state built from the derivation
+#                                       passes and every negative control is detected
+#                                       [EPISODE=<n>]. No stack.
+# reference-verify-lerobot           -- the platform's Episodes of SNAPSHOT_ID against
+#                                       the derivation, then the negative controls
+#                                       (read-only) [EPISODE=<n>] [DATASET=<id>/<version>]
+# --------------------
+
+LEROBOT_VERIFY := uv run --no-sync python -I tools/reference/lerobot_verify.py \
+	$(if $(EPISODE),--episode $(EPISODE))
+
+.PHONY: reference-verify-lerobot-selftest
+reference-verify-lerobot-selftest:
+	@$(LEROBOT_VERIFY) selftest
+
+.PHONY: reference-verify-lerobot
+reference-verify-lerobot:
+	@test -n "$(SNAPSHOT_ID)" || { echo "SNAPSHOT_ID=<snapshot id> is required"; exit 2; }
+	@$(REFERENCE_VERIFY_ENV) $(LEROBOT_VERIFY) verify --snapshot-id $(SNAPSHOT_ID) \
+		$(if $(DATASET),--dataset $(DATASET))

@@ -1,0 +1,11 @@
+{
+  "features": [
+    {"feature": "observation.image", "role": "observation"},
+    {"feature": "observation.state", "role": "state"},
+    {"feature": "action", "role": "action"},
+    {"feature": "next.reward", "role": "transition"},
+    {"feature": "next.done", "role": "transition"},
+    {"feature": "next.success", "role": "transition"}
+  ],
+  "task_events": true
+}

@@ -83,12 +83,13 @@ class FakeEpisodes:
             None,
         )
 
-    async def list(self, *, robot_run_id=None, limit=100, offset=0):
+    async def list(self, *, robot_run_id=None, content_id=None, limit=100, offset=0):
         units = {r.episode_id: r.unit() for r in self.records}
         items = [
             units[e]
             for e in sorted(units)
-            if robot_run_id is None or units[e].robot_run_id == robot_run_id
+            if (robot_run_id is None or units[e].robot_run_id == robot_run_id)
+            and (content_id is None or units[e].content_id == content_id)
         ]
         return items[offset : offset + limit]
 

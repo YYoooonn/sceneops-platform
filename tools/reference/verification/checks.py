@@ -19,7 +19,7 @@ from .expectations import EpisodeExpectation, SceneExpectation
 from .findings import Findings
 
 SCENE_MANIFEST_SCHEMA = "sceneops.scene_manifest/v3"
-EPISODE_MANIFEST_SCHEMA = "sceneops.episode_manifest/v2"
+EPISODE_MANIFEST_SCHEMA = "sceneops.episode_manifest/v3"
 PAYLOAD_REF_KIND = "artifact"
 MANIFEST_KIND = {"scene": "scene_manifest", "episode": "episode_manifest"}
 
@@ -518,6 +518,32 @@ def check_episode_manifest(
         for s in manifest.get("streams", [])
     }
     f.equal(streams, exp_unit.streams, "episode_streams", "streams")
+    # A recording Episode is asynchronous: no frame grid, no per-frame
+    # transition stream, no native occurrence reference, no component names.
+    f.equal(
+        {
+            "frame_timeline": manifest.get("frame_timeline"),
+            "transitions": manifest.get("transitions"),
+            "native_refs": sorted(
+                {r.get("native_ref") for role in _ROLES for r in manifest.get(role, [])}
+                - {None}
+            ),
+            "component_names": [
+                fd.get("component_names")
+                for s in manifest.get("streams", [])
+                for fd in s.get("fields", [])
+                if fd.get("component_names") is not None
+            ],
+        },
+        {
+            "frame_timeline": None,
+            "transitions": [],
+            "native_refs": [],
+            "component_names": [],
+        },
+        "episode_streams",
+        "recording Episode v3 fields",
+    )
     check_clock_domains(
         f,
         manifest,

@@ -117,7 +117,10 @@ test-integration:
 #   sources     source preservation of the reference snapshots (pusht, the nuScenes
 #               scene-0061 slice): publish-snapshot + REGISTER_SOURCE_SNAPSHOT on a
 #               disposable execution runtime, after the snapshot capacity preflight
-INFRA_SUITES := pipelines recovery kafka boundaries sources
+#   lerobot-episodes
+#               LeRobot pusht -> canonical Episodes: snapshot_episode_building on a
+#               disposable execution runtime, held to the raw-source verifier
+INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes
 SUITE ?= pipelines
 
 .PHONY: test-infrastructure
@@ -146,6 +149,7 @@ infra-suite-pipelines:
 		--ignore=tests/infrastructure/test_acquisition_recovery.py \
 		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
 		--ignore=tests/infrastructure/test_source_preservation_acceptance.py \
+		--ignore=tests/infrastructure/test_lerobot_episode_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
 
 REFERENCE_SNAPSHOTS := lerobot-pusht nuscenes-scene-0061
@@ -163,6 +167,20 @@ infra-suite-sources:
 		SNAPSHOTS="$(REFERENCE_SNAPSHOTS)"
 	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
 		tests/infrastructure/test_source_preservation_acceptance.py -v
+
+.PHONY: infra-suite-lerobot-episodes
+# LeRobot Episode acceptance (ADR-015 §6.7, M3 S3): the pinned pusht snapshot is
+# published and registered, then SNAPSHOT_EPISODE_BUILDING builds, registers, composes,
+# validates and profiles its Episodes on a disposable execution runtime; Episode 0 and
+# then the whole corpus are held to tools/reference/lerobot_verify.py (raw-source
+# derivation + negative controls). Refused first when the snapshot does not fit the
+# Docker VM. Prerequisites: `make local-up` (servers and images) and
+# `make reference-source-fetch`. A skip here is a failure.
+infra-suite-lerobot-episodes:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="lerobot-pusht"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_lerobot_episode_acceptance.py -v
 
 .PHONY: infra-suite-kafka
 infra-suite-kafka: streaming-test streaming-producer-test smoke-streaming

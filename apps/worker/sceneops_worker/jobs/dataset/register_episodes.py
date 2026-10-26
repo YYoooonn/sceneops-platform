@@ -41,7 +41,8 @@ class RegisterEpisodesJobHandler(
             manifest_artifact_ids=request.params.manifest_artifact_ids,
         )
         return RegisterEpisodesJobResult(
-            robot_run_id=registration.robot_run_id,
+            source_kind=registration.source_kind,
+            source_id=registration.source_id,
             producer_fingerprint=registration.producer_fingerprint,
             revisions=registration.pins,
             episode_ids=registration.episode_ids(),

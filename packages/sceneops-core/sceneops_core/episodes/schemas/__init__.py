@@ -1,6 +1,6 @@
 from .enums import EpisodeOutcome
 from .manifests import (
-    EPISODE_MANIFEST_SCHEMA_V2,
+    EPISODE_MANIFEST_SCHEMA_V3,
     EpisodeField,
     EpisodeLineage,
     EpisodeManifest,
@@ -9,6 +9,7 @@ from .manifests import (
     EpisodeStream,
     EpisodeTimeWindow,
     EpisodeValue,
+    FrameTimeline,
     NonCanonicalEpisodeManifestError,
     UnsupportedEpisodeManifestVersionError,
     load_canonical_episode_manifest,
@@ -22,7 +23,7 @@ from .records import (
 from .runs import EpisodeProfileRunRecord, EpisodeValidationRunRecord
 
 __all__ = [
-    "EPISODE_MANIFEST_SCHEMA_V2",
+    "EPISODE_MANIFEST_SCHEMA_V3",
     "EpisodeField",
     "EpisodeLineage",
     "EpisodeManifest",
@@ -36,6 +37,7 @@ __all__ = [
     "EpisodeTimeWindow",
     "EpisodeValidationRunRecord",
     "EpisodeValue",
+    "FrameTimeline",
     "NonCanonicalEpisodeManifestError",
     "UnsupportedEpisodeManifestVersionError",
     "episode_id_for",

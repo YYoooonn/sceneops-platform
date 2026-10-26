@@ -146,8 +146,9 @@ version name or anything mutable. `manifest_artifact_id` is a function of
 `(unit_id, manifest_checksum)`, so it adds nothing. Two versions may have equal
 compositions under different names.
 
-`RevisionSourceClause {domain, robot_run_id, producer_fingerprint}` selects every
-revision of a `domain` unit sourced from `robot_run_id` and registered under
+`RevisionSourceClause {domain, source_kind, source_id, producer_fingerprint}` selects
+every revision of a `domain` unit sourced from `(source_kind, source_id)` — a
+RobotRun (`recording`) or a SourceContent (`content`) — and registered under
 `producer_fingerprint`. One unit and one fingerprint have at most one revision
 (MS-7), so a clause selects at most one revision per unit; clauses are unique and
 kept in canonical order, and their union is the selection. A selector is resolved
@@ -185,10 +186,13 @@ Contract: [Scene domain](./scene-domain.md) §2,
 ```text
 scenes / episodes                      the unit
   scene_id | episode_id   PK           unit_id v2 = f(domain, source_kind,
-                                       robot_run_id, unit_key); no DatasetVersion
-  source_kind                          'recording' (CHECK)
-  robot_run_id            FK robot_runs RESTRICT
-  unit_key                             unique (robot_run_id, unit_key)
+                                       source_id, unit_key); no DatasetVersion
+  source_kind                          scenes: 'recording' (CHECK);
+                                       episodes: 'recording' | 'content' (CHECK)
+  robot_run_id            FK robot_runs RESTRICT; unique (robot_run_id, unit_key)
+  content_id (episodes)   FK source_contents RESTRICT; unique (content_id, unit_key)
+                                       exactly the column of source_kind is set (CHECK)
+  unit_key
   registered_at
 
 scene_revisions / episode_revisions    one registered manifest of a unit
@@ -215,13 +219,14 @@ Rules the schema enforces:
   that derived another id for it fails instead of forking identity. The
   manifest ArtifactRecord id is the revision's deterministic id, so one
   artifact belongs to exactly one revision.
-- **Source binding.** Unit rows admit recording sources only (`ck_*_source_kind`,
-  `robot_run_id` NOT NULL). The source-unit key is per source column, so it never
-  relies on a nullable column: a source kind with its own column (a content id)
-  needs its own unique key and a CHECK that exactly the column of the row's
-  `source_kind` is set. One unique key over nullable source columns would not hold
-  (PostgreSQL treats NULLs as distinct), and with `NULLS NOT DISTINCT` it would make
-  equal unit keys of different sources conflict. The registration code compares every
+- **Source binding.** Scene rows admit recording sources only
+  (`ck_scenes_source_kind`, `robot_run_id` NOT NULL). Episode rows admit a recording
+  or a content source: one column per source kind, each with its own foreign key and
+  its own source-unit key (`uq_episodes_source_unit`, `uq_episodes_content_source_unit`),
+  and a CHECK that exactly the column of the row's `source_kind` is set
+  (`ck_episodes_source_kind`). One unique key over nullable source columns would not
+  hold (PostgreSQL treats NULLs as distinct), and with `NULLS NOT DISTINCT` it would
+  make equal unit keys of different sources conflict. The registration code compares every
   unit column with the candidate, not a fixed column list.
 - **Revisions.** A unit has one or more revisions and no "current" one. One unit
   and one producer fingerprint have at most one manifest checksum
@@ -263,8 +268,8 @@ it.
 
 An Episode revision projects, besides the shared pin and window columns, the
 topics of each role with at least one occurrence
-(`observation_topics` / `state_topics` / `action_topics` / `event_topics`) and
-the matching counts. Episodes carry no status, task or outcome column (see
+(`observation_topics` / `state_topics` / `action_topics` / `event_topics` /
+`transition_topics`) and the matching counts. Episodes carry no status, task or outcome column (see
 [Episode domain](./episode-domain.md) §5).
 
 ## 5. Robot / RobotRun / Mission / RobotState

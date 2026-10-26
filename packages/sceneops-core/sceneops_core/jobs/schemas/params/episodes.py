@@ -8,6 +8,7 @@ from sceneops_core.episodes.alignment import (
     TemporalSourceContext,
 )
 from sceneops_core.episodes.curation import CurationPolicy
+from sceneops_core.episodes.lerobot_build import LeRobotEpisodeBuildConfig
 from sceneops_core.episodes.recording_build import RecordingEpisodeBuildConfig
 
 from .base import (
@@ -15,6 +16,7 @@ from .base import (
     RecordingBuildJobParams,
     RevisionAssessmentJobParams,
     RevisionRegistrationJobParams,
+    SnapshotBuildJobParams,
 )
 
 
@@ -29,6 +31,25 @@ class BuildRecordingEpisodesJobParams(RecordingBuildJobParams):
 
     robot_run_id: str = Field(min_length=1)
     build_config: RecordingEpisodeBuildConfig
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class BuildSnapshotEpisodesJobParams(SnapshotBuildJobParams):
+    """One registered SourceSnapshot -> the canonical Episodes of its content
+    (ADR-015 §6.7; M3.0 D2).
+
+    ``snapshot_id`` names the declaration an operator selects; the build
+    resolves it to its content once, records both in its result as execution
+    provenance, and builds from the content alone, so every snapshot of the
+    same bytes yields the same manifests. ``build_config`` is the producer's
+    whole semantic configuration. ``unit_keys`` limits the build to those
+    native units (default: every unit of the content); it is execution
+    scope, never configuration, so a subset yields the same revisions. No
+    DatasetVersion is involved.
+    """
+
+    build_config: LeRobotEpisodeBuildConfig
 
     metadata: JsonDict = Field(default_factory=dict)
 

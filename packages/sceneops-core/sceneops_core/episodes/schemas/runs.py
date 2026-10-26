@@ -68,11 +68,13 @@ class EpisodeProfileRunRecord(_EpisodeRunRecord):
     state_count: int | None = None
     action_count: int | None = None
     event_count: int | None = None
+    transition_count: int | None = None
 
     observation_topics: list[str] = Field(default_factory=list)
     state_topics: list[str] = Field(default_factory=list)
     action_topics: list[str] = Field(default_factory=list)
     event_topics: list[str] = Field(default_factory=list)
+    transition_topics: list[str] = Field(default_factory=list)
 
     window_duration_ns: int | None = None
 

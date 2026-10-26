@@ -21,6 +21,7 @@ from .clocks import (
     recording_clock_domains,
     require_comparable,
 )
+from .frame_time import NS_PER_SECOND, frame_index_of, frame_time_ns
 from .producer import (
     EXECUTION_SCOPED_CONFIG_KEYS,
     PRODUCER_FINGERPRINT_SCHEMA_V1,
@@ -68,6 +69,7 @@ __all__ = [
     "EXECUTION_SCOPED_CONFIG_KEYS",
     "INT64_MAX",
     "MANIFEST_ARTIFACT_ID_SCHEMA_V1",
+    "NS_PER_SECOND",
     "PRODUCER_FINGERPRINT_SCHEMA_V1",
     "RECORDING_CLOCK_ORIGIN",
     "RECORDING_CLOCK_RESOLUTION_NS",
@@ -105,6 +107,8 @@ __all__ = [
     "clock_instance",
     "compute_producer_fingerprint",
     "decide_revision_registration",
+    "frame_index_of",
+    "frame_time_ns",
     "manifest_artifact_id_for",
     "normalize_build_config",
     "promote_to_ns",

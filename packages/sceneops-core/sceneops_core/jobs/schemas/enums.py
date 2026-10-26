@@ -46,6 +46,9 @@ class JobType(StrEnum):
     BUILD_RECORDING_EPISODES = "build_recording_episodes"
     REGISTER_EPISODES = "register_episodes"
 
+    # ── registered SourceSnapshot → canonical Episodes (ADR-015 §6.7) ──
+    BUILD_SNAPSHOT_EPISODES = "build_snapshot_episodes"
+
     # ── episode-level jobs ──
     VALIDATE_EPISODE = "validate_episode"
     PROFILE_EPISODE = "profile_episode"

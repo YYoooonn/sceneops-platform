@@ -24,11 +24,13 @@ class EpisodeProfileResult(SceneOpsBaseModel):
     state_count: int = 0
     action_count: int = 0
     event_count: int = 0
+    transition_count: int = 0
 
     observation_topics: list[str] = Field(default_factory=list)
     state_topics: list[str] = Field(default_factory=list)
     action_topics: list[str] = Field(default_factory=list)
     event_topics: list[str] = Field(default_factory=list)
+    transition_topics: list[str] = Field(default_factory=list)
 
     window_clock: str
     window_duration_ns: int

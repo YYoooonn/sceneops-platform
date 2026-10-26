@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
 from sceneops_core.provenance import CanonicalDomain, RevisionPin
+from sceneops_core.sources import validate_snapshot_id
 
 
 class BaseJobParams(SceneOpsBaseModel):
@@ -88,6 +89,37 @@ class RecordingBuildJobParams(RecordingConsumerJobParams):
     @classmethod
     def _reject_dataset_version(cls, data: Any) -> Any:
         return _rejecting(data, _dataset_version_fields(_BUILD_REASON))
+
+
+_SNAPSHOT_BUILD_REASON = (
+    "a canonical build is a function of the snapshot's content and build_config "
+    "only; DatasetVersion membership is a separate composition"
+)
+
+
+class SnapshotBuildJobParams(BaseJobParams):
+    """Params of a canonical build from one registered SourceSnapshot
+    (ADR-015 §6.7, MS-4, MS-14): the declaration by ``snapshot_id`` and the
+    native units to build by ``unit_keys`` (default: all), kept unique and
+    sorted so the request's order does not change its execution key.
+    DatasetVersion fields are rejected loudly, as for recording builds."""
+
+    snapshot_id: str = Field(min_length=1)
+    unit_keys: list[str] | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_dataset_version(cls, data: Any) -> Any:
+        return _rejecting(data, _dataset_version_fields(_SNAPSHOT_BUILD_REASON))
+
+    @model_validator(mode="after")
+    def _check_scope(self) -> SnapshotBuildJobParams:
+        validate_snapshot_id(self.snapshot_id)
+        if self.unit_keys is not None:
+            if len(set(self.unit_keys)) != len(self.unit_keys):
+                raise ValueError("unit_keys must be unique")
+            self.unit_keys = sorted(self.unit_keys)
+        return self
 
 
 _MEMBERSHIP_REASON = (

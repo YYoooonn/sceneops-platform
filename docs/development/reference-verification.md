@@ -93,6 +93,34 @@ Rules from [Scene domain](../architecture/scene-domain.md) §1 and §6,
 | payloads | every reference has `kind = artifact` and resolves to an `observation_payload` record with exactly its checksum, size and media type, owned by the RobotRun; the object exists with that size (`--deep`: those bytes); one artifact per recorded message and extraction, shared by the Scene and the Episode |
 | DatasetVersion | members are exactly the mode's derived unit ids, one per unit; each pin names a registered revision and its artifact id recomputes; `composition_checksum` recomputed from the pins; summaries (`scene_count`, `observation_count`, `keyframe_count`, `observed_channels`, `episode_count`) equal the derivation |
 
+### LeRobot Episodes (raw pusht → expectations)
+
+`tools/reference/lerobot_verify.py` with `verification/lerobot.py` holds the Episodes a
+`SNAPSHOT_EPISODE_BUILDING` run produced from the pinned pusht snapshot to the raw tree
+`data/raw/lerobot/pusht` and `config/reference/lerobot-pusht/episode_build_config.json`.
+It reads the tree with its own pyarrow / json reader and implements the rules of
+[Episode domain](../architecture/episode-domain.md) §3.2 and §4 and
+[ADR-015](../adr/015-multi-source-platform.md) §5, §6.2, §6.5, §6.6 itself:
+
+| Subject | Rule |
+| --- | --- |
+| content | inventory = the selected files, `{path, size_bytes, sha256}`, sorted; `content_checksum = sha256(canonical_json(files))`; `content_id = content-<sha256(canonical_json({content_id_schema, content_checksum}))[:32]>`; the registered content and the snapshot declaration must match |
+| unit | one per native episode; `unit_key = str(episode_index)`; unit id with `source_kind = content`, `source_id = content_id` |
+| time | `lerobot.frame_time`, origin `unit`, resolution 1 ns; frame `k` at `round_half_even(k · 10⁹ / fps)` on exact rationals; window `[0, t(length − 1) + 1)`; `frame_timeline {clock, fps, length}`; an episode whose recorded timestamps are not `float32(frame_index / fps)` must not be built |
+| streams | topic = feature, `schema_name` = dtype, field `value` with the vector's source names as `component_names`; one occurrence per frame, id `<feature>-<k:08d>`, `native_ref = str(index)`; values equal to the Parquet values and exactly representable as float32 |
+| video | `SourceFileRef` to the raw video: sha256 / size from the raw file, `video/mp4`, frame `round_half_even((from_timestamp + k / fps) · 10⁹)` with `from_timestamp` exact; the stored object has the raw size |
+| task / transitions | `task_index` events at every task change with `{task, task_index}`; `next.*` transitions one per frame, verbatim |
+| producer | `sceneops.lerobot_episode_builder` v1; fingerprint over the normalized configuration and `{source_kind: content, content_id, content_checksum}` |
+| platform | one revision per unit; record, revision projection (transitions included), pin, canonical bytes and checksum; no snapshot id, upstream, upstream revision or licence token in the bytes; a DatasetVersion's members and composition checksum from the pins |
+
+Negative controls (consistent faults on Episode 0, all must be detected):
+`timestamp_drift` (a state 1 ns off its frame), `clock_origin` (`unix_epoch`),
+`absolute_anchor` (window and timestamps given an epoch), `vector_order` (one state's
+components reversed), `transition_value` (one `next.done` flipped),
+`dropped_occurrence`, `content_binding` (another content, fingerprint recomputed),
+`source_file_checksum`, `frame_selector` (1 ns), `missing_native_file` (the video
+object absent from the store), `snapshot_in_manifest`.
+
 ## Negative controls
 
 Every command runs its controls and fails when one is not detected. A *consistent*
@@ -117,7 +145,14 @@ make reference-expectations [WRITE=1]          derive and compare (WRITE=1: repl
 make reference-verify-selftest                 synthetic state passes, every control detected   no stack
 make reference-verify [DEEP=1] [MODE=<mode>] [FIXTURE=<id>]   the platform's contract state, read-only
 make reference-contract-verify                 the contract state check; runs reference-verify
+make reference-verify-lerobot-selftest [EPISODE=<n>]          LeRobot rules on a synthetic state   no stack
+make reference-verify-lerobot SNAPSHOT_ID=<id> [EPISODE=<n>] [DATASET=<id>/<version>]
+                                               the platform's Episodes of the pusht snapshot, read-only
 ```
+
+`make test-infrastructure SUITE=lerobot-episodes` builds pusht on a disposable runtime
+and runs `reference-verify-lerobot` for Episode 0 and then for the whole corpus and its
+DatasetVersion.
 
 `MODE=recording_import` (or `streaming_acquisition`) verifies one ingestion mode: its
 RobotRuns, units and DatasetVersion only, with the platform controls applied in that
@@ -161,13 +196,10 @@ platform.
 
 ## Coverage and limits
 
-- **Recording sources only.** No content-sourced builder exists yet, so SourceContent /
-  SourceSnapshot identity, `ContentUnitSource` bindings, `SourceFileRef` payloads and
-  MS-14 execution provenance have no rules here.
-- **Clock domains.** Manifests declare clock identifiers, not origins (ADR-015 §6.2 is
-  not implemented). The controls show that re-basing to unit-relative time or adding an
-  absolute anchor is detected through timestamps and windows; an origin declaration
-  itself cannot be checked yet.
+- **Content sources.** Only LeRobot Episodes of the pusht snapshot have rules
+  (`lerobot_verify.py`); content-sourced Scenes have none. MS-14 execution provenance
+  (the Job result naming the snapshot, the manifest record keeping the first build's
+  Job) is checked by the `lerobot-episodes` infrastructure suite, not by the verifier.
 - **Implemented policies.** Scene `whole_recording` and Episode `event_markers`, the
   reference configurations. `fixed_duration` has no derivation; a contract using it
   fails with an `ExpectationError`.

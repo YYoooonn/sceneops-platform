@@ -27,22 +27,41 @@ class EpisodeModel(Base):
     """The canonical Episode unit: its id and source binding (ADR-015 §3).
     Inserted once by the Episode registrar and never updated (a trigger
     rejects UPDATE); it carries no DatasetVersion, revision, status, task or
-    outcome."""
+    outcome.
+
+    The source is one column per source kind, exactly one of them set: a
+    RobotRun (``robot_run_id``) or a SourceContent (``content_id``). Each has
+    its own foreign key and its own unique source-unit key, which a single
+    nullable source column could not express."""
 
     __tablename__ = "episodes"
     __table_args__ = (
         # One source unit has exactly one row (see SceneModel).
         UniqueConstraint("robot_run_id", "unit_key", name="uq_episodes_source_unit"),
-        CheckConstraint("source_kind = 'recording'", name="ck_episodes_source_kind"),
+        UniqueConstraint(
+            "content_id", "unit_key", name="uq_episodes_content_source_unit"
+        ),
+        CheckConstraint(
+            "(source_kind = 'recording' AND robot_run_id IS NOT NULL "
+            "AND content_id IS NULL) OR "
+            "(source_kind = 'content' AND content_id IS NOT NULL "
+            "AND robot_run_id IS NULL)",
+            name="ck_episodes_source_kind",
+        ),
     )
 
     episode_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    robot_run_id: Mapped[str] = mapped_column(
+    robot_run_id: Mapped[str | None] = mapped_column(
         String(128),
         ForeignKey("robot_runs.run_id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
+    )
+    content_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("source_contents.content_id", ondelete="RESTRICT"),
+        nullable=True,
     )
     unit_key: Mapped[str] = mapped_column(String(256), nullable=False)
 
@@ -86,7 +105,7 @@ class EpisodeRevisionModel(Base):
         ),
         CheckConstraint(
             "observation_count >= 0 AND state_count >= 0 AND action_count >= 0 "
-            "AND event_count >= 0",
+            "AND event_count >= 0 AND transition_count >= 0",
             name="ck_episode_revisions_counts",
         ),
     )
@@ -122,10 +141,14 @@ class EpisodeRevisionModel(Base):
     event_topics: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    transition_topics: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     observation_count: Mapped[int] = mapped_column(Integer, nullable=False)
     state_count: Mapped[int] = mapped_column(Integer, nullable=False)
     action_count: Mapped[int] = mapped_column(Integer, nullable=False)
     event_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    transition_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")

@@ -107,6 +107,7 @@ class ValidateEpisodeJobHandler(
                     "state_count": result.state_count,
                     "action_count": result.action_count,
                     "event_count": result.event_count,
+                    "transition_count": result.transition_count,
                     "issues": [i.model_dump(mode="json") for i in result.issues],
                 }
             )

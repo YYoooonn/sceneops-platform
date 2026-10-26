@@ -25,7 +25,13 @@ from sceneops_worker.episodes.resolver import resolve_episode_revisions
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
 _profiler = EpisodeManifestProfiler()
-_TOPIC_LISTS = ("observation_topics", "state_topics", "action_topics", "event_topics")
+_TOPIC_LISTS = (
+    "observation_topics",
+    "state_topics",
+    "action_topics",
+    "event_topics",
+    "transition_topics",
+)
 
 
 class ProfileEpisodeJobHandler(
@@ -82,6 +88,7 @@ class ProfileEpisodeJobHandler(
             "state_count": 0,
             "action_count": 0,
             "event_count": 0,
+            "transition_count": 0,
         }
         topics: dict[str, set[str]] = {name: set() for name in _TOPIC_LISTS}
         episode_profiles: list[dict] = []

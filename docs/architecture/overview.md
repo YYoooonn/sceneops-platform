@@ -51,17 +51,19 @@ Acquisition         -> RobotRun (ingestion boundary)
 Dataset Integration -> SourceContent + SourceSnapshot (preserved external sources)
 RobotRun    -> Scene     (canonical, source-faithful)
 RobotRun    -> Episode   (canonical, task-oriented)
+SourceContent (LeRobot v3.0) -> Episode
 Scene       -> labels / sample views / ScenarioSets / predictions / evaluations
 Episode     -> AlignedEpisode -> LearningDataExport
 ```
 
-- **RobotRun** is the ingestion boundary of every canonical unit today: one finalized,
-  published, verified recording, created only by `REGISTER_ROBOT_RUN`. Nothing
-  downstream of it knows whether the recording arrived by batch import or by streaming
-  acquisition.
+- **RobotRun** is the ingestion boundary of every Scene and of recording-sourced
+  Episodes: one finalized, published, verified recording, created only by
+  `REGISTER_ROBOT_RUN`. Nothing downstream of it knows whether the recording arrived by
+  batch import or by streaming acquisition.
 - **SourceContent / SourceSnapshot** preserve an external dataset's native bytes and
   the upstream declarations that name them, created only by `REGISTER_SOURCE_SNAPSHOT`.
-  They are not converted to recordings, and no Scene or Episode is built from them yet.
+  They are not converted to recordings. LeRobot v3.0 content is built into Episodes
+  directly (`SNAPSHOT_EPISODE_BUILDING`); no Scene is built from preserved content yet.
   See [Ingress boundaries](./ingress-boundaries.md).
 - **Scene** and **Episode** are sibling derived domains over the same RobotRun, each
   with its own build, registration, validation and quality contract. They share

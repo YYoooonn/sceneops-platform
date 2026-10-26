@@ -91,12 +91,16 @@ FieldPath = Annotated[StrictStr, AfterValidator(_validate_field_path)]
 
 class EpisodeStreamRole(StrEnum):
     """What a recorded stream is to the Episode. ``event`` is reserved for
-    task / event sources (``RecordingEpisodeBuildConfig.events``)."""
+    task / event sources (``RecordingEpisodeBuildConfig.events``).
+    ``transition`` is a per-frame signal about the step from a frame to the
+    next (a LeRobot ``next.*`` feature): one occurrence per frame of the
+    Episode's frame timeline, never an event; recordings have none."""
 
     OBSERVATION = "observation"
     STATE = "state"
     ACTION = "action"
     EVENT = "event"
+    TRANSITION = "transition"
 
 
 class EpisodeTimeSource(StrEnum):

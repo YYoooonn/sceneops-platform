@@ -6,11 +6,12 @@ process or container that the platform talks to only through a
 serializable request/result contract. Today it serves one direction,
 **export** (SceneOps → LeRobot).
 
-There is no ingest runtime. Acquired data enters SceneOps only as a
-registered RobotRun recording ([ADR-007](../adr/007-canonical-ingestion-architecture.md)
-§29.2, I-31). An external dataset reaches SceneOps through the
-dataset-acquisition integration (`integrations/dataset-acquisition`), which converts it
-into an L1 recording and has no SceneOps dependency; see
+There is no ingest runtime. Acquired data enters SceneOps as a registered RobotRun
+recording; an external dataset enters as preserved SourceContent, read by an SDK-free
+native reader in the main runtime (`sceneops_sources.lerobot` for LeRobot v3.0,
+[Ingress boundaries](./ingress-boundaries.md)), or through the dataset-acquisition
+integration (`integrations/dataset-acquisition`), which converts it into an L1
+recording and has no SceneOps dependency; see
 [Robot data ingestion](../workflows/robot-run-and-mcap.md).
 
 ## 1. Reference and runtime contracts
@@ -77,7 +78,8 @@ pulls in `sceneops-db`, Celery or the worker's dependencies.
 
 ## 4. Limitations
 
-- Export only, and only LeRobot. A second format (e.g. RLDS) adds an
+- Export only, and only LeRobot; importing LeRobot needs no integration runtime. A
+  second export format (e.g. RLDS) adds an
   adapter behind the same `ExternalDatasetAdapter` / `ExternalDatasetWriter`
   contract ([Dataset interoperability](./dataset-interoperability.md)).
 - No worker-side executor or job type runs an integration runtime; no

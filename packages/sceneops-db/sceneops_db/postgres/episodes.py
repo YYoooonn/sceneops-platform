@@ -49,12 +49,15 @@ class PostgresEpisodeRepository:
         self,
         *,
         robot_run_id: str | None = None,
+        content_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRecord]:
         stmt = select(EpisodeModel)
         if robot_run_id is not None:
             stmt = stmt.where(EpisodeModel.robot_run_id == robot_run_id)
+        if content_id is not None:
+            stmt = stmt.where(EpisodeModel.content_id == content_id)
         stmt = apply_pagination(
             stmt.order_by(EpisodeModel.episode_id), limit=limit, offset=offset
         )
@@ -90,10 +93,16 @@ class PostgresEpisodeRepository:
         return found
 
     async def list_source_revisions(
-        self, *, robot_run_id: str, producer_fingerprint: str
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
     ) -> list[EpisodeRevisionRecord]:
+        source_column = (
+            EpisodeModel.robot_run_id
+            if source_kind == "recording"
+            else EpisodeModel.content_id
+        )
         return await self._revisions(
-            EpisodeModel.robot_run_id == robot_run_id,
+            EpisodeModel.source_kind == source_kind,
+            source_column == source_id,
             EpisodeRevisionModel.producer_fingerprint == producer_fingerprint,
         )
 

@@ -33,22 +33,22 @@ from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.episodes.recording_build import EpisodeStreamRole
-from sceneops_core.episodes.schemas import episode_id_for
 from sceneops_core.jobs.schemas import (
     BuildRecordingEpisodesJobParams,
     BuildRecordingEpisodesJobResult,
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.provenance import PinnedRecording, manifest_artifact_id_for
+from sceneops_core.provenance import PinnedRecording
 from sceneops_recording import check_l1_recording
 
+from sceneops_episodes.plan import EpisodeBuildPlan
 from sceneops_episodes.recording_builder import (
-    EpisodeBuildPlan,
     RecordingEpisodeBuildError,
     iter_planned_payloads,
     plan_recording_episodes,
 )
+from sceneops_worker.episodes.publication import publish_episode_manifests
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.recordings.artifact_records import (
     ArtifactRecordConflictError,
@@ -105,7 +105,12 @@ class BuildRecordingEpisodesJobHandler(
             )
             created_payloads = await self._publish_payloads(request, plan, recording)
 
-        manifest_artifact_ids = await self._publish_manifests(request, plan)
+        manifest_artifact_ids, _ = await publish_episode_manifests(
+            context,
+            plan,
+            job_id=request.job.job_id,
+            pipeline_run_id=request.job.pipeline_run_id,
+        )
         await context.commit()
 
         return BuildRecordingEpisodesJobResult(
@@ -170,42 +175,6 @@ class BuildRecordingEpisodesJobHandler(
                     continue
             _require_same(record, ref)
         return created
-
-    async def _publish_manifests(
-        self,
-        request: JobHandlerRequest[BuildRecordingEpisodesJobParams],
-        plan: EpisodeBuildPlan,
-    ) -> list[str]:
-        context = request.context
-        artifact_ids: list[str] = []
-        for episode in plan.episodes:
-            episode_id = episode_id_for(episode.manifest.lineage.source)
-            published = await context.episode_artifact_store.publish_canonical_manifest(
-                episode_id=episode_id,
-                manifest=episode.manifest,
-            )
-            artifact_id = manifest_artifact_id_for(
-                unit_id=episode_id, manifest_checksum=published.checksum
-            )
-            ref = ArtifactRef(
-                kind=ArtifactKind.EPISODE_MANIFEST,
-                uri=published.uri,
-                media_type="application/json",
-                checksum=published.checksum,
-                size_bytes=published.size_bytes,
-            )
-            record, registered = await context.artifact_record_store.create_if_absent(
-                artifact_id=artifact_id,
-                ref=ref,
-                owner_type=ArtifactOwnerType.EPISODE,
-                owner_id=episode_id,
-                job_id=request.job.job_id,
-                pipeline_run_id=request.job.pipeline_run_id,
-            )
-            if not registered:
-                _require_same(record, ref)
-            artifact_ids.append(artifact_id)
-        return artifact_ids
 
 
 def _payload_ref(planned: PlannedPayload, uri: str) -> ArtifactRef:

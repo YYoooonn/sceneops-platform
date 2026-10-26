@@ -26,9 +26,13 @@ async def list_episodes(
     service: EpisodeServiceDep,
     pagination: PaginationDep,
     robot_run_id: str | None = None,
+    content_id: str | None = None,
 ) -> EpisodeListResponse:
+    """Episode units, optionally of one source: a RobotRun (``robot_run_id``)
+    or a SourceContent (``content_id``)."""
     return await service.list_episodes(
         robot_run_id=robot_run_id,
+        content_id=content_id,
         limit=pagination.limit,
         offset=pagination.offset,
     )

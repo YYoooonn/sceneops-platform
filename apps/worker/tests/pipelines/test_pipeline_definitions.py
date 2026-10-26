@@ -16,18 +16,20 @@ from sceneops_core.jobs.schemas import JobType
 _FINAL_PIPELINE_TYPES = {
     PipelineType.RECORDING_SCENE_BUILDING,
     PipelineType.RECORDING_EPISODE_BUILDING,
+    PipelineType.SNAPSHOT_EPISODE_BUILDING,
     PipelineType.SCENE_ML_EVALUATION,
     PipelineType.EPISODE_LEARNING_DATA_BUILDING,
 }
 
 
 class TestFinalPipelineSurface:
-    """Exactly four first-class Pipelines exist (ADR-007 §34)."""
+    """Exactly five first-class Pipelines exist (ADR-007 §34, ADR-015 §6.7)."""
 
-    def test_exactly_the_four_final_pipelines(self) -> None:
+    def test_exactly_the_five_final_pipelines(self) -> None:
         assert {p.value for p in PipelineType} == {
             "recording_scene_building",
             "recording_episode_building",
+            "snapshot_episode_building",
             "scene_ml_evaluation",
             "episode_learning_data_building",
         }

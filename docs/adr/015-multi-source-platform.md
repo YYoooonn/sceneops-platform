@@ -44,6 +44,14 @@ registration gate), §6.5 (media types of preserved files, inline values), §6.6
 timeline, component names, transition streams), §6.7 (unit selection), §9 (label anchor),
 §14 (rejected alternatives) and §15. OQ-7 and OQ-8 stay open. R1–R7 are unchanged.
 
+**Amended (2026-10-26, M3 S3).** The Episode changes of §6.6 ship as
+`sceneops.episode_manifest/v3`, not v2: v2 already names the S2 manifest that added
+`clock_domains[]` on the recording path, and a structural change takes a new version
+rather than redefining a published one. SceneManifest stays v3; its content variant
+lands with the nuScenes builder (S4) without a version change unless its structure
+changes. The D14 refusal is decided by what a consumer cannot represent (a
+`SourceFileRef` payload, a `transition` stream), not by source kind, so MS-10 holds.
+
 This ADR supersedes, in
 [ADR-007](./007-canonical-ingestion-architecture.md) Amendment A4, decisions 1, 3, 4 and 5 of
 §29.2 and invariants I-31 and I-36. It amends I-1, I-2, I-10, I-16 and I-17 and retires

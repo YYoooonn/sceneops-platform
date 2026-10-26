@@ -1,11 +1,12 @@
 [project]
 name = "sceneops-sources"
 version = "0.1.0"
-description = "SceneOps Dataset Integration source preservation: file selection, content inventories, database-free snapshot publication and verified content file access"
+description = "SceneOps Dataset Integration: file selection, content inventories, database-free snapshot publication, verified content file access and native format readers"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "sceneops-core",
   "sceneops-storage",
+  "pyarrow>=15.0",
 ]
 
 [tool.uv.sources]

@@ -45,10 +45,11 @@ class SceneRepository(Protocol):
         ...
 
     async def list_source_revisions(
-        self, *, robot_run_id: str, producer_fingerprint: str
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
     ) -> list[SceneRevisionRecord]:
-        """Every revision of a unit sourced from ``robot_run_id`` registered
-        under ``producer_fingerprint``: at most one per unit."""
+        """Every revision of a unit sourced from ``(source_kind, source_id)``
+        registered under ``producer_fingerprint``: at most one per unit.
+        Scene units are recording-sourced, so a content source has none."""
         ...
 
     async def register_revision(

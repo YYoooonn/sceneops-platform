@@ -3,8 +3,9 @@
 > How data enters SceneOps and how the two ingress families meet canonical building.
 > Decision rationale: [ADR-015](../adr/015-multi-source-platform.md). Acquisition is
 > implemented end to end. Dataset Integration preserves and registers external sources
-> (`publish-snapshot`, `REGISTER_SOURCE_SNAPSHOT`); no native reader or content builder
-> consumes them yet ([limitations](./limitations.md) §5).
+> (`publish-snapshot`, `REGISTER_SOURCE_SNAPSHOT`); LeRobot v3.0 content is canonicalized
+> into Episodes ([Episode domain](./episode-domain.md)), and no other format has a
+> content builder yet ([limitations](./limitations.md) §5).
 
 ## 1. Responsibilities
 
@@ -176,9 +177,19 @@ binding projects the source revision the producer fingerprint is computed over.
 - `SourceBinding` is the closed union of the two bindings. `source_id` is the stable
   source identity a unit is keyed under: the RobotRun id, or the content id, which is
   a function of the bytes.
-- `SceneManifest` and `EpisodeManifest` lineage admit `RecordingSegmentSource` only. A
-  manifest variant lands together with the builder that produces it, so registration
-  and downstream consumers never receive a source kind nothing produces.
+- `EpisodeManifest` lineage admits either binding: the LeRobot Episode builder
+  produces `ContentUnitSource`. `SceneManifest` lineage admits `RecordingSegmentSource`
+  only until a content Scene builder exists. A manifest variant lands together with
+  the builder that produces it, so registration and downstream consumers never
+  receive a source kind nothing produces.
+- Payload references are the closed union `PayloadRef`
+  (`sceneops_core.artifacts.schemas.payload`): `ArtifactPayloadRef` (a SceneOps-owned
+  payload object) or `SourceFileRef` (a preserved file of the unit's own content, by
+  `content_id`, `path`, `sha256`, `size_bytes`, a builder-asserted `media_type` and an
+  optional `frame {timestamp_ns}` in the file's own time base). Scene observations take
+  `ArtifactPayloadRef` only. Downstream of canonical manifests, payload resolution is
+  the only place that dispatches on the reference kind; a consumer that cannot resolve
+  a kind refuses it explicitly.
 
 ### 4.1 Clock domains
 
@@ -209,7 +220,12 @@ Rules every manifest enforces (`check_clock_domains`):
   The recording builders set this (`recording_clock_domains`); no build configuration
   can change it. Capture's log time is a host clock and a header stamp's epoch belongs
   to the robot, and neither can be verified from the recording.
-- A frame rate is never part of a clock domain.
+- A content binding's origins are its format builder's decision. LeRobot time is
+  `lerobot.frame_time`, origin `unit`, resolution 1 ns: zero is the episode's first
+  frame and the data asserts no absolute time.
+- A frame rate is never part of a clock domain. An Episode sampled on a frame grid
+  declares it once, on its `frame_timeline` (`round_half_even(k · 10⁹ / fps)`,
+  `sceneops_core.provenance.frame_time`), whose clock must have origin `unit`.
 - Normalization changes a timestamp's representation, never its domain. Nothing adds
   an epoch to a relative time, shifts a clock or merges two clocks.
 
@@ -310,7 +326,12 @@ selection are not in it, so they change a revision, not the unit.
 - `sceneops_core.provenance` imports no Scene, Episode or Dataset module;
 - builder inputs carry no DatasetVersion, snapshot, format or location field;
 - two snapshots of one content give identical content bindings;
-- Scene and Episode manifests reject a content binding.
+- Scene manifests reject a content binding; Episode manifests admit either binding.
+
+`packages/sceneops-sources/tests/test_boundaries.py`: preservation modules name no
+format and import only the standard library, core and storage; native format modules
+(`lerobot.py`) import only `pyarrow` besides those, never a dataset SDK; the workspace
+lock contains no `lerobot`.
 
 Record contracts: `test_source_content.py`; bindings, revisions and pinned inputs:
 `test_provenance_sources.py`; fingerprint: `test_producer_fingerprint.py`; unit and

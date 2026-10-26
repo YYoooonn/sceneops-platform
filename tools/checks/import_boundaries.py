@@ -75,7 +75,12 @@ PACKAGES: dict[str, set[str]] = {
     # siblings: neither imports the other.
     "sceneops_derived": {"sceneops_core", "sceneops_storage"},
     "sceneops_scenes": {"sceneops_core", "sceneops_storage", "sceneops_recording"},
-    "sceneops_episodes": {"sceneops_core", "sceneops_storage", "sceneops_recording"},
+    "sceneops_episodes": {
+        "sceneops_core",
+        "sceneops_storage",
+        "sceneops_recording",
+        "sceneops_sources",
+    },
     "sceneops_inference": {"sceneops_core", "sceneops_storage", "sceneops_derived"},
     "sceneops_evaluation": {"sceneops_core", "sceneops_derived"},
     "sceneops_analytics": {"sceneops_core", "sceneops_storage"},

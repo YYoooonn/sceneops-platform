@@ -17,6 +17,10 @@ class PipelineType(StrEnum):
     # RECORDING_SCENE_BUILDING; neither depends on the other.
     RECORDING_EPISODE_BUILDING = "recording_episode_building"
 
+    # One registered SourceSnapshot -> the canonical Episodes of its content
+    # -> registration -> validation / profiling (ADR-015 §6.7).
+    SNAPSHOT_EPISODE_BUILDING = "snapshot_episode_building"
+
     # Registered Scenes + pinned label set revisions -> sample views ->
     # ScenarioSet -> prediction revision -> evaluation (ADR-007 §33, §34).
     SCENE_ML_EVALUATION = "scene_ml_evaluation"

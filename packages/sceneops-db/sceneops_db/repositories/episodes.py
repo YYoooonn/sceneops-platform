@@ -28,6 +28,7 @@ class EpisodeRepository(Protocol):
         self,
         *,
         robot_run_id: str | None = None,
+        content_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRecord]: ...
@@ -46,10 +47,11 @@ class EpisodeRepository(Protocol):
         ...
 
     async def list_source_revisions(
-        self, *, robot_run_id: str, producer_fingerprint: str
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
     ) -> list[EpisodeRevisionRecord]:
-        """Every revision of a unit sourced from ``robot_run_id`` registered
-        under ``producer_fingerprint``: at most one per unit."""
+        """Every revision of a unit sourced from ``(source_kind, source_id)``
+        (a RobotRun or a SourceContent) registered under
+        ``producer_fingerprint``: at most one per unit."""
         ...
 
     async def register_revision(

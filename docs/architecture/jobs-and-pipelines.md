@@ -31,10 +31,10 @@ A standalone Job joins the path at "durable Job". `JobRunner` is the sole runtim
 entry point for a Job: both the Celery task and the worker CLI
 (`sceneops-worker jobs run`) call it.
 
-## 2. The four Pipelines
+## 2. The five Pipelines
 
 A Pipeline exists only where multi-stage orchestration, retry and lineage justify
-it. SceneOps has exactly four; every other operation is a Job (§2.1).
+it. SceneOps has exactly five; every other operation is a Job (§2.1).
 
 ```text
 RECORDING_SCENE_BUILDING          RobotRun -> Scene revisions [-> DatasetVersion]
@@ -43,6 +43,10 @@ RECORDING_SCENE_BUILDING          RobotRun -> Scene revisions [-> DatasetVersion
 
 RECORDING_EPISODE_BUILDING        RobotRun -> Episode revisions [-> DatasetVersion]
   build_recording_episodes -> register_episodes -> compose_dataset_version (optional)
+                           -> validate_episode -> profile_episode (optional)
+
+SNAPSHOT_EPISODE_BUILDING         SourceSnapshot -> Episode revisions [-> DatasetVersion]
+  build_snapshot_episodes  -> register_episodes -> compose_dataset_version (optional)
                            -> validate_episode -> profile_episode (optional)
 
 SCENE_ML_EVALUATION               pinned label sets + policy + configs -> views -> ScenarioSet -> prediction -> evaluation
@@ -66,8 +70,18 @@ stages). One run covers one RobotRun. The two pipelines never depend on each oth
 and share the RobotRun's `OBSERVATION_PAYLOAD` artifacts. See
 [Scene domain](./scene-domain.md) and [Episode domain](./episode-domain.md).
 
-A recording run executes in no DatasetVersion: `POST /pipelines/runs` refuses a
-`dataset_id` / `dataset_version` for these two types (`PipelineDefinition.dataset_version_scope`),
+**Canonical building (SourceSnapshot -> Episode).** `SNAPSHOT_EPISODE_BUILDING`
+builds the Episodes of the content of one registered SourceSnapshot
+(`build_snapshot_episodes` params: `snapshot_id`, `build_config`, optional
+`unit_keys`) with the Episode builder of the content's registered format, then runs
+the same register, compose, validate and profile stages. The build resolves the
+snapshot to its content once and records `snapshot_id`, `content_id` and
+`content_checksum` in its result; the snapshot never enters a manifest, so every
+snapshot of the same bytes builds the same revisions. `register_episodes` returns the
+build's source as `source_kind` / `source_id`.
+
+A building run executes in no DatasetVersion: `POST /pipelines/runs` refuses a
+`dataset_id` / `dataset_version` for these three types (`PipelineDefinition.dataset_version_scope`),
 and their build, register, validate and profile params refuse DatasetVersion fields.
 The DatasetVersion is produced only by the optional `compose_dataset_version` stage. It
 runs only when the run names its target, `params.compose_dataset_version =
@@ -110,7 +124,7 @@ Reusable single operations are plain Jobs (`POST /jobs`, then
 ```text
 REGISTER_ROBOT_RUN        POST /robot-runs:register (create + dispatch)
 REGISTER_SOURCE_SNAPSHOT  a published snapshot descriptor -> SourceContent + SourceSnapshot (Ingress boundaries §3.1)
-COMPOSE_DATASET_VERSION   revision pins or a selector -> one immutable DatasetVersion (Data model §2.1); also the optional stage of the two building pipelines
+COMPOSE_DATASET_VERSION   revision pins or a selector -> one immutable DatasetVersion (Data model §2.1); also the optional stage of the three building pipelines
 IMPORT_LABELS             a label document -> an independent, pinned LabelSet revision
 BUILD_SCENE_SAMPLE_VIEWS  Scenes + policy + label sets -> pinned views (also the first stage of SCENE_ML_EVALUATION)
 MINE_SCENARIOS /          ScenarioSet curation and readiness scoring over pinned views
@@ -125,8 +139,10 @@ CURATE_EPISODES           a selection policy over one learning export (read by S
 EXPORT_ANALYTICS_SNAPSHOT Scene analytical Parquet tables of a DatasetVersion
 INGEST_ROBOT_STATES /     robot telemetry projection of a RobotRun
   EXPORT_ROBOT_ANALYTICS_SNAPSHOT
-BUILD_RECORDING_* / REGISTER_* / VALIDATE_* / PROFILE_*   the stages of the two building pipelines, also dispatchable alone:
-                          build robot_run_id + build_config -> manifest_artifact_ids;
+BUILD_RECORDING_* / BUILD_SNAPSHOT_EPISODES / REGISTER_* / VALIDATE_* / PROFILE_*
+                          the stages of the three building pipelines, also dispatchable alone:
+                          build robot_run_id | snapshot_id (+ unit_keys) + build_config
+                            -> manifest_artifact_ids;
                           register manifest_artifact_ids -> revisions (pins);
                           validate / profile revisions (pins of one domain, one per unit)
 ```
@@ -444,7 +460,10 @@ never creates its own `ArtifactRecord` for that object:
   payloads it extracts.
 - Episode: `build_recording_episodes` owns its `EPISODE_MANIFEST` and
   `OBSERVATION_PAYLOAD` records; payload ids are shared with Scene builds of the same
-  RobotRun, so whichever runs first creates them. `register_episodes` re-reads and
+  RobotRun, so whichever runs first creates them. `build_snapshot_episodes` owns its
+  `EPISODE_MANIFEST` records only: it references preserved source files and writes no
+  payload. A rebuild through another snapshot of the same bytes reuses the records, so
+  they keep the Job that first produced them. `register_episodes` re-reads and
   verifies, never creates.
 - Database-free publishers write bytes outside any Job, so their registration Job
   records them after verifying the bytes: `REGISTER_ROBOT_RUN` the recording and its

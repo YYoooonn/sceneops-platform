@@ -20,8 +20,20 @@ from ._utils import base_run_to_values, error_from_json, metadata_from_model
 
 EpisodeRunRecord: TypeAlias = EpisodeValidationRunRecord | EpisodeProfileRunRecord
 
-_TOPIC_LISTS = ("observation_topics", "state_topics", "action_topics", "event_topics")
-_COUNTS = ("observation_count", "state_count", "action_count", "event_count")
+_TOPIC_LISTS = (
+    "observation_topics",
+    "state_topics",
+    "action_topics",
+    "event_topics",
+    "transition_topics",
+)
+_COUNTS = (
+    "observation_count",
+    "state_count",
+    "action_count",
+    "event_count",
+    "transition_count",
+)
 
 # ── Episode unit / revision ──────────────────────────────────────────────────
 
@@ -31,6 +43,7 @@ def episode_model_to_record(model: EpisodeModel) -> EpisodeRecord:
         episode_id=model.episode_id,
         source_kind=model.source_kind,
         robot_run_id=model.robot_run_id,
+        content_id=model.content_id,
         unit_key=model.unit_key,
         registered_at=model.registered_at,
     )
@@ -43,6 +56,7 @@ def episode_unit_to_values(record: EpisodeRevisionRecord) -> dict[str, Any]:
         "episode_id": record.episode_id,
         "source_kind": record.source_kind,
         "robot_run_id": record.robot_run_id,
+        "content_id": record.content_id,
         "unit_key": record.unit_key,
     }
 
@@ -54,6 +68,7 @@ def episode_revision_model_to_record(
         episode_id=revision.episode_id,
         source_kind=unit.source_kind,
         robot_run_id=unit.robot_run_id,
+        content_id=unit.content_id,
         unit_key=unit.unit_key,
         manifest_artifact_id=revision.manifest_artifact_id,
         manifest_checksum=revision.manifest_checksum,

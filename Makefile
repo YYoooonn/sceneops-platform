@@ -69,7 +69,7 @@ help:
 	@echo "=================================================================="
 	@echo "  make test                          Unit suites, no infrastructure"
 	@echo "  make test-integration              Real Postgres/MinIO in a disposable database + bucket (needs local-up); a skipped test fails the run"
-	@echo "  make test-infrastructure [SUITE=pipelines|recovery|kafka|boundaries|sources]   Real-infrastructure suites (pipelines / recovery / sources: a skipped test fails the run)"
+	@echo "  make test-infrastructure [SUITE=pipelines|recovery|kafka|boundaries|sources|lerobot-episodes]   Real-infrastructure suites (pipelines / recovery / sources: a skipped test fails the run)"
 	@echo "      pipelines   (default) execution contracts -- dedup/force/convergence/replacement/resumption/concurrency -- on a disposable execution runtime (needs local-up + reference-data-bootstrap)"
 	@echo "      recovery    acquisition-recovery fault injection + the full-lifecycle acceptance + Job worker loss under leases + lost broker messages, in the disposable database + bucket with a throwaway Redis and workers (Docker; needs local-up)"
 	@echo "      kafka       streaming bridge + capture tests in their ROS 2 images, then the transport smoke (needs streaming-up)"

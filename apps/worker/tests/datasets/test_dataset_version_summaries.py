@@ -78,7 +78,8 @@ class TestSelector:
             "sources": [
                 {
                     "domain": "scene",
-                    "robot_run_id": "run-1",
+                    "source_kind": "recording",
+                    "source_id": "run-1",
                     "producer_fingerprint": "sha256:" + "f" * 64,
                 }
             ]
@@ -86,7 +87,7 @@ class TestSelector:
         record = dataset_version_model_to_record(
             _model(scene_count=1, selector=selector)
         )
-        assert record.selector.sources[0].robot_run_id == "run-1"
+        assert record.selector.sources[0].source_id == "run-1"
         assert dataset_version_record_to_values(record)["selector"] == selector
         assert dataset_version_model_to_record(_model(episode_count=1)).selector is None
 

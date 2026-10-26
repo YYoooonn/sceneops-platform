@@ -29,7 +29,7 @@ path that does not resolve or resolves to a structure or raw bytes, a
 non-finite float, a message without the configured timestamp, unpaired task
 markers, a build that yields no Episode.
 
-Identity rules (frozen by ``semantics_version`` 3):
+Identity rules (frozen by ``semantics_version`` 4):
 
     occurrence_id    <topic slug>-<rank>: rank in the stream's canonical order
                      over the whole recording (canonical timestamp, then MCAP
@@ -99,12 +99,14 @@ from sceneops_recording.observations.payloads import (
     topic_slug,
 )
 
+from .plan import EpisodeBuildPlan, PlannedEpisode
+
 RECORDING_EPISODE_PRODUCER_ID: Final = "sceneops.recording_episode_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration (it enters the producer fingerprint).
-# 3: clock-domain declarations (every recording clock with origin
-# ``source``).
-RECORDING_EPISODE_SEMANTICS_VERSION: Final = 3
+# 4: EpisodeManifest v3 (a recording Episode declares no frame timeline,
+# component names, transition stream or native reference).
+RECORDING_EPISODE_SEMANTICS_VERSION: Final = 4
 STRING_SCHEMA: Final = "std_msgs/msg/String"
 
 SourceConfig = EpisodeStreamConfig | EpisodeEventSourceConfig
@@ -113,23 +115,6 @@ SourceConfig = EpisodeStreamConfig | EpisodeEventSourceConfig
 class RecordingEpisodeBuildError(RecordingBuildError):
     """The recording cannot be canonicalized faithfully as Episodes under this
     configuration."""
-
-
-@dataclass(frozen=True)
-class PlannedEpisode:
-    unit_key: str
-    manifest: EpisodeManifest
-
-
-@dataclass(frozen=True)
-class EpisodeBuildPlan:
-    producer: ProducerInfo
-    episodes: list[PlannedEpisode]
-    # keyed by (topic, per-topic file index)
-    payloads: dict[tuple[str, int], PlannedPayload]
-
-    def count(self, role: EpisodeStreamRole) -> int:
-        return sum(len(e.manifest.occurrences_of(role)) for e in self.episodes)
 
 
 # --- field values ---------------------------------------------------------------
@@ -579,8 +564,6 @@ def iter_planned_payloads(
 __all__ = [
     "RECORDING_EPISODE_PRODUCER_ID",
     "RECORDING_EPISODE_SEMANTICS_VERSION",
-    "EpisodeBuildPlan",
-    "PlannedEpisode",
     "RecordingEpisodeBuildError",
     "iter_planned_payloads",
     "plan_recording_episodes",

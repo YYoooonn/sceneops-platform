@@ -204,10 +204,11 @@ class TestRunPinsAndReadiness:
         assert derive_episode_readiness(None) == EpisodeReadiness.UNKNOWN
 
 
-def test_roles_cover_observation_state_action_event() -> None:
+def test_roles_cover_observation_state_action_event_transition() -> None:
     assert {r.value for r in EpisodeStreamRole} == {
         "observation",
         "state",
         "action",
         "event",
+        "transition",
     }

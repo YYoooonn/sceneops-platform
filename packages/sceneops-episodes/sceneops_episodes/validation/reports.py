@@ -24,5 +24,6 @@ class EpisodeValidationResult(SceneOpsBaseModel):
     state_count: int = 0
     action_count: int = 0
     event_count: int = 0
+    transition_count: int = 0
 
     issues: list[EpisodeValidationIssue] = Field(default_factory=list)

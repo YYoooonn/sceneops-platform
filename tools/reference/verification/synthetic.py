@@ -149,7 +149,7 @@ def episode_manifest(
     exp: Any, robot_run_id: str, recording_checksum: str, build_config: dict[str, Any]
 ) -> dict[str, Any]:
     manifest: dict[str, Any] = {
-        "schema_version": "sceneops.episode_manifest/v2",
+        "schema_version": "sceneops.episode_manifest/v3",
         "lineage": _lineage(
             robot_run_id,
             recording_checksum,
@@ -157,24 +157,29 @@ def episode_manifest(
             exp.window,
             _producer(
                 "sceneops.recording_episode_builder",
-                3,
+                4,
                 build_config,
                 robot_run_id,
                 recording_checksum,
             ),
         ),
         "clock_domains": exp.clock_domains,
+        "frame_timeline": None,
         "streams": [
             {
                 "topic": t,
                 "role": s["role"],
                 "schema_name": s["schema_name"],
                 "source_clock": s["source_clock"],
-                "fields": [{"name": n, "path": p} for n, p in s["fields"]],
+                "fields": [
+                    {"name": n, "path": p, "component_names": None}
+                    for n, p in s["fields"]
+                ],
                 "has_payload": s["has_payload"],
             }
             for t, s in exp.streams.items()
         ],
+        "transitions": [],
     }
     for role in ("observations", "states", "actions", "events"):
         rows = []
@@ -189,6 +194,7 @@ def episode_manifest(
                         "payload": None
                         if row["payload"] is None
                         else _ref(robot_run_id, topic, row),
+                        "native_ref": None,
                     }
                 )
         manifest[role] = rows

@@ -343,7 +343,8 @@ async def test_a_selector_is_resolved_once_and_recorded(world):
         "sources": [
             {
                 "domain": "scene",
-                "robot_run_id": world.run_id,
+                "source_kind": "recording",
+                "source_id": world.run_id,
                 "producer_fingerprint": front.producer_fingerprint,
             }
         ]
@@ -364,7 +365,8 @@ async def test_a_mixed_selector_admits_one_revision_per_unit(world):
     clauses = [
         {
             "domain": "scene",
-            "robot_run_id": world.run_id,
+            "source_kind": "recording",
+            "source_id": world.run_id,
             "producer_fingerprint": world.scenes[("a", key)].producer_fingerprint,
         }
         for key in ("all", "front")
@@ -379,7 +381,8 @@ async def test_a_selector_clause_that_selects_nothing_fails(world):
         "sources": [
             {
                 "domain": "episode",
-                "robot_run_id": world.run_id,
+                "source_kind": "recording",
+                "source_id": world.run_id,
                 "producer_fingerprint": "sha256:" + "9" * 64,
             }
         ]

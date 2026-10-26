@@ -119,13 +119,13 @@ instrumentation. The structured recovery log lines and the read-only reports
 (`make acquisition-status`, `make artifact-lifecycle-once`) are the operational
 interface, and nothing stores them.
 
-## 5. Canonicalization from recordings
+## 5. Canonicalization
 
-Scenes and Episodes are produced only from a registered RobotRun recording. Dataset
-Integration preserves and registers external sources and has the content source
-binding and builder input ([Ingress boundaries](./ingress-boundaries.md)), but no
-native reader or content builder, so no external dataset reaches a canonical unit
-except as a converted recording. Current builder bounds:
+Scenes are produced only from a registered RobotRun recording. Episodes are produced
+from a registered RobotRun recording or from a registered LeRobot v3.0 SourceContent
+([Episode domain](./episode-domain.md)); no other external format has a native reader
+or content builder, so nuScenes reaches a canonical Scene only as a converted
+recording. Current builder bounds:
 
 - Only ROS 2 (`cdr` / `ros2msg`) messages are decoded. Scene camera payloads must be
   `CompressedImage` (jpeg / png); other Scene channels are stored as their serialized
@@ -149,8 +149,8 @@ except as a converted recording. Current builder bounds:
   from it (aligned-episode keys, learning exports, curation) are scoped to the
   DatasetVersion they were produced for: an aligned revision of the same Episode
   revision is written again under each DatasetVersion that aligns it.
-- A composition selector selects by RobotRun and producer fingerprint only. A
-  composition is one PostgreSQL transaction, whose commit-time membership check counts
+- A composition selector selects by source (a RobotRun or a SourceContent) and
+  producer fingerprint only. A composition is one PostgreSQL transaction, whose commit-time membership check counts
   each version's members once; the largest composition tested has a handful of
   members, which is a test scope, not a supported maximum.
 - `fixed_duration` windows are a grid anchored at the segmentation clock's zero, so the
@@ -160,6 +160,15 @@ except as a converted recording. Current builder bounds:
   ([Ingress boundaries](./ingress-boundaries.md) §4.1). Consumers keep comparing clocks
   by id within one manifest; the origin instance is checked only through
   `require_comparable`, which no workflow calls yet.
+- LeRobot content: only `codebase_version` v3.0 is read (v2.x is refused at build
+  time, though such a snapshot is still preserved and registered). One data file and
+  one task per episode are what the pinned pusht dataset exercises; multi-file and
+  multi-task episodes follow the reader rules but have not been run against a real
+  dataset. A dataset whose recorded timestamps are not exactly
+  `float32(frame_index / fps)` is refused, never snapped. Values stay inline in the
+  manifest: pusht Episode 0 is 201 KB and strict-loads in about 11 ms on a developer
+  host. Video frames are referenced by a frame selector into the preserved MP4 and
+  never decoded; frame-exact decoding (AV1 for pusht) is unverified.
 - The robot telemetry projection (`ingest_robot_states`) reads its own fixed topic set
   and `RobotStateRecord` columns; it is a derived table, not canonical Episode data.
 - Validation scope: the journeys are validated on one nuScenes mini scene
@@ -181,9 +190,16 @@ except as a converted recording. Current builder bounds:
   dataset and no missing-value fill or mask policy
   ([Robot learning data](./robot-learning-data.md) §8,
   [Scalable learning data](./scalable-learning-data.md) §13).
-- LeRobot is the only external format and is export-only; no integration-run record is
+- LeRobot is the only external export format; no integration-run record is
   persisted ([Dataset interoperability](./dataset-interoperability.md) §10,
   [External integration runtime](./external-integration-runtime.md) §4).
+- LeRobot-sourced Episodes are not aligned or exported. Alignment refuses an Episode
+  with a preserved-file payload or a `transition` stream
+  (`UnsupportedEpisodeContentError`), and the learning export and the LeRobot export
+  read only aligned artifacts. `frame_timeline`, `component_names` and `transition`
+  streams have no consumer yet; an event view derived from a `transition` stream
+  would need a declared rule (pusht's `next.done` is true on the last two frames of
+  every episode).
 - `JOB_STEP_DEFINITIONS_BY_TYPE` is declarative: only the first step's status is
   updated at runtime ([Jobs and pipelines](./jobs-and-pipelines.md) §6).
 

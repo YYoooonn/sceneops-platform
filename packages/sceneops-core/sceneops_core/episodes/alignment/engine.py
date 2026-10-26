@@ -24,6 +24,7 @@ Deterministic: identical inputs always produce an identical output.
 
 from __future__ import annotations
 
+from sceneops_core.artifacts.schemas import SourceFileRef
 from sceneops_core.episodes.recording_build import EpisodeStreamRole
 from sceneops_core.episodes.schemas import (
     EpisodeManifest,
@@ -33,7 +34,11 @@ from sceneops_core.episodes.schemas import (
 
 from .config import TemporalAlignmentConfig, TemporalSourceContext
 from .enums import AlignedValueKind, AssociationPolicy, ChannelNamespace
-from .errors import ClockMismatchError, InvalidEpisodeBoundsError
+from .errors import (
+    ClockMismatchError,
+    InvalidEpisodeBoundsError,
+    UnsupportedEpisodeContentError,
+)
 from .policies import (
     ChannelSample,
     EffectiveChannelPolicy,
@@ -88,11 +93,38 @@ def _payload_value(
     )
 
 
+def require_alignable(manifest: EpisodeManifest) -> None:
+    """Refuse an Episode whose content this alignment cannot represent:
+    reference channels carry ArtifactPayloadRef metadata only, and a
+    transition stream is neither an observation nor an action channel."""
+    transitions = [
+        s.topic for s in manifest.streams if s.role == EpisodeStreamRole.TRANSITION
+    ]
+    if transitions:
+        raise UnsupportedEpisodeContentError(
+            f"the Episode has transition streams {transitions}, which alignment "
+            "does not support"
+        )
+    files = sorted(
+        {
+            o.topic
+            for o in manifest.occurrences()
+            if isinstance(o.payload, SourceFileRef)
+        }
+    )
+    if files:
+        raise UnsupportedEpisodeContentError(
+            f"streams {files} reference preserved source files, which alignment "
+            "cannot resolve"
+        )
+
+
 def alignment_samples(
     manifest: EpisodeManifest, clock: str
 ) -> dict[ChannelNamespace, dict[str, list[ChannelSample]]]:
     """The canonical streams as alignment channels on ``clock`` (unsorted,
     duplicates kept; ``canonicalize_samples`` orders them)."""
+    require_alignable(manifest)
     channels: dict[ChannelNamespace, dict[str, list[ChannelSample]]] = {
         ChannelNamespace.OBSERVATION: {},
         ChannelNamespace.ACTION: {},
