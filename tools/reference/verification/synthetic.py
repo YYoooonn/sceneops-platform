@@ -36,6 +36,7 @@ def _slug(topic: str) -> str:
 def _ref(robot_run_id: str, topic: str, row: dict[str, Any]) -> dict[str, Any]:
     p = row["payload"]
     return {
+        "kind": "artifact",
         "artifact_id": _payload_id(
             robot_run_id, topic, row["channel_index"], p["media_type"]
         ),
@@ -115,7 +116,7 @@ def scene_manifest(
         key=lambda o: (o["timestamp_ns"], o["channel"], o["observation_id"])
     )
     return {
-        "schema_version": "sceneops.scene_manifest/v2",
+        "schema_version": "sceneops.scene_manifest/v3",
         "lineage": _lineage(
             robot_run_id,
             recording_checksum,
@@ -129,6 +130,7 @@ def scene_manifest(
                 recording_checksum,
             ),
         ),
+        "clock_domains": exp.clock_domains,
         "coordinate_frames": [
             {"frame_id": f, "role": r} for f, r in exp.coordinate_frames
         ],
@@ -147,7 +149,7 @@ def episode_manifest(
     exp: Any, robot_run_id: str, recording_checksum: str, build_config: dict[str, Any]
 ) -> dict[str, Any]:
     manifest: dict[str, Any] = {
-        "schema_version": "sceneops.episode_manifest/v1",
+        "schema_version": "sceneops.episode_manifest/v2",
         "lineage": _lineage(
             robot_run_id,
             recording_checksum,
@@ -155,12 +157,13 @@ def episode_manifest(
             exp.window,
             _producer(
                 "sceneops.recording_episode_builder",
-                2,
+                3,
                 build_config,
                 robot_run_id,
                 recording_checksum,
             ),
         ),
+        "clock_domains": exp.clock_domains,
         "streams": [
             {
                 "topic": t,

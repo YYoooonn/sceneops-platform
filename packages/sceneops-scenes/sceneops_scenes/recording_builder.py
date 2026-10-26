@@ -13,7 +13,8 @@ Two passes over the file:
 
     plan_recording_scenes   decode every selected message; interpret calibration,
                             frames and poses; choose each observation's canonical
-                            time; segment on the declared clock; build the
+                            time; segment on the declared clock; declare every
+                            clock a Scene uses with origin ``source``; build the
                             complete SceneManifest set and the payload plan
                             (artifact id, sha256, size, media type per payload).
                             Nothing is written.
@@ -25,7 +26,7 @@ unsupported encoding, a selected topic absent from the recording, missing or
 changing calibration, distortion the manifest cannot carry, a sensor frame
 calibrated against a frame other than the ego frame.
 
-Identity rules (frozen by ``semantics_version`` 3):
+Identity rules (frozen by ``semantics_version`` 4):
 
     observation_id   <topic slug>-<rank>: rank in the channel's canonical order
                      (canonical timestamp, then MCAP sequence when every message
@@ -58,7 +59,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from sceneops_core.provenance import INT64_MAX, PinnedRecording, ProducerInfo
+from sceneops_core.provenance import (
+    INT64_MAX,
+    PinnedRecording,
+    ProducerInfo,
+    recording_clock_domains,
+)
 from sceneops_core.provenance.segmentation import (
     WHOLE_RECORDING_SEGMENT,
     fixed_duration_index,
@@ -109,9 +115,9 @@ from sceneops_recording.observations.payloads import (
 RECORDING_SCENE_PRODUCER_ID: Final = "sceneops.recording_scene_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration: it enters the producer fingerprint, so a
-# changed builder is a different producer. 3: segmentation-qualified unit
-# keys and clock-anchored fixed-duration windows.
-RECORDING_SCENE_SEMANTICS_VERSION: Final = 3
+# changed builder is a different producer. 4: clock-domain declarations
+# (every recording clock with origin ``source``).
+RECORDING_SCENE_SEMANTICS_VERSION: Final = 4
 CAMERA_INFO_SCHEMA: Final = "sensor_msgs/msg/CameraInfo"
 TF_MESSAGE_SCHEMA: Final = "tf2_msgs/msg/TFMessage"
 
@@ -658,8 +664,18 @@ def plan_recording_scenes(
             end_timestamp_ns=end,
             unit_key=unit_key,
         )
+        window_poses = poses_by_window.get(index, [])
         manifest = SceneManifest(
             lineage=SceneLineage(source=source, producer=producer),
+            # The window's clock, every channel's and every included pose's;
+            # a pose source with no pose in this window names no clock here.
+            clock_domains=recording_clock_domains(
+                [
+                    segmentation.clock,
+                    *(c.source_clock for c in channels),
+                    *(p.source_clock for p in window_poses),
+                ]
+            ),
             coordinate_frames=frames,
             channels=channels,
             calibrations=calibration_list,
@@ -668,7 +684,7 @@ def plan_recording_scenes(
                 key=lambda o: (o.channel, o.timestamp_ns, o.observation_id),
             ),
             poses=sorted(
-                poses_by_window.get(index, []),
+                window_poses,
                 key=lambda p: (p.source_clock, p.timestamp_ns, p.pose_id),
             ),
         )

@@ -13,7 +13,12 @@ from pathlib import Path
 import pytest
 
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
-from sceneops_core.provenance import PinnedRecording
+from sceneops_core.provenance import (
+    ClockOrigin,
+    IncomparableClocksError,
+    PinnedRecording,
+    require_comparable,
+)
 from sceneops_core.provenance.segmentation import recording_unit_key
 from sceneops_scenes.recording_builder import (
     RECORDING_SCENE_PRODUCER_ID,
@@ -320,6 +325,73 @@ def test_multi_clock_scene(recording):
     )
     clocks = {c.channel: c.source_clock for c in plan.scenes[0].manifest.channels}
     assert clocks == {CAMERA_TOPIC: "sensor.header_stamp", LIDAR_TOPIC: "mcap_log_time"}
+
+
+# --- clock domains (ADR-015 §6.2, OQ-9) -----------------------------------------
+
+
+def test_every_clock_a_scene_uses_is_declared_with_origin_source(recording):
+    """The window's clock, each channel's and each pose source's are declared
+    once; the timestamps stay the recorded timing facts: header stamps for
+    the camera and the poses, publish time for the lidar."""
+    plan = _plan(
+        recording,
+        build_config(
+            clock="mcap_log_time", lidar_time=("publish_time", "mcap_publish_time")
+        ),
+    )
+    for scene in plan.scenes:
+        manifest = scene.manifest
+        assert [
+            (d.clock, d.origin, d.resolution_ns) for d in manifest.clock_domains
+        ] == [
+            ("mcap_log_time", ClockOrigin.SOURCE, 1),
+            ("mcap_publish_time", ClockOrigin.SOURCE, 1),
+            ("sensor.header_stamp", ClockOrigin.SOURCE, 1),
+        ]
+        assert {p.source_clock for p in manifest.poses} == {"sensor.header_stamp"}
+    assert [o.timestamp_ns for o in _observations(plan, CAMERA_TOPIC)] == [
+        1_000_000_000,
+        1_500_000_000,
+        2_000_000_000,
+        2_500_000_000,
+    ]
+    assert _observations(plan, LIDAR_TOPIC)[0].timestamp_ns == (
+        1_000_000_007 + LOG_LAG_NS
+    )
+
+
+def test_a_single_clock_scene_declares_one_clock(recording):
+    plan = _plan(recording)
+    for scene in plan.scenes:
+        assert [d.clock for d in scene.manifest.clock_domains] == [
+            "sensor.header_stamp"
+        ]
+
+
+def test_scenes_of_two_robot_runs_are_not_comparable(recording):
+    """The same recording registered as two RobotRuns: equal clock ids and
+    equal values, but two origin instances."""
+    other = PinnedRecording(
+        robot_run_id="run-002",
+        recording_checksum=REVISION.recording_checksum,
+        recording_clock="mcap_log_time",
+    )
+    a = _plan(recording).scenes[0].manifest
+    b = _plan(recording, revision=other).scenes[0].manifest
+    assert [o.timestamp_ns for o in a.observations] == [
+        o.timestamp_ns for o in b.observations
+    ]
+    with pytest.raises(IncomparableClocksError):
+        require_comparable(
+            a.clock_instance("sensor.header_stamp"),
+            b.clock_instance("sensor.header_stamp"),
+        )
+    sibling = _plan(recording).scenes[1].manifest
+    require_comparable(
+        a.clock_instance("sensor.header_stamp"),
+        sibling.clock_instance("sensor.header_stamp"),
+    )
 
 
 def test_equal_timestamps_order_by_sequence_then_file_order(tmp_path):

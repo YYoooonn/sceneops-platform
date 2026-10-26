@@ -64,8 +64,9 @@ The source preparation's mapping is documented in the
 
 Rules from [Scene domain](../architecture/scene-domain.md) §1 and §6,
 [Episode domain](../architecture/episode-domain.md) §2–§4,
-[Ingress boundaries](../architecture/ingress-boundaries.md) §4 and §6 and
-[ADR-007](../adr/007-canonical-ingestion-architecture.md) §8.3, §15.2 and §30.4–§30.6.
+[Ingress boundaries](../architecture/ingress-boundaries.md) §4, §4.1 and §6,
+[ADR-007](../adr/007-canonical-ingestion-architecture.md) §8.3, §15.2 and §30.4–§30.6 and
+[ADR-015](../adr/015-multi-source-platform.md) §6.2.
 
 | Subject | Rule |
 | --- | --- |
@@ -77,8 +78,9 @@ Rules from [Scene domain](../architecture/scene-domain.md) §1 and §6,
 | Scene calibration / frames / poses | extrinsic = static `ego → channel frame`; intrinsic = CameraInfo `K`; frames = ego, world, channel frames (sensor); poses = every configured `parent → child` transform at its own stamp; no keyframe groups |
 | Episode streams | topic, role, recorded schema name, clock, fields, `has_payload` |
 | Episode occurrences | every message whose time (header stamp or payload field) lies in the window; values = the selected field paths as decoded (an integer stays an integer); observation payloads as for Scenes |
+| clock domains | one declaration per clock the unit uses (the window's clock and every channel, pose or stream clock), sorted by clock, each `{origin: source, resolution_ns: 1}`; the manifest declares exactly those clocks, once each |
 | lineage | `source_kind = recording`, `robot_run_id`, `recording_artifact_id = art-robotrun-<run>`, `recording_checksum`, window, `unit_key` |
-| producer | fingerprint = `sha256(canonical_json({fingerprint_schema, producer_id, semantics_version, build_config, source: {source_kind, robot_run_id, recording_checksum}}))`; `build_config` carries every member of the reference build configuration; Scene producer `sceneops.recording_scene_builder` v3 |
+| producer | fingerprint = `sha256(canonical_json({fingerprint_schema, producer_id, semantics_version, build_config, source: {source_kind, robot_run_id, recording_checksum}}))`; `build_config` carries every member of the reference build configuration; Scene producer `sceneops.recording_scene_builder` v4 |
 
 ### Platform state (observation → checks)
 
@@ -87,8 +89,8 @@ Rules from [Scene domain](../architecture/scene-domain.md) §1 and §6,
 | RobotRun | registered under the contract robot; recording artifact `art-robotrun-<run>` of kind `robot_run_recording`; the stored object's bytes equal the record; Recording Import pins the locked sha256; Streaming Acquisition pins its capture, whose per-topic counts equal the lock's and whose derived canonical content equals the locked recording's |
 | units | the run's Scenes / Episodes are exactly the derived unit ids; each row's id recomputes from its binding; exactly `revisions_per_unit` revisions; one checksum per producer fingerprint |
 | revision | `manifest_artifact_id = f(unit_id, manifest_checksum)`; window and projection columns equal the derivation |
-| manifest | record kind, checksum and size equal the stored bytes; the bytes are canonical JSON; no DatasetVersion, unit id, status, location or execution field; schema version; lineage and producer as above; content equal to the derivation |
-| payloads | every reference resolves to an `observation_payload` record with exactly its checksum, size and media type, owned by the RobotRun; the object exists with that size (`--deep`: those bytes); one artifact per recorded message and extraction, shared by the Scene and the Episode |
+| manifest | record kind, checksum and size equal the stored bytes; the bytes are canonical JSON; no DatasetVersion, unit id, status, location or execution field; schema version (`scene_manifest/v3`, `episode_manifest/v2`); lineage, producer and clock domains as above; content equal to the derivation |
+| payloads | every reference has `kind = artifact` and resolves to an `observation_payload` record with exactly its checksum, size and media type, owned by the RobotRun; the object exists with that size (`--deep`: those bytes); one artifact per recorded message and extraction, shared by the Scene and the Episode |
 | DatasetVersion | members are exactly the mode's derived unit ids, one per unit; each pin names a registered revision and its artifact id recomputes; `composition_checksum` recomputed from the pins; summaries (`scene_count`, `observation_count`, `keyframe_count`, `observed_channels`, `episode_count`) equal the derivation |
 
 ## Negative controls
@@ -102,7 +104,7 @@ composition checksum), so only the independent expectations can catch it.
 | --- | --- |
 | sources | dropped `/tf` message (`source_message_count`), 1 ns camera stamp shift (`source_timestamp`), changed point-cloud byte (`source_payload_bytes`), re-locked recording (`lock_recording_checksum`), 1 ns label anchor shift (`source_label_anchor`), dropped label (`source_label_content`) |
 | expectations | committed Scene window off by 1 ns, expectations from another build configuration (`expectations_drift`) |
-| platform | dropped observation, 1 ns shift, payload bytes rebound consistently (`scene_observations`); changed stored payload byte (`payload_object_checksum`); member pins an unregistered revision (`member_pin`); member artifact id of another revision (`pin_artifact_id`); Episode re-based to unit-relative time on an absolute clock (`window`, `episode_occurrences`); absolute anchor added to poses (`scene_poses`, `window`); binding to another recording or RobotRun with a recomputed fingerprint (`source_binding`); another unit key (`unit_identity`); missing or foreign member (`composition_members`); wrong `composition_checksum`; wrong summary (`composition_summary`); changed action value, dropped end marker (`episode_occurrences`); build config changed without fingerprint (`producer_fingerprint`); pretty-printed manifest (`manifest_canonical`); `dataset_version` in a manifest (`manifest_forbidden_field`); missing payload or manifest object; substituted recording (`robot_run_recording`); second revision (`revision_count`); one message through two payload artifacts (`payload_identity`) |
+| platform | dropped observation, 1 ns shift, payload bytes rebound consistently (`scene_observations`); changed stored payload byte (`payload_object_checksum`); member pins an unregistered revision (`member_pin`); member artifact id of another revision (`pin_artifact_id`); Episode re-based to unit-relative time on an absolute clock (`window`, `episode_occurrences`); absolute anchor added to poses (`scene_poses`, `window`); a Scene clock declared `unix_epoch`, an Episode clock declared `unit`, the window clock's declaration dropped (`clock_domains`); binding to another recording or RobotRun with a recomputed fingerprint (`source_binding`); another unit key (`unit_identity`); missing or foreign member (`composition_members`); wrong `composition_checksum`; wrong summary (`composition_summary`); changed action value, dropped end marker (`episode_occurrences`); build config changed without fingerprint (`producer_fingerprint`); pretty-printed manifest (`manifest_canonical`); `dataset_version` in a manifest (`manifest_forbidden_field`); missing payload or manifest object; substituted recording (`robot_run_recording`); second revision (`revision_count`); one message through two payload artifacts (`payload_identity`) |
 
 `verify` runs the platform controls on a copy of the collected observation, only when
 that observation passes.

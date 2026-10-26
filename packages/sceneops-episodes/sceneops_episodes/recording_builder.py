@@ -16,8 +16,10 @@ Two passes over the file:
     plan_recording_episodes   decode every selected message; take each one's
                               canonical time and selected field values; plan
                               observation payloads; segment on the declared
-                              clock; build the complete EpisodeManifest set and
-                              the payload plan. Nothing is written.
+                              clock; declare every clock an Episode uses with
+                              origin ``source``; build the complete
+                              EpisodeManifest set and the payload plan.
+                              Nothing is written.
     iter_planned_payloads     re-read the payload streams and yield each planned
                               payload's bytes, verified against the plan.
 
@@ -27,7 +29,7 @@ path that does not resolve or resolves to a structure or raw bytes, a
 non-finite float, a message without the configured timestamp, unpaired task
 markers, a build that yields no Episode.
 
-Identity rules (frozen by ``semantics_version`` 2):
+Identity rules (frozen by ``semantics_version`` 3):
 
     occurrence_id    <topic slug>-<rank>: rank in the stream's canonical order
                      over the whole recording (canonical timestamp, then MCAP
@@ -68,7 +70,12 @@ from sceneops_core.episodes.schemas import (
     EpisodeOccurrence,
     EpisodeStream,
 )
-from sceneops_core.provenance import INT64_MAX, PinnedRecording, ProducerInfo
+from sceneops_core.provenance import (
+    INT64_MAX,
+    PinnedRecording,
+    ProducerInfo,
+    recording_clock_domains,
+)
 from sceneops_core.provenance.segmentation import (
     WHOLE_RECORDING_SEGMENT,
     fixed_duration_index,
@@ -95,9 +102,9 @@ from sceneops_recording.observations.payloads import (
 RECORDING_EPISODE_PRODUCER_ID: Final = "sceneops.recording_episode_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration (it enters the producer fingerprint).
-# 2: segmentation-qualified unit keys and clock-anchored fixed-duration
-# windows.
-RECORDING_EPISODE_SEMANTICS_VERSION: Final = 2
+# 3: clock-domain declarations (every recording clock with origin
+# ``source``).
+RECORDING_EPISODE_SEMANTICS_VERSION: Final = 3
 STRING_SCHEMA: Final = "std_msgs/msg/String"
 
 SourceConfig = EpisodeStreamConfig | EpisodeEventSourceConfig
@@ -485,6 +492,8 @@ def plan_recording_episodes(
     }
     clock = config.segmentation_clock()
     boundary = config.segmentation_boundary()
+    # Every stream is kept in every Episode, so each one names the same clocks.
+    clock_domains = recording_clock_domains([clock, *(s.source_clock for s in streams)])
 
     episodes: list[PlannedEpisode] = []
     for window in windows:
@@ -508,6 +517,7 @@ def plan_recording_episodes(
         )
         manifest = EpisodeManifest(
             lineage=EpisodeLineage(source=source, producer=producer),
+            clock_domains=clock_domains,
             streams=streams,
             **{
                 name: sorted(

@@ -19,11 +19,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from sceneops_core.artifacts.schemas.payload import PayloadRef
+from sceneops_core.artifacts.schemas.payload import ArtifactPayloadRef
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.provenance import (
     ProducerInfo,
     RecordingSegmentSource,
+    recording_clock_domains,
 )
 
 from .recording_build import EpisodeStreamRole
@@ -68,9 +69,9 @@ def event(topic: str, t: int, *, clock=None, **values) -> Occ:
     return Occ(EpisodeStreamRole.EVENT, topic, t, values, False, clock)
 
 
-def payload_ref(topic: str, rank: int) -> PayloadRef:
+def payload_ref(topic: str, rank: int) -> ArtifactPayloadRef:
     data = f"payload:{topic}:{rank}".encode()
-    return PayloadRef(
+    return ArtifactPayloadRef(
         artifact_id=f"payload-{hashlib.sha256(data).hexdigest()[:32]}",
         checksum="sha256:" + hashlib.sha256(data).hexdigest(),
         size_bytes=len(data),
@@ -154,6 +155,9 @@ def episode_manifest(
 
     return EpisodeManifest(
         lineage=EpisodeLineage(source=source, producer=producer),
+        clock_domains=recording_clock_domains(
+            [window_clock, *(s.source_clock for s in streams.values())]
+        ),
         streams=sorted(streams.values(), key=lambda s: s.topic),
         observations=ordered(EpisodeStreamRole.OBSERVATION),
         states=ordered(EpisodeStreamRole.STATE),

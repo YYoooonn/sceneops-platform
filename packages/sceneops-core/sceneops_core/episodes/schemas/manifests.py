@@ -1,10 +1,10 @@
-"""EpisodeManifest v1 -- the canonical, source-faithful description of one
+"""EpisodeManifest v2 -- the canonical, source-faithful description of one
 Episode (ADR-007 §13.10, §31).
 
 An Episode is a task / behavior-oriented projection of one RobotRun
 recording. Within its window it keeps every recorded occurrence of every
 included stream -- observations, states, actions and task / event markers --
-each at its own canonical timestamp in its stream's declared clock, with the
+each at its own canonical timestamp in its stream's clock, with the
 field values the build configuration selects, kept as the source holds
 them, and, for observations, a SceneOps-owned payload.
 
@@ -27,9 +27,14 @@ DatasetVersion registers them. The unit id is derived from the source
 binding (``episode_id_for``) and the revision is the manifest checksum
 (``sceneops_core.provenance.revisions``); neither is stored here.
 
-Representation conventions fixed by ``sceneops.episode_manifest/v1``:
+Every clock the window or a stream names is declared exactly once in
+``clock_domains`` with its origin (ADR-015 §6.2), and every declared clock
+is used.
 
-    time       integer nanoseconds in a declared clock, one clock per stream
+Representation conventions fixed by ``sceneops.episode_manifest/v2``:
+
+    time       integer nanoseconds in a declared clock domain, one clock per
+               stream
     values     bool, integer, finite float, string, or a list of numbers, exactly
                as decoded from the recorded message
     payloads   referenced by artifact identity and integrity, never by location
@@ -69,14 +74,18 @@ from sceneops_core.common.identifiers import (
     validate_verbatim_key,
 )
 from sceneops_core.provenance import (
+    ClockDomain,
+    ClockInstance,
     ProducerInfo,
     RecordingSegmentSource,
     SourceTimestampNs,
+    check_clock_domains,
+    clock_instance,
 )
 
 from ..recording_build import EpisodeStreamRole, FieldPath
 
-EPISODE_MANIFEST_SCHEMA_V1: Final = "sceneops.episode_manifest/v1"
+EPISODE_MANIFEST_SCHEMA_V2: Final = "sceneops.episode_manifest/v2"
 
 
 class EpisodeManifestError(ValueError):
@@ -196,8 +205,9 @@ _ROLE_LISTS: Final = {
 
 
 class EpisodeManifest(_ManifestModel):
-    schema_version: Literal["sceneops.episode_manifest/v1"] = EPISODE_MANIFEST_SCHEMA_V1
+    schema_version: Literal["sceneops.episode_manifest/v2"] = EPISODE_MANIFEST_SCHEMA_V2
     lineage: EpisodeLineage
+    clock_domains: list[ClockDomain] = Field(min_length=1)
 
     streams: list[EpisodeStream] = Field(min_length=1)
     observations: list[EpisodeOccurrence] = Field(default_factory=list)
@@ -243,6 +253,15 @@ class EpisodeManifest(_ManifestModel):
                     )
         if not seen_ids:
             raise ValueError("an Episode holds at least one recorded occurrence")
+        check_clock_domains(
+            self.clock_domains,
+            source=self.lineage.source,
+            referenced=[
+                self.lineage.source.source_clock,
+                *(s.source_clock for s in self.streams),
+            ],
+            timestamps=self.clocked_timestamps(),
+        )
         self._check_source_window()
         return self
 
@@ -287,6 +306,17 @@ class EpisodeManifest(_ManifestModel):
             end_timestamp_ns=source.end_timestamp_ns,
         )
 
+    def clock_domain(self, clock: str) -> ClockDomain:
+        for domain in self.clock_domains:
+            if domain.clock == clock:
+                return domain
+        raise KeyError(clock)
+
+    def clock_instance(self, clock: str) -> ClockInstance:
+        """The origin instance of ``clock`` in this Episode: timestamps of two
+        Episodes are comparable only when their instances are equal."""
+        return clock_instance(self.clock_domain(clock), self.lineage.source)
+
     def stream(self, topic: str) -> EpisodeStream:
         for stream in self.streams:
             if stream.topic == topic:
@@ -308,7 +338,7 @@ def load_canonical_episode_manifest(data: bytes) -> EpisodeManifest:
     if not isinstance(payload, dict):
         raise EpisodeManifestError("manifest must be a JSON object")
     schema_version = payload.get("schema_version")
-    if schema_version != EPISODE_MANIFEST_SCHEMA_V1:
+    if schema_version != EPISODE_MANIFEST_SCHEMA_V2:
         raise UnsupportedEpisodeManifestVersionError(
             f"unsupported EpisodeManifest schema_version: {schema_version!r}"
         )
@@ -318,13 +348,13 @@ def load_canonical_episode_manifest(data: bytes) -> EpisodeManifest:
         raise EpisodeManifestError(f"invalid EpisodeManifest: {exc}") from exc
     if manifest.to_canonical_bytes() != data:
         raise NonCanonicalEpisodeManifestError(
-            "manifest bytes are not in canonical EpisodeManifest v1 form"
+            "manifest bytes are not in canonical EpisodeManifest v2 form"
         )
     return manifest
 
 
 __all__ = [
-    "EPISODE_MANIFEST_SCHEMA_V1",
+    "EPISODE_MANIFEST_SCHEMA_V2",
     "EpisodeField",
     "EpisodeLineage",
     "EpisodeManifest",

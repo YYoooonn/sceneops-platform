@@ -113,17 +113,22 @@ derived from `RobotRun.started_at` / `ended_at`.
 
 ## 4. EpisodeManifest
 
-`sceneops.episode_manifest/v1`
+`sceneops.episode_manifest/v2`
 (`packages/sceneops-core/sceneops_core/episodes/schemas/manifests.py`):
 
 ```text
 lineage        RecordingSegmentSource (robot_run_id, recording artifact + checksum,
                window, unit_key) + ProducerInfo (fingerprint re-derivable)
+clock_domains[] every clock the Episode uses, once: clock, origin, resolution_ns
 streams[]      topic, role, recorded schema_name, source_clock, fields, has_payload
 observations[] states[] actions[] events[]
                occurrence_id (<topic slug>-<rank>), topic, timestamp_ns, values, payload?
 ```
 
+- The window's clock and every stream's clock are declared once in
+  `clock_domains`, with origin `source` for a recording Episode, and nothing
+  else is declared ([Ingress boundaries](./ingress-boundaries.md) §4.1).
+  Occurrences keep their recorded timestamp values.
 - Every recorded occurrence in the window is kept; duplicates stay separate
   occurrences; nothing is resampled, interpolated, forward-filled, padded or
   associated.

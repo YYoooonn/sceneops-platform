@@ -21,10 +21,10 @@ The manifest is authoritative; a revision record is an index over exactly one
 registered manifest. A DatasetVersion holds a Scene only through a member that
 pins one of its revisions ([Data model](./data-model.md) §3).
 
-## 1. SceneManifest v2
+## 1. SceneManifest v3
 
 Schema: `sceneops_core.scenes.schemas.manifests` (`schema_version =
-"sceneops.scene_manifest/v2"`). Strict: unknown fields are rejected at every
+"sceneops.scene_manifest/v3"`). Strict: unknown fields are rejected at every
 level, and there is no free-form metadata. A source fact the schema cannot
 express is a contract amendment.
 
@@ -35,6 +35,8 @@ SceneManifest
                          recording_artifact_id, recording_checksum, source_clock,
                          [start_timestamp_ns, end_timestamp_ns), unit_key)
                        producer: ProducerInfo (fingerprint re-derived on parse)
+  clock_domains[]      every clock the Scene uses, once: clock, origin,
+                       resolution_ns (Ingress boundaries §4.1)
   coordinate_frames[]  frame_id (verbatim) + role: world | ego | sensor
   channels[]           channel (verbatim source identity), modality
                        (camera | lidar | radar | other), frame_id,
@@ -63,7 +65,10 @@ Rules the schema enforces:
   may use different clocks. A timestamped structure no channel owns — a
   pose, a keyframe group's reference time — declares its own
   `source_clock`. A keyframe may group observations whose channels use
-  different clocks; each member keeps its own.
+  different clocks; each member keeps its own. Every clock named by the
+  window, a channel, a pose or a group is declared once in `clock_domains`,
+  and nothing else is declared. A recording Scene declares every clock with
+  origin `source` ([Ingress boundaries](./ingress-boundaries.md) §4.1).
 - **Boundaries.** A Scene's boundary is its segment's half-open window
   `[start, end)` in the segment clock, the segmentation clock the producer's
   build configuration declares (`mcap_log_time`, `mcap_publish_time` or a
@@ -77,8 +82,9 @@ Rules the schema enforces:
   names: translations in metres (`*_m`), unit quaternions `[w, x, y, z]`
   (`rotation_wxyz`), box size `[width, length, height]` (`size_wlh_m`), and a
   `FrameTransform` maps points in `child_frame_id` into `parent_frame_id`.
-- **Payloads** are strict `PayloadRef`s (`sceneops_core.artifacts.schemas.payload`):
-  `artifact_id`, `sha256` `checksum`, `size_bytes` and a `media_type` that
+- **Payloads** are strict `PayloadRef`s (`sceneops_core.artifacts.schemas.payload`),
+  a union discriminated by `kind` that admits `ArtifactPayloadRef` (`kind =
+  "artifact"`): `artifact_id`, `sha256` `checksum`, `size_bytes` and a `media_type` that
   fully specifies encoding and layout. A reference names the payload's
   `OBSERVATION_PAYLOAD` ArtifactRecord, never a location:
   `artifact_id → ArtifactRecord → uri → ArtifactStore`. Moving payload bytes
@@ -301,7 +307,7 @@ segmentation   whole_recording { clock } | fixed_duration { clock, duration_ns }
   position, extraction), so rebuilds with other segmentation reuse it.
 - **Calibration** comes from static transforms relative to the ego frame and
   from CameraInfo intrinsics. Both must be constant for the recording.
-  Distortion or rectification SceneManifest v2 cannot express fails the
+  Distortion or rectification SceneManifest v3 cannot express fails the
   build.
 - **Poses** are the configured source transforms at their own stamps,
   without interpolation or per-observation association.

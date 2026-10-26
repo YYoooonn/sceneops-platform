@@ -1,6 +1,6 @@
 """Resolve canonical payload references to their ArtifactRecords.
 
-A ``PayloadRef`` names a payload by artifact id and pins its integrity; the
+An ``ArtifactPayloadRef`` names a payload by artifact id and pins its integrity; the
 ArtifactRecord owns where the bytes live. A reference resolves only if its
 ArtifactRecord exists, is an ``OBSERVATION_PAYLOAD``, and records exactly
 the same checksum, size and media type. ``verify_payload_objects`` checks
@@ -12,7 +12,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from sceneops_core.artifacts.contracts import ArtifactStore
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord, PayloadRef
+from sceneops_core.artifacts.schemas import (
+    ArtifactKind,
+    ArtifactPayloadRef,
+    ArtifactRecord,
+)
 
 from sceneops_worker.stores.artifacts import ArtifactRecordStore
 
@@ -21,7 +25,9 @@ class PayloadIntegrityError(RuntimeError):
     """A payload reference has no matching ArtifactRecord."""
 
 
-def payload_mismatch(ref: PayloadRef, record: ArtifactRecord | None) -> str | None:
+def payload_mismatch(
+    ref: ArtifactPayloadRef, record: ArtifactRecord | None
+) -> str | None:
     """Why ``record`` does not back ``ref``, or None if it does."""
     if record is None:
         return f"payload artifact {ref.artifact_id} is not registered"
@@ -37,7 +43,7 @@ def payload_mismatch(ref: PayloadRef, record: ArtifactRecord | None) -> str | No
 
 
 async def resolve_payload_artifacts(
-    artifact_record_store: ArtifactRecordStore, refs: Iterable[PayloadRef]
+    artifact_record_store: ArtifactRecordStore, refs: Iterable[ArtifactPayloadRef]
 ) -> Mapping[str, ArtifactRecord]:
     """ArtifactRecords for every reference, keyed by artifact id; raises if
     any reference does not resolve exactly."""
@@ -108,7 +114,7 @@ class ArtifactPayloadLocator:
     def __init__(self, artifact_record_store: ArtifactRecordStore) -> None:
         self._store = artifact_record_store
 
-    async def uris(self, refs: Iterable[PayloadRef]) -> dict[str, str]:
+    async def uris(self, refs: Iterable[ArtifactPayloadRef]) -> dict[str, str]:
         records = await resolve_payload_artifacts(self._store, refs)
         return {artifact_id: record.uri for artifact_id, record in records.items()}
 

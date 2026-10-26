@@ -1,4 +1,4 @@
-"""SceneManifest v2 contract: canonical bytes, strict parsing, source
+"""SceneManifest v3 contract: canonical bytes, strict parsing, source
 fidelity invariants and record projection (ADR-007 §13.5-§13.8, §19,
 I-1/I-3/I-21-I-24/I-26)."""
 
@@ -9,11 +9,11 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from sceneops_core.artifacts.schemas import PayloadRef
+from sceneops_core.artifacts.schemas import ArtifactPayloadRef
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.provenance import ProducerInfo, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
-    SCENE_MANIFEST_SCHEMA_V2,
+    SCENE_MANIFEST_SCHEMA_V3,
     NonCanonicalSceneManifestError,
     SceneChannel,
     SceneCoordinateFrame,
@@ -64,7 +64,7 @@ def test_manifest_holds_no_membership_or_execution_state():
         "metadata",
     ):
         assert forbidden not in payload
-    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V2
+    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V3
 
 
 def test_non_canonical_bytes_are_rejected_even_when_semantically_equal():
@@ -143,11 +143,12 @@ def _payload(**overrides):
         media_type="image/jpeg",
     )
     fields.update(overrides)
-    return PayloadRef(**fields)
+    return ArtifactPayloadRef(**fields)
 
 
 def test_payload_is_referenced_by_artifact_identity_not_location():
-    assert set(PayloadRef.model_fields) == {
+    assert set(ArtifactPayloadRef.model_fields) == {
+        "kind",
         "artifact_id",
         "checksum",
         "size_bytes",
@@ -163,7 +164,9 @@ def test_payload_is_referenced_by_artifact_identity_not_location():
 def test_payload_references_carry_no_storage_location():
     payload = _dump(build_scene_manifest())
     for observation in payload["observations"]:
+        assert observation["payload"]["kind"] == "artifact"
         assert set(observation["payload"]) == {
+            "kind",
             "artifact_id",
             "checksum",
             "size_bytes",
@@ -258,6 +261,10 @@ def test_declared_channel_without_observations_stays_explicit():
         }
     )
     payload["channels"].sort(key=lambda c: c["channel"])
+    payload["clock_domains"].append(
+        {"clock": "nuscenes.timestamp_us", "origin": "source", "resolution_ns": 1}
+    )
+    payload["clock_domains"].sort(key=lambda d: d["clock"])
     rebuilt = _rebuild(payload)
     assert "RADAR_FRONT" in [c.channel for c in rebuilt.channels]
     assert "RADAR_FRONT" not in rebuilt.observed_channel_names()

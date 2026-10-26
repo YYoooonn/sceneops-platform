@@ -20,7 +20,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Final
 
-from sceneops_core.artifacts.schemas.payload import PayloadRef, validate_media_type
+from sceneops_core.artifacts.schemas.payload import (
+    ArtifactPayloadRef,
+    validate_media_type,
+)
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.robots.recording_payload import PayloadExtraction
 from sceneops_recording import RecordingMessage
@@ -45,8 +48,8 @@ class PlannedPayload:
     size_bytes: int
     media_type: str
 
-    def ref(self) -> PayloadRef:
-        return PayloadRef(
+    def ref(self) -> ArtifactPayloadRef:
+        return ArtifactPayloadRef(
             artifact_id=self.artifact_id,
             checksum=self.checksum,
             size_bytes=self.size_bytes,

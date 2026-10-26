@@ -155,6 +155,11 @@ except as a converted recording. Current builder bounds:
   members, which is a test scope, not a supported maximum.
 - `fixed_duration` windows are a grid anchored at the segmentation clock's zero, so the
   first and last window of a recording may be partial.
+- Every recording clock has origin `source`, and no build configuration can assert an
+  epoch, so timestamps of two RobotRuns are never comparable, even on the same clock id
+  ([Ingress boundaries](./ingress-boundaries.md) §4.1). Consumers keep comparing clocks
+  by id within one manifest; the origin instance is checked only through
+  `require_comparable`, which no workflow calls yet.
 - The robot telemetry projection (`ingest_robot_states`) reads its own fixed topic set
   and `RobotStateRecord` columns; it is a derived table, not canonical Episode data.
 - Validation scope: the journeys are validated on one nuScenes mini scene

@@ -1,11 +1,16 @@
-"""Strict reference to one canonical observation payload (ADR-007 §27.5).
+"""Strict reference to one canonical observation payload (ADR-007 §27.5,
+ADR-015 §6.5).
+
+``PayloadRef`` is a closed union discriminated by ``kind``. It admits
+``ArtifactPayloadRef`` only until a content builder produces the
+preserved-file reference.
 
 A canonical manifest never points into an external dataset directory, a
-source recording or a storage location. A payload is identified by the
-SceneOps ArtifactRecord that registered its immutable bytes, and pinned by
-their checksum and size:
+source recording or a storage location. An ``ArtifactPayloadRef`` is
+identified by the SceneOps ArtifactRecord that registered its immutable
+bytes, and pinned by their checksum and size:
 
-    PayloadRef.artifact_id -> ArtifactRecord -> uri -> ArtifactStore
+    ArtifactPayloadRef.artifact_id -> ArtifactRecord -> uri -> ArtifactStore
 
 Where the bytes physically live is the ArtifactRecord's concern, so moving
 a storage root or backend never changes a manifest or its checksum. A
@@ -23,7 +28,7 @@ other open identifiers it is validated, never normalized.
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
@@ -45,9 +50,10 @@ def validate_media_type(value: str) -> str:
     return value
 
 
-class PayloadRef(BaseModel):
+class ArtifactPayloadRef(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    kind: Literal["artifact"] = "artifact"
     artifact_id: StrictStr
     checksum: StrictStr = Field(pattern=SHA256_CHECKSUM_PATTERN)
     size_bytes: StrictInt = Field(ge=1)
@@ -64,4 +70,12 @@ class PayloadRef(BaseModel):
         return validate_media_type(value)
 
 
-__all__ = ["MEDIA_TYPE_PATTERN", "PayloadRef", "validate_media_type"]
+PayloadRef: TypeAlias = ArtifactPayloadRef
+
+
+__all__ = [
+    "MEDIA_TYPE_PATTERN",
+    "ArtifactPayloadRef",
+    "PayloadRef",
+    "validate_media_type",
+]

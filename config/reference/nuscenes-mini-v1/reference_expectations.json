@@ -28,6 +28,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -227,6 +234,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -251,7 +265,7 @@
         "poses_digest": "sha256:f81228d9d2635f8309efe20418218b697119bb097bf37cf93407a02663af7266",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -301,6 +315,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -500,6 +521,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -524,7 +552,7 @@
         "poses_digest": "sha256:5fa2f714313dc7ec83b1e544a5e40885f1e9860c8a8170689cfd22fd2e646fa2",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -574,6 +602,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -773,6 +808,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -797,7 +839,7 @@
         "poses_digest": "sha256:3f4bc04e219f7dbd218b7196115cf39c3ff0c7fd59ee7ae4a1e8491e83bd9bd9",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -847,6 +889,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -1046,6 +1095,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -1070,7 +1126,7 @@
         "poses_digest": "sha256:82190c1a51535635fb10988e73a8ed16f7dfa3dea748a5ae99d9b10bcd27ec47",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -1120,6 +1176,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -1319,6 +1382,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -1343,7 +1413,7 @@
         "poses_digest": "sha256:723f60800c3890b03c5939c20c90985d68db346f541ab563d0cff44983d0cb6d",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -1393,6 +1463,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -1592,6 +1669,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -1616,7 +1700,7 @@
         "poses_digest": "sha256:20933f48b930d0b80cad1681db1b04e0aa491adc53e26e830ad8b14108063bde",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -1666,6 +1750,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -1865,6 +1956,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -1889,7 +1987,7 @@
         "poses_digest": "sha256:70ab1dcb63c4b82bf5d71c9d44f8cb498b37249e49db5acd85b8fb1dbc7e9dc7",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -1939,6 +2037,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -2138,6 +2243,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -2162,7 +2274,7 @@
         "poses_digest": "sha256:187e48f1c0c2c533fdbdaf743962dd8ffe49d85ab4e85ff6185151c901c19e33",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -2212,6 +2324,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -2411,6 +2530,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -2435,7 +2561,7 @@
         "poses_digest": "sha256:b3a8b2dcc1cd1f1ad746866604cf5da3589c671fb0c2d57d199f1ae518331a08",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {
@@ -2485,6 +2611,13 @@
         },
         "units": [
           {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
             "occurrences": {
               "actions": {
                 "/vehicle/control": {
@@ -2684,6 +2817,13 @@
             "source_clock": "sensor.header_stamp"
           }
         },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
         "coordinate_frames": [
           [
             "base_link",
@@ -2708,7 +2848,7 @@
         "poses_digest": "sha256:fe6a84858e8b4f232c9283466cde364c9ff83d8d2f2aa7dc9452f2761fb0dd26",
         "producer": {
           "producer_id": "sceneops.recording_scene_builder",
-          "semantics_version": 3
+          "semantics_version": 4
         },
         "unit_key": "whole_recording-233eebe491d93840/recording",
         "window": {

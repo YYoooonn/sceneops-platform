@@ -180,6 +180,47 @@ binding projects the source revision the producer fingerprint is computed over.
   manifest variant lands together with the builder that produces it, so registration
   and downstream consumers never receive a source kind nothing produces.
 
+### 4.1 Clock domains
+
+`sceneops_core.provenance.clocks` ([ADR-015](../adr/015-multi-source-platform.md) §6.2).
+Every canonical timestamp is an integer ns count in one clock domain the manifest
+declares. Scene and Episode manifests carry `clock_domains[]`, and every timestamped
+structure names its clock by id: the binding's `source_clock` (the window), a Scene
+channel, pose or group, an Episode stream.
+
+```text
+ClockDomain
+  clock          open identifier (validate_source_clock); "<format>.<clock>" for a
+                 clock an external format defines
+  origin         unix_epoch   absolute; comparable wherever the clock id is used
+                 source       absolute within one source (one RobotRun, one content);
+                              the epoch is unknown or not asserted
+                 unit         relative; zero is the unit's own origin
+  resolution_ns  the source's native resolution; every timestamp on the clock is a
+                 multiple of it
+```
+
+Rules every manifest enforces (`check_clock_domains`):
+
+- `clock_domains` is sorted by clock and declares each clock once. Every clock the
+  window or a structure names is declared, and every declared clock is named; an
+  undeclared clock and an unused declaration are both rejected.
+- A recording binding declares every clock with origin `source` and resolution 1 ns.
+  The recording builders set this (`recording_clock_domains`); no build configuration
+  can change it. Capture's log time is a host clock and a header stamp's epoch belongs
+  to the robot, and neither can be verified from the recording.
+- A frame rate is never part of a clock domain.
+- Normalization changes a timestamp's representation, never its domain. Nothing adds
+  an epoch to a relative time, shifts a clock or merges two clocks.
+
+Two timestamps are comparable only on the same clock id and the same origin instance
+(`ClockInstance`, `require_comparable`). Any instance matches for `unix_epoch`; for
+`source` the instance is the source (`source_kind`, `source_id`), and for `unit` it is
+the unit (`source_kind`, `source_id`, `unit_key`). So two Scenes of one RobotRun on
+`mcap_log_time` are comparable, while two RobotRuns on the same clock id are not.
+`SceneManifest.clock_instance(clock)` / `EpisodeManifest.clock_instance(clock)` return
+a manifest's instance.
+
 ## 5. Canonical builder inputs
 
 `sceneops_core.provenance.pinned`. A builder receives one pinned source and builds from

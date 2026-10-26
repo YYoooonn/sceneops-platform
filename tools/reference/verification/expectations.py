@@ -2,7 +2,12 @@
 recording's own messages and a build configuration by the documented rules.
 
 Rules (docs/architecture/scene-domain.md §1, §6; episode-domain.md §2–§4;
-ingress-boundaries.md §6; ADR-007 §30.4–§30.6):
+ingress-boundaries.md §6, §7; ADR-007 §30.4–§30.6; ADR-015 §6.2):
+
+Both domains
+  clock domains  one declaration per clock the unit uses (the window's clock and
+                 every channel / pose / stream clock), sorted by clock; a recording
+                 clock has origin `source` and resolution 1 ns, whatever the clock
 
 Scene (RecordingSceneBuildConfig)
   channel        topic verbatim; modality / sensor_id from the config; frame_id =
@@ -54,12 +59,26 @@ from .recording import (
 )
 from .rules import digest, recording_unit_key
 
+RECORDING_CLOCK_ORIGIN = "source"
+RECORDING_CLOCK_RESOLUTION_NS = 1
+
 _IMAGE_MEDIA_TYPES = {"jpeg": "image/jpeg", "jpg": "image/jpeg", "png": "image/png"}
 
 
 class ExpectationError(ValueError):
     """The recording cannot be canonicalized under the configuration by the
     documented rules (the platform must fail the build too)."""
+
+
+def recording_clock_domains(clocks: set[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "clock": clock,
+            "origin": RECORDING_CLOCK_ORIGIN,
+            "resolution_ns": RECORDING_CLOCK_RESOLUTION_NS,
+        }
+        for clock in sorted(clocks)
+    ]
 
 
 def _canonical_order(entries: list[Entry], timestamp: Any) -> list[Entry]:
@@ -108,6 +127,7 @@ class SceneExpectation:
     boundary: dict[str, Any]
     unit_key: str
     window: dict[str, Any]
+    clock_domains: list[dict[str, Any]]
     coordinate_frames: list[list[str]]
     channels: dict[str, dict[str, Any]]
     observations: dict[str, list[dict[str, Any]]]
@@ -121,6 +141,7 @@ class SceneExpectation:
             "boundary": self.boundary,
             "unit_key": self.unit_key,
             "window": self.window,
+            "clock_domains": self.clock_domains,
             "coordinate_frames": self.coordinate_frames,
             "channels": {
                 topic: {
@@ -324,6 +345,11 @@ def expected_scene(facts: RecordingFacts, config: dict[str, Any]) -> SceneExpect
             "start_timestamp_ns": min(in_window),
             "end_timestamp_ns": max(in_window) + 1,
         },
+        clock_domains=recording_clock_domains(
+            {seg_clock}
+            | {c["source_clock"] for c in channels.values()}
+            | {p["source_clock"] for p in poses}
+        ),
         coordinate_frames=sorted([frame, role] for frame, role in roles.items()),
         channels=channels,
         observations=observations,
@@ -331,7 +357,7 @@ def expected_scene(facts: RecordingFacts, config: dict[str, Any]) -> SceneExpect
         calibrations=calibrations,
         producer={
             "producer_id": "sceneops.recording_scene_builder",
-            "semantics_version": 3,
+            "semantics_version": 4,
         },
     )
 
@@ -405,6 +431,7 @@ class EpisodeUnitExpectation:
     segment: str
     unit_key: str
     window: dict[str, Any]
+    clock_domains: list[dict[str, Any]]
     streams: dict[str, dict[str, Any]]
     occurrences: dict[str, dict[str, list[dict[str, Any]]]] = field(
         default_factory=dict
@@ -415,6 +442,7 @@ class EpisodeUnitExpectation:
             "segment": self.segment,
             "unit_key": self.unit_key,
             "window": self.window,
+            "clock_domains": self.clock_domains,
             "streams": self.streams,
             "occurrences": {
                 role: {
@@ -558,6 +586,9 @@ def expected_episodes(
                     "start_timestamp_ns": start,
                     "end_timestamp_ns": end,
                 },
+                clock_domains=recording_clock_domains(
+                    {seg_clock} | {s["source_clock"] for s in streams.values()}
+                ),
                 streams=streams,
                 occurrences=occurrences,
             )

@@ -23,7 +23,7 @@ from sceneops_episodes.recording_builder import (
     iter_planned_payloads,
     plan_recording_episodes,
 )
-from sceneops_core.provenance import PinnedRecording
+from sceneops_core.provenance import ClockOrigin, PinnedRecording
 from sceneops_core.provenance.segmentation import recording_unit_key
 from sceneops_scenes.recording_builder import plan_recording_scenes
 
@@ -218,6 +218,30 @@ def test_different_clocks_across_streams_are_declared_per_stream(recording):
     clocks = {s.topic: s.source_clock for s in manifest.streams}
     assert clocks[ODOM] == "mcap_log_time" and clocks[CONTROL] == CLOCK
     assert manifest.states[0].timestamp_ns == T0 + 1 * S + LOG_LAG_NS
+
+
+def test_every_clock_an_episode_uses_is_declared_with_origin_source(recording):
+    """The window's clock and each stream's are declared once, with origin
+    source; values stay the recorded timing facts (log time for odometry,
+    header stamps elsewhere)."""
+    config = episode_build_config(
+        segmentation={"policy": "whole_recording", "clock": "mcap_log_time"}
+    )
+    config["streams"][0]["time"] = {"source": "log_time", "clock": "mcap_log_time"}
+    manifest = _plan(recording, config).episodes[0].manifest
+    assert [(d.clock, d.origin, d.resolution_ns) for d in manifest.clock_domains] == [
+        ("mcap_log_time", ClockOrigin.SOURCE, 1),
+        (CLOCK, ClockOrigin.SOURCE, 1),
+    ]
+    assert _seconds(manifest.actions) == list(ACTION_TIMES)
+    assert manifest.states[0].timestamp_ns == T0 + 1 * S + LOG_LAG_NS
+
+
+def test_a_source_clock_episode_declares_its_one_clock(recording):
+    manifest = _plan(recording).episodes[0].manifest
+    assert [(d.clock, d.origin) for d in manifest.clock_domains] == [
+        (CLOCK, ClockOrigin.SOURCE)
+    ]
 
 
 def test_two_tasks_yield_two_episodes_with_stable_keys(tmp_path):

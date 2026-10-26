@@ -217,6 +217,36 @@ def _absolute_anchor(obs, ctx):
     rewrite_manifest(obs, "scene", _first(obs, "scene", ctx["run_id"]), mutate)
 
 
+def _clock_origin_swap(obs, ctx):
+    """A recording clock declared absolute (unix_epoch) instead of source-origin."""
+
+    def mutate(m):
+        m["clock_domains"][0]["origin"] = "unix_epoch"
+
+    rewrite_manifest(obs, "scene", _first(obs, "scene", ctx["run_id"]), mutate)
+
+
+def _clock_made_relative(obs, ctx):
+    """A recording clock declared unit-relative while its values stay absolute."""
+
+    def mutate(m):
+        m["clock_domains"][0]["origin"] = "unit"
+
+    rewrite_manifest(obs, "episode", _first(obs, "episode", ctx["run_id"]), mutate)
+
+
+def _clock_undeclared(obs, ctx):
+    """The window's clock declaration is dropped."""
+
+    def mutate(m):
+        window_clock = m["lineage"]["source"]["source_clock"]
+        m["clock_domains"] = [
+            d for d in m["clock_domains"] if d["clock"] != window_clock
+        ]
+
+    rewrite_manifest(obs, "scene", _first(obs, "scene", ctx["run_id"]), mutate)
+
+
 def _wrong_source_binding(obs, ctx):
     """The manifest binds another recording; the fingerprint is recomputed for it."""
 
@@ -453,6 +483,24 @@ PLATFORM_CONTROLS: tuple[Control, ...] = tuple(
             "an absolute anchor added to the Scene poses (consistent)",
             {"scene_poses", "window"},
             _absolute_anchor,
+        ),
+        (
+            "clock_origin_swap",
+            "a Scene recording clock declared with origin unix_epoch (consistent)",
+            {"clock_domains"},
+            _clock_origin_swap,
+        ),
+        (
+            "clock_made_relative",
+            "an Episode recording clock declared with origin unit (consistent)",
+            {"clock_domains"},
+            _clock_made_relative,
+        ),
+        (
+            "clock_undeclared",
+            "a Scene drops the declaration of its window clock (consistent)",
+            {"clock_domains"},
+            _clock_undeclared,
         ),
         (
             "wrong_source_recording",

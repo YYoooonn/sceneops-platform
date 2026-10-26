@@ -1,4 +1,4 @@
-"""SceneManifest v2 -- the canonical, source-faithful description of one
+"""SceneManifest v3 -- the canonical, source-faithful description of one
 Scene (ADR-007 §13.5-§13.8, §14, §27).
 
 A Scene is a spatiotemporal environmental observation unit. Within its
@@ -23,18 +23,20 @@ from the source binding (``scene_id_for``) and the revision is the manifest
 checksum (``sceneops_core.provenance.revisions``); neither is stored here.
 
 Source time is never synchronized or converted: every timestamp is an
-integer nanosecond count in exactly one declared clock. An observation's
-clock is its channel's ``source_clock``; a timestamped structure that no
-channel owns (a pose, a keyframe group) declares its own.
+integer nanosecond count in exactly one clock domain the manifest declares
+(``clock_domains``, ADR-015 §6.2). An observation's clock is its channel's
+``source_clock``; a timestamped structure that no channel owns (a pose, a
+keyframe group) names its own. Every clock the window or a structure names
+is declared exactly once, with its origin, and every declared clock is used.
 
 Payloads are referenced by SceneOps artifact identity and integrity
 (``artifact_id``, checksum, size, media type), never by storage location:
 ``artifact_id -> ArtifactRecord -> uri -> ArtifactStore``, so moving
 storage roots or backends never changes a manifest or its checksum.
 
-Representation conventions fixed by ``sceneops.scene_manifest/v2``:
+Representation conventions fixed by ``sceneops.scene_manifest/v3``:
 
-    time          integer nanoseconds in a declared source clock
+    time          integer nanoseconds in a declared clock domain
     translation   metres, [x, y, z]
     rotation      unit quaternion, [w, x, y, z]
     transform     maps a point in ``child_frame_id`` into ``parent_frame_id``
@@ -76,14 +78,18 @@ from sceneops_core.common.identifiers import (
     validate_verbatim_key,
 )
 from sceneops_core.provenance import (
+    ClockDomain,
+    ClockInstance,
     ProducerInfo,
     RecordingSegmentSource,
     SourceTimestampNs,
+    check_clock_domains,
+    clock_instance,
 )
 
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
 
-SCENE_MANIFEST_SCHEMA_V2: Final = "sceneops.scene_manifest/v2"
+SCENE_MANIFEST_SCHEMA_V3: Final = "sceneops.scene_manifest/v3"
 
 # A unit quaternion is stored as the source gives it (never renormalized);
 # this tolerance only rejects values that are not rotations at all.
@@ -295,8 +301,9 @@ def _require_known(values: Iterable[str | None], known: set[str], what: str) -> 
 
 
 class SceneManifest(_ManifestModel):
-    schema_version: Literal["sceneops.scene_manifest/v2"] = SCENE_MANIFEST_SCHEMA_V2
+    schema_version: Literal["sceneops.scene_manifest/v3"] = SCENE_MANIFEST_SCHEMA_V3
     lineage: SceneLineage
+    clock_domains: list[ClockDomain] = Field(min_length=1)
 
     coordinate_frames: list[SceneCoordinateFrame] = Field(min_length=1)
     channels: list[SceneChannel] = Field(min_length=1)
@@ -309,6 +316,7 @@ class SceneManifest(_ManifestModel):
     def _check_invariants(self) -> SceneManifest:
         self._check_ordering()
         self._check_references()
+        self._check_clock_domains()
         self._check_source_window()
         return self
 
@@ -420,6 +428,19 @@ class SceneManifest(_ManifestModel):
                     f"group {group.group_id} has more than one observation of a channel"
                 )
 
+    def _check_clock_domains(self) -> None:
+        check_clock_domains(
+            self.clock_domains,
+            source=self.lineage.source,
+            referenced=[
+                self.lineage.source.source_clock,
+                *(c.source_clock for c in self.channels),
+                *(p.source_clock for p in self.poses),
+                *(g.source_clock for g in self.groups),
+            ],
+            timestamps=self.clocked_timestamps(),
+        )
+
     def _check_source_window(self) -> None:
         """A recording segment's window is a half-open interval in the
         segment's clock. Every timestamp in that clock must lie inside it;
@@ -464,6 +485,17 @@ class SceneManifest(_ManifestModel):
             end_timestamp_ns=source.end_timestamp_ns,
         )
 
+    def clock_domain(self, clock: str) -> ClockDomain:
+        for domain in self.clock_domains:
+            if domain.clock == clock:
+                return domain
+        raise KeyError(clock)
+
+    def clock_instance(self, clock: str) -> ClockInstance:
+        """The origin instance of ``clock`` in this Scene: timestamps of two
+        Scenes are comparable only when their instances are equal."""
+        return clock_instance(self.clock_domain(clock), self.lineage.source)
+
     def keyframes(self) -> list[SceneObservationGroup]:
         return [g for g in self.groups if g.kind == SceneGroupKind.KEYFRAME]
 
@@ -482,7 +514,7 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
     if not isinstance(payload, dict):
         raise SceneManifestError("manifest must be a JSON object")
     schema_version = payload.get("schema_version")
-    if schema_version != SCENE_MANIFEST_SCHEMA_V2:
+    if schema_version != SCENE_MANIFEST_SCHEMA_V3:
         raise UnsupportedSceneManifestVersionError(
             f"unsupported SceneManifest schema_version: {schema_version!r}"
         )
@@ -494,14 +526,14 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
 
     if manifest.to_canonical_bytes() != data:
         raise NonCanonicalSceneManifestError(
-            "manifest bytes are not in canonical SceneManifest v1 form"
+            "manifest bytes are not in canonical SceneManifest v3 form"
         )
     return manifest
 
 
 __all__ = [
     "QUATERNION_NORM_TOLERANCE",
-    "SCENE_MANIFEST_SCHEMA_V2",
+    "SCENE_MANIFEST_SCHEMA_V3",
     "FrameTransform",
     "ImageSize",
     "NonCanonicalSceneManifestError",

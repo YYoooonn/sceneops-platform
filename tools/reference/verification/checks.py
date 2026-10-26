@@ -18,8 +18,9 @@ from . import rules
 from .expectations import EpisodeExpectation, SceneExpectation
 from .findings import Findings
 
-SCENE_MANIFEST_SCHEMA = "sceneops.scene_manifest/v2"
-EPISODE_MANIFEST_SCHEMA = "sceneops.episode_manifest/v1"
+SCENE_MANIFEST_SCHEMA = "sceneops.scene_manifest/v3"
+EPISODE_MANIFEST_SCHEMA = "sceneops.episode_manifest/v2"
+PAYLOAD_REF_KIND = "artifact"
 MANIFEST_KIND = {"scene": "scene_manifest", "episode": "episode_manifest"}
 
 # MS-2 / scene-domain.md §1 "No membership", "No location": no manifest names a
@@ -243,6 +244,40 @@ def check_lineage(
         )
 
 
+def check_clock_domains(
+    f: Findings,
+    manifest: dict[str, Any],
+    referenced: list[Any],
+    expected: list[dict[str, Any]],
+) -> None:
+    """ADR-015 §6.2: the manifest declares exactly the clocks the window and its
+    timestamped structures name, once each, sorted; a recording source declares
+    every clock with origin ``source`` (OQ-9). ``expected`` is derived from the
+    recording and the build configuration, never from the manifest."""
+    declared = manifest.get("clock_domains")
+    f.equal(declared, expected, "clock_domains", "clock_domains vs the derivation")
+    if not isinstance(declared, list):
+        return
+    clocks = [d.get("clock") for d in declared if isinstance(d, dict)]
+    f.check(
+        clocks == sorted(set(clocks)) and len(clocks) == len(declared),
+        "clock_domains",
+        f"clock_domains are not sorted and unique by clock: {clocks}",
+    )
+    f.equal(
+        sorted(set(clocks)),
+        sorted(set(referenced)),
+        "clock_domains",
+        "declared clocks vs the clocks the manifest uses",
+    )
+    if manifest.get("lineage", {}).get("source", {}).get("source_kind") == "recording":
+        f.check(
+            all(d.get("origin") == "source" for d in declared if isinstance(d, dict)),
+            "clock_domains",
+            "a recording clock is declared with an origin other than 'source'",
+        )
+
+
 def _payload_row(ref: dict[str, Any] | None) -> list[Any] | None:
     if ref is None:
         return None
@@ -262,6 +297,17 @@ def check_scene_manifest(
         SCENE_MANIFEST_SCHEMA,
         "manifest_schema",
         "schema_version",
+    )
+    check_clock_domains(
+        f,
+        manifest,
+        [
+            manifest.get("lineage", {}).get("source", {}).get("source_clock"),
+            *(c.get("source_clock") for c in manifest.get("channels", [])),
+            *(p.get("source_clock") for p in manifest.get("poses", [])),
+            *(g.get("source_clock") for g in manifest.get("groups", [])),
+        ],
+        exp.clock_domains,
     )
     f.equal(
         sorted(
@@ -472,6 +518,15 @@ def check_episode_manifest(
         for s in manifest.get("streams", [])
     }
     f.equal(streams, exp_unit.streams, "episode_streams", "streams")
+    check_clock_domains(
+        f,
+        manifest,
+        [
+            manifest.get("lineage", {}).get("source", {}).get("source_clock"),
+            *(s.get("source_clock") for s in manifest.get("streams", [])),
+        ],
+        exp_unit.clock_domains,
+    )
     refs = []
     all_ids = []
     for role in _ROLES:
@@ -607,6 +662,12 @@ def check_payloads(
         if artifact_id in checked:
             continue
         checked.add(artifact_id)
+        f.equal(
+            ref.get("kind"),
+            PAYLOAD_REF_KIND,
+            "payload_ref",
+            f"payload {artifact_id} reference kind",
+        )
         entry = obs["payloads"].get(artifact_id)
         if not f.check(
             entry is not None,

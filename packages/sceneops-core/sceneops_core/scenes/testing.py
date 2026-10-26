@@ -20,9 +20,13 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from sceneops_core.artifacts.schemas.payload import PayloadRef
+from sceneops_core.artifacts.schemas.payload import ArtifactPayloadRef
 from sceneops_core.common.ids import robot_run_recording_artifact_id
-from sceneops_core.provenance import ProducerInfo, RecordingSegmentSource
+from sceneops_core.provenance import (
+    ProducerInfo,
+    RecordingSegmentSource,
+    recording_clock_domains,
+)
 
 from .schemas import (
     FrameTransform,
@@ -73,9 +77,9 @@ def payload_artifact_id(observation_id: str, namespace: str = "art-payload") -> 
 
 def payload_ref(
     observation_id: str, *, media_type: str, namespace: str = "art-payload"
-) -> PayloadRef:
+) -> ArtifactPayloadRef:
     data = payload_bytes(observation_id)
-    return PayloadRef(
+    return ArtifactPayloadRef(
         artifact_id=payload_artifact_id(observation_id, namespace),
         checksum="sha256:" + hashlib.sha256(data).hexdigest(),
         size_bytes=len(data),
@@ -221,6 +225,9 @@ def build_scene_manifest(
 
     return SceneManifest(
         lineage=SceneLineage(source=source, producer=producer),
+        clock_domains=recording_clock_domains(
+            [source.source_clock, source_clock, camera_clock]
+        ),
         coordinate_frames=frames,
         channels=channels,
         calibrations=calibrations,

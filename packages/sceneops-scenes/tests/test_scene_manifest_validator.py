@@ -63,6 +63,10 @@ def test_declared_channel_without_observations_is_a_warning():
             }
         )
         payload["channels"].sort(key=lambda c: c["channel"])
+        payload["clock_domains"].append(
+            {"clock": "nuscenes.timestamp_us", "origin": "source", "resolution_ns": 1}
+        )
+        payload["clock_domains"].sort(key=lambda d: d["clock"])
 
     result = _validator.validate(
         scene_id="scene-a", manifest=_mutated(build_scene_manifest(), add_radar)
