@@ -153,3 +153,26 @@ async def test_exporting_changed_data_adds_a_revision_and_keeps_the_old_one(worl
     records = {r.uri: r for r in _table_records(world)}
     assert records[old_uri].checksum == sha256_checksum(old_bytes)
     assert len(records) == 2
+
+
+async def test_a_refused_table_fails_the_export_before_any_table_is_written(
+    world, monkeypatch
+):
+    """A Scene the observation table cannot represent (a preserved-file
+    payload) refuses the whole export; the scenes table, which could have been
+    built, must not be written first."""
+    from sceneops_analytics.tables import UnsupportedSceneContentError
+    from sceneops_worker.jobs.dataset import export_analytics_snapshot
+
+    def refuse(**_):
+        raise UnsupportedSceneContentError("channels reference preserved source files")
+
+    monkeypatch.setitem(
+        export_analytics_snapshot._MANIFEST_TABLE_BUILDERS, "observations", refuse
+    )
+    await _register(world, "a")
+    before = await world.artifact_store.list_objects(f"{world.root}/analytics")
+    with pytest.raises(UnsupportedSceneContentError):
+        await _export(world)
+    assert await world.artifact_store.list_objects(f"{world.root}/analytics") == before
+    assert _table_records(world) == []

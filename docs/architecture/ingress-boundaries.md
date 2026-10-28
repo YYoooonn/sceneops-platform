@@ -194,7 +194,9 @@ binding projects the source revision the producer fingerprint is computed over.
   optional `frame {timestamp_ns}` in the file's own time base). Downstream of
   canonical manifests, payload resolution (`sceneops_worker.payloads.PayloadLocator`)
   is the only place that dispatches on the reference kind; a consumer that cannot
-  resolve a kind refuses it explicitly.
+  resolve a kind refuses it explicitly. `tools/checks/source_dispatch.py` (run by
+  `make test`) lists every such site and the modules upstream of the manifests, and
+  fails on any other branch on source kind, format or reference type.
 
 ### 4.1 Clock domains
 

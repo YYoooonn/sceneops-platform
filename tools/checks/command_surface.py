@@ -74,6 +74,7 @@ INFRA_SUITES = {
     "sources",
     "lerobot-episodes",
     "nuscenes-scenes",
+    "mixed-sources",
 }
 
 # Callable building blocks that the surface composes (the contract bootstrap runs the

@@ -268,7 +268,8 @@ Everything downstream of registration reads canonical Scenes through a pin:
   tables from the verified revisions the DatasetVersion pins. Every timestamp
   column is paired with its `source_clock`; observations carry
   `payload_artifact_id`, not a location. A Scene whose observations reference
-  preserved source files is refused explicitly (`UnsupportedSceneContentError`).
+  preserved source files is refused explicitly (`UnsupportedSceneContentError`):
+  every table is built before any is written, so a refused export writes no table.
 
 ## 6. Producer: RecordingSceneBuilder
 

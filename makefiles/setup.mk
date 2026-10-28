@@ -124,7 +124,11 @@ test-integration:
 #               the nuScenes scene-0061 slice -> canonical Scenes:
 #               snapshot_scene_building on a disposable execution runtime, held to
 #               the raw-source verifier and to the RobotRun Scene of scene-0061
-INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes nuscenes-scenes
+#   mixed-sources
+#               one DatasetVersion of the scene-0061 RobotRun, the nuScenes Scene and the
+#               pusht Episodes, composed by pins and by selector on a disposable
+#               execution runtime and held to the mixed-source verifier
+INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes nuscenes-scenes mixed-sources
 SUITE ?= pipelines
 
 .PHONY: test-infrastructure
@@ -155,6 +159,7 @@ infra-suite-pipelines:
 		--ignore=tests/infrastructure/test_source_preservation_acceptance.py \
 		--ignore=tests/infrastructure/test_lerobot_episode_acceptance.py \
 		--ignore=tests/infrastructure/test_nuscenes_scene_acceptance.py \
+		--ignore=tests/infrastructure/test_mixed_source_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
 
 REFERENCE_SNAPSHOTS := lerobot-pusht nuscenes-scene-0061
@@ -201,6 +206,25 @@ infra-suite-nuscenes-scenes:
 		SNAPSHOTS="nuscenes-scene-0061"
 	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
 		tests/infrastructure/test_nuscenes_scene_acceptance.py -v
+
+.PHONY: infra-suite-mixed-sources
+# Mixed-source DatasetVersion acceptance (ADR-015 §7, M3 S5): the suite's baseline
+# registers the Recording Import RobotRun of scene-0061 (FIXTURE=scene-0061, so it
+# composes baseline-scene-0061 for the recording verifier); SNAPSHOT_SCENE_BUILDING
+# builds the scene-0061 slice's Scene and SNAPSHOT_EPISODE_BUILDING the pusht Episodes
+# on a disposable execution runtime. One DatasetVersion of all of them is composed by
+# pins and by selector and held to tools/reference/mixed_source_verify.py (raw-source
+# derivation + negative controls) and each part to its own verifier; validation,
+# profiling, consumers, execution provenance, idempotent re-runs and concurrent
+# compositions are checked around it. Refused first when the snapshots do not fit the
+# Docker VM. Prerequisites: `make local-up` (servers and images), the nuScenes
+# v1.0-mini tree at data/raw/nuscenes, `make reference-source-fetch` and
+# `make reference-data-bootstrap`. A skip here is a failure.
+infra-suite-mixed-sources:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="$(REFERENCE_SNAPSHOTS)"
+	FIXTURE=scene-0061 $(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_mixed_source_acceptance.py -v
 
 .PHONY: infra-suite-kafka
 infra-suite-kafka: streaming-test streaming-producer-test smoke-streaming

@@ -198,3 +198,35 @@ reference-verify-nuscenes-scene:
 	@test -n "$(SNAPSHOT_ID)" || { echo "SNAPSHOT_ID=<snapshot id> is required"; exit 2; }
 	@$(REFERENCE_VERIFY_ENV) $(NUSCENES_SCENE_VERIFY) verify --snapshot-id $(SNAPSHOT_ID) \
 		$(if $(DATASET),--dataset $(DATASET))
+
+# --------------------
+# Mixed-source DatasetVersions (tools/reference/mixed_source_verify.py,
+# docs/development/reference-verification.md "Mixed-source DatasetVersions"). The
+# expected composition of config/reference/mixed-sources/composition.json is derived
+# from the locked scene-0061 recording and the raw nuScenes and pusht trees.
+#
+# reference-verify-mixed-expectations  -- derive and compare with
+#                                         config/reference/mixed-sources/expectations.json
+#                                         (WRITE=1: replace the file). No stack.
+# reference-verify-mixed-selftest      -- a synthetic composition (by pins and by
+#                                         selector) passes and every negative control is
+#                                         detected. No stack.
+# reference-verify-mixed               -- the platform's DatasetVersion DATASET against
+#                                         the derivation, then the negative controls
+#                                         (read-only) DATASET=<id>/<version>
+# --------------------
+
+MIXED_SOURCE_VERIFY := uv run --no-sync python -I tools/reference/mixed_source_verify.py
+
+.PHONY: reference-verify-mixed-expectations
+reference-verify-mixed-expectations:
+	@$(MIXED_SOURCE_VERIFY) derive $(if $(WRITE),--write)
+
+.PHONY: reference-verify-mixed-selftest
+reference-verify-mixed-selftest:
+	@$(MIXED_SOURCE_VERIFY) selftest
+
+.PHONY: reference-verify-mixed
+reference-verify-mixed:
+	@test -n "$(DATASET)" || { echo "DATASET=<dataset_id>/<version> is required"; exit 2; }
+	@$(REFERENCE_VERIFY_ENV) $(MIXED_SOURCE_VERIFY) verify --dataset $(DATASET)

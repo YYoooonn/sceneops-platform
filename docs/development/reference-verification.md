@@ -153,6 +153,40 @@ of one sample exchanged), `source_file_checksum`, `media_type` (lidar declared r
 frame dropped from its group), `content_binding` (another content, fingerprint
 recomputed), `missing_native_file`, `snapshot_in_manifest`.
 
+### Mixed-source DatasetVersions (every part → one composition)
+
+`tools/reference/mixed_source_verify.py` with `verification/mixed_source.py` holds one
+DatasetVersion composed of several sources and both domains to the composition that
+`config/reference/mixed-sources/composition.json` declares: the Recording Import
+RobotRun of scene-0061 (its Scene and its Episode), the scene-0061 slice's nuScenes
+Scene and the 206 pusht Episodes. It derives every part with the rules above, from the
+locked recording and the raw trees, and composes them itself:
+
+| Subject | Rule |
+| --- | --- |
+| expected members | recording part: the unit ids `f(domain, recording, run_id, unit_key)` of the fixture's derived Scene and Episodes, `run_id` from the contract's `run_id_template`; content part: the derived units of the snapshot's raw tree, with the whole pin `(domain, unit_id, sha256(canonical_json(derived manifest)))` |
+| expectations | `derive` writes them to `config/reference/mixed-sources/expectations.json` (`--write` only) and every run derives them again and fails on any difference (`expectations_drift`) |
+| members | exactly the expected units, one member each, in their own domain; each pin's artifact id recomputes and names a registered revision of its unit (several revisions of a unit may exist; the member pins one) |
+| units | the unit record's binding is the part's source and unit key; a content unit names no RobotRun and a recording unit no content; the id recomputes from the binding |
+| manifests | stored bytes hash to the pin and agree with the record; canonical JSON; no membership, location or snapshot field, and no JSON token of the DatasetVersion's own dataset id or version name; a content member's bytes are exactly the derived manifest; every member also passes its part's manifest checks (recording: lineage, Scene / Episode content; content: the LeRobot or nuScenes manifest checks and the revision projection) |
+| sources | each content part's content is registered with the raw content checksum, file count and size and is declared by its snapshot declaration (`format`, `upstream`, `upstream_revision`); each recording part's RobotRun is registered |
+| composition | `composition_checksum` equals both `f(member pins)` and `f(expected pins)` (the content pins derived, the recording pins as verified); summaries (`scene_count`, `observation_count`, `keyframe_count`, `observed_channels`, `episode_count`) equal the derivation over every part; a recorded selector has exactly one clause per (part, domain), naming the part's source under the members' producer fingerprint |
+
+It reads no payload object or preserved file: each part's own verifier does
+(`reference_verify.py`, `nuscenes_scene_verify.py`, `lerobot_verify.py`).
+
+Negative controls (consistent faults, all must be detected, on a composition by pins
+and, with `selector_clause`, by selector): `content_timestamp_shift` (a pusht state 1 ns
+off), `recording_timestamp_shift` (a recording Scene observation 1 ns off),
+`membership_in_manifest` (the version's name written into a manifest), `wrong_pin` (a
+checksum the unit never registered), `dropped_member`, `foreign_member` (a unit of
+another content), `duplicate_unit` (two revisions of one unit), `wrong_domain` (an
+Episode composed as a Scene), `synthetic_robot_run` (a content Scene bound to a
+RobotRun), `source_swap` (a LeRobot unit under the nuScenes content),
+`undeclared_content` (no snapshot declares the content), `summary_count`,
+`summary_channels`, `checksum_of_other_pins`, `selector_clause` (a clause naming
+another content).
+
 ## Negative controls
 
 Every command runs its controls and fails when one is not detected. A *consistent*
@@ -183,13 +217,18 @@ make reference-verify-lerobot SNAPSHOT_ID=<id> [EPISODE=<n>] [DATASET=<id>/<vers
 make reference-verify-nuscenes-scene-selftest  nuScenes Scene rules on a synthetic state   no stack
 make reference-verify-nuscenes-scene SNAPSHOT_ID=<id> [UNIT_KEY=<token>] [DATASET=<id>/<version>]
                                                the platform's Scenes of the scene-0061 slice, read-only
+make reference-verify-mixed-expectations [WRITE=1]   mixed composition: derive and compare   no stack
+make reference-verify-mixed-selftest           mixed composition rules on a synthetic state   no stack
+make reference-verify-mixed DATASET=<id>/<version>    the platform's mixed DatasetVersion, read-only
 ```
 
 `make test-infrastructure SUITE=lerobot-episodes` builds pusht on a disposable runtime
 and runs `reference-verify-lerobot` for Episode 0 and then for the whole corpus and its
 DatasetVersion. `make test-infrastructure SUITE=nuscenes-scenes` builds the scene-0061
 slice on a disposable runtime and runs `reference-verify-nuscenes-scene` with its
-DatasetVersion.
+DatasetVersion. `make test-infrastructure SUITE=mixed-sources` builds all three parts on
+a disposable runtime, composes them by pins and by selector, runs
+`reference-verify-mixed` on both versions and each part's own verifier.
 
 `MODE=recording_import` (or `streaming_acquisition`) verifies one ingestion mode: its
 RobotRuns, units and DatasetVersion only, with the platform controls applied in that
@@ -239,6 +278,10 @@ platform.
   keeping the first build's Job) and the cross-source comparison with the RobotRun
   Scene of scene-0061 are checked by the `lerobot-episodes` / `nuscenes-scenes`
   infrastructure suites, not by the verifiers.
+- **Mixed compositions.** One composition is specified
+  (`config/reference/mixed-sources/composition.json`). The recording members' manifest
+  checksums are not derived (payload artifact ids are not recomputed), so their pins
+  enter the expected composition checksum as verified by the recording manifest checks.
 - **Implemented policies.** Scene `whole_recording` and Episode `event_markers`, the
   reference configurations. `fixed_duration` has no derivation; a contract using it
   fails with an `ExpectationError`.
