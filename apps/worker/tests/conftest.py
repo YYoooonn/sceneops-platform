@@ -329,9 +329,9 @@ class SceneWorld:
 
     @property
     def payload_locator(self):
-        from sceneops_worker.recordings.payload_refs import ArtifactPayloadLocator
+        from sceneops_worker.payloads import PayloadLocator
 
-        return ArtifactPayloadLocator(self.context.artifact_record_store)
+        return PayloadLocator(self.context)
 
     def payload_uri(self, artifact_id: str) -> str:
         return f"{self.root}/payloads/{artifact_id}"

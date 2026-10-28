@@ -56,16 +56,17 @@ Scene       -> labels / sample views / ScenarioSets / predictions / evaluations
 Episode     -> AlignedEpisode -> LearningDataExport
 ```
 
-- **RobotRun** is the ingestion boundary of every Scene and of recording-sourced
+- **RobotRun** is the ingestion boundary of recording-sourced Scenes and
   Episodes: one finalized, published, verified recording, created only by
   `REGISTER_ROBOT_RUN`. Nothing downstream of it knows whether the recording arrived by
   batch import or by streaming acquisition.
 - **SourceContent / SourceSnapshot** preserve an external dataset's native bytes and
   the upstream declarations that name them, created only by `REGISTER_SOURCE_SNAPSHOT`.
-  They are not converted to recordings. LeRobot v3.0 content is built into Episodes
-  directly (`SNAPSHOT_EPISODE_BUILDING`); no Scene is built from preserved content yet.
+  They are not converted to recordings. nuScenes v1.0 content is built into Scenes
+  (`SNAPSHOT_SCENE_BUILDING`) and LeRobot v3.0 content into Episodes
+  (`SNAPSHOT_EPISODE_BUILDING`) directly, referencing the preserved files.
   See [Ingress boundaries](./ingress-boundaries.md).
-- **Scene** and **Episode** are sibling derived domains over the same RobotRun, each
+- **Scene** and **Episode** are sibling derived domains over the same source, each
   with its own build, registration, validation and quality contract. They share
   platform infrastructure (Jobs, Pipelines, ArtifactStore), not a model: there is no
   generic "data unit" type. See [Scene domain](./scene-domain.md) and

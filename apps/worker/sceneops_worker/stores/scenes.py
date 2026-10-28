@@ -21,10 +21,15 @@ class SceneStore:
         return await self._repo.get(scene_id)
 
     async def list(
-        self, *, robot_run_id: str | None = None, limit: int = 100, offset: int = 0
+        self,
+        *,
+        robot_run_id: str | None = None,
+        content_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[SceneRecord]:
         return await self._repo.list(
-            robot_run_id=robot_run_id, limit=limit, offset=offset
+            robot_run_id=robot_run_id, content_id=content_id, limit=limit, offset=offset
         )
 
     async def get_revision(

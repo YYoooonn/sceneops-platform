@@ -37,21 +37,20 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.provenance import PinnedRecording, manifest_artifact_id_for
-from sceneops_core.scenes.schemas import scene_id_for
+from sceneops_core.provenance import PinnedRecording
 from sceneops_recording import check_l1_recording
 
-from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.recordings.artifact_records import (
     ArtifactRecordConflictError,
     require_same_artifact as _require_same,
 )
 from sceneops_worker.robots.resolver import resolve_recording
+from sceneops_worker.scenes.publication import publish_scene_manifests
+from sceneops_scenes.plan import SceneBuildPlan
 from sceneops_scenes.recording_builder import (
     PlannedPayload,
     RecordingSceneBuildError,
-    SceneBuildPlan,
     iter_planned_payloads,
     plan_recording_scenes,
 )
@@ -104,7 +103,12 @@ class BuildRecordingScenesJobHandler(
             )
             created_payloads = await self._publish_payloads(request, plan, recording)
 
-        manifest_artifact_ids = await self._publish_manifests(request, plan)
+        manifest_artifact_ids, _ = await publish_scene_manifests(
+            context,
+            plan,
+            job_id=request.job.job_id,
+            pipeline_run_id=request.job.pipeline_run_id,
+        )
         await context.commit()
 
         return BuildRecordingScenesJobResult(
@@ -176,45 +180,6 @@ class BuildRecordingScenesJobHandler(
             checksum=planned.checksum,
             size_bytes=planned.size_bytes,
         )
-
-    # ── manifests ──────────────────────────────────────────────────────────────
-
-    async def _publish_manifests(
-        self,
-        request: JobHandlerRequest[BuildRecordingScenesJobParams],
-        plan: SceneBuildPlan,
-    ) -> list[str]:
-        context: WorkerContext = request.context
-        artifact_ids: list[str] = []
-        for scene in plan.scenes:
-            scene_id = scene_id_for(scene.manifest.lineage.source)
-            published = await context.scene_artifact_store.publish_canonical_manifest(
-                scene_id=scene_id,
-                manifest=scene.manifest,
-            )
-            artifact_id = manifest_artifact_id_for(
-                unit_id=scene_id, manifest_checksum=published.checksum
-            )
-            ref = ArtifactRef(
-                kind=ArtifactKind.SCENE_MANIFEST,
-                uri=published.uri,
-                media_type="application/json",
-                checksum=published.checksum,
-                size_bytes=published.size_bytes,
-            )
-            record, registered = await context.artifact_record_store.create_if_absent(
-                artifact_id=artifact_id,
-                ref=ref,
-                owner_type=ArtifactOwnerType.SCENE,
-                owner_id=scene_id,
-                scene_id=scene_id,
-                job_id=request.job.job_id,
-                pipeline_run_id=request.job.pipeline_run_id,
-            )
-            if not registered:
-                _require_same(record, ref)
-            artifact_ids.append(artifact_id)
-        return artifact_ids
 
 
 __all__ = [

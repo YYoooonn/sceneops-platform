@@ -9,6 +9,7 @@ serializable request/result contract. Today it serves one direction,
 There is no ingest runtime. Acquired data enters SceneOps as a registered RobotRun
 recording; an external dataset enters as preserved SourceContent, read by an SDK-free
 native reader in the main runtime (`sceneops_sources.lerobot` for LeRobot v3.0,
+`sceneops_sources.nuscenes` for nuScenes v1.0,
 [Ingress boundaries](./ingress-boundaries.md)), or through the dataset-acquisition
 integration (`integrations/dataset-acquisition`), which converts it into an L1
 recording and has no SceneOps dependency; see

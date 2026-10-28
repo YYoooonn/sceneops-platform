@@ -12,6 +12,10 @@ are a separate table over the source-defined grouping. Every timestamp
 column is paired with the clock it is counted in; clocks are never
 converted. A manifest carries no
 scene id, so manifest-based builders take ``(scene_id, manifest)`` pairs.
+
+The observation table holds SceneOps payload artifacts only: a Scene whose
+observations reference preserved source files is refused explicitly
+(``UnsupportedSceneContentError``), not exported with a column it cannot fill.
 """
 
 from __future__ import annotations
@@ -20,10 +24,16 @@ from collections.abc import Sequence
 
 import polars as pl
 
+from sceneops_core.artifacts.schemas import ArtifactPayloadRef
 from sceneops_core.robots.schemas import MissionRecord, RobotStateRecord
 from sceneops_core.scenes.schemas import SceneManifest, SceneRevisionRecord
 
 SceneManifests = Sequence[tuple[str, SceneManifest]]
+
+
+class UnsupportedSceneContentError(ValueError):
+    """A Scene's content cannot be represented by the analytical tables."""
+
 
 SCENES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
@@ -104,6 +114,18 @@ def build_observations_table(
 ) -> pl.DataFrame:
     rows = []
     for scene_id, manifest in manifests:
+        files = sorted(
+            {
+                o.channel
+                for o in manifest.observations
+                if not isinstance(o.payload, ArtifactPayloadRef)
+            }
+        )
+        if files:
+            raise UnsupportedSceneContentError(
+                f"Scene {scene_id}: channels {files} reference preserved source "
+                "files, which the observation table cannot represent"
+            )
         modality = {c.channel: c.modality.value for c in manifest.channels}
         clock = {c.channel: c.source_clock for c in manifest.channels}
         rows.extend(

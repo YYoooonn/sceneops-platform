@@ -80,9 +80,11 @@ async def resolve_registered_content(
     )
 
 
-def _mismatch(
+def source_file_ref_mismatch(
     ref: SourceFileRef, content_id: str, entries: dict[str, SourceFileEntry]
 ) -> str | None:
+    """Why ``ref`` is not exactly the inventory entry of ``content_id`` it
+    names, or None if it is."""
     if ref.content_id != content_id:
         return f"{ref.path!r} is referenced in {ref.content_id}, not {content_id}"
     entry = entries.get(ref.path)
@@ -109,7 +111,11 @@ async def verify_source_file_refs(
         {
             problem
             for ref in referenced.values()
-            if (problem := _mismatch(ref, content.record.content_id, entries))
+            if (
+                problem := source_file_ref_mismatch(
+                    ref, content.record.content_id, entries
+                )
+            )
             is not None
         }
     )
@@ -146,5 +152,6 @@ __all__ = [
     "RegisteredContentError",
     "SourceFileRefError",
     "resolve_registered_content",
+    "source_file_ref_mismatch",
     "verify_source_file_refs",
 ]

@@ -45,65 +45,99 @@ def scene_id_for(source: RecordingSegmentSource | ContentUnitSource) -> str:
     return canonical_unit_id(domain="scene", source=source)
 
 
-def _check_unit_identity(scene_id: str, robot_run_id: str, unit_key: str) -> None:
+SourceKind = Literal["recording", "content"]
+
+
+def _source_id(
+    source_kind: str, robot_run_id: str | None, content_id: str | None
+) -> str:
+    """The unit's source identity: exactly the column of its source kind is
+    set (the RobotRun for a recording, the SourceContent for content)."""
+    expected, other = (
+        (robot_run_id, content_id)
+        if source_kind == "recording"
+        else (content_id, robot_run_id)
+    )
+    if not expected or other is not None:
+        raise ValueError(
+            f"a {source_kind} Scene names its source by "
+            f"{'robot_run_id' if source_kind == 'recording' else 'content_id'} only; "
+            f"got robot_run_id={robot_run_id!r}, content_id={content_id!r}"
+        )
+    return expected
+
+
+def _check_unit_identity(
+    scene_id: str, source_kind: str, source_id: str, unit_key: str
+) -> None:
     expected = unit_id_for(
         domain="scene",
-        source_kind="recording",
-        source_id=robot_run_id,
+        source_kind=source_kind,
+        source_id=source_id,
         unit_key=unit_key,
     )
     if scene_id != expected:
         raise ValueError(
-            f"scene_id {scene_id!r} is not the unit of RobotRun {robot_run_id!r} "
-            f"unit_key {unit_key!r}; expected {expected!r}"
+            f"scene_id {scene_id!r} is not the unit of {source_kind} source "
+            f"{source_id!r} unit_key {unit_key!r}; expected {expected!r}"
         )
 
 
 class SceneRecord(SceneOpsBaseModel):
     """The canonical Scene unit. Its id is a function of its source binding,
-    which the record keeps: the RobotRun whose recording is the source and
-    the producer's unit key within it."""
+    which the record keeps: the source kind, the source (the RobotRun whose
+    recording, or the SourceContent whose native scene, it is) and the unit
+    key within it."""
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, extra="forbid"
     )
 
     scene_id: str
-    source_kind: Literal["recording"] = "recording"
-    robot_run_id: str
+    source_kind: SourceKind
+    robot_run_id: str | None = None
+    content_id: str | None = None
     unit_key: str
 
     registered_at: datetime | None = None
 
     @model_validator(mode="after")
     def _check_identity(self) -> SceneRecord:
-        _check_unit_identity(self.scene_id, self.robot_run_id, self.unit_key)
+        _check_unit_identity(
+            self.scene_id, self.source_kind, self.source_id, self.unit_key
+        )
         return self
+
+    @property
+    def source_id(self) -> str:
+        return _source_id(self.source_kind, self.robot_run_id, self.content_id)
 
 
 class SceneRevisionRecord(SceneOpsBaseModel):
     """One registered SceneManifest revision of a Scene unit.
 
     ``manifest_artifact_id`` is the revision's deterministic manifest
-    ArtifactRecord id. The unit binding (``source_kind``, ``robot_run_id``,
-    ``unit_key``) is the unit's, carried so a revision is self-describing;
-    it is stored once, on the unit."""
+    ArtifactRecord id. The unit binding (``source_kind``, ``robot_run_id`` or
+    ``content_id``, ``unit_key``) is the unit's, carried so a revision is
+    self-describing; it is stored once, on the unit."""
 
     model_config = ConfigDict(
         populate_by_name=True, alias_generator=to_camel, extra="forbid"
     )
 
     scene_id: str
-    source_kind: Literal["recording"] = "recording"
-    robot_run_id: str
+    source_kind: SourceKind
+    robot_run_id: str | None = None
+    content_id: str | None = None
     unit_key: str
 
     manifest_artifact_id: str
     manifest_checksum: str
     producer_fingerprint: str
 
-    # The segment window, [start, end) in window_clock (the producer's
-    # declared segmentation clock). See SceneManifest.declared_window().
+    # The unit window, [start, end) in window_clock (the producer's declared
+    # segmentation clock, or the content's source clock). See
+    # SceneManifest.declared_window().
     window_clock: str
     window_start_timestamp_ns: int
     window_end_timestamp_ns: int
@@ -116,11 +150,17 @@ class SceneRevisionRecord(SceneOpsBaseModel):
 
     registered_at: datetime | None = None
 
+    @property
+    def source_id(self) -> str:
+        return _source_id(self.source_kind, self.robot_run_id, self.content_id)
+
     @model_validator(mode="after")
     def _check_revision(self) -> SceneRevisionRecord:
         if self.window_end_timestamp_ns <= self.window_start_timestamp_ns:
             raise ValueError("window must be non-empty")
-        _check_unit_identity(self.scene_id, self.robot_run_id, self.unit_key)
+        _check_unit_identity(
+            self.scene_id, self.source_kind, self.source_id, self.unit_key
+        )
         check_revision_pin(
             unit_id=self.scene_id,
             manifest_artifact_id=self.manifest_artifact_id,
@@ -133,6 +173,7 @@ class SceneRevisionRecord(SceneOpsBaseModel):
             scene_id=self.scene_id,
             source_kind=self.source_kind,
             robot_run_id=self.robot_run_id,
+            content_id=self.content_id,
             unit_key=self.unit_key,
         )
 
@@ -168,7 +209,8 @@ def project_scene_revision(
     return SceneRevisionRecord(
         scene_id=scene_id_for(source),
         source_kind=source.source_kind,
-        robot_run_id=source.robot_run_id,
+        robot_run_id=source.source_id if source.source_kind == "recording" else None,
+        content_id=source.source_id if source.source_kind == "content" else None,
         unit_key=source.unit_key,
         manifest_artifact_id=manifest_artifact_id,
         manifest_checksum=manifest_checksum,

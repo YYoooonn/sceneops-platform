@@ -12,6 +12,7 @@ from .labels import ImportLabelsJobParams
 from .sample_views import BuildSceneSampleViewsJobParams
 from .scene import (
     BuildRecordingScenesJobParams,
+    BuildSnapshotScenesJobParams,
     ProfileSceneJobParams,
     RegisterScenesJobParams,
     SceneKeyframeValidationConfig,
@@ -60,6 +61,7 @@ __all__ = [
     "LearningDataExportInputParams",
     "CurateEpisodesJobParams",
     "BuildRecordingScenesJobParams",
+    "BuildSnapshotScenesJobParams",
     "MissingGroundTruthPolicy",
     "ValidateSceneJobParams",
     "ProfileSceneJobParams",

@@ -1,12 +1,13 @@
 [project]
 name = "sceneops-scenes"
 version = "0.1.0"
-description = "SceneOps Scene domain: Scene building from recordings, validation, profiling and Scene artifact storage"
+description = "SceneOps Scene domain: Scene building from recordings and nuScenes content, validation, profiling and Scene artifact storage"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "sceneops-core",
   "sceneops-storage",
   "sceneops-recording",
+  "sceneops-sources",
   "pydantic>=2.0.0",
 ]
 
@@ -14,6 +15,7 @@ dependencies = [
 sceneops-core = { workspace = true }
 sceneops-storage = { workspace = true }
 sceneops-recording = { workspace = true }
+sceneops-sources = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["sceneops_scenes"]

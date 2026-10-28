@@ -26,7 +26,7 @@ unsupported encoding, a selected topic absent from the recording, missing or
 changing calibration, distortion the manifest cannot carry, a sensor frame
 calibrated against a frame other than the ego frame.
 
-Identity rules (frozen by ``semantics_version`` 4):
+Identity rules (frozen by ``semantics_version`` 5):
 
     observation_id   <topic slug>-<rank>: rank in the channel's canonical order
                      (canonical timestamp, then MCAP sequence when every message
@@ -112,12 +112,14 @@ from sceneops_recording.observations.payloads import (
     ros2_cdr_media_type,
 )
 
+from .plan import PlannedScene, SceneBuildPlan
+
 RECORDING_SCENE_PRODUCER_ID: Final = "sceneops.recording_scene_builder"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration: it enters the producer fingerprint, so a
-# changed builder is a different producer. 4: clock-domain declarations
-# (every recording clock with origin ``source``).
-RECORDING_SCENE_SEMANTICS_VERSION: Final = 4
+# changed builder is a different producer. 5: SceneManifest v4 (every
+# observation and group carries ``native_ref``, absent for a recording).
+RECORDING_SCENE_SEMANTICS_VERSION: Final = 5
 CAMERA_INFO_SCHEMA: Final = "sensor_msgs/msg/CameraInfo"
 TF_MESSAGE_SCHEMA: Final = "tf2_msgs/msg/TFMessage"
 
@@ -133,25 +135,6 @@ _PROJECTION_TOLERANCE: Final = 1e-9
 
 class RecordingSceneBuildError(RecordingBuildError):
     """The recording cannot be canonicalized faithfully under this config."""
-
-
-@dataclass(frozen=True)
-class PlannedScene:
-    unit_key: str
-    manifest: SceneManifest
-
-
-@dataclass(frozen=True)
-class SceneBuildPlan:
-    producer: ProducerInfo
-    scenes: list[PlannedScene]
-    # keyed by (topic, per-channel file index)
-    payloads: dict[tuple[str, int], PlannedPayload]
-    pose_count: int
-
-    @property
-    def observation_count(self) -> int:
-        return sum(len(s.manifest.observations) for s in self.scenes)
 
 
 # --- identifiers and payloads (shared with the Episode builder) ---------------

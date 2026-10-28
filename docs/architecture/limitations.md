@@ -121,11 +121,11 @@ interface, and nothing stores them.
 
 ## 5. Canonicalization
 
-Scenes are produced only from a registered RobotRun recording. Episodes are produced
-from a registered RobotRun recording or from a registered LeRobot v3.0 SourceContent
-([Episode domain](./episode-domain.md)); no other external format has a native reader
-or content builder, so nuScenes reaches a canonical Scene only as a converted
-recording. Current builder bounds:
+Scenes are produced from a registered RobotRun recording or from a registered
+nuScenes v1.0 SourceContent ([Scene domain](./scene-domain.md) §7). Episodes are
+produced from a registered RobotRun recording or from a registered LeRobot v3.0
+SourceContent ([Episode domain](./episode-domain.md)). No other external format has a
+native reader or content builder, and no format has both. Current builder bounds:
 
 - Only ROS 2 (`cdr` / `ros2msg`) messages are decoded. Scene camera payloads must be
   `CompressedImage` (jpeg / png); other Scene channels are stored as their serialized
@@ -169,6 +169,14 @@ recording. Current builder bounds:
   manifest: pusht Episode 0 is 201 KB and strict-loads in about 11 ms on a developer
   host. Video frames are referenced by a frame selector into the preserved MP4 and
   never decoded; frame-exact decoding (AV1 for pusht) is unverified.
+- nuScenes content: only a `v1.0-<split>` table directory is read, and only the
+  `scene-0061` slice (one scene of v1.0-mini with the shared tables) has been built on
+  real data. Sensor readings, ego poses and samples are canonicalized; CAN, maps and the
+  annotation tables are preserved but not read, so a native nuScenes Scene has no CAN
+  stream and no labels. A slice snapshot that keeps the shared tables lists scenes
+  whose files it does not preserve, so it is built with `unit_keys`. The scene-0061
+  manifest is 2.9 MB (2,963 observations); readings are referenced as whole preserved
+  files, never decoded at build time.
 - The robot telemetry projection (`ingest_robot_states`) reads its own fixed topic set
   and `RobotStateRecord` columns; it is a derived table, not canonical Episode data.
 - Validation scope: the journeys are validated on one nuScenes mini scene
@@ -184,8 +192,13 @@ recording. Current builder bounds:
 - Sample views associate by nearest / previous only (no pose interpolation); evaluation
   applies no frame transform. Episodes have no label sets. See
   [Derived layer](./derived-layer.md) §7.
-- `export_analytics_snapshot` covers Scene tables only; aligned Episodes have their own
-  learning export.
+- `export_analytics_snapshot` covers Scene tables only, of recording-sourced Scenes: a
+  Scene whose observations reference preserved source files is refused
+  (`UnsupportedSceneContentError`). Aligned Episodes have their own learning export.
+- Label sets anchor on a RobotRun's observations, so no label resolves into a
+  content-sourced (nuScenes) Scene: its sample views carry no labels. Detection lifts
+  2-D boxes only from `PointCloud2` CDR lidar payloads; a preserved nuScenes
+  `.pcd.bin` reading is located but not lifted (a failed lift is recorded).
 - Learning export is numeric scalar / vector only, with no lazy / streaming Torch
   dataset and no missing-value fill or mask policy
   ([Robot learning data](./robot-learning-data.md) §8,

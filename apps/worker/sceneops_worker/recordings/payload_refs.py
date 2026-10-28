@@ -108,19 +108,7 @@ async def verify_payload_objects(
         )
 
 
-class ArtifactPayloadLocator:
-    """Where verified payload bytes live, for workflows that read them."""
-
-    def __init__(self, artifact_record_store: ArtifactRecordStore) -> None:
-        self._store = artifact_record_store
-
-    async def uris(self, refs: Iterable[ArtifactPayloadRef]) -> dict[str, str]:
-        records = await resolve_payload_artifacts(self._store, refs)
-        return {artifact_id: record.uri for artifact_id, record in records.items()}
-
-
 __all__ = [
-    "ArtifactPayloadLocator",
     "PayloadIntegrityError",
     "payload_mismatch",
     "resolve_payload_artifacts",

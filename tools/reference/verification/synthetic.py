@@ -110,13 +110,14 @@ def scene_manifest(
                     "image_size": None
                     if size is None
                     else {"width_px": size[0], "height_px": size[1]},
+                    "native_ref": None,
                 }
             )
     observations.sort(
         key=lambda o: (o["timestamp_ns"], o["channel"], o["observation_id"])
     )
     return {
-        "schema_version": "sceneops.scene_manifest/v3",
+        "schema_version": "sceneops.scene_manifest/v4",
         "lineage": _lineage(
             robot_run_id,
             recording_checksum,

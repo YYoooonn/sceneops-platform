@@ -52,6 +52,18 @@ lands with the nuScenes builder (S4) without a version change unless its structu
 changes. The D14 refusal is decided by what a consumer cannot represent (a
 `SourceFileRef` payload, a `transition` stream), not by source kind, so MS-10 holds.
 
+**Amended (2026-10-28, M3 S4).** The Scene changes of §6.6 ship as
+`sceneops.scene_manifest/v4`. The content variant changes the structure of v3, which
+S2 published: `lineage.source` becomes the §4 union, observation payloads the §6.5
+union, and observations and keyframe groups gain `native_ref`. By the rule applied in
+S3, a structural change takes a new version, so "without a version change" above does
+not hold for Scenes. The loader reads v4 only (no backward compatibility); recording
+Scene manifests gain `native_ref: null` and the recording Scene builder's semantics
+version moves to 5. Within one Scene a `native_ref` names at most one observation and
+at most one group. Scene consumers that cannot represent a `SourceFileRef` refuse it
+by capability, as D14 does for Episodes (the analytical observation table); the
+payload locator is the one kind dispatch.
+
 This ADR supersedes, in
 [ADR-007](./007-canonical-ingestion-architecture.md) Amendment A4, decisions 1, 3, 4 and 5 of
 §29.2 and invariants I-31 and I-36. It amends I-1, I-2, I-10, I-16 and I-17 and retires

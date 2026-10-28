@@ -35,11 +35,15 @@ class SceneService:
         self,
         *,
         robot_run_id: str | None = None,
+        content_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> SceneListResponse:
         scenes = await self._repository.list(
-            robot_run_id=robot_run_id, limit=limit, offset=offset
+            robot_run_id=robot_run_id,
+            content_id=content_id,
+            limit=limit,
+            offset=offset,
         )
         return SceneListResponse(scenes=scenes, count=len(scenes))
 

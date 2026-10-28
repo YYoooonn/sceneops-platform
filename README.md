@@ -57,11 +57,12 @@ Details and the dependency rules: [Repository structure](docs/architecture/repos
 
 ### Pipelines and jobs
 
-A Pipeline exists only where multi-stage orchestration, retry and lineage justify it. SceneOps has exactly five:
+A Pipeline exists only where multi-stage orchestration, retry and lineage justify it. SceneOps has exactly six:
 
 | Pipeline                         | Stages                                                                                              |
 | -------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `recording_scene_building`       | RobotRun → `build_recording_scenes` → `register_scenes` → `compose_dataset_version` (optional) → `validate_scene` → `profile_scene` |
+| `snapshot_scene_building`        | SourceSnapshot (nuScenes v1.0) → `build_snapshot_scenes` → `register_scenes` → `compose_dataset_version` (optional) → `validate_scene` → `profile_scene` |
 | `recording_episode_building`     | RobotRun → `build_recording_episodes` → `register_episodes` → `compose_dataset_version` (optional) → `validate_episode` → `profile_episode` |
 | `snapshot_episode_building`      | SourceSnapshot (LeRobot v3.0) → `build_snapshot_episodes` → `register_episodes` → `compose_dataset_version` (optional) → `validate_episode` → `profile_episode` |
 | `scene_ml_evaluation`            | pinned label sets + policy → `build_scene_sample_views` → `mine_scenarios` → `score_scenario_readiness` → `predict_detection` → `evaluate_detection` |

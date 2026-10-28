@@ -37,6 +37,37 @@ class BuildRecordingScenesJobResult(BaseJobResult):
     metadata: JsonDict = Field(default_factory=dict)
 
 
+class BuildSnapshotScenesJobResult(BaseJobResult):
+    """The Scenes built from the content of one SourceSnapshot.
+
+    ``snapshot_id`` is the declaration this build read and ``content_id`` /
+    ``content_checksum`` the bytes it resolved to: the build's execution
+    provenance (ADR-015 §4, MS-14), recorded here and never in a manifest.
+    ``manifest_artifact_ids`` are the SCENE_MANIFEST ArtifactRecords of the
+    built units, in unit-key order, for REGISTER_SCENES; a build of the same
+    content through another snapshot finds them already recorded, with the
+    Job that first produced them. No payload object is written: every
+    observation references a preserved file."""
+
+    snapshot_id: str
+    content_id: str
+    content_checksum: str
+    producer_fingerprint: str
+
+    unit_keys: list[str] = Field(default_factory=list)
+    manifest_artifact_ids: list[str] = Field(default_factory=list)
+    # How many of manifest_artifact_ids this execution recorded.
+    created_manifest_count: int = 0
+
+    scene_count: int = 0
+    observation_count: int = 0
+    pose_count: int = 0
+    keyframe_count: int = 0
+    channels: list[str] = Field(default_factory=list)
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
 class ValidateSceneJobResult(BaseJobResult):
     status: str = "ready"
     should_block_pipeline: bool = False
@@ -69,9 +100,11 @@ class RegisterScenesJobResult(BaseJobResult):
     revision is registered after commit: the ``new_unit`` / ``new_revision``
     lists name the units whose revision this job inserted, and
     ``existing_revision`` those whose revision was already registered (a
-    retry, or a rebuild of identical bytes)."""
+    retry, or a rebuild of identical bytes). One build reads one source:
+    ``source_kind`` / ``source_id`` name it (a RobotRun or a SourceContent)."""
 
-    robot_run_id: str
+    source_kind: str
+    source_id: str
     producer_fingerprint: str
 
     revisions: list[RevisionPin] = Field(default_factory=list)

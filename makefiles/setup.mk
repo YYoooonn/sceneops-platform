@@ -120,7 +120,11 @@ test-integration:
 #   lerobot-episodes
 #               LeRobot pusht -> canonical Episodes: snapshot_episode_building on a
 #               disposable execution runtime, held to the raw-source verifier
-INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes
+#   nuscenes-scenes
+#               the nuScenes scene-0061 slice -> canonical Scenes:
+#               snapshot_scene_building on a disposable execution runtime, held to
+#               the raw-source verifier and to the RobotRun Scene of scene-0061
+INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes nuscenes-scenes
 SUITE ?= pipelines
 
 .PHONY: test-infrastructure
@@ -150,6 +154,7 @@ infra-suite-pipelines:
 		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
 		--ignore=tests/infrastructure/test_source_preservation_acceptance.py \
 		--ignore=tests/infrastructure/test_lerobot_episode_acceptance.py \
+		--ignore=tests/infrastructure/test_nuscenes_scene_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
 
 REFERENCE_SNAPSHOTS := lerobot-pusht nuscenes-scene-0061
@@ -181,6 +186,21 @@ infra-suite-lerobot-episodes:
 		SNAPSHOTS="lerobot-pusht"
 	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
 		tests/infrastructure/test_lerobot_episode_acceptance.py -v
+
+.PHONY: infra-suite-nuscenes-scenes
+# nuScenes Scene acceptance (ADR-015 §6.7, M3 S4): the scene-0061 slice is published
+# and registered, then SNAPSHOT_SCENE_BUILDING builds, registers, composes, validates
+# and profiles its Scene on a disposable execution runtime; the Scene is held to
+# tools/reference/nuscenes_scene_verify.py (raw-source derivation + negative controls)
+# and compared with the RobotRun Scene of scene-0061, which the suite's baseline
+# registers. Refused first when the snapshot does not fit the Docker VM. Prerequisites:
+# `make local-up` (servers and images), the nuScenes v1.0-mini tree at data/raw/nuscenes
+# and `make reference-data-bootstrap` (the locked recording). A skip here is a failure.
+infra-suite-nuscenes-scenes:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="nuscenes-scene-0061"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_nuscenes_scene_acceptance.py -v
 
 .PHONY: infra-suite-kafka
 infra-suite-kafka: streaming-test streaming-producer-test smoke-streaming

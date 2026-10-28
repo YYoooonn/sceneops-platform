@@ -13,6 +13,7 @@ from .params import (
     BuildRecordingEpisodesJobParams,
     BuildSnapshotEpisodesJobParams,
     BuildRecordingScenesJobParams,
+    BuildSnapshotScenesJobParams,
     ComposeDatasetVersionJobParams,
     CurateEpisodesJobParams,
     EvaluateDetectionJobParams,
@@ -42,6 +43,7 @@ from .results import (
     BuildRecordingEpisodesJobResult,
     BuildSnapshotEpisodesJobResult,
     BuildRecordingScenesJobResult,
+    BuildSnapshotScenesJobResult,
     ComposeDatasetVersionJobResult,
     CurateEpisodesJobResult,
     EvaluateDetectionJobResult,
@@ -69,6 +71,7 @@ JobResultModel: TypeAlias = type[BaseJobResult]
 
 JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
     JobType.BUILD_RECORDING_SCENES: BuildRecordingScenesJobParams,
+    JobType.BUILD_SNAPSHOT_SCENES: BuildSnapshotScenesJobParams,
     JobType.IMPORT_LABELS: ImportLabelsJobParams,
     JobType.BUILD_SCENE_SAMPLE_VIEWS: BuildSceneSampleViewsJobParams,
     JobType.VALIDATE_SCENE: ValidateSceneJobParams,
@@ -98,6 +101,7 @@ JOB_PARAM_SCHEMA_BY_TYPE: dict[JobType, JobParamsModel] = {
 
 JOB_RESULT_SCHEMA_BY_TYPE: dict[JobType, JobResultModel] = {
     JobType.BUILD_RECORDING_SCENES: BuildRecordingScenesJobResult,
+    JobType.BUILD_SNAPSHOT_SCENES: BuildSnapshotScenesJobResult,
     JobType.IMPORT_LABELS: ImportLabelsJobResult,
     JobType.BUILD_SCENE_SAMPLE_VIEWS: BuildSceneSampleViewsJobResult,
     JobType.VALIDATE_SCENE: ValidateSceneJobResult,

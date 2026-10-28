@@ -49,12 +49,15 @@ class PostgresSceneRepository:
         self,
         *,
         robot_run_id: str | None = None,
+        content_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[SceneRecord]:
         stmt = select(SceneModel)
         if robot_run_id is not None:
             stmt = stmt.where(SceneModel.robot_run_id == robot_run_id)
+        if content_id is not None:
+            stmt = stmt.where(SceneModel.content_id == content_id)
         stmt = apply_pagination(
             stmt.order_by(SceneModel.scene_id), limit=limit, offset=offset
         )
@@ -91,10 +94,14 @@ class PostgresSceneRepository:
     async def list_source_revisions(
         self, *, source_kind: str, source_id: str, producer_fingerprint: str
     ) -> list[SceneRevisionRecord]:
-        if source_kind != "recording":
-            return []
+        source_column = (
+            SceneModel.robot_run_id
+            if source_kind == "recording"
+            else SceneModel.content_id
+        )
         return await self._revisions(
-            SceneModel.robot_run_id == source_id,
+            SceneModel.source_kind == source_kind,
+            source_column == source_id,
             SceneRevisionModel.producer_fingerprint == producer_fingerprint,
         )
 

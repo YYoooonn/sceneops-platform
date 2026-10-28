@@ -2,8 +2,9 @@
 
 ``load_detection_samples`` is the only way a detection run turns derived
 inputs into samples: every view and every Scene revision it names is read
-through its pinned checksum, every payload through its verified
-ArtifactRecord, and nothing is looked up by location or "latest".
+through its pinned checksum, every payload through the payload locator (its
+verified ArtifactRecord, or its registered content's inventory), and nothing
+is looked up by location or "latest".
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.resolution import ResolvedView, resolve_label_set
 from sceneops_inference.detection.base import DetectionSampleInput
 from sceneops_inference.detection.uris import normalize_image_uri
-from sceneops_worker.recordings.payload_refs import ArtifactPayloadLocator
+from sceneops_worker.payloads import PayloadLocator
 
 
 class SampleViewResolutionError(ValueError):
@@ -50,7 +51,7 @@ async def load_detection_samples(
     none of its samples is an error, never an empty result.
     """
     selection = DetectionSampleSelection()
-    locator = ArtifactPayloadLocator(context.artifact_record_store)
+    locator = PayloadLocator(context)
     label_cache: dict[str, LabelSetManifest] = {}
 
     async def labels_of(
@@ -137,15 +138,11 @@ async def load_detection_samples(
                     scene_id=view.scene.scene_id,
                     sample_id=sample.sample_id,
                     camera_channel=camera_channel,
-                    image_uri=normalize_image_uri(
-                        uris[camera.observation.payload.artifact_id]
-                    ),
+                    image_uri=normalize_image_uri(uris[camera.observation.payload]),
                     camera=camera,
                     lidar=lidar,
                     lidar_uri=(
-                        uris[lidar.observation.payload.artifact_id]
-                        if lidar is not None
-                        else None
+                        uris[lidar.observation.payload] if lidar is not None else None
                     ),
                     pose=r.pose,
                     reference_labels=(

@@ -89,7 +89,7 @@ Rules from [Scene domain](../architecture/scene-domain.md) §1 and §6,
 | RobotRun | registered under the contract robot; recording artifact `art-robotrun-<run>` of kind `robot_run_recording`; the stored object's bytes equal the record; Recording Import pins the locked sha256; Streaming Acquisition pins its capture, whose per-topic counts equal the lock's and whose derived canonical content equals the locked recording's |
 | units | the run's Scenes / Episodes are exactly the derived unit ids; each row's id recomputes from its binding; exactly `revisions_per_unit` revisions; one checksum per producer fingerprint |
 | revision | `manifest_artifact_id = f(unit_id, manifest_checksum)`; window and projection columns equal the derivation |
-| manifest | record kind, checksum and size equal the stored bytes; the bytes are canonical JSON; no DatasetVersion, unit id, status, location or execution field; schema version (`scene_manifest/v3`, `episode_manifest/v2`); lineage, producer and clock domains as above; content equal to the derivation |
+| manifest | record kind, checksum and size equal the stored bytes; the bytes are canonical JSON; no DatasetVersion, unit id, status, location or execution field; schema version (`scene_manifest/v4`, `episode_manifest/v3`); a recording Scene carries no `native_ref`; lineage, producer and clock domains as above; content equal to the derivation |
 | payloads | every reference has `kind = artifact` and resolves to an `observation_payload` record with exactly its checksum, size and media type, owned by the RobotRun; the object exists with that size (`--deep`: those bytes); one artifact per recorded message and extraction, shared by the Scene and the Episode |
 | DatasetVersion | members are exactly the mode's derived unit ids, one per unit; each pin names a registered revision and its artifact id recomputes; `composition_checksum` recomputed from the pins; summaries (`scene_count`, `observation_count`, `keyframe_count`, `observed_channels`, `episode_count`) equal the derivation |
 
@@ -121,6 +121,38 @@ components reversed), `transition_value` (one `next.done` flipped),
 `source_file_checksum`, `frame_selector` (1 ns), `missing_native_file` (the video
 object absent from the store), `snapshot_in_manifest`.
 
+### nuScenes Scenes (raw scene-0061 slice → expectations)
+
+`tools/reference/nuscenes_scene_verify.py` with `verification/nuscenes_scene.py` holds
+the Scenes a `SNAPSHOT_SCENE_BUILDING` run produced from the `nuscenes-scene-0061`
+snapshot to the raw tree `data/raw/nuscenes`, selected by that snapshot's declaration,
+and `config/reference/nuscenes-scene-0061/scene_build_config.json`. It reads the tables
+with its own standard-library json reader and implements the rules of
+[Scene domain](../architecture/scene-domain.md) §1 and §7 and
+[ADR-015](../adr/015-multi-source-platform.md) §5, §6.2, §6.5, §6.6 itself:
+
+| Subject | Rule |
+| --- | --- |
+| content | as for LeRobot: the selected files hashed independently, `content_checksum`, `content_id`; the registered content and the snapshot declaration must match |
+| unit | one per native scene; `unit_key = scene.token`; a scene with a selected reading whose file the slice does not preserve must not be built (nine of the ten v1.0-mini scenes); `scene.name` must not appear in the bytes |
+| time | `nuscenes.timestamp`, origin `unix_epoch`, resolution 1 000 ns; `timestamp_us · 1 000` for readings, ego poses and samples; window `[min, max + 1)` over every reading of the scene's samples, every channel |
+| channels / frames | `sensor.channel`, `sensor.modality`, frame = channel; `global` (world), `ego` (ego) and one sensor frame per channel |
+| calibrations / poses | `cal-<calibrated_sensor.token>` ego → channel with translation and rotation verbatim, the camera intrinsic for cameras only; `pose-<ego_pose.token>` global → ego |
+| observations | every reading of the selected channels: id `<channel>-<rank:08d>` in (timestamp, token) order, `native_ref = sample_data.token`; `SourceFileRef` to the raw file with its sha256 and size and the D3 media type (`image/jpeg`, `application/x.nuscenes.lidar-pcd-bin`, `application/x.nuscenes.radar-pcd`); `calibration_id`, `ego_pose_id` from the reading's own tokens; image size for cameras |
+| keyframes | one group per sample, `keyframe-<rank:06d>` in (timestamp, token) order, at `sample.timestamp`, the key-frame readings, `native_ref = sample.token` |
+| producer | `sceneops.nuscenes_scene_builder` v1; fingerprint over `{channels sorted}` and `{source_kind: content, content_id, content_checksum}` |
+| platform | one revision per unit; record (`robot_run_id` null), revision projection, pin, canonical bytes and checksum; no snapshot id, upstream, upstream revision, licence or scene-name token in the bytes; every referenced file stored with its raw size; a DatasetVersion's members, `scene_count` and composition checksum from the pins |
+
+Negative controls (consistent faults on the first Scene, all must be detected):
+`timestamp_drift` (a camera reading 1 µs off), `clock_origin` (`source`),
+`window_shift` (1 µs early), `dropped_reading`, `sensor_file_swap` (two sensors' files
+of one sample exchanged), `source_file_checksum`, `media_type` (lidar declared radar),
+`ego_pose_link` (a reading linked to another reading's pose), `calibration_value`
+(1 cm), `ego_pose_value` (0.5 m), `native_token` (a `native_ref` replaced),
+`sample_token_swap` (two groups' sample tokens exchanged), `keyframe_member` (a key
+frame dropped from its group), `content_binding` (another content, fingerprint
+recomputed), `missing_native_file`, `snapshot_in_manifest`.
+
 ## Negative controls
 
 Every command runs its controls and fails when one is not detected. A *consistent*
@@ -148,10 +180,15 @@ make reference-contract-verify                 the contract state check; runs re
 make reference-verify-lerobot-selftest [EPISODE=<n>]          LeRobot rules on a synthetic state   no stack
 make reference-verify-lerobot SNAPSHOT_ID=<id> [EPISODE=<n>] [DATASET=<id>/<version>]
                                                the platform's Episodes of the pusht snapshot, read-only
+make reference-verify-nuscenes-scene-selftest  nuScenes Scene rules on a synthetic state   no stack
+make reference-verify-nuscenes-scene SNAPSHOT_ID=<id> [UNIT_KEY=<token>] [DATASET=<id>/<version>]
+                                               the platform's Scenes of the scene-0061 slice, read-only
 ```
 
 `make test-infrastructure SUITE=lerobot-episodes` builds pusht on a disposable runtime
 and runs `reference-verify-lerobot` for Episode 0 and then for the whole corpus and its
+DatasetVersion. `make test-infrastructure SUITE=nuscenes-scenes` builds the scene-0061
+slice on a disposable runtime and runs `reference-verify-nuscenes-scene` with its
 DatasetVersion.
 
 `MODE=recording_import` (or `streaming_acquisition`) verifies one ingestion mode: its
@@ -196,10 +233,12 @@ platform.
 
 ## Coverage and limits
 
-- **Content sources.** Only LeRobot Episodes of the pusht snapshot have rules
-  (`lerobot_verify.py`); content-sourced Scenes have none. MS-14 execution provenance
-  (the Job result naming the snapshot, the manifest record keeping the first build's
-  Job) is checked by the `lerobot-episodes` infrastructure suite, not by the verifier.
+- **Content sources.** LeRobot Episodes of the pusht snapshot (`lerobot_verify.py`) and
+  nuScenes Scenes of the scene-0061 slice (`nuscenes_scene_verify.py`) have rules. MS-14
+  execution provenance (the Job result naming the snapshot, the manifest record
+  keeping the first build's Job) and the cross-source comparison with the RobotRun
+  Scene of scene-0061 are checked by the `lerobot-episodes` / `nuscenes-scenes`
+  infrastructure suites, not by the verifiers.
 - **Implemented policies.** Scene `whole_recording` and Episode `event_markers`, the
   reference configurations. `fixed_duration` has no derivation; a contract using it
   fails with an `ExpectationError`.

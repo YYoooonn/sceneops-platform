@@ -22,11 +22,14 @@ async def list_scenes(
     service: SceneServiceDep,
     pagination: PaginationDep,
     robot_run_id: str | None = None,
+    content_id: str | None = None,
 ) -> SceneListResponse:
-    """Scene units; the Scenes of a DatasetVersion, each at the revision it
-    pins, are listed under the DatasetVersion."""
+    """Scene units, optionally of one source: a RobotRun (``robot_run_id``)
+    or a SourceContent (``content_id``). The Scenes of a DatasetVersion, each
+    at the revision it pins, are listed under the DatasetVersion."""
     return await service.list_scenes(
         robot_run_id=robot_run_id,
+        content_id=content_id,
         limit=pagination.limit,
         offset=pagination.offset,
     )

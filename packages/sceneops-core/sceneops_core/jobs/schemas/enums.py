@@ -7,6 +7,9 @@ class JobType(StrEnum):
     # ── registered RobotRun recording → canonical Scenes ──
     BUILD_RECORDING_SCENES = "build_recording_scenes"
 
+    # ── registered SourceSnapshot → canonical Scenes (ADR-015 §6.7) ──
+    BUILD_SNAPSHOT_SCENES = "build_snapshot_scenes"
+
     # ── scene-level jobs ──
     VALIDATE_SCENE = "validate_scene"
     PROFILE_SCENE = "profile_scene"

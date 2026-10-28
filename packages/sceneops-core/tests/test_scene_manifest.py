@@ -13,7 +13,7 @@ from sceneops_core.artifacts.schemas import ArtifactPayloadRef
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.provenance import ProducerInfo, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
-    SCENE_MANIFEST_SCHEMA_V3,
+    SCENE_MANIFEST_SCHEMA_V4,
     NonCanonicalSceneManifestError,
     SceneChannel,
     SceneCoordinateFrame,
@@ -64,7 +64,7 @@ def test_manifest_holds_no_membership_or_execution_state():
         "metadata",
     ):
         assert forbidden not in payload
-    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V3
+    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V4
 
 
 def test_non_canonical_bytes_are_rejected_even_when_semantically_equal():
@@ -370,7 +370,7 @@ def test_recording_window_constrains_only_timestamps_in_the_segment_clock():
         source_clock="mcap_log_time", start_timestamp_ns=0, end_timestamp_ns=2_000
     )
 
-    with pytest.raises(ValidationError, match="outside the segment window"):
+    with pytest.raises(ValidationError, match="outside the unit window"):
         build_scene_manifest(source=source, keyframe_timestamps_ns=(500, 1_999))
 
     # Camera timestamps in another clock are not comparable to the window and

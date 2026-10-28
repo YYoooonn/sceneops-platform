@@ -66,7 +66,15 @@ MUST_BE_ADVERTISED = (
 )
 
 # `make test-infrastructure SUITE=<name>`: each name has an `infra-suite-<name>` target.
-INFRA_SUITES = {"pipelines", "recovery", "kafka", "boundaries", "sources", "lerobot-episodes"}
+INFRA_SUITES = {
+    "pipelines",
+    "recovery",
+    "kafka",
+    "boundaries",
+    "sources",
+    "lerobot-episodes",
+    "nuscenes-scenes",
+}
 
 # Callable building blocks that the surface composes (the contract bootstrap runs the
 # baseline bootstraps, the cleanroom runs the corpus verifier, the kafka / boundaries

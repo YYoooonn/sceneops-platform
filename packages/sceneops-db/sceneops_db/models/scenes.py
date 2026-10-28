@@ -26,7 +26,12 @@ from sceneops_db.base import Base
 class SceneModel(Base):
     """The canonical Scene unit: its id and source binding (ADR-015 §3).
     Inserted once by the Scene registrar and never updated (a trigger
-    rejects UPDATE); it carries no DatasetVersion, revision or status."""
+    rejects UPDATE); it carries no DatasetVersion, revision or status.
+
+    The source is one column per source kind, exactly one of them set: a
+    RobotRun (``robot_run_id``) or a SourceContent (``content_id``). Each has
+    its own foreign key and its own unique source-unit key, which a single
+    nullable source column could not express."""
 
     __tablename__ = "scenes"
     __table_args__ = (
@@ -34,16 +39,30 @@ class SceneModel(Base):
         # unit_key), so one source unit has exactly one row; a writer that
         # derived another id for it fails here instead of forking identity.
         UniqueConstraint("robot_run_id", "unit_key", name="uq_scenes_source_unit"),
-        CheckConstraint("source_kind = 'recording'", name="ck_scenes_source_kind"),
+        UniqueConstraint(
+            "content_id", "unit_key", name="uq_scenes_content_source_unit"
+        ),
+        CheckConstraint(
+            "(source_kind = 'recording' AND robot_run_id IS NOT NULL "
+            "AND content_id IS NULL) OR "
+            "(source_kind = 'content' AND content_id IS NOT NULL "
+            "AND robot_run_id IS NULL)",
+            name="ck_scenes_source_kind",
+        ),
     )
 
     scene_id: Mapped[str] = mapped_column(String(128), primary_key=True)
 
     source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    robot_run_id: Mapped[str] = mapped_column(
+    robot_run_id: Mapped[str | None] = mapped_column(
         String(128),
         ForeignKey("robot_runs.run_id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
+    )
+    content_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("source_contents.content_id", ondelete="RESTRICT"),
+        nullable=True,
     )
     unit_key: Mapped[str] = mapped_column(String(256), nullable=False)
 
@@ -106,8 +125,8 @@ class SceneRevisionModel(Base):
     )
     producer_fingerprint: Mapped[str] = mapped_column(String(71), nullable=False)
 
-    # The segment window [start, end) in window_clock, the producer's
-    # declared segmentation clock.
+    # The unit window [start, end) in window_clock (the producer's declared
+    # segmentation clock, or the content's source clock).
     window_clock: Mapped[str] = mapped_column(String(64), nullable=False)
     window_start_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     window_end_timestamp_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)

@@ -169,7 +169,7 @@ deterministic per recording message and extraction, so identical bytes at
 an existing key are reused and different bytes are a conflict; a Scene and
 an Episode build of the same RobotRun share every payload they both extract.
 
-An Episode built from preserved content writes no payload: its `SourceFileRef`s name
+A Scene or Episode built from preserved content writes no payload: its `SourceFileRef`s name
 files of its content by `(content_id, path)`, and their location is derived from the
 content's inventory ArtifactRecord (`{sources_root}/contents/{content_id}/files/{path}`,
 above). The preserved files are never copied into `observation_payloads/`.

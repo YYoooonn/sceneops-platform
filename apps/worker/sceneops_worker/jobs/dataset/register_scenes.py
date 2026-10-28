@@ -42,7 +42,8 @@ class RegisterScenesJobHandler(
             manifest_artifact_ids=request.params.manifest_artifact_ids,
         )
         return RegisterScenesJobResult(
-            robot_run_id=registration.robot_run_id,
+            source_kind=registration.source_kind,
+            source_id=registration.source_id,
             producer_fingerprint=registration.producer_fingerprint,
             revisions=registration.pins,
             scene_ids=registration.scene_ids(),

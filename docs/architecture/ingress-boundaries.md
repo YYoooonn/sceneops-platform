@@ -46,8 +46,7 @@ COMPOSE_DATASET_VERSION         params dataset_id, dataset_version, pins | selec
                                   -> one immutable DatasetVersion + members, one transaction
 ```
 
-Dataset Integration (preservation and registration implemented, §3.1; the snapshot
-build exists only as its builder input contracts):
+Dataset Integration (§3.1):
 
 ```text
 local source tree + SnapshotDeclaration
@@ -57,10 +56,16 @@ REGISTER_SOURCE_SNAPSHOT        params {descriptor_uri}
                                   -> SourceContent + SourceSnapshot records and their
                                      SOURCE_CONTENT_INVENTORY / SOURCE_SNAPSHOT_DESCRIPTOR
                                      ArtifactRecords, one transaction
-snapshot build                  snapshot_id -> content_id once (recorded on the Job)
-  (not implemented)               -> PinnedContent                         builder input
+BUILD_SNAPSHOT_SCENES /         params snapshot_id, build_config, unit_keys? (no DatasetVersion)
+BUILD_SNAPSHOT_EPISODES           snapshot_id -> content_id once (recorded on the Job)
+                                  -> the builder of the content's registered format
+                                     (nuscenes -> Scenes, lerobot -> Episodes)
+                                  -> PinnedContent + the verified files its reader reads
                                   -> manifests: lineage ContentUnitSource
-                                     + ProducerInfo over ContentSourceRevision
+                                     + ProducerInfo over ContentSourceRevision;
+                                     payloads SourceFileRef, no payload object
+REGISTER_SCENES / REGISTER_EPISODES  as above; the gate checks every SourceFileRef
+                                  against the content inventory and the store
 ```
 
 ## 3. Dataset Integration output records
@@ -177,19 +182,19 @@ binding projects the source revision the producer fingerprint is computed over.
 - `SourceBinding` is the closed union of the two bindings. `source_id` is the stable
   source identity a unit is keyed under: the RobotRun id, or the content id, which is
   a function of the bytes.
-- `EpisodeManifest` lineage admits either binding: the LeRobot Episode builder
-  produces `ContentUnitSource`. `SceneManifest` lineage admits `RecordingSegmentSource`
-  only until a content Scene builder exists. A manifest variant lands together with
+- `SceneManifest` and `EpisodeManifest` lineage admit either binding: the recording
+  builders produce `RecordingSegmentSource`, the nuScenes Scene builder and the
+  LeRobot Episode builder `ContentUnitSource`. A manifest variant lands together with
   the builder that produces it, so registration and downstream consumers never
   receive a source kind nothing produces.
 - Payload references are the closed union `PayloadRef`
   (`sceneops_core.artifacts.schemas.payload`): `ArtifactPayloadRef` (a SceneOps-owned
   payload object) or `SourceFileRef` (a preserved file of the unit's own content, by
   `content_id`, `path`, `sha256`, `size_bytes`, a builder-asserted `media_type` and an
-  optional `frame {timestamp_ns}` in the file's own time base). Scene observations take
-  `ArtifactPayloadRef` only. Downstream of canonical manifests, payload resolution is
-  the only place that dispatches on the reference kind; a consumer that cannot resolve
-  a kind refuses it explicitly.
+  optional `frame {timestamp_ns}` in the file's own time base). Downstream of
+  canonical manifests, payload resolution (`sceneops_worker.payloads.PayloadLocator`)
+  is the only place that dispatches on the reference kind; a consumer that cannot
+  resolve a kind refuses it explicitly.
 
 ### 4.1 Clock domains
 
@@ -222,7 +227,10 @@ Rules every manifest enforces (`check_clock_domains`):
   to the robot, and neither can be verified from the recording.
 - A content binding's origins are its format builder's decision. LeRobot time is
   `lerobot.frame_time`, origin `unit`, resolution 1 ns: zero is the episode's first
-  frame and the data asserts no absolute time.
+  frame and the data asserts no absolute time. nuScenes time is
+  `nuscenes.timestamp`, origin `unix_epoch`, resolution 1 000 ns: the tables count
+  microseconds since the Unix epoch, sensor readings, ego poses and samples on one
+  clock (every ego pose is at its reading's timestamp); CAN is not canonicalized.
 - A frame rate is never part of a clock domain. An Episode sampled on a frame grid
   declares it once, on its `frame_timeline` (`round_half_even(k · 10⁹ / fps)`,
   `sceneops_core.provenance.frame_time`), whose clock must have origin `unit`.
@@ -326,12 +334,12 @@ selection are not in it, so they change a revision, not the unit.
 - `sceneops_core.provenance` imports no Scene, Episode or Dataset module;
 - builder inputs carry no DatasetVersion, snapshot, format or location field;
 - two snapshots of one content give identical content bindings;
-- Scene manifests reject a content binding; Episode manifests admit either binding.
+- Scene and Episode manifests admit either binding.
 
 `packages/sceneops-sources/tests/test_boundaries.py`: preservation modules name no
 format and import only the standard library, core and storage; native format modules
-(`lerobot.py`) import only `pyarrow` besides those, never a dataset SDK; the workspace
-lock contains no `lerobot`.
+(`lerobot.py`, `nuscenes.py` and their synthetic test trees) import only `pyarrow`
+besides those, never a dataset SDK; the workspace lock contains no `lerobot`.
 
 Record contracts: `test_source_content.py`; bindings, revisions and pinned inputs:
 `test_provenance_sources.py`; fingerprint: `test_producer_fingerprint.py`; unit and

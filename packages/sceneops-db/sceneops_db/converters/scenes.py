@@ -37,6 +37,7 @@ def scene_model_to_record(model: SceneModel) -> SceneRecord:
         scene_id=model.scene_id,
         source_kind=model.source_kind,
         robot_run_id=model.robot_run_id,
+        content_id=model.content_id,
         unit_key=model.unit_key,
         registered_at=model.registered_at,
     )
@@ -49,6 +50,7 @@ def scene_unit_to_values(record: SceneRevisionRecord) -> dict[str, Any]:
         "scene_id": record.scene_id,
         "source_kind": record.source_kind,
         "robot_run_id": record.robot_run_id,
+        "content_id": record.content_id,
         "unit_key": record.unit_key,
     }
 
@@ -60,6 +62,7 @@ def scene_revision_model_to_record(
         scene_id=revision.scene_id,
         source_kind=unit.source_kind,
         robot_run_id=unit.robot_run_id,
+        content_id=unit.content_id,
         unit_key=unit.unit_key,
         manifest_artifact_id=revision.manifest_artifact_id,
         manifest_checksum=revision.manifest_checksum,

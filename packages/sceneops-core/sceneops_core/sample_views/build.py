@@ -227,14 +227,15 @@ def _label_index(
     manifest: SceneManifest, label_set: LabelSetManifest
 ) -> tuple[dict[str, list[Box3DLabel]], set[str]]:
     """Labels and covered observations of ``label_set`` that resolve into this
-    Scene: ``({observation_id: labels}, covered observation ids)``. Anchors of
-    other RobotRuns, or that match no observation of this Scene, belong to
-    other Scenes and are ignored here."""
-    robot_run_id = manifest.lineage.source.robot_run_id
+    Scene: ``({observation_id: labels}, covered observation ids)``. A label
+    anchor names a RobotRun; anchors of another source, or that match no
+    observation of this Scene, belong to other Scenes and are ignored here."""
+    source = manifest.lineage.source
+    scene_source = (source.source_kind, source.source_id)
     keys = _observation_keys(manifest)
 
     def resolve(anchor) -> str | None:  # type: ignore[no-untyped-def]
-        if anchor.robot_run_id != robot_run_id:
+        if ("recording", anchor.robot_run_id) != scene_source:
             return None
         ids = keys.get((anchor.channel, anchor.source_clock, anchor.timestamp_ns))
         if not ids:

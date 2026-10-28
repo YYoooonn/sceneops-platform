@@ -187,10 +187,9 @@ Contract: [Scene domain](./scene-domain.md) §2,
 scenes / episodes                      the unit
   scene_id | episode_id   PK           unit_id v2 = f(domain, source_kind,
                                        source_id, unit_key); no DatasetVersion
-  source_kind                          scenes: 'recording' (CHECK);
-                                       episodes: 'recording' | 'content' (CHECK)
+  source_kind                          'recording' | 'content' (CHECK)
   robot_run_id            FK robot_runs RESTRICT; unique (robot_run_id, unit_key)
-  content_id (episodes)   FK source_contents RESTRICT; unique (content_id, unit_key)
+  content_id              FK source_contents RESTRICT; unique (content_id, unit_key)
                                        exactly the column of source_kind is set (CHECK)
   unit_key
   registered_at
@@ -401,6 +400,7 @@ longer than its threshold and moves `updated_at` to that resend.
 
 ```text
 BUILD_RECORDING_SCENES                               # RobotRun recording -> canonical scenes
+BUILD_SNAPSHOT_SCENES, BUILD_SNAPSHOT_EPISODES       # SourceSnapshot content -> canonical scenes / episodes
 REGISTER_SCENES, VALIDATE_SCENE, PROFILE_SCENE         # scene-level
 IMPORT_LABELS, BUILD_SCENE_SAMPLE_VIEWS                # derived: label set / sample view revisions
 ALIGN_EPISODE, VALIDATE_ALIGNED_EPISODE, PROFILE_ALIGNED_EPISODE,

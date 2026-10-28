@@ -50,12 +50,19 @@ class FakeSceneRepository:
         return found[0].unit() if found else None
 
     async def list(
-        self, *, robot_run_id: str | None = None, limit: int = 100, offset: int = 0
+        self,
+        *,
+        robot_run_id: str | None = None,
+        content_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[SceneRecord]:
         units = {r.scene_id: r.unit() for r in self.revisions}
         results = [units[s] for s in sorted(units)]
         if robot_run_id is not None:
             results = [u for u in results if u.robot_run_id == robot_run_id]
+        if content_id is not None:
+            results = [u for u in results if u.content_id == content_id]
         return results[offset : offset + limit]
 
     async def list_revisions(self, scene_id: str) -> list[SceneRevisionRecord]:
@@ -165,6 +172,7 @@ def _scene(
     scene_id = sid(name, robot_run_id)
     return SceneRevisionRecord(
         scene_id=scene_id,
+        source_kind="recording",
         robot_run_id=robot_run_id,
         unit_key=name,
         window_clock="mcap_log_time",

@@ -3,12 +3,14 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
+from sceneops_core.scenes.nuscenes_build import NuScenesSceneBuildConfig
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
 
 from .base import (
     RecordingBuildJobParams,
     RevisionAssessmentJobParams,
     RevisionRegistrationJobParams,
+    SnapshotBuildJobParams,
 )
 
 
@@ -30,6 +32,25 @@ class BuildRecordingScenesJobParams(RecordingBuildJobParams):
 
     robot_run_id: str = Field(min_length=1)
     build_config: RecordingSceneBuildConfig
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class BuildSnapshotScenesJobParams(SnapshotBuildJobParams):
+    """One registered SourceSnapshot -> the canonical Scenes of its content
+    (ADR-015 §6.7; M3.0 D2).
+
+    ``snapshot_id`` names the declaration an operator selects; the build
+    resolves it to its content once, records both in its result as execution
+    provenance, and builds from the content alone, so every snapshot of the
+    same bytes yields the same manifests. ``build_config`` is the producer's
+    whole semantic configuration. ``unit_keys`` limits the build to those
+    native scenes (default: every scene of the content); it is execution
+    scope, never configuration, so a subset yields the same revisions. No
+    DatasetVersion is involved.
+    """
+
+    build_config: NuScenesSceneBuildConfig
 
     metadata: JsonDict = Field(default_factory=dict)
 

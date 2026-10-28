@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
-from sceneops_core.provenance import manifest_artifact_id_for
-from sceneops_core.scenes.schemas import project_scene_revision, scene_id_for
+import json
+
+import pytest
+
+from sceneops_core.artifacts.schemas import SourceFileRef
+from sceneops_core.provenance import ContentUnitSource, manifest_artifact_id_for
+from sceneops_core.scenes.schemas import (
+    SceneManifest,
+    project_scene_revision,
+    scene_id_for,
+)
 from sceneops_core.scenes.testing import build_scene_manifest, recording_source
+from sceneops_core.sources import content_id_for
 from sceneops_analytics.tables import (
     TABLE_BUILDERS,
+    UnsupportedSceneContentError,
     build_keyframes_table,
     build_observations_table,
     build_scenes_table,
@@ -109,3 +120,29 @@ def test_keyframes_table_has_one_row_per_group_and_no_annotation_data():
     )
     assert keyframes.height == 4
     assert not any("annotation" in column for column in keyframes.columns)
+
+
+def test_preserved_source_file_payloads_are_refused_explicitly():
+    checksum = "sha256:" + "c" * 64
+    source = ContentUnitSource(
+        content_id=content_id_for(checksum),
+        content_checksum=checksum,
+        source_clock="mcap_log_time",
+        start_timestamp_ns=0,
+        end_timestamp_ns=10_000_000_000,
+        unit_key="scene-token",
+    )
+    payload = json.loads(build_scene_manifest(source=source).to_canonical_bytes())
+    for i, observation in enumerate(payload["observations"]):
+        observation["payload"] = SourceFileRef(
+            content_id=source.content_id,
+            path=f"samples/x/{i}.jpg",
+            sha256="sha256:" + "a" * 64,
+            size_bytes=1,
+            media_type="image/jpeg",
+        ).model_dump(mode="json")
+    manifest = SceneManifest.model_validate(payload)
+    with pytest.raises(UnsupportedSceneContentError, match="preserved source files"):
+        build_observations_table(
+            dataset_id="ds", dataset_version="v1", manifests=[("scene-1", manifest)]
+        )

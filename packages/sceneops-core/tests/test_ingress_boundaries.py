@@ -18,7 +18,6 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 import sceneops_core
 from sceneops_core.episodes.schemas import EpisodeManifest
@@ -184,19 +183,14 @@ def _content_lineage(lineage: dict) -> dict:
     }
 
 
-def test_scene_manifests_admit_content_bindings_only_with_a_content_builder():
-    """No dormant branch: until a content Scene builder produces
-    ContentUnitSource lineage, Scene registration and every Scene consumer see
-    recording sources only."""
+def test_scene_manifests_admit_either_source_binding():
+    """The nuScenes Scene builder produces ContentUnitSource lineage, so the
+    Scene schema admits both bindings of the union."""
     payload = json.loads(build_scene_manifest().to_canonical_bytes())
-    SceneManifest.model_validate(payload)
-    with pytest.raises(ValidationError) as rejected:
-        SceneManifest.model_validate(
-            {**payload, "lineage": _content_lineage(payload["lineage"])}
-        )
-    assert ("lineage", "source", "source_kind") in {
-        error["loc"] for error in rejected.value.errors()
-    }
+    content = SceneManifest.model_validate(
+        {**payload, "lineage": _content_lineage(payload["lineage"])}
+    )
+    assert content.lineage.source.source_kind == "content"
 
 
 def test_episode_manifests_admit_either_source_binding():

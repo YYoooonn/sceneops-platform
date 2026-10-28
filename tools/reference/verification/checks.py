@@ -18,7 +18,7 @@ from . import rules
 from .expectations import EpisodeExpectation, SceneExpectation
 from .findings import Findings
 
-SCENE_MANIFEST_SCHEMA = "sceneops.scene_manifest/v3"
+SCENE_MANIFEST_SCHEMA = "sceneops.scene_manifest/v4"
 EPISODE_MANIFEST_SCHEMA = "sceneops.episode_manifest/v3"
 PAYLOAD_REF_KIND = "artifact"
 MANIFEST_KIND = {"scene": "scene_manifest", "episode": "episode_manifest"}
@@ -397,6 +397,12 @@ def check_scene_manifest(
             all(o.get("ego_pose_id") is None for o in got),
             "scene_observations",
             f"{topic}: an observation names an ego pose the recording does not associate",
+        )
+        # A recording carries no native identifier of a message.
+        f.check(
+            all(o.get("native_ref") is None for o in got),
+            "scene_observations",
+            f"{topic}: an observation names a native_ref the recording does not have",
         )
         for o, r in zip(got, expected_rows):
             refs.append(

@@ -171,3 +171,30 @@ reference-verify-lerobot:
 	@test -n "$(SNAPSHOT_ID)" || { echo "SNAPSHOT_ID=<snapshot id> is required"; exit 2; }
 	@$(REFERENCE_VERIFY_ENV) $(LEROBOT_VERIFY) verify --snapshot-id $(SNAPSHOT_ID) \
 		$(if $(DATASET),--dataset $(DATASET))
+
+# --------------------
+# nuScenes Scenes from the scene-0061 slice snapshot (tools/reference/nuscenes_scene_verify.py,
+# docs/development/reference-verification.md "nuScenes Scenes"). The expectations are
+# derived from the raw tree at data/raw/nuscenes by the documented rules.
+#
+# reference-verify-nuscenes-scene-selftest  -- a synthetic state built from the derivation
+#                                              passes and every negative control is
+#                                              detected. No stack.
+# reference-verify-nuscenes-scene           -- the platform's Scenes of SNAPSHOT_ID against
+#                                              the derivation, then the negative controls
+#                                              (read-only) [UNIT_KEY=<scene token>]
+#                                              [DATASET=<id>/<version>]
+# --------------------
+
+NUSCENES_SCENE_VERIFY := uv run --no-sync python -I tools/reference/nuscenes_scene_verify.py \
+	$(if $(UNIT_KEY),--unit-key $(UNIT_KEY))
+
+.PHONY: reference-verify-nuscenes-scene-selftest
+reference-verify-nuscenes-scene-selftest:
+	@$(NUSCENES_SCENE_VERIFY) selftest
+
+.PHONY: reference-verify-nuscenes-scene
+reference-verify-nuscenes-scene:
+	@test -n "$(SNAPSHOT_ID)" || { echo "SNAPSHOT_ID=<snapshot id> is required"; exit 2; }
+	@$(REFERENCE_VERIFY_ENV) $(NUSCENES_SCENE_VERIFY) verify --snapshot-id $(SNAPSHOT_ID) \
+		$(if $(DATASET),--dataset $(DATASET))

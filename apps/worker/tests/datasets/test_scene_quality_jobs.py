@@ -74,7 +74,7 @@ async def test_register_handler_reports_complete_revision_pins(scene_world):
             revisions[(pin.unit_id, pin.manifest_checksum)].manifest_artifact_id
             == pin.manifest_artifact_id
         )
-    assert result.robot_run_id == "run-001"
+    assert (result.source_kind, result.source_id) == ("recording", "run-001")
     assert (
         result.producer_fingerprint
         == next(iter(revisions.values())).producer_fingerprint

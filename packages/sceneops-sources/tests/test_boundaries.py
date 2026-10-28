@@ -13,7 +13,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 ALLOWED_FIRST_PARTY = {"sceneops_core", "sceneops_storage", "sceneops_sources"}
 # Native format modules (readers and their synthetic test trees): the only
 # modules that name a format.
-NATIVE_READERS = {"lerobot.py", "lerobot_synthetic.py"}
+NATIVE_READERS = {
+    "lerobot.py",
+    "lerobot_synthetic.py",
+    "nuscenes.py",
+    "nuscenes_synthetic.py",
+}
 READER_THIRD_PARTY = {"pyarrow"}
 
 

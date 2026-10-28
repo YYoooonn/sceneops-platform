@@ -70,7 +70,7 @@ async def test_registers_revisions_and_returns_their_complete_pins(scene_world):
         b.artifact_id,
     }
     assert set(_decisions(result).values()) == {RevisionDecision.NEW_UNIT}
-    assert result.robot_run_id == "run-001"
+    assert (result.source_kind, result.source_id) == ("recording", "run-001")
     assert scene_world.commits == 1
 
 
@@ -225,7 +225,7 @@ async def test_input_must_be_one_build_of_one_robot_run(scene_world):
     other_run = await _recording_build(
         scene_world, [_segment("seg-0", 0, 1_000, run_id="run-2")]
     )
-    with pytest.raises(SceneRegistrationScopeError, match="exactly one RobotRun"):
+    with pytest.raises(SceneRegistrationScopeError, match="exactly one source"):
         await _register(scene_world, one + other_run)
 
     other_config = await _recording_build(

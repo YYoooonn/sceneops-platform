@@ -31,6 +31,12 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("publish_observation_payloads", "Publish observation payloads"),
         step("publish_scene_manifests", "Publish scene manifests"),
     ],
+    JobType.BUILD_SNAPSHOT_SCENES: [
+        step("resolve_snapshot", "Resolve the snapshot to its registered content"),
+        step("materialize_content", "Materialize verified content files"),
+        step("plan_scenes", "Plan scenes"),
+        step("publish_scene_manifests", "Publish scene manifests"),
+    ],
     JobType.IMPORT_LABELS: [
         step("read_label_document", "Read label document"),
         step("validate_label_set", "Validate and canonicalize label set"),

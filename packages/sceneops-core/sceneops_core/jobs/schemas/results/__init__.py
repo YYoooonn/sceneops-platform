@@ -7,6 +7,7 @@ from .detection import EvaluateDetectionJobResult, PredictDetectionJobResult
 from .labels import BuildSceneSampleViewsJobResult, ImportLabelsJobResult
 from .scene import (
     BuildRecordingScenesJobResult,
+    BuildSnapshotScenesJobResult,
     ProfileSceneJobResult,
     RegisterScenesJobResult,
     ValidateSceneJobResult,
@@ -52,6 +53,7 @@ __all__ = [
     "ExportLearningDataJobResult",
     "CurateEpisodesJobResult",
     "BuildRecordingScenesJobResult",
+    "BuildSnapshotScenesJobResult",
     "ValidateSceneJobResult",
     "ProfileSceneJobResult",
     "RegisterScenesJobResult",

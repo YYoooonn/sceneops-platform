@@ -116,10 +116,10 @@ contract; SceneOps production code never imports the integration. In particular:
 | `sceneops-storage` | `ArtifactStore` implementations (local, S3 / MinIO) and the write-once primitive |
 | `sceneops-streaming` | Streaming transport: `TelemetryEnvelope`, channel registry, run lifecycle control events, Kafka producer / consumer, wire mapping. No RobotRun, Scene or Episode semantics |
 | `sceneops-recording` | Recording: `capture/` (run-scoped consumer, MCAP writer, validation, atomic finalize, capture receipt I/O), publication of finalized recordings, L1 conformance and equivalence, the recording reader, the capture receipt / scan / published-scan vocabulary, canonical observation payload extraction (`observations/`), test builders (`testing/`) |
-| `sceneops-sources` | Dataset Integration source preservation: selection of a local source tree by the declaration's include patterns, content inventories, database-free snapshot publication to the source layout (`contents/{content_id}/…`, `snapshots/{snapshot_id}/descriptor.json`) and verified content file access (`ContentFiles`: a local directory, or files materialized from the object store), which interprets no file; and the native format readers on top of `ContentFiles` (`lerobot`: LeRobot v3.0 metadata and data Parquet, read with `pyarrow` and `json`), which parse but decide nothing canonical. No dataset SDK and no database |
+| `sceneops-sources` | Dataset Integration source preservation: selection of a local source tree by the declaration's include patterns, content inventories, database-free snapshot publication to the source layout (`contents/{content_id}/…`, `snapshots/{snapshot_id}/descriptor.json`) and verified content file access (`ContentFiles`: a local directory, or files materialized from the object store), which interprets no file; and the native format readers on top of `ContentFiles` (`lerobot`: LeRobot v3.0 metadata and data Parquet, read with `pyarrow` and `json`; `nuscenes`: the nuScenes v1.0 tables, read with `json`), which parse but decide nothing canonical. No dataset SDK and no database |
 | `sceneops-execution` | Job and Pipeline services and dispatch facades, Celery dispatch backends and the worker-side dispatcher, ownership leases and lease recovery, execution recovery, job event and result recording, pipeline quality gate and result builder |
 | `sceneops-acquisition` | Acquisition lifecycle (ADR-008): reconciliation and bounded registration recovery, derived acquisition status, artifact lifecycle classification, `REGISTER_ROBOT_RUN` submission |
-| `sceneops-scenes` | Scene building from a registered recording, Scene validation and profiling, Scene artifact layout |
+| `sceneops-scenes` | Scene building from a registered recording and from registered nuScenes content (`nuscenes_builder`, on the `sceneops-sources` reader), Scene validation and profiling, Scene artifact layout |
 | `sceneops-episodes` | Episode building from a registered recording and from registered LeRobot content (`lerobot_builder`, on the `sceneops-sources` reader), Episode validation and profiling, Episode artifact layout |
 | `sceneops-derived` | Write-once, checksum-pinned storage of derived manifests (labels, sample views, ScenarioSets, predictions) and run artifacts |
 | `sceneops-inference` | Detection inference backends (mock, GroundingDINO client with frustum lifting) and prediction publication |
@@ -140,8 +140,7 @@ extraction) and `sceneops-derived`.
    sceneops-derived   (storage)
    sceneops-analytics (storage)
    sceneops-execution (db)
-3  sceneops-scenes                           (recording)
-   sceneops-episodes                         (recording, sources)
+3  sceneops-scenes, sceneops-episodes        (recording, sources)
    sceneops-inference, sceneops-evaluation   (derived)
    sceneops-acquisition                      (db, storage, recording, execution)
 ```

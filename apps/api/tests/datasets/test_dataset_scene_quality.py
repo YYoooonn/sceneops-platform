@@ -49,6 +49,7 @@ def _scene(
 ) -> SceneRevisionRecord:
     return SceneRevisionRecord(
         scene_id=_id(scene_id),
+        source_kind="recording",
         robot_run_id="run-0",
         unit_key=scene_id,
         window_clock="mcap_log_time",

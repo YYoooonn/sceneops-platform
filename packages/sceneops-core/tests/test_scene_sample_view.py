@@ -308,6 +308,38 @@ def test_labels_of_another_robot_run_are_ignored() -> None:
     assert view.label_stats[0].covered_observation_count == 0
 
 
+def test_a_content_scene_builds_samples_and_attaches_no_robot_run_label() -> None:
+    """Sample views read observations only, so a content-sourced Scene builds
+    the same samples; a RobotRun-anchored label never resolves into it, even
+    when the anchor's run id spells the content id."""
+    from sceneops_core.provenance import ContentUnitSource
+    from sceneops_core.sources import content_id_for
+
+    checksum = "sha256:" + "c" * 64
+    content = manifest(
+        source=ContentUnitSource(
+            content_id=content_id_for(checksum),
+            content_checksum=checksum,
+            source_clock=CLOCK,
+            start_timestamp_ns=0,
+            end_timestamp_ns=10_000_000_000,
+            unit_key="scene-token",
+        )
+    )
+    ref, labels = label_set(
+        anchors=[1_000_000_000],
+        labels={"a": 1_000_000_000},
+        run=content_id_for(checksum),
+    )
+    view = build(content, policy(), [(ref, labels)])
+    recording_view = build(manifest(), policy())
+    assert [s.anchor for s in view.samples] == [
+        s.anchor for s in recording_view.samples
+    ]
+    assert all(not s.labels[0].covered for s in view.samples)
+    assert view.label_stats[0].covered_observation_count == 0
+
+
 def test_duplicate_anchor_resolution_fails_loudly() -> None:
     m = manifest()
     data = json.loads(m.to_canonical_bytes())

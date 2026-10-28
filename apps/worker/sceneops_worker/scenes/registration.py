@@ -2,10 +2,10 @@
 (ADR-015 §6.4, MS-7).
 
 Input is the ids of the SCENE_MANIFEST ArtifactRecords of one build (one
-RobotRun, one producer fingerprint). Registration verifies, then adds
-immutable revisions; it never writes manifest or payload bytes, and it
-never reads or writes a DatasetVersion: membership is a separate
-composition that pins the revisions registration returns.
+source, one producer fingerprint). Registration verifies, then adds
+immutable revisions; it never writes manifest or payload bytes, never reads
+a SourceSnapshot, and never reads or writes a DatasetVersion: membership is
+a separate composition that pins the revisions registration returns.
 
     S1  durability and integrity gate, for every input artifact, against the
         ArtifactStore itself and not only against database rows:
@@ -14,14 +14,21 @@ composition that pins the revisions registration returns.
                     both, and are a canonical SceneManifest (strict parse,
                     fingerprint re-derived); its id is the revision's
                     deterministic manifest artifact id
-          payloads  every observation payload reference resolves to an
-                    OBSERVATION_PAYLOAD ArtifactRecord with exactly the
-                    referenced checksum, size and media type, and that
-                    record's object is present in the store with its
-                    recorded size (one listing per payload prefix)
+          payloads  by reference kind (the only kind dispatch, MS-10):
+                    an ArtifactPayloadRef resolves to an OBSERVATION_PAYLOAD
+                    ArtifactRecord with exactly the referenced checksum, size
+                    and media type, whose object is present in the store with
+                    its recorded size (one listing per payload prefix); a
+                    SourceFileRef is checked in S2 against its content
     S2  derive each Scene's unit id; reject duplicate units, more than one
-        RobotRun or producer fingerprint, an unregistered RobotRun, or a
-        manifest built from different recording bytes than the RobotRun's
+        source or producer fingerprint, and a source binding that is not the
+        registered source:
+          recording  the RobotRun is registered and the manifests were built
+                     from its recording bytes
+          content    the SourceContent is registered with the pinned
+                     content_checksum, and every SourceFileRef matches its
+                     inventory entry (path, sha256, size) and is stored with
+                     that size (one listing per content prefix)
     S3  one transaction: register each unit and revision additively
         (sceneops_db.repositories.revisions); commit
           same unit + same manifest checksum          -> no-op
@@ -46,7 +53,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
+from sceneops_core.artifacts.schemas import (
+    ArtifactKind,
+    ArtifactPayloadRef,
+    ArtifactRecord,
+    SourceFileRef,
+)
 from sceneops_core.provenance import (
     InconsistentRevisionsError,
     NonDeterministicProducerError,
@@ -68,6 +80,12 @@ from sceneops_worker.recordings.payload_refs import (
     resolve_payload_artifacts,
     verify_payload_objects,
 )
+from sceneops_worker.sources.content import (
+    RegisteredContentError,
+    SourceFileRefError,
+    resolve_registered_content,
+    verify_source_file_refs,
+)
 
 
 class SceneRegistrationError(RuntimeError):
@@ -80,8 +98,8 @@ class SceneManifestRejectedError(SceneRegistrationError):
 
 
 class SceneRegistrationScopeError(SceneRegistrationError):
-    """The input set is not the output of one build of a registered
-    RobotRun."""
+    """The input set is not the output of one build of one registered
+    source (a RobotRun or a SourceContent)."""
 
 
 class SceneRegistrationConflictError(SceneRegistrationError):
@@ -113,7 +131,8 @@ class RegisteredSceneRevision:
 
 @dataclass(frozen=True)
 class SceneRegistration:
-    robot_run_id: str
+    source_kind: str
+    source_id: str
     producer_fingerprint: str
     # One per input manifest, in unit id order.
     revisions: list[RegisteredSceneRevision]
@@ -144,7 +163,10 @@ async def register_scenes(
         for artifact_id in manifest_artifact_ids
     ]
     _check_input_scope(verified)
-    await _verify_recording_source(context, verified)
+    if verified[0].record.source_kind == "recording":
+        await _verify_recording_source(context, verified)
+    else:
+        await _verify_content_source(context, verified)
 
     # S3, one transaction. Inserts go in unit id order: an insert waits for a
     # concurrent uncommitted insert of the same key, so two registrations of
@@ -159,7 +181,8 @@ async def register_scenes(
         await context.rollback()
         raise
     return SceneRegistration(
-        robot_run_id=verified[0].record.robot_run_id,
+        source_kind=verified[0].record.source_kind,
+        source_id=verified[0].record.source_id,
         producer_fingerprint=verified[0].record.producer_fingerprint,
         revisions=registered,
     )
@@ -192,7 +215,12 @@ async def _verify_manifest(
 
     try:
         payloads = await resolve_payload_artifacts(
-            context.artifact_record_store, (o.payload for o in manifest.observations)
+            context.artifact_record_store,
+            (
+                o.payload
+                for o in manifest.observations
+                if isinstance(o.payload, ArtifactPayloadRef)
+            ),
         )
         await verify_payload_objects(context.artifact_store, payloads.values())
     except PayloadIntegrityError as exc:
@@ -217,10 +245,10 @@ def _check_input_scope(verified: list[VerifiedSceneManifest]) -> None:
             f"input contains more than one manifest for scene(s) {duplicates}"
         )
 
-    run_ids = {v.record.robot_run_id for v in verified}
-    if len(run_ids) != 1:
+    sources = {(v.record.source_kind, v.record.source_id) for v in verified}
+    if len(sources) != 1:
         raise SceneRegistrationScopeError(
-            f"a registration covers exactly one RobotRun, got {sorted(run_ids)}"
+            f"a registration covers exactly one source, got {sorted(sources)}"
         )
     fingerprints = {v.record.producer_fingerprint for v in verified}
     if len(fingerprints) != 1:
@@ -237,8 +265,7 @@ async def _verify_recording_source(
     recording bytes. Their segment clock is the producer's declared
     segmentation clock (Q4), not necessarily the recording clock, so it is
     not compared with the RobotRun."""
-    sources = [v.manifest.lineage.source for v in verified]
-    robot_run_id = verified[0].record.robot_run_id
+    robot_run_id = verified[0].record.source_id
     run = await context.robot_store.get_run(robot_run_id)
     if run is None:
         raise SceneRegistrationScopeError(f"RobotRun is not registered: {robot_run_id}")
@@ -248,12 +275,46 @@ async def _verify_recording_source(
             f"RobotRun {robot_run_id} references missing recording artifact "
             f"{run.recording_artifact_id}"
         )
-    for source in sources:
+    for item in verified:
+        source = item.manifest.lineage.source
         if source.recording_checksum != recording.checksum:
             raise SceneRegistrationScopeError(
                 f"manifest was built from recording bytes {source.recording_checksum}, "
                 f"but RobotRun {robot_run_id} is {recording.checksum}"
             )
+
+
+async def _verify_content_source(
+    context: WorkerContext, verified: list[VerifiedSceneManifest]
+) -> None:
+    """The manifests must have been built from the registered SourceContent's
+    bytes, and every preserved file they reference must be that content's,
+    as its inventory pins it and as the store holds it."""
+    content_id = verified[0].record.source_id
+    try:
+        content = await resolve_registered_content(context, content_id)
+    except RegisteredContentError as exc:
+        raise SceneRegistrationScopeError(str(exc)) from exc
+    for item in verified:
+        source = item.manifest.lineage.source
+        if source.content_checksum != content.record.content_checksum:
+            raise SceneRegistrationScopeError(
+                f"manifest was built from content bytes {source.content_checksum}, "
+                f"but SourceContent {content_id} is {content.record.content_checksum}"
+            )
+    try:
+        await verify_source_file_refs(
+            context,
+            content,
+            (
+                o.payload
+                for item in verified
+                for o in item.manifest.observations
+                if isinstance(o.payload, SourceFileRef)
+            ),
+        )
+    except SourceFileRefError as exc:
+        raise SceneManifestRejectedError(str(exc)) from exc
 
 
 # --- S3 ----------------------------------------------------------------------------

@@ -1875,6 +1875,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "sceneops-core" },
     { name = "sceneops-recording" },
+    { name = "sceneops-sources" },
     { name = "sceneops-storage" },
 ]
 
@@ -1883,6 +1884,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "sceneops-core", editable = "packages/sceneops-core" },
     { name = "sceneops-recording", editable = "packages/sceneops-recording" },
+    { name = "sceneops-sources", editable = "packages/sceneops-sources" },
     { name = "sceneops-storage", editable = "packages/sceneops-storage" },
 ]
 

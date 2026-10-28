@@ -4,7 +4,7 @@ from .readiness import (
     latest_validation_for_revision,
 )
 from .schemas import (
-    SCENE_MANIFEST_SCHEMA_V3,
+    SCENE_MANIFEST_SCHEMA_V4,
     SceneManifest,
     SceneProfileRunRecord,
     SceneRecord,
@@ -16,7 +16,7 @@ from .schemas import (
 )
 
 __all__ = [
-    "SCENE_MANIFEST_SCHEMA_V3",
+    "SCENE_MANIFEST_SCHEMA_V4",
     "SceneManifest",
     "SceneProfileRunRecord",
     "SceneReadiness",

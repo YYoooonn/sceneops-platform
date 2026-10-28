@@ -23,8 +23,9 @@ or window. The producer fingerprint is computed over that revision
 (``sceneops_core.provenance.producer``), so a manifest's fingerprint can be
 re-derived from the manifest itself.
 
-Scene and Episode manifests admit ``RecordingSegmentSource`` only until a
-content builder produces ``ContentUnitSource`` bindings.
+Scene and Episode manifests admit either binding: the recording builders
+produce ``RecordingSegmentSource``, the format builders of Dataset
+Integration (nuScenes Scenes, LeRobot Episodes) ``ContentUnitSource``.
 """
 
 from __future__ import annotations

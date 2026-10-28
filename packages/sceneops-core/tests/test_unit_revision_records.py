@@ -74,7 +74,10 @@ def test_a_revision_names_its_unit():
     revision = _scene_revision(robot_run_id="run-7", unit_key="seg/1")
     unit = revision.unit()
     assert unit == SceneRecord(
-        scene_id=revision.scene_id, robot_run_id="run-7", unit_key="seg/1"
+        scene_id=revision.scene_id,
+        source_kind="recording",
+        robot_run_id="run-7",
+        unit_key="seg/1",
     )
     assert unit.scene_id == scene_id_for(
         recording_source(robot_run_id="run-7", unit_key="seg/1")
