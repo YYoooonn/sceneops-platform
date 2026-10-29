@@ -128,7 +128,11 @@ test-integration:
 #               one DatasetVersion of the scene-0061 RobotRun, the nuScenes Scene and the
 #               pusht Episodes, composed by pins and by selector on a disposable
 #               execution runtime and held to the mixed-source verifier
-INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes nuscenes-scenes mixed-sources
+#   nuscenes-labels
+#               the scene-0061 slice's own annotations -> one LabelSet: import_labels
+#               {snapshot_id} and CAM_FRONT / LIDAR_TOP sample views on a disposable
+#               execution runtime, held to the raw-source label verifier
+INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes nuscenes-scenes mixed-sources nuscenes-labels
 SUITE ?= pipelines
 
 .PHONY: test-infrastructure
@@ -160,6 +164,7 @@ infra-suite-pipelines:
 		--ignore=tests/infrastructure/test_lerobot_episode_acceptance.py \
 		--ignore=tests/infrastructure/test_nuscenes_scene_acceptance.py \
 		--ignore=tests/infrastructure/test_mixed_source_acceptance.py \
+		--ignore=tests/infrastructure/test_nuscenes_label_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
 
 REFERENCE_SNAPSHOTS := lerobot-pusht nuscenes-scene-0061
@@ -225,6 +230,23 @@ infra-suite-mixed-sources:
 		SNAPSHOTS="$(REFERENCE_SNAPSHOTS)"
 	FIXTURE=scene-0061 $(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
 		tests/infrastructure/test_mixed_source_acceptance.py -v
+
+.PHONY: infra-suite-nuscenes-labels
+# Native nuScenes label acceptance (ADR-015 §9, M3 S6): the scene-0061 slice is published
+# and registered and its Scene built and composed; IMPORT_LABELS {snapshot_id} imports the
+# slice's annotations and BUILD_SCENE_SAMPLE_VIEWS builds a CAM_FRONT- and a
+# LIDAR_TOP-anchored view pinning them on a disposable execution runtime. The label set,
+# Scene and views are held to tools/reference/nuscenes_label_verify.py (raw-source
+# derivation + negative controls) and to the locked reference labels of the RobotRun
+# label path; re-imports, a second snapshot and refusals are checked to write nothing.
+# Refused first when the snapshot does not fit the Docker VM. Prerequisites: `make
+# local-up` (servers and images), the nuScenes v1.0-mini tree at data/raw/nuscenes and
+# `make reference-data-bootstrap` (the locked reference labels). A skip here is a failure.
+infra-suite-nuscenes-labels:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="nuscenes-scene-0061"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_nuscenes_label_acceptance.py -v
 
 .PHONY: infra-suite-kafka
 infra-suite-kafka: streaming-test streaming-producer-test smoke-streaming

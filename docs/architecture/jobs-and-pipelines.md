@@ -130,7 +130,7 @@ Reusable single operations are plain Jobs (`POST /jobs`, then
 REGISTER_ROBOT_RUN        POST /robot-runs:register (create + dispatch)
 REGISTER_SOURCE_SNAPSHOT  a published snapshot descriptor -> SourceContent + SourceSnapshot (Ingress boundaries §3.1)
 COMPOSE_DATASET_VERSION   revision pins or a selector -> one immutable DatasetVersion (Data model §2.1); also the optional stage of the four building pipelines
-IMPORT_LABELS             a label document -> an independent, pinned LabelSet revision
+IMPORT_LABELS             a label document, or a SourceSnapshot's native annotations -> an independent, pinned LabelSet revision
 BUILD_SCENE_SAMPLE_VIEWS  Scenes + policy + label sets -> pinned views (also the first stage of SCENE_ML_EVALUATION)
 MINE_SCENARIOS /          ScenarioSet curation and readiness scoring over pinned views
   SCORE_SCENARIO_READINESS   (stages of SCENE_ML_EVALUATION)

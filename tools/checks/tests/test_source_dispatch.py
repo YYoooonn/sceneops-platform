@@ -49,7 +49,7 @@ def test_the_repository_dispatches_on_source_only_where_allowed():
 )
 def test_a_downstream_dispatch_site_is_rejected(tmp_path, body):
     root = _repo(tmp_path, {CONSUMER: body})
-    (violation,) = dispatch.check(root, upstream={}, downstream={})
+    (violation,) = dispatch.check(root, upstream={}, downstream={}, identity={})
     assert violation.startswith(CONSUMER)
 
 
@@ -60,7 +60,52 @@ def test_ordinary_code_is_not_a_dispatch_site(tmp_path):
         "    return rows, ref.media_type == 'image/jpeg', ref.kind\n"
     )
     root = _repo(tmp_path, {CONSUMER: body})
-    assert dispatch.check(root, upstream={}, downstream={}) == []
+    assert dispatch.check(root, upstream={}, downstream={}, identity={}) == []
+
+
+IDENTITY_BODY = (
+    "class R:\n"
+    "    def resolve(self, anchor):\n"
+    "        return (anchor.source_kind, anchor.source_id) != self.source\n"
+)
+
+
+def test_an_identity_match_is_allowed_only_at_the_anchor_resolver(tmp_path):
+    root = _repo(tmp_path, {CONSUMER: IDENTITY_BODY})
+    assert (
+        dispatch.check(
+            root, upstream={}, downstream={}, identity={(CONSUMER, "R.resolve"): "x"}
+        )
+        == []
+    )
+    # The same comparison in any other derived workflow is a violation.
+    (violation,) = dispatch.check(root, upstream={}, downstream={}, identity={})
+    assert "only the anchor resolver matches a source identity" in violation
+
+
+@pytest.mark.parametrize(
+    "comparison",
+    [
+        "('recording', anchor.source_id) == (anchor.source_kind, anchor.source_id)",
+        "anchor.source_kind == 'content' and anchor.source_id == self.source_id",
+        "anchor.source_kind != self.kind",
+    ],
+)
+def test_the_anchor_resolver_may_not_branch_on_a_source_kind(tmp_path, comparison):
+    body = f"class R:\n    def resolve(self, anchor):\n        return {comparison}\n"
+    root = _repo(tmp_path, {CONSUMER: body})
+    violations = dispatch.check(
+        root, upstream={}, downstream={}, identity={(CONSUMER, "R.resolve"): "x"}
+    )
+    assert violations and all("anchor resolver" in v for v in violations)
+
+
+def test_a_listed_identity_site_that_no_longer_exists_is_reported(tmp_path):
+    root = _repo(tmp_path, {CONSUMER: "def f():\n    return 1\n"})
+    (violation,) = dispatch.check(
+        root, upstream={}, downstream={}, identity={(CONSUMER, "f"): "x"}
+    )
+    assert "remove it from IDENTITY" in violation
 
 
 def test_upstream_modules_and_listed_sites_are_allowed(tmp_path):
@@ -77,6 +122,7 @@ def test_upstream_modules_and_listed_sites_are_allowed(tmp_path):
             root,
             upstream={"packages/sceneops-up/": "a builder"},
             downstream={(CONSUMER, "L.uris"): "the locator"},
+            identity={},
         )
         == []
     )
@@ -85,7 +131,7 @@ def test_upstream_modules_and_listed_sites_are_allowed(tmp_path):
 def test_a_listed_site_that_no_longer_exists_is_reported(tmp_path):
     root = _repo(tmp_path, {CONSUMER: "def f():\n    return 1\n"})
     (violation,) = dispatch.check(
-        root, upstream={}, downstream={(CONSUMER, "f"): "was a refusal"}
+        root, upstream={}, downstream={(CONSUMER, "f"): "was a refusal"}, identity={}
     )
     assert "no such site exists" in violation
 
@@ -93,5 +139,7 @@ def test_a_listed_site_that_no_longer_exists_is_reported(tmp_path):
 def test_a_site_moved_to_another_function_is_not_covered_by_the_listing(tmp_path):
     body = "def g(ref):\n    return isinstance(ref, SourceFileRef)\n"
     root = _repo(tmp_path, {CONSUMER: body})
-    violations = dispatch.check(root, upstream={}, downstream={(CONSUMER, "f"): "x"})
+    violations = dispatch.check(
+        root, upstream={}, downstream={(CONSUMER, "f"): "x"}, identity={}
+    )
     assert len(violations) == 2

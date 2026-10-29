@@ -72,8 +72,9 @@ PACKAGES: dict[str, set[str]] = {
         "sceneops_execution",
     },
     # Derived-layer storage and the capabilities built on it. Scene and Episode are
-    # siblings: neither imports the other.
-    "sceneops_derived": {"sceneops_core", "sceneops_storage"},
+    # siblings: neither imports the other. `sceneops_sources` is reached by the native
+    # label importers, which read annotations from verified source content.
+    "sceneops_derived": {"sceneops_core", "sceneops_storage", "sceneops_sources"},
     "sceneops_scenes": {
         "sceneops_core",
         "sceneops_storage",

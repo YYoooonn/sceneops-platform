@@ -514,6 +514,44 @@ def test_invalid_mixed_compositions_write_nothing(api: Api, recording: dict, nus
     assert _rows() == before
 
 
+def test_native_labels_resolve_only_into_the_content_scene_of_a_mixed_version(
+    api: Api, nuscenes: dict, recording: dict, pins: list[dict], by_pins: dict
+) -> None:
+    """S6 on the mixed version: the nuScenes Scene's own labels attach to it, never
+    to the RobotRun Scene of the same nuScenes scene, whose lidar readings carry
+    the same timestamps; importing labels changes no DatasetVersion."""
+    imported = _succeeded(api, "import_labels", {
+        "snapshot_id": nuscenes["snapshot"]["snapshot_id"], "label_set_id": "nuscenes-scene-0061-mixed",
+        "unit_keys": PARTS["nuscenes-scene-0061"]["unit_keys"],
+    })  # fmt: skip
+    assert (imported["label_count"], imported["content_ids"]) == (4699, [nuscenes["snapshot"]["content_id"]])
+    store = _store()
+
+    def view_of(policy: dict) -> tuple[dict, dict]:
+        result = _succeeded(api, "build_scene_sample_views", {
+            "dataset_id": DATASET, "dataset_version": "pins", "policy": policy,
+            "label_sets": [imported["label_set"]],
+        })  # fmt: skip
+        (ref,) = result["views"]
+        artifact = api.get(f"/artifacts/{ref['manifest_artifact_id']}")["artifact"]
+        return result, json.loads(asyncio.run(store.read_bytes(artifact["uri"])))
+
+    _, native_view = view_of({"anchor": {"channel": "LIDAR_TOP"}})
+    (scene_pin,) = [p for p in nuscenes["pins"] if p["domain"] == "scene"]
+    assert native_view["scene"]["scene_id"] == scene_pin["unit_id"]
+    (stats,) = native_view["label_stats"]
+    assert (stats["covered_observation_count"], stats["attached_label_count"], stats["unattached_label_count"]) == (39, 4699, 0)
+    _, robot_view = view_of({"anchor": {"channel": "/lidar/top/points"}})
+    (recording_scene,) = [p for p in recording["pins"] if p["domain"] == "scene"]
+    assert robot_view["scene"]["scene_id"] == recording_scene["unit_id"]
+    (stats,) = robot_view["label_stats"]
+    assert (stats["covered_observation_count"], stats["attached_label_count"], stats["unattached_label_count"]) == (0, 0, 0)
+    assert {s["labels"][0]["covered"] for s in robot_view["samples"]} == {False}
+    recomposed = _succeeded(api, "compose_dataset_version", {"dataset_id": DATASET, "dataset_version": "pins", "pins": pins})
+    assert (recomposed["created"], recomposed["composition_checksum"]) == (False, by_pins["composition_checksum"])
+    MEASUREMENTS["mixed_native_labels_attached"] = 4699
+
+
 def test_measurements_are_reported(capsys) -> None:
     with capsys.disabled():
         print("mixed_source_measurements " + json.dumps(MEASUREMENTS, sort_keys=True))

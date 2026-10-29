@@ -24,8 +24,9 @@ Episode --config-->  AlignedEpisode revision --> learning export (explicit confi
 
 A derived manifest is immutable. Its identity is the checksum of its canonical
 JSON bytes; it is stored write-once at `manifest-<hex>.json`; its
-ArtifactRecord id is a deterministic function of `(logical id, checksum)`
-(`sceneops_core.common.derived_ids`). Registering identical work again is a
+ArtifactRecord id is `<prefix>-<sha256(canonical_json({derived_artifact_id_schema:
+"sceneops.derived_artifact_id/v1", prefix, logical_id, checksum}))[:32]>` with prefix
+`labelset`, `sampleview` or `scenarioset` (`sceneops_core.common.derived_ids`). Registering identical work again is a
 no-op; a conflicting duplicate fails. A consumer resolves a pin by verifying
 the record's kind, owner and checksum and hashing the bytes
 (`sceneops_derived`). Records that do not pin a revision are refused
@@ -33,15 +34,79 @@ the record's kind, owner and checksum and hashing the bytes
 
 ## 2. Label sets
 
-`LabelSetManifest` (`sceneops.label_set/v1`): provenance (`human`, `external`,
-`model`), `coverage` (every annotated anchor, with or without objects) and
-`Box3DLabel`s. An `ObservationAnchor` is
-`(robot_run_id, channel, source_clock, timestamp_ns)`.
+`LabelSetManifest` (`sceneops.label_set/v2`): `label_set_id`, provenance
+(`human`, `external`, `model`; producer and version), `coverage` (every annotated
+anchor, with or without objects) and `Box3DLabel`s (`label_id`, `anchor`,
+`category`, `instance_id`, `box` {`frame_id`, `center_m`, `size_wlh_m`,
+`rotation_wxyz`, `velocity_mps`}, sorted `attributes`). It holds no location,
+DatasetVersion, SourceSnapshot or execution context.
 
-`IMPORT_LABELS` reads an adapter-produced document from the input store,
-checks that the anchored RobotRuns are registered, and registers a revision.
-Labels never enter a Scene, Episode or recording. Source-format adapters live
-outside the platform (`dataset-acquisition reference render-labels`).
+```text
+ObservationAnchor  source_kind   recording | content
+                   source_id     robot_run_id | content_id
+                   channel, source_clock, timestamp_ns
+                   group_ref?    native_ref of the source-defined group annotated
+```
+
+An anchor names a source observation by the same source identity a canonical
+unit's binding carries, so a label set needs no RobotRun for content sources and
+never depends on DatasetVersion membership or on which snapshot declared the
+content. Coverage holds one anchor per observation; a label carries its coverage
+anchor exactly. Coverage is sorted by `(source_kind, source_id, channel,
+source_clock, timestamp_ns, group_ref)` and labels by `(anchor, label_id)`.
+
+**Resolution.** One resolver (`sceneops_core.labels.resolution`) places an anchor in
+a Scene, reading the Scene manifest only:
+
+```text
+another source, or a channel the Scene lacks   not in this Scene
+no group_ref                                   the one observation at
+                                               (channel, source_clock, timestamp_ns)
+group_ref                                      that observation, inside the group whose
+                                               native_ref is group_ref; observation and
+                                               group both absent -> not in this Scene;
+                                               one absent, or the group not holding the
+                                               observation -> GroupRefMismatchError
+several observations at the anchor             AmbiguousAnchorError
+channel on a unit-origin clock                 UnsupportedAnchorClockError
+```
+
+It never reads a sample view and never associates by time.
+
+**Import.** `IMPORT_LABELS` takes exactly one input and registers one revision:
+
+- `document_uri`: an adapter-produced document from the input store
+  (`dataset-acquisition reference render-labels` renders the reference labels for a
+  RobotRun, anchored `recording` without `group_ref`).
+- `snapshot_id` + `label_set_id` [+ `unit_keys`]: a native import. The snapshot is
+  resolved to its content once; the content's format selects the native importer,
+  which reads the verified content tables only. The Job result names the snapshot
+  and content (execution provenance); the label set and its ArtifactRecord name the
+  content only. DatasetVersion fields are refused.
+
+Every anchored RobotRun or SourceContent must be registered. Re-importing the same
+bytes returns the same revision and writes nothing; another snapshot of the same
+content yields the same revision, whose record keeps the Job that first registered
+it. Labels never enter a Scene, Episode, recording or DatasetVersion.
+
+**Native nuScenes labels** (`sceneops_derived.nuscenes_labels`, reading
+`sample_annotation`, `instance`, `category` and `attribute` through
+`sceneops_sources.nuscenes`):
+
+```text
+anchor     per sample of a selected scene: (content, content_id, LIDAR_TOP,
+           nuscenes.timestamp, sample.timestamp · 1 000), group_ref = sample.token; the
+           sample's one LIDAR_TOP key frame must be at sample.timestamp and its file
+           preserved, else the import fails; a sample without annotations is covered
+           with no label
+label      label_id = sample_annotation.token, instance_id = instance.token,
+           category = category.name, attributes = attribute names sorted
+box        frame "global" (the content Scene's world frame); translation, size [w, l, h]
+           and rotation [w, x, y, z] verbatim; no velocity
+provenance external, producer nuscenes, producer_version = the table version
+```
+
+Visibility, point counts and prev / next links are not carried.
 
 ## 3. Scene sample views
 
@@ -57,9 +122,13 @@ pose     { parent_frame_id, child_frame_id, association, tolerance_ns, required 
 Association never crosses clocks and never interpolates; nearest ties go to
 the earlier timestamp. Anchors that cannot satisfy a required member are
 dropped with a recorded reason. A view stores references and deltas, not
-payloads. Labels attach through the observations a sample holds, each labelled
-observation owned by the nearest sample, so a label is counted once
-(`label_stats`).
+payloads. Each pinned anchor is resolved on the Scene (§2); a label attaches
+through what it resolves to: its observation, or, with `group_ref`, any member of
+its group. A sample holding it is a candidate, and the one whose anchor instant is
+nearest to a held member owns it (earlier on a tie), so a label is counted once
+(`label_stats`: covered anchors, attached, unattached). Group-anchored labels
+therefore attach alike whichever channel anchors the view. An anchor that
+contradicts the Scene fails the view. Builder semantics version `2`.
 
 ## 4. ScenarioSet
 
@@ -116,7 +185,10 @@ pinned export.
 - Evaluation applies no frame transform; a prediction and label in different
   frames fail.
 - Labels are 3-D boxes anchored on Scene observations; Episodes have no label
-  sets.
+  sets. An anchor carries no unit key, so a channel on a unit-origin clock cannot be
+  labelled (no Scene source has one).
+- Native label import exists for nuScenes only, validated on the `scene-0061` slice
+  (39 samples, 4,699 annotations).
 - The default `make e2e-scene-ml` runs the mock backend; the GroundingDINO
   backend is the opt-in `make acceptance-grounding-dino`.
 - Validated on one nuScenes mini scene (`scene-0061`).

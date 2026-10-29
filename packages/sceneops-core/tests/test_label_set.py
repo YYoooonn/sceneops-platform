@@ -1,5 +1,5 @@
-"""LabelSetManifest v1: canonical form, provenance and coverage invariants
-(ADR-007 §33.2)."""
+"""LabelSetManifest v2: canonical form, provenance, anchor and coverage
+invariants (ADR-007 §33.2, ADR-015 §9)."""
 
 from __future__ import annotations
 
@@ -25,9 +25,16 @@ from sceneops_core.labels import (
 RUN = "run-001"
 
 
-def anchor(ts: int, *, channel: str = "LIDAR_TOP", run: str = RUN) -> ObservationAnchor:
+def anchor(
+    ts: int, *, channel: str = "LIDAR_TOP", run: str = RUN, group_ref: str | None = None
+) -> ObservationAnchor:
     return ObservationAnchor(
-        robot_run_id=run, channel=channel, source_clock="mcap_log_time", timestamp_ns=ts
+        source_kind="recording",
+        source_id=run,
+        channel=channel,
+        source_clock="mcap_log_time",
+        timestamp_ns=ts,
+        group_ref=group_ref,
     )
 
 
@@ -190,3 +197,112 @@ def test_artifact_id_is_deterministic_per_revision() -> None:
     assert a != label_set_artifact_id(
         label_set_id="gt-2", checksum="sha256:" + "a" * 64
     )
+
+
+CONTENT = "content-" + "c" * 32
+
+
+def content_anchor(ts: int, group_ref: str | None) -> ObservationAnchor:
+    return ObservationAnchor(
+        source_kind="content",
+        source_id=CONTENT,
+        channel="LIDAR_TOP",
+        source_clock="nuscenes.timestamp",
+        timestamp_ns=ts,
+        group_ref=group_ref,
+    )
+
+
+def test_an_anchor_names_its_source_by_kind_and_identity_only() -> None:
+    assert set(ObservationAnchor.model_fields) == {
+        "source_kind",
+        "source_id",
+        "channel",
+        "source_clock",
+        "timestamp_ns",
+        "group_ref",
+    }
+    with pytest.raises(ValueError):
+        ObservationAnchor.model_validate(
+            {**content_anchor(1_000, "s").model_dump(), "source_kind": "snapshot"}
+        )
+    with pytest.raises(ValueError):
+        ObservationAnchor.model_validate(
+            {**content_anchor(1_000, "s").model_dump(), "robot_run_id": RUN}
+        )
+
+
+def test_content_and_recording_anchors_coexist_in_one_set() -> None:
+    manifest = LabelSetManifest.normalized(
+        label_set_id="gt-1",
+        provenance=HUMAN,
+        coverage=[content_anchor(1_000, "sample-a"), anchor(10)],
+        labels=[],
+    )
+    assert [a.source_kind for a in manifest.coverage] == ["content", "recording"]
+    assert load_canonical_label_set(manifest.to_canonical_bytes()) == manifest
+
+
+def test_one_observation_cannot_be_covered_with_two_groups() -> None:
+    with pytest.raises(ValueError, match="twice"):
+        LabelSetManifest.normalized(
+            label_set_id="gt-1",
+            provenance=HUMAN,
+            coverage=[
+                content_anchor(1_000, "sample-a"),
+                content_anchor(1_000, "sample-b"),
+            ],
+            labels=[],
+        )
+    with pytest.raises(ValueError, match="twice"):
+        LabelSetManifest.normalized(
+            label_set_id="gt-1",
+            provenance=HUMAN,
+            coverage=[content_anchor(1_000, "sample-a"), content_anchor(1_000, None)],
+            labels=[],
+        )
+
+
+def test_a_label_must_carry_its_coverage_anchor_exactly() -> None:
+    label = box("a", 10).model_copy(update={"anchor": anchor(10, group_ref="g")})
+    with pytest.raises(ValueError, match="outside the declared coverage"):
+        make([label], coverage=[10])
+
+
+def test_a_v1_label_set_is_not_read() -> None:
+    payload = make([box("a", 10)], coverage=[10]).model_dump(mode="json")
+    payload["schema_version"] = "sceneops.label_set/v1"
+    with pytest.raises(UnsupportedLabelSetVersionError):
+        load_canonical_label_set(json.dumps(payload).encode())
+    with pytest.raises(UnsupportedLabelSetVersionError):
+        parse_label_set_document(json.dumps(payload).encode())
+
+
+def test_import_params_take_exactly_one_input() -> None:
+    from sceneops_core.jobs.schemas import ImportLabelsJobParams
+
+    snapshot = "snapshot-" + "1" * 32
+    with pytest.raises(ValueError, match="exactly one"):
+        ImportLabelsJobParams()
+    with pytest.raises(ValueError, match="exactly one"):
+        ImportLabelsJobParams(document_uri="/x.json", snapshot_id=snapshot)
+    with pytest.raises(ValueError, match="needs label_set_id"):
+        ImportLabelsJobParams(snapshot_id=snapshot)
+    with pytest.raises(ValueError, match="apply to a native import"):
+        ImportLabelsJobParams(document_uri="/x.json", label_set_id="gt")
+    with pytest.raises(ValueError, match="pins a document"):
+        ImportLabelsJobParams(
+            snapshot_id=snapshot, label_set_id="gt", expected_checksum="sha256:x"
+        )
+    with pytest.raises(ValueError, match="dataset_version is not accepted"):
+        ImportLabelsJobParams.model_validate(
+            {"snapshot_id": snapshot, "label_set_id": "gt", "dataset_version": "v1"}
+        )
+    with pytest.raises(ValueError, match="unique"):
+        ImportLabelsJobParams(
+            snapshot_id=snapshot, label_set_id="gt", unit_keys=["a", "a"]
+        )
+    params = ImportLabelsJobParams(
+        snapshot_id=snapshot, label_set_id="gt", unit_keys=["b", "a"]
+    )
+    assert params.unit_keys == ["a", "b"]

@@ -15,8 +15,13 @@ CLOCK = "mcap_log_time"
 
 
 def anchor(run: str, ts: int, channel: str = "LIDAR_TOP") -> ObservationAnchor:
+    """An anchor on an observation of RobotRun ``run``'s recording."""
     return ObservationAnchor(
-        robot_run_id=run, channel=channel, source_clock=CLOCK, timestamp_ns=ts
+        source_kind="recording",
+        source_id=run,
+        channel=channel,
+        source_clock=CLOCK,
+        timestamp_ns=ts,
     )
 
 

@@ -171,9 +171,10 @@ native reader or content builder, and no format has both. Current builder bounds
   never decoded; frame-exact decoding (AV1 for pusht) is unverified.
 - nuScenes content: only a `v1.0-<split>` table directory is read, and only the
   `scene-0061` slice (one scene of v1.0-mini with the shared tables) has been built on
-  real data. Sensor readings, ego poses and samples are canonicalized; CAN, maps and the
-  annotation tables are preserved but not read, so a native nuScenes Scene has no CAN
-  stream and no labels. A slice snapshot that keeps the shared tables lists scenes
+  real data. Sensor readings, ego poses and samples are canonicalized; CAN and maps are
+  preserved but not read, so a native nuScenes Scene has no CAN stream. Its annotation
+  tables are read only by the native label import (a separate LabelSet, never part of
+  the Scene). A slice snapshot that keeps the shared tables lists scenes
   whose files it does not preserve, so it is built with `unit_keys`. The scene-0061
   manifest is 2.9 MB (2,963 observations); readings are referenced as whole preserved
   files, never decoded at build time.
@@ -195,8 +196,9 @@ native reader or content builder, and no format has both. Current builder bounds
 - `export_analytics_snapshot` covers Scene tables only, of recording-sourced Scenes: a
   Scene whose observations reference preserved source files is refused
   (`UnsupportedSceneContentError`). Aligned Episodes have their own learning export.
-- Label sets anchor on a RobotRun's observations, so no label resolves into a
-  content-sourced (nuScenes) Scene: its sample views carry no labels. Detection lifts
+- Native label import exists for nuScenes only (validated on the `scene-0061` slice);
+  visibility, point counts and annotation prev / next links are not carried. An anchor
+  carries no unit key, so a unit-origin clock cannot be labelled. Detection lifts
   2-D boxes only from `PointCloud2` CDR lidar payloads; a preserved nuScenes
   `.pcd.bin` reading is located but not lifted (a failed lift is recorded).
 - Learning export is numeric scalar / vector only, with no lazy / streaming Torch

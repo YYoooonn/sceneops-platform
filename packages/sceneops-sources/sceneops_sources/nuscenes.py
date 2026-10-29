@@ -21,9 +21,19 @@ Layout read (nuScenes v1.0)::
     v1.0-<split>/calibrated_sensor.json  sensor extrinsics in the ego frame (+ camera K)
     v1.0-<split>/sensor.json             channel and modality of each sensor
 
-Sensor files, CAN, maps and the annotation tables are never read: a reading's
-file is only named (``NuScenesSampleData.filename``), so a caller that
-materializes content for the reader can leave them out.
+The annotation tables are read only by ``read_nuscenes_annotations``, for
+native label import (ADR-015 §9)::
+
+    v1.0-<split>/sample_annotation.json  one 3-D box per (instance, sample): its sample,
+                                         instance, attributes, visibility, translation
+                                         and rotation in the global frame, size [w, l, h]
+    v1.0-<split>/instance.json           one tracked object: its category
+    v1.0-<split>/category.json           category name
+    v1.0-<split>/attribute.json          attribute name
+
+Sensor files, CAN and maps are never read: a reading's file is only named
+(``NuScenesSampleData.filename``), so a caller that materializes content for
+the reader can leave them out.
 """
 
 from __future__ import annotations
@@ -46,6 +56,12 @@ NUSCENES_TABLES: Final = (
     "sample_data",
     "scene",
     "sensor",
+)
+NUSCENES_ANNOTATION_TABLES: Final = (
+    "attribute",
+    "category",
+    "instance",
+    "sample_annotation",
 )
 
 
@@ -179,6 +195,64 @@ class NuScenesContent:
         return self.sensors[calibrated.sensor_token]
 
 
+@dataclass(frozen=True)
+class NuScenesAnnotation:
+    """One ``sample_annotation`` row: a box of one instance at one sample.
+    ``translation`` and ``rotation`` ([w, x, y, z]) are in the global frame,
+    ``size`` is [width, length, height] in metres, all as stored."""
+
+    token: str
+    sample_token: str
+    instance_token: str
+    visibility_token: str
+    attribute_tokens: tuple[str, ...]
+    translation: Vector
+    size: Vector
+    rotation: Vector
+    prev: str
+    next: str
+    num_lidar_pts: int
+    num_radar_pts: int
+
+
+@dataclass(frozen=True)
+class NuScenesInstance:
+    token: str
+    category_token: str
+
+
+@dataclass(frozen=True)
+class NuScenesCategory:
+    token: str
+    name: str
+
+
+@dataclass(frozen=True)
+class NuScenesAttribute:
+    token: str
+    name: str
+
+
+@dataclass(frozen=True)
+class NuScenesAnnotations:
+    version: str
+    annotations: Mapping[str, NuScenesAnnotation]
+    instances: Mapping[str, NuScenesInstance]
+    categories: Mapping[str, NuScenesCategory]
+    attributes: Mapping[str, NuScenesAttribute]
+
+    def by_sample(self) -> dict[str, list[NuScenesAnnotation]]:
+        """Annotations per sample token, in table order."""
+        out: dict[str, list[NuScenesAnnotation]] = {}
+        for annotation in self.annotations.values():
+            out.setdefault(annotation.sample_token, []).append(annotation)
+        return out
+
+    def category_of(self, annotation: NuScenesAnnotation) -> NuScenesCategory:
+        instance = self.instances[annotation.instance_token]
+        return self.categories[instance.category_token]
+
+
 # --- table parsing -------------------------------------------------------------
 
 
@@ -270,6 +344,18 @@ def _table_version(inventory: SourceContentInventory) -> str:
     if missing:
         raise NuScenesFormatError(f"{version} has no table(s) {missing}")
     return version
+
+
+def nuscenes_annotation_read_paths(inventory: SourceContentInventory) -> list[str]:
+    """The annotation tables ``read_nuscenes_annotations`` reads; a content
+    without them carries no native labels."""
+    version = _table_version(inventory)
+    paths = {entry.path for entry in inventory.files}
+    wanted = [f"{version}/{name}.json" for name in NUSCENES_ANNOTATION_TABLES]
+    missing = [path for path in wanted if path not in paths]
+    if missing:
+        raise NuScenesFormatError(f"the content has no annotation table(s) {missing}")
+    return wanted
 
 
 def nuscenes_read_paths(inventory: SourceContentInventory) -> list[str]:
@@ -401,18 +487,121 @@ def read_nuscenes_content(files: ContentFiles) -> NuScenesContent:
     )
 
 
+def _tokens(row: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
+    value = row.get(key)
+    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+        raise NuScenesFormatError(f"{where}: {key!r} is not a list of tokens")
+    return tuple(value)
+
+
+def read_nuscenes_annotations(files: ContentFiles) -> NuScenesAnnotations:
+    """The native annotation tables of a nuScenes v1.0 content, with every
+    token reference between them checked to resolve. Sample tokens are
+    checked by the caller against ``read_nuscenes_content``."""
+    version = _table_version(files.inventory)
+    nuscenes_annotation_read_paths(files.inventory)
+
+    def rows(name: str) -> list[dict[str, Any]]:
+        return _rows(files, version, name)
+
+    categories = _by_token(
+        [
+            NuScenesCategory(
+                token=(token := _str(r, "token", "category")),
+                name=_str(r, "name", f"category {token}"),
+            )
+            for r in rows("category")
+        ],
+        "category",
+    )
+    attributes = _by_token(
+        [
+            NuScenesAttribute(
+                token=(token := _str(r, "token", "attribute")),
+                name=_str(r, "name", f"attribute {token}"),
+            )
+            for r in rows("attribute")
+        ],
+        "attribute",
+    )
+    instances = _by_token(
+        [
+            NuScenesInstance(
+                token=(token := _str(r, "token", "instance")),
+                category_token=_str(r, "category_token", f"instance {token}"),
+            )
+            for r in rows("instance")
+        ],
+        "instance",
+    )
+    annotations = _by_token(
+        [
+            NuScenesAnnotation(
+                token=(token := _str(r, "token", "sample_annotation")),
+                sample_token=_str(
+                    r, "sample_token", (w := f"sample_annotation {token}")
+                ),
+                instance_token=_str(r, "instance_token", w),
+                visibility_token=_str(r, "visibility_token", w, empty=True),
+                attribute_tokens=_tokens(r, "attribute_tokens", w),
+                translation=_vector(r.get("translation"), 3, f"{w} translation"),
+                size=_vector(r.get("size"), 3, f"{w} size"),
+                rotation=_vector(r.get("rotation"), 4, f"{w} rotation"),
+                prev=_str(r, "prev", w, empty=True),
+                next=_str(r, "next", w, empty=True),
+                num_lidar_pts=_int(r, "num_lidar_pts", w),
+                num_radar_pts=_int(r, "num_radar_pts", w),
+            )
+            for r in rows("sample_annotation")
+        ],
+        "sample_annotation",
+    )
+
+    def require(table: str, token: str, known: Mapping[str, Any], where: str) -> None:
+        if token not in known:
+            raise NuScenesFormatError(f"{where} references unknown {table} {token!r}")
+
+    for instance in instances.values():
+        require(
+            "category",
+            instance.category_token,
+            categories,
+            f"instance {instance.token}",
+        )
+    for annotation in annotations.values():
+        where = f"sample_annotation {annotation.token}"
+        require("instance", annotation.instance_token, instances, where)
+        for attribute in annotation.attribute_tokens:
+            require("attribute", attribute, attributes, where)
+    return NuScenesAnnotations(
+        version=version,
+        annotations=annotations,
+        instances=instances,
+        categories=categories,
+        attributes=attributes,
+    )
+
+
 __all__ = [
+    "NUSCENES_ANNOTATION_TABLES",
     "NUSCENES_TABLES",
     "NUSCENES_TABLE_VERSION_PREFIX",
+    "NuScenesAnnotation",
+    "NuScenesAnnotations",
+    "NuScenesAttribute",
     "NuScenesCalibratedSensor",
+    "NuScenesCategory",
     "NuScenesContent",
     "NuScenesEgoPose",
     "NuScenesFormatError",
+    "NuScenesInstance",
     "NuScenesSample",
     "NuScenesSampleData",
     "NuScenesScene",
     "NuScenesSensor",
     "UnsupportedNuScenesVersionError",
+    "nuscenes_annotation_read_paths",
     "nuscenes_read_paths",
+    "read_nuscenes_annotations",
     "read_nuscenes_content",
 ]

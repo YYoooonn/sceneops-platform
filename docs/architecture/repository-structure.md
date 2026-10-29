@@ -121,7 +121,7 @@ contract; SceneOps production code never imports the integration. In particular:
 | `sceneops-acquisition` | Acquisition lifecycle (ADR-008): reconciliation and bounded registration recovery, derived acquisition status, artifact lifecycle classification, `REGISTER_ROBOT_RUN` submission |
 | `sceneops-scenes` | Scene building from a registered recording and from registered nuScenes content (`nuscenes_builder`, on the `sceneops-sources` reader), Scene validation and profiling, Scene artifact layout |
 | `sceneops-episodes` | Episode building from a registered recording and from registered LeRobot content (`lerobot_builder`, on the `sceneops-sources` reader), Episode validation and profiling, Episode artifact layout |
-| `sceneops-derived` | Write-once, checksum-pinned storage of derived manifests (labels, sample views, ScenarioSets, predictions) and run artifacts |
+| `sceneops-derived` | Write-once, checksum-pinned storage of derived manifests (labels, sample views, ScenarioSets, predictions) and run artifacts; native label importers on the `sceneops-sources` readers (`nuscenes_labels`) |
 | `sceneops-inference` | Detection inference backends (mock, GroundingDINO client with frustum lifting) and prediction publication |
 | `sceneops-evaluation` | Detection evaluation: matching, metric accumulation, evaluation artifacts |
 | `sceneops-analytics` | Parquet table builders, DuckDB helper, learning-data read layer, external dataset adapters |
@@ -137,12 +137,12 @@ extraction) and `sceneops-derived`.
 1  sceneops-storage    sceneops-db    sceneops-streaming
 2  sceneops-recording (storage; streaming from capture/ only)
    sceneops-sources   (storage)
-   sceneops-derived   (storage)
    sceneops-analytics (storage)
    sceneops-execution (db)
 3  sceneops-scenes, sceneops-episodes        (recording, sources)
-   sceneops-inference, sceneops-evaluation   (derived)
+   sceneops-derived                          (storage, sources)
    sceneops-acquisition                      (db, storage, recording, execution)
+4  sceneops-inference, sceneops-evaluation   (derived)
 ```
 
 Every package depends on `sceneops-core`; the parenthesis names its other dependencies.

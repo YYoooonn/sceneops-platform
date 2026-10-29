@@ -8,6 +8,10 @@ Scene ``s`` (0-based) has ``samples`` samples. Sample ``k`` of scene ``s`` is at
 ``BASE_US + s * 10**8 + k * 500_000`` µs; it has one key frame per channel at
 the sample's own time (the lidar exactly, the camera and radar a few µs off)
 and, for every channel, ``sweeps`` sweeps after it.
+
+Each scene has the instances of ``INSTANCES`` (one per category); every sample
+but the scene's last annotates each of them once (``sample_annotation``), so the
+last sample is annotated as empty.
 """
 
 from __future__ import annotations
@@ -29,6 +33,11 @@ CHANNELS = {
 KEY_FRAME_OFFSET_US = {"CAM_FRONT": 12, "LIDAR_TOP": 0, "RADAR_FRONT": -7}
 CAMERA_K = [[1266.4, 0.0, 816.3], [0.0, 1266.4, 491.5], [0.0, 0.0, 1.0]]
 INCLUDE = ("LICENSE", "samples/**", "sweeps/**", "v1.0-mini/*")
+# Category name -> the attribute names its annotations carry.
+INSTANCES = {
+    "human.pedestrian.adult": ("pedestrian.moving",),
+    "vehicle.car": ("vehicle.moving",),
+}
 
 
 def token(*parts: object) -> str:
@@ -63,8 +72,26 @@ def write_nuscenes_tree(
             "calibrated_sensor",
             "sensor",
             "log",
+            "category",
+            "attribute",
+            "visibility",
+            "instance",
+            "sample_annotation",
         )
     }
+    for category, attributes in INSTANCES.items():
+        tables["category"].append(
+            {"token": token("category", category), "name": category, "description": ""}
+        )
+        for attribute in attributes:
+            tables["attribute"].append(
+                {
+                    "token": token("attribute", attribute),
+                    "name": attribute,
+                    "description": "",
+                }
+            )
+    tables["visibility"].append({"token": "4", "level": "v80-100", "description": ""})
     for channel, (modality, _, _) in CHANNELS.items():
         tables["sensor"].append(
             {
@@ -157,6 +184,39 @@ def write_nuscenes_tree(
                     )
                     if s not in omit_scene_files:
                         files[filename] = f"{channel} {us}\n".encode()
+        annotated = sample_tokens[:-1]
+        for i, (category, attributes) in enumerate(INSTANCES.items()):
+            instance = token("instance", s, category)
+            boxes = [
+                token("sample_annotation", s, category, k)
+                for k in range(len(annotated))
+            ]
+            tables["instance"].append(
+                {
+                    "token": instance,
+                    "category_token": token("category", category),
+                    "nbr_annotations": len(boxes),
+                    "first_annotation_token": boxes[0] if boxes else "",
+                    "last_annotation_token": boxes[-1] if boxes else "",
+                }
+            )
+            for k, sample_token in enumerate(annotated):
+                tables["sample_annotation"].append(
+                    {
+                        "token": boxes[k],
+                        "sample_token": sample_token,
+                        "instance_token": instance,
+                        "visibility_token": "4",
+                        "attribute_tokens": [token("attribute", a) for a in attributes],
+                        "translation": [410.0 + k + 5 * i, 1105.5 - i, 0.75 + 0.25 * i],
+                        "size": [[0.6, 0.7, 1.7], [1.8, 4.5, 1.5]][i],
+                        "rotation": [0.8, 0.0, 0.0, 0.6],
+                        "prev": boxes[k - 1] if k else "",
+                        "next": boxes[k + 1] if k + 1 < len(boxes) else "",
+                        "num_lidar_pts": 10 + k,
+                        "num_radar_pts": i,
+                    }
+                )
     if mutate_tables is not None:
         mutate_tables(tables)
     for name, rows in tables.items():
@@ -173,6 +233,7 @@ __all__ = [
     "CAMERA_K",
     "CHANNELS",
     "INCLUDE",
+    "INSTANCES",
     "KEY_FRAME_OFFSET_US",
     "VERSION",
     "log_name",

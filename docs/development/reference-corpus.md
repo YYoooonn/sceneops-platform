@@ -82,7 +82,7 @@ equal bytes. The lock holds its sha256, size and counts; the cache file name fol
 the sha256, so a changed artifact is never found under an old name.
 
 `reference render-labels` turns the locked artifact and a target RobotRun id into a
-`sceneops.label_set/v1` document for `IMPORT_LABELS`. It reads no source dataset, first
+`sceneops.label_set/v2` document for `IMPORT_LABELS`. It reads no source dataset, first
 verifies the artifact against the lock, and is a deterministic function of (artifact,
 `--robot-run-id`, `--label-set-id`): the same inputs give the same bytes, and the
 RobotRun identity exists only in the rendered document. `make e2e-scene-ml` renders

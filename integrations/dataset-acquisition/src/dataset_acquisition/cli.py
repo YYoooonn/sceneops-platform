@@ -31,7 +31,7 @@ and the cached recordings (``--lock-only``: the lock alone) and prints each
 fixture's locked facts and recording path (``--with-labels``: also the verified
 reference label artifact). ``render-labels`` is the other no-source command: the
 locked reference label artifact of one fixture and a target RobotRun id become a
-``sceneops.label_set/v1`` document. One JSON line per fixture goes to stdout;
+``sceneops.label_set/v2`` document. One JSON line per fixture goes to stdout;
 exit 1 if any fixture disagrees. ``replay`` is the streaming counterpart of
 ``resolve``: it verifies one fixture's cached recording against the lock, then
 publishes that MCAP (``mcap_source``) on ROS 2 topics. It reads no source dataset.

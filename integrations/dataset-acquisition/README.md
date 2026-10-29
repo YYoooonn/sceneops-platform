@@ -235,7 +235,7 @@ reference-data-bootstrap` / `make reference-data-verify`; these are the only com
 that need the source dataset. Consumers need none: `reference resolve` prints each
 fixture's locked facts and verified recording path (`--with-labels`: and the verified
 label artifact), and `reference render-labels` turns the locked label artifact and a
-target RobotRun id into the `sceneops.label_set/v1` document `IMPORT_LABELS` reads. The
+target RobotRun id into the `sceneops.label_set/v2` document `IMPORT_LABELS` reads. The
 `reference-labels` compose service runs it without mounting a source dataset.
 
 ## Limitations

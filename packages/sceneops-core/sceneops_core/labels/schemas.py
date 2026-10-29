@@ -1,20 +1,26 @@
-"""LabelSetManifest v1: post-acquisition labels as separate, lineage-bearing
-data (ADR-007 §33.2).
+"""LabelSetManifest v2: post-acquisition labels as separate, lineage-bearing
+data (ADR-007 §33.2, ADR-015 §9).
 
-A label is a statement *about* acquired data made after acquisition, by a
-human, an external dataset or a model. It is not part of the RobotRun's
-acquisition provenance, and it is never written into a canonical Scene or
-Episode manifest. A label set references what it labels through a stable
-canonical reference, an :class:`ObservationAnchor`, so it survives
+A label is a statement *about* source data made after acquisition, by a
+human, an external dataset or a model. It is not part of a source's
+provenance, and it is never written into a canonical Scene or Episode
+manifest. A label set references what it labels through a stable canonical
+reference, an :class:`ObservationAnchor`, so it survives
 re-canonicalization (another build configuration, another DatasetVersion).
 
-    anchor  = (robot_run_id, channel, source_clock, timestamp_ns)
+    anchor  = (source_kind, source_id, channel, source_clock, timestamp_ns)
+              + group_ref?
 
-``channel`` is the canonical source channel (the recorded topic) and
-``timestamp_ns`` the observation's canonical source timestamp in
-``source_clock``, so an anchor names an observation, not a Scene. Whether a
-given Scene holds the observation is decided when a derived view resolves
-the anchor (``SceneSampleView``), never here.
+``source_kind`` / ``source_id`` name the source exactly as a canonical
+unit's binding does (``recording`` + robot_run_id, ``content`` +
+content_id), never a SourceSnapshot, a DatasetVersion or a Scene.
+``channel`` is the source's own channel and ``timestamp_ns`` the
+observation's canonical timestamp in ``source_clock``, so an anchor names a
+source observation, not a Scene. ``group_ref`` is set when the label
+annotates a source-defined group (a nuScenes sample): it is the group's
+``native_ref``, and the anchored observation must be a member of that group.
+Which Scene holds the observation is decided when the anchor is resolved
+against a Scene manifest (``sceneops_core.labels.resolution``), never here.
 
 A label set also declares its *coverage*: every anchor it has annotated,
 including anchors annotated with no object. Without coverage, "no label" is
@@ -24,8 +30,8 @@ evaluation could not tell a true negative from a missing label.
 One serialized label set is one immutable revision. A revision is identified
 by the checksum of its canonical bytes; consumers pin that checksum, so a
 label set can gain revisions without changing what an earlier evaluation
-read. The manifest holds no storage location, DatasetVersion, execution
-context or import timestamp.
+read. The manifest holds no storage location, DatasetVersion, SourceSnapshot,
+execution context or import timestamp.
 
 Format knowledge (nuScenes annotation tables, CVAT exports, ...) lives in
 adapters outside core. They emit this document; they are not domain types.
@@ -35,7 +41,7 @@ from __future__ import annotations
 
 import json
 from enum import StrEnum
-from typing import Annotated, Final, Literal
+from typing import Annotated, Final, Literal, TypeAlias
 
 from pydantic import (
     AfterValidator,
@@ -64,7 +70,7 @@ from sceneops_core.scenes.schemas.manifests import (
     Vector3,
 )
 
-LABEL_SET_SCHEMA_V1: Final = "sceneops.label_set/v1"
+LABEL_SET_SCHEMA_V2: Final = "sceneops.label_set/v2"
 
 
 class LabelSetError(ValueError):
@@ -134,22 +140,34 @@ class LabelProvenance(_Model):
         return self
 
 
+# (source_kind, source_id, channel, source_clock, timestamp_ns): the one
+# source observation an anchor names.
+ObservationKey: TypeAlias = tuple[str, str, str, str, int]
+
+
 class ObservationAnchor(_Model):
     """The canonical reference a label attaches to: one observation of one
-    RobotRun, by channel and exact source timestamp."""
+    source, by channel and exact source timestamp, and, with ``group_ref``,
+    the source-defined group it annotates."""
 
-    robot_run_id: StrictStr
+    source_kind: Literal["recording", "content"]
+    source_id: VerbatimKey
     channel: VerbatimKey
     source_clock: SourceClock
     timestamp_ns: SourceTimestampNs
+    group_ref: VerbatimKey | None = None
 
-    @field_validator("robot_run_id")
-    @classmethod
-    def _check_robot_run_id(cls, value: str) -> str:
-        return validate_verbatim_key(value, field="robot_run_id")
+    def observation_key(self) -> ObservationKey:
+        return (
+            self.source_kind,
+            self.source_id,
+            self.channel,
+            self.source_clock,
+            self.timestamp_ns,
+        )
 
-    def sort_key(self) -> tuple[str, str, str, int]:
-        return (self.robot_run_id, self.channel, self.source_clock, self.timestamp_ns)
+    def sort_key(self) -> tuple[str, str, str, str, int, str]:
+        return (*self.observation_key(), self.group_ref or "")
 
 
 class LabelBox3D(_Model):
@@ -187,7 +205,7 @@ class Box3DLabel(_Model):
 
 
 class LabelSetManifest(_Model):
-    schema_version: Literal["sceneops.label_set/v1"] = LABEL_SET_SCHEMA_V1
+    schema_version: Literal["sceneops.label_set/v2"] = LABEL_SET_SCHEMA_V2
     label_set_id: LocalId
     provenance: LabelProvenance
     # Every anchor this set annotated, with or without objects.
@@ -199,6 +217,7 @@ class LabelSetManifest(_Model):
         keys = [anchor.sort_key() for anchor in self.coverage]
         if keys != sorted(set(keys)):
             raise ValueError("coverage must be sorted by anchor and unique")
+        _require_one_anchor_per_observation(self.coverage)
         label_order = [
             (label.anchor.sort_key(), label.label_id) for label in self.labels
         ]
@@ -207,9 +226,9 @@ class LabelSetManifest(_Model):
         label_ids = [label.label_id for label in self.labels]
         if len(label_ids) != len(set(label_ids)):
             raise ValueError("label_id must be unique within a label set")
-        covered = set(keys)
+        covered = set(self.coverage)
         for label in self.labels:
-            if label.anchor.sort_key() not in covered:
+            if label.anchor not in covered:
                 raise ValueError(
                     f"label {label.label_id} is anchored outside the declared coverage"
                 )
@@ -231,7 +250,8 @@ class LabelSetManifest(_Model):
         labels: list[Box3DLabel],
     ) -> LabelSetManifest:
         """Sort and de-duplicate coverage and order labels canonically, so an
-        adapter need not know the canonical order. Duplicate label ids are
+        adapter need not know the canonical order. Duplicate label ids, and
+        two anchors that name one observation with different groups, are
         still rejected, never merged."""
         unique = {anchor.sort_key(): anchor for anchor in coverage}
         return cls(
@@ -242,6 +262,19 @@ class LabelSetManifest(_Model):
                 labels, key=lambda item: (item.anchor.sort_key(), item.label_id)
             ),
         )
+
+
+def _require_one_anchor_per_observation(coverage: list[ObservationAnchor]) -> None:
+    seen: dict[ObservationKey, str | None] = {}
+    for anchor in coverage:
+        key = anchor.observation_key()
+        if key in seen:
+            raise ValueError(
+                f"coverage anchors {anchor.channel}@{anchor.timestamp_ns} of "
+                f"{anchor.source_kind} {anchor.source_id} twice, with group_ref "
+                f"{seen[key]!r} and {anchor.group_ref!r}"
+            )
+        seen[key] = anchor.group_ref
 
 
 class LabelSetRef(_Model):
@@ -266,7 +299,7 @@ def load_canonical_label_set(data: bytes) -> LabelSetManifest:
     if not isinstance(payload, dict):
         raise LabelSetError("label set must be a JSON object")
     version = payload.get("schema_version")
-    if version != LABEL_SET_SCHEMA_V1:
+    if version != LABEL_SET_SCHEMA_V2:
         raise UnsupportedLabelSetVersionError(
             f"unsupported label set schema_version: {version!r}"
         )
@@ -276,7 +309,7 @@ def load_canonical_label_set(data: bytes) -> LabelSetManifest:
         raise LabelSetError(f"invalid label set: {exc}") from exc
     if manifest.to_canonical_bytes() != data:
         raise NonCanonicalLabelSetError(
-            "label set bytes are not in canonical label set v1 form"
+            "label set bytes are not in canonical label set v2 form"
         )
     return manifest
 
@@ -293,8 +326,8 @@ def parse_label_set_document(data: bytes) -> LabelSetManifest:
         raise LabelSetError(f"label document is not UTF-8 JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise LabelSetError("label document must be a JSON object")
-    version = payload.get("schema_version", LABEL_SET_SCHEMA_V1)
-    if version != LABEL_SET_SCHEMA_V1:
+    version = payload.get("schema_version", LABEL_SET_SCHEMA_V2)
+    if version != LABEL_SET_SCHEMA_V2:
         raise UnsupportedLabelSetVersionError(
             f"unsupported label set schema_version: {version!r}"
         )
@@ -315,7 +348,7 @@ def parse_label_set_document(data: bytes) -> LabelSetManifest:
 
 
 __all__ = [
-    "LABEL_SET_SCHEMA_V1",
+    "LABEL_SET_SCHEMA_V2",
     "Box3DLabel",
     "LabelBox3D",
     "LabelProvenance",
@@ -325,6 +358,7 @@ __all__ = [
     "LabelSourceKind",
     "NonCanonicalLabelSetError",
     "ObservationAnchor",
+    "ObservationKey",
     "UnsupportedLabelSetVersionError",
     "load_canonical_label_set",
     "parse_label_set_document",

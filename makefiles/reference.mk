@@ -200,6 +200,35 @@ reference-verify-nuscenes-scene:
 		$(if $(DATASET),--dataset $(DATASET))
 
 # --------------------
+# Native nuScenes labels of the scene-0061 slice (tools/reference/nuscenes_label_verify.py,
+# docs/development/reference-verification.md "Native nuScenes labels"). The expected label
+# set is derived from the raw annotation tables at data/raw/nuscenes by the documented rules.
+#
+# reference-verify-nuscenes-labels-selftest  -- a synthetic label set, Scene and CAM_FRONT /
+#                                               LIDAR_TOP views pass and every negative
+#                                               control is detected. No stack.
+# reference-verify-nuscenes-labels           -- the platform's label set revision
+#                                               LABEL_SET_ARTIFACT, the Scene of the slice's
+#                                               snapshot SNAPSHOT_ID and the sample views
+#                                               VIEWS="<artifact id> ..." against the
+#                                               derivation, then the negative controls
+#                                               (read-only)
+# --------------------
+
+NUSCENES_LABEL_VERIFY := uv run --no-sync python -I tools/reference/nuscenes_label_verify.py
+
+.PHONY: reference-verify-nuscenes-labels-selftest
+reference-verify-nuscenes-labels-selftest:
+	@$(NUSCENES_LABEL_VERIFY) selftest
+
+.PHONY: reference-verify-nuscenes-labels
+reference-verify-nuscenes-labels:
+	@test -n "$(SNAPSHOT_ID)" || { echo "SNAPSHOT_ID=<snapshot id> is required"; exit 2; }
+	@test -n "$(LABEL_SET_ARTIFACT)" || { echo "LABEL_SET_ARTIFACT=<artifact id> is required"; exit 2; }
+	@$(REFERENCE_VERIFY_ENV) $(NUSCENES_LABEL_VERIFY) verify --snapshot-id $(SNAPSHOT_ID) \
+		--label-set-artifact $(LABEL_SET_ARTIFACT) $(foreach v,$(VIEWS),--view-artifact $(v))
+
+# --------------------
 # Mixed-source DatasetVersions (tools/reference/mixed_source_verify.py,
 # docs/development/reference-verification.md "Mixed-source DatasetVersions"). The
 # expected composition of config/reference/mixed-sources/composition.json is derived

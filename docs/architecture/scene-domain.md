@@ -255,10 +255,11 @@ Everything downstream of registration reads canonical Scenes through a pin:
   asynchronous; synchronization exists only in the view. Each view pins the
   Scene `manifest_artifact_id` / `manifest_checksum`. It reads observations
   only, so it builds views of either source kind alike. `IMPORT_LABELS`
-  produces independent label set revisions anchored on canonical
-  observations of a RobotRun; labels are never written into a Scene. A label
-  anchors on its RobotRun, so no label resolves into a content-sourced Scene
-  ([Limitations](./limitations.md) §6).
+  produces independent label set revisions anchored on source observations
+  (`source_kind`, `source_id`, channel, clock, timestamp and, for a nuScenes
+  sample, `group_ref` = the keyframe group's `native_ref`); labels are never
+  written into a Scene. One resolver places an anchor on the Scene manifest
+  ([Derived layer](./derived-layer.md) §2).
 - Scenario mining, detection and evaluation consume sample views and label
   sets through checksum-verified pins (`sceneops_derived`), locate
   payloads through the payload locator (an ArtifactRecord, or a content

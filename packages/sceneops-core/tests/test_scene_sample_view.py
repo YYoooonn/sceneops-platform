@@ -1,5 +1,5 @@
 """SceneSampleView v1: policy-driven association, label attachment and
-canonical form (ADR-007 §33.3)."""
+canonical form (ADR-007 §33.3, ADR-015 §9)."""
 
 from __future__ import annotations
 
@@ -78,11 +78,24 @@ def build(m: SceneManifest, p: SampleViewPolicy, label_sets=()):
 
 
 def label_set(
-    anchors: list[int], labels: dict[str, int], *, set_id: str = "gt-1", run: str = RUN
+    anchors: list[int],
+    labels: dict[str, int],
+    *,
+    set_id: str = "gt-1",
+    run: str = RUN,
+    source_kind: str = "recording",
+    groups: dict[int, str] | None = None,
 ) -> tuple[LabelSetRef, LabelSetManifest]:
+    """``groups`` maps an anchor timestamp to the group_ref it carries."""
+
     def anchor(ts: int) -> ObservationAnchor:
         return ObservationAnchor(
-            robot_run_id=run, channel="LIDAR_TOP", source_clock=CLOCK, timestamp_ns=ts
+            source_kind=source_kind,
+            source_id=run,
+            channel="LIDAR_TOP",
+            source_clock=CLOCK,
+            timestamp_ns=ts,
+            group_ref=(groups or {}).get(ts),
         )
 
     manifest = LabelSetManifest.normalized(
@@ -310,8 +323,8 @@ def test_labels_of_another_robot_run_are_ignored() -> None:
 
 def test_a_content_scene_builds_samples_and_attaches_no_robot_run_label() -> None:
     """Sample views read observations only, so a content-sourced Scene builds
-    the same samples; a RobotRun-anchored label never resolves into it, even
-    when the anchor's run id spells the content id."""
+    the same samples; a recording-anchored label never resolves into it, even
+    when the anchor's source id spells the content id."""
     from sceneops_core.provenance import ContentUnitSource
     from sceneops_core.sources import content_id_for
 
@@ -443,3 +456,137 @@ def test_resolver_rejects_a_view_that_does_not_match_the_scene() -> None:
     other = manifest(keyframe_timestamps_ns=(5_000_000_000,))
     with pytest.raises(SampleViewResolutionError):
         SceneSampleResolver(view, other).resolve_all()
+
+
+# ── labels on source-defined groups ──────────────────────────────────────────
+
+LIDAR_1, LIDAR_2 = 1_000_000_000, 1_500_000_000
+GROUPS = {LIDAR_1: "sample-a", LIDAR_2: "sample-b"}
+
+
+def content_scene() -> SceneManifest:
+    """The default Scene bound to a content, whose keyframe groups carry the
+    source's sample tokens as native_ref."""
+    from sceneops_core.provenance import ContentUnitSource
+    from sceneops_core.sources import content_id_for
+
+    checksum = "sha256:" + "d" * 64
+    data = json.loads(
+        manifest(
+            source=ContentUnitSource(
+                content_id=content_id_for(checksum),
+                content_checksum=checksum,
+                source_clock=CLOCK,
+                start_timestamp_ns=0,
+                end_timestamp_ns=10_000_000_000,
+                unit_key="scene-token",
+            )
+        ).to_canonical_bytes()
+    )
+    for group in data["groups"]:
+        group["native_ref"] = GROUPS[group["timestamp_ns"]]
+    return SceneManifest.model_validate(data)
+
+
+def native_labels(scene: SceneManifest, **kwargs):
+    return label_set(
+        anchors=[LIDAR_1, LIDAR_2],
+        labels={"car": LIDAR_1, "bus": LIDAR_1, "bike": LIDAR_2},
+        run=scene.lineage.source.source_id,
+        source_kind="content",
+        groups=GROUPS,
+        **kwargs,
+    )
+
+
+def labels_by_group(scene: SceneManifest, view) -> dict[str, list[str]]:
+    group_of = {o: g.native_ref for g in scene.groups for o in g.observation_ids}
+    out: dict[str, list[str]] = {}
+    for sample in view.samples:
+        (entry,) = sample.labels
+        if entry.label_ids:
+            owned = {
+                group_of[o] for o in sample.member_observation_ids() if o in group_of
+            }
+            (group,) = owned
+            out[group] = entry.label_ids
+    return out
+
+
+@pytest.mark.parametrize("members", [[], ["LIDAR_TOP"]])
+def test_group_labels_attach_alike_whichever_channel_anchors_the_view(members) -> None:
+    scene = content_scene()
+    pinned = [native_labels(scene)]
+    camera = build(
+        scene,
+        policy(
+            anchor="CAM_FRONT",
+            members=[MemberPolicy(channel=c, tolerance_ns=10 * MS) for c in members],
+        ),
+        pinned,
+    )
+    lidar = build(scene, policy(anchor="LIDAR_TOP", members=[]), pinned)
+    expected = {"sample-a": ["bus", "car"], "sample-b": ["bike"]}
+    assert labels_by_group(scene, camera) == expected
+    assert labels_by_group(scene, lidar) == expected
+    for view in (camera, lidar):
+        (stats,) = view.label_stats
+        assert (stats.covered_observation_count, stats.attached_label_count) == (2, 3)
+        assert stats.unattached_label_count == 0
+    # The camera sweep between the key frames holds no group member: uncovered
+    # (or dropped, when the lidar member is required and none is in tolerance).
+    sweep = [s for s in camera.samples if s.anchor.timestamp_ns == 1_250_000_000]
+    assert all(not s.labels[0].covered for s in sweep)
+    assert len(sweep) == (0 if members else 1)
+
+
+def test_an_observation_label_needs_its_own_observation_in_the_sample() -> None:
+    """Without group_ref a label is about its observation only: a camera view
+    without the lidar member does not present it."""
+    scene = content_scene()
+    ref, labels = label_set(
+        anchors=[LIDAR_1],
+        labels={"car": LIDAR_1},
+        run=scene.lineage.source.source_id,
+        source_kind="content",
+    )
+    view = build(scene, policy(anchor="CAM_FRONT", members=[]), [(ref, labels)])
+    (stats,) = view.label_stats
+    assert (stats.attached_label_count, stats.unattached_label_count) == (0, 1)
+
+
+def test_a_group_held_by_two_samples_is_owned_by_the_nearest() -> None:
+    scene = content_scene()
+    # Both camera key frames hold a lidar member; the camera sweep at 1.25e9
+    # holds none within 10 ms. Each group is owned by its own key frame sample.
+    view = build(
+        scene,
+        policy(
+            anchor="CAM_FRONT",
+            members=[MemberPolicy(channel="LIDAR_TOP", tolerance_ns=300 * MS)],
+        ),
+        [native_labels(scene)],
+    )
+    owners = {
+        s.anchor.timestamp_ns: s.labels[0].label_ids
+        for s in view.samples
+        if s.labels[0].label_ids
+    }
+    assert owners == {1_000_000_007: ["bus", "car"], 1_500_000_007: ["bike"]}
+    assert view.label_stats[0].attached_label_count == 3
+
+
+def test_a_swapped_group_ref_fails_the_view() -> None:
+    from sceneops_core.labels import GroupRefMismatchError
+
+    scene = content_scene()
+    swapped = {LIDAR_1: "sample-b", LIDAR_2: "sample-a"}
+    ref, labels = label_set(
+        anchors=[LIDAR_1, LIDAR_2],
+        labels={"car": LIDAR_1},
+        run=scene.lineage.source.source_id,
+        source_kind="content",
+        groups=swapped,
+    )
+    with pytest.raises(GroupRefMismatchError):
+        build(scene, policy(anchor="LIDAR_TOP", members=[]), [(ref, labels)])

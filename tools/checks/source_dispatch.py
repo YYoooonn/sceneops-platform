@@ -5,8 +5,16 @@ Downstream of canonical manifests no workflow branches on the source kind or the
 source format. The one dispatch is payload resolution (the payload locator), which
 branches on the payload reference type; a consumer that cannot represent a content
 payload refuses it by capability. Upstream of the manifests (source preservation,
-the format builders, canonical registration and the contracts that define a binding)
-dispatch by source is the point.
+the format builders and importers, canonical and label registration and the contracts
+that define a binding) dispatch by source is the point.
+
+Between the two sits anchor resolution (ADR-015 §9): a derived resource (a LabelSet
+anchor) names a source by identity, and the one anchor resolver matches that
+identity against a Scene's binding. Matching is not dispatch: at a listed IDENTITY
+site only a comparison of the whole source identity (``source_kind`` together with
+``source_id``, no source-kind, payload-kind or format literal) is allowed, and no
+derived workflow (sample views, scenarios, evaluation) compares source identity at
+all.
 
 Checked statically on production code (`apps/*/<module>`, `packages/*/<module>`;
 tests, `testing.py` and synthetic-tree helpers are not production code). A *dispatch
@@ -20,9 +28,10 @@ site* is any of:
     binding, source revision, pinned source or payload reference class;
   * a dict literal keyed by a format literal (a format registry).
 
-Every site must lie in an UPSTREAM module or be one of the DOWNSTREAM sites below,
-named by module and enclosing function with the reason it is allowed. A listed
-downstream site that no longer exists is reported too, so the list cannot go stale.
+Every site must lie in an UPSTREAM module, be one of the DOWNSTREAM sites below, or
+be an identity comparison at one of the IDENTITY sites, each named by module and
+enclosing function with the reason it is allowed. A listed site that no longer
+exists is reported too, so the lists cannot go stale.
 It prints one line per violation and exits non-zero when there is any.
 """
 
@@ -68,6 +77,8 @@ UPSTREAM: dict[str, str] = {
     "apps/worker/sceneops_worker/episodes/registration.py": "canonical registration, as for Scenes",
     "apps/worker/sceneops_worker/sources/": "source snapshot registration and the content gate",
     "apps/publisher/": "publish-snapshot",
+    "packages/sceneops-derived/sceneops_derived/nuscenes_labels.py": "the nuScenes native label importer (reads annotations from source content)",
+    "apps/worker/sceneops_worker/jobs/derived/import_labels.py": "label registration: selects the native label importer for a snapshot's format and checks each anchored source is registered under its kind",
 }
 
 # Downstream sites, by (module, enclosing function): the payload locator and the
@@ -86,14 +97,22 @@ DOWNSTREAM: dict[tuple[str, str], str] = {
         "require_alignable",
     ): "capability refusal: alignment cannot resolve preserved files (UnsupportedEpisodeContentError, D14)",
     (
-        "packages/sceneops-core/sceneops_core/sample_views/build.py",
-        "_label_index.resolve",
-    ): "identity, not behaviour: a LabelSet anchor names a RobotRun, so it resolves only into a Scene of that RobotRun",
-    (
         "packages/sceneops-analytics/sceneops_analytics/external_adapters/lerobot/entrypoint.py",
         "_check_supported",
     ): "an export target format (the adapter's own), not a source format",
 }
+
+
+# Anchor resolution, by (module, enclosing function): where a derived anchor's source
+# identity is matched against a Scene's binding. Only IDENTITY_MATCH is allowed here.
+IDENTITY: dict[tuple[str, str], str] = {
+    (
+        "packages/sceneops-core/sceneops_core/labels/resolution.py",
+        "SceneAnchorResolver.resolve",
+    ): "the one label-anchor resolver: an anchor lands in a Scene only when it names the Scene's own source",
+}
+
+IDENTITY_MATCH = "compares a whole source identity (source_kind, source_id)"
 
 
 @dataclass(frozen=True)
@@ -126,6 +145,10 @@ def _dispatch(node: ast.AST) -> str | None:
     if isinstance(node, ast.Compare):
         names, strings = _names(node), _strings(node)
         if "source_kind" in names:
+            if "source_id" in names and not strings & (
+                SOURCE_KINDS | PAYLOAD_KINDS | FORMATS
+            ):
+                return IDENTITY_MATCH
             return "compares source_kind"
         if "format" in names or strings & FORMATS:
             return "compares a source format"
@@ -192,7 +215,9 @@ def check(
     root: Path = REPO_ROOT,
     upstream: dict[str, str] = UPSTREAM,
     downstream: dict[tuple[str, str], str] = DOWNSTREAM,
+    identity: dict[tuple[str, str], str] | None = None,
 ) -> list[str]:
+    identity = IDENTITY if identity is None else identity
     violations = []
     used: set[tuple[str, str]] = set()
     for path, module in production_modules(root):
@@ -203,15 +228,31 @@ def check(
             if key in downstream:
                 used.add(key)
                 continue
+            if key in identity:
+                used.add(key)
+                if site.what == IDENTITY_MATCH:
+                    continue
+                violations.append(
+                    f"{site.module}:{site.line} ({site.function}): {site.what} at the "
+                    "anchor resolver; resolution matches a whole source identity and "
+                    "never branches on a source kind, payload kind or format"
+                )
+                continue
             violations.append(
                 f"{site.module}:{site.line} ({site.function}): {site.what} downstream of "
                 "canonical manifests; only the payload locator dispatches on a "
-                "reference type, and a consumer refuses what it cannot represent"
+                "reference type, only the anchor resolver matches a source identity, "
+                "and a consumer refuses what it cannot represent"
             )
     for module, function in sorted(set(downstream) - used):
         violations.append(
             f"{module} ({function}): listed as an allowed downstream dispatch site, "
             "but no such site exists; remove it from DOWNSTREAM"
+        )
+    for module, function in sorted(set(identity) - used):
+        violations.append(
+            f"{module} ({function}): listed as an anchor-resolution site, but no "
+            "such site exists; remove it from IDENTITY"
         )
     return violations
 

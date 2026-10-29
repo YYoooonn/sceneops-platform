@@ -64,6 +64,26 @@ at most one group. Scene consumers that cannot represent a `SourceFileRef` refus
 by capability, as D14 does for Episodes (the analytical observation table); the
 payload locator is the one kind dispatch.
 
+**Amended (2026-10-29, M3 S6).** The §9 label anchor ships as
+`sceneops.label_set/v2`: `(source_kind, source_id, channel, source_clock,
+timestamp_ns)` with optional `group_ref`, replacing `robot_run_id`; v1 is not read.
+The anchor carries no `unit_key`: no Scene source has a unit-origin clock, so the field
+would have no producer, and the resolver refuses an anchor on a unit-origin channel
+(`UnsupportedAnchorClockError`) instead of resolving it ambiguously. Adding a unit key is
+a new label set version when a source needs it. The one anchor resolver lives in
+`sceneops_core.labels.resolution`; a `group_ref` that disagrees with the Scene (missing
+group or observation, or a group that does not hold the observation) is an error. A
+sample view attaches a group-anchored label through any member of its group, owned by
+the sample nearest to a held member, so views anchored on different channels present a
+group's labels alike (sample-view semantics 2); an observation-anchored label still
+attaches through its own observation only. `IMPORT_LABELS {snapshot_id, label_set_id,
+unit_keys?}` selects the native importer by the content's registered format; the label
+set and its ArtifactRecord name the content, the Job result the snapshot. A native
+import fails when a selected sample's key-frame file is not preserved. The
+`sceneops_derived → sceneops_sources` edge is added. `render-labels` re-anchors
+RobotRun labels as `recording` without `group_ref`; its locked reference label artifacts
+carry no anchor and are unchanged.
+
 This ADR supersedes, in
 [ADR-007](./007-canonical-ingestion-architecture.md) Amendment A4, decisions 1, 3, 4 and 5 of
 §29.2 and invariants I-31 and I-36. It amends I-1, I-2, I-10, I-16 and I-17 and retires

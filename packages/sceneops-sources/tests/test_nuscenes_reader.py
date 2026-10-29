@@ -16,16 +16,20 @@ from sceneops_sources import (
     select_files,
 )
 from sceneops_sources.nuscenes import (
+    NUSCENES_ANNOTATION_TABLES,
     NUSCENES_TABLES,
     NuScenesFormatError,
     UnsupportedNuScenesVersionError,
+    nuscenes_annotation_read_paths,
     nuscenes_read_paths,
+    read_nuscenes_annotations,
     read_nuscenes_content,
 )
 from sceneops_sources.nuscenes_synthetic import (
     BASE_US,
     CAMERA_K,
     CHANNELS,
+    INSTANCES,
     VERSION,
     token,
     write_nuscenes_tree,
@@ -157,3 +161,72 @@ def test_a_sample_chain_that_disagrees_with_its_scene_is_refused(tmp_path):
     )
     with pytest.raises(NuScenesFormatError, match="declares 2"):
         content.scene_samples(content.scenes[0])
+
+
+# --- the annotation tables (native labels) --------------------------------------
+
+
+def test_reads_annotations_with_their_instances_categories_and_attributes(tmp_path):
+    root = write_nuscenes_tree(tmp_path, scenes=2, samples=3)
+    files = _files(root)
+    assert nuscenes_annotation_read_paths(files.inventory) == [
+        f"{VERSION}/{name}.json" for name in NUSCENES_ANNOTATION_TABLES
+    ]
+    annotations = read_nuscenes_annotations(files)
+    assert annotations.version == VERSION
+    # Every sample but each scene's last annotates every instance once.
+    assert len(annotations.annotations) == 2 * 2 * len(INSTANCES)
+    by_sample = annotations.by_sample()
+    assert set(by_sample) == {token("sample", s, k) for s in range(2) for k in range(2)}
+    box = annotations.annotations[token("sample_annotation", 1, "vehicle.car", 1)]
+    assert box.sample_token == token("sample", 1, 1)
+    assert box.instance_token == token("instance", 1, "vehicle.car")
+    assert annotations.category_of(box).name == "vehicle.car"
+    assert [annotations.attributes[a].name for a in box.attribute_tokens] == [
+        "vehicle.moving"
+    ]
+    assert (box.translation, box.size, box.rotation) == (
+        (416.0, 1104.5, 1.0),
+        (1.8, 4.5, 1.5),
+        (0.8, 0.0, 0.0, 0.6),
+    )
+    assert (box.num_lidar_pts, box.num_radar_pts, box.visibility_token) == (11, 1, "4")
+
+
+def test_scene_reading_never_needs_the_annotation_tables(tmp_path):
+    root = write_nuscenes_tree(tmp_path)
+    (root / VERSION / "sample_annotation.json").unlink()
+    files = _files(root)
+    read_nuscenes_content(files)
+    with pytest.raises(NuScenesFormatError, match="annotation table"):
+        nuscenes_annotation_read_paths(files.inventory)
+    with pytest.raises(NuScenesFormatError, match="annotation table"):
+        read_nuscenes_annotations(files)
+
+
+def test_every_annotation_byte_read_is_verified_against_the_inventory(tmp_path):
+    root = write_nuscenes_tree(tmp_path)
+    files = _files(root)
+    path = root / VERSION / "sample_annotation.json"
+    path.write_text(path.read_text().replace("1105.5", "1105.6"))
+    with pytest.raises(ContentFileIntegrityError):
+        read_nuscenes_annotations(files)
+
+
+@pytest.mark.parametrize(
+    ("table", "field", "value", "match"),
+    [
+        ("sample_annotation", "instance_token", "f" * 32, "unknown instance"),
+        ("sample_annotation", "attribute_tokens", ["f" * 32], "unknown attribute"),
+        ("sample_annotation", "attribute_tokens", "x", "list of tokens"),
+        ("sample_annotation", "size", [1.0, 2.0], "3 finite numbers"),
+        ("sample_annotation", "rotation", [1.0, "x", 0.0, 0.0], "4 finite numbers"),
+        ("sample_annotation", "num_lidar_pts", 1.5, "not an integer"),
+        ("instance", "category_token", "f" * 32, "unknown category"),
+        ("category", "name", "", "non-empty string"),
+    ],
+)
+def test_broken_annotation_tables_are_refused(tmp_path, table, field, value, match):
+    root = write_nuscenes_tree(tmp_path, mutate_tables=_break(table, field, value))
+    with pytest.raises(NuScenesFormatError, match=match):
+        read_nuscenes_annotations(_files(root))

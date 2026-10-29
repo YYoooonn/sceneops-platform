@@ -153,6 +153,33 @@ of one sample exchanged), `source_file_checksum`, `media_type` (lidar declared r
 frame dropped from its group), `content_binding` (another content, fingerprint
 recomputed), `missing_native_file`, `snapshot_in_manifest`.
 
+### Native nuScenes labels (raw scene-0061 annotations → one LabelSet)
+
+`tools/reference/nuscenes_label_verify.py` with `verification/nuscenes_labels.py` holds
+the LabelSet an `IMPORT_LABELS {snapshot_id}` of the `nuscenes-scene-0061` snapshot
+produced, the Scene of `scene-0061` and sample views pinning the LabelSet to the raw
+annotation tables (`sample_annotation`, `instance`, `category`, `attribute`) and the
+`sample` / `sample_data` tables, read with its own json reader. It implements the rules
+of [Derived layer](../architecture/derived-layer.md) §2–§3 and
+[ADR-015](../adr/015-multi-source-platform.md) §9 itself:
+
+| Subject | Rule |
+| --- | --- |
+| anchors | one per sample of the scene: `(content, content_id, LIDAR_TOP, nuscenes.timestamp, sample.timestamp · 1 000)`, `group_ref = sample.token`; the sample's one LIDAR_TOP key frame is at `sample.timestamp` and its file is preserved |
+| labels | one per `sample_annotation` of the sample: `label_id` = token, `instance_id` = instance token, `category` = category name, sorted attribute names; box in `global` with translation, size and rotation verbatim as floats, `velocity_mps` null |
+| document | `sceneops.label_set/v2`, provenance `external` / `nuscenes` / table version, canonical order; the stored bytes are canonical and their checksum equals the raw-derived document's; no other field (no snapshot) |
+| artifact | `label_set_manifest` owned by the label set, id `labelset-<derived artifact id>` of the checksum |
+| resolution | without a view: on the platform's Scene, the one LIDAR_TOP observation at each anchor is the raw key frame (`native_ref = sample_data.token`) and a member of the group whose `native_ref` is the anchor's `group_ref` |
+| views | each view pins the Scene revision and the LabelSet; attached + unattached = all labels, covered anchors = all anchors; every keyframe group is presented by exactly one sample, with exactly its raw sample's annotation tokens; views anchored on CAM_FRONT and LIDAR_TOP agree |
+
+Negative controls (consistent faults: the LabelSet is re-serialized, its checksum and
+artifact id recomputed and the views re-pinned; all must be detected):
+`swapped_group_ref`, `anchor_timestamp_shift` (1 ns), `other_content_binding`,
+`recording_binding`, `lost_label`, `lost_sample`, `label_on_another_sample`,
+`box_center` (1 cm), `box_size_swap`, `box_rotation`, `box_frame`, `category_swap`,
+`instance_swap`, `snapshot_in_label_set`, `view_labels_on_wrong_group`,
+`view_lost_label`, `view_label_pin`, `scene_group_token_swap`.
+
 ### Mixed-source DatasetVersions (every part → one composition)
 
 `tools/reference/mixed_source_verify.py` with `verification/mixed_source.py` holds one
@@ -220,6 +247,9 @@ make reference-verify-nuscenes-scene SNAPSHOT_ID=<id> [UNIT_KEY=<token>] [DATASE
 make reference-verify-mixed-expectations [WRITE=1]   mixed composition: derive and compare   no stack
 make reference-verify-mixed-selftest           mixed composition rules on a synthetic state   no stack
 make reference-verify-mixed DATASET=<id>/<version>    the platform's mixed DatasetVersion, read-only
+make reference-verify-nuscenes-labels-selftest native label rules on a synthetic state   no stack
+make reference-verify-nuscenes-labels SNAPSHOT_ID=<id> LABEL_SET_ARTIFACT=<id> [VIEWS="<id> ..."]
+                                               the platform's native LabelSet, Scene and views, read-only
 ```
 
 `make test-infrastructure SUITE=lerobot-episodes` builds pusht on a disposable runtime
@@ -229,6 +259,9 @@ slice on a disposable runtime and runs `reference-verify-nuscenes-scene` with it
 DatasetVersion. `make test-infrastructure SUITE=mixed-sources` builds all three parts on
 a disposable runtime, composes them by pins and by selector, runs
 `reference-verify-mixed` on both versions and each part's own verifier.
+`make test-infrastructure SUITE=nuscenes-labels` builds the scene-0061 Scene, imports its
+native labels and builds a CAM_FRONT- and a LIDAR_TOP-anchored view on a disposable
+runtime and runs `reference-verify-nuscenes-labels` on them.
 
 `MODE=recording_import` (or `streaming_acquisition`) verifies one ingestion mode: its
 RobotRuns, units and DatasetVersion only, with the platform controls applied in that
@@ -292,9 +325,13 @@ platform.
 - **Source values.** CAN pose and battery values are compared between recording and
   manifest, not with the CAN extract (the README states the source, not the field
   mapping). Control values are compared with the extract.
+- **Native labels.** Only nuScenes native LabelSets have rules
+  (`nuscenes_label_verify.py`); idempotency, the second-snapshot record and the
+  comparison with the RobotRun path's locked reference labels are checked by the
+  `nuscenes-labels` infrastructure suite, not by the verifier.
 - **Not covered here.** Validation / profile readiness (the baseline verifiers),
-  derived resources (labels imported into LabelSets, sample views, alignment, exports),
-  and the Recovery workflows.
+  derived resources other than native LabelSets and the views pinning them (rendered
+  RobotRun LabelSets, scenarios, alignment, exports), and the Recovery workflows.
 - A saved observation (`verify --observation-in`) carries no captured recordings, so
   its Streaming Acquisition runs fail with `streaming_content`.
 - **Captured recordings.** A streamed RobotRun pins its capture, whose `log_time` and

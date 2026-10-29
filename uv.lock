@@ -1677,12 +1677,14 @@ version = "0.1.0"
 source = { editable = "packages/sceneops-derived" }
 dependencies = [
     { name = "sceneops-core" },
+    { name = "sceneops-sources" },
     { name = "sceneops-storage" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "sceneops-core", editable = "packages/sceneops-core" },
+    { name = "sceneops-sources", editable = "packages/sceneops-sources" },
     { name = "sceneops-storage", editable = "packages/sceneops-storage" },
 ]
 

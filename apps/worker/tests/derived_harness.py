@@ -199,6 +199,16 @@ class FakeRobotStore:
         return SimpleNamespace(run_id=run_id)
 
 
+class FakeSourceStore:
+    def __init__(self, content_ids: set[str]) -> None:
+        self.content_ids = content_ids
+
+    async def get_content(self, content_id: str):
+        if content_id not in self.content_ids:
+            return None
+        return SimpleNamespace(content_id=content_id)
+
+
 @dataclass
 class Harness:
     """Stands in for ``WorkerContext`` in handler tests."""
@@ -214,6 +224,9 @@ class Harness:
     scene_store: FakeSceneStore = field(default_factory=FakeSceneStore)
     scenario_store: FakeScenarioStore = field(default_factory=FakeScenarioStore)
     robot_store: FakeRobotStore = field(default_factory=lambda: FakeRobotStore(set()))
+    source_store: FakeSourceStore = field(
+        default_factory=lambda: FakeSourceStore(set())
+    )
     inference_runs: FakeRunStore = field(default_factory=FakeRunStore)
     evaluation_runs: FakeRunStore = field(default_factory=FakeRunStore)
     scene_runs: FakeSceneRunStore = field(default_factory=FakeSceneRunStore)
