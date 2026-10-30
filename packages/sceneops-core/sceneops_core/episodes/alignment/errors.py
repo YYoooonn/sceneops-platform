@@ -16,6 +16,12 @@ class ClockMismatchError(AlignmentError):
     converted."""
 
 
+class UnsupportedEpisodeContentError(AlignmentError):
+    """The Episode holds content this alignment cannot represent: a per-frame
+    ``transition`` stream. It is refused explicitly instead of being aligned
+    with that content silently dropped or misread (M3.0 D14)."""
+
+
 class InvalidAlignmentConfigError(AlignmentError):
     """A resolved per-channel policy is missing configuration it requires
     (e.g. nearest without a tolerance, linear_interpolation without a

@@ -1,0 +1,52 @@
+{
+  "definition_sha256": "sha256:950980689d478aab63f625f4cff58183ba4a99fea29a47bd82ef7d1fe2afc93f",
+  "file_count": 7,
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "sha256:246e94b68f204bfcd05bb32e23631c3316b8de6152d7a85e693d4455540ef72f",
+      "size_bytes": 3538,
+      "upstream_checksum": "git-blob-sha1:9005ff31912b5b48506e519c2534cc63961d0e74"
+    },
+    {
+      "path": "data/chunk-000/file-000.parquet",
+      "sha256": "sha256:9abc0431f12d10c33b5b37b1bf1e6e557c8ae1c8c29fb86658969e48fcbbbf01",
+      "size_bytes": 674393,
+      "upstream_checksum": "lfs-sha256:9abc0431f12d10c33b5b37b1bf1e6e557c8ae1c8c29fb86658969e48fcbbbf01"
+    },
+    {
+      "path": "meta/episodes/chunk-000/file-000.parquet",
+      "sha256": "sha256:bc1226f33d3d1635ec1954f9942073709be8e106fde5f4f16b9d52edc4e0ebc4",
+      "size_bytes": 106584,
+      "upstream_checksum": "lfs-sha256:bc1226f33d3d1635ec1954f9942073709be8e106fde5f4f16b9d52edc4e0ebc4"
+    },
+    {
+      "path": "meta/info.json",
+      "sha256": "sha256:0b46becc21ad92b117da1e95daf44110bb21d0bde75638b4ad167c8ccd959d38",
+      "size_bytes": 2261,
+      "upstream_checksum": "git-blob-sha1:de3c71d108d220f5d500416542bb5b8a49574eaa"
+    },
+    {
+      "path": "meta/stats.json",
+      "sha256": "sha256:2a58f97df48893274c587fdf09f5cecb31fe385b1e188a82197a8972ccfb9d6d",
+      "size_bytes": 4371,
+      "upstream_checksum": "git-blob-sha1:28e319831a7f4f99dfadcba0e7aaafe41cb4f618"
+    },
+    {
+      "path": "meta/tasks.parquet",
+      "sha256": "sha256:95535f5152771bc0a6ab0fd93d23d7c1fecd9b7a13dc117852dfdd94f5b2c711",
+      "size_bytes": 2265,
+      "upstream_checksum": "lfs-sha256:95535f5152771bc0a6ab0fd93d23d7c1fecd9b7a13dc117852dfdd94f5b2c711"
+    },
+    {
+      "path": "videos/observation.image/chunk-000/file-000.mp4",
+      "sha256": "sha256:f58d11857651dad5983c021b56a50a68a6ce19068834c1fb5cac099219fb3a78",
+      "size_bytes": 6890970,
+      "upstream_checksum": "lfs-sha256:f58d11857651dad5983c021b56a50a68a6ce19068834c1fb5cac099219fb3a78"
+    }
+  ],
+  "revision": "7628202a2180972f291ba1bc6723834921e72c19",
+  "schema": "sceneops.raw_source_lock/1",
+  "source_id": "lerobot-pusht",
+  "total_bytes": 7684382
+}

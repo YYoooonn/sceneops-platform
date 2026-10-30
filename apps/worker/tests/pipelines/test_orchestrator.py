@@ -38,6 +38,7 @@ RUN_ID = "pipe-1"
 SCENE_TASKS = [
     "build_recording_scenes",
     "register_scenes",
+    "compose_dataset_version",
     "validate_scene",
     "profile_scene",
 ]
@@ -308,6 +309,8 @@ async def test_each_finished_job_advances_the_run_to_the_next_task_until_it_succ
 
     h.settle(JobStatus.SUCCEEDED, {"scene_ids": ["s-1"]})
     await h.advance()
+    # compose_dataset_version is optional and the run names no target for it.
+    assert h.task("compose_dataset_version").status == PipelineTaskRunStatus.SKIPPED
     assert h.in_flight().pipeline_task_id == "validate_scene"
 
     h.settle(JobStatus.SUCCEEDED, {"should_block_pipeline": False, "status": "passed"})
@@ -318,14 +321,52 @@ async def test_each_finished_job_advances_the_run_to_the_next_task_until_it_succ
     assert run.status == PipelineRunStatus.SUCCEEDED
     assert run.result.outputs["scene_ids"] == ["s-1"]
     assert run.result.summary["succeeded_task_count"] == 3
-    assert run.result.summary["skipped_task_count"] == 1
+    assert run.result.summary["skipped_task_count"] == 2
+    assert h.dispatcher.dispatch_job.call_count == 3
+
+
+async def test_naming_a_target_version_runs_the_composition_before_assessment():
+    target = {"dataset_id": "ds", "dataset_version": "v1"}
+    h = _Harness(_state(params={"compose_dataset_version": target}))
+    await h.advance()
+    for result in ({}, {"revisions": ["pins"]}):
+        h.settle(JobStatus.SUCCEEDED, result)
+        await h.advance()
+
+    compose = h.in_flight()
+    assert compose.pipeline_task_id == "compose_dataset_version"
+    assert compose.type == JobType.COMPOSE_DATASET_VERSION
+    h.settle(JobStatus.SUCCEEDED, {"composition_checksum": "c", **target})
+    await h.advance()
+    assert h.in_flight().pipeline_task_id == "validate_scene"
+
+
+async def test_a_failed_composition_fails_the_run_before_assessment():
+    h = _Harness(
+        _state(
+            params={
+                "compose_dataset_version": {"dataset_id": "ds", "dataset_version": "v1"}
+            }
+        )
+    )
+    await h.advance()
+    for result in ({}, {"revisions": ["pins"]}):
+        h.settle(JobStatus.SUCCEEDED, result)
+        await h.advance()
+
+    h.settle(JobStatus.FAILED)
+    run = await h.advance()
+
+    assert run.status == PipelineRunStatus.FAILED
+    assert h.task("compose_dataset_version").status == PipelineTaskRunStatus.FAILED
+    assert h.task("validate_scene").status == PipelineTaskRunStatus.PENDING
     assert h.dispatcher.dispatch_job.call_count == 3
 
 
 async def test_an_optional_task_with_params_runs_as_a_job():
     h = _Harness(_state(params={"profile_scene": {"triggered": True}}))
     await h.advance()
-    for result in ({}, {}, {"should_block_pipeline": False}):
+    for result in ({}, {}, {"should_block_pipeline": False}):  # compose: skipped
         h.settle(JobStatus.SUCCEEDED, result)
         await h.advance()
 

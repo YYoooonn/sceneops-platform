@@ -26,12 +26,42 @@ KAFKA_TOPIC="${KAFKA_TOPIC:-sceneops.robot.telemetry.v1}"
 CHANNELS_FILE="${CHANNELS_FILE:-/workspace/channels/surround-camera-lidar.json}"
 RATE="${RATE:-}" # empty: the fixture's replay definition
 
-COMPOSE=(docker compose --env-file "$ENV_FILE" --profile acquisition --profile streaming)
+# Where the path runs. STREAMING_RUNTIME=reference (default): the services of
+# compose/streaming.yaml and compose/acquisition.yaml in the reference compose project.
+# STREAMING_RUNTIME=disposable: the same images as the `test-` services of the
+# disposable execution runtime (compose project sceneops-test, compose/test-runtime.yaml
+# + compose/test-streaming.yaml; `disposable_env.py run --streaming` sets this and the
+# TEST_* variables those files interpolate): its own broker, capture volume, workers,
+# database and bucket. The MinIO and PostgreSQL servers are the only shared parts.
+STREAMING_RUNTIME="${STREAMING_RUNTIME:-reference}"
+case "$STREAMING_RUNTIME" in
+  reference)
+    COMPOSE=(docker compose --env-file "$ENV_FILE" --profile acquisition --profile streaming)
+    SVC_KAFKA=kafka SVC_BRIDGE=streaming-bridge SVC_CAPTURE=capture SVC_REPLAY=dataset-replay
+    SVC_PUBLISHER=recording-publisher SVC_WORKER_JOBS=worker-jobs SVC_WORKER_PIPELINE=worker-pipeline
+    ;;
+  disposable)
+    : "${TEST_DATABASE_URL:?STREAMING_RUNTIME=disposable runs under disposable_env.py run --streaming}"
+    : "${TEST_ARTIFACT_ROOT_URI:?}" "${TEST_API_PORT:?}"
+    COMPOSE=(docker compose -p sceneops-test -f "$REPO_ROOT/compose/test-runtime.yaml"
+      -f "$REPO_ROOT/compose/test-streaming.yaml" --project-directory "$REPO_ROOT"
+      --env-file "$ENV_FILE" --profile oneshot)
+    SVC_KAFKA=test-kafka SVC_BRIDGE=test-streaming-bridge SVC_CAPTURE=test-capture
+    SVC_REPLAY=test-dataset-replay SVC_PUBLISHER=test-recording-publisher
+    SVC_WORKER_JOBS=test-worker-jobs SVC_WORKER_PIPELINE=test-worker-pipeline
+    ;;
+  *)
+    echo "❌ STREAMING_RUNTIME must be reference or disposable, not '$STREAMING_RUNTIME'" >&2
+    exit 2
+    ;;
+esac
+# The shared MinIO / PostgreSQL servers, measured read-only by streaming_storage.
+SERVERS=(docker compose --env-file "$ENV_FILE")
 # The replay service mounts no source dataset: it can read only the locked recording.
-REPLAY=("${COMPOSE[@]}" run --rm -T dataset-replay)
-REPLAY_PROBE=("${COMPOSE[@]}" run --rm -T --entrypoint sh dataset-replay)
-PUBLISHER=("${COMPOSE[@]}" run --rm -T recording-publisher)
-WORKER_EXEC=("${COMPOSE[@]}" exec -T worker-jobs)
+REPLAY=("${COMPOSE[@]}" run --rm -T "$SVC_REPLAY")
+REPLAY_PROBE=("${COMPOSE[@]}" run --rm -T --entrypoint sh "$SVC_REPLAY")
+PUBLISHER=("${COMPOSE[@]}" run --rm -T "$SVC_PUBLISHER")
+WORKER_EXEC=("${COMPOSE[@]}" exec -T "$SVC_WORKER_JOBS")
 RECONCILE=(sceneops-worker acquisition reconcile --once)
 
 # ── Small helpers ────────────────────────────────────────────────────────────
@@ -76,25 +106,57 @@ streaming_assert_replay_isolated() {
     || fail "the replay container sees a raw dataset or lacks the reference mounts: $probe"
 }
 
+# streaming_wait_run_started <bridge-container> [seconds] -> the acknowledged RUN_START
+# position (TOPIC:PARTITION:OFFSET) on stdout.
+#
+# The bridge prints one `run_started {json}` line once the broker has acknowledged
+# RUN_START (integrations/ros2-kafka-bridge); nothing else is parsed. Fails if the
+# bridge exits first (its RUN_START was not acknowledged) or the line does not appear.
+streaming_wait_run_started() {
+  local bridge="$1" seconds="${2:-60}" line
+  for _ in $(seq 1 "$seconds"); do
+    line="$(summary_line "$(docker logs "$bridge" 2>&1)" run_started)"
+    if [ -n "$line" ]; then
+      jq -er '.start_position' <<<"$line" || return 1
+      return 0
+    fi
+    [ "$(docker inspect -f '{{.State.Running}}' "$bridge" 2>/dev/null)" = true ] || return 1
+    sleep 1
+  done
+  return 1
+}
+
 # streaming_acquire <resolved-fixture-json> <run-id> <robot-id> <capture-root> <bridge-container> <capture-container>
 #
 # Replays the fixture's locked MCAP into ROS 2 -> bridge -> Kafka -> capture and
 # waits for the capture to finalize on the run's explicit RUN_END. Sets:
 #   REPLAY_SOURCE REPLAY_SUMMARY BRIDGE_SUMMARY CAPTURE_SUMMARY  the tools' own summaries
+#   START_POSITION                                                the acknowledged RUN_START position Capture was pinned to
 #   STREAM_RECORDING RECEIPT_PATH                                 the finalized capture (container paths)
 #   ACQ_REPLAY_S ACQ_CAPTURE_S                                    wall seconds of the replay / capture container
+#
+# Order: the bridge publishes RUN_START and reports where the broker stored it; only
+# then is Capture started, pinned to exactly that position (no topic scan), and only
+# when the bridge reports ready is the replay started. This script keeps the position
+# in memory only: it is an optimization of where Capture starts reading, and a lost
+# one costs a beginning-of-topic scan (an attempt without --start-position), never
+# correctness.
 streaming_acquire() {
   local fixture="$1" run_id="$2" robot_id="$3" capture_root="$4" bridge="$5" capture="$6"
   local fixture_id
   fixture_id="$(echo "$fixture" | jq -r '.fixture_id')"
   docker rm -f "$bridge" "$capture" >/dev/null 2>&1 || true
   streaming_assert_replay_isolated
-  "${COMPOSE[@]}" run -d --name "$bridge" -T streaming-bridge \
+  "${COMPOSE[@]}" run -d --name "$bridge" -T "$SVC_BRIDGE" \
     --robot-id "$robot_id" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
     --exit-after-idle-seconds 10 >/dev/null
-  "${COMPOSE[@]}" run -d --name "$capture" -T capture \
+  START_POSITION="$(streaming_wait_run_started "$bridge")" \
+    || fail "bridge did not report an acknowledged RUN_START"
+  log "  RUN_START acknowledged at $START_POSITION"
+  "${COMPOSE[@]}" run -d --name "$capture" -T "$SVC_CAPTURE" \
     --robot-id "$robot_id" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
-    --output-root "$capture_root" --idle-timeout-seconds 120 >/dev/null
+    --output-root "$capture_root" --idle-timeout-seconds 120 \
+    --start-position "$START_POSITION" >/dev/null
   for _ in $(seq 1 60); do
     docker logs "$bridge" 2>&1 | grep -q "streaming bridge ready" && break
     sleep 1
@@ -117,7 +179,7 @@ streaming_acquire() {
 
 # streaming_capture_receipt <receipt-path> -> the capture receipt JSON
 streaming_capture_receipt() {
-  "${COMPOSE[@]}" run --rm -T --entrypoint cat capture "$1" </dev/null
+  "${COMPOSE[@]}" run --rm -T --entrypoint cat "$SVC_CAPTURE" "$1" </dev/null
 }
 
 # ── Publication and registration (ADR-008) ───────────────────────────────────
@@ -180,13 +242,13 @@ streaming_publish_and_register() {
 streaming_release_capture() {
   local run_id="$1" capture_root="$2" scan receipt registered
   case "$capture_root" in /recordings/capture-?*) ;; *) fail "refusing to remove unexpected capture root '$capture_root'" ;; esac
-  "${COMPOSE[@]}" run --rm -T --entrypoint test capture -d "$capture_root" </dev/null || return 0
+  "${COMPOSE[@]}" run --rm -T --entrypoint test "$SVC_CAPTURE" -d "$capture_root" </dev/null || return 0
   scan="$(streaming_scan "$capture_root")"
   receipt="$(jq -r --arg r "$run_id" '[.runs[] | select(.run_id == $r) | .receipt.recording_checksum] | first // empty' <<<"$scan")"
   registered="$(api_get "$API_BASE_URL" "/artifacts/$(api_get "$API_BASE_URL" "/robot-runs/$run_id" | jq -r '.robotRun.recordingArtifactId')" | jq -r '.artifact.checksum')"
   [ -n "$receipt" ] && [ "$receipt" = "$registered" ] \
     || fail "keeping the capture of $run_id: the registered recording ($registered) is not the capture's ($receipt)"
-  "${COMPOSE[@]}" run --rm -T --entrypoint rm capture -rf "$capture_root" </dev/null
+  "${COMPOSE[@]}" run --rm -T --entrypoint rm "$SVC_CAPTURE" -rf "$capture_root" </dev/null
 }
 
 # ── Registered recording facts ───────────────────────────────────────────────
@@ -209,7 +271,7 @@ streaming_load_facts() {
   done
   [ "$manifests" != "{}" ] || { STREAM_FACTS="{}"; return 0; }
   STREAM_FACTS="$("${COMPOSE[@]}" run --rm -T -v "$REPO_ROOT/tools/baselines/streaming:/workspace/streaming:ro" \
-    --entrypoint python recording-publisher /workspace/streaming/manifest_facts.py \
+    --entrypoint python "$SVC_PUBLISHER" /workspace/streaming/manifest_facts.py \
     <<<"$(jq -cn --argjson m "$manifests" '{manifests: $m}')")" || fail "could not read the RobotRun manifests"
 }
 
@@ -258,18 +320,20 @@ streaming_verify() {
 # ── Resources ────────────────────────────────────────────────────────────────
 
 # streaming_storage — one JSON object on stdout: free GiB of the host volume and of
-# the Docker VM disk (whichever is lower bounds the run), and the sizes (MiB) of
-# MinIO, the Kafka log and the transient capture volume.
+# the Docker VM disk (whichever is lower bounds the run), and the sizes (MiB) of the
+# shared MinIO and PostgreSQL servers' data (every bucket / database on them), the
+# runtime's Kafka log and its transient capture volume.
 streaming_storage() {
-  local host vm minio kafka recordings
+  local host vm minio postgres kafka recordings
   host="$(df -Pk "$REPO_ROOT" | awk 'NR==2 { printf "%.1f", $4 / 1048576 }')"
-  vm="$("${COMPOSE[@]}" run --rm -T --entrypoint df capture -Pk /recordings </dev/null | awk 'NR==2 { printf "%.1f", $4 / 1048576 }')"
-  minio="$("${COMPOSE[@]}" exec -T minio du -sk /data | awk '{ printf "%d", $1 / 1024 }')"
-  kafka="$("${COMPOSE[@]}" exec -T kafka du -sk /var/lib/kafka/data | awk '{ printf "%d", $1 / 1024 }')"
-  recordings="$("${COMPOSE[@]}" run --rm -T --entrypoint du capture -sk /recordings </dev/null | awk '{ printf "%d", $1 / 1024 }')"
-  jq -cn --argjson host "$host" --argjson vm "$vm" --argjson minio "$minio" \
+  vm="$("${COMPOSE[@]}" run --rm -T --entrypoint df "$SVC_CAPTURE" -Pk /recordings </dev/null | awk 'NR==2 { printf "%.1f", $4 / 1048576 }')"
+  minio="$("${SERVERS[@]}" exec -T minio du -sk /data | awk '{ printf "%d", $1 / 1024 }')"
+  postgres="$("${SERVERS[@]}" exec -T postgres du -sk /var/lib/postgresql/data | awk '{ printf "%d", $1 / 1024 }')"
+  kafka="$("${COMPOSE[@]}" exec -T "$SVC_KAFKA" du -sk /var/lib/kafka/data | awk '{ printf "%d", $1 / 1024 }')"
+  recordings="$("${COMPOSE[@]}" run --rm -T --entrypoint du "$SVC_CAPTURE" -sk /recordings </dev/null | awk '{ printf "%d", $1 / 1024 }')"
+  jq -cn --argjson host "$host" --argjson vm "$vm" --argjson minio "$minio" --argjson pg "$postgres" \
     --argjson kafka "$kafka" --argjson rec "$recordings" \
-    '{host_free_gib: $host, docker_vm_free_gib: $vm, minio_mib: $minio, kafka_mib: $kafka, acquisition_recordings_mib: $rec}'
+    '{host_free_gib: $host, docker_vm_free_gib: $vm, minio_mib: $minio, postgres_mib: $pg, kafka_mib: $kafka, acquisition_recordings_mib: $rec}'
 }
 
 # ── Pipelines ────────────────────────────────────────────────────────────────

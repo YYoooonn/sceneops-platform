@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sceneops_analytics import (
     TABLE_BUILDERS,
     AnalyticsTableWriteResult,
@@ -21,6 +23,9 @@ from sceneops_worker.derived.publication import register_published
 from sceneops_worker.scenes.resolver import list_dataset_version_scenes
 from sceneops_worker.scenes.resolver import resolve_registered_scene
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
+
+if TYPE_CHECKING:
+    import polars as pl
 
 _MANIFEST_TABLE_BUILDERS = {
     "observations": build_observations_table,
@@ -74,31 +79,34 @@ class ExportAnalyticsSnapshotJobHandler(
                 "Ensure register_scenes has completed before exporting analytics."
             )
 
-        # Every Scene is read at the revision its record pins, verified.
+        # Every Scene is read at the revision its member pins, verified.
         manifests: list[tuple[str, SceneManifest]] = []
         if requested_tables & set(_MANIFEST_TABLE_BUILDERS):
             for scene in all_scene_records:
                 resolved = await resolve_registered_scene(context, scene)
                 manifests.append((scene.scene_id, resolved.manifest))
 
-        tables: dict[str, AnalyticsTableWriteResult] = {}
-        row_counts: dict[str, int] = {}
-
+        # Every table is built before any is written, so a build failure
+        # refuses the whole export without leaving another table's object
+        # behind.
+        frames: dict[str, pl.DataFrame] = {}
         if "scenes" in requested_tables:
-            df = build_scenes_table(all_scene_records)
-            tables["scenes"] = await context.analytics_writer.write_table(
-                "scenes", df, dataset_id=dataset_id, dataset_version=dataset_version
-            )
-            row_counts["scenes"] = df.height
-
-        for table_name, builder in _MANIFEST_TABLE_BUILDERS.items():
-            if table_name not in requested_tables:
-                continue
-            df = builder(
+            frames["scenes"] = build_scenes_table(
                 dataset_id=dataset_id,
                 dataset_version=dataset_version,
-                manifests=manifests,
+                scenes=all_scene_records,
             )
+        for table_name, builder in _MANIFEST_TABLE_BUILDERS.items():
+            if table_name in requested_tables:
+                frames[table_name] = builder(
+                    dataset_id=dataset_id,
+                    dataset_version=dataset_version,
+                    manifests=manifests,
+                )
+
+        tables: dict[str, AnalyticsTableWriteResult] = {}
+        row_counts: dict[str, int] = {}
+        for table_name, df in frames.items():
             tables[table_name] = await context.analytics_writer.write_table(
                 table_name, df, dataset_id=dataset_id, dataset_version=dataset_version
             )

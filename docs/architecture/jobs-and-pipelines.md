@@ -31,17 +31,27 @@ A standalone Job joins the path at "durable Job". `JobRunner` is the sole runtim
 entry point for a Job: both the Celery task and the worker CLI
 (`sceneops-worker jobs run`) call it.
 
-## 2. The four Pipelines
+## 2. The six Pipelines
 
 A Pipeline exists only where multi-stage orchestration, retry and lineage justify
-it. SceneOps has exactly four; every other operation is a Job (§2.1).
+it. SceneOps has exactly six; every other operation is a Job (§2.1).
 
 ```text
-RECORDING_SCENE_BUILDING          RobotRun -> Scenes
-  build_recording_scenes -> register_scenes -> validate_scene -> profile_scene (optional)
+RECORDING_SCENE_BUILDING          RobotRun -> Scene revisions [-> DatasetVersion]
+  build_recording_scenes -> register_scenes -> compose_dataset_version (optional)
+                         -> validate_scene -> profile_scene (optional)
 
-RECORDING_EPISODE_BUILDING        RobotRun -> Episodes
-  build_recording_episodes -> register_episodes -> validate_episode -> profile_episode (optional)
+SNAPSHOT_SCENE_BUILDING           SourceSnapshot -> Scene revisions [-> DatasetVersion]
+  build_snapshot_scenes  -> register_scenes -> compose_dataset_version (optional)
+                         -> validate_scene -> profile_scene (optional)
+
+RECORDING_EPISODE_BUILDING        RobotRun -> Episode revisions [-> DatasetVersion]
+  build_recording_episodes -> register_episodes -> compose_dataset_version (optional)
+                           -> validate_episode -> profile_episode (optional)
+
+SNAPSHOT_EPISODE_BUILDING         SourceSnapshot -> Episode revisions [-> DatasetVersion]
+  build_snapshot_episodes  -> register_episodes -> compose_dataset_version (optional)
+                           -> validate_episode -> profile_episode (optional)
 
 SCENE_ML_EVALUATION               pinned label sets + policy + configs -> views -> ScenarioSet -> prediction -> evaluation
   build_scene_sample_views -> mine_scenarios -> score_scenario_readiness
@@ -51,17 +61,45 @@ EPISODE_LEARNING_DATA_BUILDING    pinned Episodes + alignment config -> AlignedE
   align_episode -> export_learning_data
 ```
 
-**Canonical building (RobotRun -> Scene / Episode).** `RECORDING_SCENE_BUILDING`
-builds the canonical Scenes of one registered RobotRun (`build_recording_scenes`
-params: `robot_run_id`, `build_config`) and hands the complete set to
-`register_scenes` through the `manifest_artifact_ids` REF; `register_scenes` hands
-`scene_ids` to the quality stages. `RECORDING_EPISODE_BUILDING` is its Episode
-sibling: `build_recording_episodes` hands the complete Episode set to
-`register_episodes` (`manifest_artifact_ids`), which hands `episode_ids` to
-`validate_episode` / `profile_episode`. One run covers one RobotRun; a DatasetVersion
-spanning several RobotRuns takes several runs. The two pipelines never depend on
-each other and share the RobotRun's `OBSERVATION_PAYLOAD` artifacts. See
+**Canonical building (RobotRun -> Scene / Episode), Build -> Register -> Compose.**
+`RECORDING_SCENE_BUILDING` builds the canonical Scenes of one registered RobotRun
+(`build_recording_scenes` params: `robot_run_id`, `build_config`; nothing else) and
+hands the complete set to `register_scenes` through the `manifest_artifact_ids` REF.
+Each id is `manifest_artifact_id_for(unit_id, manifest_checksum)`, a reference to one
+write-once manifest object and its exact bytes. `register_scenes` registers the
+revisions and hands their complete pins (`revisions`: domain, unit id, manifest
+artifact id, manifest checksum) to the later stages. `RECORDING_EPISODE_BUILDING` is
+its Episode sibling (`build_recording_episodes` -> `register_episodes` -> the same
+stages). One run covers one RobotRun. The two pipelines never depend on each other
+and share the RobotRun's `OBSERVATION_PAYLOAD` artifacts. See
 [Scene domain](./scene-domain.md) and [Episode domain](./episode-domain.md).
+
+**Canonical building (SourceSnapshot -> Scene / Episode).** `SNAPSHOT_SCENE_BUILDING`
+and `SNAPSHOT_EPISODE_BUILDING` build the Scenes / Episodes of the content of one
+registered SourceSnapshot (`build_snapshot_scenes` / `build_snapshot_episodes` params:
+`snapshot_id`, `build_config`, optional `unit_keys`) with the builder of the content's
+registered format (nuScenes Scenes, LeRobot Episodes), then run the same register,
+compose, validate and profile stages. The build resolves the snapshot to its content
+once and records `snapshot_id`, `content_id` and `content_checksum` in its result; the
+snapshot never enters a manifest, so every snapshot of the same bytes builds the same
+revisions. `register_scenes` / `register_episodes` return the build's source as
+`source_kind` / `source_id`.
+
+A building run executes in no DatasetVersion: `POST /pipelines/runs` refuses a
+`dataset_id` / `dataset_version` for these four types (`PipelineDefinition.dataset_version_scope`),
+and their build, register, validate and profile params refuse DatasetVersion fields.
+The DatasetVersion is produced only by the optional `compose_dataset_version` stage. It
+runs only when the run names its target, `params.compose_dataset_version =
+{dataset_id, dataset_version}`, and composes exactly the `revisions` the register stage
+returned, so a pipeline never composes something other than what it built. Members in
+its params (`pins`, `selector`) are refused. Its Job carries the target as its
+`dataset_id` / `dataset_version`. The stage converges when the name is already bound to
+the same pins. When the name is bound to other pins the stage fails, and the run fails
+before validation. A DatasetVersion of several RobotRuns, or of both domains, is one
+standalone `COMPOSE_DATASET_VERSION` Job over the register stages' pins
+(`tools/baselines/canonical/` does this), never several runs composing one name.
+`validate_*` / `profile_*` take the same `revisions` and assess exactly those
+revisions, with or without a composition (§2.1, [Quality and run records](./quality-and-runs.md)).
 
 **Scene ML.** `SCENE_ML_EVALUATION` consumes registered Scenes, an explicit
 sample-view policy and pinned label set revisions. Each stage pins the revisions it
@@ -75,8 +113,9 @@ sets, categories and the model backend are explicit params; no stage defaults a
 source's vocabulary. See [Derived layer](./derived-layer.md).
 
 **Episode learning.** `EPISODE_LEARNING_DATA_BUILDING` aligns pinned Episode
-revisions (`align_episode` params: `episodes`, each an `episode_id` optionally
-pinned by `source_artifact_id` + `source_manifest_sha256`, and one
+revisions (`align_episode` params: the DatasetVersion, `episodes`, each an
+`episode_id` either resolved to the revision that DatasetVersion pins or pinned by
+`source_artifact_id` + `source_manifest_sha256` to a registered revision, and one
 `alignment_config`) and hands the aligned revisions to `export_learning_data` in the
 export's own input shape (`export_inputs`: episode id, aligned artifact id,
 checksum). The export validates every aligned input and fails rather than
@@ -89,7 +128,9 @@ Reusable single operations are plain Jobs (`POST /jobs`, then
 
 ```text
 REGISTER_ROBOT_RUN        POST /robot-runs:register (create + dispatch)
-IMPORT_LABELS             a label document -> an independent, pinned LabelSet revision
+REGISTER_SOURCE_SNAPSHOT  a published snapshot descriptor -> SourceContent + SourceSnapshot (Ingress boundaries §3.1)
+COMPOSE_DATASET_VERSION   revision pins or a selector -> one immutable DatasetVersion (Data model §2.1); also the optional stage of the four building pipelines
+IMPORT_LABELS             a label document, or a SourceSnapshot's native annotations -> an independent, pinned LabelSet revision
 BUILD_SCENE_SAMPLE_VIEWS  Scenes + policy + label sets -> pinned views (also the first stage of SCENE_ML_EVALUATION)
 MINE_SCENARIOS /          ScenarioSet curation and readiness scoring over pinned views
   SCORE_SCENARIO_READINESS   (stages of SCENE_ML_EVALUATION)
@@ -103,7 +144,12 @@ CURATE_EPISODES           a selection policy over one learning export (read by S
 EXPORT_ANALYTICS_SNAPSHOT Scene analytical Parquet tables of a DatasetVersion
 INGEST_ROBOT_STATES /     robot telemetry projection of a RobotRun
   EXPORT_ROBOT_ANALYTICS_SNAPSHOT
-BUILD_RECORDING_* / REGISTER_* / VALIDATE_* / PROFILE_*   the stages of the two building pipelines, also dispatchable alone
+BUILD_RECORDING_* / BUILD_SNAPSHOT_* / REGISTER_* / VALIDATE_* / PROFILE_*
+                          the stages of the four building pipelines, also dispatchable alone:
+                          build robot_run_id | snapshot_id (+ unit_keys) + build_config
+                            -> manifest_artifact_ids;
+                          register manifest_artifact_ids -> revisions (pins);
+                          validate / profile revisions (pins of one domain, one per unit)
 ```
 
 A job that is a pipeline stage and the standalone job of the same type are the same
@@ -114,7 +160,7 @@ handler (`JobHandlerRegistry`).
 
 Each task's outputs are classified by `PipelineTaskOutputKind` (`builtin.py`):
 
-- `REF` — a reference the next task consumes as input (for example `episode_ids`,
+- `REF` — a reference the next task consumes as input (for example `revisions`,
   `validation_run_id`); the connective tissue between tasks.
 - `SUMMARY` — aggregate statistics recorded on the task result (for example
   `scene_count`, `issue_count`).
@@ -419,8 +465,15 @@ never creates its own `ArtifactRecord` for that object:
   payloads it extracts.
 - Episode: `build_recording_episodes` owns its `EPISODE_MANIFEST` and
   `OBSERVATION_PAYLOAD` records; payload ids are shared with Scene builds of the same
-  RobotRun, so whichever runs first creates them. `register_episodes` re-reads and
+  RobotRun, so whichever runs first creates them. `build_snapshot_episodes` owns its
+  `EPISODE_MANIFEST` records only: it references preserved source files and writes no
+  payload. A rebuild through another snapshot of the same bytes reuses the records, so
+  they keep the Job that first produced them. `register_episodes` re-reads and
   verifies, never creates.
+- Database-free publishers write bytes outside any Job, so their registration Job
+  records them after verifying the bytes: `REGISTER_ROBOT_RUN` the recording and its
+  manifest, `REGISTER_SOURCE_SNAPSHOT` the content inventory (once per content) and
+  the snapshot descriptor. Preserved source files have no record of their own.
 
 Publication is content-pinned and convergent
 (`apps/worker/sceneops_worker/derived/publication.py`, `ArtifactRecordStore.register`):
@@ -460,9 +513,11 @@ These are the verified gaps and bounds of the current design.
 - **Dispatch and database are not one atomic unit.** A message can be sent without its
   `ExecutionRecord` being committed, and a record can be committed for a message the
   broker then lost; `ExecutionRecord` is an audit of sends, not of deliveries.
-- **Blocking broker sends in async code.** `Celery.send_task` is synchronous; the API's
-  `dispatch_job` / `dispatch_pipeline` and the worker's `ExecutionDispatcher` call it
-  from `async` code, so the event loop waits for the broker round trip.
+- **Synchronous broker sends in the worker.** `Celery.send_task` is synchronous. The
+  API's `dispatch_job` / `dispatch_pipeline` run it on a thread, so a slow broker never
+  stalls the API's shared event loop. The worker's `ExecutionDispatcher` calls it
+  directly from `async` code; each Celery task runs on its own event loop and its lease
+  renews on another thread, so the wait delays only that task's step.
 - **Strictly serial pipeline scheduling.** One task's Job is in flight per run;
   `depends_on_pipeline_task_ids` is not a scheduling graph.
 - **No cancellation.** `CANCELLED` statuses exist, and re-execution and `JobRunner`

@@ -28,6 +28,7 @@ from sceneops_worker.stores.runs import (
 )
 from sceneops_worker.stores.scenarios import ScenarioStore
 from sceneops_worker.stores.scenes import SceneStore
+from sceneops_worker.stores.sources import SourceStore
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class WorkerContext:
     episode_store: EpisodeStore
     scenario_store: ScenarioStore
     model_store: ModelStore
+    source_store: SourceStore
     artifact_record_store: ArtifactRecordStore
 
     runs: RunStores

@@ -25,7 +25,7 @@ from sceneops_core.jobs.schemas import (
 from sceneops_core.jobs.schemas.params import EpisodeAlignmentInput
 from sceneops_core.jobs.schemas.results import AlignedEpisodeRef
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.episodes.schemas import EpisodeRecord
+from sceneops_core.episodes.schemas import EpisodeRevisionRecord
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
@@ -48,7 +48,8 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
     AlignedEpisodeArtifact per Episode (derived, L3; ADR-007 §13.10, §31.8).
 
     Resolves one exact canonical EpisodeManifest revision per Episode (the
-    one its EpisodeRecord points to, or an explicitly pinned one), verifies
+    one the DatasetVersion's member pins, or an explicitly pinned registered
+    revision of the Episode), verifies
     its bytes against their checksum, parses them strictly, runs the pure
     ``align_episode`` engine and persists the result with the source
     revision it consumed. All timeline / association decisions live in the
@@ -120,24 +121,28 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
         params: AlignEpisodeJobParams,
         item: EpisodeAlignmentInput,
     ) -> tuple[AlignedEpisodeRef, str]:
-        episode_record = await context.episode_store.get(item.episode_id)
-        if episode_record is None:
-            raise ValueError(f"Episode not found: {item.episode_id}")
-        # An Episode belongs to exactly one DatasetVersion: that is the scope,
-        # never a configured default.
-        dataset_id = episode_record.dataset_id
-        dataset_version = episode_record.dataset_version
-        if (params.dataset_id, params.dataset_version) not in (
-            (None, None),
-            (dataset_id, dataset_version),
-        ):
+        # An Episode may be a member of many DatasetVersions; the one being
+        # aligned is named explicitly, never inferred.
+        if params.dataset_id is None or params.dataset_version is None:
             raise ValueError(
-                f"Episode {item.episode_id} belongs to {dataset_id}:"
-                f"{dataset_version}, not {params.dataset_id}:{params.dataset_version}"
+                "align_episode aligns the Episodes of one DatasetVersion; "
+                "dataset_id and dataset_version are required"
+            )
+        dataset_id = params.dataset_id
+        dataset_version = params.dataset_version
+        member = await context.episode_store.get_member_revision(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            episode_id=item.episode_id,
+        )
+        if member is None:
+            raise ValueError(
+                f"Episode {item.episode_id} is not a member of "
+                f"{dataset_id}:{dataset_version}"
             )
 
         source_artifact_id, source_uri, source_checksum = await self._resolve_source(
-            context=context, item=item, episode_record=episode_record
+            context=context, item=item, member=member
         )
         raw_bytes = await context.episode_artifact_store.read_pinned_manifest_bytes(
             uri=source_uri, checksum=source_checksum
@@ -239,33 +244,34 @@ class AlignEpisodeJobHandler(JobHandler[AlignEpisodeJobParams, AlignEpisodeJobRe
         *,
         context: WorkerContext,
         item: EpisodeAlignmentInput,
-        episode_record: EpisodeRecord,
+        member: EpisodeRevisionRecord,
     ) -> tuple[str, str, str]:
         """Returns (source_artifact_id, uri, checksum).
 
         Pinned (item.source_artifact_id set): that exact EPISODE_MANIFEST
-        ArtifactRecord of this episode, which may be an earlier revision.
-        Unpinned: exactly the revision the EpisodeRecord points to
-        (``manifest_artifact_id``), never "the latest artifact" (§14.4).
+        ArtifactRecord, which must be a registered revision of this Episode
+        and may be another one than the member pins. Unpinned: exactly the
+        revision the DatasetVersion's member pins, never "the latest
+        artifact".
         """
-        artifact_id = item.source_artifact_id or episode_record.manifest_artifact_id
+        artifact_id = item.source_artifact_id or member.manifest_artifact_id
         record = await context.artifact_record_store.get(artifact_id)
         if record is None or record.kind != ArtifactKind.EPISODE_MANIFEST.value:
             raise SourceManifestNotFoundError(
                 f"source_artifact_id {artifact_id!r} is not a valid EPISODE_MANIFEST "
                 "ArtifactRecord"
             )
-        if (
-            record.owner_type != ArtifactOwnerType.EPISODE.value
-            or record.owner_id != episode_record.episode_id
-        ):
-            raise SourceManifestNotFoundError(
-                f"source_artifact_id {artifact_id!r} does not belong to episode "
-                f"{episode_record.episode_id!r}"
-            )
         if not record.checksum:
             raise SourceManifestNotFoundError(
                 f"EPISODE_MANIFEST {artifact_id!r} pins no checksum"
+            )
+        revision = await context.episode_store.get_revision(
+            episode_id=member.episode_id, manifest_checksum=record.checksum
+        )
+        if revision is None or revision.manifest_artifact_id != record.artifact_id:
+            raise SourceManifestNotFoundError(
+                f"source_artifact_id {artifact_id!r} is not a registered revision of "
+                f"episode {member.episode_id!r}"
             )
         return record.artifact_id, record.uri, record.checksum
 

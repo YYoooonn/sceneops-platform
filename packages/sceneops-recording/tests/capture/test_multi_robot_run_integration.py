@@ -1,31 +1,24 @@
-"""Phase 6.6 reliability matrix item 5 / Phase 6.6.1 acceptance
-(multi-RobotRun isolation), against the REAL local Kafka broker -- no
-monkeypatched consumer, unlike the rest of this test package.
+"""Multi-RobotRun isolation of ``run_capture`` against the REAL local Kafka
+broker -- no monkeypatched consumer, unlike the rest of this test package.
 
 Two things are tested:
 
   1. Within ONE capture invocation, RunFilter correctly isolates the
      target robot_run_id from interleaved messages belonging to a
      DIFFERENT robot_run_id on the same topic/partition -- the resulting
-     MCAP contains only the target run's messages. Unaffected by Phase
-     6.6.1 -- this guarantee already existed.
+     MCAP contains only the target run's messages.
 
   2. Two SEQUENTIAL, independent capture invocations for interleaved
-     runs A and B now get fully independent offset cursors (Phase
-     6.6.1's run-scoped consumer groups, group_id.py): each sees its own
-     COMPLETE 0..N-1 sequence and writes only its own messages, in
-     either processing order. Phase 6.6 found and this phase fixes the
-     previous failure mode -- A's capture reading past B's interleaved
-     messages no longer silently advances a SHARED group's committed
-     offset past them, because A and B no longer share a group at all.
+     runs A and B share no state: each sees its own COMPLETE 0..N-1
+     sequence and writes only its own messages, in either processing
+     order. A's capture reading past B's interleaved messages to reach
+     its own target cannot affect B's, because Capture assigns its
+     partitions itself and records no progress in Kafka.
 
 The local dev topic has exactly one partition
 (`sceneops.robot.telemetry.v1`, `PartitionCount: 1`), which makes
 interleaving on one partition the realistic default, not a rare edge
-case -- and confirms this fix is about consumer-group isolation, not
-Kafka partition scaling (see group_id.py's own docstring and
-docs/history/streaming-reliability-scale-baseline.md's Phase 6.6.1
-addendum for the historical-rescan tradeoff this isolation trades for).
+case.
 """
 
 from __future__ import annotations
@@ -38,8 +31,7 @@ from mcap.reader import make_reader  # noqa: E402
 from sceneops_streaming import EnvelopeEncoding, TelemetryEnvelope  # noqa: E402
 from sceneops_streaming import KafkaTelemetryProducer, StreamingSettings  # noqa: E402
 
-from sceneops_recording.capture.consumer import CAPTURE_CONSUMER_GROUP_ID, run_capture  # noqa: E402
-from sceneops_recording.capture.group_id import derive_capture_group_id  # noqa: E402
+from sceneops_recording.capture.consumer import run_capture  # noqa: E402
 
 
 def _envelope(*, robot_run_id: str, sequence_number: int) -> TelemetryEnvelope:
@@ -106,25 +98,12 @@ def test_run_filter_isolates_target_run_from_interleaved_other_run(tmp_path) -> 
 
 
 def test_sequential_independent_captures_each_see_complete_sequence(tmp_path) -> None:
-    """Phase 6.6.1 acceptance: A's capture (reading past B's interleaved
-    messages to reach its own target) must NOT advance B's committed
-    position -- B's later, independent capture still sees its own
-    complete 0..N-1 sequence and writes only its own messages. This is
-    the exact scenario that used to fail (SequenceIntegrityError on B)
-    before run-scoped consumer groups."""
+    """A's capture (reading past B's interleaved messages to reach its own
+    target) must not affect B's: B's later, independent capture still sees its
+    own complete 0..N-1 sequence and writes only its own messages."""
     invocation = uuid.uuid4().hex[:10]
     run_a = f"seq-a-{invocation}"
     run_b = f"seq-b-{invocation}"
-
-    # A and B derive different groups -- confirms the isolation mechanism
-    # directly, not just its downstream effect.
-    group_a = derive_capture_group_id(
-        base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=run_a
-    )
-    group_b = derive_capture_group_id(
-        base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=run_b
-    )
-    assert group_a != group_b
 
     async def _publish_interleaved():
         settings = StreamingSettings()
@@ -163,8 +142,8 @@ def test_sequential_independent_captures_each_see_complete_sequence(tmp_path) ->
         assert run_a.encode("ascii") in payload
         assert run_b.encode("ascii") not in payload
 
-    # B's capture, run AFTER A's, on its OWN run-scoped group -- must see
-    # its full 0..3 sequence, not miss b0/b1/b2 the way it used to.
+    # B's capture, run AFTER A's -- must see its full 0..3 sequence, including
+    # b0/b1/b2 that A's capture read past.
     result_b = asyncio.run(
         run_capture(
             settings=StreamingSettings(),

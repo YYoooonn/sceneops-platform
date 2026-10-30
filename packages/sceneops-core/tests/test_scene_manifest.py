@@ -1,4 +1,4 @@
-"""SceneManifest v2 contract: canonical bytes, strict parsing, source
+"""SceneManifest contract: canonical bytes, strict parsing, source
 fidelity invariants and record projection (ADR-007 §13.5-§13.8, §19,
 I-1/I-3/I-21-I-24/I-26)."""
 
@@ -11,9 +11,9 @@ from pydantic import ValidationError
 
 from sceneops_core.artifacts.schemas import PayloadRef
 from sceneops_core.common.checksums import sha256_checksum
-from sceneops_core.provenance import ProducerInfo
+from sceneops_core.provenance import ProducerInfo, manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
-    SCENE_MANIFEST_SCHEMA_V2,
+    SCENE_MANIFEST_SCHEMA_V5,
     NonCanonicalSceneManifestError,
     SceneChannel,
     SceneCoordinateFrame,
@@ -22,7 +22,7 @@ from sceneops_core.scenes.schemas import (
     SceneTimeWindow,
     UnsupportedSceneManifestVersionError,
     load_canonical_scene_manifest,
-    project_scene_record,
+    project_scene_revision,
     scene_id_for,
 )
 from sceneops_core.scenes.testing import (
@@ -64,7 +64,7 @@ def test_manifest_holds_no_membership_or_execution_state():
         "metadata",
     ):
         assert forbidden not in payload
-    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V2
+    assert payload["schema_version"] == SCENE_MANIFEST_SCHEMA_V5
 
 
 def test_non_canonical_bytes_are_rejected_even_when_semantically_equal():
@@ -137,7 +137,7 @@ def test_unsupported_schema_version_and_garbage_are_rejected():
 
 def _payload(**overrides):
     fields = dict(
-        artifact_id="art-payload-1",
+        uri="sceneops://observation-payloads/run-001/art-payload-1",
         checksum="sha256:" + "a" * 64,
         size_bytes=1,
         media_type="image/jpeg",
@@ -146,29 +146,28 @@ def _payload(**overrides):
     return PayloadRef(**fields)
 
 
-def test_payload_is_referenced_by_artifact_identity_not_location():
+def test_payload_is_referenced_by_logical_uri_not_location():
     assert set(PayloadRef.model_fields) == {
-        "artifact_id",
+        "uri",
         "checksum",
         "size_bytes",
         "media_type",
+        "selector",
     }
-    with pytest.raises(ValidationError):
-        _payload(uri="s3://b/x")
-    for bad_id in ("", "s3://b/x", "samples/CAM_FRONT/x.jpg", " art-1"):
+    for bad_uri in ("s3://b/x", "file:///x", "samples/CAM_FRONT/x.jpg", ""):
         with pytest.raises(ValidationError):
-            _payload(artifact_id=bad_id)
+            _payload(uri=bad_uri)
+    with pytest.raises(ValidationError):
+        _payload(artifact_id="art-payload-1")
 
 
 def test_payload_references_carry_no_storage_location():
     payload = _dump(build_scene_manifest())
     for observation in payload["observations"]:
-        assert set(observation["payload"]) == {
-            "artifact_id",
-            "checksum",
-            "size_bytes",
-            "media_type",
-        }
+        assert set(observation["payload"]) == set(PayloadRef.model_fields)
+        assert observation["payload"]["uri"].startswith(
+            "sceneops://observation-payloads/run-001/"
+        )
 
 
 @pytest.mark.parametrize(
@@ -179,11 +178,11 @@ def test_payload_media_type_is_a_canonical_type_subtype(media_type):
         _payload(media_type=media_type)
 
 
-def test_payload_requires_checksum_and_positive_size():
+def test_payload_requires_checksum_and_non_negative_size():
     with pytest.raises(ValidationError):
         _payload(checksum="md5:abc")
     with pytest.raises(ValidationError):
-        _payload(size_bytes=0)
+        _payload(size_bytes=-1)
 
 
 def test_timestamps_are_integer_nanoseconds():
@@ -258,6 +257,10 @@ def test_declared_channel_without_observations_stays_explicit():
         }
     )
     payload["channels"].sort(key=lambda c: c["channel"])
+    payload["clock_domains"].append(
+        {"clock": "nuscenes.timestamp_us", "origin": "source", "resolution_ns": 1}
+    )
+    payload["clock_domains"].sort(key=lambda d: d["clock"])
     rebuilt = _rebuild(payload)
     assert "RADAR_FRONT" in [c.channel for c in rebuilt.channels]
     assert "RADAR_FRONT" not in rebuilt.observed_channel_names()
@@ -363,7 +366,7 @@ def test_recording_window_constrains_only_timestamps_in_the_segment_clock():
         source_clock="mcap_log_time", start_timestamp_ns=0, end_timestamp_ns=2_000
     )
 
-    with pytest.raises(ValidationError, match="outside the segment window"):
+    with pytest.raises(ValidationError, match="outside the unit window"):
         build_scene_manifest(source=source, keyframe_timestamps_ns=(500, 1_999))
 
     # Camera timestamps in another clock are not comparable to the window and
@@ -457,80 +460,17 @@ def test_coordinate_frames_and_channels_must_be_sorted_unique():
 # --- identity and record projection -------------------------------------------
 
 
-def test_scene_identity_is_deterministic_and_scoped():
-    source = recording_source(robot_run_id="run-1", unit_key="segment-000000")
-    scene_id = scene_id_for(dataset_id="d", dataset_version="v1", source=source)
-    assert scene_id == scene_id_for(dataset_id="d", dataset_version="v1", source=source)
-    assert scene_id.startswith("scene-") and len(scene_id) <= 128
-
-    assert scene_id != scene_id_for(dataset_id="d", dataset_version="v2", source=source)
-    assert scene_id != scene_id_for(
-        dataset_id="d",
-        dataset_version="v1",
-        source=recording_source(robot_run_id="run-2", unit_key="segment-000000"),
-    )
-    # The recording revision and the window are not identity: a rebuild of
-    # the same unit key keeps the id.
-    rebuilt = recording_source(
-        robot_run_id="run-1",
-        unit_key="segment-000000",
-        recording_checksum="sha256:" + "9" * 64,
-        start_timestamp_ns=5,
-        end_timestamp_ns=6,
-        source_clock="sensor.header_stamp",
-    )
-    assert scene_id == scene_id_for(
-        dataset_id="d", dataset_version="v1", source=rebuilt
-    )
-    # Pinned: the identity document is unchanged from when external units
-    # existed (§29.9).
-    assert (
-        scene_id
-        == "scene-"
-        + __import__("hashlib")
-        .sha256(
-            __import__(
-                "sceneops_core.common.canonical_json", fromlist=["x"]
-            ).canonical_json_bytes(
-                {
-                    "unit_id_schema": "sceneops.unit_id/v1",
-                    "domain": "scene",
-                    "dataset_id": "d",
-                    "dataset_version": "v1",
-                    "source": {
-                        "source_kind": "recording",
-                        "robot_run_id": "run-1",
-                        "unit_key": "segment-000000",
-                    },
-                }
-            )
-        )
-        .hexdigest()[:32]
-    )
-
-    a = recording_source(robot_run_id="run-1", unit_key="seg-0")
-    b = recording_source(robot_run_id="run-1", unit_key="seg-1")
-    assert scene_id_for(dataset_id="d", dataset_version="v1", source=a) != scene_id_for(
-        dataset_id="d", dataset_version="v1", source=b
-    )
-    # Ambiguous concatenations cannot collide.
-    assert scene_id_for(
-        dataset_id="d-v", dataset_version="1", source=source
-    ) != scene_id_for(dataset_id="d", dataset_version="v-1", source=source)
-
-
 def test_record_projection_is_derived_from_the_manifest():
     manifest = build_scene_manifest(keyframe_timestamps_ns=(1_000, 3_000))
-    record = project_scene_record(
-        dataset_id="d",
-        dataset_version="v1",
+    record = project_scene_revision(
         manifest=manifest,
-        manifest_artifact_id="art-1",
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=scene_id_for(manifest.lineage.source),
+            manifest_checksum=manifest.checksum(),
+        ),
         manifest_checksum=manifest.checksum(),
     )
-    assert record.scene_id == scene_id_for(
-        dataset_id="d", dataset_version="v1", source=manifest.lineage.source
-    )
+    assert record.scene_id == scene_id_for(manifest.lineage.source)
     assert record.robot_run_id == "run-001"
     assert record.unit_key == "segment-0000"
     assert record.producer_fingerprint == manifest.lineage.producer.producer_fingerprint
@@ -539,7 +479,9 @@ def test_record_projection_is_derived_from_the_manifest():
         record.window_start_timestamp_ns,
         record.window_end_timestamp_ns,
     ) == ("mcap_log_time", 0, 10_000_000_000)
-    assert not {"source_kind", "external_format"} & set(record.model_dump())
+    assert record.source_kind == "recording"
+    assert "external_format" not in record.model_dump()
+    assert not {"dataset_id", "dataset_version"} & set(record.model_dump())
     assert record.observed_channels == ["CAM_FRONT", "LIDAR_TOP"]
     assert record.observation_count == 5
     assert record.keyframe_count == 2
@@ -552,11 +494,12 @@ def test_recording_record_projects_robot_run_scope():
         source=recording_source(robot_run_id="run-7", unit_key="segment-0003"),
         keyframe_timestamps_ns=(1_000,),
     )
-    record = project_scene_record(
-        dataset_id="d",
-        dataset_version="v1",
+    record = project_scene_revision(
         manifest=manifest,
-        manifest_artifact_id="art-1",
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=scene_id_for(manifest.lineage.source),
+            manifest_checksum=manifest.checksum(),
+        ),
         manifest_checksum=manifest.checksum(),
     )
     assert record.robot_run_id == "run-7"
@@ -576,10 +519,7 @@ def test_producer_info_changes_change_fingerprint_not_identity():
         != b.lineage.producer.producer_fingerprint
     )
     assert a.checksum() != b.checksum()
-    ids = {
-        scene_id_for(dataset_id="d", dataset_version="v1", source=m.lineage.source)
-        for m in (a, b)
-    }
+    ids = {scene_id_for(m.lineage.source) for m in (a, b)}
     assert len(ids) == 1
     assert isinstance(a.lineage.producer, ProducerInfo)
 

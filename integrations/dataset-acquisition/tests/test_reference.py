@@ -1033,9 +1033,11 @@ def test_render_labels_needs_no_source_and_is_deterministic(
     assert code == 0 and render(capsys, corpus_dir, labelled, second)[0] == 0
     assert first.read_bytes() == second.read_bytes()
     document = json.loads(first.read_text())
-    assert document["schema_version"] == "sceneops.label_set/v1"
+    assert document["schema_version"] == "sceneops.label_set/v2"
     assert document["label_set_id"] == "gt-1"
-    assert {a["robot_run_id"] for a in document["coverage"]} == {"run-1"}
+    assert {(a["source_kind"], a["source_id"]) for a in document["coverage"]} == {
+        ("recording", "run-1")
+    }
     assert (summary["coverage_count"], summary["label_count"]) == (2, 3)
     assert summary["sha256"].startswith("sha256:")
     lock = json.loads(lock_bytes(corpus_dir))

@@ -6,7 +6,6 @@ from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
 from app.domains.datasets.dependencies import DatasetServiceDep
 from app.domains.datasets.schemas import (
-    CreateDatasetVersionBody,
     DatasetDetailResponse,
     DatasetListResponse,
     DatasetSceneQualityListResponse,
@@ -15,7 +14,8 @@ from app.domains.datasets.schemas import (
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
 )
-from app.domains.scenes.schemas import SceneListResponse
+from app.domains.episodes.schemas import EpisodeRevisionListResponse
+from app.domains.scenes.schemas import SceneRevisionListResponse
 from app.platform.artifacts.schemas import ArtifactListResponse
 from sceneops_core.datasets.schemas import CreateDatasetRequest
 
@@ -75,22 +75,6 @@ async def list_dataset_versions(
     return result
 
 
-@router.post(
-    "/{dataset_id}/versions",
-    response_model=DatasetVersionDetailResponse,
-    status_code=201,
-)
-async def create_dataset_version(
-    dataset_id: str,
-    body: CreateDatasetVersionBody,
-    service: DatasetServiceDep,
-) -> DatasetVersionDetailResponse:
-    result = await service.create_dataset_version(dataset_id, body)
-    if result is None:
-        raise_not_found("Dataset", dataset_id)
-    return result
-
-
 @router.get(
     "/{dataset_id}/versions/{version}", response_model=DatasetVersionDetailResponse
 )
@@ -137,14 +121,34 @@ async def list_dataset_scene_quality(
     return result
 
 
-@router.get("/{dataset_id}/versions/{version}/scenes", response_model=SceneListResponse)
+@router.get(
+    "/{dataset_id}/versions/{version}/scenes", response_model=SceneRevisionListResponse
+)
 async def list_dataset_version_scenes(
     dataset_id: str,
     version: str,
     service: DatasetServiceDep,
     pagination: PaginationDep,
-) -> SceneListResponse:
+) -> SceneRevisionListResponse:
     result = await service.list_dataset_version_scenes(
+        dataset_id, version, limit=pagination.limit, offset=pagination.offset
+    )
+    if result is None:
+        raise_not_found("Dataset version", f"{dataset_id}:{version}")
+    return result
+
+
+@router.get(
+    "/{dataset_id}/versions/{version}/episodes",
+    response_model=EpisodeRevisionListResponse,
+)
+async def list_dataset_version_episodes(
+    dataset_id: str,
+    version: str,
+    service: DatasetServiceDep,
+    pagination: PaginationDep,
+) -> EpisodeRevisionListResponse:
+    result = await service.list_dataset_version_episodes(
         dataset_id, version, limit=pagination.limit, offset=pagination.offset
     )
     if result is None:

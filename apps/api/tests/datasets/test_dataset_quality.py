@@ -24,7 +24,6 @@ Covers:
 
 from __future__ import annotations
 
-from sceneops_core.datasets.schemas.enums import DatasetVersionStatus
 from sceneops_core.datasets.schemas.records import DatasetVersionRecord
 
 from app.domains.datasets.quality import (
@@ -37,10 +36,10 @@ from app.domains.datasets.schemas import (
 )
 
 
-def _version(
-    status: DatasetVersionStatus = DatasetVersionStatus.REGISTERED,
-) -> DatasetVersionRecord:
-    return DatasetVersionRecord(dataset_id="d", version="v1", status=status)
+def _version() -> DatasetVersionRecord:
+    return DatasetVersionRecord(
+        dataset_id="d", version="v1", composition_checksum="sha256:" + "c" * 64
+    )
 
 
 def _summary(
@@ -128,11 +127,8 @@ def test_response_identity_counts_and_channels():
         observed_channels=["CAM_FRONT"],
     )
     response = build_dataset_version_quality_from_aggregate(_version(), summary)
-    assert (response.dataset_id, response.version, response.status) == (
-        "d",
-        "v1",
-        "registered",
-    )
+    assert (response.dataset_id, response.version) == ("d", "v1")
+    assert "status" not in response.model_dump()
     assert response.counts.scene_count == 3
     assert response.counts.keyframe_count == 7
     assert response.counts.observation_count == 90

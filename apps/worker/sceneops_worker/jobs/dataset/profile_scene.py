@@ -22,7 +22,7 @@ from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 from sceneops_scenes.profiling import SceneManifestProfiler
-from sceneops_worker.scenes.resolver import resolve_registered_scene
+from sceneops_worker.scenes.resolver import resolve_scene_revisions
 
 _profiler = SceneManifestProfiler()
 
@@ -33,9 +33,9 @@ class ProfileSceneJobHandler(
     ],
     JobHandler[ProfileSceneJobParams, ProfileSceneJobResult],
 ):
-    """Profiles registered Scenes at their current revision; each per-scene
-    run record pins the revision it profiled. Never writes a SceneRecord or
-    DatasetVersion state."""
+    """Profiles pinned Scene revisions; each per-scene run record pins the
+    revision it profiled. Reads no DatasetVersion and never changes a unit,
+    a revision or a membership."""
 
     @property
     def job_type(self) -> JobType:
@@ -46,14 +46,7 @@ class ProfileSceneJobHandler(
         return ProfileSceneJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": inputs.dataset.dataset_version
-            if inputs.dataset
-            else None,
-            **inputs.params,
-            "scene_ids": inputs.refs.get("scene_ids") or [],
-        }
+        return {**inputs.params, "revisions": inputs.refs.get("revisions") or []}
 
     def build_initial_record(
         self,
@@ -64,8 +57,6 @@ class ProfileSceneJobHandler(
     ) -> SceneProfileRunRecord:
         return SceneProfileRunRecord(
             run_id=default_profile_run_id(job.job_id),
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
             pipeline_task_run_id=job.pipeline_task_run_id,
@@ -83,17 +74,15 @@ class ProfileSceneJobHandler(
         started_at: datetime,
     ) -> tuple[SceneProfileRunRecord, ProfileSceneJobResult]:
         run_id = initial_record.run_id
-        if not params.scene_ids:
-            raise ValueError("profile_scene requires at least one scene_id.")
 
         total_observations = 0
         total_keyframes = 0
         all_channels: set[str] = set()
         scene_profiles: list[dict] = []
 
-        for scene_id in params.scene_ids:
-            resolved = await resolve_registered_scene(context, scene_id)
+        for resolved in await resolve_scene_revisions(context, params.revisions):
             record = resolved.record
+            scene_id = record.scene_id
             result = _profiler.profile(scene_id=scene_id, manifest=resolved.manifest)
 
             all_channels.update(result.observed_channels)
@@ -135,8 +124,6 @@ class ProfileSceneJobHandler(
                 owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
                 owner_id=per_scene_run_id,
                 scene_id=scene_id,
-                dataset_id=record.dataset_id,
-                dataset_version=record.dataset_version,
                 run_id=per_scene_run_id,
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
@@ -147,8 +134,6 @@ class ProfileSceneJobHandler(
                     scene_id=scene_id,
                     manifest_artifact_id=record.manifest_artifact_id,
                     manifest_checksum=record.manifest_checksum,
-                    dataset_id=record.dataset_id,
-                    dataset_version=record.dataset_version,
                     status=RunStatus.SUCCEEDED,
                     observation_count=result.observation_count,
                     keyframe_count=result.keyframe_count,
@@ -187,8 +172,6 @@ class ProfileSceneJobHandler(
             media_type="application/json",
             owner_type=ArtifactOwnerType.SCENE_PROFILE_RUN,
             owner_id=run_id,
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             run_id=run_id,
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,

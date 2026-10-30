@@ -95,6 +95,7 @@ def test_camera_and_lidar_sized_payloads_round_trip_through_capture(tmp_path) ->
                 robot_id=robot,
                 robot_run_id=run,
                 sequence_number=1,
+                telemetry_count=len(payloads),
             )
         )
         await producer.close()
@@ -168,13 +169,19 @@ def test_zero_source_timestamp_round_trips_through_real_kafka_and_capture(
         envelope = _envelope(
             run, robot, 0, "/tf_static", "tf2_msgs/msg/TFMessage", payload
         )
+        await producer.publish(
+            build_control_envelope(
+                event_type=RunEventType.RUN_START, robot_id=robot, robot_run_id=run
+            )
+        )
         await producer.publish(envelope.model_copy(update={"source_timestamp_ns": 0}))
         await producer.publish(
             build_control_envelope(
                 event_type=RunEventType.RUN_END,
                 robot_id=robot,
                 robot_run_id=run,
-                sequence_number=0,
+                sequence_number=1,
+                telemetry_count=1,
             )
         )
         await producer.close()

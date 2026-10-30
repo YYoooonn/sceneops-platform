@@ -1,0 +1,2882 @@
+{
+  "corpus_id": "nuscenes-mini-v1",
+  "derived_from": {
+    "corpus_lock": "sha256:d288d0c14daa5c7a70a2c646cc8ef6a857a623ad7c732c6cef96737119c37bc7",
+    "episode_build_config": "sha256:79e820fe659c7015a0302e3cb37d36968e440615784c38dd9663c9c8f241f5ea",
+    "scene_build_config": "sha256:bcb825d5b3133557c775c431dfa97eec72f9df2f03c0e896d30e809705a56298"
+  },
+  "fixtures": {
+    "scene-0061": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 38,
+                  "digest": "sha256:3967d3ace7c42f2de39867a29003793c3a02e71494b39d9ee9fe859626f57307"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:8dcaa26c849925f78b471874e7fa76fb7ec6702f576cdc0b2d2930d4d4a93ddb"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 224,
+                  "digest": "sha256:d8bd57f4d3dc72dee2ed2b76118f7a8a0fdd6eef30833ef68baeb22b59d3b7d0"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 938,
+                  "digest": "sha256:49ffc6ae78d8949b1af25fae01de5d8d41ecad4ab3c744d5dd47994d1fa05ef2"
+                },
+                "/vehicle/status": {
+                  "count": 38,
+                  "digest": "sha256:0edebc07021d30040771d7b0e7d31c56e8dc06ca19c6cfc8f3a9eb3310f2d3e6"
+                }
+              }
+            },
+            "segment": "task-mission-scene-0061-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-0061-000",
+            "window": {
+              "end_timestamp_ns": 1532402947127060001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1532402927604844000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 8897,
+        "sha256": "sha256:05f96038d59019f8d823685d859b71ebbe2f9f54a7a84e1b2727a0af599779a1",
+        "size_bytes": 355793127
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1266.417203046554,
+                0.0,
+                816.2670197447984
+              ],
+              [
+                0.0,
+                1266.417203046554,
+                491.50706579294757
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.4998015430569128,
+                -0.5030316162024876,
+                0.4997798114386805,
+                -0.49737083824542755
+              ],
+              "translation_m": [
+                1.70079118954,
+                0.0159456324149,
+                1.51095763913
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.7077955119163518,
+                -0.006492242056004365,
+                0.010646214713995808,
+                -0.7063073142877817
+              ],
+              "translation_m": [
+                0.943713,
+                0.0,
+                1.84023
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 224,
+            "observations_digest": "sha256:cd58e403ef1f83f4f283f1d3d7186e563286827c02107c3ab9049c867cf01eab",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 382,
+            "observations_digest": "sha256:7ea21899e2e30d2706b4764d32a970f3f58dc9b04029871672f4227ac46b2ada",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 606,
+        "pose_count": 2963,
+        "poses_digest": "sha256:f81228d9d2635f8309efe20418218b697119bb097bf37cf93407a02663af7266",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1532402946826796001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1532402927604844000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-b9ae0e7326cf4c263c4f2bb984d0f1e1"
+          ],
+          "scene": [
+            "scene-82f1766f5f094306ef74c54737512da3"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-d9ffdcc44123eeff8f56ae8840637f0e"
+          ],
+          "scene": [
+            "scene-a79272d714b370d18392e1e34e10b6bf"
+          ]
+        }
+      }
+    },
+    "scene-0103": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 40,
+                  "digest": "sha256:a3b9c5a83ec7cd9b021d21f9331ce0bf2b70d88209e9645ce8df27870b33745c"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:473f059acbb20de6ca89bcc254c5e7e21c5478f1cf302deb6c9270f83eac287d"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 229,
+                  "digest": "sha256:940b9ef3ca07cdf42d7707fc83ae7a75317e5b92bedae620b1b32df0bf4f0982"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 969,
+                  "digest": "sha256:ba6be1b35a5f932043dece3ff059309114381eedfce9eb403c971e6e94fdedd5"
+                },
+                "/vehicle/status": {
+                  "count": 40,
+                  "digest": "sha256:e693539b063575735fdf58060f947d8f753bae935ca2f30ad29f2914abe853cf"
+                }
+              }
+            },
+            "segment": "task-mission-scene-0103-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-0103-000",
+            "window": {
+              "end_timestamp_ns": 1533151623899468001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1533151603504799000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9206,
+        "sha256": "sha256:e70fc56e9008c835b1cf23955c39599e7f0be08b87af750bd9a95a15e47c0fff",
+        "size_bytes": 345676680
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1252.8131021185304,
+                0.0,
+                826.588114781398
+              ],
+              [
+                0.0,
+                1252.8131021185304,
+                469.9846626224581
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.5077241387638071,
+                -0.4973392230703816,
+                0.49837167536166627,
+                -0.4964832014373754
+              ],
+              "translation_m": [
+                1.72200568478,
+                0.00475453292289,
+                1.49491291905
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.706749235646644,
+                -0.015300993788500868,
+                0.01739745181256607,
+                -0.7070846669051719
+              ],
+              "translation_m": [
+                0.985793,
+                0.0,
+                1.84019
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 229,
+            "observations_digest": "sha256:8d75b4eba51a346ed5ada970b2c9abe4e4e595ed2e277f4c75ce0613d553173e",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 389,
+            "observations_digest": "sha256:ba101eec5b15417d72e492649abcc6cf5fcd915c3e29597b94e44a34dd7c7b4f",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 618,
+        "pose_count": 3063,
+        "poses_digest": "sha256:5fa2f714313dc7ec83b1e544a5e40885f1e9860c8a8170689cfd22fd2e646fa2",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1533151622983657001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1533151603504799000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-c7e87fcef46c516fe8d81e53e711a734"
+          ],
+          "scene": [
+            "scene-d11be6cf9fbe8f199c161f169e0d764e"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-0a637f0e9f02f58bf0f4c5263dc2d2f2"
+          ],
+          "scene": [
+            "scene-4f9cc41db91d3005503b6f615a9f4b7f"
+          ]
+        }
+      }
+    },
+    "scene-0553": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 40,
+                  "digest": "sha256:2b90dd41d4665205abdb55771b95af32470f7e3f0eceacdc1bec3135122f3875"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:4e56d73cbd0277f36d6f29b2aa3b768d17a519d5b96b4163c2faa0817772972a"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 237,
+                  "digest": "sha256:8e504a337c715d50452f416350d02a8486e51643d6674e1aebabf90c1853969b"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 992,
+                  "digest": "sha256:fc6dd32f9df6817c272234fbbb2cf3050db1ce4801fc65cb51b8e4460683ac6e"
+                },
+                "/vehicle/status": {
+                  "count": 40,
+                  "digest": "sha256:1e3b1672f249d53402e9e10a51426876a231f108288ab2903cd7034364222f45"
+                }
+              }
+            },
+            "segment": "task-mission-scene-0553-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-0553-000",
+            "window": {
+              "end_timestamp_ns": 1535489316217510001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1535489296004799000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9476,
+        "sha256": "sha256:69ec4e42cc78efcaa1012e9cb335af9cf36bf6bc414ec0241a30a9d663bee089",
+        "size_bytes": 311632194
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1252.8131021185304,
+                0.0,
+                826.588114781398
+              ],
+              [
+                0.0,
+                1252.8131021185304,
+                469.9846626224581
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.5077241387638071,
+                -0.4973392230703816,
+                0.49837167536166627,
+                -0.4964832014373754
+              ],
+              "translation_m": [
+                1.72200568478,
+                0.00475453292289,
+                1.49491291905
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.706749235646644,
+                -0.015300993788500868,
+                0.01739745181256607,
+                -0.7070846669051719
+              ],
+              "translation_m": [
+                0.985793,
+                0.0,
+                1.84019
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 237,
+            "observations_digest": "sha256:9d44caa5ac2c2d641ceca022a8ed753586c24d72cc88f5545e41f6318883e60e",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 398,
+            "observations_digest": "sha256:9f0bf77fb807b2a44e42680263b64233ce145b617cdb38ed614c45c7ae129a75",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 635,
+        "pose_count": 3171,
+        "poses_digest": "sha256:3f4bc04e219f7dbd218b7196115cf39c3ff0c7fd59ee7ae4a1e8491e83bd9bd9",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1535489315976447001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1535489296004799000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-415f009a5ff7f20b4654aa27103f0b22"
+          ],
+          "scene": [
+            "scene-8f447e4e483603b32d0d2f122ec0999d"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-8a7758c7497dbd8d7d92dd0c7754a679"
+          ],
+          "scene": [
+            "scene-b5530250cfbbb9b458317bafe2ac64de"
+          ]
+        }
+      }
+    },
+    "scene-0655": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 40,
+                  "digest": "sha256:f78081c5cd3e63b17c8b93ed744564d3578b301b4689ea92db6471830e798213"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:bd79168ff83ae07eb38659268499b649a0751e0deb294870786f35250e6f66ba"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 237,
+                  "digest": "sha256:df477f8bfaefc4651315fe2fa6088e846fc751b26f4f832e8c38ac91fb67c654"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 985,
+                  "digest": "sha256:b7dd95faada946884b877035a87aa9e27188ebe06303eb6a4d862ebbea7c69db"
+                },
+                "/vehicle/status": {
+                  "count": 40,
+                  "digest": "sha256:4a302df4a8a523a3812940bdfab671822e2d2f715aca590e5c810848be98e9a4"
+                }
+              }
+            },
+            "segment": "task-mission-scene-0655-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-0655-000",
+            "window": {
+              "end_timestamp_ns": 1535385112194518001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1535385092104799000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9400,
+        "sha256": "sha256:46b1fa9cf05a523a9f24a5e5f20497831b37776f447b22f48cf981a26edef957",
+        "size_bytes": 332901701
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1252.8131021185304,
+                0.0,
+                826.588114781398
+              ],
+              [
+                0.0,
+                1252.8131021185304,
+                469.9846626224581
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.5077241387638071,
+                -0.4973392230703816,
+                0.49837167536166627,
+                -0.4964832014373754
+              ],
+              "translation_m": [
+                1.72200568478,
+                0.00475453292289,
+                1.49491291905
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.706749235646644,
+                -0.015300993788500868,
+                0.01739745181256607,
+                -0.7070846669051719
+              ],
+              "translation_m": [
+                0.985793,
+                0.0,
+                1.84019
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 237,
+            "observations_digest": "sha256:4b561eff6e61c079fd1a8cf46cdee1c5357cbc059c8789f5f2d2c3c67df91477",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 396,
+            "observations_digest": "sha256:6d5e82aeba1b63af34cb537cc7441b6fcf47f683c6232ca07959a1cf97ef9f6e",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 633,
+        "pose_count": 3136,
+        "poses_digest": "sha256:82190c1a51535635fb10988e73a8ed16f7dfa3dea748a5ae99d9b10bcd27ec47",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1535385111974960001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1535385092104799000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-fc18c719d3ef9a352b95d46fcdf392b3"
+          ],
+          "scene": [
+            "scene-797f8e7ab83218dc0cc198e6c27021cd"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-098d0e26a0904175113c4644983bc632"
+          ],
+          "scene": [
+            "scene-dcd8211dbde624e0bb3f47ffffc9dbd2"
+          ]
+        }
+      }
+    },
+    "scene-0757": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 39,
+                  "digest": "sha256:61fa0c3d49c9832468ec5a71c706ef8efc09beadc1f222a103b5aeb6a51478d7"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:af2e16b50a54bcd12b6b0527eaf9312444d7b534a0042d9aab20a70a1c546e76"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 237,
+                  "digest": "sha256:08e5fa9c303a27b39081751d6802e0ccba991ea28f53e0f2fd3948f1b6255a8c"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 992,
+                  "digest": "sha256:c8d0980fe4a6813e887bdb902be6e6d91792186c4520cf4859c9e2aee81ead69"
+                },
+                "/vehicle/status": {
+                  "count": 39,
+                  "digest": "sha256:0538d6d8f977f5674e65ae3fb3cae0d6b608899a99318da81156bdf71b7c9465"
+                }
+              }
+            },
+            "segment": "task-mission-scene-0757-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-0757-000",
+            "window": {
+              "end_timestamp_ns": 1535657128475290001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1535657108254799000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9446,
+        "sha256": "sha256:4fb1609aa8435c746851c208f3628fc4a68be58e42e12381a27aa75cd01d6c8b",
+        "size_bytes": 354735847
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1252.8131021185304,
+                0.0,
+                826.588114781398
+              ],
+              [
+                0.0,
+                1252.8131021185304,
+                469.9846626224581
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.5077241387638071,
+                -0.4973392230703816,
+                0.49837167536166627,
+                -0.4964832014373754
+              ],
+              "translation_m": [
+                1.72200568478,
+                0.00475453292289,
+                1.49491291905
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.706749235646644,
+                -0.015300993788500868,
+                0.01739745181256607,
+                -0.7070846669051719
+              ],
+              "translation_m": [
+                0.985793,
+                0.0,
+                1.84019
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 237,
+            "observations_digest": "sha256:173476cc520d3f8437811e35aa71b00c8f039c53dec91c350744f8fca1deb018",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 397,
+            "observations_digest": "sha256:e787a115153a47b0bbdb9c2d5142d22c5f7c373d452ad6f5d555321f1e54ae2e",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 634,
+        "pose_count": 3155,
+        "poses_digest": "sha256:723f60800c3890b03c5939c20c90985d68db346f541ab563d0cff44983d0cb6d",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1535657128173715001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1535657108254799000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-8b17b023b5e7e7e3ecacc023ce0144a5"
+          ],
+          "scene": [
+            "scene-c9af93c34fea2eb485cbef870a580e45"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-0e666de3c3ac25c467ad8e82c972a927"
+          ],
+          "scene": [
+            "scene-512491515a57ada55268e08387226b92"
+          ]
+        }
+      }
+    },
+    "scene-0796": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 40,
+                  "digest": "sha256:8fe93a0069c029f0f8afc2421170224af71efcabd7dc162c9dd2a3d9e23303fa"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:170ef4c4542b95b4a488bd776f13d4da8e9478e9e809095de866cc1ac0ac16ca"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 234,
+                  "digest": "sha256:36d858b72eab2f36b39918e994458beeb0bbc3e445533305ed57cef90ceb40c8"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 976,
+                  "digest": "sha256:69ed278d7e27bd0dcd9f9440130420c423fea4e01d4dca42e82e35fd16738ca9"
+                },
+                "/vehicle/status": {
+                  "count": 40,
+                  "digest": "sha256:e80ce834fbef81d5bd2b135f221a8b6232b8d1330cacba82ea55a9f94d42aef8"
+                }
+              }
+            },
+            "segment": "task-mission-scene-0796-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-0796-000",
+            "window": {
+              "end_timestamp_ns": 1538448764131460001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1538448744404844000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9323,
+        "sha256": "sha256:982a1e9edf51a631c08701b2ccfa020b5b2cc7678ee147f9e149076da9728641",
+        "size_bytes": 420397185
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1266.417203046554,
+                0.0,
+                816.2670197447984
+              ],
+              [
+                0.0,
+                1266.417203046554,
+                491.50706579294757
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.4998015430569128,
+                -0.5030316162024876,
+                0.4997798114386805,
+                -0.49737083824542755
+              ],
+              "translation_m": [
+                1.70079118954,
+                0.0159456324149,
+                1.51095763913
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.7077955119163518,
+                -0.006492242056004365,
+                0.010646214713995808,
+                -0.7063073142877817
+              ],
+              "translation_m": [
+                0.943713,
+                0.0,
+                1.84023
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 234,
+            "observations_digest": "sha256:2b3a0f60eb386e000066d63a4d5cad404ec4366977f4336577c378a5fb2422ce",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 392,
+            "observations_digest": "sha256:149a1208a6f3646e730954efcc20734e487ea2f9ed3ea141f9e9d167a446c272",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 626,
+        "pose_count": 3115,
+        "poses_digest": "sha256:20933f48b930d0b80cad1681db1b04e0aa491adc53e26e830ad8b14108063bde",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1538448764049773001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1538448744404844000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-caf5495463ba0cdea8a0941712fde22f"
+          ],
+          "scene": [
+            "scene-6780c2de1916c5b95ee71f0ed16e51fa"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-91f20764336636212015322f178b838a"
+          ],
+          "scene": [
+            "scene-b5b484e89901b443dc1b9b81037c1feb"
+          ]
+        }
+      }
+    },
+    "scene-0916": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 41,
+                  "digest": "sha256:f3e118d06bbd60a6d31853dc3bf04c4ea209a8ab2dcd7d0f9f1c3abe5612687d"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:cfbabdc73cb176e3bbb1335b0c61e8271251e1c0aed653345cb508d26ee30898"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 240,
+                  "digest": "sha256:0e1453540d8aa8481eba64a91c2a9ce15f2525be59212748b4c5a9539490264c"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 995,
+                  "digest": "sha256:b06f02c81ad61abdcb143b67ccdd1a09d08790189efa6fe6f389672fe2e94d1f"
+                },
+                "/vehicle/status": {
+                  "count": 41,
+                  "digest": "sha256:8f6d0c0960ef52db2a3a2ec4544d6e3a1390740d8b96867e7d54ee0351ca40e2"
+                }
+              }
+            },
+            "segment": "task-mission-scene-0916-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-0916-000",
+            "window": {
+              "end_timestamp_ns": 1538984253624820001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1538984233504844000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9535,
+        "sha256": "sha256:2f4b4c3f79c3c193814e753edf5e7c5badab6246e202c3ab3257e018312d4a0b",
+        "size_bytes": 381579450
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1266.417203046554,
+                0.0,
+                816.2670197447984
+              ],
+              [
+                0.0,
+                1266.417203046554,
+                491.50706579294757
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.4998015430569128,
+                -0.5030316162024876,
+                0.4997798114386805,
+                -0.49737083824542755
+              ],
+              "translation_m": [
+                1.70079118954,
+                0.0159456324149,
+                1.51095763913
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.7077955119163518,
+                -0.006492242056004365,
+                0.010646214713995808,
+                -0.7063073142877817
+              ],
+              "translation_m": [
+                0.943713,
+                0.0,
+                1.84023
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 240,
+            "observations_digest": "sha256:b942c7b0eed21fb6f521c021d13a795819c59b6c6f9b4b8a64133683a1523faf",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 399,
+            "observations_digest": "sha256:719f2fb94863e7be8c6982462d7631d21deb844b0fb919ed4d046bf2707e8b3b",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 639,
+        "pose_count": 3197,
+        "poses_digest": "sha256:70ab1dcb63c4b82bf5d71c9d44f8cb498b37249e49db5acd85b8fb1dbc7e9dc7",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1538984253481462001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1538984233504844000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-1ceb4f1055b80c11432b2188c0d28fbe"
+          ],
+          "scene": [
+            "scene-5baad1895fe2ef934a781e7c646adb9e"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-0d1adc56ff7caa8a6f75f944c0119795"
+          ],
+          "scene": [
+            "scene-e2a615f56d24824f64b992942670c8b7"
+          ]
+        }
+      }
+    },
+    "scene-1077": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 41,
+                  "digest": "sha256:089114bcb77013608bcb84220b0afac639191732054e0d3d6e70ca219c0d2835"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:1d20ee6953dfbbd30bb4774f1fc28287548b1200e43cf6da67a3e920cbb5ba0d"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 240,
+                  "digest": "sha256:5230beca4f038ad49d01cc860f3c366df942fd193184e3cf670e7eaa907f5ae1"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 992,
+                  "digest": "sha256:69a7a34600f3adc5e9c94947cdc5c2e230264af613e0786286a6b0d657771b59"
+                },
+                "/vehicle/status": {
+                  "count": 41,
+                  "digest": "sha256:337fdc053bc3b3a14ae44ba8d8fcd7bc2f762c2f9286f5355dfa29d755fea42c"
+                }
+              }
+            },
+            "segment": "task-mission-scene-1077-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-1077-000",
+            "window": {
+              "end_timestamp_ns": 1542800388122646001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1542800367904844000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9493,
+        "sha256": "sha256:8c3c95a4306e95a4422b8a6a4ce663bdc8fcedfdcaea60f517870d38c37b3892",
+        "size_bytes": 493268068
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1266.417203046554,
+                0.0,
+                816.2670197447984
+              ],
+              [
+                0.0,
+                1266.417203046554,
+                491.50706579294757
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.4998015430569128,
+                -0.5030316162024876,
+                0.4997798114386805,
+                -0.49737083824542755
+              ],
+              "translation_m": [
+                1.70079118954,
+                0.0159456324149,
+                1.51095763913
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.7077955119163518,
+                -0.006492242056004365,
+                0.010646214713995808,
+                -0.7063073142877817
+              ],
+              "translation_m": [
+                0.943713,
+                0.0,
+                1.84023
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 240,
+            "observations_digest": "sha256:a5123c4f55cc4ce30e26396f660000cf12e59366664b9b6fbffc4f5d82a2f5ff",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 400,
+            "observations_digest": "sha256:c9b6702b40bfdf282947c2443f329cb666bf5c6376ec5b5d3e12c5cd059ce82a",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 640,
+        "pose_count": 3177,
+        "poses_digest": "sha256:187e48f1c0c2c533fdbdaf743962dd8ffe49d85ab4e85ff6185151c901c19e33",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1542800387935184001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1542800367904844000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-29f0dd5818578d44f1805b600571047e"
+          ],
+          "scene": [
+            "scene-e2b3dc2a66e43e2ce5c0a2c158c7e7dc"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-e57f4f0d6b2085844452f4203c8be69f"
+          ],
+          "scene": [
+            "scene-ec67ab41d00a9d31da7a9d2f22c0d120"
+          ]
+        }
+      }
+    },
+    "scene-1094": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 40,
+                  "digest": "sha256:0a57504942201831bd26eb18eb42a9de22a6ae98544f869b36e9323a213c6826"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:000c3346a654e20d9a59f972e035f0c083104988457f6ee0094f431ccc809b02"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 232,
+                  "digest": "sha256:e86261dfa1f90e354fdb3f5b14c10b8d21b0ae62fbc60a020a5006ec5ab8a33e"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 967,
+                  "digest": "sha256:beb12fe3ed8e5a85224f9b49f789d4961a3d1c144e080eb72ffc15ca66898773"
+                },
+                "/vehicle/status": {
+                  "count": 40,
+                  "digest": "sha256:ab97bbbce61be24b0200e9373bbc4a9676acfec9cae7cc30e21590d722955d7b"
+                }
+              }
+            },
+            "segment": "task-mission-scene-1094-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-1094-000",
+            "window": {
+              "end_timestamp_ns": 1542800867618010001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1542800847904844000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9290,
+        "sha256": "sha256:4ddbe0de51236b850289d4f96fa8838377c22d92451616de45066448a66873c7",
+        "size_bytes": 516203707
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1266.417203046554,
+                0.0,
+                816.2670197447984
+              ],
+              [
+                0.0,
+                1266.417203046554,
+                491.50706579294757
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.4998015430569128,
+                -0.5030316162024876,
+                0.4997798114386805,
+                -0.49737083824542755
+              ],
+              "translation_m": [
+                1.70079118954,
+                0.0159456324149,
+                1.51095763913
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.7077955119163518,
+                -0.006492242056004365,
+                0.010646214713995808,
+                -0.7063073142877817
+              ],
+              "translation_m": [
+                0.943713,
+                0.0,
+                1.84023
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 232,
+            "observations_digest": "sha256:39a3a3fd5e9f5369c4e19e284ae0483f293f6ecefd30c0b8d18337134531b8da",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 391,
+            "observations_digest": "sha256:907b0c53df61e6ed15095a967220264d662fbbf7b8e99bb0bdb5fb74e536463b",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 623,
+        "pose_count": 3111,
+        "poses_digest": "sha256:b3a8b2dcc1cd1f1ad746866604cf5da3589c671fb0c2d57d199f1ae518331a08",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1542800867473468001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1542800847904844000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-d38032e319a00d057566f76a33c14477"
+          ],
+          "scene": [
+            "scene-c6c3853bab1d7243a1382595b427eae9"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-6193dd5f0fd70bf9be76b6d74a93d7c1"
+          ],
+          "scene": [
+            "scene-615bf29c72eef31c9133a33e29bf6c48"
+          ]
+        }
+      }
+    },
+    "scene-1100": {
+      "episode": {
+        "boundary": {
+          "decoding": "json_string",
+          "end_values": [
+            "completed"
+          ],
+          "event_topic": "/mission/status",
+          "key_path": "mission_id",
+          "policy": "event_markers",
+          "start_values": [
+            "running"
+          ],
+          "state_path": "operation_state",
+          "time": {
+            "clock": "vehicle.source_time",
+            "field": "source_timestamp_ns",
+            "source": "payload_field"
+          }
+        },
+        "units": [
+          {
+            "clock_domains": [
+              {
+                "clock": "vehicle.source_time",
+                "origin": "source",
+                "resolution_ns": 1
+              }
+            ],
+            "occurrences": {
+              "actions": {
+                "/vehicle/control": {
+                  "count": 40,
+                  "digest": "sha256:8d12b4da7b050c3df7a4c555d558c3fe128575881e1e3402333300c86ded123d"
+                }
+              },
+              "events": {
+                "/mission/status": {
+                  "count": 2,
+                  "digest": "sha256:9e7d904ac148e780e2fb853a92f5c2ae8eae581c351fd45a46e2834c3b5d4441"
+                }
+              },
+              "observations": {
+                "/camera/front/image/compressed": {
+                  "count": 232,
+                  "digest": "sha256:4f6e0931e622d7de42faf8d342fcce23dabdc72556786c9618ab0fdfc9cd4cb9"
+                }
+              },
+              "states": {
+                "/vehicle/odom": {
+                  "count": 974,
+                  "digest": "sha256:4ad0bf6aa52a0feb892a0484f384d6f613a971dd6e31ab0ff3ba7332e1db76cf"
+                },
+                "/vehicle/status": {
+                  "count": 40,
+                  "digest": "sha256:d762ec8b27c54730805200a6a57fb09661792422a0b0eeceaa788eb890d329ae"
+                }
+              }
+            },
+            "segment": "task-mission-scene-1100-000",
+            "streams": {
+              "/camera/front/image/compressed": {
+                "fields": [],
+                "has_payload": true,
+                "role": "observation",
+                "schema_name": "sensor_msgs/msg/CompressedImage",
+                "source_clock": "vehicle.source_time"
+              },
+              "/mission/status": {
+                "fields": [
+                  [
+                    "mission_id",
+                    "mission_id"
+                  ],
+                  [
+                    "state",
+                    "operation_state"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "event",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/control": {
+                "fields": [
+                  [
+                    "brake",
+                    "brake"
+                  ],
+                  [
+                    "steering",
+                    "steering"
+                  ],
+                  [
+                    "throttle",
+                    "throttle"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "action",
+                "schema_name": "std_msgs/msg/String",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/odom": {
+                "fields": [
+                  [
+                    "vx",
+                    "twist.twist.linear.x"
+                  ],
+                  [
+                    "x",
+                    "pose.pose.position.x"
+                  ],
+                  [
+                    "y",
+                    "pose.pose.position.y"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "nav_msgs/msg/Odometry",
+                "source_clock": "vehicle.source_time"
+              },
+              "/vehicle/status": {
+                "fields": [
+                  [
+                    "battery",
+                    "percentage"
+                  ]
+                ],
+                "has_payload": false,
+                "role": "state",
+                "schema_name": "sensor_msgs/msg/BatteryState",
+                "source_clock": "vehicle.source_time"
+              }
+            },
+            "unit_key": "event_markers-514c31ea4e90ecfa/task-mission-scene-1100-000",
+            "window": {
+              "end_timestamp_ns": 1542801007617857001,
+              "source_clock": "vehicle.source_time",
+              "start_timestamp_ns": 1542800987904844000
+            }
+          }
+        ]
+      },
+      "recording": {
+        "message_count": 9307,
+        "sha256": "sha256:fb2dcacc6e667bc101e0cce583df0e0015828965586a8be3e40cea44df93a291",
+        "size_bytes": 555970139
+      },
+      "scene": {
+        "boundary": {
+          "clock": "sensor.header_stamp",
+          "policy": "whole_recording"
+        },
+        "calibrations": {
+          "/camera/front/image/compressed": {
+            "camera_intrinsic": [
+              [
+                1266.417203046554,
+                0.0,
+                816.2670197447984
+              ],
+              [
+                0.0,
+                1266.417203046554,
+                491.50706579294757
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "extrinsic": {
+              "child_frame_id": "cam_front",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.4998015430569128,
+                -0.5030316162024876,
+                0.4997798114386805,
+                -0.49737083824542755
+              ],
+              "translation_m": [
+                1.70079118954,
+                0.0159456324149,
+                1.51095763913
+              ]
+            }
+          },
+          "/lidar/top/points": {
+            "camera_intrinsic": null,
+            "extrinsic": {
+              "child_frame_id": "lidar_top",
+              "parent_frame_id": "base_link",
+              "rotation_wxyz": [
+                0.7077955119163518,
+                -0.006492242056004365,
+                0.010646214713995808,
+                -0.7063073142877817
+              ],
+              "translation_m": [
+                0.943713,
+                0.0,
+                1.84023
+              ]
+            }
+          }
+        },
+        "channels": {
+          "/camera/front/image/compressed": {
+            "frame_id": "cam_front",
+            "modality": "camera",
+            "observation_count": 232,
+            "observations_digest": "sha256:83857703e192d0e0e6ad6541d824981129ab00158d903b24270d365f8e68edc8",
+            "sensor_id": "cam-front",
+            "source_clock": "sensor.header_stamp"
+          },
+          "/lidar/top/points": {
+            "frame_id": "lidar_top",
+            "modality": "lidar",
+            "observation_count": 391,
+            "observations_digest": "sha256:82dab7cfcfb602c960162a0361cf12d9c8889ddaa5391530237f8b8b2d7019a1",
+            "sensor_id": "lidar-top",
+            "source_clock": "sensor.header_stamp"
+          }
+        },
+        "clock_domains": [
+          {
+            "clock": "sensor.header_stamp",
+            "origin": "source",
+            "resolution_ns": 1
+          }
+        ],
+        "coordinate_frames": [
+          [
+            "base_link",
+            "ego"
+          ],
+          [
+            "cam_front",
+            "sensor"
+          ],
+          [
+            "lidar_top",
+            "sensor"
+          ],
+          [
+            "map",
+            "world"
+          ]
+        ],
+        "group_count": 0,
+        "observation_count": 623,
+        "pose_count": 3118,
+        "poses_digest": "sha256:fe6a84858e8b4f232c9283466cde364c9ff83d8d2f2aa7dc9452f2761fb0dd26",
+        "producer": {
+          "producer_id": "sceneops.recording_scene_builder",
+          "semantics_version": 6
+        },
+        "unit_key": "whole_recording-233eebe491d93840/recording",
+        "window": {
+          "end_timestamp_ns": 1542801007452232001,
+          "source_clock": "sensor.header_stamp",
+          "start_timestamp_ns": 1542800987904844000
+        }
+      },
+      "units": {
+        "recording_import": {
+          "episode": [
+            "episode-027584d67536a942707ad5115dfe223f"
+          ],
+          "scene": [
+            "scene-d5476378c9ad019e8fda0365a9059e0c"
+          ]
+        },
+        "streaming_acquisition": {
+          "episode": [
+            "episode-6533d453a57ceb943b3ef3c948f0684c"
+          ],
+          "scene": [
+            "scene-d6b04d1cba5d96895ec925a66d803abe"
+          ]
+        }
+      }
+    }
+  },
+  "rules": "docs/development/reference-verification.md",
+  "schema": "sceneops.reference_expectations/1"
+}

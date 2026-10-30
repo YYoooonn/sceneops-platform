@@ -4,9 +4,10 @@
 # reference-corpus.md).
 #
 # A baseline is: one RobotRun per selected corpus fixture (the fixture's prepared
-# batch recording, published and registered through the production path) and, in
-# one DatasetVersion, the canonical Scenes and Episodes built from those
-# RobotRuns, validated and profiled. It contains nothing derived (no labels,
+# batch recording, published and registered through the production path), the
+# canonical Scene and Episode revisions built from those RobotRuns, validated and
+# profiled, and one immutable DatasetVersion composed of exactly those revisions
+# (COMPOSE_DATASET_VERSION, ADR-015 §7). It contains nothing derived (no labels,
 # sample views, ScenarioSets, predictions, evaluations or learning exports):
 # those are L3 workflows run on top of a baseline.
 #
@@ -26,8 +27,11 @@
 # different baseline: that creates non-contract RobotRuns, which only a
 # disposable runtime may hold (require_disposable_runtime, tools/e2e/lib.sh).
 # DATASET_ID / ROBOT_ID default to the baseline's own and may be overridden: a
-# journey that only needs Scenes / Episodes of a contract RobotRun builds them
-# into a DatasetVersion of its own and registers no RobotRun.
+# journey that only needs Scenes / Episodes of a contract RobotRun composes them
+# into a DatasetVersion of its own and registers no RobotRun. A DatasetVersion is
+# immutable, so its default name (DATASET_VERSION) follows the selection: `baseline`
+# for the contract's whole selection, baseline-<fixture or scope> for a part of it.
+# Another selection is another composition and never rebinds a name.
 #
 # BASELINE_RECORDING_ASSERT names the function that checks a registered RobotRun's
 # recording against its fixture: the streaming baseline (tools/baselines/streaming) pins
@@ -50,7 +54,14 @@ CONTRACT_FIXTURE_IDS="$(jq -c '[.fixtures[].fixture_id] | sort' "$REFERENCE_CONT
 BASELINE_ID="${BASELINE_ID:-$CONTRACT_BASELINE_ID}"
 ROBOT_ID="${ROBOT_ID:-robot-$BASELINE_ID}"
 DATASET_ID="${DATASET_ID:-sceneops-$BASELINE_ID}"
-DATASET_VERSION="${DATASET_VERSION:-baseline}"
+# One name is one composition: the contract's whole selection is `baseline`, a part of
+# it (smoke-1, FIXTURE=) is composed under a name of its own.
+CONTRACT_SCOPE="$(jq -r '.corpus.scope // empty' "$REFERENCE_CONTRACT_FILE")"
+if [ -z "$FIXTURE" ] && [ "$REFERENCE_SCOPE" = "$CONTRACT_SCOPE" ]; then
+  DATASET_VERSION="${DATASET_VERSION:-baseline}"
+else
+  DATASET_VERSION="${DATASET_VERSION:-baseline-${FIXTURE:-$REFERENCE_SCOPE}}"
+fi
 
 # The resolved fixtures of the selection (a JSON array), set by baseline_resolve.
 BASELINE_FIXTURES=""
@@ -138,35 +149,47 @@ baseline_all_registered() {
   done
 }
 
-# baseline_ensure_dataset <name> — the Dataset and DatasetVersion exist; nothing is
-# written when they already do.
-baseline_ensure_dataset() {
-  if api_get "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION" >/dev/null 2>&1; then
-    return 0
-  fi
-  upsert_dataset "$API_BASE_URL" "$DATASET_ID" "$1" >/dev/null
-  upsert_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" >/dev/null
+# baseline_capacity_preflight <mode> — before the first write, refuse when the Docker VM
+# cannot hold what the selection's unregistered fixtures will add
+# (tools/dev/capacity_preflight.py). Exhausting the VM's disk stops the shared PostgreSQL
+# server; a refusal here has written nothing. Registered RobotRuns whose builds are
+# still pending are not estimated.
+baseline_capacity_preflight() {
+  local id report pending=()
+  for id in $(echo "$BASELINE_FIXTURES" | jq -r '.[].fixture_id'); do
+    baseline_run_registered "$(baseline_run_id "$id")" || pending+=(--fixture "$id")
+  done
+  [ "${#pending[@]}" -gt 0 ] || return 0
+  report="$(python3 "$REPO_ROOT/tools/dev/capacity_preflight.py" --corpus "$REFERENCE_CORPUS" \
+    --mode "$1" "${pending[@]}")" || {
+    [ -z "$report" ] || log "capacity_preflight $report"
+    fail "not enough free space for $1 of $(( ${#pending[@]} / 2 )) fixture(s) (capacity_preflight above; docs/development/local-development.md#disk-hygiene)"
+  }
+  log "capacity_preflight $report"
 }
 
-# baseline_fixture_complete <run-id> — the RobotRun has the Scenes and Episodes the
-# reference baseline expects in $DATASET_ID/$DATASET_VERSION, all validated, profiled
-# and ready at their current revision. A complete fixture is reused: the build
-# pipelines are not run over it again.
-baseline_fixture_complete() {
-  local run_id="$1" scenes episodes id scenes_expected episodes_expected
-  scenes_expected="$(jq -r '.scenes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
-  episodes_expected="$(jq -r '.episodes_per_robot_run' "$BASELINE_CONFIG_DIR/baseline_shape.json")"
-  scenes="$(api_get "$API_BASE_URL" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500" 2>/dev/null \
-    | jq -c --arg r "$run_id" '[.scenes[]? | select(.robotRunId == $r)]')" || return 1
-  episodes="$(api_get "$API_BASE_URL" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500" 2>/dev/null \
-    | jq -c --arg r "$run_id" '[.episodes[]? | select(.robotRunId == $r)]')" || return 1
-  [ "$(echo "$scenes" | jq length)" = "$scenes_expected" ] && [ "$(echo "$episodes" | jq length)" = "$episodes_expected" ] || return 1
-  for id in $(echo "$scenes" | jq -r '.[].sceneId'); do
-    api_get "$API_BASE_URL" "/scenes/$id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null || return 1
-  done
-  for id in $(echo "$episodes" | jq -r '.[].episodeId'); do
-    api_get "$API_BASE_URL" "/episodes/$id/quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null || return 1
-  done
+# baseline_ensure_dataset <name> — the Dataset exists (a namespace; its versions
+# are only ever composed). Nothing is written when it already does.
+baseline_ensure_dataset() {
+  api_get "$API_BASE_URL" "/datasets/$DATASET_ID" >/dev/null 2>&1 && return 0
+  upsert_dataset "$API_BASE_URL" "$DATASET_ID" "$1" >/dev/null
+}
+
+# baseline_version_composed — $DATASET_ID/$DATASET_VERSION exists. A DatasetVersion
+# is complete from creation and never changes, so an existing one is verified, not
+# built again.
+baseline_version_composed() {
+  api_get "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION" >/dev/null 2>&1
+}
+
+# baseline_compose <pins-json-array> — the baseline's DatasetVersion, composed of
+# exactly these revision pins. Composing an existing name with the same pins
+# converges; with other pins (a changed producer or build configuration) it fails
+# loudly and the version keeps its composition.
+baseline_compose() {
+  local job
+  job="$(compose_dataset_version "$API_BASE_URL" "$DATASET_ID" "$DATASET_VERSION" "$1")"
+  log "  ✅  DatasetVersion $DATASET_ID/$DATASET_VERSION: $(job_result "$job" | jq -c '{created, member_count, scene_count, episode_count, composition_checksum}')"
 }
 
 # baseline_guard_identity — only the golden reference identity may be created on a
@@ -186,19 +209,22 @@ baseline_exact_membership() {
 }
 
 # baseline_build_scope <pipeline-type> <build-task> <register-task> <profile-task> <run-id> <config>
-# One pipeline run over one RobotRun's recording scope, in $DATASET_ID/$DATASET_VERSION.
+# One pipeline run over one RobotRun's recording scope: build, register, validate,
+# profile; no DatasetVersion. An identical succeeded run is reused, not run again
+# (the revisions it registered are immutable). Prints the revision pins the run's
+# register stage returned, for the composition.
 baseline_build_scope() {
   local type="$1" build_task="$2" register_task="$3" profile_task="$4" run_id="$5" config="$6"
   local params pipeline
-  params="$(jq -cn --arg b "$build_task" --arg r "$register_task" --arg p "$profile_task" \
+  params="$(jq -cn --arg b "$build_task" --arg p "$profile_task" \
     --arg run "$run_id" --argjson config "$config" '{
       ($b): {robot_run_id: $run, build_config: $config},
-      ($r): {replace: false},
       ($p): {triggered: true}}')"
-  pipeline="$(run_pipeline "$API_BASE_URL" "$type" "$DATASET_ID" "$DATASET_VERSION" "$params")"
+  pipeline="$(run_pipeline "$API_BASE_URL" "$type" "" "" "$params" '{"force": false}')"
   assert_pipeline_succeeded "$(fetch_pipeline_run "$API_BASE_URL" "$pipeline")" \
     "$type for $run_id should succeed" "$API_BASE_URL" "$pipeline" >&2
   log "  ✅  $type ($run_id): $pipeline"
+  task_json "$API_BASE_URL" "$pipeline" "$register_task" | jq -c '.result.refs.revisions'
 }
 
 # baseline_verify <api>
@@ -228,8 +254,9 @@ baseline_verify() {
       || fail "the selected RobotRuns are not all registered under $ROBOT_ID: missing $(jq -cn --argjson e "$expected" --argjson r "$registered" '$e - $r')"
   fi
 
-  all_scenes="$(api_get "$api" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500")"
-  all_episodes="$(api_get "$api" "/episodes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500")"
+  all_scenes="$(api_get "$api" "/datasets/$DATASET_ID/versions/$DATASET_VERSION/scenes?limit=500")" \
+    || fail "DatasetVersion $DATASET_ID/$DATASET_VERSION is not composed"
+  all_episodes="$(api_get "$api" "/datasets/$DATASET_ID/versions/$DATASET_VERSION/episodes?limit=500")"
 
   fixtures=()
   while IFS= read -r fixture; do fixtures+=("$fixture"); done < <(echo "$BASELINE_FIXTURES" | jq -c '.[]')
@@ -251,7 +278,7 @@ baseline_verify() {
     [ "$(echo "$fixture_episodes" | jq 'length')" = "$episodes_expected" ] \
       || fail "fixture $id ($run_id) has $(echo "$fixture_episodes" | jq 'length') Episode(s), the reference baseline expects $episodes_expected per RobotRun"
 
-    # Every record pins exactly the checksum of its manifest ArtifactRecord.
+    # Every member pins exactly the checksum of its manifest ArtifactRecord.
     manifest_pins="$({
       echo "$fixture_scenes" | jq -r '.[] | "\(.manifestArtifactId) \(.manifestChecksum)"'
       echo "$fixture_episodes" | jq -r '.[] | "\(.manifestArtifactId) \(.manifestChecksum)"'
@@ -262,19 +289,19 @@ baseline_verify() {
         || fail "manifest artifact $mid of $id does not carry the checksum its record pins"
     done <<<"$manifest_pins"
 
-    # Validated and profiled at the current revision, and ready.
+    # Validated and profiled at the revision the DatasetVersion pins, and ready.
     scenes_ready=0
     for scene_id in $(echo "$fixture_scenes" | jq -r '.[].sceneId'); do
-      quality="$(api_get "$api" "/scenes/$scene_id/quality")"
+      quality="$(api_get "$api" "/scenes/$scene_id/quality?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION")"
       echo "$quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null \
-        || fail "Scene $scene_id ($id) is not validated, profiled and ready at its current revision"
+        || fail "Scene $scene_id ($id) is not validated, profiled and ready at the revision $DATASET_ID/$DATASET_VERSION pins"
       scenes_ready=$((scenes_ready + 1))
     done
     episodes_ready=0
     for episode_id in $(echo "$fixture_episodes" | jq -r '.[].episodeId'); do
-      quality="$(api_get "$api" "/episodes/$episode_id/quality")"
+      quality="$(api_get "$api" "/episodes/$episode_id/quality?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION")"
       echo "$quality" | jq -e '.validation != null and .profile != null and .readiness == "ready"' >/dev/null \
-        || fail "Episode $episode_id ($id) is not validated, profiled and ready at its current revision"
+        || fail "Episode $episode_id ($id) is not validated, profiled and ready at the revision $DATASET_ID/$DATASET_VERSION pins"
       episodes_ready=$((episodes_ready + 1))
     done
 
@@ -305,15 +332,17 @@ baseline_verify() {
 
   version="$(api_get "$api" "/datasets/$DATASET_ID/versions/$DATASET_VERSION" | jq -c '.version')"
   [ "$(echo "$version" | jq -r '.scene.sceneCount')" = "$(echo "$all_scenes" | jq '.scenes | length')" ] \
-    || fail "DatasetVersion scene summary differs from the registered Scenes"
+    || fail "DatasetVersion scene summary differs from its Scene members"
   [ "$(echo "$version" | jq -r '.episode.episodeCount')" = "$(echo "$all_episodes" | jq '.episodes | length')" ] \
-    || fail "DatasetVersion episode summary differs from the registered Episodes"
+    || fail "DatasetVersion episode summary differs from its Episode members"
 
   jq -cn --arg id "$BASELINE_ID" --arg robot "$ROBOT_ID" --arg ds "$DATASET_ID" \
     --arg dv "$DATASET_VERSION" --arg corpus "$REFERENCE_CORPUS" \
     --arg scope "$REFERENCE_SCOPE" --arg fixture "$FIXTURE" \
+    --arg composition "$(echo "$version" | jq -r '.compositionChecksum')" \
     --argjson runs "$run_ids" --argjson entries "$entries" '{
       baseline_id: $id, robot_id: $robot, dataset_id: $ds, dataset_version: $dv,
+      composition_checksum: $composition,
       reference: {corpus: $corpus, scope: (if $fixture == "" then $scope else null end),
                   fixture: (if $fixture == "" then null else $fixture end)},
       robot_run_ids: $runs,

@@ -72,6 +72,17 @@ class PipelineService:
 
         dataset_id = request.dataset_id
         dataset_version = request.dataset_version
+        if not definition.dataset_version_scope and (
+            dataset_id is not None or dataset_version is not None
+        ):
+            # Refused rather than ignored: the caller would believe the run
+            # built into, or read from, that DatasetVersion.
+            raise ValueError(
+                f"a {request.type.value} run executes in no DatasetVersion; "
+                "dataset_id / dataset_version are not accepted (name the "
+                "version a recording pipeline composes in its "
+                "compose_dataset_version task params)"
+            )
 
         execution_key = compute_execution_key(
             kind="pipeline_run",

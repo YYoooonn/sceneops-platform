@@ -3,11 +3,8 @@
 6.6, docs/history/streaming-reliability-scale-baseline.md).
 
 Runs INSIDE the capture container (needs the ROS 2 interface definitions + real Kafka). Two
-phases, run as SEPARATE invocations (so the orchestrating shell script,
-tools/benchmarks/streaming/benchmark_streaming_capture_scale.sh, can query real Kafka
-consumer-group lag from the HOST in between them -- this container has
-no kafka-consumer-groups.sh and no Docker socket to reach the kafka
-container's):
+phases, run as SEPARATE invocations by the orchestrating shell script
+(tools/benchmarks/streaming/benchmark_streaming_capture_scale.sh):
 
     --phase produce   publish N synthetic envelopes at max rate
     --phase capture   durably capture them (sceneops_recording.capture.consumer,
@@ -16,12 +13,11 @@ container's):
 No unbounded application-level queue is introduced anywhere in this
 benchmark -- publish and capture are separate phases, matching how a
 real robot session's Kafka topic already decouples producer and capture
-rate: Kafka itself is the backlog buffer; this script only measures how
-deep that backlog gets and how fast capture drains it.
+rate: Kafka itself is the backlog buffer; this script measures how fast
+capture drains it.
 
 Usage: see tools/benchmarks/streaming/benchmark_streaming_capture_scale.sh (the
-reproducible entry point -- runs both phases plus the lag checks
-between them).
+reproducible entry point -- runs both phases).
 """
 
 from __future__ import annotations
@@ -37,11 +33,12 @@ from pathlib import Path
 from sceneops_streaming import EnvelopeEncoding, TelemetryEnvelope  # noqa: E402
 from sceneops_streaming import KafkaTelemetryProducer, StreamingSettings  # noqa: E402
 
-from sceneops_recording.capture.consumer import CAPTURE_CONSUMER_GROUP_ID, run_capture  # noqa: E402
-from sceneops_recording.capture.group_id import derive_capture_group_id  # noqa: E402
+from sceneops_recording.capture.consumer import run_capture  # noqa: E402
 
 
-async def _publish(*, robot_run_id: str, message_count: int, payload_bytes: int) -> float:
+async def _publish(
+    *, robot_run_id: str, message_count: int, payload_bytes: int
+) -> float:
     settings = StreamingSettings()
     producer = KafkaTelemetryProducer(settings=settings)
     payload = bytes([0x00, 0x01, 0x00, 0x00]) + (b"x" * max(0, payload_bytes - 4))
@@ -87,15 +84,6 @@ def main() -> int:
     parser.add_argument("--output-root", default="/data/tmp_scale_bench")
     args = parser.parse_args()
 
-    # Same derivation run_capture() itself uses (group_id.py) -- never
-    # reimplemented here, just called, so the lag query the orchestrating
-    # shell script runs between phases targets the SAME run-scoped group
-    # capture will actually use (Phase 6.6.1: one shared literal group no
-    # longer exists).
-    group_id = derive_capture_group_id(
-        base=CAPTURE_CONSUMER_GROUP_ID, robot_run_id=args.robot_run_id
-    )
-
     if args.phase == "produce":
         duration = asyncio.run(
             _publish(
@@ -105,14 +93,17 @@ def main() -> int:
             )
         )
         rate = args.message_count / duration if duration > 0 else float("inf")
-        print(json.dumps({
-            "phase": "produce",
-            "message_count": args.message_count,
-            "payload_bytes": args.payload_bytes,
-            "duration_s": round(duration, 3),
-            "msgs_per_s": round(rate, 1),
-            "group_id": group_id,
-        }))
+        print(
+            json.dumps(
+                {
+                    "phase": "produce",
+                    "message_count": args.message_count,
+                    "payload_bytes": args.payload_bytes,
+                    "duration_s": round(duration, 3),
+                    "msgs_per_s": round(rate, 1),
+                }
+            )
+        )
         return 0
 
     duration, result = asyncio.run(
@@ -124,16 +115,20 @@ def main() -> int:
     )
     rate = args.message_count / duration if duration > 0 else float("inf")
     peak_rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # Linux: KB
-    print(json.dumps({
-        "phase": "capture",
-        "message_count": args.message_count,
-        "duration_s": round(duration, 3),
-        "msgs_per_s": round(rate, 1),
-        "mcap_size_bytes": result.path.stat().st_size,
-        "peak_rss_kb": peak_rss_kb,
-        "sha256": result.sha256,
-        "path": str(result.path),
-    }))
+    print(
+        json.dumps(
+            {
+                "phase": "capture",
+                "message_count": args.message_count,
+                "duration_s": round(duration, 3),
+                "msgs_per_s": round(rate, 1),
+                "mcap_size_bytes": result.path.stat().st_size,
+                "peak_rss_kb": peak_rss_kb,
+                "sha256": result.sha256,
+                "path": str(result.path),
+            }
+        )
+    )
     return 0
 
 

@@ -54,6 +54,15 @@ streaming-test: streaming-ros-build
 		-e PYTHONPATH=/workspace/bridge \
 		capture python3 -m pytest /workspace/tests/streaming -q -p no:cacheprovider
 
+# The producer under a broker that stops answering: a throwaway broker container is
+# frozen and thawed (docker pause) while the real KafkaTelemetryProducer's queue fills
+# and drains. Needs Docker and the broker image (`make streaming-up` pulls it); not
+# the compose broker, which it never touches.
+.PHONY: streaming-producer-test
+streaming-producer-test:
+	SCENEOPS_BROKER_FAULT_TESTS=1 $(REAL_INFRA_PYTEST) -p no:cacheprovider -q \
+		packages/sceneops-streaming/tests/test_producer_overload_integration.py
+
 .PHONY: streaming-ros-build
 streaming-ros-build:
 	$(COMPOSE) --profile streaming build streaming-bridge capture

@@ -5,7 +5,9 @@ Ground truth is not an acquisition fact: a real robot never records it, and
 the recording this tool writes carries no annotation. A source's annotations
 are emitted separately, as a *label set document* the platform imports with
 ``IMPORT_LABELS``. The document anchors every label on an observation of the
-recording by ``(robot_run_id, channel, source_clock, timestamp_ns)`` and
+recording by ``(source_kind "recording", source_id = robot_run_id, channel,
+source_clock, timestamp_ns)``, with no ``group_ref`` (a recording has no
+source-defined sample group), and
 declares which anchors it annotated (its *coverage*), including anchors with
 no object, so "annotated as empty" differs from "never annotated".
 
@@ -18,7 +20,7 @@ Two steps, split at the source boundary:
   RobotRun into the document. The artifact is the only input, so a document
   is a deterministic function of (artifact, run id, label set id).
 
-The document shape is the platform's ``sceneops.label_set/v1`` contract,
+The document shape is the platform's ``sceneops.label_set/v2`` contract,
 written as plain JSON: this tool imports no SceneOps package (I-36). The
 platform validates and canonicalizes the document on import.
 """
@@ -38,7 +40,7 @@ from .nuscenes import (
     lidar_topic,
 )
 
-LABEL_SET_SCHEMA = "sceneops.label_set/v1"
+LABEL_SET_SCHEMA = "sceneops.label_set/v2"
 REFERENCE_LABELS_SCHEMA = "sceneops.reference_labels/1"
 # The clock the recording's Header.stamp times are on (the build
 # configuration declares the same clock for the channel).
@@ -197,7 +199,7 @@ def render_label_document(
     label_set_id: str,
     source_clock: str = HEADER_STAMP_CLOCK,
 ) -> dict[str, Any]:
-    """The ``sceneops.label_set/v1`` document of ``artifact`` for one RobotRun.
+    """The ``sceneops.label_set/v2`` document of ``artifact`` for one RobotRun.
     Needs no source dataset; ``artifact`` must come from
     :func:`parse_reference_labels`."""
     entries = [
@@ -245,7 +247,8 @@ def build_document(
     labels: list[dict[str, Any]] = []
     for entry in entries:
         anchor = {
-            "robot_run_id": robot_run_id,
+            "source_kind": "recording",
+            "source_id": robot_run_id,
             "channel": topic,
             "source_clock": source_clock,
             "timestamp_ns": entry.anchor_timestamp_ns,

@@ -54,16 +54,23 @@ From `.env.example` / `ArtifactSettings` (`sceneops_core/config.py`):
 
 ```text
 {ARTIFACT_ROOT_URI}/
+  canonical/    ArtifactSettings.canonical_prefix   (canonical Scene / Episode manifests)
   datasets/     ArtifactSettings.dataset_prefix
   runs/         ArtifactSettings.run_prefix
   labels/       ArtifactSettings.label_prefix       (label set revisions)
   analytical/   ArtifactSettings.analytics_prefix   (Parquet analytics layer)
   robot_runs/   ArtifactSettings.robot_run_prefix   (published robot recordings)
   observation_payloads/   ArtifactSettings.observation_payload_prefix   (canonical payloads)
+  sources/      ArtifactSettings.source_prefix      (preserved external sources)
 ```
 
-Local: `/data/artifacts/{datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
-S3/MinIO: `s3://sceneops/artifacts/{datasets,runs,labels,analytical,robot_runs,observation_payloads}/...`
+Local: `/data/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads,sources}/...`
+S3/MinIO: `s3://sceneops/artifacts/{canonical,datasets,runs,labels,analytical,robot_runs,observation_payloads,sources}/...`
+
+Keys are passed to the backends verbatim. `S3ArtifactStore` takes everything after the
+bucket as the key, so characters a URI parser would read as a query, fragment or
+escape (`?`, `#`, `%`) and `+` are ordinary key characters; MinIO round trips them
+(`packages/sceneops-storage/tests/test_s3_artifact_store.py`).
 
 ### Published robot recordings: write-once per `run_id`
 
@@ -92,18 +99,47 @@ is classified. The contract and the commands are in
 [Robot data ingestion](../workflows/robot-run-and-mcap.md) §3.2 and
 [ADR-008](../adr/008-acquisition-lifecycle-reliability.md) §6.
 
-### Scene manifests: write-once, checksum-qualified
+### Preserved sources: write-once per content and per declaration
+
+`publish-snapshot` (`sceneops_sources.publication`, database-free) writes under the
+source root (default `{ARTIFACT_ROOT_URI}/sources`, `ArtifactSettings.source_root_uri`):
+
+```text
+{source_root}/contents/{content_id}/files/{path}          each preserved file, byte for byte
+{source_root}/contents/{content_id}/inventory.json        SourceContentInventory
+{source_root}/snapshots/{snapshot_id}/descriptor.json     SourceSnapshotDescriptor, written last
+```
+
+Every key is write-once: identical bytes are reused, different bytes are a conflict,
+never an overwrite. `path` is the source's own relative path, verbatim. Files and the
+inventory are stored once per content however many declarations name it; a
+descriptor exists once per declaration. A content's file location is derived from
+its registered inventory ArtifactRecord (`dirname(inventory uri)/files/{path}`), so no
+reader needs a root setting. `REGISTER_SOURCE_SNAPSHOT` reads descriptors only under
+the configured source root, and records `SOURCE_CONTENT_INVENTORY` and
+`SOURCE_SNAPSHOT_DESCRIPTOR` ArtifactRecords; the files are covered by the inventory and
+have no record of their own.
+
+Files and an inventory without a descriptor (an interrupted publication), and a
+descriptor whose registration was refused, are unreferenced objects. They are not
+classified and nothing deletes them ([limitations](./limitations.md) §3).
+
+### Scene manifests: write-once, unit-scoped, checksum-qualified
 
 A canonical SceneManifest revision lives at
 
 ```text
-{dataset_root}/{dataset_id}/versions/{version}/scenes/{scene_id}/manifest-{sha256}.json
+{canonical_root}/scenes/{scene_id}/manifest-{sha256}.json
 ```
 
-(`SceneArtifactStore.publish_canonical_manifest`). The key embeds the
-checksum of the canonical bytes, so every revision of a Scene coexists and
-no key is ever overwritten: re-publishing identical bytes is a no-op and a
-key that already holds different bytes is a conflict. Superseded revisions
+(`SceneArtifactStore.publish_canonical_manifest`). The key names the revision
+`(scene_id, manifest_checksum)` and nothing else: no DatasetVersion, so one
+revision is one object however many DatasetVersions pin it. Every revision of
+a Scene coexists and no key is ever overwritten: re-publishing identical bytes
+is a no-op and a key that already holds different bytes is a conflict. Its
+`SCENE_MANIFEST` ArtifactRecord has the revision's deterministic id
+(`manifest_artifact_id_for(scene_id, checksum)`), is owned by the Scene and
+carries no DatasetVersion. Superseded revisions
 stay for lineage; there is no garbage collection. Readers never list this
 prefix to find "the latest" manifest — they follow a pinned
 `manifest_artifact_id` / checksum (see [Scene domain](./scene-domain.md)).
@@ -111,26 +147,47 @@ prefix to find "the latest" manifest — they follow a pinned
 Canonical EpisodeManifest revisions follow the same rule at
 
 ```text
-{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/manifest-{sha256}.json
+{canonical_root}/episodes/{episode_id}/manifest-{sha256}.json
 ```
 
-(`EpisodeArtifactStore.publish_canonical_manifest`); derived aligned-episode
-artifacts sit beside them under `episodes/{episode_id}/aligned/`.
+(`EpisodeArtifactStore.publish_canonical_manifest`). Derived aligned-episode
+artifacts are keyed by the DatasetVersion they were aligned for, under
+`{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/`.
 
-Observation payloads are not addressed by readers through a key
-convention: a manifest references each payload by its
-`OBSERVATION_PAYLOAD` ArtifactRecord id, and the record's `uri` is the only
-place its location is stored. Both recording builders (Scene and Episode)
-write them write-once, through one shared store, at
+Observation payloads are written write-once by both recording builders (Scene
+and Episode), through one shared store, at
 
 ```text
 {ARTIFACT_ROOT_URI}/observation_payloads/{robot_run_id}/{artifact_id}
 ```
 
-(`ArtifactSettings.observation_payload_prefix`). The artifact id is
+(`ArtifactSettings.observation_payload_prefix`), each with an
+`OBSERVATION_PAYLOAD` ArtifactRecord owned by the RobotRun. The artifact id is
 deterministic per recording message and extraction, so identical bytes at
 an existing key are reused and different bytes are a conflict; a Scene and
 an Episode build of the same RobotRun share every payload they both extract.
+
+A Scene or Episode built from preserved content writes no payload: it references the
+files of its content in place, at `{sources_root}/contents/{content_id}/files/{path}`
+(above). The preserved files are never copied into `observation_payloads/`.
+
+A manifest references every payload by Logical URI
+([ADR-016](../adr/016-logical-uri-and-verified-payload-access.md),
+[ADR-017](../adr/017-unified-payload-ref-and-versioned-manifests.md)): a namespace and
+the object key under that namespace's configured root, never a bucket, endpoint,
+backend or ArtifactRecord id.
+
+| Namespace | Root (`ArtifactSettings`) | Key |
+| --- | --- | --- |
+| `sceneops://observation-payloads/` | `observation_payload_root_uri` | `{robot_run_id}/{artifact_id}` |
+| `sceneops://sources/` | `source_root_uri` | `contents/{content_id}/files/{path}` |
+
+`sceneops_storage.PayloadUriResolver` maps a Logical URI to `{root}/{key}`, and
+`sceneops_storage.VerifiedPayloadReader` returns the bytes only after their size and
+full sha256 equal the reference. Registration accepts a URI only when it resolves to
+exactly where the source's records place the object (the payload's ArtifactRecord, or
+the content's inventory), so producers must write under the configured roots. Moving a
+root changes no manifest; changing the key layout needs a migration.
 
 ### Analytics (Parquet)
 
@@ -226,13 +283,14 @@ label document read by `IMPORT_LABELS`) is read through its own
 Local: /data/inputs
 ```
 
-Raw source datasets (`./data/raw/nuscenes`) are not a runtime input. They are
-read only by the acquisition and reference-preparation containers
-(`dataset-acquisition`, `reference-data`), which turn them into locked reference
-MCAPs and labels. No API, worker, inference, replay, ROS 2 or LeRobot service
-mounts `./data/raw`, and the object store holds no raw mirror: platform objects
-live under `s3://sceneops/artifacts/`. Recordings enter
-the platform through the Recording Publisher (see
+Raw source datasets (`./data/raw/...`) are not a runtime input. They are read by the
+acquisition and reference-preparation containers (`dataset-acquisition`,
+`reference-data`), which turn them into locked reference MCAPs and labels, and by
+`publish-snapshot`, which copies a declared selection into `sources/` (above). No API,
+worker, inference, replay, ROS 2 or LeRobot service mounts `./data/raw`: the workers
+read preserved sources only from the object store, verified against their inventory.
+Platform objects live under `s3://sceneops/artifacts/`. Recordings enter the platform
+through the Recording Publisher (see
 [Robot data ingestion](../workflows/robot-run-and-mcap.md)).
 
 ## 4. What the layout does *not* encode

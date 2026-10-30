@@ -265,6 +265,16 @@ async def test_list_objects_preserves_file_uri_style(store, tmp_path):
     assert await store.read_bytes(objects[0].uri) == b"1"
 
 
+async def test_file_uri_keeps_query_and_fragment_characters(store, tmp_path):
+    """'?' and '#' are part of a file name, not a URI query or fragment."""
+    await store.write_bytes(f"file://{tmp_path}/root/a?b#c.bin", b"1")
+    await store.write_bytes(f"file://{tmp_path}/root/a", b"2")
+
+    assert (tmp_path / "root" / "a?b#c.bin").read_bytes() == b"1"
+    assert await store.read_bytes(f"file://{tmp_path}/root/a?b#c.bin") == b"1"
+    assert await store.read_bytes(f"file://{tmp_path}/root/a") == b"2"
+
+
 async def test_list_objects_writes_nothing(store, tmp_path):
     await store.write_bytes(str(tmp_path / "root" / "x.bin"), b"1")
     before = sorted(p.name for p in (tmp_path / "root").iterdir())

@@ -18,10 +18,8 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "episodes"))
 from episode_context import S, job, make_context, register, sample_manifest  # noqa: E402
 
 
-def _request(episode_ids, context) -> JobHandlerRequest:
-    params = ProfileEpisodeJobParams(
-        dataset_id="d1", dataset_version="v1", episode_ids=episode_ids
-    )
+def _request(pins, context) -> JobHandlerRequest:
+    params = ProfileEpisodeJobParams(revisions=pins)
     return JobHandlerRequest(
         job=job(JobType.PROFILE_EPISODE, params.model_dump()),
         params=params,
@@ -32,9 +30,9 @@ def _request(episode_ids, context) -> JobHandlerRequest:
 async def test_profile_counts_roles_and_pins_the_revision() -> None:
     registered = [register(sample_manifest("a")), register(sample_manifest("b"))]
     context = make_context(registered)
-    ids = [r.episode_id for r, _, _ in registered]
+    pins = [r.pin() for r, _, _ in registered]
 
-    result = await ProfileEpisodeJobHandler().run(_request(ids, context))
+    result = await ProfileEpisodeJobHandler().run(_request(pins, context))
 
     assert result.checked_episode_count == 2
     assert (result.observation_count, result.state_count, result.action_count) == (
@@ -55,8 +53,7 @@ async def test_profile_counts_roles_and_pins_the_revision() -> None:
     assert streams["/odom"]["source_clock"] == "sensor.header_stamp"
 
 
-async def test_unregistered_episode_fails_the_job() -> None:
+async def test_a_pin_of_an_unregistered_revision_fails_the_job() -> None:
+    record, _, _ = register(sample_manifest())
     with pytest.raises(EpisodeNotRegisteredError):
-        await ProfileEpisodeJobHandler().run(
-            _request(["episode-missing"], make_context([]))
-        )
+        await ProfileEpisodeJobHandler().run(_request([record.pin()], make_context([])))

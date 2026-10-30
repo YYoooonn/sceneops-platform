@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from sceneops_core.artifacts.schemas import ArtifactRecord
-from sceneops_core.common.time import utc_now
 from sceneops_core.datasets.schemas import (
     CreateDatasetRequest,
     DatasetRecord,
-    DatasetVersionRecord,
 )
 from sceneops_core.runs.schemas import RunType
 from sceneops_db.repositories.artifacts import ArtifactRepository
@@ -13,6 +11,7 @@ from sceneops_db.repositories.datasets import (
     DatasetRepository,
     DatasetVersionRepository,
 )
+from sceneops_db.repositories.episodes import EpisodeRepository
 from sceneops_db.repositories.scenes import SceneRepository, SceneRunRepository
 
 from app.domains.datasets.quality import (
@@ -20,7 +19,6 @@ from app.domains.datasets.quality import (
     build_dataset_version_quality_from_aggregate,
 )
 from app.domains.datasets.schemas import (
-    CreateDatasetVersionBody,
     DatasetDetailResponse,
     DatasetListResponse,
     DatasetSceneQualityListResponse,
@@ -29,8 +27,9 @@ from app.domains.datasets.schemas import (
     DatasetVersionQualityResponse,
     UpdateDatasetRequest,
 )
+from app.domains.episodes.schemas import EpisodeRevisionListResponse
 from app.domains.scenes.quality import build_scene_quality
-from app.domains.scenes.schemas import SceneListResponse, SceneQualityResponse
+from app.domains.scenes.schemas import SceneQualityResponse, SceneRevisionListResponse
 
 
 class DatasetService:
@@ -41,12 +40,14 @@ class DatasetService:
         version_repository: DatasetVersionRepository,
         scene_repository: SceneRepository,
         scene_run_repository: SceneRunRepository,
+        episode_repository: EpisodeRepository,
         artifact_repository: ArtifactRepository,
     ) -> None:
         self._repository = repository
         self._version_repository = version_repository
         self._scene_repository = scene_repository
         self._scene_run_repository = scene_run_repository
+        self._episode_repository = episode_repository
         self._artifact_repository = artifact_repository
 
     async def list_datasets(
@@ -106,37 +107,6 @@ class DatasetService:
         )
         return DatasetVersionListResponse(versions=versions, count=len(versions))
 
-    async def create_dataset_version(
-        self, dataset_id: str, body: CreateDatasetVersionBody
-    ) -> DatasetVersionDetailResponse | None:
-        dataset = await self._repository.get(dataset_id)
-        if dataset is None:
-            return None
-        # This endpoint is used as an upsert (e.g. e2e scripts re-POST it).
-        # A freshly constructed record has
-        # created_at/updated_at=None, which repository.update() would write
-        # through verbatim onto an existing row and violate the NOT NULL
-        # constraint — so preserve the original created_at and stamp a fresh
-        # updated_at explicitly rather than relying on server_default/onupdate
-        # (those only fire when a column is left unset, not set to None).
-        #
-        # The generic upsert below passes scene=None so it leaves every
-        # registrar-owned Scene column alone.
-        existing = await self._version_repository.get(
-            dataset_id=dataset_id, version=body.version
-        )
-        now = utc_now()
-        version = await self._version_repository.upsert(
-            DatasetVersionRecord(
-                dataset_id=dataset_id,
-                version=body.version,
-                status=body.status,
-                created_at=existing.created_at if existing is not None else now,
-                updated_at=now,
-            )
-        )
-        return DatasetVersionDetailResponse(version=version)
-
     async def get_dataset_version(
         self, dataset_id: str, version: str
     ) -> DatasetVersionDetailResponse | None:
@@ -168,16 +138,29 @@ class DatasetService:
 
     async def list_dataset_version_scenes(
         self, dataset_id: str, version: str, *, limit: int = 100, offset: int = 0
-    ) -> SceneListResponse | None:
+    ) -> SceneRevisionListResponse | None:
         record = await self._version_repository.get(
             dataset_id=dataset_id, version=version
         )
         if record is None:
             return None
-        scenes = await self._scene_repository.list(
+        scenes = await self._scene_repository.list_member_revisions(
             dataset_id=dataset_id, dataset_version=version, limit=limit, offset=offset
         )
-        return SceneListResponse(scenes=scenes, count=len(scenes))
+        return SceneRevisionListResponse(scenes=scenes, count=len(scenes))
+
+    async def list_dataset_version_episodes(
+        self, dataset_id: str, version: str, *, limit: int = 100, offset: int = 0
+    ) -> EpisodeRevisionListResponse | None:
+        record = await self._version_repository.get(
+            dataset_id=dataset_id, version=version
+        )
+        if record is None:
+            return None
+        episodes = await self._episode_repository.list_member_revisions(
+            dataset_id=dataset_id, dataset_version=version, limit=limit, offset=offset
+        )
+        return EpisodeRevisionListResponse(episodes=episodes, count=len(episodes))
 
     async def list_scene_quality(
         self,
@@ -228,23 +211,23 @@ class DatasetService:
         version: str,
     ) -> list[SceneQualityResponse]:
         """Fetch all scene quality rows for a dataset version (3 DB queries),
-        using only runs that assessed each Scene's current revision.
+        using only runs that assessed the revision each member pins.
 
         Shared by get_dataset_version_quality and list_scene_quality so both
         endpoints produce consistent counts from the same data.
         """
-        all_scenes = await self._scene_repository.list(
+        all_scenes = await self._scene_repository.list_member_revisions(
             dataset_id=dataset_id, dataset_version=version, limit=10000, offset=0
         )
         latest_validation = (
-            await self._scene_run_repository.latest_succeeded_for_current_revisions(
+            await self._scene_run_repository.latest_succeeded_for_member_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_VALIDATION,
             )
         )
         latest_profile = (
-            await self._scene_run_repository.latest_succeeded_for_current_revisions(
+            await self._scene_run_repository.latest_succeeded_for_member_revisions(
                 dataset_id=dataset_id,
                 dataset_version=version,
                 run_type=RunType.SCENE_PROFILE,
@@ -253,6 +236,8 @@ class DatasetService:
         return [
             build_scene_quality(
                 scene=s,
+                dataset_id=dataset_id,
+                dataset_version=version,
                 validation_run=latest_validation.get(s.scene_id),
                 profile_run=latest_profile.get(s.scene_id),
             )

@@ -1,17 +1,21 @@
-"""Resolve a registered Scene to the exact manifest revision it points to.
+"""Resolve a registered Scene revision to its verified manifest.
 
-Every consumer of canonical Scene content goes through here: SceneRecord ->
-``manifest_artifact_id`` -> ArtifactRecord -> bytes verified against the
-pinned checksum -> strict canonical parse. A consumer never resolves "the
-latest manifest" by location (ADR-007 §14.4, I-2).
+Every consumer of canonical Scene content goes through here: a revision
+(a pin, or the one a DatasetVersion member pins) -> ``manifest_artifact_id``
+-> ArtifactRecord -> bytes verified against the pinned checksum -> strict
+canonical parse. A Scene unit has no current revision, so a consumer always
+names the revision it reads; it never resolves "the latest manifest" by
+location or by registration order (ADR-015 §6.4).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
-from sceneops_core.scenes.schemas import SceneManifest, SceneRecord
+from sceneops_core.provenance import RevisionPin
+from sceneops_core.scenes.schemas import SceneManifest, SceneRevisionRecord
 
 from sceneops_worker.core.context import WorkerContext
 
@@ -21,28 +25,40 @@ class SceneNotRegisteredError(LookupError):
 
 
 class InconsistentSceneStateError(RuntimeError):
-    """A SceneRecord's pinned manifest artifact is missing or disagrees with
-    the record. Reported, never repaired."""
+    """A revision's manifest artifact is missing or disagrees with the
+    revision. Reported, never repaired."""
 
 
 @dataclass(frozen=True)
 class ResolvedScene:
-    record: SceneRecord
+    record: SceneRevisionRecord
     manifest_artifact: ArtifactRecord
     manifest: SceneManifest
 
 
-async def resolve_registered_scene(
-    context: WorkerContext, scene: str | SceneRecord
-) -> ResolvedScene:
-    record = (
-        scene
-        if isinstance(scene, SceneRecord)
-        else await context.scene_store.get(scene)
+async def resolve_scene_revisions(
+    context: WorkerContext, pins: Sequence[RevisionPin]
+) -> list[ResolvedScene]:
+    """The registered revision of every pin, in pin order. A pin must match
+    its revision row exactly (unit, manifest checksum and manifest artifact
+    id); a pin that names no registered revision fails before any manifest
+    is read."""
+    records = await context.scene_store.get_revisions(
+        [(p.unit_id, p.manifest_checksum) for p in pins]
     )
-    if record is None:
-        raise SceneNotRegisteredError(f"Scene is not registered: {scene}")
+    by_pin = {r.pin(): r for r in records}
+    unregistered = [p for p in pins if p not in by_pin]
+    if unregistered:
+        raise SceneNotRegisteredError(
+            "pins name no registered Scene revision: "
+            + ", ".join(f"{p.unit_id}@{p.manifest_checksum}" for p in unregistered)
+        )
+    return [await resolve_registered_scene(context, by_pin[p]) for p in pins]
 
+
+async def resolve_registered_scene(
+    context: WorkerContext, record: SceneRevisionRecord
+) -> ResolvedScene:
     artifact = await context.artifact_record_store.get(record.manifest_artifact_id)
     if artifact is None:
         raise InconsistentSceneStateError(
@@ -67,7 +83,7 @@ async def resolve_registered_scene(
     return ResolvedScene(record=record, manifest_artifact=artifact, manifest=manifest)
 
 
-# Upper bound of SceneRecords one derived workflow lists at once; a
+# Upper bound of Scene members one derived workflow lists at once; a
 # DatasetVersion with more members fails loudly instead of being processed
 # partially.
 MAX_LISTED_SCENES = 10_000
@@ -75,8 +91,9 @@ MAX_LISTED_SCENES = 10_000
 
 async def list_dataset_version_scenes(
     context: WorkerContext, *, dataset_id: str, dataset_version: str
-) -> list[SceneRecord]:
-    scenes = await context.scene_store.list(
+) -> list[SceneRevisionRecord]:
+    """The Scene revisions a DatasetVersion pins, one per member unit."""
+    scenes = await context.scene_store.list_member_revisions(
         dataset_id=dataset_id,
         dataset_version=dataset_version,
         limit=MAX_LISTED_SCENES + 1,
@@ -95,4 +112,5 @@ __all__ = [
     "SceneNotRegisteredError",
     "list_dataset_version_scenes",
     "resolve_registered_scene",
+    "resolve_scene_revisions",
 ]

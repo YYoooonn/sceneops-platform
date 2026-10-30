@@ -1,0 +1,21 @@
+[project]
+name = "sceneops-sources"
+version = "0.1.0"
+description = "SceneOps Dataset Integration: file selection, content inventories, database-free snapshot publication, verified content file access and native format readers"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "sceneops-core",
+  "sceneops-storage",
+  "pyarrow>=15.0",
+]
+
+[tool.uv.sources]
+sceneops-core = { workspace = true }
+sceneops-storage = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["sceneops_sources"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

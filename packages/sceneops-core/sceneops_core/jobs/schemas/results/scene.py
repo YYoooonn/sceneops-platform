@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict
+from sceneops_core.provenance import RevisionPin
 
 from .base import BaseJobResult
 
@@ -12,13 +13,13 @@ class BuildRecordingScenesJobResult(BaseJobResult):
 
     ``manifest_artifact_ids`` are the SCENE_MANIFEST ArtifactRecords of
     every Scene of the recording scope, in unit-key order, for
-    REGISTER_SCENES. ``payload_artifact_count`` counts the distinct
+    REGISTER_SCENES. Each id is ``manifest_artifact_id_for(unit_id,
+    manifest_checksum)``: it names one write-once manifest object and its
+    exact bytes, and the registrar re-derives it from the bytes it reads. ``payload_artifact_count`` counts the distinct
     OBSERVATION_PAYLOAD artifacts they reference; ``created_payload_count``
     those this execution registered (the rest already existed with
     identical bytes)."""
 
-    dataset_id: str
-    dataset_version: str
     robot_run_id: str
     recording_checksum: str
     producer_fingerprint: str
@@ -31,6 +32,37 @@ class BuildRecordingScenesJobResult(BaseJobResult):
     pose_count: int = 0
     payload_artifact_count: int = 0
     created_payload_count: int = 0
+    channels: list[str] = Field(default_factory=list)
+
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class BuildSnapshotScenesJobResult(BaseJobResult):
+    """The Scenes built from the content of one SourceSnapshot.
+
+    ``snapshot_id`` is the declaration this build read and ``content_id`` /
+    ``content_checksum`` the bytes it resolved to: the build's execution
+    provenance (ADR-015 §4, MS-14), recorded here and never in a manifest.
+    ``manifest_artifact_ids`` are the SCENE_MANIFEST ArtifactRecords of the
+    built units, in unit-key order, for REGISTER_SCENES; a build of the same
+    content through another snapshot finds them already recorded, with the
+    Job that first produced them. No payload object is written: every
+    observation references a preserved file."""
+
+    snapshot_id: str
+    content_id: str
+    content_checksum: str
+    producer_fingerprint: str
+
+    unit_keys: list[str] = Field(default_factory=list)
+    manifest_artifact_ids: list[str] = Field(default_factory=list)
+    # How many of manifest_artifact_ids this execution recorded.
+    created_manifest_count: int = 0
+
+    scene_count: int = 0
+    observation_count: int = 0
+    pose_count: int = 0
+    keyframe_count: int = 0
     channels: list[str] = Field(default_factory=list)
 
     metadata: JsonDict = Field(default_factory=dict)
@@ -63,23 +95,25 @@ class ProfileSceneJobResult(BaseJobResult):
 
 
 class RegisterScenesJobResult(BaseJobResult):
-    """``scene_ids`` / ``manifest_artifact_ids`` are the canonical members
-    of the registered recording scope after commit, each at its current
-    revision (when the fingerprint is unchanged, the already-registered
-    set). ``removed_scene_ids`` are records of a replaced scope that the new
-    set no longer contains."""
+    """The Scene revisions of one build, each as its complete pin, in unit
+    id order; ``scene_ids`` are their units in the same order. Every
+    revision is registered after commit: the ``new_unit`` / ``new_revision``
+    lists name the units whose revision this job inserted, and
+    ``existing_revision`` those whose revision was already registered (a
+    retry, or a rebuild of identical bytes). One build reads one source:
+    ``source_kind`` / ``source_id`` name it (a RobotRun or a SourceContent)."""
 
-    dataset_id: str
-    dataset_version: str
+    source_kind: str
+    source_id: str
+    producer_fingerprint: str
 
+    revisions: list[RevisionPin] = Field(default_factory=list)
     scene_ids: list[str] = Field(default_factory=list)
-    manifest_artifact_ids: list[str] = Field(default_factory=list)
 
-    created_scene_ids: list[str] = Field(default_factory=list)
-    replaced_scene_ids: list[str] = Field(default_factory=list)
-    unchanged_scene_ids: list[str] = Field(default_factory=list)
-    removed_scene_ids: list[str] = Field(default_factory=list)
+    new_unit_scene_ids: list[str] = Field(default_factory=list)
+    new_revision_scene_ids: list[str] = Field(default_factory=list)
+    existing_revision_scene_ids: list[str] = Field(default_factory=list)
 
-    registered_scene_count: int = 0
+    revision_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)

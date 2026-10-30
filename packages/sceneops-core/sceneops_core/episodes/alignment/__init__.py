@@ -21,6 +21,7 @@ from .errors import (
     InvalidAlignmentConfigError,
     InvalidEpisodeBoundsError,
     UnknownChannelError,
+    UnsupportedEpisodeContentError,
 )
 from .policies import (
     ChannelSample,
@@ -87,6 +88,7 @@ __all__ = [
     "Timeline",
     "TimelineMode",
     "UnknownChannelError",
+    "UnsupportedEpisodeContentError",
     "align_episode",
     "alignment_samples",
     "field_channel",

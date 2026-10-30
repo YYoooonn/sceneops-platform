@@ -21,9 +21,6 @@ class _SceneRunRecord(BaseRunRecord):
     manifest_artifact_id: str | None = None
     manifest_checksum: str | None = None
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
     @model_validator(mode="after")
     def _check_revision_pin(self) -> _SceneRunRecord:
         pinned = (self.manifest_artifact_id, self.manifest_checksum)

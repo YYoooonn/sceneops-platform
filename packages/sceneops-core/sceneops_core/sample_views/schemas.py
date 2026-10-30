@@ -16,8 +16,10 @@ always rebuild the same bytes:
     members   per channel: nearest / previous association inside a tolerance,
               and whether the sample needs it
     pose      one named frame-pair, associated the same way
-    labels    pinned label set revisions; labels attach through the
-              observations a sample holds (their ObservationAnchor)
+    labels    pinned label set revisions; each anchor is resolved on the
+              Scene manifest (``sceneops_core.labels.resolution``), and a
+              label attaches through the observation, or the source-defined
+              group, it resolves to, when the sample holds it
 
 Association never crosses clocks: every associated channel and pose must be
 on the anchor channel's clock, and a configuration that asks otherwise
@@ -57,7 +59,7 @@ SAMPLE_VIEW_SCHEMA_V1: Final = "sceneops.scene_sample_view/v1"
 # Identifies the behaviour of the view builder (association tie-breaks, drop
 # rules, label attachment). Bump when a change would alter the output for an
 # existing input.
-SAMPLE_VIEW_SEMANTICS_VERSION: Final = "1"
+SAMPLE_VIEW_SEMANTICS_VERSION: Final = "2"
 
 
 class SampleViewError(ValueError):
@@ -180,9 +182,9 @@ class SamplePose(_Model):
 class SampleLabels(_Model):
     """What one pinned label set says about one sample.
 
-    ``covered``: the set annotated at least one observation the sample
-    holds, so an empty ``label_ids`` is an annotated negative. Not covered
-    means the set says nothing about the sample.
+    ``covered``: the set annotated at least one observation or group the
+    sample owns, so an empty ``label_ids`` is an annotated negative. Not
+    covered means the set says nothing about the sample.
     """
 
     label_set_id: LocalId
@@ -230,8 +232,8 @@ class LabelAttachmentStats(_Model):
 
     ``covered_observation_count``  observations of this Scene the set annotated
     ``attached_label_count``       labels attached to some sample
-    ``unattached_label_count``     labels anchored on a Scene observation that
-                                   no sample holds
+    ``unattached_label_count``     labels resolved into this Scene whose
+                                   observation (or group) no sample holds
     """
 
     label_set_id: LocalId

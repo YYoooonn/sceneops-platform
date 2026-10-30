@@ -18,8 +18,8 @@ from pathlib import Path
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
 from sceneops_core.scenes.schemas import scene_id_for
 from sceneops_core.scenes.testing import semantic_scene_content
+from sceneops_core.provenance import PinnedRecording
 from sceneops_scenes.recording_builder import (
-    RecordingRevision,
     iter_planned_payloads,
     plan_recording_scenes,
 )
@@ -33,8 +33,22 @@ from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     default_recording,
 )
 
-BATCH = RecordingRevision("run-batch", "sha256:" + "a" * 64, "mcap_log_time")
-REPLAY = RecordingRevision("run-replay", "sha256:" + "b" * 64, "mcap_log_time")
+BATCH = PinnedRecording(
+    robot_run_id="run-batch",
+    recording_checksum="sha256:" + "a" * 64,
+    recording_clock="mcap_log_time",
+)
+REPLAY = PinnedRecording(
+    robot_run_id="run-replay",
+    recording_checksum="sha256:" + "b" * 64,
+    recording_clock="mcap_log_time",
+)
+
+
+def _payload_id(ref) -> str:
+    """The payload artifact id a recording payload's Logical URI names
+    (``{robot_run_id}/{artifact_id}``)."""
+    return ref.logical_uri().key.rpartition("/")[2]
 
 
 def _plan(path, revision, config=None):
@@ -53,7 +67,7 @@ def _bytes_by_observation(path, plan, config=None):
     cfg = RecordingSceneBuildConfig.model_validate(config or build_config())
     data = {p.artifact_id: b for p, b in iter_planned_payloads(path, plan, cfg)}
     return {
-        o.observation_id: data[o.payload.artifact_id]
+        o.observation_id: data[_payload_id(o.payload)]
         for s in plan.scenes
         for o in s.manifest.observations
     }
@@ -89,18 +103,8 @@ def test_same_run_rebuild_is_identical(tmp_path):
         s.manifest.to_canonical_bytes() for s in b.scenes
     ]
     assert _payload_ids(a) == _payload_ids(b)
-    ids = [
-        scene_id_for(
-            dataset_id="d", dataset_version="v1", source=s.manifest.lineage.source
-        )
-        for s in a.scenes
-    ]
-    assert ids == [
-        scene_id_for(
-            dataset_id="d", dataset_version="v1", source=s.manifest.lineage.source
-        )
-        for s in b.scenes
-    ]
+    ids = [scene_id_for(s.manifest.lineage.source) for s in a.scenes]
+    assert ids == [scene_id_for(s.manifest.lineage.source) for s in b.scenes]
 
 
 def test_same_run_identity_ignores_cross_channel_write_order(tmp_path):
@@ -168,7 +172,7 @@ def test_duplicate_occurrences_keep_distinct_identities(tmp_path):
     ]
     assert len(duplicates) == 2
     assert len({o.observation_id for o in duplicates}) == 2
-    assert len({o.payload.artifact_id for o in duplicates}) == 2
+    assert len({_payload_id(o.payload) for o in duplicates}) == 2
     assert len({o.payload.checksum for o in duplicates}) == 1
 
 
@@ -207,18 +211,25 @@ def test_equivalent_recordings_differ_only_in_provenance(tmp_path):
 
 
 def test_receive_time_segmentation_is_outside_equivalence(tmp_path):
-    """Segmenting on mcap_log_time makes windows depend on the acquisition
-    (§29.12): the windows move with the recorder's receive time while the
-    observations keep their source timestamps."""
+    """Segmenting on mcap_log_time makes Scenes depend on the acquisition
+    (§29.12): the clock grid is fixed, but which window an observation falls
+    in moves with the recorder's receive time, while the observations keep
+    their source timestamps."""
     rec = default_recording()
-    replay, _ = _replayed(rec, receive_delay_ns=37_000_000)
+    replay, _ = _replayed(rec, receive_delay_ns=600_000_000)
     config = build_config(clock="mcap_log_time")
     a = _plan(rec.write(tmp_path / "a.mcap"), BATCH, config)
     b = _plan(replay.write(tmp_path / "b.mcap"), REPLAY, config)
 
-    starts_a = [s.manifest.lineage.source.start_timestamp_ns for s in a.scenes]
-    starts_b = [s.manifest.lineage.source.start_timestamp_ns for s in b.scenes]
-    assert starts_a != starts_b
+    def grouping(plan):
+        return {
+            s.unit_key: sorted(
+                (o.channel, o.timestamp_ns) for o in s.manifest.observations
+            )
+            for s in plan.scenes
+        }
+
+    assert grouping(a) != grouping(b)
     observed = [
         sorted(
             (o.channel, o.timestamp_ns)

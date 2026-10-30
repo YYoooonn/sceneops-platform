@@ -1,58 +1,118 @@
-"""Deterministic canonical unit identity (ADR-007 §18.1)::
+"""Deterministic canonical unit identity (ADR-015 §3, MS-6)::
 
-    unit id = f(dataset_id, dataset_version, domain, robot_run_id, unit_key)
+    unit_id = <domain>-<sha256(canonical_json({
+        "unit_id_schema": "sceneops.unit_id/v2",
+        "domain":         "scene" | "episode",
+        "source_kind":    "recording" | "content",
+        "source_id":      robot_run_id | content_id,
+        "unit_key":       the source binding's unit key, verbatim
+    }))[:32]>
 
-The id is a hash of a canonical-JSON identity document, so it is injective
-over its inputs (no separator ambiguity), fits the 128-character id columns,
-and never depends on storage location, producer configuration or execution
-state. A rebuild that keeps the unit key keeps the id, which is what lets a
-replacement repoint an existing record instead of creating a new one.
+A unit id answers "which logical unit of which source". Its inputs come
+from the unit's source binding alone, so it never depends on:
 
-Changing anything in the identity document is an identity-affecting
-migration; ``unit_id_schema`` makes such a change explicit. The document
-keeps its ``source_kind = "recording"`` member, so ids are unchanged from
-when a second source kind existed (§29.9).
+- a DatasetVersion: the same unit in two compositions is one unit,
+  referenced twice;
+- a SourceSnapshot: ``content_id`` is a function of the bytes, so every
+  declaration of the same content yields the same ids;
+- the source revision checksum, the window, the producer or its build
+  configuration: those decide a *revision* of the unit
+  (``sceneops_core.provenance.revisions``), not the unit;
+- storage location or execution context.
+
+The identity document is canonical JSON, so the hash is injective over its
+inputs (no separator ambiguity), and the id fits the 128-character id
+columns. ``unit_id_schema`` makes any change to the document an explicit
+identity change.
 """
 
 from __future__ import annotations
 
 import hashlib
-from typing import Final, Literal
+import re
+from typing import Final, Literal, get_args
 
 from sceneops_core.common.canonical_json import canonical_json_bytes
 
-from .sources import RecordingSegmentSource
+from .sources import ContentUnitSource, RecordingSegmentSource
 
-UNIT_ID_SCHEMA_V1: Final = "sceneops.unit_id/v1"
+UNIT_ID_SCHEMA_V2: Final = "sceneops.unit_id/v2"
 _UNIT_ID_DIGEST_HEX_LENGTH: Final = 32
 
 CanonicalDomain = Literal["scene", "episode"]
+CANONICAL_DOMAINS: Final[tuple[CanonicalDomain, ...]] = get_args(CanonicalDomain)
+_SOURCE_KINDS: Final = frozenset(
+    {
+        RecordingSegmentSource.model_fields["source_kind"].default,
+        ContentUnitSource.model_fields["source_kind"].default,
+    }
+)
+_UNIT_ID_RE: Final = re.compile(
+    rf"^(?P<domain>{'|'.join(CANONICAL_DOMAINS)})-[0-9a-f]{{{_UNIT_ID_DIGEST_HEX_LENGTH}}}$"
+)
+
+
+def _check_domain(domain: str) -> CanonicalDomain:
+    if domain not in CANONICAL_DOMAINS:
+        raise ValueError(
+            f"domain must be one of {list(CANONICAL_DOMAINS)}, got {domain!r}"
+        )
+    return domain  # type: ignore[return-value]
 
 
 def canonical_unit_id(
     *,
     domain: CanonicalDomain,
-    dataset_id: str,
-    dataset_version: str,
-    source: RecordingSegmentSource,
+    source: RecordingSegmentSource | ContentUnitSource,
 ) -> str:
+    if not isinstance(source, (RecordingSegmentSource, ContentUnitSource)):
+        raise TypeError(f"source must be a source binding, got {type(source).__name__}")
+    return unit_id_for(
+        domain=domain,
+        source_kind=source.source_kind,
+        source_id=source.source_id,
+        unit_key=source.unit_key,
+    )
+
+
+def unit_id_for(
+    *, domain: CanonicalDomain, source_kind: str, source_id: str, unit_key: str
+) -> str:
+    """The unit id of the identity inputs a persisted unit keeps (its source
+    kind, source id and unit key), so a stored unit can be checked against
+    its own id without its full source binding."""
+    if source_kind not in _SOURCE_KINDS:
+        raise ValueError(
+            f"source_kind must be one of {sorted(_SOURCE_KINDS)}, got {source_kind!r}"
+        )
+    for name, value in (("source_id", source_id), ("unit_key", unit_key)):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{name} must be a non-empty string, got {value!r}")
     document = {
-        "unit_id_schema": UNIT_ID_SCHEMA_V1,
-        "domain": domain,
-        "dataset_id": dataset_id,
-        "dataset_version": dataset_version,
-        "source": {
-            "source_kind": source.source_kind,
-            "robot_run_id": source.robot_run_id,
-            "unit_key": source.unit_key,
-        },
+        "unit_id_schema": UNIT_ID_SCHEMA_V2,
+        "domain": _check_domain(domain),
+        "source_kind": source_kind,
+        "source_id": source_id,
+        "unit_key": unit_key,
     }
     digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
     return f"{domain}-{digest[:_UNIT_ID_DIGEST_HEX_LENGTH]}"
 
 
+def unit_id_domain(unit_id: str) -> CanonicalDomain:
+    """The domain a unit id was derived for; anything not shaped like a
+    canonical unit id is rejected."""
+    match = _UNIT_ID_RE.fullmatch(unit_id) if isinstance(unit_id, str) else None
+    if match is None:
+        raise ValueError(f"not a canonical unit id: {unit_id!r}")
+    return match["domain"]  # type: ignore[return-value]
+
+
 __all__ = [
-    "UNIT_ID_SCHEMA_V1",
+    "CANONICAL_DOMAINS",
+    "UNIT_ID_SCHEMA_V2",
     "CanonicalDomain",
     "canonical_unit_id",
+    "unit_id_domain",
+    "unit_id_for",
 ]

@@ -281,8 +281,8 @@ class TestSignedTimeDeltas:
         assert cp.max_abs_time_delta_us == 800_000
 
 
-class TestMissingUriOnResolvedReference:
-    def test_resolved_reference_with_uri_none_is_not_missing(self) -> None:
+class TestUriOnResolvedReference:
+    def test_a_resolved_canonical_reference_carries_its_logical_uri(self) -> None:
         manifest = _manifest_of(
             episode_id="ep-1",
             observation_frames=[
@@ -304,9 +304,9 @@ class TestMissingUriOnResolvedReference:
         assert cp.resolved_count == 1
         assert cp.missing_count == 0
         assert cp.resolved_reference_count == 1
-        assert cp.payload_uri_available_count == 0
-        assert cp.payload_uri_missing_count == 1
-        assert cp.payload_uri_available_ratio == 0.0
+        assert cp.payload_uri_available_count == 1
+        assert cp.payload_uri_missing_count == 0
+        assert cp.payload_uri_available_ratio == 1.0
 
 
 class TestDuplicateDiagnosticsPassthrough:

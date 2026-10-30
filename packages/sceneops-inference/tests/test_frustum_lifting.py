@@ -7,6 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from sceneops_core.artifacts.logical_uri import LogicalPayloadPin
 from sceneops_core.sample_views import (
     MemberPolicy,
     PosePolicy,
@@ -177,10 +178,24 @@ def _input(sample, *, with_lidar=True) -> DetectionSampleInput:
         scene_id="scene-1",
         sample_id="smp-000000",
         camera_channel="CAM_FRONT",
-        image_uri="file:///img.jpg",
+        camera_payload=LogicalPayloadPin(
+            uri="sceneops://observation-payloads/run-001/camera",
+            checksum="sha256:" + "0" * 64,
+            size_bytes=1,
+            media_type="image/jpeg",
+        ),
         camera=sample.anchor,
         lidar=sample.member("LIDAR_TOP") if with_lidar else None,
-        lidar_uri="file:///lidar" if with_lidar else None,
+        lidar_payload=(
+            LogicalPayloadPin(
+                uri="sceneops://observation-payloads/run-001/lidar",
+                checksum="sha256:" + "0" * 64,
+                size_bytes=1,
+                media_type="application/octet-stream",
+            )
+            if with_lidar
+            else None
+        ),
         pose=sample.pose,
     )
 

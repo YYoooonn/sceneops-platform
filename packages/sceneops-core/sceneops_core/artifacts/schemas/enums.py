@@ -22,11 +22,18 @@ class ArtifactKind(StrEnum):
     # REGISTER_ROBOT_RUN.
     ROBOT_RUN_MANIFEST = "robot_run_manifest"
 
+    # Source preservation (ADR-015 §5). The inventory of one SourceContent and
+    # the descriptor of one SourceSnapshot, both written by publish-snapshot
+    # and registered by REGISTER_SOURCE_SNAPSHOT. The preserved files have no
+    # ArtifactRecord of their own: the inventory is their checksummed registry.
+    SOURCE_CONTENT_INVENTORY = "source_content_inventory"
+    SOURCE_SNAPSHOT_DESCRIPTOR = "source_snapshot_descriptor"
+
     # Observation-level
     # Immutable bytes of one canonical observation (an image, a point
     # cloud, ...), extracted from a registered recording and referenced
-    # from canonical manifests by artifact id
-    # (sceneops_core.artifacts.schemas.payload.PayloadRef).
+    # from canonical manifests by Logical URI (PayloadRef, see
+    # sceneops_core.artifacts.schemas.payload).
     OBSERVATION_PAYLOAD = "observation_payload"
 
     # Scene-level

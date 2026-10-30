@@ -1,6 +1,6 @@
 """Pure Postgres/ArtifactStore record -> columnar table builders.
 
-No I/O here — callers load ``SceneRecord`` rows (Postgres) and verified
+No I/O here — callers load ``SceneRevisionRecord`` rows (Postgres) and verified
 ``SceneManifest`` revisions (ArtifactStore) themselves and pass them in.
 Keeping these functions pure makes them trivially unit-testable and reusable
 outside the job/worker runtime (e.g. from a notebook, a future Spark/dbt
@@ -12,6 +12,10 @@ are a separate table over the source-defined grouping. Every timestamp
 column is paired with the clock it is counted in; clocks are never
 converted. A manifest carries no
 scene id, so manifest-based builders take ``(scene_id, manifest)`` pairs.
+
+An observation's payload is exported as its reference, whatever the source:
+Logical URI, checksum, size, media type and, when it selects part of the
+object, the selector as canonical JSON. No payload is read.
 """
 
 from __future__ import annotations
@@ -20,10 +24,12 @@ from collections.abc import Sequence
 
 import polars as pl
 
+from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.robots.schemas import MissionRecord, RobotStateRecord
-from sceneops_core.scenes.schemas import SceneManifest, SceneRecord
+from sceneops_core.scenes.schemas import SceneManifest, SceneRevisionRecord
 
 SceneManifests = Sequence[tuple[str, SceneManifest]]
+
 
 SCENES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
@@ -51,10 +57,11 @@ OBSERVATIONS_SCHEMA: dict[str, pl.PolarsDataType] = {
     "modality": pl.Utf8,
     "timestamp_ns": pl.Int64,
     "source_clock": pl.Utf8,
-    "payload_artifact_id": pl.Utf8,
+    "payload_uri": pl.Utf8,
     "payload_checksum": pl.Utf8,
     "payload_media_type": pl.Utf8,
     "payload_size_bytes": pl.Int64,
+    "payload_selector": pl.Utf8,
     "calibration_id": pl.Utf8,
     "ego_pose_id": pl.Utf8,
 }
@@ -70,11 +77,14 @@ KEYFRAMES_SCHEMA: dict[str, pl.PolarsDataType] = {
 }
 
 
-def build_scenes_table(scenes: list[SceneRecord]) -> pl.DataFrame:
+def build_scenes_table(
+    *, dataset_id: str, dataset_version: str, scenes: list[SceneRevisionRecord]
+) -> pl.DataFrame:
+    """One row per Scene revision the DatasetVersion pins."""
     rows = [
         {
-            "dataset_id": s.dataset_id,
-            "dataset_version": s.dataset_version,
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
             "scene_id": s.scene_id,
             "robot_run_id": s.robot_run_id,
             "unit_key": s.unit_key,
@@ -113,10 +123,17 @@ def build_observations_table(
                 "modality": modality[o.channel],
                 "timestamp_ns": o.timestamp_ns,
                 "source_clock": clock[o.channel],
-                "payload_artifact_id": o.payload.artifact_id,
+                "payload_uri": o.payload.uri,
                 "payload_checksum": o.payload.checksum,
                 "payload_media_type": o.payload.media_type,
                 "payload_size_bytes": o.payload.size_bytes,
+                "payload_selector": (
+                    canonical_json_bytes(
+                        o.payload.selector.model_dump(mode="json")
+                    ).decode()
+                    if o.payload.selector is not None
+                    else None
+                ),
                 "calibration_id": o.calibration_id,
                 "ego_pose_id": o.ego_pose_id,
             }

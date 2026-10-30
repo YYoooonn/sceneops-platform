@@ -1,18 +1,27 @@
-"""Unit tests for KafkaTelemetryConsumer's manual-commit support and
-(Phase 7.0.1) its internal batched-fetch/buffer behavior. No real broker
--- confluent_kafka.Consumer is monkeypatched with a minimal fake that
-records constructor config, consume()/commit() calls, and serves
-pre-loaded fake messages.
+"""Unit tests for KafkaTelemetryConsumer's subscribed and assigned modes and its
+internal batched-fetch/buffer behavior. No real broker -- confluent_kafka.Consumer
+is monkeypatched with a minimal fake that records constructor config,
+assign()/subscribe()/consume() calls, and serves pre-loaded fake messages.
 """
 
 from __future__ import annotations
 
+import types
+
 import pytest
 
-from sceneops_streaming import EnvelopeEncoding, TelemetryEnvelope
+from confluent_kafka import KafkaError, KafkaException
+
+from sceneops_streaming import (
+    EnvelopeEncoding,
+    KafkaStartPosition,
+    ReplayExpiredError,
+    StartPositionError,
+    TelemetryEnvelope,
+)
 from sceneops_streaming import consumer as consumer_module
 from sceneops_streaming.config import StreamingSettings
-from sceneops_streaming.consumer import KafkaTelemetryConsumer
+from sceneops_streaming.consumer import ASSIGNED_READER_GROUP_ID, KafkaTelemetryConsumer
 from sceneops_streaming.errors import EnvelopeDecodeError
 from sceneops_streaming.wire import encode_envelope
 
@@ -100,16 +109,38 @@ class _FakeConfluentConsumer:
     def __init__(self, config: dict) -> None:
         self.config = config
         self.subscribed_topics: list[str] = []
-        self.committed: list[tuple[object, bool]] = []
         self.closed = False
         self._queue: list[_FakeMessage] = []
         # (num_messages, timeout) for every consume() call -- lets tests
         # assert batching actually reduces the number of underlying
         # blocking fetch calls, not just that poll() still "works".
         self.consume_calls: list[tuple[int, float]] = []
+        # Broker state seen by start-position validation.
+        self.partitions_by_topic: dict[str, set[int]] = {"t": {0, 1}}
+        self.watermarks = (5, 100)
+        self.subscribed = False
+        self.assigned = None
 
-    def subscribe(self, topics: list[str]) -> None:
+    def list_topics(self, topic=None, timeout=-1):
+        partitions = self.partitions_by_topic.get(topic)
+        topic_metadata = types.SimpleNamespace(
+            error=None if partitions is not None else "UNKNOWN_TOPIC_OR_PART",
+            partitions={p: object() for p in partitions or ()},
+        )
+        return types.SimpleNamespace(topics={topic: topic_metadata})
+
+    def get_watermark_offsets(self, partition, timeout=-1, cached=False):
+        assert cached is False
+        return self.watermarks
+
+    def subscribe(self, topics: list[str], on_assign=None) -> None:
+        self.subscribed = True
         self.subscribed_topics = topics
+        self.on_assign = on_assign
+        self.assigned = None
+
+    def assign(self, partitions) -> None:
+        self.assigned = partitions
 
     def enqueue(self, *messages: _FakeMessage) -> None:
         self._queue.extend(messages)
@@ -120,9 +151,6 @@ class _FakeConfluentConsumer:
             return []
         batch, self._queue = self._queue[:num_messages], self._queue[num_messages:]
         return batch
-
-    def commit(self, message=None, asynchronous=True) -> None:
-        self.committed.append((message, asynchronous))
 
     def close(self) -> None:
         self.closed = True
@@ -145,24 +173,88 @@ def test_enable_auto_commit_false_is_passed_through() -> None:
     assert consumer._consumer.config["enable.auto.commit"] is False
 
 
-async def test_commit_with_no_polled_message_is_a_no_op() -> None:
+def test_default_subscription_resumes_from_committed_offsets() -> None:
+    consumer = KafkaTelemetryConsumer(settings=StreamingSettings(_env_file=None))
+    assert consumer._consumer.on_assign is None
+
+
+def test_start_from_beginning_assigns_every_partition_at_the_beginning() -> None:
+    from confluent_kafka import OFFSET_BEGINNING
+
     consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), enable_auto_commit=False
+        settings=StreamingSettings(_env_file=None),
+        topic="t",
+        start_from_beginning=True,
     )
-    await consumer.commit()
-    assert consumer._consumer.committed == []
+    fake = consumer._consumer
+
+    assert not fake.subscribed
+    assert [(tp.topic, tp.partition, tp.offset) for tp in fake.assigned] == [
+        ("t", 0, OFFSET_BEGINNING),
+        ("t", 1, OFFSET_BEGINNING),
+    ]
 
 
-async def test_commit_commits_the_last_polled_message_synchronously() -> None:
+def test_start_from_beginning_of_a_missing_topic_fails_and_releases_the_client(
+    monkeypatch,
+) -> None:
+    created: list[_FakeConfluentConsumer] = []
+
+    class _Fake(_FakeConfluentConsumer):
+        def __init__(self, config: dict) -> None:
+            super().__init__(config)
+            created.append(self)
+
+    monkeypatch.setattr(consumer_module, "ConfluentConsumer", _Fake)
+
+    with pytest.raises(StartPositionError, match="does not exist"):
+        KafkaTelemetryConsumer(
+            settings=StreamingSettings(_env_file=None),
+            topic="missing",
+            start_from_beginning=True,
+        )
+
+    assert created[0].closed
+    assert created[0].assigned is None
+
+
+@pytest.mark.parametrize(
+    "assigned",
+    [
+        {"start_from_beginning": True, "topic": "t"},
+        {"start_position": KafkaStartPosition("t", 0, 10)},
+    ],
+)
+def test_assigned_consumer_has_no_group_progress(assigned) -> None:
+    """Assigned reading never joins a group and nothing can record progress:
+    auto-commit is off whatever the caller asks, there is no commit API, and an
+    offset leaving the log is an error."""
     consumer = KafkaTelemetryConsumer(
-        settings=StreamingSettings(_env_file=None), enable_auto_commit=False
+        settings=StreamingSettings(_env_file=None),
+        enable_auto_commit=True,
+        auto_offset_reset="earliest",
+        **assigned,
     )
-    sentinel_message = object()
-    consumer._last_message = sentinel_message
+    config = consumer._consumer.config
 
-    await consumer.commit()
+    assert config["enable.auto.commit"] is False
+    assert config["group.id"] == ASSIGNED_READER_GROUP_ID
+    assert config["auto.offset.reset"] == "error"
+    assert not hasattr(consumer, "commit")
 
-    assert consumer._consumer.committed == [(sentinel_message, False)]
+
+@pytest.mark.parametrize(
+    "assigned",
+    [
+        {"start_from_beginning": True, "topic": "t"},
+        {"start_position": KafkaStartPosition("t", 0, 10)},
+    ],
+)
+def test_assigned_consumer_rejects_a_group_id(assigned) -> None:
+    with pytest.raises(ValueError, match="no consumer group"):
+        KafkaTelemetryConsumer(
+            settings=StreamingSettings(_env_file=None), group_id="g", **assigned
+        )
 
 
 # ---------------------------------------------------------------------
@@ -303,22 +395,22 @@ async def test_malformed_record_raises_decode_error_with_location() -> None:
     assert exc_info.value.offset == 7
 
 
-async def test_commit_commits_the_last_record_even_when_served_from_buffer() -> None:
-    consumer = _consumer(poll_batch_size=10, enable_auto_commit=False)
-    envelopes = [_envelope(sequence_number=i) for i in range(2)]
+@pytest.mark.parametrize(
+    "code", [KafkaError._AUTO_OFFSET_RESET, KafkaError.OFFSET_OUT_OF_RANGE]
+)
+async def test_log_start_passing_the_read_position_is_replay_expired(code) -> None:
+    consumer = _consumer(poll_batch_size=10)
     consumer._consumer.enqueue(
-        *[_fake_message(e, offset=i) for i, e in enumerate(envelopes)]
+        _fake_message(_envelope(sequence_number=0), offset=0),
+        _error_message(offset=1, error=KafkaError(code)),
     )
 
-    await consumer.poll(1.0)  # triggers the fetch, returns record 0
-    second = await consumer.poll(1.0)  # served from buffer, returns record 1
+    assert (await consumer.poll(1.0)).envelope.sequence_number == 0
 
-    await consumer.commit()
-
-    assert len(consumer._consumer.committed) == 1
-    committed_message, asynchronous = consumer._consumer.committed[0]
-    assert committed_message.offset() == second.offset
-    assert asynchronous is False
+    # Records fetched before retention moved were delivered; the first offset the
+    # broker no longer holds is reported as expiry, not as a malformed record.
+    with pytest.raises(ReplayExpiredError, match=r"while they were being read"):
+        await consumer.poll(1.0)
 
 
 async def test_close_with_buffered_unreturned_messages_does_not_raise() -> None:
@@ -334,8 +426,105 @@ async def test_close_with_buffered_unreturned_messages_does_not_raise() -> None:
     await consumer.close()
 
     assert consumer._consumer.closed is True
-    # Buffered-but-never-returned records are dropped, not committed --
-    # they were never eligible for commit() in the first place (only
-    # _last_message, the most recently RETURNED record, ever is), so
-    # dropping them loses nothing a future consumer can't redeliver.
+    # Fetched-but-never-returned records are dropped; the next attempt reads
+    # them again from its own start position.
     assert consumer._buffer == []
+
+
+# ---------------------------------------------------------------------
+# Pinned start position: assign() one partition at one offset
+# ---------------------------------------------------------------------
+
+
+def _pinned(position: KafkaStartPosition, **kwargs) -> KafkaTelemetryConsumer:
+    return _consumer(start_position=position, **kwargs)
+
+
+def test_start_position_assigns_the_exact_partition_without_subscribing() -> None:
+    consumer = _pinned(KafkaStartPosition("t", 1, 42))
+    fake = consumer._consumer
+
+    assert not fake.subscribed
+    assert [(tp.topic, tp.partition, tp.offset) for tp in fake.assigned] == [
+        ("t", 1, 42)
+    ]
+    assert consumer.end_offset == 100
+    # An offset that later leaves the log must be an error, never a reset.
+    assert fake.config["auto.offset.reset"] == "error"
+
+
+def test_start_position_overrides_the_caller_auto_offset_reset() -> None:
+    consumer = _pinned(KafkaStartPosition("t", 0, 5), auto_offset_reset="earliest")
+    assert consumer._consumer.config["auto.offset.reset"] == "error"
+
+
+def test_start_position_accepts_the_low_watermark_and_the_last_record() -> None:
+    _pinned(KafkaStartPosition("t", 0, 5))
+    _pinned(KafkaStartPosition("t", 0, 99))
+
+
+@pytest.mark.parametrize(
+    ("position", "watermarks", "message"),
+    [
+        (KafkaStartPosition("t", 2, 10), (5, 100), "no partition 2"),
+        (KafkaStartPosition("missing", 0, 10), (5, 100), "does not exist"),
+        (KafkaStartPosition("t", 0, 4), (5, 100), "below the low watermark 5"),
+        (KafkaStartPosition("t", 0, 100), (5, 100), "high watermark 100"),
+        (KafkaStartPosition("t", 0, 7), (7, 7), "high watermark 7"),
+    ],
+)
+def test_unusable_start_position_fails_and_releases_the_client(
+    monkeypatch, position, watermarks, message
+) -> None:
+    created: list[_FakeConfluentConsumer] = []
+
+    class _Fake(_FakeConfluentConsumer):
+        def __init__(self, config: dict) -> None:
+            super().__init__(config)
+            self.watermarks = watermarks
+            created.append(self)
+
+    monkeypatch.setattr(consumer_module, "ConfluentConsumer", _Fake)
+
+    with pytest.raises(StartPositionError, match=message):
+        _pinned(position)
+
+    assert created[0].closed
+    assert created[0].assigned is None
+
+
+def test_only_a_position_below_the_low_watermark_is_replay_expired() -> None:
+    # Below the low watermark: the records existed and retention removed them.
+    with pytest.raises(ReplayExpiredError, match="below the low watermark 5"):
+        _pinned(KafkaStartPosition("t", 0, 4))
+    # At the log end: nothing was ever published there. Not expiry.
+    with pytest.raises(StartPositionError, match="high watermark 100") as exc_info:
+        _pinned(KafkaStartPosition("t", 0, 100))
+    assert not isinstance(exc_info.value, ReplayExpiredError)
+
+
+def test_start_position_wraps_broker_errors(monkeypatch) -> None:
+    class _Fake(_FakeConfluentConsumer):
+        def get_watermark_offsets(self, partition, timeout=-1, cached=False):
+            raise KafkaException("broker down")
+
+    monkeypatch.setattr(consumer_module, "ConfluentConsumer", _Fake)
+
+    with pytest.raises(StartPositionError, match="cannot read watermarks"):
+        _pinned(KafkaStartPosition("t", 0, 10))
+
+
+def test_start_position_excludes_start_from_beginning() -> None:
+    with pytest.raises(ValueError, match="exclusive"):
+        _pinned(KafkaStartPosition("t", 0, 10), start_from_beginning=True)
+
+
+def test_start_position_topic_must_agree_with_an_explicit_topic() -> None:
+    with pytest.raises(ValueError, match="contradicts"):
+        _pinned(KafkaStartPosition("t", 0, 10), topic="other")
+
+
+@pytest.mark.parametrize("args", [("", 0, 0), ("t", -1, 0), ("t", 0, -1)])
+def test_start_position_rejects_negative_or_empty_fields(args) -> None:
+    with pytest.raises(ValueError):
+        KafkaStartPosition(*args)

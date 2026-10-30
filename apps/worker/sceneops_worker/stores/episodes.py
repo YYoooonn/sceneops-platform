@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.episodes.schemas import EpisodeRecord
+from sceneops_core.episodes.schemas import EpisodeRecord, EpisodeRevisionRecord
 from sceneops_db.postgres import PostgresEpisodeRepository
+from sceneops_db.repositories import RevisionRegistration
 
 
 class EpisodeStore:
-    """EpisodeRecord access. ``insert`` / ``replace_revision`` / ``delete``
-    belong to the Episode registrar (``sceneops_worker.episodes.registration``)
-    and no other job writes Episode membership."""
+    """Episode unit and revision access. ``register_revision`` belongs to
+    the Episode registrar (``sceneops_worker.episodes.registration``); no
+    other job writes Episode units or revisions."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._repo = PostgresEpisodeRepository(session)
@@ -20,39 +23,66 @@ class EpisodeStore:
     async def list(
         self,
         *,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         robot_run_id: str | None = None,
+        content_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRecord]:
         return await self._repo.list(
+            robot_run_id=robot_run_id, content_id=content_id, limit=limit, offset=offset
+        )
+
+    async def get_revision(
+        self, *, episode_id: str, manifest_checksum: str
+    ) -> EpisodeRevisionRecord | None:
+        return await self._repo.get_revision(
+            episode_id=episode_id, manifest_checksum=manifest_checksum
+        )
+
+    async def list_revisions(self, episode_id: str) -> list[EpisodeRevisionRecord]:
+        return await self._repo.list_revisions(episode_id)
+
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[EpisodeRevisionRecord]:
+        return await self._repo.get_revisions(keys)
+
+    async def list_source_revisions(
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
+    ) -> list[EpisodeRevisionRecord]:
+        return await self._repo.list_source_revisions(
+            source_kind=source_kind,
+            source_id=source_id,
+            producer_fingerprint=producer_fingerprint,
+        )
+
+    async def register_revision(
+        self, revision: EpisodeRevisionRecord
+    ) -> RevisionRegistration[EpisodeRevisionRecord]:
+        return await self._repo.register_revision(revision)
+
+    async def get_member_revision(
+        self, *, dataset_id: str, dataset_version: str, episode_id: str
+    ) -> EpisodeRevisionRecord | None:
+        return await self._repo.get_member_revision(
+            dataset_id=dataset_id,
+            dataset_version=dataset_version,
+            episode_id=episode_id,
+        )
+
+    async def list_member_revisions(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        robot_run_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EpisodeRevisionRecord]:
+        return await self._repo.list_member_revisions(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             robot_run_id=robot_run_id,
             limit=limit,
             offset=offset,
         )
-
-    async def list_recording_scope(
-        self, *, dataset_id: str, dataset_version: str, robot_run_id: str
-    ) -> list[EpisodeRecord]:
-        return await self._repo.list_recording_scope(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            robot_run_id=robot_run_id,
-        )
-
-    async def count(self, *, dataset_id: str, dataset_version: str) -> int:
-        return await self._repo.count(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
-
-    async def insert(self, episode: EpisodeRecord) -> EpisodeRecord:
-        return await self._repo.insert(episode)
-
-    async def replace_revision(self, episode: EpisodeRecord) -> EpisodeRecord:
-        return await self._repo.replace_revision(episode)
-
-    async def delete(self, episode_ids: list[str]) -> int:
-        return await self._repo.delete(episode_ids)

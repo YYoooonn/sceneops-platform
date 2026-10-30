@@ -1,12 +1,14 @@
-"""SceneManifest v2 -- the canonical, source-faithful description of one
-Scene (ADR-007 §13.5-§13.8, §14, §27).
+"""SceneManifest -- the canonical, source-faithful description of one Scene
+(ADR-007 §13.5-§13.8, §14, §27; ADR-015 §6.5, §6.6; ADR-017).
 
-A Scene is a spatiotemporal environmental observation unit. Within its
-selected boundary the manifest keeps every source observation of every
-included source channel, each with its own source timestamp, verbatim
-source channel identity, SceneOps-owned payload, calibration and the
-source's own coordinate-frame and pose information, plus the unit's source
-and producer provenance. Labels and annotations are never part of a Scene:
+A Scene is a spatiotemporal environmental observation unit of one source
+unit: a window of a registered RobotRun recording
+(``RecordingSegmentSource``) or one native scene of a registered
+SourceContent (``ContentUnitSource``). Within its selected boundary the
+manifest keeps every source observation of every included source channel,
+each with its own source timestamp, verbatim source channel identity,
+payload reference, calibration and the source's own coordinate-frame and
+pose information, plus the unit's source and producer provenance. Labels and annotations are never part of a Scene:
 they are independent, lineage-bearing label sets (ADR-007 §33.2, I-50).
 
 Observations are primary. Synchronized samples, nearest-frame association,
@@ -16,28 +18,36 @@ itself defines (e.g. a hardware-triggered capture set) is carried as a
 non-lossy index over observations (``groups``), never instead of them.
 
 The manifest describes the unit, not its membership: it holds no
-DatasetVersion, scene id, record state or execution context. Identical
+DatasetVersion, scene id, record state, SourceSnapshot, upstream declaration
+or execution context. Identical
 source, producer and build configuration therefore produce byte-identical
-manifests, whatever DatasetVersion registers them. The registrar derives
-the DatasetVersion-scoped ``scene_id`` from (dataset_id, dataset_version,
-robot_run_id, unit_key).
+manifests, whatever DatasetVersion registers them. The unit id is derived
+from the source binding (``scene_id_for``) and the revision is the manifest
+checksum (``sceneops_core.provenance.revisions``); neither is stored here.
 
 Source time is never synchronized or converted: every timestamp is an
-integer nanosecond count in exactly one declared clock. An observation's
-clock is its channel's ``source_clock``; a timestamped structure that no
-channel owns (a pose, a keyframe group) declares its own.
+integer nanosecond count in exactly one clock domain the manifest declares
+(``clock_domains``, ADR-015 §6.2). An observation's clock is its channel's
+``source_clock``; a timestamped structure that no channel owns (a pose, a
+keyframe group) names its own. Every clock the window or a structure names
+is declared exactly once, with its origin, and every declared clock is used.
 
-Payloads are referenced by SceneOps artifact identity and integrity
-(``artifact_id``, checksum, size, media type), never by storage location:
-``artifact_id -> ArtifactRecord -> uri -> ArtifactStore``, so moving
-storage roots or backends never changes a manifest or its checksum.
+Payloads are referenced by Logical URI and integrity, never by storage
+location (``PayloadRef``, ``sceneops_core.artifacts.schemas.payload``), the
+same way for every source, so moving storage roots or backends never changes
+a manifest or its checksum. The schema version is
+``sceneops.scene_manifest/v5``.
 
-Representation conventions fixed by ``sceneops.scene_manifest/v2``:
+Representation conventions:
 
-    time          integer nanoseconds in a declared source clock
+    time          integer nanoseconds in a declared clock domain
     translation   metres, [x, y, z]
     rotation      unit quaternion, [w, x, y, z]
     transform     maps a point in ``child_frame_id`` into ``parent_frame_id``
+    native_ref    the source's own identifier of an observation or a group,
+                  verbatim (a nuScenes ``sample_data.token`` / ``sample.token``),
+                  where the source has one; unique among observations and
+                  among groups
 
 Free-form metadata is not part of the contract: a source fact that the
 schema cannot express is a contract amendment, not a metadata entry.
@@ -76,14 +86,18 @@ from sceneops_core.common.identifiers import (
     validate_verbatim_key,
 )
 from sceneops_core.provenance import (
+    ClockDomain,
+    ClockInstance,
     ProducerInfo,
-    RecordingSegmentSource,
+    SourceBinding,
     SourceTimestampNs,
+    check_clock_domains,
+    clock_instance,
 )
 
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
 
-SCENE_MANIFEST_SCHEMA_V2: Final = "sceneops.scene_manifest/v2"
+SCENE_MANIFEST_SCHEMA_V5: Final = "sceneops.scene_manifest/v5"
 
 # A unit quaternion is stored as the source gives it (never renormalized);
 # this tolerance only rejects values that are not rotations at all.
@@ -205,7 +219,8 @@ class SceneObservation(_ManifestModel):
 
     ``ego_pose_id`` is set only where the source itself associates a pose
     with this observation; choosing the nearest pose is a derived
-    transformation.
+    transformation. ``native_ref`` is the source's own identifier of the
+    observation, verbatim, where the source has one.
     """
 
     observation_id: LocalId
@@ -215,6 +230,7 @@ class SceneObservation(_ManifestModel):
     calibration_id: LocalId | None = None
     ego_pose_id: LocalId | None = None
     image_size: ImageSize | None = None
+    native_ref: VerbatimKey | None = None
 
 
 class ScenePose(_ManifestModel):
@@ -229,13 +245,16 @@ class ScenePose(_ManifestModel):
 class SceneObservationGroup(_ManifestModel):
     """A source-defined grouping of observations, at most one per channel.
     Its own timestamp (the source's reference time for the group) is in
-    ``source_clock``; members keep their own channel clocks."""
+    ``source_clock``; members keep their own channel clocks. ``native_ref``
+    is the source's own identifier of the group (a nuScenes sample token),
+    verbatim, where the source has one."""
 
     group_id: LocalId
     kind: SceneGroupKind
     timestamp_ns: SourceTimestampNs
     source_clock: SourceClock
     observation_ids: list[LocalId] = Field(min_length=1)
+    native_ref: VerbatimKey | None = None
 
     @model_validator(mode="after")
     def _check_members(self) -> SceneObservationGroup:
@@ -245,11 +264,12 @@ class SceneObservationGroup(_ManifestModel):
 
 
 class SceneLineage(_ManifestModel):
-    """Full provenance of the unit: the recording segment it was built from
-    and the producer that built it. The producer fingerprint must re-derive
-    from the manifest's own source revision."""
+    """Full provenance of the unit: the source unit it was built from (a
+    recording segment or a native unit of a content) and the producer that
+    built it. The producer fingerprint must re-derive from the manifest's own
+    source revision."""
 
-    source: RecordingSegmentSource
+    source: SourceBinding
     producer: ProducerInfo
 
     @model_validator(mode="after")
@@ -295,8 +315,11 @@ def _require_known(values: Iterable[str | None], known: set[str], what: str) -> 
 
 
 class SceneManifest(_ManifestModel):
-    schema_version: Literal["sceneops.scene_manifest/v2"] = SCENE_MANIFEST_SCHEMA_V2
+    # A new version changes every builder's output bytes, so it moves only
+    # together with every Scene builder's semantics version (ADR-017).
+    schema_version: Literal["sceneops.scene_manifest/v5"] = SCENE_MANIFEST_SCHEMA_V5
     lineage: SceneLineage
+    clock_domains: list[ClockDomain] = Field(min_length=1)
 
     coordinate_frames: list[SceneCoordinateFrame] = Field(min_length=1)
     channels: list[SceneChannel] = Field(min_length=1)
@@ -309,6 +332,8 @@ class SceneManifest(_ManifestModel):
     def _check_invariants(self) -> SceneManifest:
         self._check_ordering()
         self._check_references()
+        self._check_native_refs()
+        self._check_clock_domains()
         self._check_source_window()
         return self
 
@@ -420,16 +445,44 @@ class SceneManifest(_ManifestModel):
                     f"group {group.group_id} has more than one observation of a channel"
                 )
 
+    def _check_native_refs(self) -> None:
+        """A native identifier names one source observation or one source
+        group, so it occurs at most once among each."""
+        for what, refs in (
+            ("observations", [o.native_ref for o in self.observations]),
+            ("groups", [g.native_ref for g in self.groups]),
+        ):
+            present = [r for r in refs if r is not None]
+            duplicates = sorted({r for r in present if present.count(r) > 1})
+            if duplicates:
+                raise ValueError(
+                    f"{what} repeat native_ref(s) {duplicates[:10]}; a native "
+                    "identifier names one source structure"
+                )
+
+    def _check_clock_domains(self) -> None:
+        check_clock_domains(
+            self.clock_domains,
+            source=self.lineage.source,
+            referenced=[
+                self.lineage.source.source_clock,
+                *(c.source_clock for c in self.channels),
+                *(p.source_clock for p in self.poses),
+                *(g.source_clock for g in self.groups),
+            ],
+            timestamps=self.clocked_timestamps(),
+        )
+
     def _check_source_window(self) -> None:
-        """A recording segment's window is a half-open interval in the
-        segment's clock. Every timestamp in that clock must lie inside it;
-        timestamps in other clocks are not comparable to it and are never
-        converted to make them so."""
+        """The unit's window is a half-open interval in its source clock.
+        Every timestamp in that clock must lie inside it; timestamps in other
+        clocks are not comparable to it and are never converted to make them
+        so."""
         source = self.lineage.source
         for clock, timestamp in self.clocked_timestamps():
             if clock == source.source_clock and not source.contains(timestamp):
                 raise ValueError(
-                    f"timestamp {timestamp} ({clock}) lies outside the segment "
+                    f"timestamp {timestamp} ({clock}) lies outside the unit "
                     f"window [{source.start_timestamp_ns}, "
                     f"{source.end_timestamp_ns})"
                 )
@@ -454,8 +507,8 @@ class SceneManifest(_ManifestModel):
     # --- read helpers ----------------------------------------------------------
 
     def declared_window(self) -> SceneTimeWindow:
-        """The Scene's temporal boundary: its segment window, a half-open
-        interval in the segment's clock. Observation extent is never
+        """The Scene's temporal boundary: its source unit's window, a
+        half-open interval in the source clock. Observation extent is never
         promoted to a window."""
         source = self.lineage.source
         return SceneTimeWindow(
@@ -463,6 +516,17 @@ class SceneManifest(_ManifestModel):
             start_timestamp_ns=source.start_timestamp_ns,
             end_timestamp_ns=source.end_timestamp_ns,
         )
+
+    def clock_domain(self, clock: str) -> ClockDomain:
+        for domain in self.clock_domains:
+            if domain.clock == clock:
+                return domain
+        raise KeyError(clock)
+
+    def clock_instance(self, clock: str) -> ClockInstance:
+        """The origin instance of ``clock`` in this Scene: timestamps of two
+        Scenes are comparable only when their instances are equal."""
+        return clock_instance(self.clock_domain(clock), self.lineage.source)
 
     def keyframes(self) -> list[SceneObservationGroup]:
         return [g for g in self.groups if g.kind == SceneGroupKind.KEYFRAME]
@@ -472,8 +536,8 @@ class SceneManifest(_ManifestModel):
 
 
 def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
-    """Strictly parse manifest bytes and require them to be canonical:
-    ``canonical(parse(data)) == data``."""
+    """Strictly parse manifest bytes of the current schema version and require
+    them to be canonical: ``canonical(parse(data)) == data``."""
     try:
         payload = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -482,7 +546,7 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
     if not isinstance(payload, dict):
         raise SceneManifestError("manifest must be a JSON object")
     schema_version = payload.get("schema_version")
-    if schema_version != SCENE_MANIFEST_SCHEMA_V2:
+    if schema_version != SCENE_MANIFEST_SCHEMA_V5:
         raise UnsupportedSceneManifestVersionError(
             f"unsupported SceneManifest schema_version: {schema_version!r}"
         )
@@ -494,14 +558,14 @@ def load_canonical_scene_manifest(data: bytes) -> SceneManifest:
 
     if manifest.to_canonical_bytes() != data:
         raise NonCanonicalSceneManifestError(
-            "manifest bytes are not in canonical SceneManifest v1 form"
+            f"manifest bytes are not in canonical {schema_version} form"
         )
     return manifest
 
 
 __all__ = [
     "QUATERNION_NORM_TOLERANCE",
-    "SCENE_MANIFEST_SCHEMA_V2",
+    "SCENE_MANIFEST_SCHEMA_V5",
     "FrameTransform",
     "ImageSize",
     "NonCanonicalSceneManifestError",

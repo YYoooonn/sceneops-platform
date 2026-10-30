@@ -9,7 +9,9 @@ recording means as canonical Episodes, and nothing else:
                    observations, an optional payload extraction
     events         which topics carry task / event markers recorded at
                    acquisition time, with their selected fields
-    segmentation   how the recording is cut into Episodes, on one declared clock
+    segmentation   how the recording is cut into Episodes, on one declared clock;
+                   the only part of the configuration that enters unit identity
+                   (``segmentation_boundary``)
 
 It names topics, field paths and clocks verbatim and never a robot, a field
 convention or a source format: steering / throttle / brake, joint commands
@@ -89,12 +91,16 @@ FieldPath = Annotated[StrictStr, AfterValidator(_validate_field_path)]
 
 class EpisodeStreamRole(StrEnum):
     """What a recorded stream is to the Episode. ``event`` is reserved for
-    task / event sources (``RecordingEpisodeBuildConfig.events``)."""
+    task / event sources (``RecordingEpisodeBuildConfig.events``).
+    ``transition`` is a per-frame signal about the step from a frame to the
+    next (a LeRobot ``next.*`` feature): one occurrence per frame of the
+    Episode's frame timeline, never an event; recordings have none."""
 
     OBSERVATION = "observation"
     STATE = "state"
     ACTION = "action"
     EVENT = "event"
+    TRANSITION = "transition"
 
 
 class EpisodeTimeSource(StrEnum):
@@ -207,16 +213,19 @@ class EpisodeEventSourceConfig(_ConfigModel):
 
 class WholeRecordingSegmentation(_ConfigModel):
     """One Episode: ``[earliest, latest + 1)`` of every included message's
-    timestamp on ``clock``. ``unit_key`` is ``recording``."""
+    timestamp on ``clock``. Its segment is ``recording``; the window is the
+    extent of the included data, so it is a fact of the revision, not of the
+    unit."""
 
     policy: Literal["whole_recording"] = "whole_recording"
     clock: SourceClock
 
 
 class FixedDurationEpisodeSegmentation(_ConfigModel):
-    """Half-open windows of ``duration_ns`` on ``clock`` from the earliest
-    included message. A window with no message is not an Episode.
-    ``unit_key`` is ``segment-<index>``."""
+    """Half-open windows ``[k * duration_ns, (k + 1) * duration_ns)`` on
+    ``clock``: a grid anchored at the clock's zero, so window ``k`` is the
+    same interval whichever streams are included. A window with no message
+    is not an Episode. Its segment is ``k``."""
 
     policy: Literal["fixed_duration"] = "fixed_duration"
     clock: SourceClock
@@ -229,7 +238,7 @@ class EventMarkerSegmentation(_ConfigModel):
     its ``state_field`` value opens the Episode (``start_values``) or closes
     it (``end_values``); any other value is an ordinary event. The window is
     ``[start marker, end marker + 1)`` on the event source's clock, so the
-    end marker belongs to its Episode. ``unit_key`` is
+    end marker belongs to its Episode. Its segment is
     ``task-<key>-<occurrence>``. Markers that do not pair up (an end without
     a start, a second start, a start never ended) fail the build."""
 
@@ -305,6 +314,35 @@ class RecordingEpisodeBuildConfig(_ConfigModel):
                 )
             return source.time.clock
         return segmentation.clock
+
+    def segmentation_boundary(self) -> dict[str, Any]:
+        """The configuration that decides where Episode boundaries fall. It
+        is the segmentation part of every unit key
+        (``sceneops_core.provenance.segmentation``); nothing else in the
+        configuration enters unit identity.
+
+        For ``event_markers`` the markers themselves place the boundaries,
+        so the document holds how they are read: the marker topic, its time
+        policy and decoding, and the field *paths* behind ``key_field`` /
+        ``state_field`` (a name is only a label for a path). The other
+        selected fields of the marker source are content, not boundary."""
+        segmentation = self.segmentation
+        if not isinstance(segmentation, EventMarkerSegmentation):
+            return segmentation.model_dump(mode="json")
+        self.segmentation_clock()  # the marker source and both fields exist
+        source = self.event_source(segmentation.event_topic)
+        assert source is not None
+        paths = {f.name: f.path for f in source.fields}
+        return {
+            "policy": segmentation.policy,
+            "event_topic": segmentation.event_topic,
+            "time": source.time.model_dump(mode="json"),
+            "decoding": source.decoding.value,
+            "key_path": paths[segmentation.key_field],
+            "state_path": paths[segmentation.state_field],
+            "start_values": sorted(set(segmentation.start_values)),
+            "end_values": sorted(set(segmentation.end_values)),
+        }
 
     def normalized(self) -> dict[str, Any]:
         """``ProducerInfo.build_config``: defaults explicit, unordered

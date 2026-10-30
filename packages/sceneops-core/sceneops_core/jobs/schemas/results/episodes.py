@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from sceneops_core.common.schemas import JsonDict, SceneOpsBaseModel
+from sceneops_core.provenance import RevisionPin
 
 from .base import BaseJobResult
 
@@ -12,13 +13,13 @@ class BuildRecordingEpisodesJobResult(BaseJobResult):
 
     ``manifest_artifact_ids`` are the EPISODE_MANIFEST ArtifactRecords of
     every Episode of the recording scope, in unit-key order, for
-    REGISTER_EPISODES. ``payload_artifact_count`` counts the distinct
+    REGISTER_EPISODES. Each id is ``manifest_artifact_id_for(unit_id,
+    manifest_checksum)``: it names one write-once manifest object and its
+    exact bytes, and the registrar re-derives it from the bytes it reads. ``payload_artifact_count`` counts the distinct
     OBSERVATION_PAYLOAD artifacts they reference; ``created_payload_count``
     those this execution registered (the rest already existed with
     identical bytes, e.g. extracted by a Scene build of the same RobotRun)."""
 
-    dataset_id: str
-    dataset_version: str
     robot_run_id: str
     recording_checksum: str
     producer_fingerprint: str
@@ -38,24 +39,57 @@ class BuildRecordingEpisodesJobResult(BaseJobResult):
     metadata: JsonDict = Field(default_factory=dict)
 
 
-class RegisterEpisodesJobResult(BaseJobResult):
-    """``episode_ids`` / ``manifest_artifact_ids`` are the canonical members
-    of the registered recording scope after commit, each at its current
-    revision. ``removed_episode_ids`` are records of a replaced scope that
-    the new set no longer contains."""
+class BuildSnapshotEpisodesJobResult(BaseJobResult):
+    """The Episodes built from the content of one SourceSnapshot.
 
-    dataset_id: str
-    dataset_version: str
+    ``snapshot_id`` is the declaration this build read and ``content_id`` /
+    ``content_checksum`` the bytes it resolved to: the build's execution
+    provenance (ADR-015 §4, MS-14), recorded here and never in a manifest.
+    ``manifest_artifact_ids`` are the EPISODE_MANIFEST ArtifactRecords of
+    the built units, in unit-key order, for REGISTER_EPISODES; a build of the
+    same content through another snapshot finds them already recorded, with
+    the Job that first produced them."""
 
-    episode_ids: list[str] = Field(default_factory=list)
+    snapshot_id: str
+    content_id: str
+    content_checksum: str
+    producer_fingerprint: str
+
+    unit_keys: list[str] = Field(default_factory=list)
     manifest_artifact_ids: list[str] = Field(default_factory=list)
+    # How many of manifest_artifact_ids this execution recorded.
+    created_manifest_count: int = 0
 
-    created_episode_ids: list[str] = Field(default_factory=list)
-    replaced_episode_ids: list[str] = Field(default_factory=list)
-    unchanged_episode_ids: list[str] = Field(default_factory=list)
-    removed_episode_ids: list[str] = Field(default_factory=list)
+    episode_count: int = 0
+    observation_count: int = 0
+    state_count: int = 0
+    action_count: int = 0
+    event_count: int = 0
+    transition_count: int = 0
+    features: list[str] = Field(default_factory=list)
 
-    registered_episode_count: int = 0
+    metadata: JsonDict = Field(default_factory=dict)
+
+
+class RegisterEpisodesJobResult(BaseJobResult):
+    """The Episode revisions of one build, each as its complete pin, in
+    unit id order; ``episode_ids`` are their units in the same order. One
+    build reads one source: ``source_kind`` / ``source_id`` name it (a
+    RobotRun or a SourceContent). See ``RegisterScenesJobResult`` for the
+    decision lists."""
+
+    source_kind: str
+    source_id: str
+    producer_fingerprint: str
+
+    revisions: list[RevisionPin] = Field(default_factory=list)
+    episode_ids: list[str] = Field(default_factory=list)
+
+    new_unit_episode_ids: list[str] = Field(default_factory=list)
+    new_revision_episode_ids: list[str] = Field(default_factory=list)
+    existing_revision_episode_ids: list[str] = Field(default_factory=list)
+
+    revision_count: int = 0
 
     metadata: JsonDict = Field(default_factory=dict)
 
@@ -79,11 +113,13 @@ class ProfileEpisodeJobResult(BaseJobResult):
     state_count: int = 0
     action_count: int = 0
     event_count: int = 0
+    transition_count: int = 0
 
     observation_topics: list[str] = Field(default_factory=list)
     state_topics: list[str] = Field(default_factory=list)
     action_topics: list[str] = Field(default_factory=list)
     event_topics: list[str] = Field(default_factory=list)
+    transition_topics: list[str] = Field(default_factory=list)
 
     profile_run_id: str | None = None
     report_uri: str | None = None

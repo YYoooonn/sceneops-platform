@@ -3,12 +3,14 @@
 Runs in the capture image (needs the ROS 2 interface definitions for
 schema text). The capture ends, and finalizes, only on the run's explicit
 RUN_END control event, which the bridge publishes after its last telemetry
-record. ``--idle-timeout-seconds`` is an abort guard, not a finalization
-policy: when no new message arrives for that long before RUN_END, the
-capture fails (non-zero exit) without finalizing or committing Kafka offsets,
-so a bridge that was killed cannot leave a truncated recording that looks
-complete. The partial bag stays; re-running the capture discards it and
-rebuilds from Kafka's committed offsets.
+record, and only for a complete RUN_START, telemetry, RUN_END session of that
+run (``sceneops_recording.capture.lifecycle``). ``--idle-timeout-seconds`` is an
+abort guard, not a finalization policy: when the run shows no activity for that
+long before RUN_END, the capture fails (non-zero exit) without finalizing, so a bridge that was killed cannot leave a truncated
+recording that looks complete. The partial bag stays; re-running the capture
+discards it and rebuilds the run from the start position (the beginning of the
+topic when none is given). Only one capture of a run can run at a time on an output
+root; a second one fails at once.
 
 The finalized bag directory holds the MCAP and a ``capture_receipt.json``
 (acquisition metadata, ADR-008) that ``publish --from-capture`` reads, so
@@ -29,28 +31,15 @@ import argparse
 import asyncio
 import json
 import sys
-import time
-from collections.abc import Callable
 from pathlib import Path
 
-from sceneops_streaming import build_channel_registry
-from sceneops_streaming import StreamingSettings
+from sceneops_streaming import (
+    KafkaStartPosition,
+    StreamingSettings,
+    build_channel_registry,
+)
 
 from sceneops_recording.capture.consumer import run_capture
-
-
-def _idle_timeout_stop_condition(idle_timeout_seconds: float) -> Callable[[int], bool]:
-    state = {"last_count": -1, "last_progress": time.monotonic()}
-
-    def stop_condition(count: int) -> bool:
-        now = time.monotonic()
-        if count != state["last_count"]:
-            state["last_count"] = count
-            state["last_progress"] = now
-            return False
-        return (now - state["last_progress"]) >= idle_timeout_seconds
-
-    return stop_condition
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -78,17 +67,30 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--idle-timeout-seconds",
         type=float,
-        help="Abort (without finalizing) after this many seconds with no new "
-        "matching message before the run's RUN_END. Default: wait for RUN_END.",
+        help="Abort (without finalizing) after this many seconds without progress "
+        "before the run's RUN_END: before RUN_START, no record of any run "
+        "arrives; after it, no record of this run arrives, whatever other runs "
+        "publish. Default: wait for RUN_END.",
+    )
+    parser.add_argument(
+        "--start-position",
+        type=_start_position,
+        metavar="TOPIC:PARTITION:OFFSET",
+        help="Read exactly this partition from this offset (normally the offset of "
+        "the run's RUN_START) instead of scanning every partition of the topic "
+        "from the beginning. A position that is not "
+        "in the retained log, or that does not lead to the run's RUN_START, fails "
+        "the capture; it is never replaced by another position.",
     )
     parser.add_argument("--poll-timeout-seconds", type=float, default=1.0)
     return parser.parse_args(argv)
 
 
-def _abort_condition(args: argparse.Namespace) -> Callable[[int], bool]:
-    if args.idle_timeout_seconds is None:
-        return lambda count: False
-    return _idle_timeout_stop_condition(args.idle_timeout_seconds)
+def _start_position(text: str) -> KafkaStartPosition:
+    try:
+        return KafkaStartPosition.parse(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 async def _main_async(args: argparse.Namespace) -> int:
@@ -98,11 +100,12 @@ async def _main_async(args: argparse.Namespace) -> int:
         robot_id=args.robot_id,
         robot_run_id=args.robot_run_id,
         output_root=args.output_root,
-        stop_condition=_abort_condition(args),
+        idle_timeout_seconds=args.idle_timeout_seconds,
         poll_timeout_seconds=args.poll_timeout_seconds,
         registry=build_channel_registry(args.channels_file),
         stop_on_run_end=True,
         robot_platform=args.robot_platform,
+        start=args.start_position,
     )
 
     print("CaptureResult:")

@@ -40,7 +40,8 @@ from .scenarios import (
 from .scenes import (
     SceneRunRecord,
     scene_model_to_record,
-    scene_record_to_values,
+    scene_revision_model_to_record,
+    scene_revision_to_values,
     scene_run_model_to_record,
     scene_run_record_to_values,
 )
@@ -70,7 +71,8 @@ __all__ = [
     # scenes
     "SceneRunRecord",
     "scene_model_to_record",
-    "scene_record_to_values",
+    "scene_revision_model_to_record",
+    "scene_revision_to_values",
     "scene_run_model_to_record",
     "scene_run_record_to_values",
     # scenarios

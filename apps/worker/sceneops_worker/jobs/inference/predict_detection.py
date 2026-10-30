@@ -50,6 +50,7 @@ from sceneops_worker.inference.detection.samples import (
     load_detection_samples,
 )
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
+from sceneops_worker.payloads import payload_reader
 from sceneops_worker.scenes.readiness import require_no_blocked_scenes
 
 
@@ -364,6 +365,7 @@ class PredictDetectionJobHandler(
             ),
             samples=selection.samples,
             artifact_store=context.artifact_store,
+            payload_reader=payload_reader(context),
             run_artifact_store=context.run_artifact_store,
             derived_store=context.derived_store,
         )

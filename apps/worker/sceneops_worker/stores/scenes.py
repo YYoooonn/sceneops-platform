@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sceneops_core.scenes.schemas import SceneRecord
+from sceneops_core.scenes.schemas import SceneRecord, SceneRevisionRecord
 from sceneops_db.postgres import PostgresSceneRepository
-from sceneops_db.repositories import SceneMembershipSummary
+from sceneops_db.repositories import RevisionRegistration
 
 
 class SceneStore:
-    """SceneRecord access. ``insert`` / ``replace_revision`` / ``delete``
-    belong to the Scene registrar (``sceneops_worker.scenes.registration``)
-    and no other job writes Scene membership."""
+    """Scene unit and revision access. ``register_revision`` belongs to the
+    Scene registrar (``sceneops_worker.scenes.registration``); no other job
+    writes Scene units or revisions."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._repo = PostgresSceneRepository(session)
@@ -21,41 +23,57 @@ class SceneStore:
     async def list(
         self,
         *,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         robot_run_id: str | None = None,
+        content_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[SceneRecord]:
         return await self._repo.list(
+            robot_run_id=robot_run_id, content_id=content_id, limit=limit, offset=offset
+        )
+
+    async def get_revision(
+        self, *, scene_id: str, manifest_checksum: str
+    ) -> SceneRevisionRecord | None:
+        return await self._repo.get_revision(
+            scene_id=scene_id, manifest_checksum=manifest_checksum
+        )
+
+    async def list_revisions(self, scene_id: str) -> list[SceneRevisionRecord]:
+        return await self._repo.list_revisions(scene_id)
+
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[SceneRevisionRecord]:
+        return await self._repo.get_revisions(keys)
+
+    async def list_source_revisions(
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
+    ) -> list[SceneRevisionRecord]:
+        return await self._repo.list_source_revisions(
+            source_kind=source_kind,
+            source_id=source_id,
+            producer_fingerprint=producer_fingerprint,
+        )
+
+    async def register_revision(
+        self, revision: SceneRevisionRecord
+    ) -> RevisionRegistration[SceneRevisionRecord]:
+        return await self._repo.register_revision(revision)
+
+    async def list_member_revisions(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        robot_run_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[SceneRevisionRecord]:
+        return await self._repo.list_member_revisions(
             dataset_id=dataset_id,
             dataset_version=dataset_version,
             robot_run_id=robot_run_id,
             limit=limit,
             offset=offset,
         )
-
-    async def list_recording_scope(
-        self, *, dataset_id: str, dataset_version: str, robot_run_id: str
-    ) -> list[SceneRecord]:
-        return await self._repo.list_recording_scope(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            robot_run_id=robot_run_id,
-        )
-
-    async def summarize_membership(
-        self, *, dataset_id: str, dataset_version: str
-    ) -> SceneMembershipSummary:
-        return await self._repo.summarize_membership(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
-
-    async def insert(self, scene: SceneRecord) -> SceneRecord:
-        return await self._repo.insert(scene)
-
-    async def replace_revision(self, scene: SceneRecord) -> SceneRecord:
-        return await self._repo.replace_revision(scene)
-
-    async def delete(self, scene_ids: list[str]) -> int:
-        return await self._repo.delete(scene_ids)

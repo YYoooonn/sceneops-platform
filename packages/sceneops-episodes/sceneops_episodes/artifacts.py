@@ -1,16 +1,18 @@
 """Episode artifact storage.
 
 Canonical EpisodeManifest revisions live at write-once, checksum-qualified
-keys (ADR-007 §19)::
+keys under their unit (ADR-015 §6.4)::
 
-    {dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/manifest-{sha256}.json
+    {canonical_root}/episodes/{episode_id}/manifest-{sha256}.json
 
-so every revision coexists and no key is ever overwritten. Reading a
-canonical manifest always goes through a pinned checksum: the bytes are
-verified before they are parsed, and parsing requires canonical form.
-Observation payloads go through the shared :class:`ObservationPayloadStore`.
-Derived aligned-episode artifacts and their reports live next to the
-canonical revisions, under ``episodes/{episode_id}/aligned/``.
+so every revision coexists, no key is ever overwritten, and a revision has
+one object however many DatasetVersions pin it. Reading a canonical
+manifest always goes through a pinned checksum: the bytes are verified
+before they are parsed, and parsing requires canonical form. Observation
+payloads go through the shared :class:`ObservationPayloadStore`. Derived
+aligned-episode artifacts and their reports are keyed by the DatasetVersion
+they were aligned for, under
+``{dataset_root}/{dataset_id}/versions/{version}/episodes/{episode_id}/aligned/``.
 """
 
 from __future__ import annotations
@@ -81,10 +83,12 @@ class EpisodeArtifactStore:
         self,
         *,
         artifact_store: ArtifactStore,
+        canonical_root_uri: str,
         dataset_root_uri: str,
         payload_root_uri: str,
     ) -> None:
         self.artifact_store = artifact_store
+        self.canonical_root_uri = canonical_root_uri
         self.dataset_root_uri = dataset_root_uri
         self.payload_store = ObservationPayloadStore(
             artifact_store=artifact_store, payload_root_uri=payload_root_uri
@@ -102,19 +106,9 @@ class EpisodeArtifactStore:
             dataset_version,
         )
 
-    def canonical_manifest_uri(
-        self,
-        *,
-        dataset_id: str,
-        dataset_version: str,
-        episode_id: str,
-        checksum: str,
-    ) -> str:
-        version_root = self._version_root_uri(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
+    def canonical_manifest_uri(self, *, episode_id: str, checksum: str) -> str:
         return self.artifact_store.join_uri(
-            version_root,
+            self.canonical_root_uri,
             "episodes",
             episode_id,
             checksum_qualified_manifest_name(checksum),
@@ -158,24 +152,14 @@ class EpisodeArtifactStore:
     # ------------------------------------------------------------------
 
     async def publish_canonical_manifest(
-        self,
-        *,
-        dataset_id: str,
-        dataset_version: str,
-        episode_id: str,
-        manifest: EpisodeManifest,
+        self, *, episode_id: str, manifest: EpisodeManifest
     ) -> PublishedEpisodeManifest:
         """Write-once publication at the checksum-qualified key. Re-publishing
         identical bytes is a no-op; a key that already holds different bytes
         is a conflict and is never overwritten."""
         data = manifest.to_canonical_bytes()
         checksum = sha256_checksum(data)
-        uri = self.canonical_manifest_uri(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            episode_id=episode_id,
-            checksum=checksum,
-        )
+        uri = self.canonical_manifest_uri(episode_id=episode_id, checksum=checksum)
         if await self.artifact_store.exists(uri):
             if await self.artifact_store.read_bytes(uri) != data:
                 raise EpisodeManifestWriteConflictError(

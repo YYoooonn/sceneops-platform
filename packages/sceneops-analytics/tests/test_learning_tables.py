@@ -17,6 +17,7 @@ from sceneops_core.episodes.alignment.schemas import (
     LearningStep,
 )
 
+from sceneops_analytics.learning_dataset.reconstruct import signal_from_row
 from sceneops_analytics.learning_tables import (
     LEARNING_EPISODES_SCHEMA,
     LEARNING_SIGNALS_SCHEMA,
@@ -389,6 +390,40 @@ def test_learning_signals_reference_value_with_uri() -> None:
     assert row["value_kind"] == "reference"
     assert row["reference_uri"] == "s3://x/0.png"
     assert row["status"] == "resolved"
+
+
+def test_learning_signals_keep_a_frame_selector_beside_the_video_uri() -> None:
+    """A reference to one frame of a video names the video by URI and the
+    frame by selector; exporting the URI alone would name the whole video."""
+    uri = "sceneops://sources/contents/content-x/files/videos/file-000.mp4"
+    selector = {"kind": "video_frame", "timestamp_ns": 33_333_333}
+    signal = AlignedSignal(
+        channel="observation.image",
+        policy=AssociationPolicy.NEAREST,
+        status=AlignedSignalStatus.RESOLVED,
+        value=AlignedValue(
+            kind=AlignedValueKind.REFERENCE,
+            reference_uri=uri,
+            reference_metadata={"media_type": "video/mp4", "selector": selector},
+        ),
+        source_timestamp_us=0,
+        time_delta_us=0,
+    )
+    steps = [LearningStep(timestamp_us=0, observations={"observation.image": signal})]
+    df = build_learning_signals_table(
+        dataset_id=DATASET_ID,
+        dataset_version=DATASET_VERSION,
+        export_id=EXPORT_ID,
+        entries=[("checksum-1", _artifact(_episode("ep-1", steps)))],
+    )
+    row = df.row(0, named=True)
+    assert row["reference_uri"] == uri
+    assert row["reference_selector"] == (
+        '{"kind":"video_frame","timestamp_ns":33333333}'
+    )
+    rebuilt = signal_from_row(row)
+    assert rebuilt.value.reference_uri == uri
+    assert rebuilt.value.reference_metadata == {"selector": selector}
 
 
 def test_learning_signals_matched_reference_with_none_uri_distinguishable_from_missing() -> (

@@ -7,4 +7,6 @@ from __future__ import annotations
 # endpoints, or interpolation semantics would change output for existing
 # inputs. align_episode() is the only place that sets it — callers cannot
 # override it.
-ALIGNMENT_SEMANTICS_VERSION = "v2"
+# v3: a reference value carries the payload's Logical URI as reference_uri
+# and its checksum, size, media type and selector as reference_metadata.
+ALIGNMENT_SEMANTICS_VERSION = "v3"

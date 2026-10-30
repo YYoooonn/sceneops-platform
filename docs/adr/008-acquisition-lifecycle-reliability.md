@@ -4,6 +4,11 @@
 
 **Implemented — Closed by Amendment 12.6 (§8).**
 
+**Later change.** Capture no longer commits Kafka offsets after finalize: the atomic finalize
+is the completion boundary and Capture records no progress in Kafka
+([ADR-013](./013-capture-records-no-kafka-progress.md)). The commit-ordering and
+"after finalize, before offset commit" rows below describe the earlier design.
+
 Ratified 2026-10-05 with four clarifications, incorporated in place: reconciliation
 scheduling (§3.2), capture receipt semantics (§4.2), the retry budget across
 replacement Jobs (§5.2, §5.3) and deferral of the stall threshold to Phase 12.4

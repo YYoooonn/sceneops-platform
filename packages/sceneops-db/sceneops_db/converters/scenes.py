@@ -3,13 +3,17 @@ from __future__ import annotations
 from typing import Any, TypeAlias
 
 from sceneops_core.runs.schemas import RunType
-from sceneops_core.scenes.schemas.records import SceneRecord
+from sceneops_core.scenes.schemas.records import SceneRecord, SceneRevisionRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
 )
 
-from sceneops_db.models.scenes import SceneModel, SceneRunRecordModel
+from sceneops_db.models.scenes import (
+    SceneModel,
+    SceneRevisionModel,
+    SceneRunRecordModel,
+)
 
 from ._utils import (
     base_run_to_values,
@@ -25,42 +29,62 @@ _SCENE_RUN_TYPE_MAP: dict[str, type[SceneRunRecord]] = {
 }
 
 
-# ── Scene ─────────────────────────────────────────────────────────────────────
+# ── Scene unit / revision ─────────────────────────────────────────────────────
 
 
 def scene_model_to_record(model: SceneModel) -> SceneRecord:
     return SceneRecord(
         scene_id=model.scene_id,
-        dataset_id=model.dataset_id,
-        dataset_version=model.dataset_version,
+        source_kind=model.source_kind,
         robot_run_id=model.robot_run_id,
+        content_id=model.content_id,
         unit_key=model.unit_key,
-        producer_fingerprint=model.producer_fingerprint,
-        manifest_artifact_id=model.manifest_artifact_id,
-        manifest_checksum=model.manifest_checksum,
-        window_clock=model.window_clock,
-        window_start_timestamp_ns=model.window_start_timestamp_ns,
-        window_end_timestamp_ns=model.window_end_timestamp_ns,
-        observed_channels=list(model.observed_channels or []),
-        observation_count=model.observation_count,
-        keyframe_count=model.keyframe_count,
         registered_at=model.registered_at,
-        updated_at=model.updated_at,
     )
 
 
-def scene_record_to_values(record: SceneRecord) -> dict[str, Any]:
-    """Every registrar-owned column. ``registered_at`` / ``updated_at`` are
+def scene_unit_to_values(record: SceneRevisionRecord) -> dict[str, Any]:
+    """The unit row of a revision's unit. ``registered_at`` is
     database-managed and never written from a record."""
     return {
         "scene_id": record.scene_id,
-        "dataset_id": record.dataset_id,
-        "dataset_version": record.dataset_version,
+        "source_kind": record.source_kind,
         "robot_run_id": record.robot_run_id,
+        "content_id": record.content_id,
         "unit_key": record.unit_key,
-        "producer_fingerprint": record.producer_fingerprint,
-        "manifest_artifact_id": record.manifest_artifact_id,
+    }
+
+
+def scene_revision_model_to_record(
+    revision: SceneRevisionModel, unit: SceneModel
+) -> SceneRevisionRecord:
+    return SceneRevisionRecord(
+        scene_id=revision.scene_id,
+        source_kind=unit.source_kind,
+        robot_run_id=unit.robot_run_id,
+        content_id=unit.content_id,
+        unit_key=unit.unit_key,
+        manifest_artifact_id=revision.manifest_artifact_id,
+        manifest_checksum=revision.manifest_checksum,
+        producer_fingerprint=revision.producer_fingerprint,
+        window_clock=revision.window_clock,
+        window_start_timestamp_ns=revision.window_start_timestamp_ns,
+        window_end_timestamp_ns=revision.window_end_timestamp_ns,
+        observed_channels=list(revision.observed_channels or []),
+        observation_count=revision.observation_count,
+        keyframe_count=revision.keyframe_count,
+        registered_at=revision.registered_at,
+    )
+
+
+def scene_revision_to_values(record: SceneRevisionRecord) -> dict[str, Any]:
+    """Every revision column the registrar writes; the unit binding lives on
+    the unit row only."""
+    return {
+        "scene_id": record.scene_id,
         "manifest_checksum": record.manifest_checksum,
+        "manifest_artifact_id": record.manifest_artifact_id,
+        "producer_fingerprint": record.producer_fingerprint,
         "window_clock": record.window_clock,
         "window_start_timestamp_ns": record.window_start_timestamp_ns,
         "window_end_timestamp_ns": record.window_end_timestamp_ns,
@@ -98,8 +122,6 @@ def scene_run_model_to_record(model: SceneRunRecordModel) -> SceneRunRecord:
         scene_id=model.scene_id,
         manifest_artifact_id=model.manifest_artifact_id,
         manifest_checksum=model.manifest_checksum,
-        dataset_id=model.dataset_id,
-        dataset_version=model.dataset_version,
     )
     s = model.summary or {}
 
@@ -133,8 +155,6 @@ def scene_run_record_to_values(record: SceneRunRecord) -> dict[str, Any]:
         "scene_id": record.scene_id,
         "manifest_artifact_id": record.manifest_artifact_id,
         "manifest_checksum": record.manifest_checksum,
-        "dataset_id": record.dataset_id,
-        "dataset_version": record.dataset_version,
     }
 
     if isinstance(record, SceneValidationRunRecord):

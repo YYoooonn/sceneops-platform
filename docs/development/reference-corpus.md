@@ -82,7 +82,7 @@ equal bytes. The lock holds its sha256, size and counts; the cache file name fol
 the sha256, so a changed artifact is never found under an old name.
 
 `reference render-labels` turns the locked artifact and a target RobotRun id into a
-`sceneops.label_set/v1` document for `IMPORT_LABELS`. It reads no source dataset, first
+`sceneops.label_set/v2` document for `IMPORT_LABELS`. It reads no source dataset, first
 verifies the artifact against the lock, and is a deterministic function of (artifact,
 `--robot-run-id`, `--label-set-id`): the same inputs give the same bytes, and the
 RobotRun identity exists only in the rendered document. `make e2e-scene-ml` renders
@@ -139,6 +139,62 @@ files are not pruned.
 Changing the definition, the source or the tool makes `verify` fail until the
 change is deliberately locked with `UPDATE_LOCK=1`. A changed tool identity must
 re-lock every fixture of the corpus.
+
+## Pinned raw sources
+
+Some sources enter SceneOps as preserved native files rather than as an acquisition
+recording (Dataset Integration, [ADR-015](../adr/015-multi-source-platform.md)). Their
+raw copy is pinned the same way the corpus is: a hand-written definition and a
+generated lock in Git, and a local, git-ignored copy that is checked against the lock.
+
+```text
+config/reference/lerobot-pusht/source.json        hand-written definition      (Git)
+config/reference/lerobot-pusht/source.lock.json   generated checksum lock      (Git)
+data/raw/lerobot/pusht/                           the pinned copy              (local, git-ignored)
+```
+
+The definition names the upstream (`lerobot/pusht` on Hugging Face), its full commit
+revision, the include patterns (`README.md`, `data/**`, `meta/**`, `videos/**`) and the
+local root. The lock lists every selected file with its path, size and sha256, plus the
+checksum the upstream publishes for it: the LFS sha256 of an LFS file, the git blob sha1
+of any other file. A download is accepted only when it agrees with both, so the lock is
+evidence of the upstream bytes, not a record of whatever was downloaded. pusht at
+`7628202a2180972f291ba1bc6723834921e72c19` is 7 files and 7,684,382 bytes.
+
+```text
+make reference-source-fetch  [SOURCE=lerobot-pusht] [UPDATE_LOCK=1]
+make reference-source-verify [SOURCE=lerobot-pusht]
+```
+
+- `fetch` downloads every locked file missing from the local root at the pinned
+  revision, verifies it against the lock and writes it with a temporary file, fsync
+  and an atomic rename. Then it verifies the whole local tree. A present file is never
+  overwritten. With `UPDATE_LOCK=1` it first re-lists the upstream at the pinned
+  revision, applies the include patterns and rewrites the lock; nothing else writes it.
+- `verify` runs offline and writes nothing. It fails on a changed, missing or
+  unexpected local file (a stray `.DS_Store` included) and on a definition that
+  changed since the lock was written.
+- `tools/reference/raw_source.py` uses the Python standard library only and imports
+  no SceneOps package, so its checksums are independent expectations for the tests
+  that read the pinned copy (`packages/sceneops-sources/tests/test_pusht_preservation.py`
+  skips, naming the command, when the copy is absent). No container or stack is
+  involved; only `fetch` uses the network.
+
+### Reference source snapshots
+
+`config/reference/source-snapshots.json` declares the snapshots the platform is accepted
+on (`make test-infrastructure SUITE=sources`): for each, the local root, the declaration
+(`format`, `upstream`, `upstream_revision`, `include`) and its annotations.
+
+| Snapshot | Declaration | Selected |
+| --- | --- | --- |
+| `lerobot-pusht` | `lerobot`, `lerobot/pusht`, the pinned commit, the raw-source pin's include patterns, `license=mit` | the 7 locked files, 7,684,382 bytes |
+| `nuscenes-scene-0061` | `nuscenes`, `nuscenes`, `v1.0-mini`; `LICENSE`, `can_bus/scene-0061_*`, `maps/*`, `samples/*/n015-2018-07-24-11-22-45+0800__*`, `sweeps/*/n015-2018-07-24-11-22-45+0800__*`, `v1.0-mini/*`; `license=nuscenes-terms-of-use` | 2,989 files, 519,531,462 bytes: the tables, maps and licence, the readings of scene-0061's log (the only scene of that log) and its 8 CAN extracts |
+
+The pusht entry restates its raw-source pin (`tools/dev/tests/test_capacity_preflight.py`
+keeps them equal). The nuScenes slice is read from the local v1.0-mini tree, which has no
+lock; the acceptance suite derives its expectations by walking and hashing that tree.
+The slice is its own content, so its ids differ from those of a full v1.0-mini snapshot.
 
 ## Limitations
 

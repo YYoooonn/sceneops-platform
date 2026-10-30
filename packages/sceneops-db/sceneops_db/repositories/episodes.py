@@ -1,47 +1,78 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from sceneops_core.episodes.schemas import (
     EpisodeProfileRunRecord,
     EpisodeRecord,
+    EpisodeRevisionRecord,
     EpisodeValidationRunRecord,
 )
 from sceneops_core.runs.schemas import RunStatus, RunType
+
+from .revisions import RevisionRegistration
 
 EpisodeRunRecord: TypeAlias = EpisodeValidationRunRecord | EpisodeProfileRunRecord
 
 
 @runtime_checkable
 class EpisodeRepository(Protocol):
-    """Read access for everyone; ``insert`` / ``replace_revision`` /
-    ``delete`` are for the Episode registrar only (ADR-007 §17.5)."""
+    """Episode units and their revisions (ADR-015 §3, §6.4). Read access
+    for everyone; ``register_revision`` is for the Episode registrar only,
+    and it only adds rows (``sceneops_db.repositories.revisions``)."""
 
     async def get(self, episode_id: str) -> EpisodeRecord | None: ...
 
     async def list(
         self,
         *,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         robot_run_id: str | None = None,
+        content_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EpisodeRecord]: ...
 
-    async def list_recording_scope(
-        self, *, dataset_id: str, dataset_version: str, robot_run_id: str
-    ) -> list[EpisodeRecord]: ...
+    async def get_revision(
+        self, *, episode_id: str, manifest_checksum: str
+    ) -> EpisodeRevisionRecord | None: ...
 
-    async def count(
-        self, *, dataset_id: str | None = None, dataset_version: str | None = None
-    ) -> int: ...
+    async def list_revisions(self, episode_id: str) -> list[EpisodeRevisionRecord]: ...
 
-    async def insert(self, episode: EpisodeRecord) -> EpisodeRecord: ...
+    async def get_revisions(
+        self, keys: Sequence[tuple[str, str]]
+    ) -> list[EpisodeRevisionRecord]:
+        """The registered revisions among ``(episode_id, manifest_checksum)``
+        keys, in key order; a key that names no revision is absent."""
+        ...
 
-    async def replace_revision(self, episode: EpisodeRecord) -> EpisodeRecord: ...
+    async def list_source_revisions(
+        self, *, source_kind: str, source_id: str, producer_fingerprint: str
+    ) -> list[EpisodeRevisionRecord]:
+        """Every revision of a unit sourced from ``(source_kind, source_id)``
+        (a RobotRun or a SourceContent) registered under
+        ``producer_fingerprint``: at most one per unit."""
+        ...
 
-    async def delete(self, episode_ids: list[str]) -> int: ...
+    async def register_revision(
+        self, revision: EpisodeRevisionRecord
+    ) -> RevisionRegistration[EpisodeRevisionRecord]: ...
+
+    # --- the revisions a DatasetVersion pins -----------------------------------
+
+    async def get_member_revision(
+        self, *, dataset_id: str, dataset_version: str, episode_id: str
+    ) -> EpisodeRevisionRecord | None: ...
+
+    async def list_member_revisions(
+        self,
+        *,
+        dataset_id: str,
+        dataset_version: str,
+        robot_run_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EpisodeRevisionRecord]: ...
 
 
 @runtime_checkable
@@ -59,8 +90,6 @@ class EpisodeRunRepository(Protocol):
         status: RunStatus | None = None,
         episode_id: str | None = None,
         manifest_artifact_id: str | None = None,
-        dataset_id: str | None = None,
-        dataset_version: str | None = None,
         job_id: str | None = None,
         pipeline_run_id: str | None = None,
         limit: int = 100,

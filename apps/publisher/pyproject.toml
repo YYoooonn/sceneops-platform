@@ -1,12 +1,13 @@
 [project]
 name = "sceneops-publisher"
 version = "0.1.0"
-description = "SceneOps Publisher: database-free publication of finalized recordings to the ArtifactStore"
+description = "SceneOps Publisher: database-free publication of finalized recordings and source snapshots to the ArtifactStore"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "sceneops-core",
   "sceneops-storage",
   "sceneops-recording",
+  "sceneops-sources",
   "pydantic>=2.0.0",
   "pydantic-settings>=2.0",
 ]
@@ -18,6 +19,7 @@ sceneops-publisher = "sceneops_publisher.cli:main"
 sceneops-core = { workspace = true }
 sceneops-storage = { workspace = true }
 sceneops-recording = { workspace = true }
+sceneops-sources = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["sceneops_publisher"]

@@ -7,11 +7,13 @@ class JobType(StrEnum):
     # ── registered RobotRun recording → canonical Scenes ──
     BUILD_RECORDING_SCENES = "build_recording_scenes"
 
+    # ── registered SourceSnapshot → canonical Scenes (ADR-015 §6.7) ──
+    BUILD_SNAPSHOT_SCENES = "build_snapshot_scenes"
+
     # ── scene-level jobs ──
     VALIDATE_SCENE = "validate_scene"
     PROFILE_SCENE = "profile_scene"
-    # The only writer of SceneRecord membership and DatasetVersion Scene
-    # summaries (ADR-007 §17.5).
+    # The only writer of canonical Scene units and revisions (ADR-015 §6.4).
     REGISTER_SCENES = "register_scenes"
 
     # ── derived L3 inputs (ADR-007 §33) ──
@@ -25,6 +27,8 @@ class JobType(StrEnum):
     SCORE_SCENARIO_READINESS = "score_scenario_readiness"
 
     # ── dataset version-level jobs ──
+    # The only writer of DatasetVersions and their members (ADR-015 §7).
+    COMPOSE_DATASET_VERSION = "compose_dataset_version"
     EXPORT_ANALYTICS_SNAPSHOT = "export_analytics_snapshot"
 
     # ── detection ──
@@ -34,6 +38,9 @@ class JobType(StrEnum):
     # ── robot recording registration ──
     REGISTER_ROBOT_RUN = "register_robot_run"
 
+    # ── source preservation registration (ADR-015 §5) ──
+    REGISTER_SOURCE_SNAPSHOT = "register_source_snapshot"
+
     # ── robot runtime ──
     INGEST_ROBOT_STATES = "ingest_robot_states"
     EXPORT_ROBOT_ANALYTICS_SNAPSHOT = "export_robot_analytics_snapshot"
@@ -41,6 +48,9 @@ class JobType(StrEnum):
     # ── registered RobotRun recording → canonical Episodes (ADR-007 §17.4) ──
     BUILD_RECORDING_EPISODES = "build_recording_episodes"
     REGISTER_EPISODES = "register_episodes"
+
+    # ── registered SourceSnapshot → canonical Episodes (ADR-015 §6.7) ──
+    BUILD_SNAPSHOT_EPISODES = "build_snapshot_episodes"
 
     # ── episode-level jobs ──
     VALIDATE_EPISODE = "validate_episode"

@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.core.errors import raise_not_found
 from app.core.pagination import PaginationDep
+from app.core.revisions import RevisionAddressDep
 from app.domains.scenes.dependencies import SceneServiceDep
 from app.domains.scenes.schemas import (
     SceneDetailResponse,
@@ -20,14 +21,15 @@ async def list_scenes(
     *,
     service: SceneServiceDep,
     pagination: PaginationDep,
-    dataset_id: str | None = None,
-    dataset_version: str | None = None,
     robot_run_id: str | None = None,
+    content_id: str | None = None,
 ) -> SceneListResponse:
+    """Scene units, optionally of one source: a RobotRun (``robot_run_id``)
+    or a SourceContent (``content_id``). The Scenes of a DatasetVersion, each
+    at the revision it pins, are listed under the DatasetVersion."""
     return await service.list_scenes(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
         robot_run_id=robot_run_id,
+        content_id=content_id,
         limit=pagination.limit,
         offset=pagination.offset,
     )
@@ -43,11 +45,13 @@ async def get_scene(scene_id: str, service: SceneServiceDep) -> SceneDetailRespo
 
 @router.get("/{scene_id}/quality", response_model=SceneQualityResponse)
 async def get_scene_quality(
-    scene_id: str, service: SceneServiceDep
+    scene_id: str, address: RevisionAddressDep, service: SceneServiceDep
 ) -> SceneQualityResponse:
-    result = await service.get_scene_quality(scene_id)
+    """Quality of one revision of the Scene: the one ``manifest_checksum``
+    names, or the one the DatasetVersion pins."""
+    result = await service.get_scene_quality(scene_id, address)
     if result is None:
-        raise_not_found("Scene", scene_id)
+        raise_not_found("Scene revision", address.describe(scene_id))
     return result
 
 

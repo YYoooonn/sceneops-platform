@@ -80,12 +80,16 @@ def test_an_unannotated_sample_stays_in_the_artifact_as_coverage(tmp_path):
 
 def test_coverage_is_one_anchor_per_sample_on_the_lidar_key_frame(adapter):
     doc = _document(adapter)
-    assert doc["schema_version"] == "sceneops.label_set/v1"
+    assert doc["schema_version"] == "sceneops.label_set/v2"
     assert [(a["channel"], a["timestamp_ns"]) for a in doc["coverage"]] == [
         ("/lidar/top/points", 1_000_050_000),
         ("/lidar/top/points", 1_500_050_000),
     ]
-    assert {a["robot_run_id"] for a in doc["coverage"]} == {"run-1"}
+    assert {(a["source_kind"], a["source_id"]) for a in doc["coverage"]} == {
+        ("recording", "run-1")
+    }
+    # A recording has no source-defined sample group to reference.
+    assert all("group_ref" not in a for a in doc["coverage"])
     assert {a["source_clock"] for a in doc["coverage"]} == {HEADER_STAMP_CLOCK}
 
 
@@ -135,8 +139,8 @@ def test_run_identity_is_injected_only_at_render_time(adapter):
         _document(adapter, "run-b", "gt-b"),
     )
     assert first["label_set_id"] == "gt-a" and second["label_set_id"] == "gt-b"
-    assert {lab["anchor"]["robot_run_id"] for lab in first["labels"]} == {"run-a"}
-    assert {a["robot_run_id"] for a in second["coverage"]} == {"run-b"}
+    assert {lab["anchor"]["source_id"] for lab in first["labels"]} == {"run-a"}
+    assert {a["source_id"] for a in second["coverage"]} == {"run-b"}
     # Apart from the injected identity the two documents are the same.
     first_text = (
         json.dumps(first, sort_keys=True).replace("run-a", "R").replace("gt-a", "G")

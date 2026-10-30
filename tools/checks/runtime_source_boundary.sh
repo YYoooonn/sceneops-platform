@@ -19,7 +19,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 ENV_FILE="${ENV_FILE:-.env.local}"
-COMPOSE=(docker compose --env-file "$ENV_FILE"
+# --progress quiet: a probe's output is compared line by line, and Compose writes
+# container lifecycle progress ("Container … Creating") to stderr on `run`.
+COMPOSE=(docker compose --env-file "$ENV_FILE" --progress quiet
   --profile worker --profile debug --profile inference --profile lerobot
   --profile acquisition --profile tools --profile streaming --profile recovery)
 PROBE_IMAGE="sceneops-platform/worker:local"

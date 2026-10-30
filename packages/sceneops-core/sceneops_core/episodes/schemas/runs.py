@@ -21,9 +21,6 @@ class _EpisodeRunRecord(BaseRunRecord):
     manifest_artifact_id: str | None = None
     manifest_checksum: str | None = None
 
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-
     @model_validator(mode="after")
     def _check_revision_pin(self) -> _EpisodeRunRecord:
         pinned = (self.manifest_artifact_id, self.manifest_checksum)
@@ -71,11 +68,13 @@ class EpisodeProfileRunRecord(_EpisodeRunRecord):
     state_count: int | None = None
     action_count: int | None = None
     event_count: int | None = None
+    transition_count: int | None = None
 
     observation_topics: list[str] = Field(default_factory=list)
     state_topics: list[str] = Field(default_factory=list)
     action_topics: list[str] = Field(default_factory=list)
     event_topics: list[str] = Field(default_factory=list)
+    transition_topics: list[str] = Field(default_factory=list)
 
     window_duration_ns: int | None = None
 

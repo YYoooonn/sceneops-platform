@@ -6,6 +6,8 @@ filtering (callers pass already-filtered row dicts, e.g. from
 
 from __future__ import annotations
 
+import json
+
 from sceneops_core.episodes.alignment import (
     AlignedSignal,
     AlignedSignalStatus,
@@ -21,12 +23,12 @@ from sceneops_core.sensors import SensorModality
 def signal_from_row(row: dict) -> AlignedSignal:
     """One learning_signals.parquet row -> AlignedSignal.
 
-    ``reference_channel``/``reference_metadata`` are not columns on
-    learning_signals (LEARNING_SIGNALS_SCHEMA never persisted them, Request
-    2.5 §-- see learning_tables.py) -- a reconstructed REFERENCE
-    AlignedValue therefore always has those two fields unset. This is a
-    known, documented lossy edge of the columnar export, not something
-    reconstruction here can recover.
+    ``reference_channel`` and ``reference_metadata`` other than the
+    selector are not columns on learning_signals (LEARNING_SIGNALS_SCHEMA
+    never persisted them, Request 2.5 §-- see learning_tables.py) -- a
+    reconstructed REFERENCE AlignedValue keeps its URI and selector only.
+    This is a known, documented lossy edge of the columnar export, not
+    something reconstruction here can recover.
     """
     value = None
     if row["value_kind"] is not None:
@@ -41,6 +43,11 @@ def signal_from_row(row: dict) -> AlignedSignal:
                 else None
             ),
             reference_uri=row["reference_uri"],
+            reference_metadata=(
+                {"selector": json.loads(row["reference_selector"])}
+                if row.get("reference_selector") is not None
+                else {}
+            ),
         )
     return AlignedSignal(
         channel=row["channel"],

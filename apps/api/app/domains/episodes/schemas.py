@@ -6,11 +6,18 @@ from typing import Any
 from pydantic import Field
 
 from sceneops_core.common.schemas import SceneOpsBaseModel
-from sceneops_core.episodes.schemas.records import EpisodeRecord
+from sceneops_core.episodes.schemas.records import (
+    EpisodeRecord,
+    EpisodeRevisionRecord,
+)
 
 
 class EpisodeDetailResponse(SceneOpsBaseModel):
+    """An Episode unit and every registered revision of it; none is
+    current."""
+
     episode: EpisodeRecord
+    revisions: list[EpisodeRevisionRecord]
 
 
 class EpisodeListResponse(SceneOpsBaseModel):
@@ -18,9 +25,16 @@ class EpisodeListResponse(SceneOpsBaseModel):
     count: int
 
 
+class EpisodeRevisionListResponse(SceneOpsBaseModel):
+    """The Episode revisions a DatasetVersion pins, one per member unit."""
+
+    episodes: list[EpisodeRevisionRecord]
+    count: int
+
+
 class EpisodeManifestResponse(SceneOpsBaseModel):
-    """The canonical EpisodeManifest revision the Episode currently points
-    to, verified against its pinned checksum before it is returned."""
+    """One canonical EpisodeManifest revision of the Episode, verified
+    against its checksum before it is returned."""
 
     episode_id: str
     manifest_artifact_id: str
@@ -30,8 +44,9 @@ class EpisodeManifestResponse(SceneOpsBaseModel):
 
 # ── Episode quality summary ──────────────────────────────────────────────────
 #
-# Only run records that assessed the Episode's current manifest revision
-# count (ADR-007 §13.4).
+# Quality describes one revision of an Episode, named by its manifest
+# checksum or by a DatasetVersion that pins it; only run records that
+# assessed exactly that revision count.
 
 
 class EpisodeQualityReadiness(StrEnum):
@@ -71,9 +86,12 @@ class EpisodeProfileQualitySummary(SceneOpsBaseModel):
 
 
 class EpisodeQualityResponse(SceneOpsBaseModel):
+    """``dataset_id`` / ``dataset_version`` are set when the revision was
+    addressed through a DatasetVersion."""
+
     episode_id: str
-    dataset_id: str
-    dataset_version: str
+    dataset_id: str | None = None
+    dataset_version: str | None = None
     manifest_artifact_id: str
     manifest_checksum: str
 

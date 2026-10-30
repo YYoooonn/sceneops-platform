@@ -127,9 +127,15 @@ def build_registration_submitter(settings: WorkerSettings):
         "socket_connect_timeout": _BROKER_TIMEOUT_SECONDS,
         "socket_timeout": _BROKER_TIMEOUT_SECONDS,
     }
+    # send_task subscribes to the task's result channel first. The Redis result
+    # backend takes its socket bounds only from these keys (it ignores socket
+    # options in result_backend_transport_options; the default read timeout is
+    # 120 s), and reconnects under its own retry policy (default 20 attempts), which
+    # would multiply the bound: one reconnect, then the pass gives up.
+    celery_app.conf.redis_socket_connect_timeout = _BROKER_TIMEOUT_SECONDS
+    celery_app.conf.redis_socket_timeout = _BROKER_TIMEOUT_SECONDS
     celery_app.conf.result_backend_transport_options = {
-        "socket_connect_timeout": _BROKER_TIMEOUT_SECONDS,
-        "socket_timeout": _BROKER_TIMEOUT_SECONDS,
+        "retry_policy": {"max_retries": 1}
     }
     facade = JobDispatchFacade(
         session_factory=get_async_sessionmaker(),

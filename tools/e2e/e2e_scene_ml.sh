@@ -122,7 +122,7 @@ render_reference_labels() {
 }
 
 scenes_json() {
-  api_get "$API_BASE_URL" "/scenes?dataset_id=$DATASET_ID&dataset_version=$DATASET_VERSION&limit=500"
+  api_get "$API_BASE_URL" "/datasets/$DATASET_ID/versions/$DATASET_VERSION/scenes?limit=500"
 }
 
 scene_revisions() {

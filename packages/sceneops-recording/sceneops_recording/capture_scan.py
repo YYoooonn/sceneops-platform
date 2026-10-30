@@ -102,6 +102,8 @@ class CaptureScanReport(_CaptureModel):
 # Capture's write target for bags that are not finalized yet
 # (``capture.finalize`` owns this name; the scan only reads it).
 PARTIAL_DIRNAME = ".partial"
+# Capture's per-run ownership lock files (``capture.ownership``); not recordings.
+LOCKS_DIRNAME = ".locks"
 
 _ERROR_MESSAGE_LIMIT = 300
 
@@ -203,7 +205,7 @@ def scan_capture_volume(capture_root: Path) -> CaptureScanReport:
     final_dirs: dict[str, Path] = {}
     unrecognized: list[str] = []
     for entry in sorted(capture_root.iterdir()):
-        if entry.name == PARTIAL_DIRNAME:
+        if entry.name in (PARTIAL_DIRNAME, LOCKS_DIRNAME):
             continue
         if entry.is_dir() and _is_run_id(entry.name):
             final_dirs[entry.name] = entry

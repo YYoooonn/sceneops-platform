@@ -13,9 +13,11 @@ Two passes over the file:
 
     plan_recording_scenes   decode every selected message; interpret calibration,
                             frames and poses; choose each observation's canonical
-                            time; segment on the declared clock; build the
+                            time; segment on the declared clock; declare every
+                            clock a Scene uses with origin ``source``; build the
                             complete SceneManifest set and the payload plan
-                            (artifact id, sha256, size, media type per payload).
+                            (artifact id, sha256, size, media type per payload;
+                            the manifest names each by its Logical URI).
                             Nothing is written.
     iter_planned_payloads   re-read the selected messages and yield each planned
                             payload's bytes, verified against the plan.
@@ -25,14 +27,17 @@ unsupported encoding, a selected topic absent from the recording, missing or
 changing calibration, distortion the manifest cannot carry, a sensor frame
 calibrated against a frame other than the ego frame.
 
-Identity rules (frozen by ``semantics_version`` 1):
+Identity rules (frozen by ``semantics_version`` 6):
 
     observation_id   <topic slug>-<rank>: rank in the channel's canonical order
                      (canonical timestamp, then MCAP sequence when every message
                      of the channel carries one, then per-channel file order)
     pose_id          pose-<source index>-<rank>, same ordering per pose source
     calibration_id   cal-<topic slug>
-    unit_key         recording (whole_recording) | segment-<window index>
+    unit_key         <segmentation>/<segment> (sceneops_core.provenance.segmentation):
+                     the segment is ``recording`` (whole_recording) or the grid
+                     window index k of [k * duration, (k + 1) * duration)
+                     (fixed_duration)
     payload artifact payload-<sha256(robot_run_id, topic, channel_index,
                      extraction)[:32]>. ``channel_index`` is the message's
                      occurrence index among the messages of its own topic, in
@@ -44,7 +49,9 @@ Identity rules (frozen by ``semantics_version`` 1):
                      RobotRun reuses it and two configurations can never give
                      one id different bytes. It is scoped to the RobotRun:
                      an equivalent recording of another acquisition owns its
-                     own payload artifacts (ADR-007 §30.9).
+                     own payload artifacts (ADR-007 §30.9). An observation
+                     references it as a PayloadRef by the Logical URI of its
+                     published key {robot_run_id}/{artifact id}.
 """
 
 from __future__ import annotations
@@ -55,12 +62,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.provenance import (
     INT64_MAX,
+    PinnedRecording,
     ProducerInfo,
-    RecordingSegmentSource,
-    RecordingSourceRevision,
+    recording_clock_domains,
+)
+from sceneops_core.provenance.segmentation import (
+    WHOLE_RECORDING_SEGMENT,
+    fixed_duration_index,
+    fixed_duration_window,
+    recording_unit_key,
 )
 from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
 from sceneops_core.scenes.recording_build import (
@@ -98,19 +110,19 @@ from sceneops_recording.observations.payloads import (
     OBSERVATION_PAYLOAD_ID_SCHEMA_V1,
     PlannedPayload,
     RecordingBuildError,
-    RecordingRevision,
     canonical_order as _canonical_order,
     observation_payload_artifact_id,
     ros2_cdr_media_type,
 )
 
+from .plan import PlannedScene, SceneBuildPlan
+
 RECORDING_SCENE_PRODUCER_ID: Final = "sceneops.recording_scene_builder"
-WHOLE_RECORDING_UNIT_KEY: Final = "recording"
 # Bump whenever the canonical bytes a build produces change for the same
 # recording and configuration: it enters the producer fingerprint, so a
-# changed builder is a different producer and replacing registered Scenes
-# is explicit. 2: SceneManifest v2 (no embedded annotations).
-RECORDING_SCENE_SEMANTICS_VERSION: Final = 2
+# changed builder is a different producer. 6: SceneManifest v5 (every
+# observation payload is a PayloadRef by Logical URI).
+RECORDING_SCENE_SEMANTICS_VERSION: Final = 6
 CAMERA_INFO_SCHEMA: Final = "sensor_msgs/msg/CameraInfo"
 TF_MESSAGE_SCHEMA: Final = "tf2_msgs/msg/TFMessage"
 
@@ -126,25 +138,6 @@ _PROJECTION_TOLERANCE: Final = 1e-9
 
 class RecordingSceneBuildError(RecordingBuildError):
     """The recording cannot be canonicalized faithfully under this config."""
-
-
-@dataclass(frozen=True)
-class PlannedScene:
-    unit_key: str
-    manifest: SceneManifest
-
-
-@dataclass(frozen=True)
-class SceneBuildPlan:
-    producer: ProducerInfo
-    scenes: list[PlannedScene]
-    # keyed by (topic, per-channel file index)
-    payloads: dict[tuple[str, int], PlannedPayload]
-    pose_count: int
-
-    @property
-    def observation_count(self) -> int:
-        return sum(len(s.manifest.observations) for s in self.scenes)
 
 
 # --- identifiers and payloads (shared with the Episode builder) ---------------
@@ -199,7 +192,7 @@ class _CameraInfo:
 
 @dataclass
 class _Planner:
-    revision: RecordingRevision
+    revision: PinnedRecording
     config: RecordingSceneBuildConfig
     decoder: Ros2Decoder = field(default_factory=Ros2Decoder)
     channels: dict[str, SceneChannelConfig] = field(init=False)
@@ -285,6 +278,7 @@ class _Planner:
         timestamp_ns = self._time(channel.time, message, header)
         data, media_type = extract_payload(channel, message, decoded)
         payload = PlannedPayload(
+            robot_run_id=self.revision.robot_run_id,
             artifact_id=observation_payload_artifact_id(
                 robot_run_id=self.revision.robot_run_id,
                 topic=message.topic,
@@ -496,7 +490,7 @@ class _Planner:
 
 
 def plan_recording_scenes(
-    path: Path, *, revision: RecordingRevision, config: RecordingSceneBuildConfig
+    path: Path, *, revision: PinnedRecording, config: RecordingSceneBuildConfig
 ) -> SceneBuildPlan:
     """Pass 1: the complete Scene set of the recording scope, without
     writing anything."""
@@ -526,10 +520,7 @@ def plan_recording_scenes(
         producer_id=RECORDING_SCENE_PRODUCER_ID,
         semantics_version=RECORDING_SCENE_SEMANTICS_VERSION,
         build_config=config.normalized(),
-        source=RecordingSourceRevision(
-            robot_run_id=revision.robot_run_id,
-            recording_checksum=revision.recording_checksum,
-        ),
+        source=revision.source_revision,
     )
 
     # Canonical observations, identified by their rank in channel order.
@@ -601,22 +592,22 @@ def plan_recording_scenes(
         def window_bounds(index: int) -> tuple[int, int]:
             return whole
 
-        def window_unit_key(index: int) -> str:
-            return WHOLE_RECORDING_UNIT_KEY
+        def window_segment(index: int) -> str:
+            return WHOLE_RECORDING_SEGMENT
 
     else:
-        origin = min(item.segment_ns for item, _ in observations)
         duration = segmentation.duration_ns
 
         def window_index(segment_ns: int) -> int:
-            return (segment_ns - origin) // duration
+            return fixed_duration_index(segment_ns, duration)
 
         def window_bounds(index: int) -> tuple[int, int]:
-            start = origin + index * duration
-            return start, start + duration
+            return fixed_duration_window(index, duration)
 
-        def window_unit_key(index: int) -> str:
-            return f"segment-{index:06d}"
+        def window_segment(index: int) -> str:
+            return str(index)
+
+    boundary = config.segmentation_boundary()
 
     by_window: dict[int, list[SceneObservation]] = {}
     for item, observation in observations:
@@ -653,20 +644,25 @@ def plan_recording_scenes(
             raise RecordingSceneBuildError(
                 f"segment window [{start}, {end}) is outside the int64 time range"
             )
-        unit_key = window_unit_key(index)
-        source = RecordingSegmentSource(
-            robot_run_id=revision.robot_run_id,
-            recording_artifact_id=robot_run_recording_artifact_id(
-                revision.robot_run_id
-            ),
-            recording_checksum=revision.recording_checksum,
+        unit_key = recording_unit_key(boundary=boundary, segment=window_segment(index))
+        source = revision.segment_source(
             source_clock=segmentation.clock,
             start_timestamp_ns=start,
             end_timestamp_ns=end,
             unit_key=unit_key,
         )
+        window_poses = poses_by_window.get(index, [])
         manifest = SceneManifest(
             lineage=SceneLineage(source=source, producer=producer),
+            # The window's clock, every channel's and every included pose's;
+            # a pose source with no pose in this window names no clock here.
+            clock_domains=recording_clock_domains(
+                [
+                    segmentation.clock,
+                    *(c.source_clock for c in channels),
+                    *(p.source_clock for p in window_poses),
+                ]
+            ),
             coordinate_frames=frames,
             channels=channels,
             calibrations=calibration_list,
@@ -675,7 +671,7 @@ def plan_recording_scenes(
                 key=lambda o: (o.channel, o.timestamp_ns, o.observation_id),
             ),
             poses=sorted(
-                poses_by_window.get(index, []),
+                window_poses,
                 key=lambda p: (p.source_clock, p.timestamp_ns, p.pose_id),
             ),
         )
@@ -729,10 +725,8 @@ __all__ = [
     "OBSERVATION_PAYLOAD_ID_SCHEMA_V1",
     "RECORDING_SCENE_PRODUCER_ID",
     "RECORDING_SCENE_SEMANTICS_VERSION",
-    "WHOLE_RECORDING_UNIT_KEY",
     "PlannedPayload",
     "PlannedScene",
-    "RecordingRevision",
     "RecordingSceneBuildError",
     "SceneBuildPlan",
     "extract_payload",

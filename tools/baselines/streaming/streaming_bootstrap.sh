@@ -30,16 +30,26 @@
 #   capture finalized / published / registration pending -> publish-pending and/or
 #                                                           reconcile --apply: never replayed again
 #   capture unfinished (interrupted)                     -> resumed by re-running the capture
-#                                                           from Kafka's committed offsets
+#                                                           without a start position: the run is
+#                                                           rebuilt from the retained Kafka log,
+#                                                           scanned from the beginning (Capture
+#                                                           records no progress in Kafka, ADR-013)
 #   nothing                                              -> replayed (streamed)
 #   any other reconciler state                           -> fails and names it
 # A registered RobotRun is never replayed over. Once a run's recording is
 # registered and byte-identical to its capture, the transient capture files
 # are removed; the durable state is in the ArtifactStore and PostgreSQL.
 #
-# Disk: each fixture needs headroom for its capture, its Kafka records and its
-# artifacts. The bootstrap stops before a fixture when the host or the Docker VM
-# has less than MIN_FREE_GIB (default 6) free.
+# Disk: before the first fixture is streamed, the capacity preflight
+# (tools/dev/capacity_preflight.py) refuses a selection whose recordings, payloads,
+# Kafka log and capture the Docker VM cannot hold with margin; during the run the
+# bootstrap still stops before a fixture when the host or the Docker VM has less than
+# MIN_FREE_GIB (default 6) free.
+#
+# Runtime: STREAMING_RUNTIME=disposable (set by `disposable_env.py run --streaming`)
+# runs the whole path on the disposable execution runtime's own broker, capture volume,
+# workers, database and bucket (tools/baselines/streaming/streaming_lib.sh); the default
+# is the reference stack.
 #
 # stdout: one JSON summary (streaming_verify), deterministic for an unchanged
 # baseline. Progress and per-fixture diagnostics (`streaming_fixture {json}`,
@@ -92,7 +102,7 @@ stall_watch_start() {
     log "pipeline_slow $(jq -cn --arg l "$1" --arg t "$(date -u +%FT%TZ)" --argjson s "$STALL_REPORT_SECONDS" \
       '{label: $l, still_running_after_seconds: $s, at: $t}')"
     log "pipeline_slow_stats $(docker stats --no-stream --format '{{json .}}' | jq -sc '[.[] | {name: .Name, cpu: .CPUPerc, mem: .MemUsage}]')"
-    for svc in worker-pipeline worker-jobs; do
+    for svc in "$SVC_WORKER_PIPELINE" "$SVC_WORKER_JOBS"; do
       log "pipeline_slow_log $svc: $("${COMPOSE[@]}" logs --no-color --tail 15 "$svc" 2>&1 | cut -c1-300 | tr '\n' '|')"
     done
   ) &
@@ -144,13 +154,13 @@ acquire_fixture() {
 }
 
 # resume_capture <run-id> <capture-root> — an interrupted capture: Kafka is the source
-# of truth, and a capture resumes from its group's committed offsets. Nothing is
-# replayed: it finalizes only if the run's RUN_END is already in the topic, and
+# of truth, and a capture rebuilds the run from the beginning of the topic. Nothing is
+# replayed: it finalizes only if the run's RUN_START..RUN_END is already in the topic, and
 # otherwise aborts (a recording that merely stopped arriving is never finalized).
 resume_capture() {
   local run_id="$1" capture_root="$2" summary
   docker rm -f "$CAPTURE" >/dev/null 2>&1 || true
-  "${COMPOSE[@]}" run -d --name "$CAPTURE" -T capture \
+  "${COMPOSE[@]}" run -d --name "$CAPTURE" -T "$SVC_CAPTURE" \
     --robot-id "$ROBOT_ID" --robot-run-id "$run_id" --channels-file "$CHANNELS_FILE" \
     --output-root "$capture_root" --idle-timeout-seconds 60 >/dev/null
   [ "$(docker wait "$CAPTURE")" = 0 ] || fail "the resumed capture of $run_id failed (its RUN_END may never have reached Kafka: remove the capture and the run's partial state by hand)"
@@ -168,7 +178,7 @@ process_fixture() {
   action=reused
   if ! api_get "$API_BASE_URL" "/robot-runs/$run_id" >/dev/null 2>&1; then
     disk_guard
-    "${COMPOSE[@]}" run --rm -T --entrypoint mkdir capture -p "$capture_root" </dev/null
+    "${COMPOSE[@]}" run --rm -T --entrypoint mkdir "$SVC_CAPTURE" -p "$capture_root" </dev/null
     scan="$(streaming_scan "$capture_root")"
     state="$(streaming_run_state "$run_id" "$scan")"
     log "--- $id: $run_id is $state"
@@ -197,21 +207,22 @@ process_fixture() {
   fi
 
   t3="$(now)"
-  if baseline_fixture_complete "$run_id"; then
-    log "  Scene and Episode of $run_id are built and ready: reused"
+  if [ "$COMPOSED" = 1 ]; then
+    log "  Scenes and Episodes of $run_id are members of $DATASET_ID/$DATASET_VERSION: reused"
     t4="$t3"
     t5="$t3"
   else
     stall_watch_start "recording_scene_building $run_id"
-    baseline_build_scope recording_scene_building build_recording_scenes register_scenes profile_scene \
-      "$run_id" "$(scene_build_config)"
+    scenes="$(baseline_build_scope recording_scene_building build_recording_scenes \
+      register_scenes profile_scene "$run_id" "$(scene_build_config)")"
     stall_watch_stop
     t4="$(now)"
     stall_watch_start "recording_episode_building $run_id"
-    baseline_build_scope recording_episode_building build_recording_episodes register_episodes profile_episode \
-      "$run_id" "$(episode_build_config)"
+    episodes="$(baseline_build_scope recording_episode_building build_recording_episodes \
+      register_episodes profile_episode "$run_id" "$(episode_build_config)")"
     stall_watch_stop
     t5="$(now)"
+    PINS="$(jq -cn --argjson a "$PINS" --argjson s "$scenes" --argjson e "$episodes" '$a + $s + $e')"
   fi
   diag="$(jq -cn --arg id "$id" --arg run "$run_id" --arg action "$action" \
     --argjson replay "$replay_s" --argjson capture "$capture_s" \
@@ -237,15 +248,21 @@ if ! baseline_all_registered; then
     | grep -E 'sceneops_capture|sceneops_streaming_bridge|publication-recovery|registration-recovery' || true)"
   [ -z "$ACTIVE" ] || fail "an unrelated capture, bridge or recovery loop is running (stop it first, e.g. make recovery-down):
 $ACTIVE"
-  "${COMPOSE[@]}" up -d --wait kafka >/dev/null 2>&1 || fail "Kafka did not become healthy"
+  "${COMPOSE[@]}" up -d --wait "$SVC_KAFKA" >/dev/null 2>&1 || fail "Kafka did not become healthy"
   log "  Kafka up; no capture, bridge or recovery container running"
   log "streaming_storage $(streaming_storage)"
   log "--- a RobotRun has to be streamed: cached recordings verified against the lock"
   baseline_resolve full
+  baseline_capacity_preflight streaming_acquisition
 fi
 log "  $(echo "$BASELINE_FIXTURES" | jq -c '[.[].fixture_id]')"
 
 baseline_ensure_dataset "Streaming baseline $BASELINE_ID"
+# A composed DatasetVersion is complete and immutable: its fixtures are not built
+# again. Otherwise every fixture's revision pins are collected for one composition.
+COMPOSED=0
+baseline_version_composed && COMPOSED=1
+PINS='[]'
 
 # Collected into an array first: a docker container inside a `while read` loop would
 # consume the remaining fixtures from stdin. (No mapfile: the host bash may be 3.2.)
@@ -255,6 +272,11 @@ for fixture in "${fixtures[@]}"; do
   process_fixture "$fixture"
   [ "$ACQUIRING" = 0 ] || log "streaming_storage $(streaming_storage)"
 done
+
+if [ "$COMPOSED" = 0 ]; then
+  log "--- compose $DATASET_ID/$DATASET_VERSION ($(echo "$PINS" | jq length) revisions)"
+  baseline_compose "$PINS"
+fi
 
 log "--- verify"
 streaming_verify "$API_BASE_URL"

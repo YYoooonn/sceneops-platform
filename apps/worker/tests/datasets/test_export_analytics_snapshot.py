@@ -34,7 +34,6 @@ def _job() -> MagicMock:
 
 @pytest.fixture()
 def world(scene_world):
-    scene_world.add_dataset_version()
     scene_world.context.analytics_writer = AnalyticsTableWriter(
         artifact_store=scene_world.artifact_store,
         root_uri=f"{scene_world.root}/analytics",
@@ -59,17 +58,16 @@ async def _register(world, *keys):
         await world.publish(world.manifest(source=recording_source(unit_key=k)))
         for k in keys
     ]
-    await RegisterScenesJobHandler().run(
+    result = await RegisterScenesJobHandler().run(
         JobHandlerRequest(
             job=_job(),
             params=RegisterScenesJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
                 manifest_artifact_ids=[a.artifact_id for a in artifacts],
             ),
             context=world.context,
         )
     )
+    world.scenes.pin(result.revisions)
 
 
 async def _export(world, tables=None):
@@ -99,7 +97,7 @@ async def test_exports_all_three_tables_by_default(world):
         "keyframes": 4,
     }
     observations = await _table(world, result.table_uris["observations"])
-    assert set(observations["scene_id"].to_list()) == set(world.scenes.committed)
+    assert set(observations["scene_id"].to_list()) == set(world.scenes.members())
     assert observations["timestamp_ns"].dtype.is_integer()
 
 
@@ -143,9 +141,8 @@ async def test_exporting_changed_data_adds_a_revision_and_keeps_the_old_one(worl
     old_uri = first.table_uris["scenes"]
     old_bytes = await world.artifact_store.read_bytes(old_uri)
 
-    (scene_id,) = world.scenes.working
-    record = world.scenes.working[scene_id]
-    world.scenes.working[scene_id] = record.model_copy(
+    ((key, record),) = world.scenes.working[0].items()
+    world.scenes.working[0][key] = record.model_copy(
         update={"observation_count": record.observation_count + 1}
     )
     second = await _export(world, tables=["scenes"])
@@ -156,3 +153,27 @@ async def test_exporting_changed_data_adds_a_revision_and_keeps_the_old_one(worl
     records = {r.uri: r for r in _table_records(world)}
     assert records[old_uri].checksum == sha256_checksum(old_bytes)
     assert len(records) == 2
+
+
+async def test_a_failed_table_fails_the_export_before_any_table_is_written(
+    world, monkeypatch
+):
+    """A table that cannot be built refuses the whole export; the scenes
+    table, which could have been built, must not be written first."""
+    from sceneops_worker.jobs.dataset import export_analytics_snapshot
+
+    class TableBuildError(ValueError):
+        pass
+
+    def refuse(**_):
+        raise TableBuildError("the observation table cannot be built")
+
+    monkeypatch.setitem(
+        export_analytics_snapshot._MANIFEST_TABLE_BUILDERS, "observations", refuse
+    )
+    await _register(world, "a")
+    before = await world.artifact_store.list_objects(f"{world.root}/analytics")
+    with pytest.raises(TableBuildError):
+        await _export(world)
+    assert await world.artifact_store.list_objects(f"{world.root}/analytics") == before
+    assert _table_records(world) == []

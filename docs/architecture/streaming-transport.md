@@ -65,7 +65,7 @@ The transport is one package, `sceneops-streaming`
 ```text
 Transport-neutral contract (no Kafka SDK import, no I/O)
   envelope.py     TelemetryEnvelope (Pydantic), TelemetryEnvelopeVersion, EnvelopeEncoding
-  contracts.py    ConsumedTelemetryEnvelope, TelemetryProducer / TelemetryConsumer Protocols
+  contracts.py    ConsumedTelemetryEnvelope, DeliveredRecord, KafkaStartPosition, TelemetryProducer / TelemetryConsumer Protocols
   channels.py     ChannelSpec / ChannelRegistry, timestamp rules, channel-set files
   control.py      run lifecycle control events (RUN_START / RUN_END)
   constants.py    default topic name, header prefix, the reserved control channel
@@ -74,7 +74,7 @@ Kafka adapter (the only code that imports confluent_kafka)
   config.py       StreamingSettings (bootstrap servers / topic / consumer group / client id)
   wire.py         pure Kafka key / headers / value mapping -- no broker needed
   producer.py     KafkaTelemetryProducer
-  consumer.py     KafkaTelemetryConsumer, EnvelopeDecodeError
+  consumer.py     KafkaTelemetryConsumer (subscribe; or assign() every partition from the beginning, or one at a KafkaStartPosition), EnvelopeDecodeError
 ```
 
 The package depends only on `sceneops-core`. It defines no RobotRun, Scene or Episode
@@ -83,7 +83,7 @@ behavior. Its dependents are the ROS 2 -> Kafka bridge integration (`integration
 envelope; `apps/api`, `apps/worker` and `apps/publisher` depend on none of it, so the
 Kafka SDK is not in their images. `sceneops-streaming` is a member of the root uv
 workspace, so `make test` runs its unit tests (wire mapping, settings, consumer
-manual-commit behavior, envelope, channel registry and control events) without a broker.
+subscribed and assigned modes, envelope, channel registry and control events) without a broker.
 
 ## 3. TelemetryEnvelope contract
 
@@ -140,13 +140,57 @@ never sorts or reorders messages. Kafka partitioning by `robot_run_id`
 gives deterministic per-RobotRun ordering (§6); no attempt is made at
 ordering across RobotRuns or globally.
 
-**Delivery.** At-least-once. `KafkaTelemetryProducer.publish` buffers a
-record and returns once accepted into librdkafka's client-side queue;
-`flush` blocks until the broker acknowledges every buffered record (or
-raises on the first delivery failure). No exactly-once claim is made
-end-to-end -- Kafka delivery and any future canonical-side idempotency
-(e.g. a dedup key when this eventually feeds `RobotRun`/MCAP) are separate
-concerns, deliberately not conflated here.
+**Delivery.** `KafkaTelemetryProducer.publish` buffers a record and
+returns once accepted into librdkafka's client-side queue; `flush` blocks
+until the broker acknowledges every buffered record (or raises on a delivery
+failure or timeout). The producer is idempotent (`enable.idempotence=true`,
+`acks=all`):
+
+```text
+within one producer instance
+  broker retries (connection loss, lost response, request timeout)
+  never duplicate and never reorder a partition's records
+across producer instances (a restarted bridge)
+  records may be re-sent; duplicates are possible
+a record whose delivery finally fails (message.timeout.ms)
+  is reported by flush(); later records may still be delivered,
+  so the stream has a gap -- a delivery error invalidates the run's stream
+```
+
+**Queue full.** librdkafka's client-side queue is bounded (1 GiB / 100,000
+messages). A slot is released only when the record's delivery report has been served,
+and only `poll()` and `flush()` serve reports -- `produce()` never does, so a queue
+full of already-delivered records stays full until polled. `publish` therefore serves
+reports before every produce; if the queue is still full it waits in `poll()` (blocking,
+not spinning) for up to `queue_full_timeout_seconds` (default 1.0 s) for a slot, then
+raises `ProducerQueueFullError`. That record was not accepted: nothing was queued, a
+later accepted record leaves a gap in the stream, and a retry cannot duplicate or
+reorder. After one record has exhausted the wait, further records are refused at once
+until one is accepted again. `flush` speaks only for accepted records, so it succeeds
+after such a rejection: the caller that saw the error owns the knowledge that a record
+is missing.
+
+`publish_and_wait` publishes one record and returns only once its own delivery
+report arrived, as a `DeliveredRecord(topic, partition, offset)` (the position the
+broker stored it at); a failed delivery raises `DeliveryError`, no report in time
+raises `TimeoutError` (the record may still be stored later). It exists for the
+few records whose position is handed to another process (`RUN_START`, §28); bulk
+telemetry stays on the asynchronous `publish`.
+
+Only a delivery report without error means a record is durable on the
+broker; `publish` returning means nothing about delivery. The ROS2 bridge
+publishes `RUN_END` only after a `flush` that raised nothing (§14): a record
+whose delivery failed may never have reached the broker although the
+`RUN_END` count (§28) includes it. No exactly-once claim is made
+end-to-end -- Kafka delivery and canonical-side idempotency (e.g. a dedup key
+when this feeds `RobotRun`/MCAP) are separate concerns.
+
+**Partition-count stability.** The partition of a key is fixed when the
+producer *learns* the topic's partition count, which it refreshes only
+periodically (`topic.metadata.refresh.interval.ms`, librdkafka default 300 s)
+or on an explicit metadata request. An active `robot_run_id` therefore moves
+partitions mid-run once the producer observes a larger partition count.
+Topics with active runs must not be resized (§6).
 
 ## 5. Kafka wire contract
 
@@ -305,10 +349,10 @@ SCENEOPS_STREAMING_KAFKA_CONSUMER_GROUP_ID   consumer_group_id    sceneops-telem
 **Deliberately not exposed as environment variables:** `acks`, `retries`,
 `linger.ms`, `batch.size`, compression, `auto.offset.reset`,
 `enable.auto.commit`, consumer session timeouts. These stay as explicit
-code-level defaults in `producer.py` (`acks=all`) and `consumer.py`
-(`auto.offset.reset` is a constructor parameter, not an env var;
-`enable.auto.commit=True` is hardcoded) until a demonstrated override
-need exists.
+code-level defaults in `producer.py` (`acks=all`, `enable.idempotence=true`) and `consumer.py`
+(`auto.offset.reset` and `enable.auto.commit` are constructor parameters of a
+subscribed consumer, not env vars; an assigned consumer forces auto-commit off
+and `auto.offset.reset=error`) until a demonstrated override need exists.
 
 **Precedence** (pydantic-settings' own built-in behavior, not a custom
 mechanism): explicit constructor kwarg > environment variable >
@@ -328,8 +372,11 @@ KAFKA_NODE_ID, KAFKA_PROCESS_ROLES, KAFKA_LISTENERS,
 KAFKA_ADVERTISED_LISTENERS, KAFKA_LISTENER_SECURITY_PROTOCOL_MAP,
 KAFKA_CONTROLLER_LISTENER_NAMES, KAFKA_INTER_BROKER_LISTENER_NAME,
 KAFKA_CONTROLLER_QUORUM_VOTERS, KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR,
-KAFKA_LOG_DIRS, KAFKA_AUTO_CREATE_TOPICS_ENABLE, CLUSTER_ID
+KAFKA_LOG_DIRS, KAFKA_AUTO_CREATE_TOPICS_ENABLE, CLUSTER_ID,
+KAFKA_LOG_RETENTION_HOURS, KAFKA_LOG_ROLL_HOURS, KAFKA_LOG_RETENTION_BYTES
 ```
+
+The last three are the replay window (§26.1).
 
 None of these appear in `.env.example`. `KAFKA_HOST_PORT` (default
 `9092`, in `.env.example`/`.env.local` under local-development
@@ -589,13 +636,29 @@ RobotRun identity (`run-stream-ref-<corpus>-<fixture>`).
 `KafkaTelemetryProducer` on a dedicated background asyncio event loop for
 the node's whole lifetime. A ROS2 callback's `publish()` call blocks the
 calling (ROS2 callback) thread for at most `--publish-timeout-seconds`
-(default 5.0s) waiting for the coroutine to complete on that loop. There is
-no queue of the bridge's own besides the DDS subscription history (keep-all,
-§13) and librdkafka's internal client queue, bounded by its own default
-configuration. A stalled/unreachable broker surfaces as a timeout or
-exception in the callback (caught, logged, counted -- never silently
-dropped); a sustained input rate above what the bridge can forward shows up
-as growing DDS-side memory, not as silent loss.
+(default 5.0s) waiting for the coroutine to complete on that loop. The bridge
+has no queue of its own; the buffering in this data path is librdkafka's
+client queue (bounded at 1 GiB / 100,000 messages) and the DDS subscription
+history (keep-all, §13). The bridge does not slow the source: a callback returns
+as soon as the producer accepted the record, so while the broker is slow or
+unreachable the records accumulate in librdkafka's queue, not in DDS, until a
+bound is hit. From there:
+
+```text
+queue not full             publish returns at once; delivery is asynchronous
+queue full, slot frees     the callback waits for it (up to half of --publish-timeout-seconds,
+                           so the producer answers before the bridge stops waiting), then the
+                           record is accepted
+queue full for longer      ProducerQueueFullError: the callback counts a failed message, its
+                           sequence number is a gap (capture rejects the run), and following
+                           records are refused at once until the broker drains the queue
+accepted, never delivered  message.timeout.ms (300 s) -> delivery error, reported by the flush
+```
+
+The bridge exits non-zero in every one of these failures. Records still queued when
+the process exits are lost with it, which is why a run with a refused or unconfirmed
+record is never finalized (§28). There is no application-level flow control: the
+source cannot be slowed and the bridge cannot see Kafka state beyond its own queue.
 
 *Measured (scope: one nuScenes v1.0-mini scene, scene-0061, 8,897 messages,
 about 356 MB, 20 channels incl. six cameras and a 20 Hz lidar; Apple-silicon
@@ -622,17 +685,42 @@ whose messages exceed ~1 MB needs the producer `message.max.bytes`, topic
 `max.message.bytes` and broker `message.max.bytes` raised together; that
 is not configured today.
 
+**Session start:** with lifecycle events on (always, from `main()`) the node
+publishes `RUN_START` with `publish_and_wait` during construction, before it
+creates any subscription, so no telemetry can be bridged before the broker has
+acknowledged `RUN_START`. The acknowledged position becomes
+`node.run_start_position` and `main()` prints it as one machine-readable stdout
+line, distinct from the human log:
+
+```text
+run_started {"event": "run_started", "robot_run_id": "...", "topic": "...",
+             "partition": 2, "offset": 18432, "start_position": "TOPIC:2:18432"}
+```
+
+`start_position` is exactly the value of Capture's `--start-position` (§26). The
+bridge only reports it: it starts no Capture and writes no SceneOps state. If
+`RUN_START` is not acknowledged within `--publish-timeout-seconds` (or its delivery
+fails), the node raises `RunStartError`, `main()` exits non-zero, nothing was
+subscribed and no position was printed. A timed-out `RUN_START` can still reach the
+broker later; that run then has a `RUN_START` and never a `RUN_END`, which Capture
+refuses (§26).
+
 **Graceful shutdown:** `main()` installs `SIGTERM`/`SIGINT` handlers that
 set a `threading.Event`; the spin loop (`rclpy.spin_once(node,
 timeout_sec=0.5)`) checks it every 0.5s. For a finite source,
 `--exit-after-idle-seconds N` ends the loop once at least one message was
 bridged and none arrived for `N` seconds. On shutdown: stop spinning (no
-new callbacks) -> publish `RUN_END` (always; capture finalizes a run only on
-its `RUN_END`) -> flush the producer, bounded
-by a timeout -> close it -> print one `bridge_summary` JSON line (published
+new callbacks) -> flush the producer, bounded by a timeout -> publish `RUN_END`
+only if that flush reported no delivery failure, declaring `telemetry_count`
+(§28; capture finalizes a run only on its `RUN_END`, so withholding it makes
+capture refuse the run) -> flush and
+close the producer -> print one `bridge_summary` JSON line (published
 and failed counts, per channel) -> `node.destroy_node()` ->
-`rclpy.shutdown()`. If any message failed during the run, the process exits
-non-zero.
+`rclpy.shutdown()`. The process exits non-zero if any message failed during the run
+(including a record the producer refused because its queue was full) or if delivery
+was not confirmed: the flush before `RUN_END` failed (`RUN_END` is withheld) or closing
+the producer failed. `close()` flushes again and a delivery error is reported only
+once, so a later successful flush never clears the unconfirmed state.
 
 **Failure semantics:** `_handle_message` wraps decode/timestamp/publish in
 one `try`/`except Exception`. On failure: increment the failed count, log a
@@ -642,7 +730,9 @@ processing subsequent messages -- never crash the node, never silently
 drop. Every received message takes its sequence number before anything can
 fail, so a message the bridge drops leaves a sequence gap, which capture
 rejects: a bridge failure makes the run's recording fail rather than silently
-come out incomplete. "Unsupported
+come out incomplete. A record the producer refused (`ProducerQueueFullError`) is such a
+failure; because the bridge keeps its sequence number, neither a successful `flush` nor
+a `RUN_END` can make the run look complete. "Unsupported
 message type" cannot occur at runtime by construction: the node only ever
 subscribes to registry topics. No DLQ, no persistent retry storage --
 deferred to a reliability boundary, matching the transport's own
@@ -821,7 +911,7 @@ packages/sceneops-recording/sceneops_recording/capture/
   validation.py          pre-finalize MCAP read-back validation; retry-convergence comparison
   finalize.py            temp/final bag directory lifecycle
   receipt_io.py          capture receipt write / read / convergence check
-  group_id.py            run-scoped consumer-group derivation
+  ownership.py           exclusive local ownership of a run (flock)
   consumer.py            RunFilter, SequenceTracker, CaptureResult, run_capture()
 apps/capture/sceneops_capture/cli.py   CLI entry point (run_capture, finalizes on RUN_END)
 packages/sceneops-recording/tests/capture/   pytest, runs only inside the capture image (make streaming-test)
@@ -882,32 +972,29 @@ dependency, each introduced by a separator line and `MSG: <package>/<Name>`
 -- the same format rosbag2 writes. Tests decode payloads serialized by
 `rclpy` with those schemas through an independent MCAP ROS 2 decoder.
 
-## 21. Commit-boundary ordering (durability guarantee)
+## 21. Finalize ordering (durability guarantee)
 
 Frozen, never reversed:
 
 ```text
 consume -> write to the temp/partial MCAP -> close the writer (fsync)
-  -> validate by reading the file back -> atomically finalize
-  (rename + fsync parent dir) -> commit Kafka offsets
+  -> validate by reading the file back -> write the receipt
+  -> atomically finalize (rename + fsync parent dir)
 ```
 
-If anything before the Kafka commit fails, `run_capture()`
-(`consumer.py`) raises without committing -- the partial bag is
-left in place for the next attempt to discard and rebuild from Kafka
-(§25), never appended to. `KafkaTelemetryConsumer` gained
-`enable_auto_commit`/`commit()` (Part 1's `consumer.py`) specifically for
-this: `enable.auto.commit=False` is REQUIRED for capture (durability must
-never depend on librdkafka's periodic background commit), and `commit()`
-synchronously commits only up through the most recently polled record,
-called exactly once, after finalize succeeds.
+The atomic finalize is the only completion boundary. Capture reads Kafka and
+records no progress in it (§26): a run counts as captured when its finalized bag
+and receipt exist, and Kafka carries no state about that. If anything before the
+finalize fails, `run_capture()` (`consumer.py`) raises -- the partial bag is left
+in place for the next attempt to discard and rebuild from Kafka (§25), never
+appended to.
 
-A dedicated regression test enforces this ordering, not just the
-behavior: `test_run_capture_commits_only_after_finalize`
-(`packages/sceneops-recording/tests/capture/test_capture_consumer.py`) spies on both
-`finalize_bag` and the consumer's `commit()` and asserts
-`call_order == ["finalize", "commit"]` -- it fails if `run_capture` is
-ever edited to call `commit()` before (or without) `finalize_bag()`.
+`KafkaTelemetryConsumer` in assigned mode has no commit API and forces
+`enable.auto.commit=False`, so durability cannot depend on a background commit
+either. `test_pinned_capture.py` pins what `run_capture` asks of the consumer
+(only `settings`, `start_position`, `start_from_beginning`: no group id, no commit
+behaviour), and the real-Kafka tests assert that a capture leaves no
+consumer-group state behind (`tests/capture/group_state.py`).
 
 ## 22. Supported channels
 
@@ -915,8 +1002,7 @@ The channel registry (§11) is the only source of channel/type validation
 -- no dynamic ROS2 topic/type discovery. Capture must be given the same
 `--channels-file`s as the bridge. An envelope naming a channel or
 `message_type` outside the registry raises `UnsupportedChannelError` and
-aborts the capture attempt (§21's ordering means nothing gets finalized or
-committed). The writer needs no imported ROS2 message class: the payload is
+aborts the capture attempt (§21's ordering means nothing gets finalized). The writer needs no imported ROS2 message class: the payload is
 opaque CDR bytes and the schema text is read from the interface
 definitions by type name (§20).
 
@@ -960,9 +1046,14 @@ late/out-of-order (sequence < expected next, not
 
 "Fail" here means `SequenceIntegrityError`, which aborts the capture
 attempt the same way `PartitionInvariantError`/`UnsupportedChannelError`
-do -- per §21's ordering, nothing gets finalized or committed, so a
-restart safely rebuilds from the last committed offset rather than
+do -- per §21's ordering, nothing gets finalized, so a
+restart safely rebuilds the run from the beginning of the topic rather than
 silently accepting corrupted sequencing.
+
+The tracker proves that what arrived is a gap-free prefix `0..K-1`. It cannot
+prove that `K` is the end of the run: records lost after the last one it saw
+leave nothing to compare against. `RUN_END`'s `telemetry_count` (§28) supplies
+the end.
 
 ## 25. Temp/final file lifecycle
 
@@ -973,14 +1064,14 @@ is that whole directory. Layout, per `robot_run_id`, under one capture `output_r
 ```text
 <output_root>/.partial/<robot_run_id>/   -- write target (in progress)
 <output_root>/<robot_run_id>/            -- finalized (atomically renamed)
+<output_root>/.locks/<robot_run_id>.lock -- ownership lock (§26)
 ```
 
 `prepare_partial_bag_dir()` (`finalize.py`) never appends to or resumes a
 stale `.partial` directory from a previous crashed/interrupted attempt --
 it discards it (`shutil.rmtree`) and lets the writer recreate it from
 scratch, because the source of truth for what belongs in a capture is
-Kafka, replayed from the last *committed* offset (always before anything
-a stale partial could contain under §21's ordering), never whatever bytes
+Kafka, replayed from the beginning of the topic (§26), never whatever bytes
 happen to already be on disk. The writer refuses to open into a directory
 that already exists, so `prepare_partial_bag_dir()` guarantees the path
 does *not* exist and its parent does, rather than creating it itself.
@@ -1003,20 +1094,36 @@ or zero messages.
 ## 26. Capture lifecycle, configuration, and failure behavior
 
 **Lifecycle.** `run_capture()` never inspects payload content to decide
-when to stop. A run is finalized only by its explicit `RUN_END` control
-event (`stop_on_run_end`, always set by `cli.py`), consumed after it passed
-its own sequence validation. The bridge publishes `RUN_END` after its last
-telemetry record on the same partition, so everything it forwarded precedes
-it. The caller's `stop_condition(message_count)`, polled before every Kafka
-poll, is then only an abort guard: `cli.py --idle-timeout-seconds S` aborts
-when nothing arrives for `S` seconds before `RUN_END`. An aborted capture
-raises `RunEndNotObservedError`, exits non-zero and finalizes and commits
-nothing, because a recording that merely stopped arriving (a bridge killed
-without `RUN_END`) cannot be told from a complete one once it is a registered
+when to stop. `cli.py` always runs it lifecycle-governed (`stop_on_run_end`):
+the run must be a complete `RUN_START` -> telemetry -> `RUN_END` session
+(§29), and only its explicit `RUN_END`, consumed after it passed its own
+sequence validation, finalizes it. The bridge publishes `RUN_END` after its
+last telemetry record on the same partition, so everything it forwarded
+precedes it. The abort guard is then the only other way the capture ends:
+`cli.py --idle-timeout-seconds S` (`idle_timeout_seconds`), or a caller's
+`stop_condition(message_count)` polled before every Kafka poll. An aborted
+capture raises `RunStartNotObservedError` (the run never started) or
+`RunEndNotObservedError`, exits non-zero and finalizes nothing,
+because a recording that merely stopped arriving (a bridge killed without
+`RUN_END`) cannot be told from a complete one once it is a registered
 RobotRun. Without `stop_on_run_end` (tests and benchmarks of count-bounded
-synthetic runs) the `stop_condition` alone ends and finalizes the capture; the
-receipt then records its reason (`max_messages`, `idle_timeout`, `manual`),
-and every capture finalized through `cli.py` records `explicit_run_end`.
+synthetic runs) the `stop_condition` alone ends and finalizes the capture, no
+`RUN_START` is required, control events are only sequence-validated, and the
+receipt records its reason (`max_messages`, `idle_timeout`, `manual`); every
+capture finalized through `cli.py` records `explicit_run_end`.
+
+**Idle guard.** Three kinds of progress are kept apart. *Consumer progress*
+is any record taken from Kafka, of any run: it proves the consumer is
+advancing, not that the run is alive. *Run progress* is any record of the
+target run. *Run inactivity* is the time since the last run record once the
+run has started. Before `RUN_START` (a scan of history, or a wait for a
+bridge that has not started) the guard measures consumer progress, so a
+healthy scan is never taken for idleness; after `RUN_START` it measures run
+progress only, so other runs' traffic never keeps alive a run whose `RUN_END`
+is not coming. The clock starts when the capture starts, so S must cover the
+scan to `RUN_START` (§26) and any wait for the bridge. A
+topic that stays busy with other runs' records while the target `RUN_START`
+never arrives is not bounded by the guard.
 
 Channels arrive asynchronously: a channel is registered in the MCAP the
 first time a message for it is written, whenever that is, and a run is not
@@ -1026,24 +1133,77 @@ RUN_END) never enter the recording (§29).
 **Restart and failure behavior (current, explicit).**
 
 ```text
-Capture process dies before finalize   the .partial directory is discarded and the capture
-                                       rebuilds from Kafka (offsets were never committed).
-Capture dies after finalize, before    a re-run consumes the same records, writes a new
-commit                                 partial and finds the final file. It converges only
+Capture dies before RUN_START, in     the .partial directory is discarded and the capture
+the run, or after RUN_END but before   rebuilds the whole run from its start position (the
+finalize                               beginning of the topic when none is given).
+Capture dies after finalize            a re-run consumes the same records, writes a new
+                                       partial and finds the final file. It converges only
                                        if the recorded messages match (topic, schema, publish
                                        time, sequence, payload; log_time excluded, since each
                                        attempt stamps its own receive time): the existing file
-                                       stays the recording of record, the offsets are
-                                       committed. Different content under the same run id
-                                       fails with FinalBagExistsError and commits nothing.
+                                       stays the recording of record. Different content under
+                                       the same run id fails with FinalBagExistsError.
+Re-run of a finalized run              the run is read again from its start position, meets
+                                       the final file and converges as above. Without a start
+                                       position its cost is a full scan.
+Consumer-group state of Kafka          irrelevant: Capture neither reads nor writes any, so
+lost, reset or never existed           deleting every group or recreating the broker over
+                                       the same topic data changes nothing.
+Kafka unavailable after finalize       nothing remains to be written to Kafka: the finalized
+                                       bag and receipt are already the completed capture.
+Start position not usable              the partition does not exist, or the offset is not below the
+                                       log end (StartPositionError), or is below the low watermark
+                                       (ReplayExpiredError, a StartPositionError), before any file
+                                       is touched. An offset that leaves the
+                                       retained log mid-capture is ReplayExpiredError once the
+                                       client's fetched records are used up
+                                       (auto.offset.reset=error), never a reset.
+Second Capture of a run that is        RunAlreadyOwnedError at once; the live attempt's
+already being captured (same           .partial directory is not touched. The lock disappears
+output root)                           with the owning process, SIGKILL included.
+Run records no longer on the topic     RUN_START is never observed: with an idle guard the
+(retention) or the run never started   capture fails (RunStartNotObservedError), without one
+                                       it waits for RUN_START. With a start position the wait
+                                       ends at the log end seen at startup (below), and an
+                                       expired run is told apart from one not yet published
+                                       (ReplayExpiredError vs StartPositionError); a scan
+                                       cannot tell them apart.
+Bridge killed after RUN_START was       Capture, started from the (valid) position, observes
+acknowledged, before any telemetry      RUN_START and no further record of the run; the
+                                       idle-timeout guard aborts it (RunEndNotObservedError).
+RUN_START not acknowledged             the bridge exits non-zero before bridging anything and
+                                       prints no run_started line; the launcher starts no
+                                       Capture.
+Same robot_run_id streamed twice       a second RUN_START before the first RUN_END fails
+                                       (RunLifecycleError). A second session after the first
+                                       RUN_END is never read (Capture ends at the first
+                                       RUN_END), so Capture neither records nor detects it.
 Bridge killed without RUN_END          no RUN_END arrives; the idle-timeout guard aborts the
-                                       capture (RunEndNotObservedError): nothing is finalized
-                                       or committed, the .partial directory stays, and a re-run
-                                       discards it and rebuilds from Kafka.
-Bridge message failure                 counted and logged; the sequence gap fails the capture.
-Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized or committed.
+                                       capture (RunEndNotObservedError): nothing is finalized,
+                                       the .partial directory stays, and a re-run discards it,
+                                       reads the same records and aborts the same way. The run
+                                       cannot be recovered from Kafka; it is streamed again.
+Same robot_run_id streamed again after the aborted session stays in the log. Capture
+an aborted session (no RUN_END),       pinned to the new RUN_START records exactly the new
+partial bag cleared                    session. An attempt that starts before it (a scan, or the
+                                       aborted session's position) meets the aborted session
+                                       first: telemetry followed by a second RUN_START fails
+                                       (RunLifecycleError) and nothing is finalized; with no
+                                       telemetry in between, the repeated RUN_START is an exact
+                                       redelivery and the new session is recorded.
+Bridge message failure                 counted and logged; the sequence gap fails the capture,
+                                       and a failed last message fails it on the RUN_END count.
+Broker unreachable until the producer  records refused while the queue is full are bridge message
+queue is full                          failures (above); the bridge exits non-zero. Once the broker
+                                       returns the producer accepts records again, so the run has a
+                                       gap in the middle (SequenceIntegrityError), not a stuck tail.
+Broker unreachable at shutdown         the telemetry flush fails: RUN_END is withheld, the idle-timeout
+                                       guard aborts the capture (RunEndNotObservedError) and the
+                                       bridge exits non-zero.
+Sequence gap, conflicting duplicate,   the capture fails; nothing is finalized.
 partition spread, unsupported channel
-Kafka retention                        capture can only rebuild what the topic still holds.
+Kafka retention                        capture can only rebuild what the topic still holds
+                                       (§26.1). A finalized bag never depends on the topic.
 In-flight state across restart         capture holds no state beyond Kafka and the .partial
                                        directory.
 ```
@@ -1051,46 +1211,106 @@ In-flight state across restart         capture holds no state beyond Kafka and t
 **Configuration -- frozen in code, not environment variables:**
 
 ```text
-CAPTURE_CONSUMER_GROUP_ID = "sceneops-mcap-capture"
-  -- a CAPTURE CONSUMER-GROUP BASE, not the literal Kafka group.id any
-     capture attempt actually uses (see below) -- independent from Part
-     1's general SCENEOPS_STREAMING_KAFKA_CONSUMER_GROUP_ID default;
-     capture never shares committed-offset state with any other
-     consumer, generic or otherwise.
-auto.offset.reset = "earliest"   -- correctness-first: a capture that
-  starts after some of a run's messages were already published must
-  still see all of them, not just whatever arrives from "now".
-enable.auto.commit = False       -- required; see §21.
+group.id = ASSIGNED_READER_GROUP_ID  -- "sceneops-assigned-reader". librdkafka requires a
+  group.id even for a consumer that only assign()s. Capture never joins that group and
+  never writes to it, so no consumer group exists on the broker because of Capture.
+auto.offset.reset = "error"      -- an offset that leaves the retained log is a consumer
+  error, never a silent reset to earliest or latest.
+enable.auto.commit = False       -- forced for every assigned consumer; there is no commit
+  API. Capture records no progress in Kafka (§21).
 ```
 
-**Run-scoped consumer groups (`packages/sceneops-recording/sceneops_recording/capture/group_id.py`).** Every
-capture attempt derives its own Kafka `group.id` from the base above and
-its target `robot_run_id` (`derive_capture_group_id`) -- it never passes
-the bare base to `KafkaTelemetryConsumer` directly. Two independent
-RobotRuns therefore never share committed-offset state, even when
-interleaved on the same partition. The same `robot_run_id` always derives
-the same group (a pure function of its inputs), so retries land on the same
-group and offset lifecycle every time; different `robot_run_id`s derive
-different groups (a SHA-256 digest suffix, not the human-readable slug
-prefix alone, which is cosmetic only).
+**Start position and ownership.** Where an attempt reads is chosen by the
+caller; Kafka decides nothing, and no consumer-group state is involved either way:
 
-**Tradeoff, not fully solved:** this provides correct, isolated replay per
-RobotRun -- it does not provide efficient large-scale multi-run capture.
-Each run-scoped group is, the first time it's used, a brand new Kafka
-consumer group with no committed offset, so `auto.offset.reset = earliest`
-means it may scan the topic's entire historical record before reaching its
-own messages (measured: ~3.4s against a lightly-used topic vs ~44s once it
-held ~150,000 prior messages; see
+```text
+no start position   assign() every partition of the topic at its beginning, then a scan of
+                    the history (the amplification is the topic's whole history)
+KafkaStartPosition  assign() exactly one partition at one offset: no record of any other
+(topic, partition,  partition. Runtime information of one attempt
+offset)             (sceneops_streaming.contracts), not RobotRun identity.
+                    `python -m sceneops_capture --start-position TOPIC:PARTITION:OFFSET`
+```
+
+**Start position hierarchy.** The orchestrated path is exact, the manual path is
+safe:
+
+```text
+orchestrated   bridge: RUN_START acknowledged -> run_started line (topic, partition, offset)
+               launcher: reads that line, starts Capture with --start-position
+               Capture: assign() to that partition at that offset (no scan)
+manual         no hint -> assign every partition from the beginning, scan the topic
+```
+
+A supplied position is never replaced: an unusable one fails (below), it does not
+degrade to the scan. The launcher (`streaming_acquire` in
+`tools/baselines/streaming/streaming_lib.sh`) owns the coordination: it starts the
+bridge, waits for the `run_started` line (failing if the bridge exits first), starts
+Capture with the position, and only then starts the replay. The position lives in
+the launcher's memory and in the bridge's stdout only. It is not RobotRun metadata,
+not in the envelope and not in the receipt's identity, and nothing persists it, so a
+launcher that dies after reading it loses an optimization, not correctness: a
+restarted Capture without the hint finds `RUN_START` by scanning, and the
+`run_started` line is still in the bridge's output for a restart that has it. A
+Capture started late reads the run from `RUN_START` all the same, because the
+position is a place in the log, not a rendezvous.
+
+The offset is normally that of the run's `RUN_START`. It is validated, never
+repaired: before the first read the consumer checks that the topic and
+partition exist and that the offset lies in `[low watermark, high watermark)`
+(`StartPositionError` otherwise), and it never falls back to `earliest`. The
+position may be earlier than `RUN_START` (other runs' records are skipped,
+§29); a position after `RUN_START` fails at the run's first telemetry record,
+and a position after the whole run, or on a partition that does not hold it,
+fails with `RunStartNotObservedError` once the log end seen at startup has been
+consumed without `RUN_START` (a position that came from a delivered `RUN_START`
+always finds it below that end). Records of the run from any other partition
+fail with `PartitionInvariantError`. The start position topic must be the
+configured telemetry topic.
+
+**No consumer-group state.** Capture joins no consumer group, is never rebalanced
+and commits no offset. A committed offset would serve no purpose here: it is not a
+start position, recovery state or ownership, and it does not decide whether a run
+was captured (the finalized bag does). It would also describe the run poorly: after
+the run's last record the group's lag is the number of records other runs appended
+to the partition since, and while the run is being captured an assigned consumer's
+group does not exist at all. One group per captured run would also persist on the
+broker, with its committed offsets retained for `offsets.retention.minutes` (7 days
+by default), without any use.
+The evidence is in
+[Streaming consumer-group study](../history/streaming-consumer-group-study.md);
+the decision is [ADR-013](../adr/013-capture-records-no-kafka-progress.md).
+Operational visibility of captures is the capture log, the finalized bag and its
+receipt, not Kafka lag.
+
+**Ownership.** One Capture attempt owns one RobotRun. `run_capture` holds an
+advisory `flock` on `<output_root>/.locks/<robot_run_id>.lock`
+(`ownership.py`) from before `.partial/<run>` is touched until the attempt is over.
+A second attempt for the same run on the same output root fails immediately
+with `RunAlreadyOwnedError` (naming the holder's pid) instead of discarding the
+live attempt's partial bag. The kernel releases the lock with the owning process
+(exit, crash, SIGKILL), so a restart needs no cleanup and no timeout; lock files
+are never deleted and are ignored by `scan_capture_volume`. Scope: attempts that
+share one filesystem on which `flock` is honoured (a local disk, one Docker
+volume); it is not a lease across hosts. Kafka decides neither which Capture
+instance handles a run nor when it starts: the launcher starts one attempt, and
+that attempt owns the run locally and reads its explicitly assigned partition.
+
+**Cost of the manual path.** Without a start position an attempt scans the
+topic's whole history before reaching its own records (measured on a subscribed
+scan, which also paid a consumer-group join: ~3.4 s against a lightly-used topic
+vs ~44 s once it held ~150,000 prior messages; see
 [Streaming reliability & scale baseline](../history/streaming-reliability-scale-baseline.md)).
-Redesigning topic layout to bound this cost is out of scope here.
+A start position removes the scan. Redesigning topic layout to bound the cost of
+the manual path is out of scope here.
 
 None of these are `SCENEOPS_STREAMING_KAFKA_*` settings and none are
 configurable via environment variable -- deliberately, matching Part 1's
 own "explicit code-level default until a demonstrated override need
 exists" policy (§9.1).
 
-**`CaptureResult`** (`consumer.py`), returned once Kafka offsets
-are committed:
+**`CaptureResult`** (`consumer.py`), returned once the recording is durably
+finalized (or an identical one already was):
 
 ```text
 robot_id, robot_run_id, path, message_count, partition,
@@ -1102,10 +1322,116 @@ Not a `RobotRun` -- it describes a local file and its Kafka provenance
 only; nothing here is a canonical record (§18). The CLI prints it and one
 `capture_summary` JSON line for orchestration.
 
-**Out of scope:** multi-instance coordination, durable session recovery and
-exactly-once capture beyond one invocation's commit-after-finalize ordering
+**Out of scope:** scheduling or coordination of Capture instances across hosts,
+durable session recovery and exactly-once capture beyond one invocation's
+finalize ordering
 -- a reliability boundary for later work, matching Part 1's own DLQ/retry
 deferral (§7).
+
+### 26.1 Replay window and retention
+
+Kafka is where an unfinished capture is rebuilt from; a finalized bag and its receipt do not
+need it (§21). The **replay window** is how long after being produced a run's records stay
+readable by a Capture retry. The states of a run follow from the finalized bag and the
+retained log; none is stored:
+
+```text
+CAPTURABLE      not finalized; its start position is in [low watermark, high watermark)
+CAPTURED        finalized bag + receipt. Terminal and independent of Kafka: the expiry of
+                its records changes nothing about the recording, its receipt, publication
+                or registration (the Publisher and worker images carry no Kafka client)
+REPLAY_EXPIRED  not finalized; its RUN_START is below the low watermark. Unrecoverable from
+                Kafka (ReplayExpiredError): the run can only be streamed again from its source
+```
+
+Records expiring before durable capture are an ingestion failure; after it they are normal.
+
+**What retention does** (Kafka 3.9, single broker):
+
+```text
+shape         a prefix of the partition log is removed, whole segments, oldest first -- never a
+              middle or a suffix. A run is lost from its RUN_START onwards, so a run with a
+              missing prefix is never finalized: telemetry before RUN_START is RunLifecycleError
+              on the pinned and on the scanning path alike
+time          a segment goes when its newest record is older than retention.ms. The check runs
+              every 5 minutes, so a record outlives retention.ms by up to the roll interval
+              plus 5 minutes, never less. When every segment is eligible the active one is
+              rolled and deleted too. Age is the record's Kafka timestamp, which the broker sets
+              to its append time (LogAppendTime, below); the producer's clock plays no part
+size          retention.bytes removes the oldest whole segments regardless of age: a second,
+              rate-dependent window that silently shortens the time one
+visibility    the low watermark moves at the check; consumers see it at once; files follow 60 s later
+```
+
+**Start position validity.** `(topic, partition, offset)` is usable while
+`low <= offset < high` at validation. Below `low` the run's records are gone:
+`ReplayExpiredError`. At or after `high` nothing was published there yet (or the position is
+wrong): `StartPositionError`. Only a start position makes the two distinguishable; a scan from
+the beginning reports both as `RunStartNotObservedError` after its idle guard.
+
+**An attempt already reading** is not protected by having validated its position. The client
+delivers the records it had already fetched (up to its prefetch buffer), then fails with
+`ReplayExpiredError` when the log start has passed its next fetch offset. Nothing is finalized
+and the `.partial` directory stays; the next attempt fails at validation.
+
+**Requirement.** A retry succeeds iff its start position is valid when it begins, so the
+window must cover the time from `RUN_START` to the last acceptable retry start:
+
+```text
+replay window >= D_max          longest RUN_START -> RUN_END
+               + T_detect       until a failed capture is noticed
+               + T_retry        until the retry starts (start-up and validation: ~1 s)
+               + T_read         slack for the retry's own read (a 0.47 GB run: ~8 s)
+```
+
+`T_detect` and `T_retry` belong to whoever operates recovery: nothing supervises Capture, so
+they are not properties of the platform. Time retention is the mechanism that guarantees the
+window; it is a lower bound per record.
+
+**Timestamps.** Three clocks exist on a record and each has one owner:
+
+```text
+Kafka record timestamp        the broker's append time (message.timestamp.type=LogAppendTime).
+                              Used by retention and by timestamp->offset lookup; carries no
+                              SceneOps meaning and is never read by SceneOps code
+envelope source_timestamp_ns  the source's observation time (header, passed through verbatim)
+envelope ingest_timestamp_ns  the time SceneOps accepted the message at the transport boundary
+                              (the bridge's clock; header; written as MCAP publish_time, §20)
+```
+
+With `CreateTime` the first would be the producer's clock, so a robot clock behind the broker's
+by more than `retention.ms` would make its records expire at the first retention check, and a
+clock ahead would keep them for the skew longer. `LogAppendTime` makes the lifetime of every
+record start when Kafka accepted it. The envelope headers are not touched by either setting.
+A timestamp->offset lookup is meaningful only under `LogAppendTime`: it then finds the first
+record the broker appended at or after a wall-clock instant, whatever the producers' clocks
+read. It is not an exact start position and a run's `RUN_START` position remains the only
+exact one. The setting applies to records appended after it is set; records written earlier
+keep their producer timestamp.
+
+**Local broker configuration** (`compose/streaming.yaml`, broker defaults inherited by the
+auto-created topic): `retention.ms` 24 h, `segment.ms` 1 h, `retention.bytes` 20 GiB,
+`message.timestamp.type` `LogAppendTime`. The
+window is a working day of recovery latency. The roll interval makes a quiet topic expire.
+The size cap exists to protect the host disk, not to define the window: it holds ~40 streamed
+reference runs (~0.47 GB each), and a topic that reaches it has lost the guarantee.
+
+**Disk budget.**
+
+```text
+Kafka disk ~= ingest bytes/s x (window + roll interval + 5 min) x replication factor x safety
+```
+
+A 20 s surround-camera + LiDAR reference run is 471 MB on the topic (1.33x its finalized MCAP),
+24 MB/s while streaming at real time; the non-image channels are ~0.26 MB/s. Per-record
+framing is ~415 B. The measurements are in
+[Kafka replay window study](../history/streaming-retention-study.md); the decision is
+[ADR-014](../adr/014-kafka-replay-window.md).
+
+**Signals not built.** A deployment must watch what ends the guarantee before it is needed:
+the age of the oldest run that is neither captured nor failed (against the window), the
+partition's size against `retention.bytes`, and free broker disk. Producer clocks do not
+affect the window.
 
 ## 27. Make surface and verification
 
@@ -1116,10 +1442,17 @@ bridge source on `PYTHONPATH`: writer (receive time, publish time, sequence, mon
 payload bytes, duplicates, late channel arrival, unsupported channels),
 message definitions decoded by an independent MCAP ROS 2 decoder,
 finalize/validation, `RunFilter`/`SequenceTracker`/duplicate policy,
-`run_capture` (RUN_END finalization and refusal to finalize without it, sensor
+`run_capture` (the RUN_START/RUN_END lifecycle matrix and idle-guard progress semantics,
+RUN_END finalization and refusal to finalize without it, sensor
 channels from a channel file, durability ordering, crash boundaries C and D
 including conflicting retry), and real-Kafka integration (multi-run isolation, lifecycle,
-camera- and lidar-sized payloads, oversize failure).
+camera- and lidar-sized payloads, oversize failure, broker-assigned record timestamps). The orchestrated hand-off is
+tested at three levels: the producer's delivery result and the bridge's
+acknowledge-before-subscribe startup over fakes; the launcher's parsing and
+ordering over a stubbed `docker` (`tools/e2e/tests/test_streaming_launcher.py`);
+and, on a real 3-partition broker, interleaved runs each captured from their
+acknowledged position, a late Capture, a bridge killed after `RUN_START` and an
+unacknowledged `RUN_START` (`tests/streaming/test_bridge_pinned_capture.py`).
 
 `make streaming-bootstrap` is the real vertical: the captured recording is
 checked with the L1 conformance suite
@@ -1154,13 +1487,46 @@ sees these records too; `is_control_envelope()` makes them trivially
 filterable by any consumer that doesn't care about lifecycle.
 
 A control envelope's `sequence_number` does not share that run's
-telemetry sequence counter -- the bridge reads its own, independent
-live counter without incrementing it, so `RUN_START` always lands at
-sequence_number `0`, the same position the first real telemetry
-message also needs in its own space (§29 covers why this is safe).
+telemetry sequence counter -- the bridge numbers control events with its
+own, independent counter, so `RUN_START` always lands at
+sequence_number `0` and `RUN_END` at `1`, while the first real telemetry
+message also needs `0` in its own space (§29 covers why this is safe).
 
-Capture finalizes a run only on its `RUN_END` (§26), so a bridge always
-publishes both events.
+Capture finalizes a run only on its `RUN_END` (§26), so a bridge publishes both
+events -- `RUN_START` synchronously, acknowledged before any telemetry (§14);
+`RUN_END` only after its telemetry was fully delivered (§14).
+
+**Closing state.** `RUN_END`'s payload is a JSON object with a required
+integer `telemetry_count >= 0` (and an optional `reason`); `RUN_START`'s
+payload carries no count. `telemetry_count` is the number of telemetry
+sequence numbers the producer assigned to the run.
+
+```text
+telemetry sequence_number   one counter per robot_run_id, across every channel,
+                            assigned by the bridge to each message it receives
+                            (the transport arrival order), starting at 0
+telemetry_count == N        the run's telemetry is exactly sequence numbers 0..N-1
+telemetry_count == 0        the run bridged nothing
+```
+
+The counter advances for every received message, including one the bridge then
+fails to forward, so `telemetry_count` is the size of the sequence space, not
+the number of delivered records. A message that failed before reaching the
+producer therefore appears to Capture as a gap, or, when it was the last one,
+as a count larger than what arrived.
+
+Because the sequence space is dense, `telemetry_count` and "last telemetry
+sequence" state the same fact (`last = count - 1`, undefined for zero); the
+count is the one carried, since it is also defined for an empty run. Per-channel
+counts, a digest or a last source timestamp are not carried: no loss mode of the
+transport is exposed by them that the dense global sequence and the count do not
+already expose.
+
+The bridge computes the count after it stopped spinning (no callback can assign
+another sequence number) and publishes `RUN_END` only after the telemetry flush
+reported no delivery failure. The count is not a claim that every counted
+record is durable, only that all records of the sequence space were produced
+and, with a clean flush, delivered.
 
 ## 29. Control envelopes in capture
 
@@ -1174,6 +1540,58 @@ to the MCAP writer. A control envelope therefore never appears in a finalized
 MCAP and never raises `UnsupportedChannelError` (reserved for a genuinely
 unsupported channel). Its offset still belongs to the receipt's Kafka offset
 range.
+
+**Run lifecycle contract.** A lifecycle-governed capture (`stop_on_run_end`)
+enforces the order of one run's records with `RunLifecycle`
+(`capture/lifecycle.py`). One `robot_run_id` is exactly one streaming session.
+
+```text
+phase      accepts                          rejects (RunLifecycleError, at the first record)
+ARMED      RUN_START -> CAPTURING           telemetry (it precedes RUN_START); RUN_END
+CAPTURING  telemetry; RUN_END -> ENDED      a second RUN_START
+ENDED      nothing: Capture stops reading   (a record after RUN_END is never read)
+```
+
+After ENDED the code is linear: validate the MCAP, write the receipt, finalize
+atomically. A failure anywhere before the finalize leaves the `.partial`
+directory and no finalized bag.
+
+```text
+RUN_START mandatory                      yes; the first record of the run that Capture reads
+telemetry or RUN_END before RUN_START    fails, rather than being discovered at RUN_END
+RUN_START redelivered immediately        skipped (a producer retry); after any other record
+  after itself, same sequence/payload      of the run it is a second session and fails
+RUN_END without a valid                  fails (RunLifecycleError)
+  telemetry_count
+RUN_END's telemetry_count differs from   fails (RunIncompleteError): tail telemetry lost, or
+  the telemetry Capture accepted           a RUN_END that does not describe this stream
+RUN_END at RUN_START's control sequence  fails (SequenceIntegrityError, conflicting
+                                           redelivery: the payloads differ)
+unrecognized future control event        sequence validated, otherwise ignored
+telemetry after RUN_END                  not detectable: Capture stops at RUN_END
+```
+
+**Completeness.** When `RUN_END` is consumed, Capture compares its
+`telemetry_count` with the number of distinct telemetry sequence numbers the
+tracker accepted (`last_sequence + 1`, 0 if none; exact redeliveries do not
+count twice). A mismatch raises `RunIncompleteError`, a `RunLifecycleError`,
+before the MCAP is validated, the receipt written or anything finalized. Together with §24, a finalized run is a gap-free,
+in-order telemetry sequence `0..N-1` that the producer declared to be all of
+its telemetry. A run with `telemetry_count == 0` and no telemetry is complete
+but has no recording to finalize: the MCAP validation refuses an empty file.
+Records the bridge never received (lost in DDS before the bridge's callback) are
+outside the sequence space and not covered.
+
+The receipt does not repeat the declaration. For a finalized run it equals
+`message_count`, and `kafka.first_sequence`/`kafka.last_sequence` already record
+the accepted range; `finalization.reason == explicit_run_end` means a
+`RUN_END` whose count matched.
+
+A start position (§26) other than the beginning of the topic is a lower bound on
+the offset of `RUN_START`, never a claim about the run: other runs' records
+before `RUN_START` are skipped, and a position after `RUN_START` fails at the
+first telemetry record of the run instead of producing a recording that lacks
+its start.
 
 ## 30. From capture to canonical Scenes and Episodes
 
@@ -1267,7 +1685,7 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - Kafka wire mapping + client implementation: `packages/sceneops-streaming/sceneops_streaming/{wire,producer,consumer,config,errors}.py`
 - Wire/decode unit tests (no broker required): `packages/sceneops-streaming/tests/test_wire.py`
 - Config surface/precedence unit tests (no broker required): `packages/sceneops-streaming/tests/test_config.py`
-- Manual-commit (`enable_auto_commit`/`commit()`) unit tests (no broker required): `packages/sceneops-streaming/tests/test_consumer.py`
+- Subscribed / assigned consumer unit tests (no broker required): `packages/sceneops-streaming/tests/test_consumer.py`
 - Compose service: `compose/streaming.yaml`
 - Make targets: `makefiles/streaming.mk` (`streaming-up`/`streaming-down`/`smoke-streaming`)
 - Smoke test: `tools/e2e/smoke_streaming.py`, `tools/e2e/smoke_streaming.sh`
@@ -1288,8 +1706,9 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 - MCAP writer: `packages/sceneops-recording/sceneops_recording/capture/writer.py`, `packages/sceneops-recording/tests/capture/test_mcap_writer.py`
 - Pre-finalize validation: `packages/sceneops-recording/sceneops_recording/capture/validation.py`, `packages/sceneops-recording/tests/capture/test_validation.py`
 - Temp/final lifecycle: `packages/sceneops-recording/sceneops_recording/capture/finalize.py`, `packages/sceneops-recording/tests/capture/test_finalize.py`
-- Consumer orchestration (`RunFilter`/`SequenceTracker`/`CaptureResult`/`run_capture`, durability-ordering test): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
-- Run-scoped consumer-group derivation: `packages/sceneops-recording/sceneops_recording/capture/group_id.py`, `packages/sceneops-recording/tests/capture/test_group_id.py`
+- Consumer orchestration (`RunFilter`/`SequenceTracker`/`CaptureResult`/`run_capture`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
+- Broker-side check that a capture leaves no consumer-group state (real Kafka): `packages/sceneops-recording/tests/capture/group_state.py`
+- Retention behaviour of a pinned Capture (real Kafka: expired start, prefix removed, expired vs not started, finalized bag unaffected): `packages/sceneops-recording/tests/capture/test_pinned_start_integration.py`
 - Multi-RobotRun isolation (real Kafka): `packages/sceneops-recording/tests/capture/test_multi_robot_run_integration.py`
 - CLI entry point: `apps/capture/sceneops_capture/cli.py`
 - Container/runtime deps (`mcap`/`mcap-ros2-support`): `apps/capture/Dockerfile`, `compose/streaming.yaml`
@@ -1300,10 +1719,12 @@ Kafka message-size configuration beyond the stock ~1 MB limit (§14)
 
 **Run lifecycle:**
 
-- Lifecycle control envelopes (`RunEventType`, `build_control_envelope`/`is_control_envelope`/`parse_run_event`): `packages/sceneops-streaming/sceneops_streaming/control.py`, `packages/sceneops-streaming/tests/test_control.py`
+- Lifecycle control envelopes (`RunEventType`, `build_control_envelope`/`is_control_envelope`/`parse_run_event`/`parse_run_end_telemetry_count`): `packages/sceneops-streaming/sceneops_streaming/control.py`, `packages/sceneops-streaming/tests/test_control.py`
 - `SESSION_CONTROL_CHANNEL` constant: `packages/sceneops-streaming/sceneops_streaming/constants.py`
 - Bridge lifecycle-event publishing: `integrations/ros2-kafka-bridge/sceneops_streaming_bridge/node.py`, `integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py`
 - Control-envelope handling and RUN_END finalization in capture (`control_tracker`, `RunEndNotObservedError`): `packages/sceneops-recording/sceneops_recording/capture/consumer.py`, `packages/sceneops-recording/tests/capture/test_capture_consumer.py`
+- Start position and ownership (`KafkaStartPosition`, pinned `assign()`, `own_run`): `packages/sceneops-streaming/sceneops_streaming/consumer.py`, `packages/sceneops-recording/sceneops_recording/capture/ownership.py`, `packages/sceneops-streaming/tests/test_consumer.py`, `packages/sceneops-recording/tests/capture/test_pinned_capture.py`, `packages/sceneops-recording/tests/capture/test_pinned_start_integration.py`, `packages/sceneops-recording/tests/test_run_ownership.py`
+- Run lifecycle and RUN_END completeness (`RunLifecycle`, `RunLifecycleError`, `RunIncompleteError`, `check_run_complete`): `packages/sceneops-recording/sceneops_recording/capture/lifecycle.py`, `packages/sceneops-recording/tests/capture/test_run_lifecycle.py`, `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py`
 - Real-Kafka lifecycle integration (solo and interleaved runs): `packages/sceneops-recording/tests/capture/test_lifecycle_integration.py` and `tests/streaming/test_bridge_capture_lifecycle.py`
 - Point-in-time design/benchmark record: [Multi-run streaming architecture study](../history/streaming-multirun-phase7-study.md)
 

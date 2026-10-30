@@ -1094,7 +1094,7 @@ def render_labels(
     output: Path,
 ) -> int:
     """Render a fixture's locked reference label artifact for one RobotRun as
-    a ``sceneops.label_set/v1`` document. Reads no source: the lock and the
+    a ``sceneops.label_set/v2`` document. Reads no source: the lock and the
     cached artifact are the only inputs, and the artifact is verified against
     the lock first. The document is a deterministic function of (artifact,
     run id, label set id); it is written to ``output`` atomically and

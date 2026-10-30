@@ -5,54 +5,91 @@ from typing import Any, TypeAlias
 from sceneops_core.episodes.schemas import (
     EpisodeProfileRunRecord,
     EpisodeRecord,
+    EpisodeRevisionRecord,
     EpisodeValidationRunRecord,
 )
 from sceneops_core.runs.schemas import RunType
 
-from sceneops_db.models.episodes import EpisodeModel, EpisodeRunRecordModel
+from sceneops_db.models.episodes import (
+    EpisodeModel,
+    EpisodeRevisionModel,
+    EpisodeRunRecordModel,
+)
 
 from ._utils import base_run_to_values, error_from_json, metadata_from_model
 
 EpisodeRunRecord: TypeAlias = EpisodeValidationRunRecord | EpisodeProfileRunRecord
 
-_TOPIC_LISTS = ("observation_topics", "state_topics", "action_topics", "event_topics")
-_COUNTS = ("observation_count", "state_count", "action_count", "event_count")
+_TOPIC_LISTS = (
+    "observation_topics",
+    "state_topics",
+    "action_topics",
+    "event_topics",
+    "transition_topics",
+)
+_COUNTS = (
+    "observation_count",
+    "state_count",
+    "action_count",
+    "event_count",
+    "transition_count",
+)
 
-# ── Episode ──────────────────────────────────────────────────────────────────
+# ── Episode unit / revision ──────────────────────────────────────────────────
 
 
 def episode_model_to_record(model: EpisodeModel) -> EpisodeRecord:
     return EpisodeRecord(
         episode_id=model.episode_id,
-        dataset_id=model.dataset_id,
-        dataset_version=model.dataset_version,
+        source_kind=model.source_kind,
         robot_run_id=model.robot_run_id,
+        content_id=model.content_id,
         unit_key=model.unit_key,
-        producer_fingerprint=model.producer_fingerprint,
-        manifest_artifact_id=model.manifest_artifact_id,
-        manifest_checksum=model.manifest_checksum,
-        window_clock=model.window_clock,
-        window_start_timestamp_ns=model.window_start_timestamp_ns,
-        window_end_timestamp_ns=model.window_end_timestamp_ns,
-        **{name: list(getattr(model, name) or []) for name in _TOPIC_LISTS},
-        **{name: getattr(model, name) for name in _COUNTS},
         registered_at=model.registered_at,
-        updated_at=model.updated_at,
     )
 
 
-def episode_record_to_values(record: EpisodeRecord) -> dict[str, Any]:
-    """Every registrar-owned column. ``registered_at`` / ``updated_at`` are
+def episode_unit_to_values(record: EpisodeRevisionRecord) -> dict[str, Any]:
+    """The unit row of a revision's unit. ``registered_at`` is
     database-managed and never written from a record."""
     return {
         "episode_id": record.episode_id,
-        "dataset_id": record.dataset_id,
-        "dataset_version": record.dataset_version,
+        "source_kind": record.source_kind,
         "robot_run_id": record.robot_run_id,
+        "content_id": record.content_id,
         "unit_key": record.unit_key,
-        "producer_fingerprint": record.producer_fingerprint,
-        "manifest_artifact_id": record.manifest_artifact_id,
+    }
+
+
+def episode_revision_model_to_record(
+    revision: EpisodeRevisionModel, unit: EpisodeModel
+) -> EpisodeRevisionRecord:
+    return EpisodeRevisionRecord(
+        episode_id=revision.episode_id,
+        source_kind=unit.source_kind,
+        robot_run_id=unit.robot_run_id,
+        content_id=unit.content_id,
+        unit_key=unit.unit_key,
+        manifest_artifact_id=revision.manifest_artifact_id,
+        manifest_checksum=revision.manifest_checksum,
+        producer_fingerprint=revision.producer_fingerprint,
+        window_clock=revision.window_clock,
+        window_start_timestamp_ns=revision.window_start_timestamp_ns,
+        window_end_timestamp_ns=revision.window_end_timestamp_ns,
+        **{name: list(getattr(revision, name) or []) for name in _TOPIC_LISTS},
+        **{name: getattr(revision, name) for name in _COUNTS},
+        registered_at=revision.registered_at,
+    )
+
+
+def episode_revision_to_values(record: EpisodeRevisionRecord) -> dict[str, Any]:
+    """Every revision column the registrar writes; the unit binding lives on
+    the unit row only."""
+    return {
+        "episode_id": record.episode_id,
         "manifest_checksum": record.manifest_checksum,
+        "manifest_artifact_id": record.manifest_artifact_id,
+        "producer_fingerprint": record.producer_fingerprint,
         "window_clock": record.window_clock,
         "window_start_timestamp_ns": record.window_start_timestamp_ns,
         "window_end_timestamp_ns": record.window_end_timestamp_ns,
@@ -85,8 +122,6 @@ def episode_run_model_to_record(model: EpisodeRunRecordModel) -> EpisodeRunRecor
         episode_id=model.episode_id,
         manifest_artifact_id=model.manifest_artifact_id,
         manifest_checksum=model.manifest_checksum,
-        dataset_id=model.dataset_id,
-        dataset_version=model.dataset_version,
     )
 
     s = model.summary or {}
@@ -121,8 +156,6 @@ def episode_run_record_to_values(record: EpisodeRunRecord) -> dict[str, Any]:
         "episode_id": record.episode_id,
         "manifest_artifact_id": record.manifest_artifact_id,
         "manifest_checksum": record.manifest_checksum,
-        "dataset_id": record.dataset_id,
-        "dataset_version": record.dataset_version,
     }
 
     if isinstance(record, EpisodeValidationRunRecord):

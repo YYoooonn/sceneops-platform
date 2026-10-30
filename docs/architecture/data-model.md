@@ -10,17 +10,23 @@
 ```text
 Dataset
  +- DatasetVersion
+     +- DatasetVersionMember (pins one Scene or Episode revision per unit)
 
-SceneRecord (scenes table)
- +- SceneRunRecord (validation / profile)
+SceneRecord (scenes: the unit)
+ +- SceneRevisionRecord (scene_revisions: one per registered manifest)
+     +- SceneRunRecord (validation / profile, pins the revision)
 
-EpisodeRecord (episodes table)
- +- EpisodeRunRecord (validation / profile)
+EpisodeRecord (episodes: the unit)
+ +- EpisodeRevisionRecord (episode_revisions: one per registered manifest)
+     +- EpisodeRunRecord (validation / profile, pins the revision)
 
 Robot
  +- RobotRun
      +- Mission
      +- RobotState (time series)
+
+SourceContent (preserved native bytes)
+ +- SourceSnapshot (one per upstream declaration of those bytes)
 
 LabelSet (immutable revisions)
 SceneSampleView (one revision per Scene revision and policy)
@@ -42,166 +48,228 @@ Artifact          (metadata index every domain's binary/JSON output goes through
 ```
 
 `SceneManifest` (with its `SceneLineage`) is an immutable Object Storage
-artifact, not a table: `SceneRecord.manifest_artifact_id` pins the one
-registered revision the row projects (see [Scene domain](./scene-domain.md)).
+artifact, not a table: each `scene_revisions` row pins one by
+`manifest_artifact_id` and projects it (see [Scene domain](./scene-domain.md)).
 `EpisodeManifest` (with its `EpisodeLineage`) is likewise an immutable
-artifact pinned by `EpisodeRecord.manifest_artifact_id` (see
-[Episode domain](./episode-domain.md)). Prediction runs are `InferenceRunModel` in code (table `inference_runs`).
+artifact pinned by an `episode_revisions` row (see
+[Episode domain](./episode-domain.md)). Units, revisions and members are three
+separate concepts: a unit is identified by its source, a revision by its manifest
+checksum, and a DatasetVersion holds units only through member pins (§3). Prediction runs are `InferenceRunModel` in code (table `inference_runs`).
 
 ## 2. Dataset / DatasetVersion
 
 `datasets` — a logical dataset (e.g. `nuscenes`). `dataset_id` is the PK,
-plus a `default_version` pointer.
+plus a `default_version` pointer. A Dataset is a namespace with mutable display
+metadata, not versioned content.
 
-`dataset_versions` — one snapshot per version. `(dataset_id, version)` is
-unique.
+`dataset_versions` — one committed, immutable composition per version
+(ADR-015 §7, MS-8). `(dataset_id, version)` is unique and is bound once to one
+composition.
 
 Key fields:
-- `status`: `DatasetVersionStatus` — currently a single value, `registered`
-  (see §2.1 below — this is intentional, not a placeholder).
+- `composition_checksum`: the identity of the member pins (§2.1).
+- `selector`: the `RevisionSelector` the members were resolved from, or NULL
+  when the composing Job was given explicit pins (§2.1).
 - `scene_count` / `keyframe_count` / `observation_count` / `observed_channels`:
-  the Scene membership summary, written only by Scene registration.
-- `episode_count`: version-level Episode statistic (`EpisodeVersionSummary`
-  — its own independent rollup, not derived from or overwritten by the
-  Scene fields above; see the aggregate-summary contract below).
+  the Scene summary (`SceneVersionSummary`).
+- `episode_count`: the Episode summary (`EpisodeVersionSummary`).
+- `created_at`.
 
-A DatasetVersion holds no channel requirements and no free-form metadata:
-channel requirements are pipeline / job parameters (ADR-007 §16, I-59).
-
-A DatasetVersion carries no source location or source format; it relates
-to RobotRuns only through its units' provenance. `datasets` has no `type`.
+A DatasetVersion has no status and no update time: if its row exists, it is
+complete. It holds no channel requirements and no free-form metadata; channel
+requirements are pipeline / job parameters (ADR-007 §16, I-59). It carries no
+source location or source format and relates to RobotRuns only through its
+units' provenance. `datasets` has no `type`.
 
 A DatasetVersion caches no quality result. Scene and Episode readiness are
 derived from run records (`scene_run_records` / `episode_run_records`),
-for Scenes only from runs of each Scene's current manifest revision (see
+only from runs of the revision each member pins (see
 [Quality and run records](./quality-and-runs.md)).
 
-#### 2.0.1 The aggregate-summary contract
+`dataset_version_members` — the version's units, each pinned at exactly one
+registered revision (§3).
 
-`SceneVersionSummary.scene_count` and `EpisodeVersionSummary.episode_count`
-(`packages/sceneops-core/sceneops_core/datasets/schemas/summaries.py`) are
-**cached aggregate projections of that DatasetVersion's current canonical
-membership** — `scene_count` must always equal a live count of `SceneRecord`
-rows owned by `(dataset_id, dataset_version)`, and `episode_count` a live
-count of `EpisodeRecord` rows, at the moment each was last written. They are
-**not** a metric of the latest ingest/build/register operation
-(`registered_episode_count` on `RegisterEpisodeJobResult`, or the number of
-scenes a single `build_recording_scenes` dispatch happened to build,
-are the correct place for that — job results, never the DatasetVersion
-summary).
+Schema rules: the summary columns have no default, are non-negative and count at
+least one member (`ck_dataset_versions_counts`); `composition_checksum` is a
+sha256 (`ck_dataset_versions_composition_checksum`); a `BEFORE UPDATE` trigger
+(`sceneops_reject_update`) rejects any UPDATE; a Dataset with versions and a
+version with members cannot be deleted (RESTRICT).
 
-Concretely, every writer recomputes from a live repository query
-(`EpisodeRepository.count(...)`, `SceneRepository.summarize_membership(...)`)
-rather than incrementing a delta onto the previous cached value — this is what keeps the count correct under retry,
-replacement, duplicate input, and one registration per RobotRun: each
-registration converges on the true total, not just what it touched. Episode
-registration (`REGISTER_EPISODES`) is the sole writer of `episode_count`, in
-the same transaction as the membership change; `build_recording_episodes`
-only produces manifests, never an `EpisodeRecord`. Scene registration (`REGISTER_SCENES`) is the sole writer of the
-Scene summary, in the same transaction as the membership change.
+PostgreSQL also enforces the membership itself, for any SQL, not only for the
+repository's single write:
 
-#### 2.0.2 Concurrency: serializing aggregate mutation per DatasetVersion
+```text
+complete     dataset_versions_members_complete: a deferred constraint trigger checks
+             every inserted version row at commit; its scene / episode member rows
+             must number exactly scene_count / episode_count, so a positive count
+             without members cannot commit
+closed       dataset_version_members_closed: a member is inserted only in the
+             transaction that inserted its version row (decided from the version
+             row's xmin, savepoints included); a member of a committed version is
+             refused
+undeletable  dataset_version_members_undeletable: a member row is never deleted;
+             UPDATE is refused by sceneops_reject_update; with members RESTRICTing
+             their version, a committed version cannot be deleted either
+```
 
-Recompute-from-live-count (§2.0.1) is correct for any single transaction,
-but two independent transactions recomputing and writing the *same*
-DatasetVersion's aggregate at overlapping times can still both compute a
-now-stale count and both persist it — a classic lost update (e.g. two
-concurrent Episode registrations for the same
-`(dataset_id, dataset_version)`, each seeing only its own not-yet-committed
-insert, both writing the same too-low count).
+### 2.1 Composition
 
-The fix is a real PostgreSQL row-level lock, not a distributed lock or
-reconciliation process:
-`PostgresDatasetVersionRepository.lock_for_update` issues
-`SELECT ... FOR UPDATE` on the target DatasetVersion row. Both registrars
-(`REGISTER_SCENES`, `REGISTER_EPISODES`) take it (via
-`DatasetStore.lock_version_for_update`) before re-reading their recording
-scope and before inserting any record. The order matters: inserting a
-record takes a `FOR KEY SHARE` lock on the DatasetVersion row through its
-foreign key, which a concurrent registration's `FOR UPDATE` would deadlock
-against if the lock came second. A concurrent registration blocks at the
-lock until the first commits, then observes its committed changes. Scene and Episode summaries occupy disjoint
-columns (`replace_scene_membership_summary`/`update_episode_summary` each
-write only their own domain's columns —
-`values_without_none` + per-attribute `setattr` — so SQLAlchemy's
-unit-of-work only marks the touched attributes dirty and emits an `UPDATE`
-naming only those columns). Postgres's ordinary row-level write lock
-already forces a concurrent Scene write and a concurrent Episode write to
-the same row to serialize with each other without either losing its own
-column's write, lock or no lock — proven by a genuine two-session
-concurrency test, not just reasoned about
-(`packages/sceneops-db/tests/test_episode_summary_aggregation.py`).
+`COMPOSE_DATASET_VERSION` is the only writer of `dataset_versions` and
+`dataset_version_members` (`sceneops_worker.datasets.composition`). It is a Job,
+submitted through `POST /api/v1/jobs`; no dataset route writes a version.
 
-**Guarantee after this fix:** committed same-DatasetVersion Episode
-aggregate mutations are fully serialized — the summary written by the last
-transaction to commit always equals live canonical membership at that
-point; the same holds for Scene registration. **Residual limitation:** this
-guarantees correctness of *committed* state; it says nothing about a caller
-observing a value mid-flight between two overlapping transactions
-(ordinary READ COMMITTED behavior).
+```text
+params    dataset_id (an existing Dataset), dataset_version (the new name),
+          exactly one of
+            pins       the complete list of RevisionPins, at most one per unit
+            selector   RevisionSelector {sources: [RevisionSourceClause]}
+stage     reads only: resolve the input to registered revisions once; every
+          pin must match a revision row exactly; a selector clause must select
+          at least one revision; at most one revision per unit; at least one
+          member; composition_checksum and summaries
+converge  name exists + same composition_checksum      -> no-op (created = false)
+          name exists + other composition_checksum     -> fail
+commit    one transaction: the version row, then every member row
+result    dataset_id, dataset_version, composition_checksum, created,
+          member_count, scene_count, episode_count
+```
 
-### 2.1 Why `DatasetVersionStatus` has one value
+```text
+composition_checksum = "sha256:" + sha256(canonical_json({
+    "composition_schema": "sceneops.dataset_version_composition/v1",
+    "members":            sorted [[domain, unit_id, manifest_checksum], ...]
+}))
+```
 
-`DatasetVersionStatus` used to carry Scene-workflow-specific values
-(`INGESTING`/`INGESTED`/`VALIDATING`/`PROFILING`/`READY`/`FAILED`/
-`DEPRECATED`). All were removed — some had zero writers ever, the rest were
-exclusively Scene-domain transitions that don't generalize to Episode (which
-has its own, independent quality model). A `DatasetVersion` is now a
-domain-agnostic parent record; per-domain processing state lives in that
-domain's pipeline/job/run records and summary artifacts, not on this shared
-row. Downstream readiness checks (e.g. "can I run detection prediction
-against this version?") use explicit domain-scoped prerequisite functions
-(`predict_detection.py`/`evaluate_detection.py`'s
-`_require_scene_dataset_ready`) instead of branching on this field.
+The checksum covers the set of pins only: not their order, the selector, the
+version name or anything mutable. `manifest_artifact_id` is a function of
+`(unit_id, manifest_checksum)`, so it adds nothing. Two versions may have equal
+compositions under different names.
 
-## 3. SceneRecord
+`RevisionSourceClause {domain, source_kind, source_id, producer_fingerprint}` selects
+every revision of a `domain` unit sourced from `(source_kind, source_id)` — a
+RobotRun (`recording`) or a SourceContent (`content`) — and registered under
+`producer_fingerprint`. One unit and one fingerprint have at most one revision
+(MS-7), so a clause selects at most one revision per unit; clauses are unique and
+kept in canonical order, and their union is the selection. A selector is resolved
+once, by the composing Job, and stored beside the members it resolved to. It is
+never re-resolved, so registering more revisions later never changes a version.
 
-`scenes` — canonical Scene membership; one row per registered Scene,
-projecting the manifest revision `manifest_artifact_id` names. Written only
-by Scene registration. There is no status column.
+Summaries are computed once, in the composing Job, from the projections of the
+member revisions (`summarize_composition`). A domain with no member has no
+summary (`scene` / `episode` is null).
 
-Key fields (contract: [Scene domain](./scene-domain.md) §2):
-- `scene_id`: deterministic from `(dataset_id, dataset_version, robot_run_id, unit_key)`.
-- `dataset_id`, `dataset_version`: FK to `dataset_versions` (RESTRICT).
-- `robot_run_id` (NOT NULL, FK to `robot_runs`, RESTRICT), `unit_key`,
-  `producer_fingerprint`: source and producer projections.
-- `manifest_artifact_id` (FK to `artifacts`, RESTRICT), `manifest_checksum`:
-  the current revision.
-- `window_clock`, `window_start_timestamp_ns`, `window_end_timestamp_ns`:
-  the segment window in the producer's declared segmentation clock (NOT
-  NULL; `ck_scenes_segment_window` keeps it non-empty).
-- `observed_channels`, `observation_count`, `keyframe_count`: searchable
-  projections. A Scene embeds no annotations (labels are independent label
-  sets), so there is no annotation count.
+Failure and concurrency:
 
-`scene_run_records` — unified scene-scope run table
-(`scene_validation` / `scene_profile`). A per-scene row pins the revision it
-assessed (`manifest_artifact_id` FK + `manifest_checksum`); a job-level
-aggregate row has neither a scene nor a pin (CHECK constraint).
+- **Rows only.** Composition writes no object and reads none. It relies on revision
+  registration's durability gate (§3), not on the members' foreign keys, for the
+  bytes a member references.
+- **No partial version.** Staging writes nothing; the commit is one transaction, so
+  an invalid pin (even the last one), a crash or a failed commit leaves no version row
+  and no member.
+- **Races.** The version row is inserted first. A concurrent composition of the same
+  name waits on its key, fails when the first commits, and re-runs the convergence
+  check against the committed version. No row lock is taken: nothing writes a version
+  after commit.
+- **Job retries.** Job state and the composition are separate commits. A Job whose
+  composition committed but whose success was never recorded is reclaimed
+  (ADR-010) and re-run, and the re-run converges as a no-op. That convergence, not a
+  fence, makes duplicate execution safe. Params keep pins in canonical order, so
+  reordered pins share one execution key.
 
-## 4. EpisodeRecord
+## 3. Units, revisions and DatasetVersion membership
 
-`episodes` — canonical Episode membership: one row per registered Episode,
-projecting the EpisodeManifest revision named by `manifest_artifact_id`.
-Written only by the Episode registrar; no status, task or outcome column
-(see [Episode domain](./episode-domain.md) §5).
+Contract: [Scene domain](./scene-domain.md) §2,
+[Episode domain](./episode-domain.md) §5,
+[Ingress boundaries](./ingress-boundaries.md) §6.
 
-Key fields:
-- `(dataset_id, dataset_version)`: FK `dataset_versions`.
-- `robot_run_id` (FK `robot_runs`), `unit_key`: the source projection.
-- `producer_fingerprint`; `manifest_artifact_id` (FK `artifacts`) +
-  `manifest_checksum`: the exact current revision.
-- `window_clock`, `window_start_timestamp_ns`, `window_end_timestamp_ns`:
-  the half-open window in the segmentation clock (CHECK non-empty).
-- `observation_topics` / `state_topics` / `action_topics` / `event_topics`
-  and the matching counts.
+```text
+scenes / episodes                      the unit
+  scene_id | episode_id   PK           unit_id v2 = f(domain, source_kind,
+                                       source_id, unit_key); no DatasetVersion
+  source_kind                          'recording' | 'content' (CHECK)
+  robot_run_id            FK robot_runs RESTRICT; unique (robot_run_id, unit_key)
+  content_id              FK source_contents RESTRICT; unique (content_id, unit_key)
+                                       exactly the column of source_kind is set (CHECK)
+  unit_key
+  registered_at
 
-`episode_run_records` — unified episode-scope run table
-(`episode_validation` / `episode_profile`), the same job-level/per-item
-split as Scene's run records (`episode_id=None` -> aggregate across the
-whole job; `episode_id` set -> a single episode, pinning the
-`manifest_artifact_id` + `manifest_checksum` it assessed; CHECK
-`ck_episode_run_records_revision_pin`).
+scene_revisions / episode_revisions    one registered manifest of a unit
+  (unit id, manifest_checksum)  PK     FK unit RESTRICT
+  manifest_artifact_id    FK artifacts RESTRICT, unique; = f(unit id, checksum)
+  producer_fingerprint                 unique (unit id, producer_fingerprint)
+  window_clock, window_[start|end]_timestamp_ns   CHECK end > start
+  projection columns                   Scene: observed_channels, counts;
+                                       Episode: per-role topics, counts
+  unique (unit id, manifest_artifact_id, manifest_checksum)   the full pin
+
+dataset_version_members                one pin per unit per DatasetVersion
+  (dataset_version_id, unit_id)  PK    FK dataset_versions RESTRICT
+  domain                               'scene' | 'episode'
+  scene_id | episode_id                exactly one, = unit_id (CHECK)
+  manifest_artifact_id, manifest_checksum
+  FK (scene_id | episode_id, manifest_artifact_id, manifest_checksum)
+       -> that domain's revision pin, RESTRICT
+```
+
+Rules the schema enforces:
+
+- **Identity.** One source unit has one unit row (`uq_*_source_unit`); a writer
+  that derived another id for it fails instead of forking identity. The
+  manifest ArtifactRecord id is the revision's deterministic id, so one
+  artifact belongs to exactly one revision.
+- **Source binding.** Scene rows admit recording sources only
+  (`ck_scenes_source_kind`, `robot_run_id` NOT NULL). Episode rows admit a recording
+  or a content source: one column per source kind, each with its own foreign key and
+  its own source-unit key (`uq_episodes_source_unit`, `uq_episodes_content_source_unit`),
+  and a CHECK that exactly the column of the row's `source_kind` is set
+  (`ck_episodes_source_kind`). One unique key over nullable source columns would not
+  hold (PostgreSQL treats NULLs as distinct), and with `NULLS NOT DISTINCT` it would
+  make equal unit keys of different sources conflict. The registration code compares every
+  unit column with the candidate, not a fixed column list.
+- **Revisions.** A unit has one or more revisions and no "current" one. One unit
+  and one producer fingerprint have at most one manifest checksum
+  (`uq_*_revisions_fingerprint`, MS-7): a second checksum is a
+  non-deterministic producer.
+- **Immutability.** Units, revisions and members are never updated: a
+  `BEFORE UPDATE` trigger (`sceneops_reject_update`) rejects any UPDATE.
+- **Pins.** A member, and a per-unit run record, reference a revision by its
+  full pin, so a pin whose artifact id and checksum disagree, or that names no
+  registered revision, is refused. These composite foreign keys are `MATCH
+  SIMPLE`, which skips the check when any column is NULL, so a CHECK makes the
+  referencing columns all set (a member's domain column, a per-unit run record's
+  pin) or, for a run record's job-level row, all NULL. A pinned revision, a unit with revisions, a
+  manifest artifact with a revision, and a DatasetVersion with members cannot
+  be deleted (RESTRICT).
+- **Membership.** A DatasetVersion pins at most one revision per unit; one
+  revision may be pinned by many DatasetVersions.
+
+Registration writes units and revisions only by insert-if-absent and decides
+each candidate with `decide_revision_registration` against the committed
+revisions of its unit (`sceneops_db.repositories.revisions`). It writes a
+revision row only after the durability and integrity gate
+([Scene domain](./scene-domain.md) §3), which a foreign key cannot prove.
+Concurrent registrations of one unit are decided by the unique keys, not by a
+lock: identical registrations converge on one row, and of two checksums under
+one fingerprint exactly one commits. A registration inserts its units in unit id
+order, so two overlapping registrations wait for each other instead of
+deadlocking.
+
+`scene_run_records` / `episode_run_records` — unified run tables
+(`scene_validation` / `scene_profile`, `episode_validation` /
+`episode_profile`). A per-unit row pins the revision it assessed
+(`fk_*_run_records_revision` to the full pin); a job-level aggregate row has
+neither a unit nor a pin (CHECK `ck_*_run_records_revision_pin`). Run records
+name no DatasetVersion: a revision is assessed once, however many versions pin
+it.
+
+## 4. Episode projection
+
+An Episode revision projects, besides the shared pin and window columns, the
+topics of each role with at least one occurrence
+(`observation_topics` / `state_topics` / `action_topics` / `event_topics` /
+`transition_topics`) and the matching counts. Episodes carry no status, task or outcome column (see
+[Episode domain](./episode-domain.md) §5).
 
 ## 5. Robot / RobotRun / Mission / RobotState
 
@@ -256,6 +324,40 @@ Episodes do not read them: `build_recording_episodes` reads the recording
 itself through the shared recording reader, as configured by its build
 configuration (see [Episode domain](./episode-domain.md)).
 
+### 5.1 SourceContent / SourceSnapshot (Source Registry)
+
+The Dataset Integration counterpart of RobotRun registration (ADR-015 §5): the
+preserved bytes of an external dataset and the upstream declarations that name them.
+Records come into existence only through `REGISTER_SOURCE_SNAPSHOT`
+([Ingress boundaries](./ingress-boundaries.md) §3.1), which inserts a content together
+with its first snapshot in one transaction:
+
+```text
+source_contents    content_id (PK), format, content_checksum (unique),
+                   inventory_artifact_id (FK artifacts, unique, RESTRICT),
+                   file_count > 0, total_bytes >= 0, registered_at
+source_snapshots   snapshot_id (PK), (content_id, format) (FK source_contents, RESTRICT),
+                   upstream, upstream_revision, selection_checksum,
+                   descriptor_artifact_id (FK artifacts, unique, RESTRICT),
+                   descriptor_checksum, registered_at
+```
+
+Neither record has a status, a DatasetVersion, a RobotRun or a location: the inventory
+and descriptor URIs live on their `SOURCE_CONTENT_INVENTORY` (owner `source_content`)
+and `SOURCE_SNAPSHOT_DESCRIPTOR` (owner `source_snapshot`) ArtifactRecords, whose ids
+derive from the content and snapshot ids. The preserved files have no row of their
+own; the inventory is their registry. PostgreSQL enforces, beside the registrar:
+
+- no row of either table is ever updated, and a snapshot is never deleted;
+- a content commits only with at least one snapshot (deferred constraint trigger), and
+  its snapshots RESTRICT it, so every registered content keeps its declarations;
+- a snapshot references `(content_id, format)`, so the bytes of a content can only be
+  declared under the format its first registration fixed;
+- the identifier and checksum formats (CHECK).
+
+Several snapshots of one content are deduplication, not a conflict; one content is
+listed with all its declarations by `GET /source-snapshots?content_id=`.
+
 ## 6. ScenarioSet
 
 `scenario_sets` — one immutable ScenarioSet revision mined from a specific
@@ -298,6 +400,7 @@ longer than its threshold and moves `updated_at` to that resend.
 
 ```text
 BUILD_RECORDING_SCENES                               # RobotRun recording -> canonical scenes
+BUILD_SNAPSHOT_SCENES, BUILD_SNAPSHOT_EPISODES       # SourceSnapshot content -> canonical scenes / episodes
 REGISTER_SCENES, VALIDATE_SCENE, PROFILE_SCENE         # scene-level
 IMPORT_LABELS, BUILD_SCENE_SAMPLE_VIEWS                # derived: label set / sample view revisions
 ALIGN_EPISODE, VALIDATE_ALIGNED_EPISODE, PROFILE_ALIGNED_EPISODE,
@@ -354,8 +457,8 @@ platform. `kind` (`ArtifactKind`), `uri`, `backend` identify what and
 where; ownership is either the polymorphic `owner_type`/`owner_id` pair, or
 one of the direct FK-style columns (`dataset_id`/`scene_id`/
 `scenario_set_id`/`run_id`/`job_id`/`pipeline_run_id`). `size_bytes`/
-`checksum` are nullable columns. Recording registration, observation payloads,
-analytics tables and every derived artifact populate them, and a derived
+`checksum` are nullable columns. Recording and source registration, observation
+payloads, analytics tables and every derived artifact populate them, and a derived
 record's id is derived from its checksum — see
 [Storage layout](./storage-layout.md).
 

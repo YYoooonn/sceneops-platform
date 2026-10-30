@@ -1,0 +1,29 @@
+{
+  "schema": "sceneops.mixed_source_composition/1",
+  "description": "The M3 mixed-source DatasetVersion: the Recording Import RobotRun of scene-0061 (one Scene, one Episode), the nuScenes scene-0061 slice (one Scene) and the LeRobot pusht snapshot (206 Episodes). tools/reference/mixed_source_verify.py derives its expected members, pins and summaries from the raw inputs; make test-infrastructure SUITE=mixed-sources composes it on a disposable runtime.",
+  "parts": [
+    {
+      "part": "recording-scene-0061",
+      "source_kind": "recording",
+      "mode": "recording_import",
+      "fixture": "scene-0061",
+      "domains": ["scene", "episode"]
+    },
+    {
+      "part": "nuscenes-scene-0061",
+      "source_kind": "content",
+      "snapshot": "nuscenes-scene-0061",
+      "domains": ["scene"],
+      "build_config": "config/reference/nuscenes-scene-0061/scene_build_config.json",
+      "unit_keys": ["cc8c0bf57f984915a77078b10eb33198"]
+    },
+    {
+      "part": "lerobot-pusht",
+      "source_kind": "content",
+      "snapshot": "lerobot-pusht",
+      "domains": ["episode"],
+      "build_config": "config/reference/lerobot-pusht/episode_build_config.json",
+      "unit_keys": null
+    }
+  ]
+}

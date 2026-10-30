@@ -20,7 +20,7 @@ from sceneops_core.pipelines.schemas import PipelineTaskInputs
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.derived.publication import publish_registered
-from sceneops_worker.episodes.resolver import resolve_registered_episode
+from sceneops_worker.episodes.resolver import resolve_episode_revisions
 from sceneops_episodes.validation import EpisodeManifestValidator
 from sceneops_worker.jobs.base import JobHandler, RunRecordHandler
 
@@ -33,12 +33,11 @@ class ValidateEpisodeJobHandler(
     ],
     JobHandler[ValidateEpisodeJobParams, ValidateEpisodeJobResult],
 ):
-    """Validates registered Episodes at the revision each EpisodeRecord
-    points to when the job reads it; each per-episode run record pins that
-    revision. Validation never changes membership or a record and caches
-    nothing on the DatasetVersion: readiness is derived from these run
-    records for the current revision (ADR-007 §13.4, §17.5). An episode id
-    that is not registered fails the job."""
+    """Validates pinned Episode revisions; each per-episode run record pins
+    the revision it assessed. Validation reads no DatasetVersion and never
+    changes a unit, a revision or a membership: readiness is derived per
+    revision from these run records (ADR-015 §6.4). A pin that names no
+    registered revision fails the job."""
 
     @property
     def job_type(self) -> JobType:
@@ -49,15 +48,7 @@ class ValidateEpisodeJobHandler(
         return ValidateEpisodeJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        episode_ids = inputs.refs.get("episode_ids") or []
-        return {
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": inputs.dataset.dataset_version
-            if inputs.dataset
-            else None,
-            **inputs.params,
-            "episode_ids": episode_ids,
-        }
+        return {**inputs.params, "revisions": inputs.refs.get("revisions") or []}
 
     def build_initial_record(
         self,
@@ -68,8 +59,6 @@ class ValidateEpisodeJobHandler(
     ) -> EpisodeValidationRunRecord:
         return EpisodeValidationRunRecord(
             run_id=default_validation_run_id(job.job_id),
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             status=RunStatus.RUNNING,
             pipeline_run_id=job.pipeline_run_id,
             pipeline_task_run_id=job.pipeline_task_run_id,
@@ -87,49 +76,15 @@ class ValidateEpisodeJobHandler(
         started_at: datetime,
     ) -> tuple[EpisodeValidationRunRecord, ValidateEpisodeJobResult]:
         run_id = initial_record.run_id
-        episode_ids = _resolve_episode_ids(params)
-        dataset_id = params.dataset_id
-        dataset_version = params.dataset_version
-
-        if not episode_ids:
-            failed_record = initial_record.model_copy(
-                update={
-                    "status": RunStatus.SUCCEEDED,
-                    "validation_status": "failed",
-                    "should_block_pipeline": True,
-                    "checked_episode_count": 0,
-                    "issue_count": 1,
-                    "error_count": 1,
-                    "warning_count": 0,
-                    "finished_at": utc_now(),
-                }
-            )
-            return failed_record, ValidateEpisodeJobResult(
-                status="failed",
-                should_block_pipeline=True,
-                checked_episode_count=0,
-                issue_count=1,
-                metadata={
-                    "issues": [
-                        {
-                            "code": "empty_episode_input",
-                            "message": (
-                                "validate_episode requires at least one episode_id."
-                            ),
-                        }
-                    ]
-                },
-            )
-
         total_issues = 0
         total_blocking = 0
         total_warnings = 0
         blocking = False
         report_episodes: list[dict] = []
 
-        for episode_id in episode_ids:
-            resolved = await resolve_registered_episode(context, episode_id)
+        for resolved in await resolve_episode_revisions(context, params.revisions):
             record = resolved.record
+            episode_id = record.episode_id
             result = _validator.validate(record=record, manifest=resolved.manifest)
 
             episode_issue_count = len(result.issues)
@@ -152,6 +107,7 @@ class ValidateEpisodeJobHandler(
                     "state_count": result.state_count,
                     "action_count": result.action_count,
                     "event_count": result.event_count,
+                    "transition_count": result.transition_count,
                     "issues": [i.model_dump(mode="json") for i in result.issues],
                 }
             )
@@ -183,8 +139,6 @@ class ValidateEpisodeJobHandler(
                 media_type="application/json",
                 owner_type=ArtifactOwnerType.EPISODE_VALIDATION_RUN,
                 owner_id=per_episode_run_id,
-                dataset_id=dataset_id,
-                dataset_version=dataset_version,
                 run_id=per_episode_run_id,
                 job_id=job.job_id,
                 pipeline_run_id=job.pipeline_run_id,
@@ -195,8 +149,6 @@ class ValidateEpisodeJobHandler(
                     episode_id=episode_id,
                     manifest_artifact_id=record.manifest_artifact_id,
                     manifest_checksum=record.manifest_checksum,
-                    dataset_id=dataset_id,
-                    dataset_version=dataset_version,
                     status=RunStatus.SUCCEEDED,
                     validation_status=result.status,
                     should_block_pipeline=result.should_block,
@@ -233,7 +185,7 @@ class ValidateEpisodeJobHandler(
                 {
                     "run_id": run_id,
                     "job_id": job.job_id,
-                    "checked_episode_count": len(episode_ids),
+                    "checked_episode_count": len(params.revisions),
                     "total_issues": total_issues,
                     "should_block_pipeline": blocking,
                     "status": overall_status,
@@ -243,8 +195,6 @@ class ValidateEpisodeJobHandler(
             media_type="application/json",
             owner_type=ArtifactOwnerType.EPISODE_VALIDATION_RUN,
             owner_id=run_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
             run_id=run_id,
             job_id=job.job_id,
             pipeline_run_id=job.pipeline_run_id,
@@ -257,7 +207,7 @@ class ValidateEpisodeJobHandler(
                 "validation_status": overall_status,
                 "should_block_pipeline": blocking,
                 "validation_report_uri": report_uri,
-                "checked_episode_count": len(episode_ids),
+                "checked_episode_count": len(params.revisions),
                 "issue_count": total_issues,
                 "error_count": total_blocking,
                 "warning_count": total_warnings,
@@ -268,7 +218,7 @@ class ValidateEpisodeJobHandler(
         return succeeded_record, ValidateEpisodeJobResult(
             status=overall_status,
             should_block_pipeline=blocking,
-            checked_episode_count=len(episode_ids),
+            checked_episode_count=len(params.revisions),
             issue_count=total_issues,
             validation_run_id=run_id,
             report_uri=report_uri,
@@ -278,14 +228,6 @@ class ValidateEpisodeJobHandler(
         self, context: WorkerContext, record: EpisodeValidationRunRecord
     ) -> EpisodeValidationRunRecord:
         return await context.runs.episode_runs.upsert(record)
-
-
-def _resolve_episode_ids(params: ValidateEpisodeJobParams) -> list[str]:
-    if params.episode_ids:
-        return params.episode_ids
-    if params.episode_id:
-        return [params.episode_id]
-    return []
 
 
 def _per_episode_validation_run_id(job_id: str, episode_id: str) -> str:

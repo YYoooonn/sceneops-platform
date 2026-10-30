@@ -18,7 +18,7 @@ dev = [
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 pythonpath = ["tests/infrastructure"]
-testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests", "packages/sceneops-acquisition/tests", "packages/sceneops-core/tests", "packages/sceneops-derived/tests", "packages/sceneops-episodes/tests", "packages/sceneops-evaluation/tests", "packages/sceneops-execution/tests", "packages/sceneops-inference/tests", "packages/sceneops-scenes/tests", "packages/sceneops-recording/tests", "packages/sceneops-streaming/tests"]
+testpaths = ["apps/worker/tests", "apps/api/tests", "packages/sceneops-analytics/tests", "packages/sceneops-acquisition/tests", "packages/sceneops-core/tests", "packages/sceneops-derived/tests", "packages/sceneops-episodes/tests", "packages/sceneops-evaluation/tests", "packages/sceneops-execution/tests", "packages/sceneops-inference/tests", "packages/sceneops-scenes/tests", "packages/sceneops-recording/tests", "packages/sceneops-sources/tests", "packages/sceneops-streaming/tests"]
 
 [tool.uv]
 package = false
@@ -38,6 +38,7 @@ members = [
   "packages/sceneops-inference",
   "packages/sceneops-evaluation",
   "packages/sceneops-streaming",
+  "packages/sceneops-sources",
   "apps/api",
   "apps/worker",
   "apps/capture",
@@ -60,6 +61,7 @@ sceneops-derived = { workspace = true }
 sceneops-inference = { workspace = true }
 sceneops-evaluation = { workspace = true }
 sceneops-streaming = { workspace = true }
+sceneops-sources = { workspace = true }
 sceneops-api = { workspace = true }
 sceneops-worker = { workspace = true }
 sceneops-capture = { workspace = true }

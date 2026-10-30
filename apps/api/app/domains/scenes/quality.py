@@ -3,9 +3,10 @@
 Pure functions — receive already-fetched records, return SceneQualityResponse.
 Independently testable without a running service or DB.
 
-Only run records that assessed the Scene's current manifest revision count;
-any other run passed in is ignored, so a replaced Scene reports ``unknown``
-until its new revision is validated (ADR-007 §13.4).
+Quality describes one Scene revision, as pinned by one DatasetVersion. Only
+run records that assessed exactly that revision count; any other run passed
+in is ignored, so a newly pinned revision reports ``unknown`` until it is
+validated.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from sceneops_core.scenes import (
     derive_scene_readiness,
     latest_validation_for_revision,
 )
-from sceneops_core.scenes.schemas.records import SceneRecord
+from sceneops_core.scenes.schemas.records import SceneRevisionRecord
 from sceneops_core.scenes.schemas.runs import (
     SceneProfileRunRecord,
     SceneValidationRunRecord,
@@ -32,18 +33,21 @@ from app.domains.scenes.schemas import (
 
 
 def build_scene_quality(
-    scene: SceneRecord,
+    scene: SceneRevisionRecord,
+    *,
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
     validation_run: SceneValidationRunRecord | None = None,
     profile_run: SceneProfileRunRecord | None = None,
 ) -> SceneQualityResponse:
-    validation_run = _current(scene, validation_run)
-    profile_run = _current(scene, profile_run)
+    validation_run = _assessed(scene, validation_run)
+    profile_run = _assessed(scene, profile_run)
     readiness = compute_scene_readiness(scene, validation_run)
 
     return SceneQualityResponse(
         scene_id=scene.scene_id,
-        dataset_id=scene.dataset_id,
-        dataset_version=scene.dataset_version,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
         manifest_artifact_id=scene.manifest_artifact_id,
         manifest_checksum=scene.manifest_checksum,
         counts=SceneQualityCounts(
@@ -57,7 +61,7 @@ def build_scene_quality(
 
 
 def compute_scene_readiness(
-    scene: SceneRecord,
+    scene: SceneRevisionRecord,
     validation_run: SceneValidationRunRecord | None,
 ) -> SceneReadiness:
     run = latest_validation_for_revision(
@@ -72,7 +76,7 @@ def compute_scene_readiness(
 _RunT = TypeVar("_RunT", SceneValidationRunRecord, SceneProfileRunRecord)
 
 
-def _current(scene: SceneRecord, run: _RunT | None) -> _RunT | None:
+def _assessed(scene: SceneRevisionRecord, run: _RunT | None) -> _RunT | None:
     if run is None or not run.assessed(
         manifest_artifact_id=scene.manifest_artifact_id,
         manifest_checksum=scene.manifest_checksum,

@@ -23,7 +23,8 @@ from sceneops_episodes.recording_builder import (
     iter_planned_payloads,
     plan_recording_episodes,
 )
-from sceneops_recording.observations.payloads import RecordingRevision
+from sceneops_core.provenance import ClockOrigin, PinnedRecording
+from sceneops_core.provenance.segmentation import recording_unit_key
 from sceneops_scenes.recording_builder import plan_recording_scenes
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -50,7 +51,11 @@ from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     default_recording,
 )
 
-REVISION = RecordingRevision("run-ep", "sha256:" + "a" * 64, "mcap_log_time")
+REVISION = PinnedRecording(
+    robot_run_id="run-ep",
+    recording_checksum="sha256:" + "a" * 64,
+    recording_clock="mcap_log_time",
+)
 
 
 def _plan(path, config=None, revision=REVISION):
@@ -68,6 +73,13 @@ def recording(tmp_path):
     return episode_recording().write(tmp_path / "episode.mcap")
 
 
+def _key(segment: str, config=None) -> str:
+    boundary = RecordingEpisodeBuildConfig.model_validate(
+        config or episode_build_config()
+    ).segmentation_boundary()
+    return recording_unit_key(boundary=boundary, segment=segment)
+
+
 def _seconds(occurrences) -> list[int]:
     return [(o.timestamp_ns - T0) // S for o in occurrences]
 
@@ -77,7 +89,8 @@ def _seconds(occurrences) -> list[int]:
 
 def test_event_markers_define_one_episode_with_a_source_clock_window(recording):
     plan = _plan(recording)
-    assert [e.unit_key for e in plan.episodes] == ["task-mission-1-000"]
+    assert [e.unit_key for e in plan.episodes] == [_key("task-mission-1-000")]
+    assert plan.episodes[0].unit_key.startswith("event_markers-")
     source = plan.episodes[0].manifest.lineage.source
     assert source.source_clock == CLOCK
     # [running marker, completed marker + 1): the end marker belongs to it.
@@ -139,17 +152,15 @@ def test_observation_payloads_are_canonical_artifacts(recording):
 # --- segmentation and clocks -----------------------------------------------------
 
 
-def test_fixed_duration_windows_are_half_open(recording):
-    plan = _plan(
-        recording,
-        episode_build_config(
-            segmentation={
-                "policy": "fixed_duration",
-                "clock": CLOCK,
-                "duration_ns": 3 * S,
-            }
-        ),
+def test_fixed_duration_windows_are_half_open_on_the_clock_grid(recording):
+    config = episode_build_config(
+        segmentation={
+            "policy": "fixed_duration",
+            "clock": CLOCK,
+            "duration_ns": 3 * S,
+        }
     )
+    plan = _plan(recording, config)
     windows = {
         e.unit_key: (
             (e.manifest.lineage.source.start_timestamp_ns - T0) // S,
@@ -157,26 +168,27 @@ def test_fixed_duration_windows_are_half_open(recording):
         )
         for e in plan.episodes
     }
+    # Window k is [3k s, 3(k + 1) s) on the clock; T0 is 2 s past a multiple
+    # of 3 s, so the grid falls at T0 - 2 s, T0 + 1 s, ...
+    k0 = (T0 - 2 * S) // (3 * S)
     assert windows == {
-        "segment-000000": (0, 3),
-        "segment-000001": (3, 6),
-        "segment-000002": (6, 9),
-        "segment-000003": (9, 12),
+        _key(str(k0), config): (-2, 1),
+        _key(str(k0 + 1), config): (1, 4),
+        _key(str(k0 + 2), config): (4, 7),
+        _key(str(k0 + 3), config): (7, 10),
     }
-    # The observation exactly at t3 is in the second window, not the first.
+    # The state exactly at t1 is in the second window, not the first.
     by_key = {e.unit_key: e.manifest for e in plan.episodes}
-    assert _seconds(by_key["segment-000000"].observations) == [0]
-    assert _seconds(by_key["segment-000001"].observations) == [3]
+    assert _seconds(by_key[_key(str(k0), config)].states) == []
+    assert _seconds(by_key[_key(str(k0 + 1), config)].states) == [1, 2, 2]
 
 
 def test_whole_recording_is_one_episode(recording):
-    plan = _plan(
-        recording,
-        episode_build_config(
-            segmentation={"policy": "whole_recording", "clock": CLOCK}
-        ),
+    config = episode_build_config(
+        segmentation={"policy": "whole_recording", "clock": CLOCK}
     )
-    assert [e.unit_key for e in plan.episodes] == ["recording"]
+    plan = _plan(recording, config)
+    assert [e.unit_key for e in plan.episodes] == [_key("recording", config)]
     source = plan.episodes[0].manifest.lineage.source
     assert (source.start_timestamp_ns, source.end_timestamp_ns) == (T0, T0 + 9 * S + 1)
 
@@ -208,16 +220,40 @@ def test_different_clocks_across_streams_are_declared_per_stream(recording):
     assert manifest.states[0].timestamp_ns == T0 + 1 * S + LOG_LAG_NS
 
 
+def test_every_clock_an_episode_uses_is_declared_with_origin_source(recording):
+    """The window's clock and each stream's are declared once, with origin
+    source; values stay the recorded timing facts (log time for odometry,
+    header stamps elsewhere)."""
+    config = episode_build_config(
+        segmentation={"policy": "whole_recording", "clock": "mcap_log_time"}
+    )
+    config["streams"][0]["time"] = {"source": "log_time", "clock": "mcap_log_time"}
+    manifest = _plan(recording, config).episodes[0].manifest
+    assert [(d.clock, d.origin, d.resolution_ns) for d in manifest.clock_domains] == [
+        ("mcap_log_time", ClockOrigin.SOURCE, 1),
+        (CLOCK, ClockOrigin.SOURCE, 1),
+    ]
+    assert _seconds(manifest.actions) == list(ACTION_TIMES)
+    assert manifest.states[0].timestamp_ns == T0 + 1 * S + LOG_LAG_NS
+
+
+def test_a_source_clock_episode_declares_its_one_clock(recording):
+    manifest = _plan(recording).episodes[0].manifest
+    assert [(d.clock, d.origin) for d in manifest.clock_domains] == [
+        (CLOCK, ClockOrigin.SOURCE)
+    ]
+
+
 def test_two_tasks_yield_two_episodes_with_stable_keys(tmp_path):
     path = episode_recording(
         extra_markers=[(3, "running", "mission-2"), (5, "completed", "mission-2")]
     ).write(tmp_path / "r.mcap")
     plan = _plan(path)
     assert [e.unit_key for e in plan.episodes] == [
-        "task-mission-1-000",
-        "task-mission-2-000",
+        _key("task-mission-1-000"),
+        _key("task-mission-2-000"),
     ]
-    second = {e.unit_key: e.manifest for e in plan.episodes}["task-mission-2-000"]
+    second = {e.unit_key: e.manifest for e in plan.episodes}[_key("task-mission-2-000")]
     assert _seconds(second.observations) == [3]
     assert _seconds(second.actions) == [5]
 
@@ -265,7 +301,11 @@ def test_equivalent_acquisitions_share_semantic_content(tmp_path):
     a = _plan(rec.write(tmp_path / "a.mcap"))
     b = _plan(
         replay.write(tmp_path / "b.mcap"),
-        revision=RecordingRevision("run-replay", "sha256:" + "b" * 64, "mcap_log_time"),
+        revision=PinnedRecording(
+            robot_run_id="run-replay",
+            recording_checksum="sha256:" + "b" * 64,
+            recording_clock="mcap_log_time",
+        ),
     )
     assert [semantic_episode_content(e.manifest) for e in a.episodes] == [
         semantic_episode_content(e.manifest) for e in b.episodes
@@ -339,7 +379,11 @@ def test_log_time_needs_a_log_time_recording_clock(recording):
         _plan(
             recording,
             config,
-            RecordingRevision("run-ep", "sha256:" + "a" * 64, "other"),
+            PinnedRecording(
+                robot_run_id="run-ep",
+                recording_checksum="sha256:" + "a" * 64,
+                recording_clock="other",
+            ),
         )
 
 
@@ -429,3 +473,41 @@ def test_fixture_recordings_are_l1_conformant(tmp_path):
 
     assert check_l1_recording(episode_recording().write(tmp_path / "a.mcap")).conforms
     assert check_l1_recording(_scene_and_episode_recording(tmp_path)).conforms
+
+
+def test_the_builder_emits_episode_manifest_v4_with_logical_payload_refs(recording):
+    """The emitted schema version moves only with the builder's semantics
+    version (ADR-017). Every observation payload is the planned payload, named
+    by the Logical URI of the key it is published under."""
+    from sceneops_core.artifacts.schemas import PayloadRef
+    from sceneops_core.episodes.schemas import EPISODE_MANIFEST_SCHEMA_V4
+    from sceneops_episodes.recording_builder import RECORDING_EPISODE_SEMANTICS_VERSION
+    from sceneops_recording.observations.store import observation_payload_uri
+
+    plan = _plan(recording)
+    assert {e.manifest.schema_version for e in plan.episodes} == {
+        EPISODE_MANIFEST_SCHEMA_V4
+    }
+    assert (
+        {e.manifest.lineage.producer.semantics_version for e in plan.episodes}
+        == {RECORDING_EPISODE_SEMANTICS_VERSION}
+        == {5}
+    )
+    refs = [
+        o.payload
+        for e in plan.episodes
+        for o in e.manifest.occurrences()
+        if o.payload is not None
+    ]
+    assert refs and {type(r) for r in refs} == {PayloadRef}
+    planned = {
+        observation_payload_uri(
+            robot_run_id=p.robot_run_id, artifact_id=p.artifact_id
+        ): (p.checksum, p.size_bytes, p.media_type)
+        for p in plan.payloads.values()
+    }
+    run = plan.episodes[0].manifest.lineage.source.robot_run_id
+    for ref in refs:
+        assert ref.uri.startswith(f"sceneops://observation-payloads/{run}/payload-")
+        assert planned[ref.uri] == (ref.checksum, ref.size_bytes, ref.media_type)
+        assert ref.selector is None

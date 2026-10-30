@@ -1,4 +1,4 @@
-"""Canonical EpisodeManifest v1 / EpisodeRecord contract (ADR-007 §31)."""
+"""Canonical EpisodeManifest v1 / Episode record contract (ADR-007 §31)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from sceneops_core.episodes.schemas import (
     NonCanonicalEpisodeManifestError,
     episode_id_for,
     load_canonical_episode_manifest,
-    project_episode_record,
+    project_episode_revision,
 )
 from sceneops_core.episodes.testing import (
     action,
@@ -29,6 +29,7 @@ from sceneops_core.episodes.testing import (
     observation,
     state,
 )
+from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_core.runs.schemas import RunStatus
 
 
@@ -150,28 +151,21 @@ class TestManifest:
 class TestRecordAndIdentity:
     def test_record_projects_the_manifest(self) -> None:
         manifest = _asynchronous()
-        record = project_episode_record(
-            dataset_id="ds",
-            dataset_version="v1",
+        record = project_episode_revision(
             manifest=manifest,
-            manifest_artifact_id="episode-manifest-x",
+            manifest_artifact_id=manifest_artifact_id_for(
+                unit_id=episode_id_for(manifest.lineage.source),
+                manifest_checksum=manifest.checksum(),
+            ),
             manifest_checksum=manifest.checksum(),
         )
-        assert record.episode_id == episode_id_for(
-            dataset_id="ds", dataset_version="v1", source=manifest.lineage.source
-        )
+        assert record.episode_id == episode_id_for(manifest.lineage.source)
         assert record.robot_run_id == "run-001"
         assert record.unit_key == "recording"
         assert (record.observation_count, record.state_count) == (3, 3)
         assert (record.action_count, record.event_count) == (3, 2)
         assert record.action_topics == ["/control"]
         assert record.window_clock == "sensor.header_stamp"
-
-    def test_episode_id_is_dataset_version_scoped_and_domain_distinct(self) -> None:
-        source = _asynchronous().lineage.source
-        a = episode_id_for(dataset_id="ds", dataset_version="v1", source=source)
-        b = episode_id_for(dataset_id="ds", dataset_version="v2", source=source)
-        assert a != b and a.startswith("episode-")
 
 
 class TestRunPinsAndReadiness:
@@ -210,10 +204,11 @@ class TestRunPinsAndReadiness:
         assert derive_episode_readiness(None) == EpisodeReadiness.UNKNOWN
 
 
-def test_roles_cover_observation_state_action_event() -> None:
+def test_roles_cover_observation_state_action_event_transition() -> None:
     assert {r.value for r in EpisodeStreamRole} == {
         "observation",
         "state",
         "action",
         "event",
+        "transition",
     }

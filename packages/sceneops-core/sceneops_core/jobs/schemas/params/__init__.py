@@ -1,5 +1,6 @@
 from .base import BaseJobParams
 from .dataset import (
+    ComposeDatasetVersionJobParams,
     ExportAnalyticsSnapshotJobParams,
 )
 from .detection import (
@@ -11,6 +12,7 @@ from .labels import ImportLabelsJobParams
 from .sample_views import BuildSceneSampleViewsJobParams
 from .scene import (
     BuildRecordingScenesJobParams,
+    BuildSnapshotScenesJobParams,
     ProfileSceneJobParams,
     RegisterScenesJobParams,
     SceneKeyframeValidationConfig,
@@ -24,6 +26,7 @@ from .robots import (
 from .episodes import (
     AlignEpisodeJobParams,
     BuildRecordingEpisodesJobParams,
+    BuildSnapshotEpisodesJobParams,
     CurateEpisodesJobParams,
     EpisodeAlignmentInput,
     ExportLearningDataJobParams,
@@ -35,15 +38,18 @@ from .episodes import (
     ValidateEpisodeJobParams,
 )
 from .scenario import MineScenariosJobParams, ScoreScenarioReadinessJobParams
+from .sources import RegisterSourceSnapshotJobParams
 
 __all__ = [
     "BaseJobParams",
     "ImportLabelsJobParams",
     "BuildSceneSampleViewsJobParams",
     "RegisterRobotRunJobParams",
+    "RegisterSourceSnapshotJobParams",
     "IngestRobotStatesJobParams",
     "ExportRobotAnalyticsSnapshotJobParams",
     "BuildRecordingEpisodesJobParams",
+    "BuildSnapshotEpisodesJobParams",
     "RegisterEpisodesJobParams",
     "ValidateEpisodeJobParams",
     "ProfileEpisodeJobParams",
@@ -55,6 +61,7 @@ __all__ = [
     "LearningDataExportInputParams",
     "CurateEpisodesJobParams",
     "BuildRecordingScenesJobParams",
+    "BuildSnapshotScenesJobParams",
     "MissingGroundTruthPolicy",
     "ValidateSceneJobParams",
     "ProfileSceneJobParams",
@@ -62,6 +69,7 @@ __all__ = [
     "SceneKeyframeValidationConfig",
     "MineScenariosJobParams",
     "ScoreScenarioReadinessJobParams",
+    "ComposeDatasetVersionJobParams",
     "ExportAnalyticsSnapshotJobParams",
     "PredictDetectionJobParams",
     "EvaluateDetectionJobParams",

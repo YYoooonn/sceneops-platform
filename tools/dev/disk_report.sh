@@ -46,7 +46,7 @@ if docker ps --format '{{.Names}}' | grep -qx "$KAFKA_CONTAINER"; then
   docker exec "$KAFKA_CONTAINER" sh -c 'du -sh /var/lib/kafka/data/sceneops.* 2>/dev/null; du -sh /var/lib/kafka/data'
   docker exec "$KAFKA_CONTAINER" /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 \
     --describe --all --entity-type topics --entity-name sceneops.robot.telemetry.v1 2>/dev/null \
-    | grep -E "^ *(retention\.ms|segment\.bytes)=" | awk '{print "  " $1}'
+    | grep -E "^ *(retention\.ms|retention\.bytes|segment\.ms|segment\.bytes)=" | awk '{print "  " $1}'
 else
   echo "  $KAFKA_CONTAINER is not running (make streaming-up); volume size is listed above"
 fi
@@ -54,6 +54,7 @@ fi
 section "disposable test resources"
 leftover="$(docker ps -a --filter label=com.docker.compose.project=sceneops-test -q | wc -l | tr -d ' ')"
 echo "  sceneops-test compose project containers: ${leftover} (a killed test run leaves them; the next run removes them)"
+docker volume ls -q --filter label=com.docker.compose.project=sceneops-test | sed 's/^/  sceneops-test volume: /'
 uv run --frozen python tests/infrastructure/disposable_env.py status 2>/dev/null \
   || echo "  disposable_env.py status unavailable (PostgreSQL / MinIO not reachable)"
 

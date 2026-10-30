@@ -7,6 +7,7 @@ from sceneops_core.jobs.schemas import (
     RegisterEpisodesJobResult,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
+from sceneops_core.provenance import RevisionDecision
 from sceneops_worker.episodes.registration import register_episodes
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 
@@ -14,7 +15,7 @@ from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 class RegisterEpisodesJobHandler(
     JobHandler[RegisterEpisodesJobParams, RegisterEpisodesJobResult]
 ):
-    """Canonical Episode registration; see
+    """Canonical Episode revision registration; see
     ``sceneops_worker.episodes.registration``. Fails the job, with no
     canonical change, on any rejected manifest, scope error or conflict."""
 
@@ -28,10 +29,6 @@ class RegisterEpisodesJobHandler(
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
         return {
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": inputs.dataset.dataset_version
-            if inputs.dataset
-            else None,
             **inputs.params,
             "manifest_artifact_ids": inputs.refs.get("manifest_artifact_ids") or [],
         }
@@ -39,24 +36,22 @@ class RegisterEpisodesJobHandler(
     async def run(
         self, request: JobHandlerRequest[RegisterEpisodesJobParams]
     ) -> RegisterEpisodesJobResult:
-        params = request.params
         registration = await register_episodes(
             context=request.context,
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
-            manifest_artifact_ids=params.manifest_artifact_ids,
-            replace=params.replace,
+            manifest_artifact_ids=request.params.manifest_artifact_ids,
         )
         return RegisterEpisodesJobResult(
-            dataset_id=registration.dataset_id,
-            dataset_version=registration.dataset_version,
-            episode_ids=[e.episode_id for e in registration.episodes],
-            manifest_artifact_ids=[
-                e.manifest_artifact_id for e in registration.episodes
-            ],
-            created_episode_ids=registration.created_episode_ids,
-            replaced_episode_ids=registration.replaced_episode_ids,
-            unchanged_episode_ids=registration.unchanged_episode_ids,
-            removed_episode_ids=registration.removed_episode_ids,
-            registered_episode_count=len(registration.episodes),
+            source_kind=registration.source_kind,
+            source_id=registration.source_id,
+            producer_fingerprint=registration.producer_fingerprint,
+            revisions=registration.pins,
+            episode_ids=registration.episode_ids(),
+            new_unit_episode_ids=registration.episode_ids(RevisionDecision.NEW_UNIT),
+            new_revision_episode_ids=registration.episode_ids(
+                RevisionDecision.NEW_REVISION
+            ),
+            existing_revision_episode_ids=registration.episode_ids(
+                RevisionDecision.EXISTING_REVISION
+            ),
+            revision_count=len(registration.revisions),
         )

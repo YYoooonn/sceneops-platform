@@ -36,6 +36,15 @@ of zero (an unstamped header) is forwarded as 0 on a channel that allows it
 (``/tf_static``) -- never replaced by the ingest time. ``sequence_number`` is
 the bridge's transport arrival counter, never a source-time order.
 
+Session start. The bridge publishes ``RUN_START`` and waits for the broker's
+acknowledgement before it subscribes to any ROS 2 topic, so no telemetry can
+precede an acknowledged ``RUN_START``. The acknowledged Kafka position of that
+record is printed on stdout as one ``run_started {json}`` line (``SceneOps``
+runtime information for the launcher that starts Capture with
+``--start-position``; the bridge itself starts nothing and writes no SceneOps
+state). If ``RUN_START`` is not acknowledged the bridge exits non-zero without
+bridging anything.
+
 Usage (inside the streaming-bridge image):
     python3 -m sceneops_streaming_bridge \\
         --robot-id robot-nuscenes-streaming --robot-run-id run-<unique> \\
@@ -70,7 +79,9 @@ from sceneops_streaming import (
     DEFAULT_REGISTRY,
     ChannelRegistry,
     ChannelSpec,
+    DeliveredRecord,
     EnvelopeEncoding,
+    KafkaStartPosition,
     RunEventType,
     TelemetryEnvelope,
     TimestampRule,
@@ -82,6 +93,28 @@ from sceneops_streaming import KafkaTelemetryProducer, StreamingSettings
 logger = logging.getLogger("sceneops.ros2_streaming_bridge")
 
 SUMMARY_PREFIX = "bridge_summary "
+RUN_STARTED_PREFIX = "run_started "
+
+
+class RunStartError(RuntimeError):
+    """``RUN_START`` was not acknowledged by the broker, so the run has no known
+    start position and the bridge must not start bridging."""
+
+
+def run_started_line(robot_run_id: str, position: KafkaStartPosition) -> str:
+    """The machine-readable stdout line announcing an acknowledged ``RUN_START``.
+    ``start_position`` is the exact value of Capture's ``--start-position``."""
+    return RUN_STARTED_PREFIX + json.dumps(
+        {
+            "event": "run_started",
+            "robot_run_id": robot_run_id,
+            "topic": position.topic,
+            "partition": position.partition,
+            "offset": position.offset,
+            "start_position": str(position),
+        },
+        sort_keys=True,
+    )
 
 
 def subscription_qos(spec: ChannelSpec) -> QoSProfile:
@@ -155,16 +188,18 @@ class _AsyncProducerBridge:
     ``publish_timeout_seconds`` -- there is no queue of this bridge's own;
     the only buffering in this data path is librdkafka's own internal
     client queue (inside ``KafkaTelemetryProducer``/``confluent_kafka``),
-    which is bounded by its own default configuration. A stalled or
-    unreachable broker surfaces as a timeout/exception in the ROS2
-    callback (caught and logged by ``StreamingBridgeNode``) rather than
-    growing unboundedly in this bridge's memory or silently dropping the
-    message.
+    bounded at 1 GiB / 100,000 messages. The bridge never slows the source:
+    while the broker is slow or unreachable the records accumulate in that
+    queue. Once it is full, ``publish()`` waits for a slot for half the publish
+    timeout, then raises ``ProducerQueueFullError`` -- the half leaves room for
+    the producer to give its verdict before this thread stops waiting for it, so
+    a record is never queued after its caller was told it failed. The callback
+    (``StreamingBridgeNode``) counts the failure; the sequence number the
+    message took is a gap in the stream, which capture rejects.
 
     This is a deliberately simple design for the expected message volume
     (one nuScenes CAN-replay scene, ~a few thousand messages over tens of
-    seconds), which never approaches librdkafka's default buffer
-    capacity. Whether this remains sufficient at materially higher
+    seconds). Whether it remains sufficient at materially higher
     throughput is left to future benchmarking work, not decided here.
     """
 
@@ -172,7 +207,10 @@ class _AsyncProducerBridge:
         self, *, settings: StreamingSettings, publish_timeout_seconds: float = 5.0
     ) -> None:
         self._publish_timeout_seconds = publish_timeout_seconds
-        self._producer = KafkaTelemetryProducer(settings=settings)
+        self._producer = KafkaTelemetryProducer(
+            settings=settings,
+            queue_full_timeout_seconds=publish_timeout_seconds / 2,
+        )
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever, daemon=True, name="kafka-producer-loop"
@@ -185,12 +223,32 @@ class _AsyncProducerBridge:
         )
         future.result(timeout=self._publish_timeout_seconds)
 
+    def publish_and_wait(
+        self, envelope: TelemetryEnvelope, timeout_seconds: float = 10.0
+    ) -> DeliveredRecord:
+        """Block until the broker acknowledged this record; returns where it
+        was stored. Raises on a delivery failure or after the timeout."""
+        future = asyncio.run_coroutine_threadsafe(
+            self._producer.publish_and_wait(envelope, timeout_seconds), self._loop
+        )
+        return future.result(timeout=timeout_seconds + 5.0)
+
+    def flush(self, timeout_seconds: float = 10.0) -> None:
+        """Block until every accepted record is acknowledged by the broker;
+        raises if any delivery failed or the timeout expires."""
+        future = asyncio.run_coroutine_threadsafe(
+            self._producer.flush(timeout_seconds), self._loop
+        )
+        future.result(timeout=timeout_seconds + 5.0)
+
     def close(self, timeout_seconds: float = 10.0) -> None:
         """Flush pending production, close the producer, stop the loop.
         Deterministic and bounded -- never blocks forever."""
-        future = asyncio.run_coroutine_threadsafe(self._producer.close(), self._loop)
+        future = asyncio.run_coroutine_threadsafe(
+            self._producer.close(timeout_seconds), self._loop
+        )
         try:
-            future.result(timeout=timeout_seconds)
+            future.result(timeout=timeout_seconds + 5.0)
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=5.0)
@@ -215,15 +273,22 @@ class StreamingBridgeNode(Node):
         integrations/ros2-kafka-bridge/tests/test_streaming_bridge_node.py.
 
         ``emit_lifecycle_events`` -- publish a ``RUN_START`` control event
-        (``sceneops_streaming.control``) right after construction and a
-        best-effort ``RUN_END`` during ``shutdown()``. Capture finalizes a run
-        only on its ``RUN_END``, so ``main()`` always enables it. It defaults
-        to ``False`` so tests that inject a fake bridge and assert exact
-        published-envelope counts/indices/sequence numbers are unaffected."""
+        (``sceneops_streaming.control``) during construction, wait for the
+        broker to acknowledge it (``run_start_position``), and publish a
+        best-effort ``RUN_END`` during ``shutdown()``. Raises ``RunStartError``
+        if ``RUN_START`` is not acknowledged, before any subscription exists.
+        Capture finalizes a run only on its ``RUN_END``, so ``main()`` always
+        enables it. It defaults to ``False`` so tests that inject a fake bridge
+        and assert exact published-envelope counts/indices/sequence numbers are
+        unaffected."""
         super().__init__("streaming_bridge_node")
         self._robot_id = robot_id
         self._robot_run_id = robot_run_id
         self._emit_lifecycle_events = emit_lifecycle_events
+        self._publish_timeout_seconds = publish_timeout_seconds
+        # Where the broker stored RUN_START; None until acknowledged, and always
+        # None when lifecycle events are off.
+        self.run_start_position: KafkaStartPosition | None = None
 
         self._registry = registry
 
@@ -255,6 +320,10 @@ class StreamingBridgeNode(Node):
 
         self.published_count = 0
         self.failed_count = 0
+        # True once the producer could not confirm that everything it accepted
+        # (telemetry, RUN_END) reached the broker; the process then exits
+        # non-zero even though no message failed on its own.
+        self.delivery_unconfirmed = False
         self.published_by_channel: dict[str, int] = {}
         self.failed_by_channel: dict[str, int] = {}
         # Monotonic time of the latest bridged message; None until the
@@ -275,7 +344,12 @@ class StreamingBridgeNode(Node):
         self._bridge = producer_bridge
 
         if self._emit_lifecycle_events:
-            self._publish_lifecycle_event(RunEventType.RUN_START)
+            try:
+                self._start_run()
+            except RunStartError:
+                # Nothing was subscribed: release what the failed start holds.
+                self._release_after_failed_start()
+                raise
 
         self._message_classes = {
             spec.topic: get_message(spec.message_type) for spec in registry
@@ -308,9 +382,48 @@ class StreamingBridgeNode(Node):
         self._lifecycle_sequence += 1
         return seq
 
-    def _publish_lifecycle_event(self, event_type: RunEventType) -> None:
+    def _start_run(self) -> None:
+        """Publish ``RUN_START`` and wait for the broker's acknowledgement. The
+        delivered position is what a launcher needs to start Capture exactly
+        there; without an acknowledgement the run has none, so startup fails
+        rather than proceeding to bridge telemetry nobody can anchor. A
+        ``RUN_START`` that timed out may still be stored late: the run then
+        has a RUN_START and never a RUN_END, which Capture refuses."""
+        try:
+            delivered = self._bridge.publish_and_wait(
+                build_control_envelope(
+                    event_type=RunEventType.RUN_START,
+                    robot_id=self._robot_id,
+                    robot_run_id=self._robot_run_id,
+                    sequence_number=self._next_lifecycle_sequence_number(),
+                ),
+                timeout_seconds=self._publish_timeout_seconds,
+            )
+        except Exception as exc:
+            self.get_logger().error(
+                f"RUN_START was not acknowledged: {type(exc).__name__}: {exc}"
+            )
+            raise RunStartError(
+                f"RUN_START of robot_run_id={self._robot_run_id!r} was not "
+                f"acknowledged by the broker: {type(exc).__name__}: {exc}"
+            ) from exc
+        self.run_start_position = delivered.as_start_position()
+
+    def _release_after_failed_start(self) -> None:
+        try:
+            self._bridge.close(timeout_seconds=2.0)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"closing the producer after a failed start: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        self.destroy_node()
+
+    def _publish_lifecycle_event(
+        self, event_type: RunEventType, *, telemetry_count: int | None = None
+    ) -> None:
         """Best-effort -- a control event failing to publish must never
-        crash bridge startup/shutdown or abort telemetry publishing. A RUN_END
+        crash bridge shutdown. A RUN_END
         that fails to publish leaves the run unfinalizable by capture, which
         fails the capture rather than finalizing a recording of unknown
         completeness. Uses the SEPARATE, independent lifecycle sequence
@@ -327,6 +440,7 @@ class StreamingBridgeNode(Node):
                 robot_id=self._robot_id,
                 robot_run_id=self._robot_run_id,
                 sequence_number=self._next_lifecycle_sequence_number(),
+                telemetry_count=telemetry_count,
             )
             self._bridge.publish(envelope)
         except Exception as exc:
@@ -411,19 +525,64 @@ class StreamingBridgeNode(Node):
     def shutdown(self, timeout_seconds: float = 10.0) -> None:
         """Flush pending Kafka production and close the producer. Does
         NOT stop ROS2 spinning -- the caller (main()) stops spin_once
-        first, then calls this: stop accepting new callbacks -> publish
-        RUN_END (best-effort, if enabled) -> flush -> close producer ->
-        destroy node. RUN_END is published BEFORE flush/close so it is
-        handed to the SAME producer instance as every telemetry record,
-        ordered after all of them in publish order -- never a separate,
-        possibly-racing producer/connection.
+        first, then calls this: stop accepting new callbacks -> flush
+        telemetry -> publish RUN_END (best-effort, if enabled) -> flush ->
+        close producer -> destroy node.
+
+        RUN_END is only published once every telemetry record the producer
+        accepted has been acknowledged by the broker, and it declares
+        ``telemetry_count``: the number of telemetry sequence numbers this
+        bridge assigned. That is the size of the sequence space, so it counts
+        a message that failed before reaching the producer (``failed_count``)
+        as well as the delivered ones; capture then sees the loss as a
+        sequence gap or, at the tail, as a count mismatch, and refuses the
+        run. Delivery failure withholds RUN_END (the broker may never have
+        stored a record the count includes); a pre-producer failure does not,
+        because the declared count already makes capture reject it with a
+        specific error. The count is final here: the caller has stopped
+        spinning, so no callback can assign another sequence number. It is
+        published on the SAME producer instance as the telemetry, after it,
+        never on a separate possibly-racing connection.
+
+        A delivery the producer could not confirm (the flush failed, or closing
+        the producer failed) sets ``delivery_unconfirmed``, which makes
+        ``main()`` exit non-zero. ``close()`` flushes again and a delivery error is
+        reported only once, so a later success never clears the flag.
 
         This is the GRACEFUL path only -- a hard kill (SIGKILL, crash)
         never reaches this method, so that run never gets a RUN_END and
         capture refuses to finalize it."""
         if self._emit_lifecycle_events:
-            self._publish_lifecycle_event(RunEventType.RUN_END)
-        self._bridge.close(timeout_seconds=timeout_seconds)
+            if self._telemetry_fully_delivered(timeout_seconds):
+                self._publish_lifecycle_event(
+                    RunEventType.RUN_END, telemetry_count=self._sequence
+                )
+            else:
+                self.delivery_unconfirmed = True
+                self.get_logger().error(
+                    "telemetry was not fully delivered -- RUN_END withheld so "
+                    "capture refuses this run"
+                )
+        try:
+            self._bridge.close(timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            # close() flushes again: a delivery error was reported once by the
+            # first flush and is gone, so this one succeeding proves nothing
+            # about the earlier outcome -- delivery_unconfirmed is sticky.
+            self.delivery_unconfirmed = True
+            self.get_logger().error(
+                f"closing the producer failed: {type(exc).__name__}: {exc}"
+            )
+
+    def _telemetry_fully_delivered(self, timeout_seconds: float) -> bool:
+        try:
+            self._bridge.flush(timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            self.get_logger().error(
+                f"telemetry flush failed: {type(exc).__name__}: {exc}"
+            )
+            return False
+        return True
 
 
 def main() -> None:
@@ -455,7 +614,10 @@ def main() -> None:
         "--publish-timeout-seconds",
         type=float,
         default=5.0,
-        help="Bound on how long a single publish() may block the ROS2 callback thread",
+        help=(
+            "Bound on how long a single publish() may block the ROS2 callback "
+            "thread, and on how long startup waits for the broker to acknowledge RUN_START"
+        ),
     )
     parser.add_argument(
         "--exit-after-idle-seconds",
@@ -476,12 +638,23 @@ def main() -> None:
 
     registry = build_channel_registry(args.channels_file)
     rclpy.init()
-    node = StreamingBridgeNode(
-        robot_id=args.robot_id,
-        robot_run_id=args.robot_run_id,
-        registry=registry,
-        publish_timeout_seconds=args.publish_timeout_seconds,
-        emit_lifecycle_events=True,
+    try:
+        node = StreamingBridgeNode(
+            robot_id=args.robot_id,
+            robot_run_id=args.robot_run_id,
+            registry=registry,
+            publish_timeout_seconds=args.publish_timeout_seconds,
+            emit_lifecycle_events=True,
+        )
+    except RunStartError as exc:
+        logger.error("bridge not started: %s", exc)
+        rclpy.shutdown()
+        raise SystemExit(1) from exc
+    # The one machine-readable handoff to whatever starts Capture; only after
+    # RUN_START is acknowledged, and before any telemetry can be bridged.
+    print(
+        run_started_line(args.robot_run_id, node.run_start_position),
+        flush=True,
     )
 
     shutdown_requested = threading.Event()
@@ -525,7 +698,7 @@ def main() -> None:
         node.destroy_node()
         rclpy.shutdown()
 
-    if node.failed_count > 0:
+    if node.failed_count > 0 or node.delivery_unconfirmed:
         raise SystemExit(1)
 
 

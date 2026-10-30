@@ -185,3 +185,157 @@ def test_a_stage_without_its_ref_does_not_invent_an_input() -> None:
     params = _REGISTRY.get(task.job_type).build_job_params(_inputs(task, {}))
     with pytest.raises(ValueError, match="at least one input"):
         parse_job_params(task.job_type, params)
+
+
+# ── recording pipelines: Build -> Register -> Compose -> assess ─────────────
+
+
+def _revision_pin(domain: str) -> dict:
+    from sceneops_core.provenance import manifest_artifact_id_for, unit_id_for
+
+    unit_id = unit_id_for(
+        domain=domain, source_kind="recording", source_id="run-1", unit_key="p/0"
+    )
+    checksum = "sha256:" + "e" * 64
+    return {
+        "domain": domain,
+        "unit_id": unit_id,
+        "manifest_checksum": checksum,
+        "manifest_artifact_id": manifest_artifact_id_for(
+            unit_id=unit_id, manifest_checksum=checksum
+        ),
+    }
+
+
+_RECORDING_PIPELINES = [
+    ("recording_scene_building", "scene", "build_recording_scenes"),
+    ("recording_episode_building", "episode", "build_recording_episodes"),
+]
+
+
+def _recording_inputs(task, refs: dict, params: dict) -> PipelineTaskInputs:
+    # A recording pipeline run has no DatasetVersion scope.
+    return _inputs(task, refs).model_copy(update={"dataset": None, "params": params})
+
+
+@pytest.mark.parametrize(
+    ("pipeline_type", "domain", "build_task"), _RECORDING_PIPELINES
+)
+def test_a_recording_pipeline_hands_each_stage_what_it_needs_and_no_dataset_version(
+    pipeline_type: str, domain: str, build_task: str
+) -> None:
+    definition = next(
+        d for d in BUILTIN_PIPELINE_DEFINITIONS if d.type == pipeline_type
+    )
+    by_id = {t.pipeline_task_id: t for t in definition.tasks}
+    pin = _revision_pin(domain)
+    ref_values = {
+        "manifest_artifact_ids": ["manifest-1"],
+        "robot_run_id": "run-1",
+        "revisions": [pin],
+        f"{domain}_ids": [pin["unit_id"]],
+    }
+    caller = {
+        build_task: {"robot_run_id": "run-1", "build_config": {}},
+        "compose_dataset_version": {"dataset_id": "d", "dataset_version": "v1"},
+    }
+
+    for task in definition.tasks:
+        upstream = {
+            o.name: ref_values[o.name]
+            for dep in task.depends_on_pipeline_task_ids
+            for o in by_id[dep].outputs
+            if o.kind == PipelineTaskOutputKind.REF and o.name in ref_values
+        }
+        params = _REGISTRY.get(task.job_type).build_job_params(
+            _recording_inputs(task, upstream, caller.get(task.pipeline_task_id, {}))
+        )
+        if task.pipeline_task_id == build_task:
+            assert params == caller[build_task]
+            continue
+        parsed = parse_job_params(task.job_type, params)
+        if task.pipeline_task_id == "compose_dataset_version":
+            assert (parsed.dataset_id, parsed.dataset_version) == ("d", "v1")
+            assert [p.model_dump() for p in parsed.pins] == [pin]
+            assert parsed.selector is None
+        elif task.job_type.value.startswith("register_"):
+            assert parsed.manifest_artifact_ids == ["manifest-1"]
+        else:
+            assert [p.model_dump() for p in parsed.revisions] == [pin]
+        assert "dataset_version" not in params or (
+            task.pipeline_task_id == "compose_dataset_version"
+        )
+
+
+@pytest.mark.parametrize("named", [{"pins": []}, {"selector": {"sources": []}}])
+def test_a_pipeline_composition_takes_its_members_only_from_the_register_stage(
+    named: dict,
+) -> None:
+    definition = next(
+        d for d in BUILTIN_PIPELINE_DEFINITIONS if d.type == "recording_scene_building"
+    )
+    compose = next(
+        t for t in definition.tasks if t.pipeline_task_id == "compose_dataset_version"
+    )
+    handler = _REGISTRY.get(compose.job_type)
+    target = {"dataset_id": "d", "dataset_version": "v1"}
+    with pytest.raises(ValueError, match="not accepted"):
+        handler.build_job_params(
+            _recording_inputs(
+                compose, {"revisions": [_revision_pin("scene")]}, {**target, **named}
+            )
+        )
+    with pytest.raises(ValueError, match="no revisions to compose"):
+        handler.build_job_params(_recording_inputs(compose, {}, target))
+
+
+def test_only_the_composition_job_of_a_recording_run_names_a_dataset_version() -> None:
+    from sceneops_core.common.time import utc_now
+    from sceneops_core.pipelines.schemas import (
+        PipelineRunManifest,
+        PipelineRunStatus,
+        PipelineTaskRunManifest,
+        PipelineTaskRunStatus,
+        PipelineType,
+    )
+    from sceneops_worker.pipelines.planning import PipelineJobPlanner
+
+    definition = next(
+        d for d in BUILTIN_PIPELINE_DEFINITIONS if d.type == "recording_scene_building"
+    )
+    target = {"dataset_id": "d", "dataset_version": "v1"}
+    run = PipelineRunManifest(
+        pipeline_run_id="pipe-1",
+        type=PipelineType.RECORDING_SCENE_BUILDING,
+        status=PipelineRunStatus.RUNNING,
+        params={"compose_dataset_version": target},
+    )
+    refs = {"revisions": [_revision_pin("scene")], "manifest_artifact_ids": ["m"]}
+    labels = {}
+    for task in definition.tasks:
+        if task.pipeline_task_id == "build_recording_scenes":
+            continue
+        task_run = PipelineTaskRunManifest(
+            pipeline_task_run_id=f"ptr-{task.pipeline_task_id}",
+            pipeline_run_id="pipe-1",
+            pipeline_task_id=task.pipeline_task_id,
+            pipeline_task_name=task.name,
+            task_order=task.order,
+            status=PipelineTaskRunStatus.PENDING,
+            job_type=task.job_type,
+            params=run.params.get(task.pipeline_task_id, {}),
+            created_at=utc_now(),
+        )
+        job = PipelineJobPlanner().build_job_for_task(
+            pipeline_run=run,
+            task=task_run,
+            inputs=_recording_inputs(task, refs, {}),
+        )
+        labels[task.pipeline_task_id] = (job.dataset_id, job.dataset_version)
+
+    assert labels == {
+        "register_scenes": (None, None),
+        "compose_dataset_version": ("d", "v1"),
+        "validate_scene": (None, None),
+        "profile_scene": (None, None),
+    }

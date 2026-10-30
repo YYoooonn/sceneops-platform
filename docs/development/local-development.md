@@ -173,10 +173,11 @@ make check-commands                the command surface is consistent (no pytest,
   `pipelines`). `pipelines` and `recovery` fail, never skip, when their infrastructure
   is missing, and the selection changes no suite's isolation:
   - `pipelines` runs `tests/infrastructure` on a disposable execution runtime:
-    execution-key dedup / force, convergence of an unchanged rebuild,
-    conflict-then-explicit-replacement, resumption of a blocked pipeline, recovery
-    of a failed one, concurrent runs over one scope and the orchestrator that
-    executed them. These tests re-execute pipelines on purpose and the platform keeps every
+    execution-key dedup / force, convergence of an unchanged rebuild, additive
+    revisions of a changed configuration beside immutable composed DatasetVersions,
+    composition convergence and refused rebinding, resumption of a blocked pipeline,
+    recovery of a failed one, concurrent runs over one scope and composition, and the
+    orchestrator that executed them. These tests re-execute pipelines on purpose and the platform keeps every
     Job and PipelineRun that results, so the command creates the disposable database and
     bucket of `make test-integration`, starts an API, Celery workers and a Redis of its own
     on them (compose project `sceneops-test`, `compose/test-runtime.yaml`), seeds the one
@@ -201,7 +202,7 @@ make check-commands                the command surface is consistent (no pytest,
     point. It needs no canonical baseline. The suites share one harness (`tests/infrastructure/recovery_support.py`);
     `RECOVERY_TESTS=<path>` runs one module.
   - `kafka` runs the ROS 2 bridge (`integrations/ros2-kafka-bridge`) and capture tests in the
-    `streaming-bridge` and `capture` images (real-Kafka integration included, `make streaming-test`) and then the transport smoke, which publishes a deterministic
+    `streaming-bridge` and `capture` images (real-Kafka integration included, `make streaming-test`), the producer against a throwaway broker it freezes with `docker pause` (`make streaming-producer-test`; needs Docker and the broker image, not the compose broker) and then the transport smoke, which publishes a deterministic
     sequence and verifies envelope recovery, per-RobotRun ordering and partitioning. It needs
     `make streaming-up` and creates no domain data.
   - `boundaries` runs the isolation boundaries: the dataset-acquisition integration's tests,
@@ -318,6 +319,7 @@ SceneOps contract, and a green result proves nothing about correctness. Correctn
 | `make worker-run-job JOB_ID=…` / `worker-advance-pipeline PIPELINE_RUN_ID=…` | run one Job through `JobRunner`, or take one `PipelineOrchestrator` step, by hand through the worker CLI (`sceneops-worker jobs run`, `sceneops-worker pipelines advance`) |
 | `make reconcile-once` / `reconcile-apply` / `artifact-lifecycle-once` / `acquisition-status` | one acquisition-reconciliation pass; read-only lifecycle and status reports ([ADR-008](../adr/008-acquisition-lifecycle-reliability.md)); these run `sceneops-worker acquisition reconcile / artifact-lifecycle / status` in the `worker-jobs` container |
 | `make disk-report` | disk headroom and what could be reclaimed (below) |
+| `make capacity-preflight [MODE=…] [REFERENCE_SCOPE=…\|FIXTURE=…\|SNAPSHOTS="…"]` | whether a reference workload fits the Docker VM's free space (below); exit 1 when it does not |
 
 `make check-commands` is different in kind: it is static, needs no stack, and is part of how
 the command surface itself is kept consistent.
@@ -337,17 +339,53 @@ the broker's retention expires it. There is no automated cleanup and no selectiv
 platform state. `make disk-report` is read-only and shows the host headroom (the streaming
 bootstrap stops below `MIN_FREE_GIB`, default 6, on the host and the Docker VM), the
 generated directories, the SceneOps volumes, the Kafka log, disposable-test leftovers and
-what Docker could reclaim. Reclaim in this order, stopping when there is room:
+what Docker could reclaim.
+
+The Docker VM's filesystem, not the host's, is usually the binding limit: PostgreSQL and
+MinIO share it, so when a bootstrap fills it, PostgreSQL stops for every database on the
+server (the reference one included) and cannot finish crash recovery until there is room
+again; `docker start sceneops-postgres-1` then replays its WAL.
+
+Both baseline bootstraps therefore run a capacity preflight
+(`tools/dev/capacity_preflight.py`, also `make capacity-preflight`) before their first write
+and stop, having written nothing, when the Docker VM cannot hold what the selection's
+unregistered fixtures will add. The estimate is computed from each fixture's locked
+recording size R:
+
+| Store | Recording Import | Streaming Acquisition |
+| --- | --- | --- |
+| MinIO (recording + payloads, manifests, run records) | 1.85 R | 1.85 R |
+| Kafka log (kept for the 24 h replay window, so it accumulates over the run) | — | 1.33 R |
+| capture volume (one capture at a time, removed once registered) | — | the largest R |
+
+The workload is refused unless the free space is at least the sum with a 25 % margin, plus
+1 GiB for PostgreSQL's WAL (`max_wal_size`) and a 2 GiB floor; the host volume must keep the
+floor. The free space is measured inside the running PostgreSQL container, the filesystem
+whose exhaustion the check prevents, and the check fails closed when it cannot measure. The
+ratios are measurements of the reference workload under `config/baselines/`, not bounds for
+other build configurations, and builds still pending for already registered RobotRuns are
+not estimated. A source snapshot (`MODE=source_snapshot SNAPSHOTS="<id> …"`, the
+declarations of `config/reference/source-snapshots.json`) is estimated from its content
+instead: the files its declaration selects from its local tree, by the selection rules
+publication applies, stored once in MinIO (so this mode runs in the workspace
+environment). `SUITE=sources` runs it for `lerobot-pusht` and `nuscenes-scene-0061`
+(2,996 files, 527,215,844 bytes): 3.6 GiB required. For the 10-fixture corpus it requires 11.8 GiB free for Recording Import and
+18.7 GiB for Streaming Acquisition (one fixture, `scene-0061`: 4.7 GiB); the streaming bootstrap's `MIN_FREE_GIB` check before
+each fixture still applies during the run. The full Recording Import baseline stores about
+7.2 GB in MinIO (4.07 GB of recordings and 3.16 GB of payloads, measured 2026-10-19 on a
+58.4 GB VM). Objects deleted from MinIO, a dropped disposable bucket included, stay in
+`.minio.sys/tmp` until MinIO purges them a few minutes later. Reclaim in this order,
+stopping when there is room:
 
 | Target | Safe? | How |
 | --- | --- | --- |
-| Disposable test resources (`sceneops_test`, `sceneops-test`, compose project `sceneops-test`) | always; a run removes its own, a killed run leaves them | `uv run python tests/infrastructure/disposable_env.py drop`, `docker compose -p sceneops-test down -v` |
+| Disposable test resources (`sceneops_test*`, `sceneops-test*`, compose project `sceneops-test` with its `sceneops-test_test-kafka-data` and `sceneops-test_test-acquisition-recordings` volumes) | always; a run removes its own, a killed run leaves them and the next run removes them | `uv run python tests/infrastructure/disposable_env.py drop [--database … --bucket …]`; containers by the project label (`docker ps -aq --filter label=com.docker.compose.project=sceneops-test \| xargs docker rm -f -v`), then the two volumes by exact name |
 | Stopped containers, dangling images | yes | `docker container prune`, `docker image prune` |
 | Docker build cache | yes; the next image build is slower | `docker builder prune` (`--filter until=168h` keeps the recent layers) |
 | Generated `./data` output, Python caches | yes; `data/raw` and `data/reference` are untouched | `make clean-artifacts`, `make clean-python` |
 | `cache/hf` (model weights) | yes if no inference server is used; re-downloaded on next use | `rm -rf cache/hf/*` |
 | Unused images (`docker image prune -a`) | **costly, not unsafe**: it also removes the opt-in `streaming-bridge`, `capture`, `dataset-replay`, `dataset-acquisition`, and `lerobot-integration` images, which the journeys and the contract bootstrap rebuild (GBs of build time) | only when the room is needed |
-| Kafka log | not selectively. The telemetry topic reports `retention.ms` = 7 days and 1 GiB segments (the repository sets neither): the broker deletes rolled segments once their newest record is that old, so the log drains by itself after the last streamed run. Every streamed run owns its offset range and a capture can only resume from what the topic still holds, so truncating by hand is not supported | wait, or `make local-reset` |
+| Kafka log | not selectively. The broker keeps records for 24 h with hourly segment rolls and a 20 GiB cap per partition (`compose/streaming.yaml`): it deletes closed segments once their newest record is that old, at a 5-minute check, so the log drains by itself about a day after the last streamed run (a streamed reference fixture is ~0.47 GB). Every streamed run owns its offset range and a capture can only resume from what the topic still holds, so truncating by hand is not supported | wait, or `make local-reset` |
 | Acquisition scratch (`sceneops_acquisition-recordings`) | transient MCAPs are removed once their recording is provably registered; a capture that is not provably published is kept on purpose and is recovered with `publish-pending` / `reconcile`, not deleted | `make acquisition-status` |
 
 Never remove with Docker or the shell: `data/raw`, `data/reference`, `config/reference`

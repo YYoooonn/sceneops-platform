@@ -4,21 +4,22 @@ These run against the disposable execution runtime that `make test-infrastructur
 starts on a disposable PostgreSQL database and MinIO bucket (execution_runtime.py): the
 FastAPI control plane, the pipeline and job Celery workers, Redis, PostgreSQL and
 MinIO. They exercise the contracts of the pipelines that no single user journey
-proves: dedup, force, retry, replacement, blocked resumption, failure recovery,
-concurrent registration, and every pipeline task running as a Job on the job workers.
+proves: dedup, force, retry convergence, revision additivity, immutable composition,
+blocked resumption, failure recovery, concurrent registration and composition, and
+every pipeline task running as a Job on the job workers.
 
 The pipelines need a registered RobotRun. The runtime starts empty, so the suite's
 `baseline` fixture seeds the one it consumes: the golden reference contract's Recording
 Import RobotRun (`tools/baselines/canonical/canonical_bootstrap.sh`, create-or-verify; the
 smoke-1 selection, scene-0061, unless REFERENCE_SCOPE says otherwise), published from
-the locked recording into the disposable bucket. `baseline_run` takes one of them and
-the tests build into DatasetVersions they own: the reference environment is never read
-or written.
+the locked recording into the disposable bucket. `baseline_run` takes one of them; the
+tests register revisions of it (which are additive and shared) and compose
+DatasetVersions they own: the reference environment is never read or written.
 
-Test-owned identity is still fixed and named after the test: `sceneops-test-infra-pipelines`
-holds one DatasetVersion per test. Everything the tests append (PipelineRuns, Jobs, the job-keyed
-validation / profile reports of a re-executed pipeline, duplicate ArtifactRecords of a
-re-executed evaluation) is execution history the platform keeps by design; it lives in the
+Test-owned identity is fixed and named after the test: `sceneops-test-infra-pipelines`
+holds the DatasetVersions the tests compose, each named after its test. Everything the
+tests append (PipelineRuns, Jobs, the job-keyed validation / profile reports of a
+re-executed pipeline) is execution history the platform keeps by design; it lives in the
 disposable database and bucket and is dropped with them. No test deletes anything.
 """
 
@@ -65,26 +66,16 @@ class Api:
             assert response.status_code == expect, response.text
         return response
 
-    def dataset_version(self, dataset_id: str, version: str) -> tuple[str, str]:
-        """The test-owned DatasetVersion ``dataset_id`` / ``version``: created when it does
-        not exist, reused when it does (a repeated run never adds an identity)."""
+    def dataset(self, dataset_id: str) -> str:
+        """The test-owned Dataset (a namespace): created when absent, reused when not."""
         self.post("/datasets", {"dataset_id": dataset_id, "name": "Infrastructure tests"})
-        if self._client.get(f"/datasets/{dataset_id}/versions/{version}").status_code == 404:
-            self.post(f"/datasets/{dataset_id}/versions", {"version": version}, expect=201)
-        return dataset_id, version
+        return dataset_id
 
-    def create_run(
-        self, pipeline_type: str, dataset: tuple[str, str], params: dict, *, force: bool = False
-    ) -> dict:
+    def create_run(self, pipeline_type: str, params: dict, *, force: bool = False) -> dict:
+        """A recording pipeline run: it names no DatasetVersion scope (the version its
+        compose stage creates is a task param)."""
         response = self.post(
-            "/pipelines/runs",
-            {
-                "type": pipeline_type,
-                "dataset_id": dataset[0],
-                "dataset_version": dataset[1],
-                "params": params,
-                "force": force,
-            },
+            "/pipelines/runs", {"type": pipeline_type, "params": params, "force": force}
         )
         assert response.status_code in (200, 201), response.text
         return response.json()["pipelineRun"]
@@ -110,10 +101,8 @@ class Api:
             time.sleep(3)
         raise AssertionError(f"pipeline run {run_id} did not finish in {timeout}s")
 
-    def run(
-        self, pipeline_type: str, dataset: tuple[str, str], params: dict, *, force: bool = True
-    ) -> dict:
-        created = self.create_run(pipeline_type, dataset, params, force=force)
+    def run(self, pipeline_type: str, params: dict, *, force: bool = True) -> dict:
+        created = self.create_run(pipeline_type, params, force=force)
         if created["status"] == "succeeded":
             # An identical request returns the run that already holds this result; a
             # succeeded run is not dispatched again (a failed or blocked one is).
@@ -124,30 +113,51 @@ class Api:
     def tasks(self, run_id: str) -> dict[str, dict]:
         return {t["pipelineTaskId"]: t for t in self.get(f"/pipelines/runs/{run_id}/tasks")["tasks"]}
 
-    def scenes(self, dataset: tuple[str, str]) -> list[dict]:
-        return self.get("/scenes", dataset_id=dataset[0], dataset_version=dataset[1], limit=500)["scenes"]
+    def version(self, dataset_id: str, version: str) -> dict | None:
+        response = self._client.get(f"/datasets/{dataset_id}/versions/{version}")
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()["version"]
 
-    def episodes(self, dataset: tuple[str, str]) -> list[dict]:
-        return self.get("/episodes", dataset_id=dataset[0], dataset_version=dataset[1], limit=500)[
-            "episodes"
+    def members(self, kind: str, dataset_id: str, version: str) -> list[dict]:
+        """The ``kind`` (scenes | episodes) revisions the DatasetVersion pins."""
+        return self.get(f"/datasets/{dataset_id}/versions/{version}/{kind}", limit=500)[kind]
+
+    def revisions(self, kind: str, robot_run_id: str) -> list[dict]:
+        """Every registered ``kind`` (scenes | episodes) revision built from the
+        RobotRun, all units, sorted by unit id and checksum."""
+        unit_key = "sceneId" if kind == "scenes" else "episodeId"
+        units = self.get(f"/{kind}", robot_run_id=robot_run_id, limit=500)[kind]
+        revisions = [
+            r
+            for unit in units
+            for r in self.get(f"/{kind}/{unit[unit_key]}")["revisions"]
         ]
+        return sorted(revisions, key=lambda r: (r[unit_key], r["manifestChecksum"]))
 
 
-def scene_params(run_id: str, *, config: dict | None = None, replace: bool = False, **extra) -> dict:
+def compose_params(dataset_id: str, version: str) -> dict:
+    return {"compose_dataset_version": {"dataset_id": dataset_id, "dataset_version": version}}
+
+
+def scene_params(
+    run_id: str, *, config: dict | None = None, compose: dict | None = None, **extra
+) -> dict:
     return {
         "build_recording_scenes": {"robot_run_id": run_id, "build_config": config or SCENE_BUILD_CONFIG},
-        "register_scenes": {"replace": replace},
         "profile_scene": {"triggered": True},
+        **(compose or {}),
         **extra,
     }
 
 
-def episode_params(run_id: str, *, config: dict | None = None, replace: bool = False) -> dict:
+def episode_params(run_id: str, *, config: dict | None = None, compose: dict | None = None) -> dict:
     return {
         "build_recording_episodes": {
             "robot_run_id": run_id,
             "build_config": config or EPISODE_BUILD_CONFIG,
         },
-        "register_episodes": {"replace": replace},
         "profile_episode": {"triggered": True},
+        **(compose or {}),
     }

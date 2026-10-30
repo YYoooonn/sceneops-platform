@@ -54,7 +54,7 @@ how it is run.
 | `apps/api` | FastAPI control plane: resources, Job / Pipeline create and dispatch | `uvicorn app.main:app` | `api` |
 | `apps/worker` | Celery workers (`JobRunner`, `PipelineOrchestrator`, job handlers) and the `sceneops-worker` CLI: `jobs`, `pipelines`, `recover`, `execution-status`, `acquisition reconcile / status / artifact-lifecycle` | `celery -A sceneops_worker.celery_app.celery_app worker`, `sceneops-worker` | `worker-jobs`, `worker-pipeline` (queues), `worker-cli`, `execution-recovery`, `registration-recovery` |
 | `apps/capture` | Capture: Kafka -> run lifecycle -> MCAP + capture receipt, one process per `robot_run_id` | `python -m sceneops_capture` | `capture` |
-| `apps/publisher` | Database-free Publisher: finalized MCAP + receipt -> ArtifactStore objects; `check`, `scan-capture`, `publish-pending` | `python -m sceneops_publisher` | `recording-publisher`, `reference-conformance`, `publication-recovery` |
+| `apps/publisher` | Database-free Publisher: finalized MCAP + receipt -> ArtifactStore objects; `publish-snapshot` (a declared selection of a local source tree -> preserved source objects); `check`, `scan-capture`, `publish-pending` | `python -m sceneops_publisher` | `recording-publisher`, `reference-conformance`, `publication-recovery` |
 
 `apps/worker` is one codebase deployed as several containers that differ only in
 command and queue. Execution recovery (`sceneops-worker recover`) is a worker command
@@ -116,11 +116,12 @@ contract; SceneOps production code never imports the integration. In particular:
 | `sceneops-storage` | `ArtifactStore` implementations (local, S3 / MinIO) and the write-once primitive |
 | `sceneops-streaming` | Streaming transport: `TelemetryEnvelope`, channel registry, run lifecycle control events, Kafka producer / consumer, wire mapping. No RobotRun, Scene or Episode semantics |
 | `sceneops-recording` | Recording: `capture/` (run-scoped consumer, MCAP writer, validation, atomic finalize, capture receipt I/O), publication of finalized recordings, L1 conformance and equivalence, the recording reader, the capture receipt / scan / published-scan vocabulary, canonical observation payload extraction (`observations/`), test builders (`testing/`) |
+| `sceneops-sources` | Dataset Integration source preservation: selection of a local source tree by the declaration's include patterns, content inventories, database-free snapshot publication to the source layout (`contents/{content_id}/…`, `snapshots/{snapshot_id}/descriptor.json`) and verified content file access (`ContentFiles`: a local directory, or files materialized from the object store), which interprets no file; and the native format readers on top of `ContentFiles` (`lerobot`: LeRobot v3.0 metadata and data Parquet, read with `pyarrow` and `json`; `nuscenes`: the nuScenes v1.0 tables, read with `json`), which parse but decide nothing canonical. No dataset SDK and no database |
 | `sceneops-execution` | Job and Pipeline services and dispatch facades, Celery dispatch backends and the worker-side dispatcher, ownership leases and lease recovery, execution recovery, job event and result recording, pipeline quality gate and result builder |
 | `sceneops-acquisition` | Acquisition lifecycle (ADR-008): reconciliation and bounded registration recovery, derived acquisition status, artifact lifecycle classification, `REGISTER_ROBOT_RUN` submission |
-| `sceneops-scenes` | Scene building from a registered recording, Scene validation and profiling, Scene artifact layout |
-| `sceneops-episodes` | Episode building from a registered recording, Episode validation and profiling, Episode artifact layout |
-| `sceneops-derived` | Write-once, checksum-pinned storage of derived manifests (labels, sample views, ScenarioSets, predictions) and run artifacts |
+| `sceneops-scenes` | Scene building from a registered recording and from registered nuScenes content (`nuscenes_builder`, on the `sceneops-sources` reader), Scene validation and profiling, Scene artifact layout |
+| `sceneops-episodes` | Episode building from a registered recording and from registered LeRobot content (`lerobot_builder`, on the `sceneops-sources` reader), Episode validation and profiling, Episode artifact layout |
+| `sceneops-derived` | Write-once, checksum-pinned storage of derived manifests (labels, sample views, ScenarioSets, predictions) and run artifacts; native label importers on the `sceneops-sources` readers (`nuscenes_labels`) |
 | `sceneops-inference` | Detection inference backends (mock, GroundingDINO client with frustum lifting) and prediction publication |
 | `sceneops-evaluation` | Detection evaluation: matching, metric accumulation, evaluation artifacts |
 | `sceneops-analytics` | Parquet table builders, DuckDB helper, learning-data read layer, external dataset adapters |
@@ -135,12 +136,13 @@ extraction) and `sceneops-derived`.
 0  sceneops-core
 1  sceneops-storage    sceneops-db    sceneops-streaming
 2  sceneops-recording (storage; streaming from capture/ only)
-   sceneops-derived   (storage)
+   sceneops-sources   (storage)
    sceneops-analytics (storage)
    sceneops-execution (db)
-3  sceneops-scenes, sceneops-episodes        (recording)
-   sceneops-inference, sceneops-evaluation   (derived)
+3  sceneops-scenes, sceneops-episodes        (recording, sources)
+   sceneops-derived                          (storage, sources)
    sceneops-acquisition                      (db, storage, recording, execution)
+4  sceneops-inference, sceneops-evaluation   (derived)
 ```
 
 Every package depends on `sceneops-core`; the parenthesis names its other dependencies.
@@ -150,8 +152,9 @@ The allowed edges are the table in `tools/checks/import_boundaries.py`. Notes:
 - `sceneops-streaming` is reachable from `sceneops-recording` only through its `capture`
   subpackage (the `capture` extra); publication, reading and conformance do not import
   it, so the publisher image carries no Kafka client.
-- `sceneops-recording` and `sceneops-streaming` never import `sceneops-db`; Capture and
-  the Publisher are database-free by construction.
+- `sceneops-recording`, `sceneops-sources` and `sceneops-streaming` never import
+  `sceneops-db`; Capture, the Publisher and snapshot publication are database-free by
+  construction.
 - Packages that need PostgreSQL (`sceneops-execution`, `sceneops-acquisition`) sit above
   `sceneops-db`; nothing in `sceneops-db` imports an application-level package.
 
@@ -260,7 +263,7 @@ runtime, owned by the integration.
 | `tools/checks/` | Static and container checks: command surface, import boundaries, runtime source boundary, acquisition image isolation, environment and broker diagnostics |
 | `tools/e2e/` | The four E2E journeys, their shared shell library and container-run verifiers |
 | `tools/baselines/` | Recording Import (`canonical/`) and Streaming Acquisition (`streaming/`) baseline bootstrap, verify and compare |
-| `tools/reference/` | Reference corpus preparation and the golden reference contract's bootstrap / verifier |
+| `tools/reference/` | Reference corpus preparation, pinned raw sources (`raw_source.py`) and the golden reference contract's bootstrap / verifier |
 | `tools/benchmarks/` | Measurement tooling; no command runs it and none is acceptance |
 | `tools/dev/` | Local environment helpers: setup, reset, MinIO bucket init, disk report, polling loop |
 

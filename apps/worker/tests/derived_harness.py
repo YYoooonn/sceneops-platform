@@ -8,9 +8,10 @@ deterministic-id idempotence and conflict behaviour are exercised, and every
 manifest is written, pinned and read back through the real stores.
 
 Scenes are registered the way the Scene registrar leaves them: a canonical
-manifest published at its checksum-qualified key, an ArtifactRecord naming
-it, a SceneRecord pinning that revision and ``OBSERVATION_PAYLOAD`` records
-for every payload the manifest references.
+manifest published at its unit-scoped, checksum-qualified key, an
+ArtifactRecord naming it, the unit and revision records, a DatasetVersion
+member pinning the revision and ``OBSERVATION_PAYLOAD`` records for every
+payload the manifest references.
 """
 
 from __future__ import annotations
@@ -28,10 +29,13 @@ from sceneops_core.models.schemas.enums import ModelBackend
 from sceneops_core.models.schemas.records import ModelVersionRecord
 from sceneops_core.runs.schemas import RunStatus, RunType
 from sceneops_core.scenarios.schemas.records import ScenarioSetRecord
+from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_core.scenes.schemas import (
     SceneManifest,
     SceneRecord,
-    project_scene_record,
+    SceneRevisionRecord,
+    project_scene_revision,
+    scene_id_for,
 )
 from sceneops_core.scenes.schemas.runs import SceneValidationRunRecord
 from sceneops_core.scenes.testing import (
@@ -100,22 +104,36 @@ class FakeArtifactRepo:
 
 
 class FakeSceneStore:
+    """Scene revisions keyed (scene_id, manifest_checksum) and the pins of
+    each DatasetVersion, ``{(dataset_id, version): {scene_id: checksum}}``."""
+
     def __init__(self) -> None:
-        self.records: dict[str, SceneRecord] = {}
+        self.revisions: dict[tuple[str, str], SceneRevisionRecord] = {}
+        self.members: dict[tuple[str, str], dict[str, str]] = {}
 
     async def get(self, scene_id: str) -> SceneRecord | None:
-        return self.records.get(scene_id)
+        revisions = await self.list_revisions(scene_id)
+        return revisions[0].unit() if revisions else None
 
-    async def list(
-        self, *, dataset_id=None, dataset_version=None, limit=100, offset=0, **_
+    async def get_revision(self, *, scene_id, manifest_checksum):
+        return self.revisions.get((scene_id, manifest_checksum))
+
+    async def list_revisions(self, scene_id: str) -> list[SceneRevisionRecord]:
+        return sorted(
+            (r for (s, _), r in self.revisions.items() if s == scene_id),
+            key=lambda r: r.manifest_checksum,
+        )
+
+    async def get_member_revision(self, *, dataset_id, dataset_version, scene_id):
+        checksum = self.members.get((dataset_id, dataset_version), {}).get(scene_id)
+        return None if checksum is None else self.revisions[(scene_id, checksum)]
+
+    async def list_member_revisions(
+        self, *, dataset_id, dataset_version, limit=100, offset=0, **_
     ):
-        rows = [
-            r
-            for r in self.records.values()
-            if (dataset_id is None or r.dataset_id == dataset_id)
-            and (dataset_version is None or r.dataset_version == dataset_version)
-        ]
-        return sorted(rows, key=lambda r: r.scene_id)[offset : offset + limit]
+        pins = self.members.get((dataset_id, dataset_version), {})
+        rows = [self.revisions[(s, c)] for s, c in sorted(pins.items())]
+        return rows[offset : offset + limit]
 
 
 class FakeRunStore:
@@ -181,6 +199,16 @@ class FakeRobotStore:
         return SimpleNamespace(run_id=run_id)
 
 
+class FakeSourceStore:
+    def __init__(self, content_ids: set[str]) -> None:
+        self.content_ids = content_ids
+
+    async def get_content(self, content_id: str):
+        if content_id not in self.content_ids:
+            return None
+        return SimpleNamespace(content_id=content_id)
+
+
 @dataclass
 class Harness:
     """Stands in for ``WorkerContext`` in handler tests."""
@@ -196,6 +224,9 @@ class Harness:
     scene_store: FakeSceneStore = field(default_factory=FakeSceneStore)
     scenario_store: FakeScenarioStore = field(default_factory=FakeScenarioStore)
     robot_store: FakeRobotStore = field(default_factory=lambda: FakeRobotStore(set()))
+    source_store: FakeSourceStore = field(
+        default_factory=lambda: FakeSourceStore(set())
+    )
     inference_runs: FakeRunStore = field(default_factory=FakeRunStore)
     evaluation_runs: FakeRunStore = field(default_factory=FakeRunStore)
     scene_runs: FakeSceneRunStore = field(default_factory=FakeSceneRunStore)
@@ -203,7 +234,13 @@ class Harness:
     jobs: int = 0
 
     def __post_init__(self) -> None:
-        self.settings = SimpleNamespace(run_root_uri=f"{self.root}/runs")
+        self.settings = SimpleNamespace(
+            run_root_uri=f"{self.root}/runs",
+            artifact=SimpleNamespace(
+                observation_payload_root_uri=f"{self.root}/payloads",
+                source_root_uri=f"{self.root}/sources",
+            ),
+        )
         self.runs = SimpleNamespace(
             inference=self.inference_runs,
             evaluations=self.evaluation_runs,
@@ -212,7 +249,9 @@ class Harness:
         self.dataset_store = SimpleNamespace(
             get_version=AsyncMock(
                 side_effect=lambda dataset_id, version: DatasetVersionRecord(
-                    dataset_id=dataset_id, version=version
+                    dataset_id=dataset_id,
+                    version=version,
+                    composition_checksum="sha256:" + "c" * 64,
                 )
             )
         )
@@ -244,7 +283,7 @@ class Harness:
         dataset_id: str = DATASET_ID,
         dataset_version: str = DATASET_VERSION,
         **manifest_kwargs: Any,
-    ) -> SceneRecord:
+    ) -> SceneRevisionRecord:
         if manifest is None:
             # Payload ids are scoped to the RobotRun, as in production.
             manifest_kwargs.setdefault("payload_namespace", f"art-{robot_run_id}")
@@ -253,21 +292,12 @@ class Harness:
                 **manifest_kwargs,
             )
         self.robot_store.run_ids.add(manifest.lineage.source.robot_run_id)
-        scene_id_probe = project_scene_record(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            manifest=manifest,
-            manifest_artifact_id="pending",
-            manifest_checksum=manifest.checksum(),
-        )
+        scene_id = scene_id_for(manifest.lineage.source)
         published = await self.scene_artifact_store.publish_canonical_manifest(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            scene_id=scene_id_probe.scene_id,
-            manifest=manifest,
+            scene_id=scene_id, manifest=manifest
         )
-        artifact_id = (
-            f"scene-manifest-{scene_id_probe.scene_id}-{published.checksum[7:15]}"
+        artifact_id = manifest_artifact_id_for(
+            unit_id=scene_id, manifest_checksum=published.checksum
         )
         await self.artifact_record_store.register(
             artifact_id=artifact_id,
@@ -279,24 +309,20 @@ class Harness:
                 size_bytes=published.size_bytes,
             ),
             owner_type=ArtifactOwnerType.SCENE,
-            owner_id=scene_id_probe.scene_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            scene_id=scene_id_probe.scene_id,
+            owner_id=scene_id,
+            scene_id=scene_id,
         )
         for observation in manifest.observations:
             ref = observation.payload
+            key = ref.logical_uri().key
             uri = self.artifact_store.join_uri(
-                self.root,
-                "payloads",
-                manifest.lineage.source.robot_run_id,
-                ref.artifact_id,
+                self.settings.artifact.observation_payload_root_uri, key
             )
             await self.artifact_store.write_bytes(
                 uri, payload_bytes(observation.observation_id)
             )
             await self.artifact_record_store.register(
-                artifact_id=ref.artifact_id,
+                artifact_id=key.rpartition("/")[2],
                 ref=ArtifactRef(
                     kind=ArtifactKind.OBSERVATION_PAYLOAD,
                     uri=uri,
@@ -307,18 +333,19 @@ class Harness:
                 owner_type=ArtifactOwnerType.ROBOT_RUN,
                 owner_id=manifest.lineage.source.robot_run_id,
             )
-        record = project_scene_record(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
+        record = project_scene_revision(
             manifest=manifest,
             manifest_artifact_id=artifact_id,
             manifest_checksum=published.checksum,
         )
-        self.scene_store.records[record.scene_id] = record
+        self.scene_store.revisions[(record.scene_id, record.manifest_checksum)] = record
+        self.scene_store.members.setdefault((dataset_id, dataset_version), {})[
+            record.scene_id
+        ] = record.manifest_checksum
         return record
 
     def add_validation(
-        self, scene: SceneRecord, *, status: str = "ready", block: bool = False
+        self, scene: SceneRevisionRecord, *, status: str = "ready", block: bool = False
     ) -> None:
         run = SceneValidationRunRecord(
             run_id=f"val-{scene.scene_id}",
@@ -371,7 +398,7 @@ def make_harness(tmp_path) -> Harness:
         ),
         scene_artifact_store=SceneArtifactStore(
             artifact_store=store,
-            dataset_root_uri=f"{root}/datasets",
+            canonical_root_uri=f"{root}/canonical",
             payload_root_uri=f"{root}/payloads",
         ),
         artifact_record_store=records,

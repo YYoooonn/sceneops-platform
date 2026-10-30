@@ -75,7 +75,7 @@ artifact_field() { # <artifact-id> <jq-field> -> a field of the ArtifactRecord
 
 manifest_uris() { # <scenes|episodes> <dataset-id> <version> <robot-run-id> -> JSON array of manifest URIs
   local ids id
-  ids="$(api_get "$API_BASE_URL" "/$1?dataset_id=$2&dataset_version=$3&limit=500" \
+  ids="$(api_get "$API_BASE_URL" "/datasets/$2/versions/$3/$1?limit=500" \
     | jq -r --arg r "$4" "[.$1[] | select(.robotRunId == \$r) | .manifestArtifactId] | sort | .[]")"
   for id in $ids; do artifact_field "$id" uri; done | jq -R . | jq -sc .
 }

@@ -1,5 +1,9 @@
 from .artifacts import PostgresArtifactRefRepository
-from .datasets import PostgresDatasetRepository, PostgresDatasetVersionRepository
+from .datasets import (
+    PostgresDatasetRepository,
+    PostgresDatasetVersionMemberRepository,
+    PostgresDatasetVersionRepository,
+)
 from .episodes import PostgresEpisodeRepository, PostgresEpisodeRunRepository
 from .evaluations import PostgresEvaluationRunRepository
 from .executions import PostgresExecutionRecordRepository
@@ -15,8 +19,10 @@ from .robots import (
 )
 from .scenarios import PostgresScenarioRunRepository, PostgresScenarioSetRepository
 from .scenes import PostgresSceneRepository, PostgresSceneRunRepository
+from .sources import PostgresSourceRegistryRepository
 
 __all__ = [
+    "PostgresSourceRegistryRepository",
     "PostgresJobRepository",
     "PostgresJobEventRepository",
     "PostgresPipelineRunRepository",
@@ -24,6 +30,7 @@ __all__ = [
     "PostgresExecutionRecordRepository",
     "PostgresDatasetRepository",
     "PostgresDatasetVersionRepository",
+    "PostgresDatasetVersionMemberRepository",
     "PostgresSceneRepository",
     "PostgresSceneRunRepository",
     "PostgresEpisodeRepository",

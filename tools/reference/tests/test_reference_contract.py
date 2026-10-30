@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ spec.loader.exec_module(rc)
 
 CONTRACT = rc.load_contract()
 LOCK = json.loads((rc.CORPUS_DIR / "corpus.lock.json").read_text())
+EXPECTATIONS = rc.load_expectations(CONTRACT)
 
 GOLDEN_FIXTURES = [
     "scene-0061", "scene-0103", "scene-0553", "scene-0655", "scene-0757",
@@ -38,12 +40,15 @@ def build_obs(contract=CONTRACT, lock=LOCK):
         "scenes": [],
         "episodes": [],
         "datasets": [],
+        "members": {},
         "facts": {},
         "baselines": {},
     }
     for mode in rc.MODES:
         spec_ = contract["ingestion_modes"][mode]
         obs["datasets"].append(spec_["dataset_id"])
+        key = f"{spec_['dataset_id']}/{spec_['dataset_version']}"
+        obs["members"][key] = {"scenes": [], "episodes": []}
         summary_fixtures = []
         for fx in contract["fixtures"]:
             fid, rid = fx["fixture_id"], rc.run_id(contract, mode, fx["fixture_id"])
@@ -56,20 +61,15 @@ def build_obs(contract=CONTRACT, lock=LOCK):
                     "manifestChecksum": f"sha256:{rid}",
                 }
             )
-            for n in range(units["scenes_per_robot_run"]):
-                obs["scenes"].append(
-                    _unit(
-                        spec_,
-                        rid,
-                        "sceneId",
-                        f"scene-{rid}-{n}",
-                        units["scene_unit_key"],
-                    )
-                )
-            for n in range(units["episodes_per_robot_run"]):
-                obs["episodes"].append(
-                    _unit(spec_, rid, "episodeId", f"episode-{rid}-{n}", f"ep-{n}")
-                )
+            ids = _ids(contract, mode, fid)
+            for kind, key_name, count in (
+                ("scene", "sceneId", units["scenes_per_robot_run"]),
+                ("episode", "episodeId", units["episodes_per_robot_run"]),
+            ):
+                for n in range(count):
+                    uid = ids[kind][n] if ids else f"{kind}-{rid}-{n}"
+                    obs[f"{kind}s"].append(_unit(rid, key_name, uid, f"{kind}-key-{n}"))
+                    obs["members"][key][f"{kind}s"].append(uid)
             locked = spec_["recording"] == "locked"
             obs["facts"][rid] = {
                 "robot_id": spec_["robot_id"],
@@ -99,11 +99,26 @@ def build_obs(contract=CONTRACT, lock=LOCK):
     return obs
 
 
-def _unit(spec_, rid, key, uid, unit_key):
+def _ids(contract, mode, fixture_id):
+    """The derived unit ids when the contract is the real one."""
+    if contract is not CONTRACT:
+        return None
+    return rc.expected_unit_ids(EXPECTATIONS, mode, fixture_id)
+
+
+def _unit(rid, key, uid, unit_key):
     return {
-        key: uid, "datasetId": spec_["dataset_id"], "datasetVersion": spec_["dataset_version"],
-        "robotRunId": rid, "unitKey": unit_key, "manifestChecksum": f"sha256:{uid}", "updatedAt": "t0",
+        key: uid, "robotRunId": rid, "unitKey": unit_key, "sourceKind": "recording", "registeredAt": "t0",
+        "revisions": [{"manifestChecksum": f"sha256:{uid}", "registeredAt": "t0"}],
     }  # fmt: skip
+
+
+def _member(obs, dataset_key, row):
+    kind = "scenes" if "sceneId" in row else "episodes"
+    obs["members"].setdefault(dataset_key, {"scenes": [], "episodes": []})[kind].append(rc._unit_id(row))
+
+
+RI_KEY = "sceneops-ref-nuscenes-mini-full-10/baseline"
 
 
 def codes(report):
@@ -111,15 +126,15 @@ def codes(report):
 
 
 def evaluate(obs, contract=CONTRACT, lock=LOCK):
-    return rc.evaluate(contract, lock, obs)
+    return rc.evaluate(contract, lock, obs, expectations=EXPECTATIONS if contract is CONTRACT else None)
 
 
 # ── The contract itself ──────────────────────────────────────────────────────
 
 
-def test_the_contract_agrees_with_corpus_lock_and_baseline_configuration():
-    contract, corpus, lock, scene_config, shape = rc._sources()
-    assert rc.validate_contract(contract, corpus, lock, scene_config, shape) == []
+def test_the_contract_agrees_with_corpus_lock_shape_and_derived_expectations():
+    contract, corpus, lock, shape, expectations, lock_checksum = rc._sources()
+    assert rc.validate_contract(contract, corpus, lock, shape, expectations, lock_checksum) == []
 
 
 def test_the_twenty_golden_identities():
@@ -137,14 +152,13 @@ def test_the_twenty_golden_identities():
 
 
 def test_contract_validation_rejects_duplicates_and_drift():
-    contract, corpus, lock, scene_config, shape = rc._sources()
+    contract, corpus, lock, shape, expectations, lock_checksum = rc._sources()
+    scene_config = None  # noqa: F841 -- the Scene policy is no longer a contract field
     dup_fixture = copy.deepcopy(contract)
     dup_fixture["fixtures"].append(dict(dup_fixture["fixtures"][0]))
     assert "duplicate_fixture" in codes(
         {
-            "violations": rc.validate_contract(
-                dup_fixture, corpus, lock, scene_config, shape
-            )
+            "violations": rc.validate_contract(dup_fixture, corpus, lock, shape)
         }
     )
 
@@ -152,35 +166,34 @@ def test_contract_validation_rejects_duplicates_and_drift():
     same_baseline["ingestion_modes"]["streaming_acquisition"]["baseline_id"] = (
         same_baseline["ingestion_modes"]["recording_import"]["baseline_id"]
     )
-    found = rc.validate_contract(same_baseline, corpus, lock, scene_config, shape)
+    found = rc.validate_contract(same_baseline, corpus, lock, shape)
     assert "duplicate_identity" in codes({"violations": found})
 
     relocked = copy.deepcopy(lock)
     relocked["fixtures"]["scene-0061"]["recording"]["sha256"] = "sha256:other"
     assert "lock_mismatch" in codes(
         {
-            "violations": rc.validate_contract(
-                contract, corpus, relocked, scene_config, shape
-            )
+            "violations": rc.validate_contract(contract, corpus, relocked, shape)
         }
     )
 
-    other_policy = {"segmentation": {"policy": "fixed_duration"}}
+    two_episodes = copy.deepcopy(expectations)
+    two_episodes["fixtures"]["scene-0061"]["units"]["recording_import"]["episode"].append("episode-x")
     assert "config_mismatch" in codes(
-        {
-            "violations": rc.validate_contract(
-                contract, corpus, lock, other_policy, shape
-            )
-        }
+        {"violations": rc.validate_contract(contract, corpus, lock, shape, two_episodes, lock_checksum)}
+    )
+    assert "expectations_stale" in codes(
+        {"violations": rc.validate_contract(contract, corpus, lock, shape, expectations, "sha256:other-lock")}
+    )
+    assert "expectations_stale" in codes(
+        {"violations": rc.validate_contract(contract, corpus, relocked, shape, expectations, lock_checksum)}
     )
 
     wrong_totals = copy.deepcopy(contract)
     wrong_totals["expected_totals"]["robot_runs"] = 21
     assert "totals_mismatch" in codes(
         {
-            "violations": rc.validate_contract(
-                wrong_totals, corpus, lock, scene_config, shape
-            )
+            "violations": rc.validate_contract(wrong_totals, corpus, lock, shape)
         }
     )
 
@@ -253,26 +266,51 @@ def test_duplicate_robot_run_rows_fail():
     assert "duplicate_robot_run" in codes(evaluate(obs))
 
 
-@pytest.mark.parametrize("unit_key,extra", [("segment-0", False), ("recording", True)])
-def test_unexpected_segmentation_shape_fails(unit_key, extra):
+@pytest.mark.parametrize("extra", [False, True])
+def test_unexpected_segmentation_shape_fails(extra):
     obs = build_obs()
     scene = next(
         s
         for s in obs["scenes"]
         if s["robotRunId"] == rc.run_id(CONTRACT, "recording_import", "scene-0103")
     )
-    scene["unitKey"] = unit_key
     if extra:  # a second Scene of the same RobotRun: segmentation yielded 2 where 1 is the contract
-        obs["scenes"].append(
-            {**scene, "sceneId": "scene-extra", "unitKey": "recording"}
-        )
+        extra_scene = {**scene, "sceneId": "scene-extra", "unitKey": "fixed_duration-x/0"}
+        obs["scenes"].append(extra_scene)
+        _member(obs, RI_KEY, extra_scene)
+    else:  # another segmentation: another unit id than the derived one
+        old = scene["sceneId"]
+        scene["sceneId"] = "scene-0000000000000000000000000000000a"
+        members = obs["members"][RI_KEY]["scenes"]
+        members[members.index(old)] = scene["sceneId"]
     report = evaluate(obs)
     assert "scene_shape" in codes(report)
+
+
+def test_a_second_revision_of_a_contract_unit_fails():
+    obs = build_obs()
+    obs["episodes"][0]["revisions"].append({"manifestChecksum": "sha256:second", "registeredAt": "t1"})
+    assert "revision_count" in codes(evaluate(obs))
+
+
+def test_a_failed_source_grounded_verification_fails_the_contract():
+    obs = build_obs()
+    obs["source_grounded"] = {"ok": False, "error": "manifest content differs", "summary": None}
+    assert "source_grounded" in codes(evaluate(obs))
+    obs["source_grounded"] = {"ok": True, "error": None, "summary": {}}
+    assert evaluate(obs)["ok"]
 
 
 def test_missing_episode_fails():
     obs = build_obs()
     obs["episodes"].pop()
+    assert "episode_shape" in codes(evaluate(obs))
+
+
+def test_a_unit_outside_the_contract_version_does_not_count():
+    """Membership is what the DatasetVersion pins, not which RobotRun a unit names."""
+    obs = build_obs()
+    obs["members"][RI_KEY]["episodes"].pop()
     assert "episode_shape" in codes(evaluate(obs))
 
 
@@ -305,6 +343,7 @@ def test_foreign_unit_in_a_contract_dataset_is_a_conflict():
         obs["scenes"][0], sceneId="scene-stray", robotRunId="run-e2e-x-scene-0061"
     )
     obs["scenes"].append(stray)
+    _member(obs, RI_KEY, stray)
     assert "foreign_unit" in codes(evaluate(obs))
 
 
@@ -323,10 +362,9 @@ def test_unrelated_temporary_runs_are_reported_and_leave_the_contract_unchanged(
         },
     ]
     obs["datasets"].append("sceneops-ref-smoke-1")
-    obs["scenes"].append(
-        {"sceneId": "s-smoke", "datasetId": "sceneops-ref-smoke-1", "datasetVersion": "baseline",
-         "robotRunId": "run-ref-smoke-1-scene-0061", "unitKey": "recording"}
-    )  # fmt: skip
+    smoke = _unit("run-ref-smoke-1-scene-0061", "sceneId", "s-smoke", "recording")
+    obs["scenes"].append(smoke)
+    _member(obs, "sceneops-ref-smoke-1/baseline", smoke)
     report = evaluate(obs)
     assert report["ok"], report["violations"]
     assert report["totals"]["observed"]["robot_runs"] == 20
@@ -370,14 +408,12 @@ def _with_derived_test_state(obs):
     run = rc.run_id(CONTRACT, "recording_import", "scene-0061")
     for dataset in ("sceneops-test-scene-ml", "sceneops-test-infra-pipelines"):
         obs["datasets"].append(dataset)
-        obs["scenes"].append(
-            {"sceneId": f"s-{dataset}", "datasetId": dataset, "datasetVersion": "baseline",
-             "robotRunId": run, "unitKey": "recording"}
-        )  # fmt: skip
-        obs["episodes"].append(
-            {"episodeId": f"e-{dataset}", "datasetId": dataset, "datasetVersion": "baseline",
-             "robotRunId": run, "unitKey": "recording"}
-        )  # fmt: skip
+        scene = _unit(run, "sceneId", f"s-{dataset}", "recording")
+        episode = _unit(run, "episodeId", f"e-{dataset}", "recording")
+        obs["scenes"].append(scene)
+        obs["episodes"].append(episode)
+        _member(obs, f"{dataset}/baseline", scene)
+        _member(obs, f"{dataset}/baseline", episode)
     return obs
 
 
@@ -450,17 +486,23 @@ def test_the_former_require_clean_flag_no_longer_exists():
         rc.main(["verify", "--require-clean"])
 
 
+@pytest.mark.parametrize("target", ["reference-contract-verify", "reference-contract-bootstrap"])
+def test_both_contract_commands_give_the_source_grounded_verifier_its_object_store(target):
+    # Both evaluate through run_source_grounded_verifier, which reads the store
+    # with MINIO_ROOT_USER / MINIO_ROOT_PASSWORD; without them it fails on a
+    # KeyError after the bootstrap has already converged. Read as text: a recipe
+    # that names $(MAKE) runs even under `make -n`.
+    makefile = (rc.REPO_ROOT / "makefiles/reference.mk").read_text()
+    store_env = re.search(r"^REFERENCE_VERIFY_ENV :=(.*?)\n\n", makefile, re.M | re.S).group(1)
+    for variable in ("MINIO_ENDPOINT_URL=", "MINIO_ROOT_USER=", "MINIO_ROOT_PASSWORD="):
+        assert variable in store_env
+    recipe = re.search(rf"^{target}:\n((?:\t.*\n)+)", makefile, re.M).group(1)
+    assert "$(REFERENCE_VERIFY_ENV)" in recipe, f"`make {target}` does not pass the store"
+
+
 def test_orphan_units_are_inventoried():
     obs = build_obs()
-    obs["scenes"].append(
-        {
-            "sceneId": "s-orphan",
-            "datasetId": "gone",
-            "datasetVersion": "v",
-            "robotRunId": "run-vanished",
-            "unitKey": "recording",
-        }
-    )
+    obs["scenes"].append(_unit("run-vanished", "sceneId", "s-orphan", "recording"))
     assert evaluate(obs)["inventory"]["orphan_scenes"] == ["s-orphan"]
 
 
@@ -538,10 +580,7 @@ def test_the_evaluator_knows_neither_twenty_nor_whole_recording():
     expressible: the restriction lives only in the contract data."""
     contract = copy.deepcopy(CONTRACT)
     contract["fixtures"] = contract["fixtures"][:2]
-    contract["units"] = {
-        "scene_policy": "fixed_duration", "scene_unit_key": "segment-0",
-        "scenes_per_robot_run": 3, "episodes_per_robot_run": 2,
-    }  # fmt: skip
+    contract["units"] = {"scenes_per_robot_run": 3, "episodes_per_robot_run": 2, "revisions_per_unit": 1}
     contract["expected_totals"] = {
         "fixtures": 2,
         "robot_runs": 4,
@@ -553,13 +592,12 @@ def test_the_evaluator_knows_neither_twenty_nor_whole_recording():
     assert report["ok"], report["violations"]
     assert report["totals"]["observed"] == contract["expected_totals"]
 
-    corpus, scene_config, shape = (
+    corpus, shape = (
         {"corpus_id": "nuscenes-mini-v1", "fixtures": [{"fixture_id": f["fixture_id"]} for f in contract["fixtures"]],
          "scopes": {contract["corpus"]["scope"]: ["*"]}},
-        {"segmentation": {"policy": "fixed_duration"}},
         {"scenes_per_robot_run": 3, "episodes_per_robot_run": 2},
     )  # fmt: skip
-    assert rc.validate_contract(contract, corpus, LOCK, scene_config, shape) == []
+    assert rc.validate_contract(contract, corpus, LOCK, shape) == []
 
 
 # ── Bootstrap convergence ────────────────────────────────────────────────────
@@ -769,16 +807,16 @@ def test_fingerprint_of_an_unchanged_platform_is_equal():
         ),
         lambda s: s["robot_runs"].pop(),
         lambda s: s["datasets"].append("sceneops-test-x"),
-        lambda s: s["scenes"][0].update(updatedAt="t1"),
-        lambda s: s["episodes"][0].update(manifestChecksum="sha256:other"),
+        lambda s: s["scenes"][0]["revisions"][0].update(manifestChecksum="sha256:rewritten"),
+        lambda s: s["episodes"][0]["revisions"].append({"manifestChecksum": "sha256:other", "registeredAt": "t1"}),
         lambda s: s["scenes"].pop(),
     ],
     ids=[
         "run added",
         "run removed",
         "dataset added",
-        "scene rewritten",
-        "episode re-pinned",
+        "scene revision rewritten",
+        "episode revision added",
         "scene removed",
     ],
 )
@@ -797,16 +835,14 @@ def _with_derived_state(state):
     an Episode built from a contract RobotRun."""
     state = copy.deepcopy(state)
     rid = state["robot_runs"][0]["runId"]
-    derived = {
-        "datasetId": "sceneops-test-scene-ml",
-        "datasetVersion": "baseline",
-        "robotRunId": rid,
-        "manifestChecksum": "sha256:derived",
-        "updatedAt": "t1",
-    }
     state["datasets"].append("sceneops-test-scene-ml")
-    state["scenes"].append({**derived, "sceneId": "scene-derived"})
-    state["episodes"].append({**derived, "episodeId": "episode-derived"})
+    scene = _unit(rid, "sceneId", "scene-derived", "fixed_duration-x/0")
+    episode = _unit(rid, "episodeId", "episode-derived", "fixed_duration-x/0")
+    state["scenes"].append(scene)
+    state["episodes"].append(episode)
+    # The derived journey pins a contract unit as well as its own.
+    _member(state, "sceneops-test-scene-ml/baseline", scene)
+    _member(state, "sceneops-test-scene-ml/baseline", state["episodes"][0])
     return state
 
 
@@ -836,15 +872,15 @@ def test_golden_fingerprint_excludes_non_contract_robot_runs():
     [
         lambda s: s["robot_runs"].pop(),
         lambda s: s["robot_runs"][0].update(manifestChecksum="sha256:other"),
-        lambda s: s["scenes"][0].update(updatedAt="t1"),
-        lambda s: s["episodes"][0].update(manifestChecksum="sha256:other"),
+        lambda s: s["scenes"][0]["revisions"][0].update(manifestChecksum="sha256:rewritten"),
+        lambda s: s["episodes"][0]["revisions"].append({"manifestChecksum": "sha256:other", "registeredAt": "t1"}),
         lambda s: s["scenes"].pop(),
     ],
     ids=[
         "run removed",
         "run re-pinned",
-        "scene rewritten",
-        "episode re-pinned",
+        "scene revision rewritten",
+        "episode revision added",
         "scene removed",
     ],
 )

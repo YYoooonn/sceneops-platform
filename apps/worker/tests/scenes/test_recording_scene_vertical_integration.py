@@ -3,9 +3,11 @@ PROFILE_SCENE on real PostgreSQL and real MinIO.
 
 The recording is a real ROS 2 CDR MCAP stored in MinIO as a registered
 RobotRun's recording artifact, resolved through ``resolve_recording``.
-Every step runs in its own session, like separate jobs. Requires
+Every step runs in its own session, like separate jobs. Registration names
+no DatasetVersion; validation and profiling read the members that ``pin``
+writes from the registered pins, standing in for a composition. Requires
 SCENEOPS_DATABASE_URL (migrated to head) and a reachable MinIO; skips
-otherwise. Rows are created under unique ids and removed afterwards.
+otherwise.
 """
 
 from __future__ import annotations
@@ -23,8 +25,9 @@ from sceneops_core.common.ids import (
     robot_run_manifest_artifact_id,
     robot_run_recording_artifact_id,
 )
-from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
+from sceneops_core.datasets.schemas.records import DatasetRecord
 from sceneops_core.jobs.schemas import (
+    ComposeDatasetVersionJobParams,
     BuildRecordingScenesJobParams,
     ProfileSceneJobParams,
     RegisterScenesJobParams,
@@ -32,8 +35,10 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_db.session import get_async_sessionmaker
+from sceneops_worker.payloads import payload_reader
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.datasets.composition import compose_dataset_version
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset.build_recording_scenes import (
     BuildRecordingScenesJobHandler,
@@ -41,7 +46,6 @@ from sceneops_worker.jobs.dataset.build_recording_scenes import (
 from sceneops_worker.jobs.dataset.profile_scene import ProfileSceneJobHandler
 from sceneops_worker.jobs.dataset.register_scenes import RegisterScenesJobHandler
 from sceneops_worker.jobs.dataset.validate_scene import ValidateSceneJobHandler
-from sceneops_worker.scenes.registration import SceneRegistrationConflictError
 
 sys.path.insert(0, str(Path(__file__).parent))
 from sceneops_recording.testing.ros2_recordings import build_config, default_recording  # noqa: E402
@@ -84,9 +88,6 @@ class _Vertical:
             ctx = self.context(session)
             await ctx.dataset_store.create_dataset(
                 DatasetRecord(dataset_id=self.dataset_id)
-            )
-            await ctx.dataset_store.create_version(
-                DatasetVersionRecord(dataset_id=self.dataset_id, version="v1")
             )
             await ctx.robot_store.create_robot_if_absent(
                 RobotRecord(robot_id=self.robot_id)
@@ -136,19 +137,26 @@ class _Vertical:
 
     def build_params(self, config=None):
         return BuildRecordingScenesJobParams(
-            dataset_id=self.dataset_id,
-            dataset_version="v1",
             robot_run_id=self.run_id,
             build_config=config or build_config(),
         )
 
-    def register_params(self, built, replace=False):
+    def register_params(self, built):
         return RegisterScenesJobParams(
-            dataset_id=self.dataset_id,
-            dataset_version="v1",
-            manifest_artifact_ids=built.manifest_artifact_ids,
-            replace=replace,
+            manifest_artifact_ids=built.manifest_artifact_ids
         )
+
+    async def pin(self, registered, version="v1") -> None:
+        """COMPOSE_DATASET_VERSION of the registration's pins."""
+        async with get_async_sessionmaker()() as session:
+            await compose_dataset_version(
+                context=self.context(session),
+                params=ComposeDatasetVersionJobParams(
+                    dataset_id=self.dataset_id,
+                    dataset_version=version,
+                    pins=registered.revisions,
+                ),
+            )
 
 
 @pytest.fixture()
@@ -171,11 +179,12 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
     registered = await vertical.run(
         RegisterScenesJobHandler(), vertical.register_params(built)
     )
-    assert registered.registered_scene_count == 2
+    assert registered.revision_count == 2
+    await vertical.pin(registered)
 
     async with get_async_sessionmaker()() as session:
         ctx = vertical.context(session)
-        scenes = await ctx.scene_store.list(
+        scenes = await ctx.scene_store.list_member_revisions(
             dataset_id=vertical.dataset_id, dataset_version="v1"
         )
         assert {s.robot_run_id for s in scenes} == {vertical.run_id}
@@ -189,32 +198,26 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
             manifest = await ctx.scene_artifact_store.read_pinned_manifest(
                 uri=manifest_record.uri, checksum=scene.manifest_checksum
             )
+            reader = payload_reader(ctx)
             for observation in manifest.observations:
+                # The Logical URI resolves to the published payload object its
+                # record registers, and reads back verified.
+                ref = observation.payload
                 record = await ctx.artifact_record_store.get(
-                    observation.payload.artifact_id
+                    ref.logical_uri().key.rpartition("/")[2]
                 )
-                data = await ctx.artifact_store.read_bytes(record.uri)
-                assert "sha256:" + hashlib.sha256(data).hexdigest() == (
-                    observation.payload.checksum
-                )
-        version = await ctx.dataset_store.get_version(
-            dataset_id=vertical.dataset_id, version="v1"
-        )
-        assert version.scene.scene_count == 2
-        assert version.scene.observation_count == 8
+                assert reader.resolver.resolve(ref.uri) == record.uri
+                data = await reader.read(ref)
+                assert "sha256:" + hashlib.sha256(data).hexdigest() == ref.checksum
 
     scene_ids = registered.scene_ids
     validated = await vertical.run(
         ValidateSceneJobHandler(),
-        ValidateSceneJobParams(
-            dataset_id=vertical.dataset_id, dataset_version="v1", scene_ids=scene_ids
-        ),
+        ValidateSceneJobParams(revisions=registered.revisions),
     )
     profiled = await vertical.run(
         ProfileSceneJobHandler(),
-        ProfileSceneJobParams(
-            dataset_id=vertical.dataset_id, dataset_version="v1", scene_ids=scene_ids
-        ),
+        ProfileSceneJobParams(revisions=registered.revisions),
     )
     assert validated.checked_scene_count == 2
     assert profiled.observation_count == 8
@@ -228,19 +231,23 @@ async def test_robot_run_to_registered_validated_scenes(vertical):
     unchanged = await vertical.run(
         RegisterScenesJobHandler(), vertical.register_params(again)
     )
-    assert sorted(unchanged.unchanged_scene_ids) == sorted(scene_ids)
+    assert unchanged.revisions == registered.revisions
+    assert unchanged.existing_revision_scene_ids == scene_ids
 
     # Changed build configuration: conflict, then explicit replacement.
     coarser = await vertical.run(
         BuildRecordingScenesJobHandler(),
         vertical.build_params(build_config(duration_ns=10_000_000_000)),
     )
-    with pytest.raises(SceneRegistrationConflictError):
-        await vertical.run(
-            RegisterScenesJobHandler(), vertical.register_params(coarser)
-        )
-    replaced = await vertical.run(
-        RegisterScenesJobHandler(), vertical.register_params(coarser, replace=True)
+    added = await vertical.run(
+        RegisterScenesJobHandler(), vertical.register_params(coarser)
     )
-    assert replaced.registered_scene_count == 1
-    assert len(replaced.removed_scene_ids) == 1
+    # Another segmentation is other units, registered beside the 1 s ones;
+    # the DatasetVersion keeps pinning exactly what it pinned.
+    assert len(added.new_unit_scene_ids) == 1
+    assert not set(added.scene_ids) & set(scene_ids)
+    async with get_async_sessionmaker()() as session:
+        pinned = await vertical.context(session).scene_store.list_member_revisions(
+            dataset_id=vertical.dataset_id, dataset_version="v1"
+        )
+    assert sorted(s.scene_id for s in pinned) == sorted(scene_ids)

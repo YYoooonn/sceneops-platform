@@ -199,3 +199,104 @@ def test_an_unknown_suite_fails_before_anything_starts():
     assert run.returncode != 0
     assert "Unknown SUITE='nope'" in run.stdout
     assert "disposable_env.py" not in run.stdout
+
+
+# ── compose/test-streaming.yaml ──────────────────────────────────────────────
+
+STREAMING = yaml.safe_load(er.STREAMING_COMPOSE_FILE.read_text())
+
+
+def _streaming_runtime() -> er.ExecutionRuntime:
+    environment = de.DisposableEnvironment.checked(
+        database="sceneops_test", bucket="sceneops-test", server=SERVER
+    )
+    return er.ExecutionRuntime(environment, api_port=18000, streaming=True)
+
+
+def test_the_streaming_services_are_named_apart_from_the_reference_stack():
+    assert all(name.startswith("test-") for name in STREAMING["services"])
+    assert "test-streaming.yaml" not in (REPO_ROOT / "compose.yaml").read_text()
+
+
+def test_the_streaming_path_has_its_own_broker_and_volumes():
+    services = STREAMING["services"]
+    assert "ports" not in services["test-kafka"]
+    assert set(STREAMING["volumes"]) == {"test-kafka-data", "test-acquisition-recordings"}
+    assert services["test-kafka"]["volumes"] == ["test-kafka-data:/var/lib/kafka/data"]
+    assert "test-acquisition-recordings:/recordings" in services["test-capture"]["volumes"]
+    assert "test-acquisition-recordings:/recordings:ro" in (
+        services["test-recording-publisher"]["volumes"]
+    )
+    # The reference broker's replay window and timestamp type.
+    reference = yaml.safe_load((REPO_ROOT / "compose/streaming.yaml").read_text())
+    for name in (
+        "KAFKA_LOG_RETENTION_HOURS",
+        "KAFKA_LOG_ROLL_HOURS",
+        "KAFKA_LOG_RETENTION_BYTES",
+        "KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE",
+    ):
+        assert (
+            services["test-kafka"]["environment"][name]
+            == reference["services"]["kafka"]["environment"][name]
+        ), name
+
+
+def test_the_static_streaming_configuration_is_isolated():
+    """The check `up` applies to the resolved configuration holds for the file
+    itself (the runner's root stands in for its interpolation)."""
+    services = STREAMING["services"]
+    resolved = {
+        name: {
+            **service,
+            "networks": {n: None for n in service.get("networks", ["default"])},
+            "environment": {
+                k: str(v).replace("${TEST_ARTIFACT_ROOT_URI:?}", "s3://sceneops-test/artifacts")
+                for k, v in (service.get("environment") or {}).items()
+            },
+        }
+        for name, service in services.items()
+    }
+    assert er.streaming_isolation_problems(resolved, "s3://sceneops-test/artifacts") == []
+    resolved["test-capture"]["environment"]["SCENEOPS_STREAMING_KAFKA_BOOTSTRAP_SERVERS"] = (
+        "kafka:9092"
+    )
+    resolved["test-streaming-bridge"]["networks"] = {"streaming": None, "default": None}
+    resolved["test-recording-publisher"]["environment"][
+        "SCENEOPS_PUBLISHER_ARTIFACT__ROOT_URI"
+    ] = "s3://sceneops/artifacts"
+    problems = er.streaming_isolation_problems(resolved, "s3://sceneops-test/artifacts")
+    assert len(problems) == 3, problems
+
+
+def test_only_the_broker_starts_with_the_runtime():
+    services = STREAMING["services"]
+    assert "profiles" not in services["test-kafka"]
+    oneshot = {n for n, s in services.items() if s.get("profiles") == [er.ONESHOT_PROFILE]}
+    assert oneshot == set(services) - {"test-kafka"}
+
+
+def test_a_streaming_runtime_hands_its_compose_settings_to_the_streaming_path():
+    child = _streaming_runtime().child_environment({})
+    assert child["STREAMING_RUNTIME"] == "disposable"
+    assert child["TEST_ARTIFACT_ROOT_URI"] == "s3://sceneops-test/artifacts"
+    assert child["TEST_DATABASE_URL"].endswith("@postgres:5432/sceneops_test")
+    assert child["TEST_API_PORT"] == "18000"
+    assert "STREAMING_RUNTIME" not in _runtime().child_environment({})
+
+
+def test_down_always_covers_the_streaming_services_and_volumes():
+    """A killed streaming run leaves its broker and volumes; any later run removes them."""
+    for runtime in (_runtime(), _streaming_runtime()):
+        command = runtime._compose_command(streaming=True)
+        assert str(er.STREAMING_COMPOSE_FILE) in command
+    assert str(er.STREAMING_COMPOSE_FILE) not in _runtime()._compose_command()
+    assert str(er.STREAMING_COMPOSE_FILE) in _streaming_runtime()._compose_command()
+
+
+def test_the_streaming_launcher_drives_this_project():
+    """tools/baselines/streaming/streaming_lib.sh names the project and files itself."""
+    lib = (REPO_ROOT / "tools/baselines/streaming/streaming_lib.sh").read_text()
+    assert f"-p {er.PROJECT} " in lib
+    assert "compose/test-runtime.yaml" in lib and "compose/test-streaming.yaml" in lib
+    assert f"--profile {er.ONESHOT_PROFILE}" in lib
+    assert er.STREAMING_KAFKA in er.STREAMING_COMPOSE_FILE.read_text()

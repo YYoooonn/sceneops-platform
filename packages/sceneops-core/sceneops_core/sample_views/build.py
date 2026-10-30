@@ -11,6 +11,11 @@ from collections import defaultdict
 from collections.abc import Sequence
 
 from sceneops_core.common.derived_ids import sample_view_artifact_id
+from sceneops_core.labels.resolution import (
+    AmbiguousAnchorError,
+    ResolvedAnchor,
+    SceneAnchorResolver,
+)
 from sceneops_core.labels.schemas import Box3DLabel, LabelSetManifest, LabelSetRef
 from sceneops_core.scenes.schemas.manifests import (
     SceneManifest,
@@ -44,10 +49,6 @@ class SceneLacksAnchorChannelError(SampleViewPolicyError):
     Scene explicitly; any other policy error is a configuration fault."""
 
 
-class AmbiguousAnchorError(SampleViewError):
-    """A label anchor matches more than one observation of the Scene."""
-
-
 def _associate(
     timestamps: list[int],
     anchor_ns: int,
@@ -76,16 +77,6 @@ def _associate(
     if abs(timestamps[best] - anchor_ns) > tolerance_ns:
         return None
     return best
-
-
-def _observation_keys(manifest: SceneManifest) -> dict[tuple[str, str, int], list[str]]:
-    clock = {c.channel: c.source_clock for c in manifest.channels}
-    keys: dict[tuple[str, str, int], list[str]] = defaultdict(list)
-    for observation in manifest.observations:
-        keys[
-            (observation.channel, clock[observation.channel], observation.timestamp_ns)
-        ].append(observation.observation_id)
-    return keys
 
 
 def build_scene_sample_view(
@@ -224,34 +215,22 @@ def build_scene_sample_view(
 
 
 def _label_index(
-    manifest: SceneManifest, label_set: LabelSetManifest
-) -> tuple[dict[str, list[Box3DLabel]], set[str]]:
-    """Labels and covered observations of ``label_set`` that resolve into this
-    Scene: ``({observation_id: labels}, covered observation ids)``. Anchors of
-    other RobotRuns, or that match no observation of this Scene, belong to
-    other Scenes and are ignored here."""
-    robot_run_id = manifest.lineage.source.robot_run_id
-    keys = _observation_keys(manifest)
-
-    def resolve(anchor) -> str | None:  # type: ignore[no-untyped-def]
-        if anchor.robot_run_id != robot_run_id:
-            return None
-        ids = keys.get((anchor.channel, anchor.source_clock, anchor.timestamp_ns))
-        if not ids:
-            return None
-        if len(ids) > 1:
-            raise AmbiguousAnchorError(
-                f"anchor {anchor.channel}@{anchor.timestamp_ns} matches "
-                f"observations {sorted(ids)}"
-            )
-        return ids[0]
-
-    covered = {oid for a in label_set.coverage if (oid := resolve(a)) is not None}
-    labels: dict[str, list[Box3DLabel]] = defaultdict(list)
+    resolver: SceneAnchorResolver, label_set: LabelSetManifest
+) -> tuple[dict[ResolvedAnchor, list[Box3DLabel]], set[ResolvedAnchor]]:
+    """Labels and covered anchors of ``label_set`` that resolve into this
+    Scene, by where they resolve. Anchors of another source, unit or channel
+    selection belong to other Scenes and are ignored here; an anchor that
+    contradicts the Scene fails the view (``AnchorResolutionError``)."""
+    covered = {
+        resolved
+        for anchor in label_set.coverage
+        if (resolved := resolver.resolve(anchor)) is not None
+    }
+    labels: dict[ResolvedAnchor, list[Box3DLabel]] = defaultdict(list)
     for label in label_set.labels:
-        oid = resolve(label.anchor)
-        if oid is not None:
-            labels[oid].append(label)
+        resolved = resolver.resolve(label.anchor)
+        if resolved is not None:
+            labels[resolved].append(label)
     return labels, covered
 
 
@@ -261,49 +240,63 @@ def _attach_labels(
     samples: list[SceneSample],
     label_sets: Sequence[tuple[LabelSetRef, LabelSetManifest]],
 ) -> tuple[list[LabelSetRef], list[LabelAttachmentStats], list[SceneSample]]:
-    """Labels attach through the observations a sample holds. An observation
-    can be held by several samples (a slow channel nearest to two anchors),
-    so each labelled or covered observation is *owned* by exactly one sample:
-    the one whose anchor instant is nearest to it, the earlier on a tie. A
-    label is therefore never counted twice."""
+    """Labels attach through the observations a sample holds. A label
+    resolved to an observation is presented by a sample holding that
+    observation; a label resolved to a source-defined group (``group_ref``)
+    by a sample holding any member of that group, so views anchored on
+    different channels present a group's labels alike. An observation or a
+    group can be held by several samples (a slow channel nearest to two
+    anchors), so each is *owned* by exactly one sample: the one whose anchor
+    instant is nearest to a held member, the earlier on a tie. A label is
+    therefore never counted twice."""
     ordered = sorted(label_sets, key=lambda pair: pair[0].label_set_id)
     ids = [ref.label_set_id for ref, _ in ordered]
     if len(ids) != len(set(ids)):
         raise SampleViewPolicyError("a label set may be pinned only once")
 
     observation_ns = {o.observation_id: o.timestamp_ns for o in manifest.observations}
+    group_members = {g.group_id: g.observation_ids for g in manifest.groups}
     holders: dict[str, list[SceneSample]] = defaultdict(list)
     for sample in samples:
         for observation_id in sample.member_observation_ids():
             holders[observation_id].append(sample)
 
-    def owner(observation_id: str) -> SceneSample | None:
-        candidates = holders.get(observation_id)
-        if not candidates:
-            return None
-        at = observation_ns[observation_id]
-        return min(
-            candidates,
-            key=lambda s: (
-                abs(s.anchor.timestamp_ns - at),
-                s.anchor.timestamp_ns,
-                s.sample_id,
-            ),
+    def owner(resolved: ResolvedAnchor) -> SceneSample | None:
+        members = (
+            [resolved.observation_id]
+            if resolved.group_id is None
+            else group_members[resolved.group_id]
         )
+        held = [
+            (sample, observation_ns[observation_id])
+            for observation_id in members
+            for sample in holders.get(observation_id, ())
+        ]
+        if not held:
+            return None
+        return min(
+            held,
+            key=lambda pair: (
+                abs(pair[0].anchor.timestamp_ns - pair[1]),
+                pair[0].anchor.timestamp_ns,
+                pair[0].sample_id,
+            ),
+        )[0]
 
+    resolver = SceneAnchorResolver(manifest)
     stats: list[LabelAttachmentStats] = []
     per_sample: dict[str, list[SampleLabels]] = {s.sample_id: [] for s in samples}
     for ref, label_set in ordered:
-        labels, covered = _label_index(manifest, label_set)
+        labels, covered = _label_index(resolver, label_set)
         covered_samples: set[str] = set()
-        for observation_id in covered:
-            owning = owner(observation_id)
+        for resolved in covered:
+            owning = owner(resolved)
             if owning is not None:
                 covered_samples.add(owning.sample_id)
         owned: dict[str, set[str]] = defaultdict(set)
         unattached = 0
-        for observation_id, observed_labels in labels.items():
-            owning = owner(observation_id)
+        for resolved, observed_labels in labels.items():
+            owning = owner(resolved)
             if owning is None:
                 unattached += len(observed_labels)
             else:

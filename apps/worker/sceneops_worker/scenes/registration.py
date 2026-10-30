@@ -1,56 +1,81 @@
-"""REGISTER_SCENES: the only writer of canonical Scene membership and of the
-DatasetVersion Scene summary (ADR-007 §17, §18, I-10-I-12).
+"""REGISTER_SCENES: the only writer of canonical Scene units and revisions
+(ADR-015 §6.4, MS-7).
 
-Input is a DatasetVersion and the ids of SCENE_MANIFEST ArtifactRecords
-that a producer published. Registration verifies and projects; it never
-writes manifest or payload bytes.
+Input is the ids of the SCENE_MANIFEST ArtifactRecords of one build (one
+source, one producer fingerprint). Registration verifies, then adds
+immutable revisions; it never writes manifest or payload bytes, never reads
+a SourceSnapshot, and never reads or writes a DatasetVersion: membership is
+a separate composition that pins the revisions registration returns.
 
-    S1  for every input artifact: the ArtifactRecord exists and is a
-        SCENE_MANIFEST; its bytes match the recorded size and checksum and
-        are a canonical SceneManifest (strict parse, fingerprint re-derived);
-        every observation payload reference resolves to an OBSERVATION_PAYLOAD
-        ArtifactRecord with exactly the referenced checksum, size and media
-        type
-    S2  derive each Scene's DatasetVersion-scoped id; reject duplicate units,
-        more than one RobotRun or producer fingerprint, an unregistered
-        RobotRun, or a manifest built from different recording bytes than
-        the RobotRun's
-    S3  one transaction: lock the DatasetVersion row, then re-read the
-        recording scope and apply the identity rules
-          recording scope (DatasetVersion, robot_run_id), §18.3
-            empty                                  -> insert the complete set
-            same fingerprint                       -> unchanged (whole scope)
-            different, replace=False               -> conflict
-            different, replace=True                -> delete absent ids,
-                                                      repoint reused ids,
-                                                      insert new ids
-    S4  recompute the DatasetVersion Scene summary from membership; commit
+    S1  manifest gate, for every input artifact, against the ArtifactStore
+        itself and not only against database rows: the ArtifactRecord exists,
+        is a SCENE_MANIFEST and pins a checksum and size; its bytes are read
+        back and match both, and are a canonical SceneManifest v5 (strict
+        parse, fingerprint re-derived); its id is the revision's deterministic
+        manifest artifact id
+    S2  derive each Scene's unit id; reject duplicate units, more than one
+        source or producer fingerprint, and a source binding that is not the
+        registered source; then verify every payload reference against that
+        source (``sceneops_worker.payload_registration``), all input
+        manifests in one batch:
+          recording  the RobotRun is registered and the manifests were built
+                     from its recording bytes; every reference names one of
+                     its registered OBSERVATION_PAYLOADs at its payload key,
+                     with exactly the recorded checksum, size and media type
+          content    the SourceContent is registered with the pinned
+                     content_checksum; every reference names a file of its
+                     inventory, where the inventory places it, with exactly
+                     the inventory's sha256 and size
+        and every referenced object is present in the store with the pinned
+        size (one listing per RobotRun or content)
+    S3  one transaction: register each unit and revision additively
+        (sceneops_db.repositories.revisions); commit
+          same unit + same manifest checksum          -> no-op
+          new unit, or a new producer fingerprint     -> insert
+          same unit + same fingerprint + other checksum
+                                                      -> conflict (a
+                                                         non-deterministic
+                                                         producer)
 
-S1-S2 failures leave no DB change. Any S3 failure rolls the whole
-transaction back: a registration applies its complete input or nothing,
-and units are never silently skipped. Expensive reads happen before the
-lock; every decision is made after it, against committed state, so
-concurrent registrations into one DatasetVersion serialize and a second
-registration sees the first one's result.
+The result is the complete pin of every input revision, all of which are
+registered once the call returns. S1-S2 failures leave no DB change, so no
+revision row exists for bytes that were not verified. Any S3 failure rolls
+the whole transaction back: a registration applies its complete input or
+nothing. No lock is taken: the unique keys of units and revisions decide
+concurrent registrations, which converge when identical and fail when they
+conflict; units are inserted in unit id order so overlapping registrations
+cannot deadlock. A retry after a crash, before or after commit,
+re-verifies and converges on the committed rows.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
+from dataclasses import dataclass
+from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord, PayloadRef
+from sceneops_core.provenance import (
+    InconsistentRevisionsError,
+    NonDeterministicProducerError,
+    RevisionDecision,
+    RevisionPin,
+)
 from sceneops_core.scenes.schemas import (
     SceneManifest,
     SceneManifestError,
-    SceneRecord,
-    project_scene_record,
+    SceneRevisionRecord,
+    project_scene_revision,
 )
+from sceneops_db.repositories import UnitIdentityConflictError
 
 from sceneops_worker.core.context import WorkerContext
 from sceneops_scenes.artifacts import SceneManifestIntegrityError
-from sceneops_worker.recordings.payload_refs import (
-    PayloadIntegrityError,
-    resolve_payload_artifacts,
+from sceneops_worker.payload_registration import (
+    PayloadRegistrationError,
+    verify_content_payload_refs,
+    verify_recording_payload_refs,
+)
+from sceneops_worker.sources.content import (
+    RegisteredContentError,
+    resolve_registered_content,
 )
 
 
@@ -59,48 +84,64 @@ class SceneRegistrationError(RuntimeError):
 
 
 class SceneManifestRejectedError(SceneRegistrationError):
-    """An input artifact is not a verifiable canonical SceneManifest."""
+    """An input artifact, or an object it references, failed the durability
+    and integrity gate."""
 
 
 class SceneRegistrationScopeError(SceneRegistrationError):
-    """The input set is not one well-formed registration scope."""
+    """The input set is not the output of one build of one registered
+    source (a RobotRun or a SourceContent)."""
 
 
 class SceneRegistrationConflictError(SceneRegistrationError):
-    """A different revision is already registered and ``replace`` is False."""
+    """A unit already has another revision under the same producer
+    fingerprint (a non-deterministic producer)."""
 
 
-class InconsistentSceneMembershipError(SceneRegistrationError):
-    """Committed membership violates a registrar invariant. Reported, never
-    repaired."""
+class InconsistentSceneRegistrationError(SceneRegistrationError):
+    """Committed units or revisions violate a registrar invariant. Reported,
+    never repaired."""
 
 
 @dataclass(frozen=True)
 class VerifiedSceneManifest:
     artifact: ArtifactRecord
     manifest: SceneManifest
-    record: SceneRecord
+    record: SceneRevisionRecord
+
+
+@dataclass(frozen=True)
+class RegisteredSceneRevision:
+    decision: RevisionDecision
+    revision: SceneRevisionRecord
+
+    @property
+    def pin(self) -> RevisionPin:
+        return self.revision.pin()
 
 
 @dataclass(frozen=True)
 class SceneRegistration:
-    dataset_id: str
-    dataset_version: str
-    # The canonical members of the registered scope after commit.
-    scenes: list[SceneRecord]
-    created_scene_ids: list[str] = field(default_factory=list)
-    replaced_scene_ids: list[str] = field(default_factory=list)
-    unchanged_scene_ids: list[str] = field(default_factory=list)
-    removed_scene_ids: list[str] = field(default_factory=list)
+    source_kind: str
+    source_id: str
+    producer_fingerprint: str
+    # One per input manifest, in unit id order.
+    revisions: list[RegisteredSceneRevision]
+
+    @property
+    def pins(self) -> list[RevisionPin]:
+        return [r.pin for r in self.revisions]
+
+    def scene_ids(self, decision: RevisionDecision | None = None) -> list[str]:
+        return [
+            r.revision.scene_id
+            for r in self.revisions
+            if decision is None or r.decision == decision
+        ]
 
 
 async def register_scenes(
-    *,
-    context: WorkerContext,
-    dataset_id: str,
-    dataset_version: str,
-    manifest_artifact_ids: list[str],
-    replace: bool = False,
+    *, context: WorkerContext, manifest_artifact_ids: list[str]
 ) -> SceneRegistration:
     if not manifest_artifact_ids:
         raise SceneRegistrationScopeError("no scene manifests to register")
@@ -109,57 +150,40 @@ async def register_scenes(
 
     # S1-S2, outside the transaction.
     verified = [
-        await _verify_manifest(
-            context,
-            artifact_id=artifact_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-        )
+        await _verify_manifest(context, artifact_id=artifact_id)
         for artifact_id in manifest_artifact_ids
     ]
     _check_input_scope(verified)
-    await _verify_recording_source(context, verified)
+    if verified[0].record.source_kind == "recording":
+        await _verify_recording_source(context, verified)
+    else:
+        await _verify_content_source(context, verified)
 
-    # S3-S4, one transaction under the DatasetVersion row lock.
+    # S3, one transaction. Inserts go in unit id order: an insert waits for a
+    # concurrent uncommitted insert of the same key, so two registrations of
+    # overlapping units in different input orders would otherwise deadlock.
     try:
-        try:
-            await context.dataset_store.lock_version_for_update(
-                dataset_id=dataset_id, version=dataset_version
-            )
-        except ValueError as exc:
-            raise SceneRegistrationScopeError(str(exc)) from exc
-
-        registration = await _apply_recording(
-            context, verified, dataset_id, dataset_version, replace
-        )
-
-        summary = await context.scene_store.summarize_membership(
-            dataset_id=dataset_id, dataset_version=dataset_version
-        )
-        await context.dataset_store.replace_scene_membership_summary(
-            dataset_id=dataset_id,
-            version=dataset_version,
-            scene_count=summary.scene_count,
-            keyframe_count=summary.keyframe_count,
-            observation_count=summary.observation_count,
-            observed_channels=summary.observed_channels,
-        )
+        registered = [
+            await _register(context, item)
+            for item in sorted(verified, key=lambda v: v.record.scene_id)
+        ]
         await context.commit()
     except BaseException:
         await context.rollback()
         raise
-    return registration
+    return SceneRegistration(
+        source_kind=verified[0].record.source_kind,
+        source_id=verified[0].record.source_id,
+        producer_fingerprint=verified[0].record.producer_fingerprint,
+        revisions=registered,
+    )
 
 
 # --- S1 / S2 ---------------------------------------------------------------------
 
 
 async def _verify_manifest(
-    context: WorkerContext,
-    *,
-    artifact_id: str,
-    dataset_id: str,
-    dataset_version: str,
+    context: WorkerContext, *, artifact_id: str
 ) -> VerifiedSceneManifest:
     artifact = await context.artifact_record_store.get(artifact_id)
     if artifact is None:
@@ -179,20 +203,15 @@ async def _verify_manifest(
         )
     except (SceneManifestIntegrityError, SceneManifestError) as exc:
         raise SceneManifestRejectedError(f"artifact {artifact_id}: {exc}") from exc
-
     try:
-        await resolve_payload_artifacts(
-            context.artifact_record_store, (o.payload for o in manifest.observations)
+        record = project_scene_revision(
+            manifest=manifest,
+            manifest_artifact_id=artifact.artifact_id,
+            manifest_checksum=artifact.checksum,
         )
-    except PayloadIntegrityError as exc:
+    except ValueError as exc:
+        # e.g. an artifact id that is not the revision's deterministic id.
         raise SceneManifestRejectedError(f"artifact {artifact_id}: {exc}") from exc
-    record = project_scene_record(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        manifest=manifest,
-        manifest_artifact_id=artifact.artifact_id,
-        manifest_checksum=artifact.checksum,
-    )
     return VerifiedSceneManifest(artifact=artifact, manifest=manifest, record=record)
 
 
@@ -204,15 +223,15 @@ def _check_input_scope(verified: list[VerifiedSceneManifest]) -> None:
             f"input contains more than one manifest for scene(s) {duplicates}"
         )
 
-    run_ids = {v.record.robot_run_id for v in verified}
-    if len(run_ids) != 1:
+    sources = {(v.record.source_kind, v.record.source_id) for v in verified}
+    if len(sources) != 1:
         raise SceneRegistrationScopeError(
-            f"a registration covers exactly one RobotRun, got {sorted(run_ids)}"
+            f"a registration covers exactly one source, got {sorted(sources)}"
         )
     fingerprints = {v.record.producer_fingerprint for v in verified}
     if len(fingerprints) != 1:
         raise SceneRegistrationScopeError(
-            "a recording scope has exactly one producer fingerprint, got "
+            "a registration covers one build with one producer fingerprint, got "
             f"{len(fingerprints)}"
         )
 
@@ -221,86 +240,83 @@ async def _verify_recording_source(
     context: WorkerContext, verified: list[VerifiedSceneManifest]
 ) -> None:
     """The manifests must have been built from the RobotRun's registered
-    recording bytes. Their segment clock is the producer's declared
-    segmentation clock (Q4), not necessarily the recording clock, so it is
-    not compared with the RobotRun."""
-    sources = [v.manifest.lineage.source for v in verified]
-    robot_run_id = verified[0].record.robot_run_id
+    recording bytes, and every payload they reference must be one of its
+    registered observation payloads, as recorded and as stored. Their
+    segment clock is the producer's declared segmentation clock (Q4), not
+    necessarily the recording clock, so it is not compared with the
+    RobotRun."""
+    robot_run_id = verified[0].record.source_id
     run = await context.robot_store.get_run(robot_run_id)
     if run is None:
         raise SceneRegistrationScopeError(f"RobotRun is not registered: {robot_run_id}")
     recording = await context.artifact_record_store.get(run.recording_artifact_id)
     if recording is None:
-        raise InconsistentSceneMembershipError(
+        raise InconsistentSceneRegistrationError(
             f"RobotRun {robot_run_id} references missing recording artifact "
             f"{run.recording_artifact_id}"
         )
-    for source in sources:
+    for item in verified:
+        source = item.manifest.lineage.source
         if source.recording_checksum != recording.checksum:
             raise SceneRegistrationScopeError(
                 f"manifest was built from recording bytes {source.recording_checksum}, "
                 f"but RobotRun {robot_run_id} is {recording.checksum}"
             )
+    try:
+        await verify_recording_payload_refs(context, run, _payload_refs(verified))
+    except PayloadRegistrationError as exc:
+        raise SceneManifestRejectedError(str(exc)) from exc
+
+
+async def _verify_content_source(
+    context: WorkerContext, verified: list[VerifiedSceneManifest]
+) -> None:
+    """The manifests must have been built from the registered SourceContent's
+    bytes, and every preserved file they reference must be that content's,
+    as its inventory pins it and as the store holds it."""
+    content_id = verified[0].record.source_id
+    try:
+        content = await resolve_registered_content(context, content_id)
+    except RegisteredContentError as exc:
+        raise SceneRegistrationScopeError(str(exc)) from exc
+    for item in verified:
+        source = item.manifest.lineage.source
+        if source.content_checksum != content.record.content_checksum:
+            raise SceneRegistrationScopeError(
+                f"manifest was built from content bytes {source.content_checksum}, "
+                f"but SourceContent {content_id} is {content.record.content_checksum}"
+            )
+    try:
+        await verify_content_payload_refs(context, content, _payload_refs(verified))
+    except PayloadRegistrationError as exc:
+        raise SceneManifestRejectedError(str(exc)) from exc
+
+
+def _payload_refs(verified: list[VerifiedSceneManifest]) -> list[PayloadRef]:
+    """Every payload reference of the input, for one batched source check."""
+    return [o.payload for item in verified for o in item.manifest.observations]
 
 
 # --- S3 ----------------------------------------------------------------------------
 
 
-async def _apply_recording(
-    context: WorkerContext,
-    verified: list[VerifiedSceneManifest],
-    dataset_id: str,
-    dataset_version: str,
-    replace: bool,
-) -> SceneRegistration:
-    new_records = [item.record for item in verified]
-    robot_run_id = new_records[0].robot_run_id
-    fingerprint = new_records[0].producer_fingerprint
-    current = await context.scene_store.list_recording_scope(
-        dataset_id=dataset_id,
-        dataset_version=dataset_version,
-        robot_run_id=robot_run_id,
+async def _register(
+    context: WorkerContext, item: VerifiedSceneManifest
+) -> RegisteredSceneRevision:
+    try:
+        registered = await context.scene_store.register_revision(item.record)
+    except NonDeterministicProducerError as exc:
+        raise SceneRegistrationConflictError(str(exc)) from exc
+    except (InconsistentRevisionsError, UnitIdentityConflictError) as exc:
+        raise InconsistentSceneRegistrationError(str(exc)) from exc
+    return RegisteredSceneRevision(
+        decision=registered.decision, revision=registered.revision
     )
-    current_fingerprints = {s.producer_fingerprint for s in current}
-    if len(current_fingerprints) > 1:
-        raise InconsistentSceneMembershipError(
-            f"recording scope ({dataset_id}/{dataset_version}, {robot_run_id}) holds "
-            f"{len(current_fingerprints)} producer fingerprints"
-        )
-
-    registration = SceneRegistration(
-        dataset_id=dataset_id, dataset_version=dataset_version, scenes=[]
-    )
-    if current and current_fingerprints == {fingerprint}:
-        registration.scenes.extend(current)
-        registration.unchanged_scene_ids.extend(s.scene_id for s in current)
-        return registration
-    if current and not replace:
-        raise SceneRegistrationConflictError(
-            f"recording scope ({dataset_id}/{dataset_version}, {robot_run_id}) is "
-            f"registered with producer fingerprint {current_fingerprints.pop()}; the "
-            f"new build has {fingerprint} and replace=False"
-        )
-
-    current_by_id = {s.scene_id: s for s in current}
-    new_ids = {r.scene_id for r in new_records}
-    removed = sorted(set(current_by_id) - new_ids)
-    await context.scene_store.delete(removed)
-    registration.removed_scene_ids.extend(removed)
-    for record in new_records:
-        if record.scene_id in current_by_id:
-            registration.scenes.append(
-                await context.scene_store.replace_revision(record)
-            )
-            registration.replaced_scene_ids.append(record.scene_id)
-        else:
-            registration.scenes.append(await context.scene_store.insert(record))
-            registration.created_scene_ids.append(record.scene_id)
-    return registration
 
 
 __all__ = [
-    "InconsistentSceneMembershipError",
+    "InconsistentSceneRegistrationError",
+    "RegisteredSceneRevision",
     "SceneManifestRejectedError",
     "SceneRegistration",
     "SceneRegistrationConflictError",

@@ -24,7 +24,6 @@ from sceneops_streaming import (  # noqa: E402
 
 import sceneops_recording.capture.consumer as capture_consumer  # noqa: E402
 from sceneops_recording.capture.consumer import (  # noqa: E402
-    CAPTURE_CONSUMER_GROUP_ID,
     PartitionInvariantError,
     RunEndNotObservedError,
     SequenceIntegrityError,
@@ -71,6 +70,7 @@ def _control(
     partition: int = 0,
     offset: int = 0,
     reason: str | None = None,
+    telemetry_count: int | None = None,
 ):
     # NOTE: build_control_envelope's payload only ever encodes `reason`
     # (e.g. b"{}" for every call that omits one) -- it does NOT encode
@@ -88,6 +88,7 @@ def _control(
         robot_run_id=robot_run_id,
         sequence_number=sequence_number,
         reason=reason,
+        telemetry_count=telemetry_count,
     )
     return _consumed(envelope, partition=partition, offset=offset)
 
@@ -199,16 +200,12 @@ def test_sequence_tracker_raises_on_out_of_order_late() -> None:
 class _FakeConsumer:
     def __init__(self, *, queue: list[ConsumedTelemetryEnvelope]) -> None:
         self._queue = list(queue)
-        self.committed = False
         self.closed = False
 
     async def poll(self, timeout_seconds: float):
         if self._queue:
             return self._queue.pop(0)
         return None
-
-    async def commit(self) -> None:
-        self.committed = True
 
     async def close(self) -> None:
         self.closed = True
@@ -217,15 +214,13 @@ class _FakeConsumer:
 def _install_fake_consumer(monkeypatch, queue):
     created: list[_FakeConsumer] = []
 
-    def factory(*, settings, group_id, auto_offset_reset, enable_auto_commit):
-        # Run-scoped (Phase 6.6.1), never the bare base literally -- every
-        # test in this file targets robot_run_id="run-1", so the derived
-        # group is deterministic; this only checks it's actually DERIVED
-        # (prefixed by the base), not the exact digest suffix.
-        assert group_id.startswith(CAPTURE_CONSUMER_GROUP_ID + "-")
-        assert group_id != CAPTURE_CONSUMER_GROUP_ID
-        assert auto_offset_reset == "earliest"
-        assert enable_auto_commit is False
+    def factory(
+        *,
+        settings,
+        start_from_beginning,
+        start_position,
+    ):
+        assert start_from_beginning is True
         consumer = _FakeConsumer(queue=queue)
         created.append(consumer)
         return consumer
@@ -234,7 +229,7 @@ def _install_fake_consumer(monkeypatch, queue):
     return created
 
 
-def test_run_capture_end_to_end_writes_validates_finalizes_and_commits(
+def test_run_capture_end_to_end_writes_validates_and_finalizes(
     tmp_path, monkeypatch
 ) -> None:
     fixtures = [_envelope(sequence_number=i, payload=bytes([i]) * 8) for i in range(3)]
@@ -262,8 +257,6 @@ def test_run_capture_end_to_end_writes_validates_finalizes_and_commits(
     assert result.path == final_bag_path(tmp_path, "run-1") / "run-1_0.mcap"
     assert result.path.exists()
     assert len(result.sha256) == 64
-
-    assert created[0].committed is True
     assert created[0].closed is True
     assert not partial_bag_path(tmp_path, "run-1").exists()
 
@@ -293,31 +286,14 @@ def test_run_capture_ignores_messages_for_other_runs(tmp_path, monkeypatch) -> N
     assert result.last_offset == 2
 
 
-def test_run_capture_commits_only_after_finalize(tmp_path, monkeypatch) -> None:
-    """Durability-ordering test: fails if run_capture is ever changed to
-    commit Kafka offsets before (or without) finalizing the MCAP bag."""
-    fixtures = [_envelope(sequence_number=0)]
-    queue = [_consumed(fixtures[0], partition=0, offset=0)]
-    created = _install_fake_consumer(monkeypatch, queue)
+def test_run_capture_records_no_kafka_progress(tmp_path, monkeypatch) -> None:
+    """Capture only reads: the consumer it builds has no way to commit offsets
+    (``_FakeConsumer`` has no ``commit``), and the finalized bag is what marks
+    the run captured."""
+    queue = [_consumed(_envelope(sequence_number=0), partition=0, offset=0)]
+    _install_fake_consumer(monkeypatch, queue)
 
-    call_order: list[str] = []
-    real_finalize_bag = capture_consumer.finalize_bag
-
-    def spy_finalize_bag(output_root, robot_run_id):
-        call_order.append("finalize")
-        return real_finalize_bag(output_root, robot_run_id)
-
-    monkeypatch.setattr(capture_consumer, "finalize_bag", spy_finalize_bag)
-
-    orig_commit = _FakeConsumer.commit
-
-    async def spy_commit(self):
-        call_order.append("commit")
-        return await orig_commit(self)
-
-    monkeypatch.setattr(_FakeConsumer, "commit", spy_commit)
-
-    asyncio.run(
+    result = asyncio.run(
         run_capture(
             settings=object(),
             robot_id="robot-1",
@@ -327,11 +303,11 @@ def test_run_capture_commits_only_after_finalize(tmp_path, monkeypatch) -> None:
         )
     )
 
-    assert call_order == ["finalize", "commit"]
-    assert created[0].committed is True
+    assert result.path == final_bag_path(tmp_path, "run-1") / "run-1_0.mcap"
+    assert result.path.exists()
 
 
-def test_run_capture_raises_on_partition_invariant_violation_and_does_not_commit(
+def test_run_capture_raises_on_partition_invariant_violation_and_does_not_finalize(
     tmp_path, monkeypatch
 ) -> None:
     fixtures = [_envelope(sequence_number=0), _envelope(sequence_number=1)]
@@ -339,7 +315,7 @@ def test_run_capture_raises_on_partition_invariant_violation_and_does_not_commit
         _consumed(fixtures[0], partition=0, offset=0),
         _consumed(fixtures[1], partition=1, offset=1),
     ]
-    created = _install_fake_consumer(monkeypatch, queue)
+    _install_fake_consumer(monkeypatch, queue)
 
     with pytest.raises(PartitionInvariantError):
         asyncio.run(
@@ -351,12 +327,10 @@ def test_run_capture_raises_on_partition_invariant_violation_and_does_not_commit
                 stop_condition=lambda count: count >= 2,
             )
         )
-
-    assert created[0].committed is False
     assert not final_bag_path(tmp_path, "run-1").exists()
 
 
-def test_run_capture_raises_on_sequence_gap_and_does_not_finalize_or_commit(
+def test_run_capture_raises_on_sequence_gap_and_does_not_finalize(
     tmp_path, monkeypatch
 ) -> None:
     fixtures = [_envelope(sequence_number=0), _envelope(sequence_number=2)]
@@ -364,7 +338,7 @@ def test_run_capture_raises_on_sequence_gap_and_does_not_finalize_or_commit(
         _consumed(fixtures[0], partition=0, offset=0),
         _consumed(fixtures[1], partition=0, offset=1),
     ]
-    created = _install_fake_consumer(monkeypatch, queue)
+    _install_fake_consumer(monkeypatch, queue)
 
     with pytest.raises(SequenceIntegrityError):
         asyncio.run(
@@ -376,17 +350,15 @@ def test_run_capture_raises_on_sequence_gap_and_does_not_finalize_or_commit(
                 stop_condition=lambda count: count >= 2,
             )
         )
-
-    assert created[0].committed is False
     assert not final_bag_path(tmp_path, "run-1").exists()
 
 
-def test_run_capture_raises_on_unsupported_channel_and_does_not_finalize_or_commit(
+def test_run_capture_raises_on_unsupported_channel_and_does_not_finalize(
     tmp_path, monkeypatch
 ) -> None:
     bad = _envelope(channel="/not/registered", message_type="std_msgs/msg/String")
     queue = [_consumed(bad, partition=0, offset=0)]
-    created = _install_fake_consumer(monkeypatch, queue)
+    _install_fake_consumer(monkeypatch, queue)
 
     with pytest.raises(UnsupportedChannelError):
         asyncio.run(
@@ -398,8 +370,6 @@ def test_run_capture_raises_on_unsupported_channel_and_does_not_finalize_or_comm
                 stop_condition=lambda count: count >= 1,
             )
         )
-
-    assert created[0].committed is False
     assert not final_bag_path(tmp_path, "run-1").exists()
 
 
@@ -414,9 +384,9 @@ def test_run_capture_handles_run_start_telemetry_run_end(tmp_path, monkeypatch) 
         _control(RunEventType.RUN_START, sequence_number=0, offset=0),
         _consumed(telemetry[0], offset=1),
         _consumed(telemetry[1], offset=2),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=3),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=3, telemetry_count=2),
     ]
-    created = _install_fake_consumer(monkeypatch, queue)
+    _install_fake_consumer(monkeypatch, queue)
 
     result = asyncio.run(
         run_capture(
@@ -446,7 +416,6 @@ def test_run_capture_handles_run_start_telemetry_run_end(tmp_path, monkeypatch) 
     # consumes RUN_END too).
     assert result.first_offset == 0
     assert result.last_offset == 2
-    assert created[0].committed is True
     assert _mcap_channels(result.path) == {"/vehicle/odom"}
 
 
@@ -456,7 +425,7 @@ def test_run_capture_mcap_contains_no_control_channel_records(
     queue = [
         _control(RunEventType.RUN_START, sequence_number=0, offset=0),
         _consumed(_envelope(sequence_number=0), offset=1),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=2),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=2, telemetry_count=1),
     ]
     _install_fake_consumer(monkeypatch, queue)
 
@@ -482,7 +451,7 @@ def test_run_capture_control_events_interleaved_with_telemetry(
         _consumed(_envelope(sequence_number=0), offset=1),
         _consumed(_envelope(sequence_number=1), offset=2),
         _consumed(_envelope(sequence_number=2), offset=3),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=4),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=4, telemetry_count=3),
     ]
     _install_fake_consumer(monkeypatch, queue)
 
@@ -509,9 +478,9 @@ def test_run_capture_detects_gap_in_control_event_sequence(
         _consumed(_envelope(sequence_number=0), offset=1),
         # Control stream jumps straight to sequence 5 -- a gap in the
         # control space specifically; telemetry's own sequence is fine.
-        _control(RunEventType.RUN_END, sequence_number=5, offset=2),
+        _control(RunEventType.RUN_END, sequence_number=5, offset=2, telemetry_count=1),
     ]
-    created = _install_fake_consumer(monkeypatch, queue)
+    _install_fake_consumer(monkeypatch, queue)
 
     with pytest.raises(SequenceIntegrityError):
         asyncio.run(
@@ -523,8 +492,6 @@ def test_run_capture_detects_gap_in_control_event_sequence(
                 stop_condition=_bounded_stop_condition(),
             )
         )
-
-    assert created[0].committed is False
     assert not final_bag_path(tmp_path, "run-1").exists()
 
 
@@ -570,7 +537,7 @@ def test_run_capture_detects_conflicting_duplicate_control_event(
         # see _control's own docstring note above.)
         _control(RunEventType.RUN_START, sequence_number=0, offset=1, reason="second"),
     ]
-    created = _install_fake_consumer(monkeypatch, queue)
+    _install_fake_consumer(monkeypatch, queue)
 
     with pytest.raises(SequenceIntegrityError):
         asyncio.run(
@@ -582,8 +549,6 @@ def test_run_capture_detects_conflicting_duplicate_control_event(
                 stop_condition=_bounded_stop_condition(),
             )
         )
-
-    assert created[0].committed is False
     assert not final_bag_path(tmp_path, "run-1").exists()
 
 
@@ -605,11 +570,11 @@ def test_run_capture_stop_on_run_end_finalizes_exactly_at_run_end(
     queue = [
         _control(RunEventType.RUN_START, sequence_number=0, offset=0),
         *[_consumed(fx, offset=1 + i) for i, fx in enumerate(telemetry)],
-        _control(RunEventType.RUN_END, sequence_number=1, offset=4),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=4, telemetry_count=3),
         # Anything after RUN_END is outside this capture.
         _consumed(_envelope(sequence_number=3), offset=5),
     ]
-    created = _install_fake_consumer(monkeypatch, queue)
+    _install_fake_consumer(monkeypatch, queue)
 
     result = asyncio.run(
         run_capture(
@@ -625,7 +590,6 @@ def test_run_capture_stop_on_run_end_finalizes_exactly_at_run_end(
     assert result.message_count == 3
     assert result.last_offset == 4
     assert result.per_channel_counts == {"/vehicle/odom": 2, "/vehicle/imu": 1}
-    assert created[0].committed is True
 
 
 def test_run_capture_stopped_before_run_end_is_not_finalized(
@@ -634,7 +598,7 @@ def test_run_capture_stopped_before_run_end_is_not_finalized(
     """With stop_on_run_end the stop condition is only an abort guard: a
     run whose RUN_END never arrived (a killed bridge, a truncated stream)
     must not become a finalized capture that publishes as a complete
-    RobotRun. Nothing is finalized, nothing is committed, and the partial
+    RobotRun. Nothing is finalized, and the partial
     bag stays for the next attempt to discard."""
     queue = [
         _control(RunEventType.RUN_START, sequence_number=0, offset=0),
@@ -654,8 +618,6 @@ def test_run_capture_stopped_before_run_end_is_not_finalized(
                 stop_on_run_end=True,
             )
         )
-
-    assert created[0].committed is False
     assert created[0].closed is True
     assert not final_bag_path(tmp_path, "run-1").exists()
     assert partial_bag_path(tmp_path, "run-1").exists()
@@ -686,9 +648,9 @@ def test_run_capture_retry_after_unfinished_attempt_finalizes_on_run_end(
     complete = [
         *truncated,
         _consumed(_envelope(sequence_number=1), offset=2),
-        _control(RunEventType.RUN_END, sequence_number=1, offset=3),
+        _control(RunEventType.RUN_END, sequence_number=1, offset=3, telemetry_count=2),
     ]
-    created = _install_fake_consumer(monkeypatch, complete)
+    _install_fake_consumer(monkeypatch, complete)
     result = asyncio.run(
         run_capture(
             settings=object(),
@@ -701,7 +663,6 @@ def test_run_capture_retry_after_unfinished_attempt_finalizes_on_run_end(
     )
 
     assert result.message_count == 2
-    assert created[0].committed is True
     assert final_bag_path(tmp_path, "run-1").exists()
     assert not partial_bag_path(tmp_path, "run-1").exists()
 

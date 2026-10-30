@@ -9,9 +9,10 @@ group per entry in ``keyframe_timestamps_ns`` holding one observation of
 each channel, one extra camera observation between consecutive keyframes
 (a non-keyframe "sweep" that stays canonical) and one ego pose per
 observation. Every timestamp uses ``source_clock`` unless ``camera_clock``
-gives the camera channel its own clock. Payloads reference the artifact ids
-``payload_artifact_id(observation_id, payload_namespace)`` with the bytes
-``payload_bytes(observation_id)``.
+gives the camera channel its own clock. Payloads have the bytes
+``payload_bytes(observation_id)`` and are referenced by Logical URI where the
+producers store them (``payload_uri``): a recording Scene's at its RobotRun's
+payload key, a content Scene's as a file of its content.
 """
 
 from __future__ import annotations
@@ -20,9 +21,14 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from sceneops_core.artifacts.logical_uri import LogicalNamespace, format_logical_uri
 from sceneops_core.artifacts.schemas.payload import PayloadRef
 from sceneops_core.common.ids import robot_run_recording_artifact_id
-from sceneops_core.provenance import ProducerInfo, RecordingSegmentSource
+from sceneops_core.provenance import (
+    ProducerInfo,
+    RecordingSegmentSource,
+    recording_clock_domains,
+)
 
 from .schemas import (
     FrameTransform,
@@ -71,12 +77,44 @@ def payload_artifact_id(observation_id: str, namespace: str = "art-payload") -> 
     return f"{namespace}-{observation_id}"
 
 
+def payload_uri(
+    observation_id: str,
+    *,
+    robot_run_id: str = "run-001",
+    content_id: str | None = None,
+    namespace: str = "art-payload",
+) -> str:
+    """The Logical URI of a test observation's payload: the observation
+    payload ``{robot_run_id}/{artifact_id}`` the recording builders publish,
+    or, given ``content_id``, the preserved file ``{namespace}/{observation_id}``
+    of that content."""
+    if content_id is not None:
+        return format_logical_uri(
+            LogicalNamespace.SOURCES,
+            f"contents/{content_id}/files/{namespace}/{observation_id}",
+        )
+    return format_logical_uri(
+        LogicalNamespace.OBSERVATION_PAYLOADS,
+        f"{robot_run_id}/{payload_artifact_id(observation_id, namespace)}",
+    )
+
+
 def payload_ref(
-    observation_id: str, *, media_type: str, namespace: str = "art-payload"
+    observation_id: str,
+    *,
+    media_type: str,
+    robot_run_id: str = "run-001",
+    content_id: str | None = None,
+    namespace: str = "art-payload",
 ) -> PayloadRef:
     data = payload_bytes(observation_id)
     return PayloadRef(
-        artifact_id=payload_artifact_id(observation_id, namespace),
+        uri=payload_uri(
+            observation_id,
+            robot_run_id=robot_run_id,
+            content_id=content_id,
+            namespace=namespace,
+        ),
         checksum="sha256:" + hashlib.sha256(data).hexdigest(),
         size_bytes=len(data),
         media_type=media_type,
@@ -191,6 +229,8 @@ def build_scene_manifest(
             timestamp_ns=timestamp_ns,
             payload=payload_ref(
                 observation_id,
+                robot_run_id=getattr(source, "robot_run_id", "run-001"),
+                content_id=getattr(source, "content_id", None),
                 namespace=payload_namespace,
                 media_type="image/jpeg" if camera else "application/x.test.pointcloud",
             ),
@@ -221,6 +261,9 @@ def build_scene_manifest(
 
     return SceneManifest(
         lineage=SceneLineage(source=source, producer=producer),
+        clock_domains=recording_clock_domains(
+            [source.source_clock, source_clock, camera_clock]
+        ),
         coordinate_frames=frames,
         channels=channels,
         calibrations=calibrations,
@@ -238,7 +281,8 @@ def semantic_scene_content(manifest: SceneManifest) -> dict[str, Any]:
 
     Removed: the source block's RobotRun, recording artifact and recording
     checksum, the producer fingerprint (it covers the source revision), and
-    each payload's artifact id. Kept: build configuration, segment window
+    each payload's URI (it names the RobotRun's payload object). Kept: build
+    configuration, segment window
     and unit key, channels, frames, calibrations, observations (ids,
     timestamps, payload checksum / size / media type), poses and groups.
     Two semantically equivalent recordings built with the same producer and
@@ -249,7 +293,7 @@ def semantic_scene_content(manifest: SceneManifest) -> dict[str, Any]:
         source.pop(field)
     data["lineage"]["producer"].pop("producer_fingerprint")
     for observation in data["observations"]:
-        observation["payload"].pop("artifact_id")
+        observation["payload"].pop("uri")
     return data
 
 
@@ -260,5 +304,6 @@ __all__ = [
     "payload_artifact_id",
     "payload_bytes",
     "payload_ref",
+    "payload_uri",
     "recording_source",
 ]

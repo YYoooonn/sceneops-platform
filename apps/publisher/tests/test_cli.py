@@ -172,3 +172,125 @@ def test_cli_scan_capture_missing_root_exits_nonzero(tmp_path):
 
     assert completed.returncode == 1
     assert "scan-capture failed" in completed.stderr
+
+
+def _source_tree(root: Path) -> Path:
+    for path, data in {
+        "README.md": b"# tiny\n",
+        "data/chunk-000/file-000.parquet": b"PAR1",
+        "meta/info.json": b'{"fps": 10}',
+        "notes/skip.txt": b"not selected",
+    }.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(data)
+    return root
+
+
+def _publish_snapshot_args(source_dir: Path, *extra: str) -> list[str]:
+    return [
+        "publish-snapshot",
+        "--source-dir",
+        str(source_dir),
+        "--format",
+        "lerobot",
+        "--upstream",
+        "lerobot/tiny",
+        "--upstream-revision",
+        "rev-1",
+        # Given unsorted: the selection's canonical form is sorted.
+        "--include",
+        "meta/**",
+        "--include",
+        "README.md",
+        "--include",
+        "data/**",
+        "--annotation",
+        "license=mit",
+        *extra,
+    ]
+
+
+def test_publish_snapshot_prints_the_registration_input_and_converges(
+    store_root, tmp_path
+) -> None:
+    from sceneops_core.sources import (
+        load_canonical_source_content_inventory,
+        load_canonical_source_snapshot_descriptor,
+    )
+
+    source_dir = _source_tree(tmp_path / "source")
+    env = _publisher_env(store_root)
+
+    first = _run(*_publish_snapshot_args(source_dir), env=env)
+    assert first.returncode == 0, first.stderr
+    result = json.loads(first.stdout)
+    assert result["descriptor_uri"] == str(
+        store_root / "sources" / "snapshots" / result["snapshot_id"] / "descriptor.json"
+    )
+    assert (result["file_count"], result["files_written"]) == (3, 3)
+    assert result["inventory_written"] and result["descriptor_written"]
+    descriptor = load_canonical_source_snapshot_descriptor(
+        Path(result["descriptor_uri"]).read_bytes()
+    )
+    assert descriptor.declaration.selection.include == (
+        "README.md",
+        "data/**",
+        "meta/**",
+    )
+    assert descriptor.annotations == {"license": "mit"}
+    inventory = load_canonical_source_content_inventory(
+        Path(result["inventory_uri"]).read_bytes()
+    )
+    assert [e.path for e in inventory.files] == [
+        "README.md",
+        "data/chunk-000/file-000.parquet",
+        "meta/info.json",
+    ]
+    # The local source path is retrieval history, never stored.
+    assert str(source_dir).encode() not in Path(result["descriptor_uri"]).read_bytes()
+
+    second = _run(*_publish_snapshot_args(source_dir), env=env)
+    assert second.returncode == 0, second.stderr
+    again = json.loads(second.stdout)
+    assert (again["files_written"], again["files_reused"]) == (0, 3)
+    assert not again["inventory_written"] and not again["descriptor_written"]
+    assert again["descriptor_checksum"] == result["descriptor_checksum"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--include", "nothing/**"], "match no file"),
+        (["--include", "data/[ab]"], "reserved characters"),
+        (["--annotation", "license"], "KEY=VALUE"),
+    ],
+)
+def test_publish_snapshot_refuses_bad_declarations_and_writes_nothing(
+    store_root, tmp_path, extra, message
+) -> None:
+    source_dir = _source_tree(tmp_path / "source")
+
+    completed = _run(
+        *_publish_snapshot_args(source_dir, *extra), env=_publisher_env(store_root)
+    )
+
+    assert completed.returncode == 1
+    assert "publish-snapshot failed" in completed.stderr
+    assert message in completed.stderr
+    assert completed.stdout == ""
+    assert list(store_root.iterdir()) == []
+
+
+def test_publish_snapshot_refuses_another_descriptor_for_a_published_declaration(
+    store_root, tmp_path
+) -> None:
+    source_dir = _source_tree(tmp_path / "source")
+    env = _publisher_env(store_root)
+    assert _run(*_publish_snapshot_args(source_dir), env=env).returncode == 0
+
+    (source_dir / "meta" / "info.json").write_bytes(b'{"fps": 30}')
+    completed = _run(*_publish_snapshot_args(source_dir), env=env)
+
+    assert completed.returncode == 1
+    assert "SnapshotPublicationConflictError" in completed.stderr
+    assert "one declared revision, two byte sets" in completed.stderr

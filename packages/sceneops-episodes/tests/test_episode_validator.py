@@ -3,7 +3,7 @@ Asynchronous streams are the canonical form and never an issue."""
 
 from __future__ import annotations
 
-from sceneops_core.episodes.schemas import project_episode_record
+from sceneops_core.episodes.schemas import episode_id_for, project_episode_revision
 from sceneops_core.episodes.testing import (
     action,
     episode_manifest,
@@ -11,15 +11,17 @@ from sceneops_core.episodes.testing import (
     observation,
     state,
 )
+from sceneops_core.provenance import manifest_artifact_id_for
 from sceneops_episodes.validation import EpisodeManifestValidator
 
 
 def _record(manifest):
-    return project_episode_record(
-        dataset_id="d1",
-        dataset_version="v1",
+    return project_episode_revision(
         manifest=manifest,
-        manifest_artifact_id="episode-manifest-1",
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=episode_id_for(manifest.lineage.source),
+            manifest_checksum=manifest.checksum(),
+        ),
         manifest_checksum=manifest.checksum(),
     )
 

@@ -18,6 +18,10 @@ from app.domains.robots.router import (
 )
 from app.domains.scenarios.router import router as scenarios_router
 from app.domains.scenes.router import router as scenes_router
+from app.domains.sources.router import (
+    source_contents_router,
+    source_snapshots_router,
+)
 
 from app.views.leaderboards.router import router as leaderboards_router
 from app.views.operations.router import router as operations_router
@@ -40,6 +44,12 @@ api_router.include_router(robots_router, prefix="/robots", tags=["robots"])
 api_router.include_router(robot_runs_router, prefix="/robot-runs", tags=["robots"])
 api_router.include_router(missions_router, prefix="/missions", tags=["robots"])
 api_router.include_router(robot_states_router, prefix="/robot-states", tags=["robots"])
+api_router.include_router(
+    source_snapshots_router, prefix="/source-snapshots", tags=["sources"]
+)
+api_router.include_router(
+    source_contents_router, prefix="/source-contents", tags=["sources"]
+)
 
 # domains — ML workflow results
 api_router.include_router(inference_router, prefix="/inference", tags=["inference"])

@@ -14,7 +14,7 @@ from typing import TypeVar
 from sceneops_core.episodes import EpisodeReadiness, derive_episode_readiness
 from sceneops_core.episodes.schemas import (
     EpisodeProfileRunRecord,
-    EpisodeRecord,
+    EpisodeRevisionRecord,
     EpisodeValidationRunRecord,
 )
 
@@ -36,7 +36,7 @@ _BLOCKING_REASON = {
 }
 
 
-def _current(episode: EpisodeRecord, run: _R | None) -> _R | None:
+def _assessed(episode: EpisodeRevisionRecord, run: _R | None) -> _R | None:
     if run is None or not run.assessed(
         manifest_artifact_id=episode.manifest_artifact_id,
         manifest_checksum=episode.manifest_checksum,
@@ -46,17 +46,20 @@ def _current(episode: EpisodeRecord, run: _R | None) -> _R | None:
 
 
 def build_episode_quality(
-    episode: EpisodeRecord,
+    episode: EpisodeRevisionRecord,
+    *,
+    dataset_id: str | None = None,
+    dataset_version: str | None = None,
     validation_run: EpisodeValidationRunRecord | None = None,
     profile_run: EpisodeProfileRunRecord | None = None,
 ) -> EpisodeQualityResponse:
-    validation_run = _current(episode, validation_run)
-    profile_run = _current(episode, profile_run)
+    validation_run = _assessed(episode, validation_run)
+    profile_run = _assessed(episode, profile_run)
     readiness = derive_episode_readiness(validation_run)
     return EpisodeQualityResponse(
         episode_id=episode.episode_id,
-        dataset_id=episode.dataset_id,
-        dataset_version=episode.dataset_version,
+        dataset_id=dataset_id,
+        dataset_version=dataset_version,
         manifest_artifact_id=episode.manifest_artifact_id,
         manifest_checksum=episode.manifest_checksum,
         counts=EpisodeQualityCounts(

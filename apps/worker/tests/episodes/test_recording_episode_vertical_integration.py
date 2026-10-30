@@ -4,10 +4,13 @@ VALIDATE_EPISODE / PROFILE_EPISODE on real PostgreSQL and real MinIO.
 The recording is a real ROS 2 CDR MCAP stored in MinIO as a registered
 RobotRun's recording artifact and read through ``resolve_recording``. Every
 step runs in its own session, like separate jobs. Covers the pipeline
-contract: retry convergence, conflict / replacement, a failure after a
-partial payload write, concurrent registration, and Scene / Episode
-independence over one RobotRun. Requires SCENEOPS_DATABASE_URL (migrated to
-head) and a reachable MinIO; skips otherwise.
+contract: retry convergence, a changed configuration as new units beside the
+registered ones, a failure after a partial payload write, concurrent
+registration, and Scene / Episode independence over one RobotRun.
+Registration names no DatasetVersion; validation and profiling read the
+members that ``pin`` writes from the registered pins, standing in for a
+composition. Requires SCENEOPS_DATABASE_URL (migrated to head) and a
+reachable MinIO; skips otherwise.
 """
 
 from __future__ import annotations
@@ -26,8 +29,9 @@ from sceneops_core.common.ids import (
     robot_run_manifest_artifact_id,
     robot_run_recording_artifact_id,
 )
-from sceneops_core.datasets.schemas.records import DatasetRecord, DatasetVersionRecord
+from sceneops_core.datasets.schemas.records import DatasetRecord
 from sceneops_core.jobs.schemas import (
+    ComposeDatasetVersionJobParams,
     BuildRecordingEpisodesJobParams,
     BuildRecordingScenesJobParams,
     ProfileEpisodeJobParams,
@@ -37,10 +41,11 @@ from sceneops_core.jobs.schemas import (
 )
 from sceneops_core.robots.schemas import RobotRecord, RobotRunRecord
 from sceneops_db.session import get_async_sessionmaker
+from sceneops_worker.payloads import payload_reader
 from sceneops_worker.core import dependencies as dependencies_module
 from sceneops_worker.core.dependencies import create_worker_context
+from sceneops_worker.datasets.composition import compose_dataset_version
 from sceneops_episodes import recording_builder as episode_builder_module
-from sceneops_worker.episodes.registration import EpisodeRegistrationConflictError
 from sceneops_worker.jobs.base import JobHandlerRequest
 from sceneops_worker.jobs.dataset import build_recording_episodes as build_job_module
 from sceneops_worker.jobs.dataset.build_recording_episodes import (
@@ -106,10 +111,6 @@ class _Vertical:
             await ctx.dataset_store.create_dataset(
                 DatasetRecord(dataset_id=self.dataset_id)
             )
-            for version in ("v1", "v2"):
-                await ctx.dataset_store.create_version(
-                    DatasetVersionRecord(dataset_id=self.dataset_id, version=version)
-                )
             await ctx.robot_store.create_robot_if_absent(
                 RobotRecord(robot_id=self.robot_id)
             )
@@ -163,34 +164,43 @@ class _Vertical:
             await session.commit()
         return run_id
 
-    def build(self, run_id, config=None, version="v1"):
+    def build(self, run_id, config=None):
         return BuildRecordingEpisodesJobParams(
-            dataset_id=self.dataset_id,
-            dataset_version=version,
             robot_run_id=run_id,
             build_config=config or episode_build_config(),
         )
 
-    def register(self, built, replace=False, version="v1"):
+    def register(self, built):
         return RegisterEpisodesJobParams(
-            dataset_id=self.dataset_id,
-            dataset_version=version,
-            manifest_artifact_ids=built.manifest_artifact_ids,
-            replace=replace,
+            manifest_artifact_ids=built.manifest_artifact_ids
         )
+
+    async def pin(self, registered, version="v1") -> None:
+        """COMPOSE_DATASET_VERSION of the registration's pins."""
+        async with get_async_sessionmaker()() as session:
+            await compose_dataset_version(
+                context=self.context(session),
+                params=ComposeDatasetVersionJobParams(
+                    dataset_id=self.dataset_id,
+                    dataset_version=version,
+                    pins=registered.revisions,
+                ),
+            )
 
     async def episodes(self, version="v1"):
         async with get_async_sessionmaker()() as session:
-            return await self.context(session).episode_store.list(
+            return await self.context(session).episode_store.list_member_revisions(
                 dataset_id=self.dataset_id, dataset_version=version
             )
 
-    async def episode_count(self, version="v1") -> int:
+    async def revisions(self, run_id):
         async with get_async_sessionmaker()() as session:
-            dv = await self.context(session).dataset_store.get_version(
-                dataset_id=self.dataset_id, version=version
-            )
-            return dv.episode.episode_count
+            store = self.context(session).episode_store
+            return [
+                revision
+                for unit in await store.list(robot_run_id=run_id)
+                for revision in await store.list_revisions(unit.episode_id)
+            ]
 
 
 @pytest.fixture()
@@ -211,15 +221,22 @@ async def test_robot_run_to_registered_validated_episodes(vertical, tmp_path):
     built = await vertical.run(
         BuildRecordingEpisodesJobHandler(), vertical.build(run_id)
     )
-    assert built.unit_keys == ["task-mission-1-000"]
+    (unit_key,) = built.unit_keys
+    assert unit_key.startswith("event_markers-")
+    assert unit_key.endswith("/task-mission-1-000")
     assert (built.observation_count, built.state_count, built.action_count) == (3, 4, 3)
     assert built.payload_artifact_count == built.created_payload_count == 3
 
     registered = await vertical.run(
         RegisterEpisodesJobHandler(), vertical.register(built)
     )
-    assert registered.created_episode_ids == registered.episode_ids
-    assert await vertical.episode_count() == 1
+    assert registered.new_unit_episode_ids == registered.episode_ids
+    assert [p.manifest_artifact_id for p in registered.revisions] == (
+        built.manifest_artifact_ids
+    )
+    # Registration pins nothing.
+    assert await vertical.episodes() == []
+    await vertical.pin(registered)
 
     (episode,) = await vertical.episodes()
     assert episode.robot_run_id == run_id
@@ -233,32 +250,24 @@ async def test_robot_run_to_registered_validated_episodes(vertical, tmp_path):
         manifest = await ctx.episode_artifact_store.read_pinned_manifest(
             uri=manifest_record.uri, checksum=episode.manifest_checksum
         )
+        reader = payload_reader(ctx)
         for observation in manifest.observations:
+            ref = observation.payload
             record = await ctx.artifact_record_store.get(
-                observation.payload.artifact_id
+                ref.logical_uri().key.rpartition("/")[2]
             )
             assert record.owner_id == run_id
-            data = await ctx.artifact_store.read_bytes(record.uri)
-            assert (
-                "sha256:" + hashlib.sha256(data).hexdigest()
-                == observation.payload.checksum
-            )
+            assert reader.resolver.resolve(ref.uri) == record.uri
+            data = await reader.read(ref)
+            assert "sha256:" + hashlib.sha256(data).hexdigest() == ref.checksum
 
     validated = await vertical.run(
         ValidateEpisodeJobHandler(),
-        ValidateEpisodeJobParams(
-            dataset_id=vertical.dataset_id,
-            dataset_version="v1",
-            episode_ids=registered.episode_ids,
-        ),
+        ValidateEpisodeJobParams(revisions=registered.revisions),
     )
     profiled = await vertical.run(
         ProfileEpisodeJobHandler(),
-        ProfileEpisodeJobParams(
-            dataset_id=vertical.dataset_id,
-            dataset_version="v1",
-            episode_ids=registered.episode_ids,
-        ),
+        ProfileEpisodeJobParams(revisions=registered.revisions),
     )
     assert validated.status == "ready"
     assert profiled.action_count == 3
@@ -272,9 +281,11 @@ async def test_robot_run_to_registered_validated_episodes(vertical, tmp_path):
     unchanged = await vertical.run(
         RegisterEpisodesJobHandler(), vertical.register(again)
     )
-    assert unchanged.unchanged_episode_ids == registered.episode_ids
+    assert unchanged.revisions == registered.revisions
+    assert unchanged.existing_revision_episode_ids == registered.episode_ids
 
-    # Changed build configuration: conflict, then explicit replacement.
+    # Changed segmentation: other units, registered beside the first; the
+    # DatasetVersion keeps pinning what it pinned.
     segmented = episode_build_config(
         segmentation={
             "policy": "fixed_duration",
@@ -286,20 +297,13 @@ async def test_robot_run_to_registered_validated_episodes(vertical, tmp_path):
         BuildRecordingEpisodesJobHandler(), vertical.build(run_id, segmented)
     )
     assert rebuilt.created_payload_count == 0  # payload ids are config-independent
-    with pytest.raises(EpisodeRegistrationConflictError):
-        await vertical.run(RegisterEpisodesJobHandler(), vertical.register(rebuilt))
+    added = await vertical.run(RegisterEpisodesJobHandler(), vertical.register(rebuilt))
+    assert len(added.new_unit_episode_ids) == 2
+    assert not set(added.episode_ids) & set(registered.episode_ids)
+    assert len(await vertical.revisions(run_id)) == 3
     assert [
         e.manifest_artifact_id for e in await vertical.episodes()
     ] == built.manifest_artifact_ids
-    replaced = await vertical.run(
-        RegisterEpisodesJobHandler(), vertical.register(rebuilt, replace=True)
-    )
-    assert len(replaced.episode_ids) == 2
-    assert replaced.removed_episode_ids == registered.episode_ids
-    assert await vertical.episode_count() == 2
-    assert {e.producer_fingerprint for e in await vertical.episodes()} == {
-        rebuilt.producer_fingerprint
-    }
 
 
 async def test_failure_after_partial_payload_write_converges_on_retry(
@@ -319,7 +323,7 @@ async def test_failure_after_partial_payload_write_converges_on_retry(
     monkeypatch.setattr(build_job_module, "iter_planned_payloads", failing)
     with pytest.raises(RuntimeError, match="mid-build"):
         await vertical.run(BuildRecordingEpisodesJobHandler(), vertical.build(run_id))
-    assert await vertical.episodes() == []
+    assert await vertical.revisions(run_id) == []
 
     monkeypatch.setattr(build_job_module, "iter_planned_payloads", real)
     built = await vertical.run(
@@ -328,7 +332,7 @@ async def test_failure_after_partial_payload_write_converges_on_retry(
     # The failed attempt's first payload bytes are reused, never duplicated.
     assert built.payload_artifact_count == 3
     await vertical.run(RegisterEpisodesJobHandler(), vertical.register(built))
-    assert len(await vertical.episodes()) == 1
+    assert len(await vertical.revisions(run_id)) == 1
 
 
 async def test_concurrent_identical_registrations_converge(vertical, tmp_path):
@@ -342,10 +346,10 @@ async def test_concurrent_identical_registrations_converge(vertical, tmp_path):
         vertical.run(RegisterEpisodesJobHandler(), vertical.register(built)),
         vertical.run(RegisterEpisodesJobHandler(), vertical.register(built)),
     )
-    created = sorted(len(r.created_episode_ids) for r in results)
+    created = sorted(len(r.new_unit_episode_ids) for r in results)
     assert created == [0, 1]
-    assert len(await vertical.episodes()) == 1
-    assert await vertical.episode_count() == 1
+    assert results[0].revisions == results[1].revisions
+    assert len(await vertical.revisions(run_id)) == 1
 
 
 async def test_scene_and_episode_building_are_independent_in_either_order(
@@ -379,8 +383,6 @@ async def test_scene_and_episode_building_are_independent_in_either_order(
 
     def scene_params(run_id):
         return BuildRecordingScenesJobParams(
-            dataset_id=vertical.dataset_id,
-            dataset_version="v1",
             robot_run_id=run_id,
             build_config=scene_build_config(),
         )
@@ -394,11 +396,7 @@ async def test_scene_and_episode_building_are_independent_in_either_order(
     scenes_a = await vertical.run(BuildRecordingScenesJobHandler(), scene_params(run_a))
     await vertical.run(
         RegisterScenesJobHandler(),
-        RegisterScenesJobParams(
-            dataset_id=vertical.dataset_id,
-            dataset_version="v1",
-            manifest_artifact_ids=scenes_a.manifest_artifact_ids,
-        ),
+        RegisterScenesJobParams(manifest_artifact_ids=scenes_a.manifest_artifact_ids),
     )
     # The Scene build reused the four camera payloads; only lidar is new.
     assert episodes_a.created_payload_count == 4
@@ -414,6 +412,5 @@ async def test_scene_and_episode_building_are_independent_in_either_order(
     assert episodes_b.created_payload_count == 0
     await vertical.run(RegisterEpisodesJobHandler(), vertical.register(episodes_b))
 
-    episodes = await vertical.episodes()
-    assert sorted(e.robot_run_id for e in episodes) == sorted([run_a, run_b])
-    assert await vertical.episode_count() == 2
+    for run_id in (run_a, run_b):
+        assert [e.robot_run_id for e in await vertical.revisions(run_id)] == [run_id]

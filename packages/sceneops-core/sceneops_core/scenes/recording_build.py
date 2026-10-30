@@ -10,7 +10,9 @@ recording means as canonical Scenes, and nothing else:
     calibration    which topics carry static transforms
     poses          which source transforms are poses
     segmentation   how the recording is cut into Scenes, on one declared clock:
-                   one Scene for the whole recording, or fixed-duration windows
+                   one Scene for the whole recording, or fixed-duration windows;
+                   the only part of the configuration that enters unit identity
+                   (``segmentation_boundary``)
 
 It names topics, frames and clocks verbatim and never a source format: the
 same configuration applies to a recording from a real robot, a replayed
@@ -166,16 +168,18 @@ class PoseSourceConfig(_ConfigModel):
 
 class WholeRecordingSegmentation(_ConfigModel):
     """One Scene: ``[earliest, latest + 1)`` of every included observation and
-    pose on ``clock``. ``unit_key`` is ``recording``."""
+    pose on ``clock``. Its segment is ``recording``; the window is the extent
+    of the included data, so it is a fact of the revision, not of the unit."""
 
     policy: Literal["whole_recording"]
     clock: SourceClock
 
 
 class FixedDurationSegmentation(_ConfigModel):
-    """Half-open windows of ``duration_ns`` on ``clock``, starting at the
-    earliest included observation's timestamp on that clock. A window with
-    no observation is not a Scene. ``unit_key`` is ``segment-<index>``."""
+    """Half-open windows ``[k * duration_ns, (k + 1) * duration_ns)`` on
+    ``clock``: a grid anchored at the clock's zero, so window ``k`` is the
+    same interval whichever channels are included. A window with no
+    observation is not a Scene. Its segment is ``k``."""
 
     policy: Literal["fixed_duration"]
     clock: SourceClock
@@ -227,6 +231,13 @@ class RecordingSceneBuildConfig(_ConfigModel):
                     f"{sorted(set(unplaceable))} do not"
                 )
         return self
+
+    def segmentation_boundary(self) -> dict[str, Any]:
+        """The configuration that decides where Scene boundaries fall: the
+        segmentation's policy, clock and duration. It is the segmentation
+        part of every unit key (``sceneops_core.provenance.segmentation``);
+        nothing else in the configuration enters unit identity."""
+        return self.segmentation.model_dump(mode="json")
 
     def normalized(self) -> dict[str, Any]:
         """``ProducerInfo.build_config``: defaults explicit, unordered

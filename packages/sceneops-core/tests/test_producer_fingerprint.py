@@ -12,12 +12,14 @@ from pydantic import ValidationError
 from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.provenance import (
     PRODUCER_FINGERPRINT_SCHEMA_V1,
+    ContentSourceRevision,
     ProducerFingerprintMismatchError,
     ProducerInfo,
     RecordingSourceRevision,
     compute_producer_fingerprint,
     normalize_build_config,
 )
+from sceneops_core.sources import content_id_for
 
 PRODUCER_ID = "sceneops.recording_scene_builder"
 RECORDING = RecordingSourceRevision(
@@ -25,6 +27,10 @@ RECORDING = RecordingSourceRevision(
 )
 OTHER_RUN = RecordingSourceRevision(
     robot_run_id="run-002", recording_checksum="sha256:" + "a" * 64
+)
+CONTENT = ContentSourceRevision(
+    content_id=content_id_for("sha256:" + "c" * 64),
+    content_checksum="sha256:" + "c" * 64,
 )
 CONFIG = {
     "selected_channels": ["/camera/front/image", "/lidar/top", "/odom"],
@@ -80,9 +86,8 @@ def test_source_revision_carries_no_location():
 
 
 def test_recording_fingerprint_is_pinned():
-    """The recording source revision serializes exactly as it did when an
-    external source kind also existed (§29.9), so fingerprints of
-    recording-derived manifests are unchanged."""
+    """Admitting a content source kind leaves the recording source revision's
+    serialization, and so every recording-derived fingerprint, unchanged."""
     assert _fingerprint() == (
         "sha256:"
         + hashlib.sha256(
@@ -101,6 +106,48 @@ def test_recording_fingerprint_is_pinned():
             )
         ).hexdigest()
     )
+
+
+def test_content_fingerprint_matches_frozen_definition():
+    expected_payload = {
+        "fingerprint_schema": PRODUCER_FINGERPRINT_SCHEMA_V1,
+        "producer_id": PRODUCER_ID,
+        "semantics_version": 1,
+        "build_config": CONFIG,
+        "source": {
+            "source_kind": "content",
+            "content_id": CONTENT.content_id,
+            "content_checksum": "sha256:" + "c" * 64,
+        },
+    }
+    assert _fingerprint(source=CONTENT) == (
+        "sha256:" + hashlib.sha256(canonical_json_bytes(expected_payload)).hexdigest()
+    )
+
+
+def test_source_kind_is_part_of_the_fingerprint():
+    assert _fingerprint(source=CONTENT) != _fingerprint(source=RECORDING)
+    assert _fingerprint(source=CONTENT.model_dump(mode="json")) == _fingerprint(
+        source=CONTENT
+    )
+
+
+def test_producer_info_verify_rejects_a_source_of_the_other_kind():
+    info = ProducerInfo.create(
+        producer_id=PRODUCER_ID,
+        semantics_version=1,
+        build_config=CONFIG,
+        source=CONTENT,
+    )
+    info.verify(CONTENT)
+    with pytest.raises(ProducerFingerprintMismatchError):
+        info.verify(RECORDING)
+    other_bytes = ContentSourceRevision(
+        content_id=content_id_for("sha256:" + "d" * 64),
+        content_checksum="sha256:" + "d" * 64,
+    )
+    with pytest.raises(ProducerFingerprintMismatchError):
+        info.verify(other_bytes)
 
 
 @pytest.mark.parametrize(

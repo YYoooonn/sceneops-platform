@@ -1,15 +1,17 @@
 [project]
 name = "sceneops-derived"
 version = "0.1.0"
-description = "SceneOps derived layer storage: write-once, checksum-pinned manifests (labels, sample views, scenario sets, predictions) and run artifacts"
+description = "SceneOps derived layer storage: write-once, checksum-pinned manifests (labels, sample views, scenario sets, predictions) and run artifacts; native label import from source content"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "sceneops-core",
+  "sceneops-sources",
   "sceneops-storage",
 ]
 
 [tool.uv.sources]
 sceneops-core = { workspace = true }
+sceneops-sources = { workspace = true }
 sceneops-storage = { workspace = true }
 
 [tool.hatch.build.targets.wheel]

@@ -66,7 +66,17 @@ MUST_BE_ADVERTISED = (
 )
 
 # `make test-infrastructure SUITE=<name>`: each name has an `infra-suite-<name>` target.
-INFRA_SUITES = {"pipelines", "recovery", "kafka", "boundaries"}
+INFRA_SUITES = {
+    "pipelines",
+    "recovery",
+    "kafka",
+    "boundaries",
+    "sources",
+    "lerobot-episodes",
+    "nuscenes-scenes",
+    "mixed-sources",
+    "nuscenes-labels",
+}
 
 # Callable building blocks that the surface composes (the contract bootstrap runs the
 # baseline bootstraps, the cleanroom runs the corpus verifier, the kafka / boundaries
@@ -79,7 +89,12 @@ HELPERS = {
     "streaming-verify",
     "streaming-compare",
     "reference-data-verify",
+    "reference-verify-sources",
+    "reference-expectations",
+    "reference-verify-selftest",
+    "reference-verify",
     "streaming-test",
+    "streaming-producer-test",
     "smoke-streaming",
     "acquisition-test",
     "lerobot-test",

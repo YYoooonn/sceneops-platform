@@ -58,6 +58,9 @@ PACKAGES: dict[str, set[str]] = {
     # Recording: capture (Kafka -> MCAP) and publication of finalized recordings.
     # `sceneops_streaming` is reached only from the `capture` subpackage.
     "sceneops_recording": {"sceneops_core", "sceneops_storage", "sceneops_streaming"},
+    # Dataset Integration source preservation: selection, inventories, database-free
+    # snapshot publication, verified content file access. No dataset SDK, no database.
+    "sceneops_sources": {"sceneops_core", "sceneops_storage"},
     # Execution of durable Jobs and Pipelines over PostgreSQL.
     "sceneops_execution": {"sceneops_core", "sceneops_db"},
     # Acquisition lifecycle: reconciliation, status, artifact lifecycle.
@@ -69,10 +72,21 @@ PACKAGES: dict[str, set[str]] = {
         "sceneops_execution",
     },
     # Derived-layer storage and the capabilities built on it. Scene and Episode are
-    # siblings: neither imports the other.
-    "sceneops_derived": {"sceneops_core", "sceneops_storage"},
-    "sceneops_scenes": {"sceneops_core", "sceneops_storage", "sceneops_recording"},
-    "sceneops_episodes": {"sceneops_core", "sceneops_storage", "sceneops_recording"},
+    # siblings: neither imports the other. `sceneops_sources` is reached by the native
+    # label importers, which read annotations from verified source content.
+    "sceneops_derived": {"sceneops_core", "sceneops_storage", "sceneops_sources"},
+    "sceneops_scenes": {
+        "sceneops_core",
+        "sceneops_storage",
+        "sceneops_recording",
+        "sceneops_sources",
+    },
+    "sceneops_episodes": {
+        "sceneops_core",
+        "sceneops_storage",
+        "sceneops_recording",
+        "sceneops_sources",
+    },
     "sceneops_inference": {"sceneops_core", "sceneops_storage", "sceneops_derived"},
     "sceneops_evaluation": {"sceneops_core", "sceneops_derived"},
     "sceneops_analytics": {"sceneops_core", "sceneops_storage"},
@@ -101,9 +115,15 @@ APPS: dict[str, set[str]] = {
         "sceneops_derived",
         "sceneops_inference",
         "sceneops_evaluation",
+        "sceneops_sources",
     },
     "sceneops_capture": {"sceneops_core", "sceneops_streaming", "sceneops_recording"},
-    "sceneops_publisher": {"sceneops_core", "sceneops_storage", "sceneops_recording"},
+    "sceneops_publisher": {
+        "sceneops_core",
+        "sceneops_storage",
+        "sceneops_recording",
+        "sceneops_sources",
+    },
 }
 
 # (module prefix of a package) -> workspace packages that module alone may import on top

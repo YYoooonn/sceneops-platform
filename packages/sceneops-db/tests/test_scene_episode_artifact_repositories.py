@@ -1,21 +1,25 @@
-"""Integration coverage for EpisodeRecord (canonical membership, registrar
-writes only) and ArtifactRecord persistence against real Postgres. SceneRecord persistence is covered by
-test_scene_repository.py."""
+"""Integration coverage for Episode units, revisions and members and for
+ArtifactRecord persistence against real Postgres. Scene persistence, and
+the concurrency of revision registration (shared implementation), are
+covered by test_scene_repository.py."""
 
 from __future__ import annotations
 
 import uuid
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from sceneops_core.artifacts.schemas.enums import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
+from sceneops_core.provenance import NonDeterministicProducerError, RevisionDecision
 from sceneops_db.postgres.artifacts import PostgresArtifactRefRepository
 from sceneops_db.postgres.episodes import PostgresEpisodeRepository
 
 
-# ── EpisodeRecord ─────────────────────────────────────────────────────────────
+# ── Episode units and revisions ──────────────────────────────────────────────
 
 
 def _artifact_id() -> str:
@@ -23,96 +27,127 @@ def _artifact_id() -> str:
 
 
 @pytest.mark.asyncio
-async def test_episode_record_insert_get_round_trip(
-    db_session, unique_id, seed_dataset_version, episode_record_for
+async def test_episode_registration_round_trip_and_convergence(
+    db_session, episode_revision_for
 ):
-    dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
-    record = await episode_record_for(db_session, dataset_id=dataset_id)
+    revision = await episode_revision_for(db_session)
     repo = PostgresEpisodeRepository(db_session)
 
-    await repo.insert(record)
-    fetched = await repo.get(record.episode_id)
-    assert fetched is not None and fetched.registered_at is not None
-    assert fetched.model_dump(
-        exclude={"registered_at", "updated_at"}
-    ) == record.model_dump(exclude={"registered_at", "updated_at"})
-    assert await repo.count(dataset_id=dataset_id, dataset_version="v1") == 1
+    first = await repo.register_revision(revision)
+    again = await repo.register_revision(revision)
+
+    assert first.decision is RevisionDecision.NEW_UNIT
+    assert again.decision is RevisionDecision.EXISTING_REVISION
+    assert first.revision.projection() == revision.projection()
+    unit = await repo.get(revision.episode_id)
+    assert unit.robot_run_id == revision.robot_run_id
+    assert await repo.list_revisions(revision.episode_id) == [first.revision]
+    assert [
+        e.episode_id for e in await repo.list(robot_run_id=revision.robot_run_id)
+    ] == [revision.episode_id]
 
 
 @pytest.mark.asyncio
-async def test_episode_record_list_and_recording_scope(
-    db_session, unique_id, seed_dataset_version, episode_record_for
+async def test_episode_revisions_accumulate_and_a_drifting_producer_fails(
+    db_session, unique_id, episode_revision_for
 ):
-    dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
-    repo = PostgresEpisodeRepository(db_session)
-    a = await episode_record_for(db_session, dataset_id=dataset_id)
-    b = await episode_record_for(db_session, dataset_id=dataset_id)
-    for record in (a, b):
-        await repo.insert(record)
-
-    assert [e.episode_id for e in await repo.list(robot_run_id=a.robot_run_id)] == [
-        a.episode_id
-    ]
-    scope = await repo.list_recording_scope(
-        dataset_id=dataset_id, dataset_version="v1", robot_run_id=b.robot_run_id
+    run_id = unique_id("run")
+    one = await episode_revision_for(db_session, robot_run_id=run_id)
+    other_config = await episode_revision_for(
+        db_session, robot_run_id=run_id, build_config={"topics": ["/odom"]}
     )
-    assert [e.episode_id for e in scope] == [b.episode_id]
-
-
-@pytest.mark.asyncio
-async def test_episode_replace_revision_repoints_and_delete_removes(
-    db_session, unique_id, seed_dataset_version, episode_record_for
-):
-    dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
+    drifted = await episode_revision_for(db_session, robot_run_id=run_id, x=2.0)
+    assert one.episode_id == other_config.episode_id == drifted.episode_id
+    assert drifted.producer_fingerprint == one.producer_fingerprint
     repo = PostgresEpisodeRepository(db_session)
-    first = await episode_record_for(db_session, dataset_id=dataset_id)
-    await repo.insert(first)
-    second = await episode_record_for(
-        db_session, dataset_id=dataset_id, robot_run_id=first.robot_run_id, x=2.0
+
+    await repo.register_revision(one)
+    assert (
+        await repo.register_revision(other_config)
+    ).decision is RevisionDecision.NEW_REVISION
+    with pytest.raises(NonDeterministicProducerError):
+        async with db_session.begin_nested():
+            await repo.register_revision(drifted)
+    assert {r.manifest_checksum for r in await repo.list_revisions(one.episode_id)} == {
+        one.manifest_checksum,
+        other_config.manifest_checksum,
+    }
+
+
+@pytest.mark.asyncio
+async def test_episode_members_pin_revisions_per_dataset_version(
+    db_session, unique_id, episode_revision_for, compose_version
+):
+    dataset_id = unique_id("ds")
+    run_id = unique_id("run")
+    a = await episode_revision_for(db_session, robot_run_id=run_id, unit_key="a")
+    b = await episode_revision_for(db_session, robot_run_id=run_id, unit_key="b")
+    repo = PostgresEpisodeRepository(db_session)
+    for revision in (a, b):
+        await repo.register_revision(revision)
+    v1 = await compose_version(
+        db_session, dataset_id=dataset_id, version="v1", revisions=[a, b]
     )
-    assert second.episode_id == first.episode_id
+    v2 = await compose_version(
+        db_session, dataset_id=dataset_id, version="v2", revisions=[a]
+    )
 
-    updated = await repo.replace_revision(second)
-    assert updated.manifest_artifact_id == second.manifest_artifact_id
-    assert await repo.delete([first.episode_id]) == 1
-    assert await repo.get(first.episode_id) is None
-
-
-@pytest.mark.asyncio
-async def test_episode_requires_registered_run_artifact_and_dataset_version(
-    db_session, unique_id, seed_dataset_version, episode_record_for
-):
-    from sqlalchemy.exc import IntegrityError
-
-    dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
-    record = await episode_record_for(db_session, dataset_id=dataset_id, seed_run=False)
-    with pytest.raises(IntegrityError):
-        await PostgresEpisodeRepository(db_session).insert(record)
-
-
-@pytest.mark.asyncio
-async def test_episode_window_must_be_non_empty_in_the_database(
-    db_session, unique_id, seed_dataset_version, episode_record_for
-):
-    from sqlalchemy import text
-    from sqlalchemy.exc import IntegrityError
-
-    dataset_id = unique_id("ds")
-    await seed_dataset_version(db_session, dataset_id=dataset_id)
-    record = await episode_record_for(db_session, dataset_id=dataset_id)
-    await PostgresEpisodeRepository(db_session).insert(record)
-    with pytest.raises(IntegrityError, match="ck_episodes_segment_window"):
-        await db_session.execute(
-            text(
-                "UPDATE episodes SET window_end_timestamp_ns = window_start_timestamp_ns "
-                "WHERE episode_id = :id"
-            ),
-            {"id": record.episode_id},
+    assert (v1.episode.episode_count, v2.episode.episode_count) == (2, 1)
+    assert v1.scene is None
+    assert [
+        e.episode_id
+        for e in await repo.list_member_revisions(
+            dataset_id=dataset_id, dataset_version="v2", robot_run_id=run_id
         )
+    ] == [a.episode_id]
+    assert (
+        await repo.get_member_revision(
+            dataset_id=dataset_id, dataset_version="v2", episode_id=b.episode_id
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_episode_requires_a_registered_robot_run(
+    db_session, episode_revision_for
+):
+    revision = await episode_revision_for(db_session, seed_run=False)
+    with pytest.raises(IntegrityError, match="robot_run_id"):
+        async with db_session.begin_nested():
+            await PostgresEpisodeRepository(db_session).register_revision(revision)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("statement", "error", "match"),
+    [
+        (
+            "UPDATE episode_revisions SET window_end_timestamp_ns = "
+            "window_start_timestamp_ns WHERE episode_id = :id",
+            DBAPIError,
+            "immutable",
+        ),
+        (
+            "UPDATE episodes SET unit_key = 'x' WHERE episode_id = :id",
+            DBAPIError,
+            "immutable",
+        ),
+        (
+            "DELETE FROM episodes WHERE episode_id = :id",
+            IntegrityError,
+            "episode_revisions",
+        ),
+    ],
+)
+async def test_episode_units_and_revisions_are_never_changed(
+    db_session, episode_revision_for, statement, error, match
+):
+    revision = await episode_revision_for(db_session)
+    await PostgresEpisodeRepository(db_session).register_revision(revision)
+    with pytest.raises(error, match=match):
+        async with db_session.begin_nested():
+            await db_session.execute(text(statement), {"id": revision.episode_id})
 
 
 # ── ArtifactRecord ────────────────────────────────────────────────────────────

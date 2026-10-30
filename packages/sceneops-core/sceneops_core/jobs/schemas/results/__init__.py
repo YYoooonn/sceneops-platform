@@ -1,11 +1,13 @@
 from .base import BaseJobResult
 from .dataset import (
+    ComposeDatasetVersionJobResult,
     ExportAnalyticsSnapshotJobResult,
 )
 from .detection import EvaluateDetectionJobResult, PredictDetectionJobResult
 from .labels import BuildSceneSampleViewsJobResult, ImportLabelsJobResult
 from .scene import (
     BuildRecordingScenesJobResult,
+    BuildSnapshotScenesJobResult,
     ProfileSceneJobResult,
     RegisterScenesJobResult,
     ValidateSceneJobResult,
@@ -19,6 +21,7 @@ from .episodes import (
     AlignEpisodeJobResult,
     AlignedEpisodeRef,
     BuildRecordingEpisodesJobResult,
+    BuildSnapshotEpisodesJobResult,
     CurateEpisodesJobResult,
     ExportLearningDataJobResult,
     ProfileAlignedEpisodeJobResult,
@@ -28,15 +31,18 @@ from .episodes import (
     ValidateEpisodeJobResult,
 )
 from .scenario import MineScenariosJobResult, ScoreScenarioReadinessJobResult
+from .sources import RegisterSourceSnapshotJobResult
 
 __all__ = [
     "BaseJobResult",
     "ImportLabelsJobResult",
     "BuildSceneSampleViewsJobResult",
     "RegisterRobotRunJobResult",
+    "RegisterSourceSnapshotJobResult",
     "IngestRobotStatesJobResult",
     "ExportRobotAnalyticsSnapshotJobResult",
     "BuildRecordingEpisodesJobResult",
+    "BuildSnapshotEpisodesJobResult",
     "RegisterEpisodesJobResult",
     "ValidateEpisodeJobResult",
     "ProfileEpisodeJobResult",
@@ -47,11 +53,13 @@ __all__ = [
     "ExportLearningDataJobResult",
     "CurateEpisodesJobResult",
     "BuildRecordingScenesJobResult",
+    "BuildSnapshotScenesJobResult",
     "ValidateSceneJobResult",
     "ProfileSceneJobResult",
     "RegisterScenesJobResult",
     "MineScenariosJobResult",
     "ScoreScenarioReadinessJobResult",
+    "ComposeDatasetVersionJobResult",
     "ExportAnalyticsSnapshotJobResult",
     "PredictDetectionJobResult",
     "EvaluateDetectionJobResult",

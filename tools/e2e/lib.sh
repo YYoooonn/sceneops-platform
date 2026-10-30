@@ -170,17 +170,31 @@ assert_pipeline_succeeded() {
 
 # run_pipeline <api> <type> <dataset-id> <dataset-version> <params-json> [extra-json]
 # Create, dispatch and wait for one PipelineRun (force=true: always a fresh
-# run). Prints the pipeline_run_id; the caller asserts on its status.
+# run, unless extra-json says {"force": false}: then an identical pending, queued,
+# running or succeeded run is returned instead). A succeeded run is not dispatched
+# again and a running one is only waited for: the API refuses to execute either, and
+# a running one is what an interrupted caller re-running the same request finds. An
+# empty dataset id / version names no DatasetVersion scope, as a recording pipeline
+# requires. Prints the pipeline_run_id; the caller asserts on its status.
 run_pipeline() {
   local api_base_url="$1" type="$2" dataset_id="$3" dataset_version="$4" params="$5"
-  local extra="${6:-}" payload run_id
+  local extra="${6:-}" payload created run_id
   [ -n "$extra" ] || extra='{}'
   payload="$(jq -cn --arg t "$type" --arg ds "$dataset_id" --arg v "$dataset_version" \
     --argjson p "$params" --argjson extra "$extra" \
-    '{type: $t, dataset_id: $ds, dataset_version: $v, force: true, params: $p} + $extra')"
-  run_id="$(extract_pipeline_run_id "$(create_pipeline_run "$api_base_url" "$payload")")"
-  dispatch_pipeline_run "$api_base_url" "$run_id" >/dev/null
-  poll_pipeline_terminal "$api_base_url" "$run_id" "$POLL_ATTEMPTS" 5 >/dev/null
+    '{type: $t, force: true, params: $p}
+     + (if $ds == "" then {} else {dataset_id: $ds} end)
+     + (if $v == "" then {} else {dataset_version: $v} end) + $extra')"
+  created="$(create_pipeline_run "$api_base_url" "$payload")"
+  run_id="$(extract_pipeline_run_id "$created")"
+  case "$(echo "$created" | jq -r '.pipelineRun.status')" in
+    succeeded) ;;
+    running) poll_pipeline_terminal "$api_base_url" "$run_id" "$POLL_ATTEMPTS" 5 >/dev/null ;;
+    *)
+      dispatch_pipeline_run "$api_base_url" "$run_id" >/dev/null
+      poll_pipeline_terminal "$api_base_url" "$run_id" "$POLL_ATTEMPTS" 5 >/dev/null
+      ;;
+  esac
   echo "$run_id"
 }
 
@@ -239,13 +253,16 @@ assert_job_succeeded() {
 }
 
 # run_job <api> <type> <dataset-id> <dataset-version> <params-json> [force=true]
-# Create, execute and wait for one Job. Prints the terminal job JSON.
+# Create, execute and wait for one Job. An empty dataset id / version names no
+# DatasetVersion. Prints the terminal job JSON.
 run_job() {
   local api_base_url="$1" type="$2" dataset_id="$3" dataset_version="$4" params="$5"
   local force="${6:-true}" payload created job_id
   payload="$(jq -cn --arg t "$type" --arg ds "$dataset_id" --arg v "$dataset_version" \
     --argjson p "$params" --argjson force "$force" \
-    '{type: $t, dataset_id: $ds, dataset_version: $v, params: $p, force: $force}')"
+    '{type: $t, params: $p, force: $force}
+     + (if $ds == "" then {} else {dataset_id: $ds} end)
+     + (if $v == "" then {} else {dataset_version: $v} end)')"
   created="$(create_job "$api_base_url" "$payload")"
   job_id="$(extract_job_id "$created")"
   execute_job "$api_base_url" "$job_id" >/dev/null
@@ -296,10 +313,18 @@ upsert_dataset() {
     -d "{\"dataset_id\": \"$dataset_id\", \"name\": \"$name\"}"
 }
 
-upsert_dataset_version() {
-  local api_base_url="$1" dataset_id="$2" version="$3"
-  curl -sS -X POST "$(api_url "$api_base_url" "/datasets/$dataset_id/versions")" \
-    -H "Content-Type: application/json" -d "{\"version\": \"$version\"}"
+# compose_dataset_version <api> <dataset-id> <version> <pins-json-array>
+# COMPOSE_DATASET_VERSION of exactly these revision pins: the only way a
+# DatasetVersion comes to exist (ADR-015 §7). A name already bound to the same
+# composition converges (result.created=false); to another, the Job fails.
+# Prints the terminal Job JSON; fails unless it succeeded.
+compose_dataset_version() {
+  local api_base_url="$1" dataset_id="$2" version="$3" pins="$4" params job
+  params="$(jq -cn --arg ds "$dataset_id" --arg v "$version" --argjson pins "$pins" \
+    '{dataset_id: $ds, dataset_version: $v, pins: $pins}')"
+  job="$(run_job "$api_base_url" compose_dataset_version "" "" "$params" false)"
+  assert_job_succeeded "$job" "COMPOSE_DATASET_VERSION $dataset_id/$version should succeed" >&2
+  echo "$job"
 }
 
 # upsert_model <api> <model-id> <model-version> <name> [backend=mock] [endpoint-url]

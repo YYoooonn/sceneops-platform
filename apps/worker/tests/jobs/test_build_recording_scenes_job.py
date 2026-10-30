@@ -1,8 +1,8 @@
 """BUILD_RECORDING_SCENES -> REGISTER_SCENES over a local ArtifactStore and
 in-memory stores: the producer owns payload + manifest bytes and
-ArtifactRecords, retries converge, conflicting bytes fail, and changed
-build configuration conflicts or replaces through the registrar. Real
-PostgreSQL + MinIO behavior is covered by
+ArtifactRecords, retries converge, conflicting bytes fail, and another
+segmentation registers other units next to the first. Real PostgreSQL +
+MinIO behavior is covered by
 tests/scenes/test_recording_scene_vertical_integration.py."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import hashlib
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -30,7 +30,6 @@ from sceneops_worker.jobs.dataset.build_recording_scenes import (
 from sceneops_worker.jobs.dataset.register_scenes import RegisterScenesJobHandler
 from sceneops_scenes.artifacts import ObservationPayloadConflictError
 from sceneops_scenes.recording_builder import RecordingSceneBuildError
-from sceneops_worker.scenes.registration import SceneRegistrationConflictError
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scenes"))
 from sceneops_recording.testing.ros2_recordings import build_config, default_recording  # noqa: E402
@@ -70,8 +69,6 @@ async def world(scene_world, tmp_path):
         manifest_artifact_id=f"art-robotrunmanifest-{RUN_ID}",
         manifest_checksum="sha256:" + "0" * 64,
     )
-    scene_world.add_dataset_version()
-    scene_world.context.dataset_store.get_version = AsyncMock(return_value=object())
     scene_world.recording_checksum = checksum
     return scene_world
 
@@ -81,8 +78,6 @@ async def _build(world, config=None, job_id="job-1"):
         JobHandlerRequest(
             job=_job(job_id),
             params=BuildRecordingScenesJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
                 robot_run_id=RUN_ID,
                 build_config=config or build_config(),
             ),
@@ -91,15 +86,12 @@ async def _build(world, config=None, job_id="job-1"):
     )
 
 
-async def _register(world, result, *, replace=False):
+async def _register(world, result):
     return await RegisterScenesJobHandler().run(
         JobHandlerRequest(
             job=_job(),
             params=RegisterScenesJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
                 manifest_artifact_ids=result.manifest_artifact_ids,
-                replace=replace,
             ),
             context=world.context,
         )
@@ -111,7 +103,7 @@ async def test_whole_recording_builds_and_registers_one_scene_sharing_the_payloa
 ):
     """Segmentation is a build policy: the same recording gives one Scene under
     whole_recording, built from the same observation payloads as the fixed
-    windows, and a registered scope converges on a rebuild."""
+    windows, and a rebuild converges on the registered revision."""
     config = {
         **build_config(),
         "segmentation": {"policy": "whole_recording", "clock": "sensor.header_stamp"},
@@ -119,10 +111,11 @@ async def test_whole_recording_builds_and_registers_one_scene_sharing_the_payloa
     result = await _build(world, config)
 
     assert result.scene_count == 1
-    assert result.unit_keys == ["recording"]
+    (unit_key,) = result.unit_keys
+    assert unit_key.startswith("whole_recording-") and unit_key.endswith("/recording")
     assert result.payload_artifact_count == result.created_payload_count == 8
     await _register(world, result)
-    assert [r.unit_key for r in world.scenes.committed.values()] == ["recording"]
+    assert [r.unit_key for r in world.scenes.revisions().values()] == [unit_key]
 
     again = await _build(world, config, "job-2")
     assert again.manifest_artifact_ids == result.manifest_artifact_ids
@@ -133,7 +126,9 @@ async def test_build_publishes_payloads_and_manifests_then_registers(world):
     result = await _build(world)
 
     assert result.scene_count == 2
-    assert result.unit_keys == ["segment-000000", "segment-000001"]
+    # Grid windows 1 and 2 of the 1 s fixed-duration segmentation.
+    assert [k.rsplit("/", 1)[1] for k in result.unit_keys] == ["1", "2"]
+    assert len({k.rsplit("/", 1)[0] for k in result.unit_keys}) == 1
     assert result.recording_checksum == world.recording_checksum
     assert result.payload_artifact_count == result.created_payload_count == 8
     payloads = [
@@ -149,12 +144,19 @@ async def test_build_publishes_payloads_and_manifests_then_registers(world):
         assert f"/observation_payloads/{RUN_ID}/" in payload.uri
     manifests = [world.artifacts[i] for i in result.manifest_artifact_ids]
     assert {m.kind for m in manifests} == {ArtifactKind.SCENE_MANIFEST}
-    # The builder writes no membership.
-    assert world.scenes.committed == {}
+    # Manifests are keyed by unit, not by DatasetVersion.
+    assert all("/canonical/scenes/" in m.uri for m in manifests)
+    assert all(m.dataset_id is None and m.dataset_version is None for m in manifests)
+    # The builder writes no unit, revision or membership.
+    assert world.scenes.committed == ({}, {})
 
     registered = await _register(world, result)
-    assert registered.registered_scene_count == 2
-    records = list(world.scenes.committed.values())
+    assert registered.revision_count == 2
+    assert {p.manifest_artifact_id for p in registered.revisions} == set(
+        result.manifest_artifact_ids
+    )
+    assert [p.unit_id for p in registered.revisions] == sorted(registered.scene_ids)
+    records = list(world.scenes.revisions().values())
     assert {r.robot_run_id for r in records} == {RUN_ID}
     assert {r.unit_key for r in records} == set(result.unit_keys)
     assert {r.window_clock for r in records} == {"sensor.header_stamp"}
@@ -173,7 +175,9 @@ async def test_retry_converges_on_the_same_artifacts(world):
     assert again.created_payload_count == 0
     assert len(world.artifacts) == count
     reregistered = await _register(world, again)
-    assert sorted(reregistered.unchanged_scene_ids) == sorted(registered.scene_ids)
+    assert reregistered.revisions == registered.revisions
+    assert reregistered.existing_revision_scene_ids == registered.scene_ids
+    assert reregistered.new_unit_scene_ids == []
 
 
 async def test_conflicting_payload_bytes_fail_and_are_never_overwritten(world):
@@ -206,20 +210,21 @@ async def test_conflicting_artifact_record_fails(world):
         await _build(world, job_id="job-2")
 
 
-async def test_changed_config_conflicts_then_replaces(world):
-    await _register(world, await _build(world))
-    before = dict(world.scenes.committed)
+async def test_another_segmentation_is_other_units(world):
+    """A coarser segmentation cuts other windows, so it yields other units,
+    not revisions of the 1 s ones: registering it adds one new unit and
+    leaves the 1 s units and their revisions untouched."""
+    first = await _build(world)
+    registered = await _register(world, first)
 
     coarser = await _build(world, build_config(duration_ns=10_000_000_000), "job-2")
     assert coarser.created_payload_count == 0  # payload identity is config-free
-    with pytest.raises(SceneRegistrationConflictError):
-        await _register(world, coarser)
-    assert world.scenes.committed == before
+    assert not set(coarser.unit_keys) & set(first.unit_keys)
 
-    replaced = await _register(world, coarser, replace=True)
-    assert len(replaced.removed_scene_ids) == 1
-    assert len(replaced.replaced_scene_ids) == 1
-    assert [r.unit_key for r in world.scenes.committed.values()] == ["segment-000000"]
+    added = await _register(world, coarser)
+    assert len(added.new_unit_scene_ids) == 1
+    assert not set(added.scene_ids) & set(registered.scene_ids)
+    assert len(world.scenes.revisions()) == 3
 
 
 async def test_non_conformant_recording_fails_before_planning(world):
@@ -244,8 +249,6 @@ def test_params_reject_a_caller_supplied_recording():
     with pytest.raises(ValueError, match="robot_run_id"):
         BuildRecordingScenesJobParams.model_validate(
             {
-                "dataset_id": "ds",
-                "dataset_version": "v1",
                 "robot_run_id": RUN_ID,
                 "mcap_uri": "s3://elsewhere/recording.mcap",
                 "build_config": build_config(),

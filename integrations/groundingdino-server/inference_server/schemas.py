@@ -4,11 +4,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from inference_server.image_resolver import IMAGE_CHECKSUM_PATTERN
+
 
 class DetectRequest(BaseModel):
-    # Primary: file:// URI (or future s3://, gs://).
-    # The server resolves the URI to an image via ImageResolver.
+    # file:// or s3:// URI of the stored image object. The server reads it via
+    # ImageResolver and decodes it only once its bytes match the pin below.
     image_uri: str
+    # Pin of the whole stored object: "sha256:<64 lowercase hex>" and exact size.
+    image_checksum: str = Field(pattern=IMAGE_CHECKSUM_PATTERN)
+    image_size_bytes: int = Field(ge=0, strict=True)
     # None → use server-side defaults from InferenceServerSettings
     prompt: str | None = Field(default=None)
     box_threshold: float | None = Field(default=None, ge=0.0, le=1.0)

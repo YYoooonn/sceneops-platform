@@ -24,15 +24,27 @@ class ArtifactSettings(StorageSettings):
     root_uri: str = "/data/artifacts"
 
     dataset_prefix: str = "datasets"
+    canonical_prefix: str = "canonical"
     run_prefix: str = "runs"
     analytics_prefix: str = "analytical"
     robot_run_prefix: str = "robot_runs"
     observation_payload_prefix: str = "observation_payloads"
     label_prefix: str = "labels"
+    # Preserved external sources (ADR-015 §5): the one trusted root that
+    # publish-snapshot writes under and REGISTER_SOURCE_SNAPSHOT reads from.
+    source_prefix: str = "sources"
+
+    @property
+    def source_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.source_prefix)
 
     @property
     def dataset_root_uri(self) -> str:
         return join_uri(self.root_uri, self.dataset_prefix)
+
+    @property
+    def canonical_root_uri(self) -> str:
+        return join_uri(self.root_uri, self.canonical_prefix)
 
     @property
     def run_root_uri(self) -> str:

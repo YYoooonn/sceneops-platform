@@ -1,6 +1,6 @@
 from .enums import SceneFrameRole, SceneGroupKind, SceneModality
 from .manifests import (
-    SCENE_MANIFEST_SCHEMA_V2,
+    SCENE_MANIFEST_SCHEMA_V5,
     FrameTransform,
     ImageSize,
     NonCanonicalSceneManifestError,
@@ -17,11 +17,16 @@ from .manifests import (
     UnsupportedSceneManifestVersionError,
     load_canonical_scene_manifest,
 )
-from .records import SceneRecord, project_scene_record, scene_id_for
+from .records import (
+    SceneRecord,
+    SceneRevisionRecord,
+    project_scene_revision,
+    scene_id_for,
+)
 from .runs import SceneProfileRunRecord, SceneValidationRunRecord
 
 __all__ = [
-    "SCENE_MANIFEST_SCHEMA_V2",
+    "SCENE_MANIFEST_SCHEMA_V5",
     "FrameTransform",
     "ImageSize",
     "NonCanonicalSceneManifestError",
@@ -39,10 +44,11 @@ __all__ = [
     "ScenePose",
     "SceneProfileRunRecord",
     "SceneRecord",
+    "SceneRevisionRecord",
     "SceneTimeWindow",
     "SceneValidationRunRecord",
     "UnsupportedSceneManifestVersionError",
     "load_canonical_scene_manifest",
-    "project_scene_record",
+    "project_scene_revision",
     "scene_id_for",
 ]

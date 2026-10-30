@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from sceneops_core.datasets.schemas import DatasetRecord, DatasetVersionRecord
+from collections.abc import Sequence
+
+from sceneops_core.datasets.schemas import (
+    DatasetRecord,
+    DatasetVersionMember,
+    DatasetVersionRecord,
+)
+from sceneops_core.provenance import CanonicalDomain
 
 
 @runtime_checkable
@@ -23,11 +30,22 @@ class DatasetRepository(Protocol):
     ) -> list[DatasetRecord]: ...
 
 
+class DatasetVersionExistsError(RuntimeError):
+    """``(dataset_id, version)`` is already bound to a composition (or a
+    concurrent composition of it committed first). Nothing was written."""
+
+    def __init__(self, dataset_id: str, version: str) -> None:
+        super().__init__(f"DatasetVersion already exists: {dataset_id}/{version}")
+        self.dataset_id = dataset_id
+        self.version = version
+
+
 @runtime_checkable
 class DatasetVersionRepository(Protocol):
-    async def create(self, version: DatasetVersionRecord) -> DatasetVersionRecord: ...
-
-    async def upsert(self, version: DatasetVersionRecord) -> DatasetVersionRecord: ...
+    """Committed DatasetVersions (ADR-015 §7, MS-8). ``insert`` is the only
+    write and belongs to COMPOSE_DATASET_VERSION: it adds one complete
+    composition, the version row and all its members, in the caller's
+    transaction. No method updates or deletes a version or its members."""
 
     async def get(
         self,
@@ -36,31 +54,6 @@ class DatasetVersionRepository(Protocol):
         version: str,
     ) -> DatasetVersionRecord | None: ...
 
-    async def update(self, version: DatasetVersionRecord) -> DatasetVersionRecord: ...
-
-    async def lock_for_update(
-        self, *, dataset_id: str, version: str
-    ) -> DatasetVersionRecord: ...
-
-    async def replace_scene_membership_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        scene_count: int,
-        keyframe_count: int,
-        observation_count: int,
-        observed_channels: list[str],
-    ) -> DatasetVersionRecord: ...
-
-    async def update_episode_summary(
-        self,
-        *,
-        dataset_id: str,
-        version: str,
-        episode_count: int | None = None,
-    ) -> DatasetVersionRecord: ...
-
     async def list(
         self,
         *,
@@ -68,3 +61,28 @@ class DatasetVersionRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
     ) -> list[DatasetVersionRecord]: ...
+
+    async def insert(
+        self,
+        version: DatasetVersionRecord,
+        members: Sequence[DatasetVersionMember],
+    ) -> DatasetVersionRecord:
+        """Raises ``DatasetVersionExistsError`` when the name is taken; an
+        uncommitted concurrent insert of it is waited for first. Members
+        must be non-empty and agree with the version's summary counts."""
+        ...
+
+
+@runtime_checkable
+class DatasetVersionMemberRepository(Protocol):
+    """The revision pins of a committed DatasetVersion (ADR-015 §7), in
+    unit id order. Members are written only with their version
+    (``DatasetVersionRepository.insert``) and never changed."""
+
+    async def list(
+        self,
+        *,
+        dataset_id: str,
+        version: str,
+        domain: CanonicalDomain | None = None,
+    ) -> list[DatasetVersionMember]: ...

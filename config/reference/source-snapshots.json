@@ -1,0 +1,28 @@
+{
+  "schema": "sceneops.reference_source_snapshots/1",
+  "snapshots": {
+    "lerobot-pusht": {
+      "local_root": "data/raw/lerobot/pusht",
+      "format": "lerobot",
+      "upstream": "lerobot/pusht",
+      "upstream_revision": "7628202a2180972f291ba1bc6723834921e72c19",
+      "include": ["README.md", "data/**", "meta/**", "videos/**"],
+      "annotations": {"license": "mit"}
+    },
+    "nuscenes-scene-0061": {
+      "local_root": "data/raw/nuscenes",
+      "format": "nuscenes",
+      "upstream": "nuscenes",
+      "upstream_revision": "v1.0-mini",
+      "include": [
+        "LICENSE",
+        "can_bus/scene-0061_*",
+        "maps/*",
+        "samples/*/n015-2018-07-24-11-22-45+0800__*",
+        "sweeps/*/n015-2018-07-24-11-22-45+0800__*",
+        "v1.0-mini/*"
+      ],
+      "annotations": {"license": "nuscenes-terms-of-use"}
+    }
+  }
+}

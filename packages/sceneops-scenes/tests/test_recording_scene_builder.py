@@ -13,11 +13,16 @@ from pathlib import Path
 import pytest
 
 from sceneops_core.scenes.recording_build import RecordingSceneBuildConfig
+from sceneops_core.provenance import (
+    ClockOrigin,
+    IncomparableClocksError,
+    PinnedRecording,
+    require_comparable,
+)
+from sceneops_core.provenance.segmentation import recording_unit_key
 from sceneops_scenes.recording_builder import (
     RECORDING_SCENE_PRODUCER_ID,
-    RecordingRevision,
     RecordingSceneBuildError,
-    WHOLE_RECORDING_UNIT_KEY,
     iter_planned_payloads,
     observation_payload_artifact_id,
     plan_recording_scenes,
@@ -40,11 +45,17 @@ from sceneops_recording.testing.ros2_recordings import (  # noqa: E402
     transform,
 )
 
-REVISION = RecordingRevision(
+REVISION = PinnedRecording(
     robot_run_id="run-001",
     recording_checksum="sha256:" + "1" * 64,
     recording_clock="mcap_log_time",
 )
+
+
+def _payload_id(ref) -> str:
+    """The payload artifact id a recording payload's Logical URI names
+    (``{robot_run_id}/{artifact_id}``)."""
+    return ref.logical_uri().key.rpartition("/")[2]
 
 
 def _plan(path, config=None, revision=REVISION):
@@ -55,6 +66,11 @@ def _plan(path, config=None, revision=REVISION):
 @pytest.fixture()
 def recording(tmp_path):
     return default_recording().write(tmp_path / "recording.mcap")
+
+
+def _key(config: dict, segment: str) -> str:
+    boundary = RecordingSceneBuildConfig.model_validate(config).segmentation_boundary()
+    return recording_unit_key(boundary=boundary, segment=segment)
 
 
 def _observations(plan, topic):
@@ -69,7 +85,12 @@ def _observations(plan, topic):
 def test_fixed_duration_segments_on_the_declared_clock(recording):
     plan = _plan(recording)
 
-    assert [s.unit_key for s in plan.scenes] == ["segment-000000", "segment-000001"]
+    # Window k is [k * 1 s, (k + 1) * 1 s) on the segmentation clock.
+    assert [s.unit_key for s in plan.scenes] == [
+        _key(build_config(), "1"),
+        _key(build_config(), "2"),
+    ]
+    assert all(s.unit_key.startswith("fixed_duration-") for s in plan.scenes)
     windows = [
         (
             s.manifest.lineage.source.source_clock,
@@ -78,8 +99,8 @@ def test_fixed_duration_segments_on_the_declared_clock(recording):
         )
         for s in plan.scenes
     ]
-    # Origin = earliest included observation on the segmentation clock
-    # (the first camera header stamp); windows are half-open.
+    # A grid anchored at the clock's zero, not at the first observation;
+    # windows are half-open.
     assert windows == [
         ("sensor.header_stamp", 1_000_000_000, 2_000_000_000),
         ("sensor.header_stamp", 2_000_000_000, 3_000_000_000),
@@ -96,7 +117,11 @@ def test_segmentation_is_deterministic_and_part_of_the_fingerprint(recording):
         s.manifest.to_canonical_bytes() for s in b.scenes
     ]
     coarser = _plan(recording, build_config(duration_ns=10_000_000_000))
-    assert [s.unit_key for s in coarser.scenes] == ["segment-000000"]
+    assert [s.unit_key for s in coarser.scenes] == [
+        _key(build_config(duration_ns=10_000_000_000), "0")
+    ]
+    # Another segmentation is other units: no key is shared.
+    assert not {s.unit_key for s in coarser.scenes} & {s.unit_key for s in a.scenes}
     assert coarser.producer.producer_fingerprint != a.producer.producer_fingerprint
     assert coarser.producer.producer_id == RECORDING_SCENE_PRODUCER_ID
     assert coarser.producer.build_config["segmentation"] == {
@@ -104,6 +129,33 @@ def test_segmentation_is_deterministic_and_part_of_the_fingerprint(recording):
         "duration_ns": 10_000_000_000,
         "policy": "fixed_duration",
     }
+
+
+def test_fixed_windows_do_not_move_with_the_channel_selection(recording):
+    """The unit boundary is the segmentation's alone: dropping the camera
+    (whose stamp is the earliest) keeps every window and unit key, so the
+    lidar-only build is another revision of the same units."""
+    both = _plan(recording)
+    config = build_config()
+    config["channels"] = [c for c in config["channels"] if c["topic"] == LIDAR_TOPIC]
+    lidar_only = _plan(recording, config)
+
+    def windows(plan):
+        return {
+            s.unit_key: (
+                s.manifest.lineage.source.start_timestamp_ns,
+                s.manifest.lineage.source.end_timestamp_ns,
+            )
+            for s in plan.scenes
+        }
+
+    assert min(o.timestamp_ns for o in _observations(lidar_only, LIDAR_TOPIC)) > min(
+        o.timestamp_ns for o in _observations(both, CAMERA_TOPIC)
+    )
+    assert windows(lidar_only) == windows(both)
+    assert (
+        lidar_only.producer.producer_fingerprint != both.producer.producer_fingerprint
+    )
 
 
 def whole_recording_config(*, clock: str = "sensor.header_stamp", **kwargs) -> dict:
@@ -118,7 +170,10 @@ def test_whole_recording_is_one_scene_covering_the_recording(recording):
 
     (scene,) = plan.scenes
     source = scene.manifest.lineage.source
-    assert scene.unit_key == WHOLE_RECORDING_UNIT_KEY == source.unit_key == "recording"
+    assert (
+        scene.unit_key == source.unit_key == _key(whole_recording_config(), "recording")
+    )
+    assert scene.unit_key.startswith("whole_recording-")
     # Half-open [earliest, latest + 1) over every observation and pose on the
     # segmentation clock: the last stamp is the lidar's, 7 ns after its frame.
     assert (
@@ -207,7 +262,11 @@ def test_log_time_segmentation_keeps_source_stamps_unconverted(recording):
     plan = _plan(recording, build_config(clock="mcap_log_time"))
     source = plan.scenes[0].manifest.lineage.source
     assert source.source_clock == "mcap_log_time"
-    assert source.start_timestamp_ns == 1_000_000_000 + LOG_LAG_NS
+    # The first message is received at 1 s + LOG_LAG_NS: grid window 1.
+    assert (source.start_timestamp_ns, source.end_timestamp_ns) == (
+        1_000_000_000,
+        2_000_000_000,
+    )
     camera = _observations(plan, CAMERA_TOPIC)
     assert [o.timestamp_ns for o in camera] == [
         1_000_000_000,
@@ -234,7 +293,11 @@ def test_windows_never_come_from_robot_run_extent(recording):
         _plan(
             recording,
             build_config(clock="mcap_log_time"),
-            revision=RecordingRevision("run-001", "sha256:" + "1" * 64, "other.clock"),
+            revision=PinnedRecording(
+                robot_run_id="run-001",
+                recording_checksum="sha256:" + "1" * 64,
+                recording_clock="other.clock",
+            ),
         )
     assert plan.scenes[0].manifest.lineage.source.start_timestamp_ns == 1_000_000_000
 
@@ -270,6 +333,73 @@ def test_multi_clock_scene(recording):
     assert clocks == {CAMERA_TOPIC: "sensor.header_stamp", LIDAR_TOPIC: "mcap_log_time"}
 
 
+# --- clock domains (ADR-015 §6.2, OQ-9) -----------------------------------------
+
+
+def test_every_clock_a_scene_uses_is_declared_with_origin_source(recording):
+    """The window's clock, each channel's and each pose source's are declared
+    once; the timestamps stay the recorded timing facts: header stamps for
+    the camera and the poses, publish time for the lidar."""
+    plan = _plan(
+        recording,
+        build_config(
+            clock="mcap_log_time", lidar_time=("publish_time", "mcap_publish_time")
+        ),
+    )
+    for scene in plan.scenes:
+        manifest = scene.manifest
+        assert [
+            (d.clock, d.origin, d.resolution_ns) for d in manifest.clock_domains
+        ] == [
+            ("mcap_log_time", ClockOrigin.SOURCE, 1),
+            ("mcap_publish_time", ClockOrigin.SOURCE, 1),
+            ("sensor.header_stamp", ClockOrigin.SOURCE, 1),
+        ]
+        assert {p.source_clock for p in manifest.poses} == {"sensor.header_stamp"}
+    assert [o.timestamp_ns for o in _observations(plan, CAMERA_TOPIC)] == [
+        1_000_000_000,
+        1_500_000_000,
+        2_000_000_000,
+        2_500_000_000,
+    ]
+    assert _observations(plan, LIDAR_TOPIC)[0].timestamp_ns == (
+        1_000_000_007 + LOG_LAG_NS
+    )
+
+
+def test_a_single_clock_scene_declares_one_clock(recording):
+    plan = _plan(recording)
+    for scene in plan.scenes:
+        assert [d.clock for d in scene.manifest.clock_domains] == [
+            "sensor.header_stamp"
+        ]
+
+
+def test_scenes_of_two_robot_runs_are_not_comparable(recording):
+    """The same recording registered as two RobotRuns: equal clock ids and
+    equal values, but two origin instances."""
+    other = PinnedRecording(
+        robot_run_id="run-002",
+        recording_checksum=REVISION.recording_checksum,
+        recording_clock="mcap_log_time",
+    )
+    a = _plan(recording).scenes[0].manifest
+    b = _plan(recording, revision=other).scenes[0].manifest
+    assert [o.timestamp_ns for o in a.observations] == [
+        o.timestamp_ns for o in b.observations
+    ]
+    with pytest.raises(IncomparableClocksError):
+        require_comparable(
+            a.clock_instance("sensor.header_stamp"),
+            b.clock_instance("sensor.header_stamp"),
+        )
+    sibling = _plan(recording).scenes[1].manifest
+    require_comparable(
+        a.clock_instance("sensor.header_stamp"),
+        sibling.clock_instance("sensor.header_stamp"),
+    )
+
+
 def test_equal_timestamps_order_by_sequence_then_file_order(tmp_path):
     """I-34: canonical order is timestamp, then MCAP sequence, never
     physical position."""
@@ -286,7 +416,7 @@ def test_equal_timestamps_order_by_sequence_then_file_order(tmp_path):
     tied = [
         o for o in _observations(plan, CAMERA_TOPIC) if o.timestamp_ns == 1_200_000_000
     ]
-    payload_ids = [o.payload.artifact_id for o in tied]
+    payload_ids = [_payload_id(o.payload) for o in tied]
     # sequence 2 (written second) sorts before sequence 3.
     assert payload_ids == [
         observation_payload_artifact_id(
@@ -326,7 +456,7 @@ def test_camera_payload_is_the_compressed_bytes_unchanged(recording):
     camera = _observations(plan, CAMERA_TOPIC)
     for index, observation in enumerate(camera):
         assert observation.payload.media_type == "image/jpeg"
-        assert payloads[observation.payload.artifact_id] == JPEG + bytes([index])
+        assert payloads[_payload_id(observation.payload)] == JPEG + bytes([index])
         assert observation.image_size.width_px == 1600
 
 
@@ -344,7 +474,7 @@ def test_lidar_payload_is_the_serialized_pointcloud2_message(recording):
         )
     }
     lidar = _observations(plan, LIDAR_TOPIC)
-    assert [payloads[o.payload.artifact_id] for o in lidar] == recorded
+    assert [payloads[_payload_id(o.payload)] for o in lidar] == recorded
     for observation, data in zip(lidar, recorded):
         assert observation.payload.media_type == (
             "application/x.ros2-cdr.sensor_msgs.msg.pointcloud2"
@@ -363,7 +493,11 @@ def test_payload_ids_are_deterministic_and_independent_of_segmentation(recording
     }
     other_run = _plan(
         recording,
-        revision=RecordingRevision("run-002", "sha256:" + "1" * 64, "mcap_log_time"),
+        revision=PinnedRecording(
+            robot_run_id="run-002",
+            recording_checksum="sha256:" + "1" * 64,
+            recording_clock="mcap_log_time",
+        ),
     )
     assert not {p.artifact_id for p in a.payloads.values()} & {
         p.artifact_id for p in other_run.payloads.values()
@@ -566,3 +700,31 @@ def test_empty_recording_scope_fails(tmp_path):
     config = build_config()
     with pytest.raises(RecordingSceneBuildError, match="not in the recording"):
         _plan(rec.write(tmp_path / "r.mcap"), config)
+
+
+def test_the_builder_emits_scene_manifest_v5_with_logical_payload_refs(recording):
+    """The emitted schema version moves only with the builder's semantics
+    version (ADR-017). Every observation names its planned payload by the
+    Logical URI of the key it is published under, {robot_run_id}/{artifact id}."""
+    from sceneops_core.artifacts.schemas import PayloadRef
+    from sceneops_core.scenes.schemas import SCENE_MANIFEST_SCHEMA_V5
+    from sceneops_recording.observations.store import observation_payload_uri
+    from sceneops_scenes.recording_builder import RECORDING_SCENE_SEMANTICS_VERSION
+
+    plan = _plan(recording)
+    assert {s.manifest.schema_version for s in plan.scenes} == {
+        SCENE_MANIFEST_SCHEMA_V5
+    }
+    assert (
+        {s.manifest.lineage.producer.semantics_version for s in plan.scenes}
+        == {RECORDING_SCENE_SEMANTICS_VERSION}
+        == {6}
+    )
+    refs = [o.payload for s in plan.scenes for o in s.manifest.observations]
+    assert {type(r) for r in refs} == {PayloadRef}
+    planned = {
+        observation_payload_uri(robot_run_id=p.robot_run_id, artifact_id=p.artifact_id)
+        for p in plan.payloads.values()
+    }
+    assert {r.uri for r in refs} == planned
+    assert {r.selector for r in refs} == {None}

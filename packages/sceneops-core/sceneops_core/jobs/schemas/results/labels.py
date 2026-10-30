@@ -15,8 +15,16 @@ class ImportLabelsJobResult(BaseJobResult):
 
     label_count: int = 0
     covered_anchor_count: int = 0
+    # The sources the anchors name, by kind.
     robot_run_ids: list[str] = Field(default_factory=list)
+    content_ids: list[str] = Field(default_factory=list)
     provenance_kind: str | None = None
+
+    # Native import only: the snapshot this import read through and its
+    # content (execution provenance, never part of the label set).
+    snapshot_id: str | None = None
+    content_id: str | None = None
+    unit_keys: list[str] = Field(default_factory=list)
 
     # False when the identical revision was already registered.
     created: bool = True

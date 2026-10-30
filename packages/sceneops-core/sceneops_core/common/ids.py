@@ -52,6 +52,17 @@ def robot_run_manifest_artifact_id(robot_run_id: str) -> str:
     return f"art-robotrunmanifest-{robot_run_id}"
 
 
+def source_content_inventory_artifact_id(content_id: str) -> str:
+    """Deterministic id of a SourceContent's inventory ArtifactRecord: one per
+    content, so concurrent registrations of one content converge on one row."""
+    return f"art-sourceinventory-{content_id}"
+
+
+def source_snapshot_descriptor_artifact_id(snapshot_id: str) -> str:
+    """Deterministic id of a SourceSnapshot's descriptor ArtifactRecord."""
+    return f"art-sourcedescriptor-{snapshot_id}"
+
+
 def default_inference_run_id(job_id: str) -> str:
     suffix = job_id.removeprefix("job-")
     return f"run-{suffix}"

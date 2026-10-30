@@ -182,6 +182,40 @@ async def test_list_objects_is_recursive_across_pages_with_size_and_mtime(
     assert abs(datetime.now(UTC) - sample.last_modified) < timedelta(minutes=10)
 
 
+_UNUSUAL_NAMES = (
+    "n015-2018-07-24-11-22-45+0800__CAM_FRONT__1532402927612460.jpg",
+    "with space.bin",
+    "query?part.bin",
+    "fragment#part.bin",
+    "semi;colon.bin",
+    "percent%2Bencoded.bin",
+    "ünïcødé-名前.bin",
+)
+
+
+@pytest.mark.asyncio
+async def test_unusual_keys_round_trip_verbatim(store, bucket, unique_key):
+    """Every character a preserved source file name may hold reaches MinIO as
+    that exact key: '?' and '#' are not a query or fragment, '+' is not a
+    space and '%2B' is not decoded. Each object is distinct, and listing
+    returns the keys as written."""
+    artifact_store = store
+    prefix = unique_key("unusual-keys")
+    uris = {name: f"s3://{bucket}/{prefix}/{name}" for name in _UNUSUAL_NAMES}
+
+    for index, uri in enumerate(uris.values()):
+        await artifact_store.write_bytes(uri, f"object-{index}".encode())
+
+    for index, uri in enumerate(uris.values()):
+        assert await artifact_store.exists(uri)
+        assert await artifact_store.read_bytes(uri) == f"object-{index}".encode()
+    listed = await artifact_store.list_objects(f"s3://{bucket}/{prefix}")
+    assert [o.uri for o in listed] == sorted(uris.values())
+    # The truncated spellings urlparse would produce do not exist.
+    assert not await artifact_store.exists(f"s3://{bucket}/{prefix}/query")
+    assert not await artifact_store.exists(f"s3://{bucket}/{prefix}/fragment")
+
+
 @pytest.mark.asyncio
 async def test_list_objects_empty_prefix_returns_empty_list(store, bucket, unique_key):
     artifact_store = store

@@ -44,30 +44,79 @@ _BUILD_RECORDING_SCENES_OUTPUTS = [
     PipelineTaskOutputSpec(name="channels", kind=_SUMMARY, source="channels"),
 ]
 
+_BUILD_SNAPSHOT_SCENES_OUTPUTS = [
+    # The Scenes of the snapshot's content, consumed by register_scenes →
+    # REF; snapshot_id / content_id are the build's execution provenance.
+    PipelineTaskOutputSpec(
+        name="manifest_artifact_ids", kind=_REF, source="manifest_artifact_ids"
+    ),
+    PipelineTaskOutputSpec(name="snapshot_id", kind=_REF, source="snapshot_id"),
+    PipelineTaskOutputSpec(name="content_id", kind=_REF, source="content_id"),
+    PipelineTaskOutputSpec(
+        name="producer_fingerprint", kind=_SUMMARY, source="producer_fingerprint"
+    ),
+    PipelineTaskOutputSpec(name="scene_count", kind=_SUMMARY, source="scene_count"),
+    PipelineTaskOutputSpec(
+        name="observation_count", kind=_SUMMARY, source="observation_count"
+    ),
+    PipelineTaskOutputSpec(name="pose_count", kind=_SUMMARY, source="pose_count"),
+    PipelineTaskOutputSpec(
+        name="keyframe_count", kind=_SUMMARY, source="keyframe_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="created_manifest_count", kind=_SUMMARY, source="created_manifest_count"
+    ),
+    PipelineTaskOutputSpec(name="unit_keys", kind=_SUMMARY, source="unit_keys"),
+    PipelineTaskOutputSpec(name="channels", kind=_SUMMARY, source="channels"),
+]
+
 _REGISTER_SCENES_OUTPUTS = [
-    # scene_ids consumed by validate_scene / profile_scene → REF.
     PipelineTaskOutputSpec(name="scene_ids", kind=_REF, source="scene_ids"),
+    # The complete revision pins of the build, consumed by
+    # compose_dataset_version, validate_scene and profile_scene → REF.
+    PipelineTaskOutputSpec(name="revisions", kind=_REF, source="revisions"),
     PipelineTaskOutputSpec(
-        name="registered_manifest_artifact_ids",
+        name="new_unit_scene_ids", kind=_SUMMARY, source="new_unit_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="new_revision_scene_ids", kind=_SUMMARY, source="new_revision_scene_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="existing_revision_scene_ids",
         kind=_SUMMARY,
-        source="manifest_artifact_ids",
+        source="existing_revision_scene_ids",
     ),
     PipelineTaskOutputSpec(
-        name="created_scene_ids", kind=_SUMMARY, source="created_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="replaced_scene_ids", kind=_SUMMARY, source="replaced_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="unchanged_scene_ids", kind=_SUMMARY, source="unchanged_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="removed_scene_ids", kind=_SUMMARY, source="removed_scene_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="registered_scene_count", kind=_SUMMARY, source="registered_scene_count"
+        name="revision_count", kind=_SUMMARY, source="revision_count"
     ),
 ]
+
+_COMPOSE_DATASET_VERSION_OUTPUTS = [
+    PipelineTaskOutputSpec(name="dataset_id", kind=_REF, source="dataset_id"),
+    PipelineTaskOutputSpec(name="dataset_version", kind=_REF, source="dataset_version"),
+    PipelineTaskOutputSpec(
+        name="composition_checksum", kind=_REF, source="composition_checksum"
+    ),
+    PipelineTaskOutputSpec(name="created", kind=_SUMMARY, source="created"),
+    PipelineTaskOutputSpec(name="member_count", kind=_SUMMARY, source="member_count"),
+]
+
+
+def _compose_task(*, order: int, register_task_id: str) -> PipelineTaskDefinition:
+    """The optional composition stage of a recording pipeline: runs only
+    when the run names its target, ``{"compose_dataset_version":
+    {"dataset_id": ..., "dataset_version": ...}}``, and composes exactly the
+    revisions the register stage returned."""
+    return PipelineTaskDefinition(
+        pipeline_task_id="compose_dataset_version",
+        name="Compose dataset version",
+        order=order,
+        job_type=JobType.COMPOSE_DATASET_VERSION,
+        depends_on_pipeline_task_ids=[register_task_id],
+        optional=True,
+        outputs=_COMPOSE_DATASET_VERSION_OUTPUTS,
+    )
+
 
 _VALIDATE_SCENE_OUTPUTS = [
     PipelineTaskOutputSpec(
@@ -147,30 +196,54 @@ _BUILD_RECORDING_EPISODES_OUTPUTS = [
     PipelineTaskOutputSpec(name="topics", kind=_SUMMARY, source="topics"),
 ]
 
+_BUILD_SNAPSHOT_EPISODES_OUTPUTS = [
+    # The Episodes of the snapshot's content, consumed by register_episodes →
+    # REF; snapshot_id / content_id are the build's execution provenance.
+    PipelineTaskOutputSpec(
+        name="manifest_artifact_ids", kind=_REF, source="manifest_artifact_ids"
+    ),
+    PipelineTaskOutputSpec(name="snapshot_id", kind=_REF, source="snapshot_id"),
+    PipelineTaskOutputSpec(name="content_id", kind=_REF, source="content_id"),
+    PipelineTaskOutputSpec(
+        name="producer_fingerprint", kind=_SUMMARY, source="producer_fingerprint"
+    ),
+    PipelineTaskOutputSpec(name="episode_count", kind=_SUMMARY, source="episode_count"),
+    PipelineTaskOutputSpec(
+        name="observation_count", kind=_SUMMARY, source="observation_count"
+    ),
+    PipelineTaskOutputSpec(name="state_count", kind=_SUMMARY, source="state_count"),
+    PipelineTaskOutputSpec(name="action_count", kind=_SUMMARY, source="action_count"),
+    PipelineTaskOutputSpec(name="event_count", kind=_SUMMARY, source="event_count"),
+    PipelineTaskOutputSpec(
+        name="transition_count", kind=_SUMMARY, source="transition_count"
+    ),
+    PipelineTaskOutputSpec(
+        name="created_manifest_count", kind=_SUMMARY, source="created_manifest_count"
+    ),
+    PipelineTaskOutputSpec(name="unit_keys", kind=_SUMMARY, source="unit_keys"),
+    PipelineTaskOutputSpec(name="features", kind=_SUMMARY, source="features"),
+]
+
 _REGISTER_EPISODES_OUTPUTS = [
-    # episode_ids consumed by validate_episode / profile_episode → REF.
     PipelineTaskOutputSpec(name="episode_ids", kind=_REF, source="episode_ids"),
+    # The complete revision pins of the build, consumed by
+    # compose_dataset_version, validate_episode and profile_episode → REF.
+    PipelineTaskOutputSpec(name="revisions", kind=_REF, source="revisions"),
     PipelineTaskOutputSpec(
-        name="registered_manifest_artifact_ids",
+        name="new_unit_episode_ids", kind=_SUMMARY, source="new_unit_episode_ids"
+    ),
+    PipelineTaskOutputSpec(
+        name="new_revision_episode_ids",
         kind=_SUMMARY,
-        source="manifest_artifact_ids",
+        source="new_revision_episode_ids",
     ),
     PipelineTaskOutputSpec(
-        name="created_episode_ids", kind=_SUMMARY, source="created_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="replaced_episode_ids", kind=_SUMMARY, source="replaced_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="unchanged_episode_ids", kind=_SUMMARY, source="unchanged_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="removed_episode_ids", kind=_SUMMARY, source="removed_episode_ids"
-    ),
-    PipelineTaskOutputSpec(
-        name="registered_episode_count",
+        name="existing_revision_episode_ids",
         kind=_SUMMARY,
-        source="registered_episode_count",
+        source="existing_revision_episode_ids",
+    ),
+    PipelineTaskOutputSpec(
+        name="revision_count", kind=_SUMMARY, source="revision_count"
     ),
 ]
 
@@ -295,36 +368,25 @@ _EVALUATE_DETECTION_OUTPUTS = [
 
 # ── Pipeline definitions ───────────────────────────────────────────────────────
 
-RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
-    type=PipelineType.RECORDING_SCENE_BUILDING,
-    name="Recording Scene Building",
-    description=(
-        "Build the canonical Scenes of one registered RobotRun recording "
-        "(robot_run_id + build_config), register them as the complete set "
-        "of that recording scope in the DatasetVersion, then validate and "
-        "profile the registered revisions. Builds from one RobotRun per run; "
-        "a DatasetVersion spanning several RobotRuns takes several runs."
-    ),
-    tasks=[
-        PipelineTaskDefinition(
-            pipeline_task_id="build_recording_scenes",
-            name="Build recording scenes",
-            order=0,
-            job_type=JobType.BUILD_RECORDING_SCENES,
-            outputs=_BUILD_RECORDING_SCENES_OUTPUTS,
-        ),
+
+def _scene_registration_tasks(build_task_id: str) -> list[PipelineTaskDefinition]:
+    """What follows a Scene build, whatever its source: register the built
+    revisions, optionally compose exactly those revisions, then validate and
+    profile them."""
+    return [
         PipelineTaskDefinition(
             pipeline_task_id="register_scenes",
             name="Register scenes",
             order=1,
             job_type=JobType.REGISTER_SCENES,
-            depends_on_pipeline_task_ids=["build_recording_scenes"],
+            depends_on_pipeline_task_ids=[build_task_id],
             outputs=_REGISTER_SCENES_OUTPUTS,
         ),
+        _compose_task(order=2, register_task_id="register_scenes"),
         PipelineTaskDefinition(
             pipeline_task_id="validate_scene",
             name="Validate scenes",
-            order=2,
+            order=3,
             job_type=JobType.VALIDATE_SCENE,
             depends_on_pipeline_task_ids=["register_scenes"],
             outputs=_VALIDATE_SCENE_OUTPUTS,
@@ -333,47 +395,84 @@ RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
         PipelineTaskDefinition(
             pipeline_task_id="profile_scene",
             name="Profile scenes",
-            order=3,
+            order=4,
             job_type=JobType.PROFILE_SCENE,
             depends_on_pipeline_task_ids=["register_scenes"],
             optional=True,
             outputs=_PROFILE_SCENE_OUTPUTS,
         ),
+    ]
+
+
+RECORDING_SCENE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.RECORDING_SCENE_BUILDING,
+    name="Recording Scene Building",
+    description=(
+        "Build the canonical Scenes of one registered RobotRun recording "
+        "(robot_run_id + build_config), register them as immutable unit "
+        "revisions, optionally compose exactly those revisions into a new "
+        "DatasetVersion, then validate and profile the registered revisions. "
+        "Builds from one RobotRun per run; the run itself names no "
+        "DatasetVersion."
+    ),
+    dataset_version_scope=False,
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="build_recording_scenes",
+            name="Build recording scenes",
+            order=0,
+            job_type=JobType.BUILD_RECORDING_SCENES,
+            outputs=_BUILD_RECORDING_SCENES_OUTPUTS,
+        ),
+        *_scene_registration_tasks("build_recording_scenes"),
     ],
 )
 
 
-RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
-    type=PipelineType.RECORDING_EPISODE_BUILDING,
-    name="Recording Episode Building",
+SNAPSHOT_SCENE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.SNAPSHOT_SCENE_BUILDING,
+    name="Snapshot Scene Building",
     description=(
-        "Build the canonical Episodes of one registered RobotRun recording "
-        "(robot_run_id + build_config), register them as the complete set "
-        "of that recording scope in the DatasetVersion, then validate and "
-        "profile the registered revisions. A sibling of "
-        "recording_scene_building: Episodes are built from the recording, "
-        "never from Scenes. Builds from one RobotRun per run."
+        "Build the canonical Scenes of the content of one registered "
+        "SourceSnapshot (snapshot_id + build_config, optionally unit_keys), "
+        "register them as immutable unit revisions, optionally compose exactly "
+        "those revisions into a new DatasetVersion, then validate and profile "
+        "the registered revisions. The snapshot is resolved to its content "
+        "once; every snapshot of the same bytes builds the same revisions. No "
+        "RobotRun is involved and the run names no DatasetVersion."
     ),
+    dataset_version_scope=False,
     tasks=[
         PipelineTaskDefinition(
-            pipeline_task_id="build_recording_episodes",
-            name="Build recording episodes",
+            pipeline_task_id="build_snapshot_scenes",
+            name="Build snapshot scenes",
             order=0,
-            job_type=JobType.BUILD_RECORDING_EPISODES,
-            outputs=_BUILD_RECORDING_EPISODES_OUTPUTS,
+            job_type=JobType.BUILD_SNAPSHOT_SCENES,
+            outputs=_BUILD_SNAPSHOT_SCENES_OUTPUTS,
         ),
+        *_scene_registration_tasks("build_snapshot_scenes"),
+    ],
+)
+
+
+def _episode_registration_tasks(build_task_id: str) -> list[PipelineTaskDefinition]:
+    """What follows an Episode build, whatever its source: register the built
+    revisions, optionally compose exactly those revisions, then validate and
+    profile them."""
+    return [
         PipelineTaskDefinition(
             pipeline_task_id="register_episodes",
             name="Register episodes",
             order=1,
             job_type=JobType.REGISTER_EPISODES,
-            depends_on_pipeline_task_ids=["build_recording_episodes"],
+            depends_on_pipeline_task_ids=[build_task_id],
             outputs=_REGISTER_EPISODES_OUTPUTS,
         ),
+        _compose_task(order=2, register_task_id="register_episodes"),
         PipelineTaskDefinition(
             pipeline_task_id="validate_episode",
             name="Validate episodes",
-            order=2,
+            order=3,
             job_type=JobType.VALIDATE_EPISODE,
             depends_on_pipeline_task_ids=["register_episodes"],
             outputs=_VALIDATE_EPISODE_OUTPUTS,
@@ -382,12 +481,63 @@ RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
         PipelineTaskDefinition(
             pipeline_task_id="profile_episode",
             name="Profile episodes",
-            order=3,
+            order=4,
             job_type=JobType.PROFILE_EPISODE,
             depends_on_pipeline_task_ids=["register_episodes"],
             optional=True,
             outputs=_PROFILE_EPISODE_OUTPUTS,
         ),
+    ]
+
+
+RECORDING_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.RECORDING_EPISODE_BUILDING,
+    name="Recording Episode Building",
+    description=(
+        "Build the canonical Episodes of one registered RobotRun recording "
+        "(robot_run_id + build_config), register them as immutable unit "
+        "revisions, optionally compose exactly those revisions into a new "
+        "DatasetVersion, then validate and profile the registered revisions. "
+        "A sibling of recording_scene_building: Episodes are built from the "
+        "recording, never from Scenes. Builds from one RobotRun per run; the "
+        "run itself names no DatasetVersion."
+    ),
+    dataset_version_scope=False,
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="build_recording_episodes",
+            name="Build recording episodes",
+            order=0,
+            job_type=JobType.BUILD_RECORDING_EPISODES,
+            outputs=_BUILD_RECORDING_EPISODES_OUTPUTS,
+        ),
+        *_episode_registration_tasks("build_recording_episodes"),
+    ],
+)
+
+
+SNAPSHOT_EPISODE_BUILDING_PIPELINE = PipelineDefinition(
+    type=PipelineType.SNAPSHOT_EPISODE_BUILDING,
+    name="Snapshot Episode Building",
+    description=(
+        "Build the canonical Episodes of the content of one registered "
+        "SourceSnapshot (snapshot_id + build_config, optionally unit_keys), "
+        "register them as immutable unit revisions, optionally compose exactly "
+        "those revisions into a new DatasetVersion, then validate and profile "
+        "the registered revisions. The snapshot is resolved to its content "
+        "once; every snapshot of the same bytes builds the same revisions. No "
+        "RobotRun is involved and the run names no DatasetVersion."
+    ),
+    dataset_version_scope=False,
+    tasks=[
+        PipelineTaskDefinition(
+            pipeline_task_id="build_snapshot_episodes",
+            name="Build snapshot episodes",
+            order=0,
+            job_type=JobType.BUILD_SNAPSHOT_EPISODES,
+            outputs=_BUILD_SNAPSHOT_EPISODES_OUTPUTS,
+        ),
+        *_episode_registration_tasks("build_snapshot_episodes"),
     ],
 )
 
@@ -656,7 +806,9 @@ EPISODE_LEARNING_DATA_BUILDING_PIPELINE = PipelineDefinition(
 
 BUILTIN_PIPELINE_DEFINITIONS = [
     RECORDING_SCENE_BUILDING_PIPELINE,
+    SNAPSHOT_SCENE_BUILDING_PIPELINE,
     RECORDING_EPISODE_BUILDING_PIPELINE,
+    SNAPSHOT_EPISODE_BUILDING_PIPELINE,
     SCENE_ML_EVALUATION_PIPELINE,
     EPISODE_LEARNING_DATA_BUILDING_PIPELINE,
 ]

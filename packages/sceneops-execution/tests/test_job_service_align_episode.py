@@ -1,11 +1,11 @@
 """ALIGN_EPISODE's pre-execution-key source resolution.
 
-An unpinned request resolves exactly the EPISODE_MANIFEST revision the
-EpisodeRecord points to (ADR-007 §14.4) -- never the newest artifact -- so
-dedup follows source content. Exercised through JobService.create_job(),
+An unpinned request resolves exactly the EPISODE_MANIFEST revision its
+DatasetVersion's member pins (ADR-015 §6.4, §7) -- never the newest artifact
+-- so dedup follows source content. Exercised through JobService.create_job(),
 the real Job API entry point, with in-memory fakes; ``FakeArtifactRepository.add``
-models a registration that repoints the record (or, with ``register=False``,
-a built but unregistered revision).
+models a registration that repins the member (or, with ``register=False``,
+a built but unpinned revision).
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ from sceneops_core.artifacts.schemas import (
     ArtifactRecord,
 )
 from sceneops_core.episodes.alignment import TemporalAlignmentConfig
-from sceneops_core.episodes.schemas import EpisodeRecord
+from types import SimpleNamespace
+
 from sceneops_core.jobs.schemas import (
     CreateJobRequest,
     JobEvent,
@@ -84,30 +85,23 @@ class FakeJobEventRepository:
 
 
 class FakeEpisodeRepository:
+    """The pins of DatasetVersion d1/v1: episode_id -> (artifact id,
+    checksum). The resolver reads only the pin of a member revision."""
+
     def __init__(self) -> None:
-        self.records: dict[str, EpisodeRecord] = {}
+        self.pins: dict[str, SimpleNamespace] = {}
 
     def point(self, episode_id: str, artifact_id: str, checksum: str) -> None:
-        self.records[episode_id] = EpisodeRecord(
+        self.pins[episode_id] = SimpleNamespace(
             episode_id=episode_id,
-            dataset_id=DATASET_ID,
-            dataset_version=DATASET_VERSION,
-            robot_run_id="run-1",
-            unit_key="recording",
-            producer_fingerprint="sha256:" + "f" * 64,
             manifest_artifact_id=artifact_id,
             manifest_checksum=checksum,
-            window_clock="sensor.header_stamp",
-            window_start_timestamp_ns=0,
-            window_end_timestamp_ns=1,
-            observation_count=0,
-            state_count=1,
-            action_count=0,
-            event_count=0,
         )
 
-    async def get(self, episode_id: str) -> EpisodeRecord | None:
-        return self.records.get(episode_id)
+    async def get_member_revision(self, *, dataset_id, dataset_version, episode_id):
+        if (dataset_id, dataset_version) != (DATASET_ID, DATASET_VERSION):
+            return None
+        return self.pins.get(episode_id)
 
 
 class FakeArtifactRepository:
@@ -348,9 +342,25 @@ class TestCurrentSourceSelection:
 
 class TestUnresolvableSource:
     @pytest.mark.asyncio
+    async def test_unpinned_episode_without_a_dataset_version_is_refused(self) -> None:
+        """An Episode has no current revision: without the DatasetVersion
+        whose member to read, an unpinned request cannot be resolved."""
+        service, _, artifacts = _service()
+        artifacts.add(artifact_id="art-A", checksum="sha256:" + "a" * 64)
+        request = CreateJobRequest(
+            type=JobType.ALIGN_EPISODE,
+            params={
+                "episodes": [{"episode_id": EPISODE_ID}],
+                "alignment_config": _config_dict(),
+            },
+        )
+        with pytest.raises(ValueError, match="dataset_id and dataset_version"):
+            await service.create_job(request)
+
+    @pytest.mark.asyncio
     async def test_unregistered_episode_fails_clearly(self) -> None:
         service, _, _artifacts = _service()
-        with pytest.raises(ValueError, match="is not registered"):
+        with pytest.raises(ValueError, match="is not a member of"):
             await service.create_job(_request())
 
     @pytest.mark.asyncio
@@ -496,7 +506,7 @@ class TestSeveralEpisodes:
             artifact_id="art-1", checksum="sha256:" + "1" * 64, episode_id="ep-1"
         )
 
-        with pytest.raises(ValueError, match="'ep-9' is not registered"):
+        with pytest.raises(ValueError, match="'ep-9' is not a member of"):
             await service.create_job(
                 _request(episodes=[{"episode_id": "ep-1"}, {"episode_id": "ep-9"}])
             )

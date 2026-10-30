@@ -57,16 +57,18 @@ Details and the dependency rules: [Repository structure](docs/architecture/repos
 
 ### Pipelines and jobs
 
-A Pipeline exists only where multi-stage orchestration, retry and lineage justify it. SceneOps has exactly four:
+A Pipeline exists only where multi-stage orchestration, retry and lineage justify it. SceneOps has exactly six:
 
 | Pipeline                         | Stages                                                                                              |
 | -------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `recording_scene_building`       | RobotRun → `build_recording_scenes` → `register_scenes` → `validate_scene` → `profile_scene`        |
-| `recording_episode_building`     | RobotRun → `build_recording_episodes` → `register_episodes` → `validate_episode` → `profile_episode` |
+| `recording_scene_building`       | RobotRun → `build_recording_scenes` → `register_scenes` → `compose_dataset_version` (optional) → `validate_scene` → `profile_scene` |
+| `snapshot_scene_building`        | SourceSnapshot (nuScenes v1.0) → `build_snapshot_scenes` → `register_scenes` → `compose_dataset_version` (optional) → `validate_scene` → `profile_scene` |
+| `recording_episode_building`     | RobotRun → `build_recording_episodes` → `register_episodes` → `compose_dataset_version` (optional) → `validate_episode` → `profile_episode` |
+| `snapshot_episode_building`      | SourceSnapshot (LeRobot v3.0) → `build_snapshot_episodes` → `register_episodes` → `compose_dataset_version` (optional) → `validate_episode` → `profile_episode` |
 | `scene_ml_evaluation`            | pinned label sets + policy → `build_scene_sample_views` → `mine_scenarios` → `score_scenario_readiness` → `predict_detection` → `evaluate_detection` |
 | `episode_learning_data_building` | pinned Episodes + config → `align_episode` → `export_learning_data`                                  |
 
-Single operations are atomic Jobs (`POST /jobs`): `register_robot_run`, `import_labels`, `build_scene_sample_views`, `mine_scenarios`, `predict_detection`, `evaluate_detection`, `align_episode`, `validate_aligned_episode`, `profile_aligned_episode`, `export_learning_data`, `curate_episodes`, and the robot-telemetry and analytics-snapshot jobs. A job that is a pipeline stage is the same handler as the atomic job. Details: [`docs/architecture/jobs-and-pipelines.md`](docs/architecture/jobs-and-pipelines.md).
+Single operations are atomic Jobs (`POST /jobs`): `register_robot_run`, `register_source_snapshot`, `compose_dataset_version` (the only way a DatasetVersion is created), `import_labels`, `build_scene_sample_views`, `mine_scenarios`, `predict_detection`, `evaluate_detection`, `align_episode`, `validate_aligned_episode`, `profile_aligned_episode`, `export_learning_data`, `curate_episodes`, and the robot-telemetry and analytics-snapshot jobs. A job that is a pipeline stage is the same handler as the atomic job. Details: [`docs/architecture/jobs-and-pipelines.md`](docs/architecture/jobs-and-pipelines.md).
 
 ```text
 PipelineRun → PipelineTaskRun → durable Job → asynchronous dispatch → Celery worker → JobRunner → domain handler
@@ -90,7 +92,7 @@ A successful mutating API response means PostgreSQL has committed; operations th
 - **ScenarioSet** — a curated selection over pinned sample views with explicit criteria; an immutable revision.
 - **Prediction / evaluation** — derived results that pin the prediction, label and view revisions they consumed; a prediction and a label in different frames fail instead of being compared.
 - **AlignedEpisode / LearningDataExport** — a derived alignment of a pinned Episode revision on an explicit timeline, and a sharded Parquet export of pinned aligned revisions (LeRobot is a downstream output of an export). See [Robot learning data](docs/architecture/robot-learning-data.md).
-- **DatasetVersion** — canonical membership and scope, with registrar-owned summaries. It holds no channel requirements, no source location and no free-form metadata.
+- **DatasetVersion** — canonical membership: each member pins one registered Scene or Episode revision. Canonical registration never writes one. It holds no channel requirements, no source location and no free-form metadata.
 
 Every derived object is an immutable, checksum-pinned revision: it records the exact revisions it was built from, and a consumer resolves a pin, never "the latest". See [Derived layer](docs/architecture/derived-layer.md).
 
@@ -166,7 +168,7 @@ There are four E2E journeys. Platform operations go through FastAPI and bulk dat
 
 | Command | Journey |
 | --- | --- |
-| `make reference-contract-bootstrap` / `make reference-contract-verify` | Developer orchestration, not a pipeline: the golden reference contract — each corpus fixture ingested once by Recording Import and once by Streaming Acquisition under a fixed identity (20 RobotRuns, 20 whole-recording Scenes, 20 Episodes); the bootstrap composes the two baseline bootstraps, the verifier is read-only and reports contract vs non-contract RobotRuns. See [`docs/development/reference-contract.md`](docs/development/reference-contract.md) and [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
+| `make reference-contract-bootstrap` / `make reference-contract-verify` | Developer orchestration, not a pipeline: the golden reference contract — each corpus fixture ingested once by Recording Import and once by Streaming Acquisition under a fixed identity (20 RobotRuns, 20 whole-recording Scenes, 20 Episodes); the bootstrap composes the two baseline bootstraps, the verifier is read-only, reports contract vs non-contract RobotRuns and checks the contract's content against expectations derived independently from the raw corpus. See [`docs/development/reference-contract.md`](docs/development/reference-contract.md), [`docs/development/reference-verification.md`](docs/development/reference-verification.md) and [`docs/development/canonical-baseline.md`](docs/development/canonical-baseline.md) |
 | `make e2e-streaming-equivalence` | Read-only: the reference contract's Recording Import and Streaming Acquisition RobotRuns of one fixture, read from the ArtifactStore, are semantically equivalent in acquisition and in canonical Scenes and Episodes (creates no state; needs neither Kafka nor ROS 2) |
 | `make e2e-scene-ml` | Scenes → labels → sample views → ScenarioSet → prediction → evaluation (mock backend), into the fixed Dataset `sceneops-test-scene-ml` |
 | `make e2e-episode-learning` | Episodes → AlignedEpisodes → learning export → export verification + LeRobot round trip, into the fixed Dataset `sceneops-test-episode-learning` |
@@ -213,9 +215,10 @@ Representative routes:
 ```text
 GET  /health
 GET  /api/v1/datasets/{id}/versions/{v}/quality
-GET  /api/v1/scenes/{scene_id}/quality
-GET  /api/v1/episodes                                  # filter by dataset_id/robot_run_id/mission_id
-GET  /api/v1/episodes/{episode_id}/manifest
+GET  /api/v1/scenes/{scene_id}/quality?manifest_checksum=   # or ?dataset_id=&dataset_version=
+GET  /api/v1/episodes                                  # Episode units, filter by robot_run_id
+GET  /api/v1/episodes/{episode_id}/manifest?manifest_checksum=
+GET  /api/v1/datasets/{id}/versions/{v}/episodes       # the revisions a version pins
 POST /api/v1/robot-runs:register                       # {manifest_uri} -> REGISTER_ROBOT_RUN Job
 POST /api/v1/pipelines/runs                            # the four pipeline types
 POST /api/v1/pipelines/runs/{id}/execute
@@ -288,7 +291,7 @@ The code-verified list is in [`docs/architecture/limitations.md`](docs/architect
 * Sample views associate by nearest / previous only (no pose interpolation); evaluation applies no frame transform between a prediction and a label.
 * Episodes have no label sets; learning export is numeric scalar / vector only.
 * Streamed capture reaches a canonical `RobotRun` through recoverable one-shot commands (`publish-pending`, `reconcile --once --apply`; `make recovery-up` loops them locally), not through a trigger in capture itself; nothing supervises capture, and there is no live robot control.
-* A Job whose worker died, or work whose Celery message was lost, is recovered only while execution recovery runs (`make recovery-up`), and pipeline tasks run strictly serially; capture replays the whole Kafka topic; artifacts are never deleted by the platform.
+* A Job whose worker died, or work whose Celery message was lost, is recovered only while execution recovery runs (`make recovery-up`), and pipeline tasks run strictly serially; a capture started without its run's Kafka start position scans the whole topic; artifacts are never deleted by the platform.
 * DuckDB queries only work against locally downloaded Parquet files.
 * Operations and leaderboard APIs exist, but there is no web UI.
 

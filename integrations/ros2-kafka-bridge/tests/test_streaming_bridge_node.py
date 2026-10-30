@@ -34,16 +34,24 @@ from tf2_msgs.msg import TFMessage
 from sceneops_streaming import (  # noqa: E402
     DEFAULT_REGISTRY,
     ChannelSpec,
+    DeliveredRecord,
     EnvelopeEncoding,
+    KafkaStartPosition,
+    ProducerQueueFullError,
     RunEventType,
     TelemetryEnvelope,
     TimestampRule,
     build_channel_registry,
+    is_control_envelope,
+    parse_run_end_telemetry_count,
     parse_run_event,
 )
 
 from sceneops_streaming_bridge.node import (  # noqa: E402
+    RUN_STARTED_PREFIX,
+    RunStartError,
     StreamingBridgeNode,
+    run_started_line,
     subscription_qos,
 )
 
@@ -64,9 +72,27 @@ class FakeProducerBridge:
     def __init__(self) -> None:
         self.published: list[TelemetryEnvelope] = []
         self.closed = False
+        self.flushed = 0
+        self.flush_error: Exception | None = None
+        self.start_error: Exception | None = None
+        self.next_offset = 0
 
     def publish(self, envelope: TelemetryEnvelope) -> None:
         self.published.append(envelope)
+
+    def publish_and_wait(
+        self, envelope: TelemetryEnvelope, timeout_seconds: float = 10.0
+    ) -> DeliveredRecord:
+        if self.start_error is not None:
+            raise self.start_error
+        self.published.append(envelope)
+        offset, self.next_offset = self.next_offset, self.next_offset + 1
+        return DeliveredRecord("fake-topic", 2, 40 + offset)
+
+    def flush(self, timeout_seconds: float = 10.0) -> None:
+        self.flushed += 1
+        if self.flush_error is not None:
+            raise self.flush_error
 
     def close(self, timeout_seconds: float = 10.0) -> None:
         self.closed = True
@@ -648,23 +674,277 @@ class TestLifecycleEvents:
         finally:
             node.destroy_node()
 
-    def test_lifecycle_event_publish_failure_is_logged_and_never_raises(self):
-        class RaisingBridge:
-            def publish(self, envelope):
-                raise RuntimeError("simulated Kafka failure")
-
-            def close(self, timeout_seconds=10.0):
-                pass
-
-        # A broken control-event publish must never prevent the node from
-        # starting and serving real telemetry.
+    def test_run_end_follows_a_successful_telemetry_flush(self, fake_bridge):
         node = StreamingBridgeNode(
             robot_id=ROBOT_ID,
             robot_run_id=ROBOT_RUN_ID,
-            producer_bridge=RaisingBridge(),
+            producer_bridge=fake_bridge,
             emit_lifecycle_events=True,
         )
         try:
-            node.shutdown()  # must also not raise
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            node.shutdown()
+
+            assert fake_bridge.flushed == 1
+            assert fake_bridge.closed
+            assert parse_run_event(fake_bridge.published[-1]) is RunEventType.RUN_END
         finally:
             node.destroy_node()
+
+    def _lifecycle_node(self, fake_bridge):
+        return StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+
+    def test_run_end_declares_the_number_of_telemetry_sequence_numbers(
+        self, fake_bridge
+    ):
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            _handle(node, "/vehicle/imu", _make_imu(1, 0))
+            _handle(node, "/vehicle/odom", _make_odometry(2, 0))
+            node.shutdown()
+
+            run_end = fake_bridge.published[-1]
+            assert parse_run_event(run_end) is RunEventType.RUN_END
+            assert parse_run_end_telemetry_count(run_end) == 3
+            telemetry = [e.sequence_number for e in fake_bridge.published[1:-1]]
+            assert telemetry == [0, 1, 2]  # the declared space is 0..count-1
+        finally:
+            node.destroy_node()
+
+    def test_run_end_of_a_run_with_no_telemetry_declares_zero(self, fake_bridge):
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+
+            _start, run_end = fake_bridge.published
+            assert parse_run_end_telemetry_count(run_end) == 0
+        finally:
+            node.destroy_node()
+
+    def test_run_end_count_includes_a_message_that_failed_before_the_producer(
+        self, fake_bridge
+    ):
+        """A tail message the bridge failed to forward leaves no gap capture
+        could see; the declared count keeps it visible."""
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            _handle(node, "/vehicle/status", BatteryState())  # zero stamp: fails
+            assert (node.published_count, node.failed_count) == (1, 1)
+            node.shutdown()
+
+            telemetry = fake_bridge.published[1:-1]
+            assert [e.sequence_number for e in telemetry] == [0]
+            assert parse_run_end_telemetry_count(fake_bridge.published[-1]) == 2
+        finally:
+            node.destroy_node()
+
+    def test_run_end_is_withheld_when_telemetry_delivery_failed(self, fake_bridge):
+        """Delivery is unconfirmed, so the broker may not hold records the
+        count includes; no RUN_END makes capture refuse the run."""
+        fake_bridge.flush_error = RuntimeError("simulated delivery failure")
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            _handle(node, "/vehicle/odom", _make_odometry(1, 0))
+            node.shutdown()  # must not raise
+
+            assert len(fake_bridge.published) == 2
+            assert parse_run_event(fake_bridge.published[0]) is RunEventType.RUN_START
+            assert fake_bridge.published[1].channel == "/vehicle/odom"
+            assert fake_bridge.closed
+        finally:
+            node.destroy_node()
+
+    def test_a_message_the_full_producer_queue_rejected_is_a_failure_with_a_gap(
+        self, fake_bridge
+    ):
+        """A record the producer refused never reached librdkafka: the bridge
+        counts it, the run keeps its sequence number as a gap, and RUN_END
+        still declares it, so no flush result can make the run look complete."""
+        node = self._lifecycle_node(fake_bridge)
+        original_publish = fake_bridge.publish
+        refusals = iter([False, True, False])
+
+        def publish(envelope):
+            if not is_control_envelope(envelope) and next(refusals):
+                raise ProducerQueueFullError("queue stayed full")
+            original_publish(envelope)
+
+        fake_bridge.publish = publish
+        try:
+            for second in (1, 2, 3):
+                _handle(node, "/vehicle/odom", _make_odometry(second, 0))
+            assert (node.published_count, node.failed_count) == (2, 1)
+            node.shutdown()
+
+            telemetry = fake_bridge.published[1:-1]
+            assert [e.sequence_number for e in telemetry] == [0, 2]
+            assert parse_run_end_telemetry_count(fake_bridge.published[-1]) == 3
+            assert node.delivery_unconfirmed is False  # a flush succeeded
+        finally:
+            node.destroy_node()
+
+    def test_unconfirmed_delivery_is_recorded_when_the_flush_fails(self, fake_bridge):
+        fake_bridge.flush_error = RuntimeError("simulated delivery failure")
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+            assert node.delivery_unconfirmed is True
+        finally:
+            node.destroy_node()
+
+    def test_a_later_successful_close_does_not_clear_unconfirmed_delivery(
+        self, fake_bridge
+    ):
+        """close() flushes again, and a delivery error is reported only once,
+        so the second flush can succeed after the first one failed."""
+        fake_bridge.flush_error = RuntimeError("simulated delivery failure")
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+            assert fake_bridge.closed
+            assert node.delivery_unconfirmed is True
+        finally:
+            node.destroy_node()
+
+    def test_a_failing_close_is_recorded_and_never_raises(self, fake_bridge):
+        def close(timeout_seconds=10.0):
+            raise TimeoutError("3 telemetry record(s) still undelivered")
+
+        fake_bridge.close = close
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()  # must not raise: the summary line still has to print
+            assert node.delivery_unconfirmed is True
+        finally:
+            node.destroy_node()
+
+    def test_a_confirmed_shutdown_is_not_marked_unconfirmed(self, fake_bridge):
+        node = self._lifecycle_node(fake_bridge)
+        try:
+            node.shutdown()
+            assert node.delivery_unconfirmed is False
+        finally:
+            node.destroy_node()
+
+    def test_run_end_publish_failure_is_logged_and_never_raises(self, fake_bridge):
+        node = self._lifecycle_node(fake_bridge)
+        fake_bridge.publish = lambda envelope: (_ for _ in ()).throw(
+            RuntimeError("simulated Kafka failure")
+        )
+        try:
+            node.shutdown()  # must not raise
+        finally:
+            node.destroy_node()
+
+
+class TestRunStartAcknowledgement:
+    """RUN_START is the one synchronous publish: the node knows where the broker
+    stored it before it subscribes to anything, and fails startup otherwise."""
+
+    def test_run_start_position_is_the_acknowledged_delivery(self, fake_bridge):
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            assert node.run_start_position == KafkaStartPosition("fake-topic", 2, 40)
+            assert parse_run_event(fake_bridge.published[0]) is RunEventType.RUN_START
+        finally:
+            node.destroy_node()
+
+    def test_no_position_without_lifecycle_events(self, fake_bridge):
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID, robot_run_id=ROBOT_RUN_ID, producer_bridge=fake_bridge
+        )
+        try:
+            assert node.run_start_position is None
+        finally:
+            node.destroy_node()
+
+    def test_run_start_is_acknowledged_before_any_subscription_exists(
+        self, fake_bridge, monkeypatch
+    ):
+        """The node creates its subscriptions only after the acknowledgement, so
+        no telemetry callback can run before the position is known."""
+        events: list[str] = []
+        original = fake_bridge.publish_and_wait
+
+        def recording_publish_and_wait(envelope, timeout_seconds=10.0):
+            events.append("run_start_acknowledged")
+            return original(envelope, timeout_seconds)
+
+        fake_bridge.publish_and_wait = recording_publish_and_wait
+        original_create = StreamingBridgeNode.create_subscription
+
+        def recording_create(self, *args, **kwargs):
+            events.append("subscription")
+            return original_create(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            StreamingBridgeNode, "create_subscription", recording_create
+        )
+        node = StreamingBridgeNode(
+            robot_id=ROBOT_ID,
+            robot_run_id=ROBOT_RUN_ID,
+            producer_bridge=fake_bridge,
+            emit_lifecycle_events=True,
+        )
+        try:
+            assert events[0] == "run_start_acknowledged"
+            assert events.count("subscription") == len(DEFAULT_REGISTRY)
+        finally:
+            node.destroy_node()
+
+    def test_unacknowledged_run_start_fails_startup_without_subscribing(
+        self, fake_bridge, monkeypatch
+    ):
+        fake_bridge.start_error = TimeoutError("no delivery report")
+        subscriptions: list[object] = []
+        original_create = StreamingBridgeNode.create_subscription
+        monkeypatch.setattr(
+            StreamingBridgeNode,
+            "create_subscription",
+            lambda self, *a, **k: subscriptions.append(1)
+            or original_create(self, *a, **k),
+        )
+        with pytest.raises(RunStartError, match="not acknowledged"):
+            StreamingBridgeNode(
+                robot_id=ROBOT_ID,
+                robot_run_id=ROBOT_RUN_ID,
+                producer_bridge=fake_bridge,
+                emit_lifecycle_events=True,
+            )
+        assert subscriptions == []
+        assert fake_bridge.published == []
+        assert fake_bridge.closed  # the failed start releases the producer
+
+    def test_run_started_line_is_parseable_and_carries_the_capture_argument(self):
+        position = KafkaStartPosition("sceneops.robot.telemetry.v1", 2, 18432)
+        line = run_started_line(ROBOT_RUN_ID, position)
+
+        assert line.startswith(RUN_STARTED_PREFIX)
+        assert "\n" not in line
+        event = json.loads(line[len(RUN_STARTED_PREFIX) :])
+        assert event == {
+            "event": "run_started",
+            "robot_run_id": ROBOT_RUN_ID,
+            "topic": "sceneops.robot.telemetry.v1",
+            "partition": 2,
+            "offset": 18432,
+            "start_position": "sceneops.robot.telemetry.v1:2:18432",
+        }
+        assert KafkaStartPosition.parse(event["start_position"]) == position

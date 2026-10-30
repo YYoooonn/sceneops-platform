@@ -171,7 +171,9 @@ class LocalArtifactStore(ArtifactStore):
     def _to_path(self, uri: ArtifactUri) -> Path:
         parsed = urlparse(uri)
         if parsed.scheme == "file":
-            return Path(parsed.path)
+            # Verbatim after the authority: urlparse's path stops at '?' and
+            # '#', which are ordinary characters in a file name.
+            return Path(uri.split("://", 1)[1][len(parsed.netloc) :])
         if parsed.scheme:
             raise ValueError(f"Unsupported local artifact URI scheme: {parsed.scheme}")
         return Path(uri)

@@ -7,12 +7,13 @@
       -> plan_recording_scenes()              complete SceneManifest set + payload plan
       -> payload bytes, write-once            {payload_root}/{robot_run_id}/{artifact_id}
       -> OBSERVATION_PAYLOAD ArtifactRecords  deterministic ids; reuse or conflict
-      -> manifests, write-once                checksum-qualified keys
+      -> manifests, write-once                {canonical_root}/scenes/{scene_id}/manifest-<sha256>.json
       -> SCENE_MANIFEST ArtifactRecords       deterministic ids; reuse or conflict
       -> commit; result.manifest_artifact_ids -> REGISTER_SCENES
 
 The builder owns its output bytes and ArtifactRecords; it never writes a
-SceneRecord or DatasetVersion state (§17.5 rule 2).
+Scene unit or revision (§17.5 rule 2) and never reads or writes a
+DatasetVersion.
 
 Failure and retry: every key and artifact id is deterministic, so a retry
 after a crash between writing bytes and committing ArtifactRecords
@@ -25,12 +26,10 @@ garbage collection, §19).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 
 from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.artifacts.schemas.refs import ArtifactRef
-from sceneops_core.common.canonical_json import canonical_json_bytes
 from sceneops_core.common.schemas import JsonDict
 from sceneops_core.jobs.schemas import (
     BuildRecordingScenesJobParams,
@@ -38,36 +37,23 @@ from sceneops_core.jobs.schemas import (
     JobType,
 )
 from sceneops_core.pipelines.schemas import PipelineTaskInputs
-from sceneops_core.scenes.schemas import scene_id_for
+from sceneops_core.provenance import PinnedRecording
 from sceneops_recording import check_l1_recording
 
-from sceneops_worker.core.context import WorkerContext
 from sceneops_worker.jobs.base import JobHandler, JobHandlerRequest
 from sceneops_worker.recordings.artifact_records import (
     ArtifactRecordConflictError,
     require_same_artifact as _require_same,
 )
 from sceneops_worker.robots.resolver import resolve_recording
+from sceneops_worker.scenes.publication import publish_scene_manifests
+from sceneops_scenes.plan import SceneBuildPlan
 from sceneops_scenes.recording_builder import (
     PlannedPayload,
-    RecordingRevision,
     RecordingSceneBuildError,
-    SceneBuildPlan,
     iter_planned_payloads,
     plan_recording_scenes,
 )
-
-SCENE_MANIFEST_ARTIFACT_ID_SCHEMA_V1 = "sceneops.scene_manifest_artifact_id/v1"
-
-
-def scene_manifest_artifact_id(*, scene_id: str, checksum: str) -> str:
-    document = {
-        "artifact_id_schema": SCENE_MANIFEST_ARTIFACT_ID_SCHEMA_V1,
-        "scene_id": scene_id,
-        "checksum": checksum,
-    }
-    digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
-    return f"scene-manifest-{digest[:32]}"
 
 
 class BuildRecordingScenesJobHandler(
@@ -82,28 +68,13 @@ class BuildRecordingScenesJobHandler(
         return BuildRecordingScenesJobParams
 
     def build_job_params(self, inputs: PipelineTaskInputs) -> JsonDict:
-        return {
-            "dataset_id": inputs.dataset.dataset_id if inputs.dataset else None,
-            "dataset_version": inputs.dataset.dataset_version
-            if inputs.dataset
-            else None,
-            **inputs.params,
-        }
+        return dict(inputs.params)
 
     async def run(
         self, request: JobHandlerRequest[BuildRecordingScenesJobParams]
     ) -> BuildRecordingScenesJobResult:
         params = request.params
         context = request.context
-        version = await context.dataset_store.get_version(
-            dataset_id=params.dataset_id, version=params.dataset_version
-        )
-        if version is None:
-            raise ValueError(
-                "DatasetVersion is not registered: "
-                f"{params.dataset_id}/{params.dataset_version}"
-            )
-
         async with resolve_recording(
             robot_run_id=params.robot_run_id,
             robot_store=context.robot_store,
@@ -119,7 +90,7 @@ class BuildRecordingScenesJobHandler(
                     f"recording of RobotRun {params.robot_run_id} is not L1-conformant: "
                     f"{details[:5]}"
                 )
-            revision = RecordingRevision(
+            revision = PinnedRecording(
                 robot_run_id=recording.robot_run_id,
                 recording_checksum=recording.checksum,
                 recording_clock=recording.source_clock,
@@ -132,12 +103,15 @@ class BuildRecordingScenesJobHandler(
             )
             created_payloads = await self._publish_payloads(request, plan, recording)
 
-        manifest_artifact_ids = await self._publish_manifests(request, plan)
+        manifest_artifact_ids, _ = await publish_scene_manifests(
+            context,
+            plan,
+            job_id=request.job.job_id,
+            pipeline_run_id=request.job.pipeline_run_id,
+        )
         await context.commit()
 
         return BuildRecordingScenesJobResult(
-            dataset_id=params.dataset_id,
-            dataset_version=params.dataset_version,
             robot_run_id=params.robot_run_id,
             recording_checksum=revision.recording_checksum,
             producer_fingerprint=plan.producer.producer_fingerprint,
@@ -207,57 +181,8 @@ class BuildRecordingScenesJobHandler(
             size_bytes=planned.size_bytes,
         )
 
-    # ── manifests ──────────────────────────────────────────────────────────────
-
-    async def _publish_manifests(
-        self,
-        request: JobHandlerRequest[BuildRecordingScenesJobParams],
-        plan: SceneBuildPlan,
-    ) -> list[str]:
-        params = request.params
-        context: WorkerContext = request.context
-        artifact_ids: list[str] = []
-        for scene in plan.scenes:
-            scene_id = scene_id_for(
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                source=scene.manifest.lineage.source,
-            )
-            published = await context.scene_artifact_store.publish_canonical_manifest(
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                scene_id=scene_id,
-                manifest=scene.manifest,
-            )
-            artifact_id = scene_manifest_artifact_id(
-                scene_id=scene_id, checksum=published.checksum
-            )
-            ref = ArtifactRef(
-                kind=ArtifactKind.SCENE_MANIFEST,
-                uri=published.uri,
-                media_type="application/json",
-                checksum=published.checksum,
-                size_bytes=published.size_bytes,
-            )
-            record, registered = await context.artifact_record_store.create_if_absent(
-                artifact_id=artifact_id,
-                ref=ref,
-                owner_type=ArtifactOwnerType.SCENE,
-                owner_id=scene_id,
-                dataset_id=params.dataset_id,
-                dataset_version=params.dataset_version,
-                scene_id=scene_id,
-                job_id=request.job.job_id,
-                pipeline_run_id=request.job.pipeline_run_id,
-            )
-            if not registered:
-                _require_same(record, ref)
-            artifact_ids.append(artifact_id)
-        return artifact_ids
-
 
 __all__ = [
     "ArtifactRecordConflictError",
     "BuildRecordingScenesJobHandler",
-    "scene_manifest_artifact_id",
 ]

@@ -48,7 +48,12 @@ from sceneops_core.episodes.alignment import (
     ChannelNamespace,
     alignment_config_hash,
 )
-from sceneops_core.episodes.alignment.schemas import AlignedSignal, LearningStep
+from sceneops_core.common.canonical_json import canonical_json_bytes
+from sceneops_core.episodes.alignment.schemas import (
+    AlignedSignal,
+    AlignedValue,
+    LearningStep,
+)
 
 LEARNING_EPISODES_SCHEMA: dict[str, pl.PolarsDataType] = {
     "dataset_id": pl.Utf8,
@@ -97,6 +102,7 @@ LEARNING_SIGNALS_SCHEMA: dict[str, pl.PolarsDataType] = {
     "value_vector": pl.List(pl.Float64),
     "reference_modality": pl.Utf8,
     "reference_uri": pl.Utf8,
+    "reference_selector": pl.Utf8,
     "source_timestamp_us": pl.Int64,
     "time_delta_us": pl.Int64,
     "source_before_timestamp_us": pl.Int64,
@@ -162,6 +168,16 @@ def build_learning_steps_table(
     return pl.DataFrame(rows, schema=LEARNING_STEPS_SCHEMA)
 
 
+def _reference_selector(value: AlignedValue | None) -> str | None:
+    """The part of ``reference_uri``'s object a reference value names (a
+    video frame), as canonical JSON: without it the URI would name the whole
+    object."""
+    selector = value.reference_metadata.get("selector") if value is not None else None
+    if selector is None:
+        return None
+    return canonical_json_bytes(selector).decode()
+
+
 def _signal_row(
     *,
     dataset_id: str,
@@ -197,6 +213,7 @@ def _signal_row(
             else None
         ),
         "reference_uri": value.reference_uri if value is not None else None,
+        "reference_selector": _reference_selector(value),
         "source_timestamp_us": signal.source_timestamp_us,
         "time_delta_us": signal.time_delta_us,
         "source_before_timestamp_us": signal.source_before_timestamp_us,

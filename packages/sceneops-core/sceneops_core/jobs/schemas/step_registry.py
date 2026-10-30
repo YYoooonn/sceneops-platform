@@ -31,6 +31,12 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("publish_observation_payloads", "Publish observation payloads"),
         step("publish_scene_manifests", "Publish scene manifests"),
     ],
+    JobType.BUILD_SNAPSHOT_SCENES: [
+        step("resolve_snapshot", "Resolve the snapshot to its registered content"),
+        step("materialize_content", "Materialize verified content files"),
+        step("plan_scenes", "Plan scenes"),
+        step("publish_scene_manifests", "Publish scene manifests"),
+    ],
     JobType.IMPORT_LABELS: [
         step("read_label_document", "Read label document"),
         step("validate_label_set", "Validate and canonicalize label set"),
@@ -57,7 +63,7 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
     JobType.REGISTER_SCENES: [
         step("verify_scene_manifests", "Verify scene manifests"),
         step("resolve_identity_scope", "Resolve identity and scope"),
-        step("apply_membership", "Apply membership and summaries"),
+        step("register_revisions", "Register units and revisions"),
     ],
     JobType.MINE_SCENARIOS: [
         step("resolve_sample_views", "Resolve pinned sample views"),
@@ -69,6 +75,10 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("load_scenario_set", "Load scenario set"),
         step("score_scenarios", "Score scenarios"),
         step("save_readiness_report", "Save readiness report"),
+    ],
+    JobType.COMPOSE_DATASET_VERSION: [
+        step("resolve_pins", "Resolve and verify revision pins"),
+        step("commit_composition", "Commit the DatasetVersion"),
     ],
     JobType.EXPORT_ANALYTICS_SNAPSHOT: [
         step("load_scene_records", "Load scene records"),
@@ -93,6 +103,11 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("verify_recording", "Verify published recording"),
         step("register_robot_run", "Register artifacts and RobotRun"),
     ],
+    JobType.REGISTER_SOURCE_SNAPSHOT: [
+        step("load_descriptor", "Load and verify the snapshot descriptor"),
+        step("verify_content", "Verify the content inventory and files"),
+        step("register_snapshot", "Register content and snapshot"),
+    ],
     JobType.INGEST_ROBOT_STATES: [
         step("load_rosbag", "Load rosbag/MCAP file"),
         step("extract_robot_states", "Extract robot states"),
@@ -111,10 +126,16 @@ JOB_STEP_DEFINITIONS_BY_TYPE: dict[JobType, list[JobStepDefinition]] = {
         step("publish_observation_payloads", "Publish observation payloads"),
         step("publish_episode_manifests", "Publish episode manifests"),
     ],
+    JobType.BUILD_SNAPSHOT_EPISODES: [
+        step("resolve_snapshot", "Resolve the snapshot to its registered content"),
+        step("materialize_content", "Materialize verified content files"),
+        step("plan_episodes", "Plan episodes"),
+        step("publish_episode_manifests", "Publish episode manifests"),
+    ],
     JobType.REGISTER_EPISODES: [
         step("verify_episode_manifests", "Verify episode manifests"),
         step("resolve_identity_scope", "Resolve identity and scope"),
-        step("apply_membership", "Apply membership and summaries"),
+        step("register_revisions", "Register units and revisions"),
     ],
     JobType.VALIDATE_EPISODE: [
         step("resolve_episode_revisions", "Resolve episode revisions"),

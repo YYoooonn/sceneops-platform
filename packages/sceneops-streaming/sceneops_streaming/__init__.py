@@ -9,15 +9,29 @@ from .channels import (
 )
 from .config import StreamingSettings, get_settings
 from .consumer import KafkaTelemetryConsumer
-from .contracts import ConsumedTelemetryEnvelope, TelemetryConsumer, TelemetryProducer
+from .contracts import (
+    ConsumedTelemetryEnvelope,
+    DeliveredRecord,
+    KafkaStartPosition,
+    TelemetryConsumer,
+    TelemetryProducer,
+)
 from .control import (
+    RunEndPayloadError,
     RunEventType,
     build_control_envelope,
     is_control_envelope,
+    parse_run_end_telemetry_count,
     parse_run_event,
 )
 from .envelope import EnvelopeEncoding, TelemetryEnvelope, TelemetryEnvelopeVersion
-from .errors import EnvelopeDecodeError
+from .errors import (
+    DeliveryError,
+    EnvelopeDecodeError,
+    ProducerQueueFullError,
+    ReplayExpiredError,
+    StartPositionError,
+)
 from .producer import KafkaTelemetryProducer
 
 __all__ = [
@@ -26,11 +40,18 @@ __all__ = [
     "ChannelRegistry",
     "ChannelSpec",
     "ConsumedTelemetryEnvelope",
+    "DeliveredRecord",
+    "DeliveryError",
     "EnvelopeDecodeError",
     "EnvelopeEncoding",
+    "KafkaStartPosition",
     "KafkaTelemetryConsumer",
     "KafkaTelemetryProducer",
+    "ProducerQueueFullError",
+    "ReplayExpiredError",
+    "RunEndPayloadError",
     "RunEventType",
+    "StartPositionError",
     "StreamingSettings",
     "TelemetryConsumer",
     "TelemetryEnvelope",
@@ -42,5 +63,6 @@ __all__ = [
     "get_settings",
     "is_control_envelope",
     "load_channel_file",
+    "parse_run_end_telemetry_count",
     "parse_run_event",
 ]

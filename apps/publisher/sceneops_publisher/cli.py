@@ -1,4 +1,4 @@
-"""CLI for the database-free Recording Publisher.
+"""CLI for the database-free Publisher of recordings and source snapshots.
 
 ::
 
@@ -74,6 +74,30 @@ it again is the retry. Each publication attempt is also logged to stderr as one
 ``acquisition_recovery {json}`` record and the pass as one
 ``acquisition_recovery_pass {json}`` record.
 
+::
+
+    python -m sceneops_publisher publish-snapshot \\
+        --source-dir /data/raw/lerobot/pusht --format lerobot \\
+        --upstream lerobot/pusht --upstream-revision 7628202a... \\
+        --include README.md --include 'data/**' [--include ...] \\
+        [--annotation license=mit ...] [--root-uri s3://sceneops/artifacts/sources]
+
+preserves the files the declaration selects from a local source tree
+(ADR-015 §5, ``sceneops_sources.publication``): each file under its content id,
+write-once, then the inventory, then the descriptor last as the publication
+marker. Include patterns are written in the selection dialect (``*``, ``?``,
+whole-segment ``**``) and each must match at least one file. On success it
+prints one JSON object::
+
+    snapshot_id, content_id, descriptor_uri, inventory_uri, descriptor_checksum,
+    file_count, total_bytes, files_written, files_reused,
+    inventory_written, descriptor_written     (false => identical object existed)
+
+The printed ``descriptor_uri`` is what ``REGISTER_SOURCE_SNAPSHOT`` takes. The
+source directory, retrieval time and operator are this process's own
+history and are written to no object. A publish that stops before the
+descriptor publishes nothing; running it again is the retry.
+
 ArtifactStore backend/credentials come from environment variables via
 ``sceneops_core.config.ArtifactSettings``, e.g.::
 
@@ -83,7 +107,8 @@ ArtifactStore backend/credentials come from environment variables via
     SCENEOPS_PUBLISHER_ARTIFACT__ACCESS_KEY_ID=minioadmin
     SCENEOPS_PUBLISHER_ARTIFACT__SECRET_ACCESS_KEY=minioadmin
 
-``--root-uri`` defaults to that ArtifactSettings' ``robot_run_root_uri``.
+``--root-uri`` defaults to that ArtifactSettings' ``robot_run_root_uri``
+(``source_root_uri`` for ``publish-snapshot``).
 The root is a normalized publication input: publishing the same recording
 under a different root yields a different manifest.
 """
@@ -98,7 +123,9 @@ from pathlib import Path
 
 from sceneops_core.robots.clock import MCAP_LOG_TIME_CLOCK
 from sceneops_core.robots.manifest import CaptureSource, CaptureSourceKind
+from sceneops_core.sources import SnapshotDeclaration, SnapshotSelection
 from sceneops_recording.recovery_log import configure_cli_logging
+from sceneops_sources import publish_snapshot
 from sceneops_storage import create_artifact_store
 
 from sceneops_recording.capture_scan import scan_capture_volume
@@ -113,7 +140,8 @@ from sceneops_recording.settings import RecordingPublisherSettings
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m sceneops_publisher",
-        description="Publish a finalized MCAP + canonical RobotRunManifest.",
+        description="Publish a finalized MCAP + canonical RobotRunManifest, or a "
+        "source snapshot.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     publish = sub.add_parser("publish")
@@ -157,6 +185,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     pending.add_argument("--root-uri", default=None)
     scan_capture = sub.add_parser("scan-capture")
     scan_capture.add_argument("--capture-root", required=True, type=Path)
+    snapshot = sub.add_parser("publish-snapshot")
+    snapshot.add_argument("--source-dir", required=True, type=Path)
+    snapshot.add_argument("--format", required=True)
+    snapshot.add_argument("--upstream", required=True)
+    snapshot.add_argument("--upstream-revision", required=True)
+    snapshot.add_argument(
+        "--include",
+        action="append",
+        required=True,
+        help="Include pattern relative to --source-dir (repeatable).",
+    )
+    snapshot.add_argument(
+        "--annotation",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Source-declared note such as license=mit (repeatable).",
+    )
+    snapshot.add_argument("--root-uri", default=None)
     compare = sub.add_parser("compare")
     compare.add_argument("--first", required=True, type=Path)
     compare.add_argument("--second", required=True, type=Path)
@@ -243,6 +290,49 @@ async def _publish(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _annotations(pairs: list[str]) -> dict[str, str]:
+    annotations: dict[str, str] = {}
+    for pair in pairs:
+        key, separator, value = pair.partition("=")
+        if not separator:
+            raise ValueError(f"--annotation must be KEY=VALUE, got {pair!r}")
+        if key in annotations:
+            raise ValueError(f"--annotation {key!r} is given twice")
+        annotations[key] = value
+    return annotations
+
+
+async def _publish_snapshot(args: argparse.Namespace) -> dict[str, object]:
+    settings = RecordingPublisherSettings()
+    declaration = SnapshotDeclaration(
+        format=args.format,
+        upstream=args.upstream,
+        upstream_revision=args.upstream_revision,
+        # The selection is a set of patterns: its canonical form is sorted.
+        selection=SnapshotSelection(include=tuple(sorted(set(args.include)))),
+    )
+    published = await publish_snapshot(
+        store=create_artifact_store(settings.artifact),
+        sources_root=args.root_uri or settings.artifact.source_root_uri,
+        source_dir=args.source_dir,
+        declaration=declaration,
+        annotations=_annotations(args.annotation),
+    )
+    return {
+        "snapshot_id": published.snapshot_id,
+        "content_id": published.content_id,
+        "descriptor_uri": published.descriptor_uri,
+        "inventory_uri": published.inventory_uri,
+        "descriptor_checksum": published.descriptor_checksum,
+        "file_count": len(published.inventory.files),
+        "total_bytes": published.inventory.total_bytes,
+        "files_written": published.files_written,
+        "files_reused": published.files_reused,
+        "inventory_written": published.inventory_written,
+        "descriptor_written": published.descriptor_written,
+    }
+
+
 def _check(args: argparse.Namespace) -> int:
     report = check_l1_recording(
         args.mcap_path, require_ros2_profile=not args.any_encoding_profile
@@ -308,6 +398,17 @@ def main(argv: list[str] | None = None) -> int:
         return _scan_capture(args)
     if args.command == "publish-pending":
         return _publish_pending(args)
+    if args.command == "publish-snapshot":
+        try:
+            snapshot = asyncio.run(_publish_snapshot(args))
+        except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero
+            print(
+                f"publish-snapshot failed: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        print(json.dumps(snapshot, sort_keys=True))
+        return 0
     try:
         result = asyncio.run(_publish(args))
     except Exception as exc:  # noqa: BLE001 - CLI boundary: report and exit non-zero

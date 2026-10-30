@@ -11,6 +11,7 @@ resolver instead of a patched one. ``context.artifact_store`` becomes a
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 import uuid
@@ -21,7 +22,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from sceneops_core.artifacts.schemas import ArtifactKind, ArtifactRecord
+from sceneops_core.artifacts.schemas import (
+    ArtifactKind,
+    ArtifactOwnerType,
+    ArtifactRecord,
+)
 from sceneops_core.artifacts.schemas.enums import ArtifactBackend
 from sceneops_core.common.ids import robot_run_recording_artifact_id
 from sceneops_core.robots.schemas import RobotRunRecord
@@ -88,70 +93,103 @@ def register_local_recording(tmp_path):
 
 
 class _StagedSceneStore:
-    """In-memory SceneStore whose writes become visible to other readers
-    only on commit, so registrar all-or-nothing behavior is observable."""
+    """In-memory Scene units, revisions and DatasetVersion pins whose writes
+    become visible to other readers only on commit, so registrar
+    all-or-nothing behavior is observable. Revision registration applies
+    the production decision (``decide_revision_registration``); members are
+    only set up by ``pin``."""
 
     def __init__(self) -> None:
-        self.committed: dict = {}
-        self.working: dict = {}
+        # (revisions {(scene_id, checksum): record},
+        #  members {(dataset_id, version): {scene_id: checksum}})
+        self.committed: tuple[dict, dict] = ({}, {})
+        self.working: tuple[dict, dict] = ({}, {})
 
     def commit(self) -> None:
-        self.committed = dict(self.working)
+        self.committed = copy.deepcopy(self.working)
 
     def rollback(self) -> None:
-        self.working = dict(self.committed)
+        self.working = copy.deepcopy(self.committed)
+
+    # --- test views -------------------------------------------------------------
+
+    def members(self, dataset_id="ds", version="v1", *, committed=True) -> dict:
+        """{scene_id: pinned revision} of one DatasetVersion."""
+        revisions, members = self.committed if committed else self.working
+        pins = members.get((dataset_id, version), {})
+        return {s: revisions[(s, c)] for s, c in sorted(pins.items())}
+
+    def revisions(self, *, committed=True) -> dict:
+        return dict((self.committed if committed else self.working)[0])
+
+    # --- SceneStore -------------------------------------------------------------
 
     async def get(self, scene_id):
-        return self.working.get(scene_id)
+        revisions = await self.list_revisions(scene_id)
+        return revisions[0].unit() if revisions else None
 
-    async def list(
-        self, *, dataset_id=None, dataset_version=None, robot_run_id=None, **_
-    ):
+    async def list(self, *, robot_run_id=None, **_):
+        units = {
+            r.scene_id: r.unit()
+            for r in self.working[0].values()
+            if robot_run_id is None or r.robot_run_id == robot_run_id
+        }
+        return [units[s] for s in sorted(units)]
+
+    async def get_revision(self, *, scene_id, manifest_checksum):
+        return self.working[0].get((scene_id, manifest_checksum))
+
+    async def list_revisions(self, scene_id):
         return sorted(
-            (
-                s
-                for s in self.working.values()
-                if (dataset_id is None or s.dataset_id == dataset_id)
-                and (dataset_version is None or s.dataset_version == dataset_version)
-                and (robot_run_id is None or s.robot_run_id == robot_run_id)
-            ),
-            key=lambda s: s.scene_id,
+            (r for (s, _), r in self.working[0].items() if s == scene_id),
+            key=lambda r: r.manifest_checksum,
         )
 
-    async def list_recording_scope(self, *, dataset_id, dataset_version, robot_run_id):
-        return await self.list(
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            robot_run_id=robot_run_id,
+    async def get_revisions(self, keys):
+        return [self.working[0][k] for k in keys if k in self.working[0]]
+
+    async def register_revision(self, revision):
+        from sceneops_core.provenance import (
+            RevisionDecision,
+            decide_revision_registration,
         )
+        from sceneops_db.repositories import RevisionRegistration
 
-    async def summarize_membership(self, *, dataset_id, dataset_version):
-        from sceneops_db.repositories import SceneMembershipSummary
-
-        scenes = await self.list(dataset_id=dataset_id, dataset_version=dataset_version)
-        return SceneMembershipSummary(
-            scene_count=len(scenes),
-            keyframe_count=sum(s.keyframe_count for s in scenes),
-            observation_count=sum(s.observation_count for s in scenes),
-            observed_channels=sorted({c for s in scenes for c in s.observed_channels}),
+        decision = decide_revision_registration(
+            unit_id=revision.scene_id,
+            candidate=revision,
+            registered=await self.list_revisions(revision.scene_id),
         )
+        key = (revision.scene_id, revision.manifest_checksum)
+        if decision != RevisionDecision.EXISTING_REVISION:
+            self.working[0][key] = revision
+        return RevisionRegistration(decision=decision, revision=self.working[0][key])
 
-    async def insert(self, scene):
-        if scene.scene_id in self.working:
-            raise RuntimeError(f"duplicate scene {scene.scene_id}")
-        self.working[scene.scene_id] = scene
-        return scene
+    async def list_member_revisions(
+        self, *, dataset_id, dataset_version, robot_run_id=None, limit=100, offset=0
+    ):
+        pins = self.working[1].get((dataset_id, dataset_version), {})
+        rows = [
+            self.working[0][(s, c)]
+            for s, c in sorted(pins.items())
+            if robot_run_id is None
+            or self.working[0][(s, c)].robot_run_id == robot_run_id
+        ]
+        return rows[offset : offset + limit]
 
-    async def replace_revision(self, scene):
-        if scene.scene_id not in self.working:
-            raise ValueError(f"Scene not found: {scene.scene_id}")
-        self.working[scene.scene_id] = scene
-        return scene
+    # --- membership (test setup only) ------------------------------------------
 
-    async def delete(self, scene_ids):
-        for scene_id in scene_ids:
-            self.working.pop(scene_id, None)
-        return len(scene_ids)
+    def pin(self, pins, *, dataset_id="ds", version="v1") -> None:
+        """Commit DatasetVersion members for the RevisionPins a registration
+        returned: stands in for a composition, which registration never
+        performs."""
+        members = self.committed[1].setdefault((dataset_id, version), {})
+        for pin in pins:
+            key = (pin.unit_id, pin.manifest_checksum)
+            if pin.unit_id in members or key not in self.committed[0]:
+                raise RuntimeError(f"cannot pin {key}")
+            members[pin.unit_id] = pin.manifest_checksum
+        self.working = copy.deepcopy(self.committed)
 
 
 class SceneWorld:
@@ -159,20 +197,20 @@ class SceneWorld:
     ArtifactStore, with in-memory record stores."""
 
     def __init__(self, root) -> None:
+        from sceneops_core.config import ArtifactSettings
         from sceneops_storage.backends.local import LocalArtifactStore
         from sceneops_scenes.artifacts import SceneArtifactStore
 
         self.root = str(root)
+        self.settings = ArtifactSettings(root_uri=self.root)
         self.artifact_store = LocalArtifactStore(root_uri=self.root)
         self.scene_artifact_store = SceneArtifactStore(
             artifact_store=self.artifact_store,
-            dataset_root_uri=f"{self.root}/datasets",
-            payload_root_uri=f"{self.root}/observation_payloads",
+            canonical_root_uri=f"{self.root}/canonical",
+            payload_root_uri=self.settings.observation_payload_root_uri,
         )
         self.artifacts: dict = {}
         self.scenes = _StagedSceneStore()
-        self.versions: set = set()
-        self.summaries: dict = {}
         self.scene_runs: list = []
         self.robot_runs: dict = {}
         self.commits = 0
@@ -184,6 +222,7 @@ class SceneWorld:
 
     def _build_context(self) -> MagicMock:
         ctx = MagicMock()
+        ctx.settings.artifact = self.settings
         ctx.settings.artifact_root_uri = self.root
         ctx.settings.run_root_uri = f"{self.root}/runs"
         ctx.artifact_store = self.artifact_store
@@ -240,18 +279,6 @@ class SceneWorld:
             label_root_uri=f"{self.root}/labels",
         )
 
-        async def lock(*, dataset_id, version):
-            if (dataset_id, version) not in self.versions:
-                raise ValueError(f"DatasetVersion not found: {dataset_id}/{version}")
-
-        async def replace_summary(*, dataset_id, version, **summary):
-            self.summaries[(dataset_id, version)] = summary
-
-        ctx.dataset_store.lock_version_for_update = AsyncMock(side_effect=lock)
-        ctx.dataset_store.replace_scene_membership_summary = AsyncMock(
-            side_effect=replace_summary
-        )
-
         async def get_run(run_id):
             return self.robot_runs.get(run_id)
 
@@ -274,9 +301,6 @@ class SceneWorld:
         ctx.commit = AsyncMock(side_effect=commit)
         ctx.rollback = AsyncMock(side_effect=rollback)
         return ctx
-
-    def add_dataset_version(self, dataset_id: str = "ds", version: str = "v1") -> None:
-        self.versions.add((dataset_id, version))
 
     def add_robot_run(self, run_id: str, *, recording_checksum: str) -> None:
         from datetime import UTC, datetime
@@ -310,64 +334,53 @@ class SceneWorld:
 
         return build_scene_manifest(**kwargs)
 
-    @property
-    def payload_locator(self):
-        from sceneops_worker.recordings.payload_refs import ArtifactPayloadLocator
+    def payload_uri(self, ref) -> str:
+        """Where the recording builders store the payload ``ref`` names."""
+        from sceneops_storage import PayloadUriResolver
 
-        return ArtifactPayloadLocator(self.context.artifact_record_store)
-
-    def payload_uri(self, artifact_id: str) -> str:
-        return f"{self.root}/payloads/{artifact_id}"
+        return PayloadUriResolver.from_settings(self.settings).resolve(ref.uri)
 
     async def register_payloads(self, manifest) -> None:
         """Store each observation's payload bytes and register its
-        OBSERVATION_PAYLOAD ArtifactRecord, as a producer does."""
+        OBSERVATION_PAYLOAD ArtifactRecord, owned by the Scene's RobotRun,
+        as a recording build does."""
         from sceneops_core.scenes.testing import payload_bytes
 
         for observation in manifest.observations:
             ref = observation.payload
+            run_id, artifact_id = ref.logical_uri().key.split("/")
             await self.artifact_store.write_bytes(
-                self.payload_uri(ref.artifact_id),
-                payload_bytes(observation.observation_id),
+                self.payload_uri(ref), payload_bytes(observation.observation_id)
             )
-            self.artifacts[ref.artifact_id] = ArtifactRecord(
-                artifact_id=ref.artifact_id,
+            self.artifacts[artifact_id] = ArtifactRecord(
+                artifact_id=artifact_id,
                 kind=ArtifactKind.OBSERVATION_PAYLOAD,
-                uri=self.payload_uri(ref.artifact_id),
+                uri=self.payload_uri(ref),
                 media_type=ref.media_type,
                 size_bytes=ref.size_bytes,
                 checksum=ref.checksum,
+                owner_type=ArtifactOwnerType.ROBOT_RUN,
+                owner_id=run_id,
             )
 
-    async def publish(
-        self,
-        manifest,
-        *,
-        dataset_id: str = "ds",
-        version: str = "v1",
-        kind=None,
-        with_payloads: bool = True,
-    ):
+    async def publish(self, manifest, *, kind=None, with_payloads: bool = True):
         """Publish a manifest the way a producer does: payload artifacts,
-        then write-once manifest bytes at the checksum-qualified key plus its
-        SCENE_MANIFEST ArtifactRecord."""
+        then write-once manifest bytes at the unit-scoped, checksum-qualified
+        key plus its SCENE_MANIFEST ArtifactRecord under the revision's
+        deterministic id."""
         if with_payloads:
             await self.register_payloads(manifest)
         from sceneops_core.artifacts.schemas import ArtifactKind
+        from sceneops_core.provenance import manifest_artifact_id_for
         from sceneops_core.scenes.schemas import scene_id_for
 
-        scene_id = scene_id_for(
-            dataset_id=dataset_id,
-            dataset_version=version,
-            source=manifest.lineage.source,
-        )
+        scene_id = scene_id_for(manifest.lineage.source)
         published = await self.scene_artifact_store.publish_canonical_manifest(
-            dataset_id=dataset_id,
-            dataset_version=version,
-            scene_id=scene_id,
-            manifest=manifest,
+            scene_id=scene_id, manifest=manifest
         )
-        artifact_id = f"art-scene-{published.checksum[7:23]}"
+        artifact_id = manifest_artifact_id_for(
+            unit_id=scene_id, manifest_checksum=published.checksum
+        )
         from sceneops_core.artifacts.schemas import ArtifactRecord
 
         record = ArtifactRecord(
@@ -379,8 +392,6 @@ class SceneWorld:
             checksum=published.checksum,
             owner_type="scene",
             owner_id=scene_id,
-            dataset_id=dataset_id,
-            dataset_version=version,
             scene_id=scene_id,
         )
         self.artifacts[artifact_id] = record

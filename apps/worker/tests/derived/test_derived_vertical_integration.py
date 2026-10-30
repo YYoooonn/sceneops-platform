@@ -2,14 +2,15 @@
 evaluation, on real PostgreSQL and real MinIO (ADR-007 §33).
 
 The recording is a real ROS 2 CDR MCAP stored in MinIO as a registered
-RobotRun's recording. Scenes are built and registered through the real jobs,
-then every derived step runs in its own session, like separate jobs. What the
+RobotRun's recording. Scenes are built and registered through the real jobs
+and pinned into the DatasetVersion from the registered pins, then every
+derived step runs in its own session, like separate jobs. What the
 in-process tests cannot prove is proven here: pins persist in PostgreSQL
 (ScenarioSet, inference run), deterministic ArtifactRecord ids converge on
 retry against the real primary key, and write-once keys hold on S3.
 
 Requires SCENEOPS_DATABASE_URL (migrated to head) and a reachable MinIO;
-skips otherwise. Rows are created under unique ids and removed afterwards.
+skips otherwise.
 """
 
 from __future__ import annotations
@@ -161,7 +162,8 @@ async def test_scenes_to_pinned_evaluation_on_real_infrastructure(derived):
     registered = await derived.run(
         RegisterScenesJobHandler(), derived.register_params(built)
     )
-    assert registered.registered_scene_count == 2
+    assert registered.revision_count == 2
+    await derived.pin(registered)
 
     # -- labels: independent lineage -------------------------------------------
     imported = await derived.run(

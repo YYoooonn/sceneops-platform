@@ -1,5 +1,7 @@
 """IMPORT_LABELS: label documents become immutable, registered, pinned
-revisions with their own lineage (ADR-007 §33.2)."""
+revisions with their own lineage (ADR-007 §33.2, ADR-015 §9). The native
+snapshot import runs against real storage in
+``test_native_label_import_integration.py``."""
 
 from __future__ import annotations
 
@@ -9,10 +11,16 @@ from sceneops_core.artifacts.schemas import ArtifactKind
 from sceneops_core.artifacts.schemas.owner import ArtifactOwnerType
 from sceneops_core.common.checksums import sha256_checksum
 from sceneops_core.jobs.schemas import ImportLabelsJobParams, JobType
+from sceneops_core.labels import (
+    LabelProvenance,
+    LabelSetManifest,
+    LabelSourceKind,
+    ObservationAnchor,
+)
 from sceneops_worker.jobs.derived import ImportLabelsJobHandler
 from sceneops_worker.jobs.derived.import_labels import (
     LabelDocumentChecksumError,
-    UnknownRobotRunError,
+    UnknownLabelSourceError,
 )
 from sceneops_derived.testing import label_document, write_document
 from tests.derived_harness import make_harness
@@ -41,6 +49,8 @@ async def test_import_registers_one_pinned_revision(tmp_path) -> None:
     assert result.created is True
     assert result.label_count == 1 and result.covered_anchor_count == 2
     assert result.robot_run_ids == ["run-001"]
+    assert result.content_ids == []
+    assert (result.snapshot_id, result.content_id) == (None, None)
     assert result.provenance_kind == "external"
     assert result.label_set.manifest_checksum == doc.checksum()
 
@@ -105,7 +115,7 @@ async def test_changed_labels_are_a_new_revision_not_an_overwrite(tmp_path) -> N
 async def test_anchors_on_unregistered_robot_runs_are_rejected(tmp_path) -> None:
     harness = await _harness_with_run(tmp_path)
     doc = label_document("gt", run="run-unknown", covered=[T0])
-    with pytest.raises(UnknownRobotRunError, match="run-unknown"):
+    with pytest.raises(UnknownLabelSourceError, match="robot_run run-unknown"):
         await _import(harness, await write_document(harness, "gt.json", doc))
     assert harness.repo.records == {}
     assert harness.commits == 0
@@ -138,9 +148,45 @@ async def test_import_never_touches_scenes(tmp_path) -> None:
     before = scene.manifest_checksum
     doc = label_document("gt", covered=[T0], labels={"a": (T0, 10.0)})
     await _import(harness, await write_document(harness, "gt.json", doc))
-    assert harness.scene_store.records[scene.scene_id].manifest_checksum == before
+    assert [
+        r.manifest_checksum
+        for r in await harness.scene_store.list_revisions(scene.scene_id)
+    ] == [before]
     manifest = await harness.scene_artifact_store.read_pinned_manifest(
         uri=(await harness.artifact_record_store.get(scene.manifest_artifact_id)).uri,
         checksum=before,
     )
     assert not hasattr(manifest, "annotations")
+
+
+CONTENT = "content-" + "a" * 32
+
+
+def _content_document(label_set_id: str = "gt-native") -> LabelSetManifest:
+    anchor = ObservationAnchor(
+        source_kind="content",
+        source_id=CONTENT,
+        channel="LIDAR_TOP",
+        source_clock="nuscenes.timestamp",
+        timestamp_ns=T0,
+        group_ref="sample-a",
+    )
+    return LabelSetManifest.normalized(
+        label_set_id=label_set_id,
+        provenance=LabelProvenance(kind=LabelSourceKind.HUMAN, producer="team"),
+        coverage=[anchor],
+        labels=[],
+    )
+
+
+async def test_a_document_may_anchor_on_a_registered_content(tmp_path) -> None:
+    harness = make_harness(tmp_path)
+    uri = await write_document(harness, "native.json", _content_document())
+    with pytest.raises(UnknownLabelSourceError, match=f"content {CONTENT}"):
+        await _import(harness, uri)
+    assert harness.repo.records == {}
+    harness.source_store.content_ids.add(CONTENT)
+    result = await _import(harness, uri)
+    assert (result.robot_run_ids, result.content_ids) == ([], [CONTENT])
+    # A document import names no snapshot: the anchors carry the content.
+    assert (result.snapshot_id, result.content_id) == (None, None)

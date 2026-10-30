@@ -37,8 +37,9 @@ UNIT_TEST_SUITES := apps/worker/tests apps/api/tests integrations/groundingdino-
 	packages/sceneops-episodes/tests \
 	packages/sceneops-evaluation/tests packages/sceneops-execution/tests \
 	packages/sceneops-inference/tests packages/sceneops-recording/tests \
-	packages/sceneops-scenes/tests packages/sceneops-streaming/tests \
-	tools/checks/tests tools/reference/tests tools/e2e/tests tests/infrastructure/unit
+	packages/sceneops-scenes/tests packages/sceneops-sources/tests \
+	packages/sceneops-streaming/tests \
+	tools/checks/tests tools/dev/tests tools/reference/tests tools/e2e/tests tests/infrastructure/unit
 
 .PHONY: test
 # All infrastructure-independent automated tests -- no Postgres/MinIO/network/
@@ -108,12 +109,30 @@ test-integration:
 #   recovery    acquisition-recovery fault injection + full-lifecycle acceptance + Job
 #               worker loss under the ownership lease + lost broker messages
 #               (makefiles/recovery.mk), same disposable database + bucket, own Redis/workers
-#   kafka       real-Kafka transport: bridge + capture tests in their ROS 2 images, then the
-#               transport smoke (makefiles/streaming.mk); needs `make streaming-up`
+#   kafka       real-Kafka transport: bridge + capture tests in their ROS 2 images, the producer
+#               under a frozen broker, then the transport smoke (makefiles/streaming.mk); needs `make streaming-up`
 #   boundaries  isolation boundaries: the acquisition integration (own uv project, I-36 import
 #               boundary), the LeRobot adapter (own uv project), the acquisition images
 #               and the raw-source mount boundary of the runtime services
-INFRA_SUITES := pipelines recovery kafka boundaries
+#   sources     source preservation of the reference snapshots (pusht, the nuScenes
+#               scene-0061 slice): publish-snapshot + REGISTER_SOURCE_SNAPSHOT on a
+#               disposable execution runtime, after the snapshot capacity preflight
+#   lerobot-episodes
+#               LeRobot pusht -> canonical Episodes: snapshot_episode_building on a
+#               disposable execution runtime, held to the raw-source verifier
+#   nuscenes-scenes
+#               the nuScenes scene-0061 slice -> canonical Scenes:
+#               snapshot_scene_building on a disposable execution runtime, held to
+#               the raw-source verifier and to the RobotRun Scene of scene-0061
+#   mixed-sources
+#               one DatasetVersion of the scene-0061 RobotRun, the nuScenes Scene and the
+#               pusht Episodes, composed by pins and by selector on a disposable
+#               execution runtime and held to the mixed-source verifier
+#   nuscenes-labels
+#               the scene-0061 slice's own annotations -> one LabelSet: import_labels
+#               {snapshot_id} and CAM_FRONT / LIDAR_TOP sample views on a disposable
+#               execution runtime, held to the raw-source label verifier
+INFRA_SUITES := pipelines recovery kafka boundaries sources lerobot-episodes nuscenes-scenes mixed-sources nuscenes-labels
 SUITE ?= pipelines
 
 .PHONY: test-infrastructure
@@ -141,10 +160,96 @@ infra-suite-pipelines:
 	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) tests/infrastructure \
 		--ignore=tests/infrastructure/test_acquisition_recovery.py \
 		--ignore=tests/infrastructure/test_acquisition_lifecycle_acceptance.py \
+		--ignore=tests/infrastructure/test_source_preservation_acceptance.py \
+		--ignore=tests/infrastructure/test_lerobot_episode_acceptance.py \
+		--ignore=tests/infrastructure/test_nuscenes_scene_acceptance.py \
+		--ignore=tests/infrastructure/test_mixed_source_acceptance.py \
+		--ignore=tests/infrastructure/test_nuscenes_label_acceptance.py \
 		--ignore=tests/infrastructure/unit -v
 
+REFERENCE_SNAPSHOTS := lerobot-pusht nuscenes-scene-0061
+
+.PHONY: infra-suite-sources
+# Source preservation acceptance (ADR-015 §5): the snapshots of
+# config/reference/source-snapshots.json are published by the Publisher process into a
+# disposable bucket and registered by REGISTER_SOURCE_SNAPSHOT Jobs on a disposable
+# execution runtime, and checked against the raw trees hashed independently. Refused
+# first when the snapshots do not fit the Docker VM. Prerequisites: `make local-up` (the
+# servers and images), `make reference-source-fetch` (pusht) and the nuScenes v1.0-mini
+# tree at data/raw/nuscenes. A skip here is a failure.
+infra-suite-sources:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="$(REFERENCE_SNAPSHOTS)"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_source_preservation_acceptance.py -v
+
+.PHONY: infra-suite-lerobot-episodes
+# LeRobot Episode acceptance (ADR-015 §6.7, M3 S3): the pinned pusht snapshot is
+# published and registered, then SNAPSHOT_EPISODE_BUILDING builds, registers, composes,
+# validates and profiles its Episodes on a disposable execution runtime; Episode 0 and
+# then the whole corpus are held to tools/reference/lerobot_verify.py (raw-source
+# derivation + negative controls). Refused first when the snapshot does not fit the
+# Docker VM. Prerequisites: `make local-up` (servers and images) and
+# `make reference-source-fetch`. A skip here is a failure.
+infra-suite-lerobot-episodes:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="lerobot-pusht"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_lerobot_episode_acceptance.py -v
+
+.PHONY: infra-suite-nuscenes-scenes
+# nuScenes Scene acceptance (ADR-015 §6.7, M3 S4): the scene-0061 slice is published
+# and registered, then SNAPSHOT_SCENE_BUILDING builds, registers, composes, validates
+# and profiles its Scene on a disposable execution runtime; the Scene is held to
+# tools/reference/nuscenes_scene_verify.py (raw-source derivation + negative controls)
+# and compared with the RobotRun Scene of scene-0061, which the suite's baseline
+# registers. Refused first when the snapshot does not fit the Docker VM. Prerequisites:
+# `make local-up` (servers and images), the nuScenes v1.0-mini tree at data/raw/nuscenes
+# and `make reference-data-bootstrap` (the locked recording). A skip here is a failure.
+infra-suite-nuscenes-scenes:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="nuscenes-scene-0061"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_nuscenes_scene_acceptance.py -v
+
+.PHONY: infra-suite-mixed-sources
+# Mixed-source DatasetVersion acceptance (ADR-015 §7, M3 S5): the suite's baseline
+# registers the Recording Import RobotRun of scene-0061 (FIXTURE=scene-0061, so it
+# composes baseline-scene-0061 for the recording verifier); SNAPSHOT_SCENE_BUILDING
+# builds the scene-0061 slice's Scene and SNAPSHOT_EPISODE_BUILDING the pusht Episodes
+# on a disposable execution runtime. One DatasetVersion of all of them is composed by
+# pins and by selector and held to tools/reference/mixed_source_verify.py (raw-source
+# derivation + negative controls) and each part to its own verifier; validation,
+# profiling, consumers, execution provenance, idempotent re-runs and concurrent
+# compositions are checked around it. Refused first when the snapshots do not fit the
+# Docker VM. Prerequisites: `make local-up` (servers and images), the nuScenes
+# v1.0-mini tree at data/raw/nuscenes, `make reference-source-fetch` and
+# `make reference-data-bootstrap`. A skip here is a failure.
+infra-suite-mixed-sources:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="$(REFERENCE_SNAPSHOTS)"
+	FIXTURE=scene-0061 $(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_mixed_source_acceptance.py -v
+
+.PHONY: infra-suite-nuscenes-labels
+# Native nuScenes label acceptance (ADR-015 §9, M3 S6): the scene-0061 slice is published
+# and registered and its Scene built and composed; IMPORT_LABELS {snapshot_id} imports the
+# slice's annotations and BUILD_SCENE_SAMPLE_VIEWS builds a CAM_FRONT- and a
+# LIDAR_TOP-anchored view pinning them on a disposable execution runtime. The label set,
+# Scene and views are held to tools/reference/nuscenes_label_verify.py (raw-source
+# derivation + negative controls) and to the locked reference labels of the RobotRun
+# label path; re-imports, a second snapshot and refusals are checked to write nothing.
+# Refused first when the snapshot does not fit the Docker VM. Prerequisites: `make
+# local-up` (servers and images), the nuScenes v1.0-mini tree at data/raw/nuscenes and
+# `make reference-data-bootstrap` (the locked reference labels). A skip here is a failure.
+infra-suite-nuscenes-labels:
+	@$(MAKE) --no-print-directory capacity-preflight MODE=source_snapshot \
+		SNAPSHOTS="nuscenes-scene-0061"
+	$(DISPOSABLE_ENV_RUNTIME) -- $(DISPOSABLE_PYTEST) \
+		tests/infrastructure/test_nuscenes_label_acceptance.py -v
+
 .PHONY: infra-suite-kafka
-infra-suite-kafka: streaming-test smoke-streaming
+infra-suite-kafka: streaming-test streaming-producer-test smoke-streaming
 
 .PHONY: infra-suite-boundaries
 infra-suite-boundaries: check-runtime-boundary acquisition-image-check acquisition-test lerobot-test

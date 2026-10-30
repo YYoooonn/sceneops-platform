@@ -1,6 +1,6 @@
 {
-  "schema": "sceneops.reference_contract/1",
-  "contract_version": 1,
+  "schema": "sceneops.reference_contract/2",
+  "contract_version": 2,
   "corpus": {
     "corpus_id": "nuscenes-mini-v1",
     "scope": "nuscenes-mini-full-10"
@@ -67,6 +67,11 @@
       "channel_count": 20
     }
   ],
+  "build_configs": {
+    "scene": "config/baselines/scene_build_config.json",
+    "episode": "config/baselines/episode_build_config.json"
+  },
+  "expectations": "reference_expectations.json",
   "ingestion_modes": {
     "recording_import": {
       "role": "platform_ml_reference",
@@ -99,10 +104,9 @@
     }
   },
   "units": {
-    "scene_policy": "whole_recording",
-    "scene_unit_key": "recording",
     "scenes_per_robot_run": 1,
-    "episodes_per_robot_run": 1
+    "episodes_per_robot_run": 1,
+    "revisions_per_unit": 1
   },
   "expected_totals": {
     "fixtures": 10,

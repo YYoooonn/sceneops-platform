@@ -141,3 +141,39 @@ async def test_succeeded_run_is_a_dedup_match():
     second = await service.create_pipeline_run(_request())
 
     assert first.pipeline_run.pipeline_run_id == second.pipeline_run.pipeline_run_id
+
+
+async def test_a_recording_pipeline_run_names_no_dataset_version():
+    """Build and registration have no DatasetVersion; a recording run names
+    the version its compose stage creates in that stage's params."""
+    import pytest
+
+    service, repo = _service()
+    for pipeline_type in (
+        PipelineType.RECORDING_SCENE_BUILDING,
+        PipelineType.RECORDING_EPISODE_BUILDING,
+    ):
+        for scope in (
+            {"dataset_id": DATASET_ID, "dataset_version": DATASET_VERSION},
+            {"dataset_id": DATASET_ID, "dataset_version": None},
+            {"dataset_id": None, "dataset_version": DATASET_VERSION},
+        ):
+            with pytest.raises(ValueError, match="executes in no DatasetVersion"):
+                await service.create_pipeline_run(_request(type=pipeline_type, **scope))
+    assert repo.runs == {}
+
+    target = {"dataset_id": DATASET_ID, "dataset_version": DATASET_VERSION}
+    created = await service.create_pipeline_run(
+        _request(
+            type=PipelineType.RECORDING_SCENE_BUILDING,
+            dataset_id=None,
+            dataset_version=None,
+            params={"compose_dataset_version": target},
+        )
+    )
+    run = created.pipeline_run
+    assert (run.dataset_id, run.dataset_version) == (None, None)
+    compose = next(
+        t for t in created.tasks if t.pipeline_task_id == "compose_dataset_version"
+    )
+    assert compose.params == target

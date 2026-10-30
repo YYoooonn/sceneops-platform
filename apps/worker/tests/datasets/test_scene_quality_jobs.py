@@ -1,8 +1,9 @@
 """REGISTER_SCENES / VALIDATE_SCENE / PROFILE_SCENE handlers.
 
-Validation and profiling read each Scene at the revision its record pins,
-write per-scene run records that pin that revision, and never write a
-SceneRecord or DatasetVersion state (ADR-007 §13.4, §17.5)."""
+Validation and profiling take the pins registration returns, read each
+Scene at exactly that revision, write per-scene run records that pin it, and
+never read a DatasetVersion or write a Scene unit or revision (ADR-015
+§6.4)."""
 
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from sceneops_core.jobs.schemas import (
     RegisterScenesJobParams,
     ValidateSceneJobParams,
 )
+from sceneops_core.provenance import RevisionPin, manifest_artifact_id_for
 from sceneops_core.runs.schemas import RunStatus
 from sceneops_core.scenes.testing import recording_source
 from sceneops_worker.jobs.base import JobHandlerRequest
@@ -39,7 +41,6 @@ def _job() -> MagicMock:
 
 
 async def _registered(world, *source_keys):
-    world.add_dataset_version()
     artifacts = [
         await world.publish(world.manifest(source=recording_source(unit_key=key)))
         for key in source_keys
@@ -48,8 +49,6 @@ async def _registered(world, *source_keys):
         JobHandlerRequest(
             job=_job(),
             params=RegisterScenesJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
                 manifest_artifact_ids=[a.artifact_id for a in artifacts],
             ),
             context=world.context,
@@ -58,14 +57,38 @@ async def _registered(world, *source_keys):
     return result
 
 
-async def test_register_handler_reports_canonical_members(scene_world):
+def _revision(world, pin):
+    return world.scenes.revisions()[(pin.unit_id, pin.manifest_checksum)]
+
+
+async def test_register_handler_reports_complete_revision_pins(scene_world):
     result = await _registered(scene_world, "a", "b")
-    assert result.registered_scene_count == 2
-    assert result.scene_ids == result.created_scene_ids
-    assert set(result.scene_ids) == set(scene_world.scenes.committed)
-    assert result.manifest_artifact_ids == [
-        scene_world.scenes.committed[s].manifest_artifact_id for s in result.scene_ids
-    ]
+    assert result.revision_count == 2
+    assert result.scene_ids == result.new_unit_scene_ids == sorted(result.scene_ids)
+    assert result.new_revision_scene_ids == result.existing_revision_scene_ids == []
+    assert [p.unit_id for p in result.revisions] == result.scene_ids
+    revisions = scene_world.scenes.revisions()
+    for pin in result.revisions:
+        assert pin.domain == "scene"
+        assert (
+            revisions[(pin.unit_id, pin.manifest_checksum)].manifest_artifact_id
+            == pin.manifest_artifact_id
+        )
+    assert (result.source_kind, result.source_id) == ("recording", "run-001")
+    assert (
+        result.producer_fingerprint
+        == next(iter(revisions.values())).producer_fingerprint
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["dataset_id", "datasetVersion", "dataset_version", "replace"]
+)
+def test_register_params_reject_membership_fields(field):
+    with pytest.raises(ValueError, match="DatasetVersion membership"):
+        RegisterScenesJobParams.model_validate(
+            {"manifest_artifact_ids": ["art-1"], field: "x"}
+        )
 
 
 async def test_validate_pins_the_assessed_revision_and_writes_no_scene_state(
@@ -73,16 +96,15 @@ async def test_validate_pins_the_assessed_revision_and_writes_no_scene_state(
 ):
     registered = await _registered(scene_world, "a")
     scene_id = registered.scene_ids[0]
-    record_before = scene_world.scenes.committed[scene_id]
+    revisions_before = scene_world.scenes.revisions()
+    record_before = _revision(scene_world, registered.revisions[0])
     scene_world.context.dataset_store.reset_mock()
 
     result = await ValidateSceneJobHandler().run(
         JobHandlerRequest(
             job=_job(),
             params=ValidateSceneJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
-                scene_ids=[scene_id],
+                revisions=registered.revisions,
                 require_target_channels=["CAM_FRONT", "LIDAR_TOP"],
             ),
             context=scene_world.context,
@@ -103,7 +125,7 @@ async def test_validate_pins_the_assessed_revision_and_writes_no_scene_state(
         r.scene_id is None and r.manifest_artifact_id is None
         for r in scene_world.scene_runs
     )
-    assert scene_world.scenes.committed[scene_id] == record_before
+    assert scene_world.scenes.revisions() == revisions_before
     assert scene_world.context.dataset_store.method_calls == []
 
 
@@ -115,7 +137,8 @@ async def test_validate_blocking_result_is_reported_not_written_to_the_record(
         JobHandlerRequest(
             job=_job(),
             params=ValidateSceneJobParams(
-                scene_ids=registered.scene_ids, require_target_channels=["RADAR_FRONT"]
+                revisions=registered.revisions,
+                require_target_channels=["RADAR_FRONT"],
             ),
             context=scene_world.context,
         )
@@ -124,27 +147,36 @@ async def test_validate_blocking_result_is_reported_not_written_to_the_record(
     per_scene = [r for r in scene_world.scene_runs if r.scene_id is not None]
     assert per_scene[0].should_block_pipeline is True
     assert per_scene[0].missing_channel_count == 1
-    assert (
-        "status"
-        not in scene_world.scenes.committed[registered.scene_ids[0]].model_dump()
-    )
+    assert "status" not in _revision(scene_world, registered.revisions[0]).model_dump()
 
 
 async def test_validate_fails_loudly_for_unregistered_or_inconsistent_scenes(
     scene_world,
 ):
-    await _registered(scene_world, "a")
-    with pytest.raises(SceneNotRegisteredError):
+    registered = await _registered(scene_world, "a")
+    pin = registered.revisions[0]
+    other = "sha256:" + "e" * 64
+    unregistered = RevisionPin(
+        domain="scene",
+        unit_id=pin.unit_id,
+        manifest_checksum=other,
+        manifest_artifact_id=manifest_artifact_id_for(
+            unit_id=pin.unit_id, manifest_checksum=other
+        ),
+    )
+    with pytest.raises(SceneNotRegisteredError, match=other):
         await ValidateSceneJobHandler().run(
             JobHandlerRequest(
                 job=_job(),
-                params=ValidateSceneJobParams(scene_ids=["scene-unknown"]),
+                params=ValidateSceneJobParams(revisions=[unregistered]),
                 context=scene_world.context,
             )
         )
+    assert scene_world.scene_runs == [
+        r for r in scene_world.scene_runs if r.scene_id is None
+    ], "an unregistered pin fails before any revision is assessed"
 
-    scene_id = next(iter(scene_world.scenes.committed))
-    record = scene_world.scenes.committed[scene_id]
+    record = _revision(scene_world, pin)
     scene_world.artifacts[record.manifest_artifact_id] = scene_world.artifacts[
         record.manifest_artifact_id
     ].model_copy(update={"checksum": "sha256:" + "f" * 64})
@@ -152,20 +184,10 @@ async def test_validate_fails_loudly_for_unregistered_or_inconsistent_scenes(
         await ValidateSceneJobHandler().run(
             JobHandlerRequest(
                 job=_job(),
-                params=ValidateSceneJobParams(scene_ids=[scene_id]),
+                params=ValidateSceneJobParams(revisions=[pin]),
                 context=scene_world.context,
             )
         )
-
-
-async def test_validate_without_scenes_reports_a_blocking_empty_input(scene_world):
-    result = await ValidateSceneJobHandler().run(
-        JobHandlerRequest(
-            job=_job(), params=ValidateSceneJobParams(), context=scene_world.context
-        )
-    )
-    assert result.should_block_pipeline is True
-    assert result.checked_scene_count == 0
 
 
 async def test_profile_pins_revision_and_counts_observations(scene_world):
@@ -173,7 +195,7 @@ async def test_profile_pins_revision_and_counts_observations(scene_world):
     result = await ProfileSceneJobHandler().run(
         JobHandlerRequest(
             job=_job(),
-            params=ProfileSceneJobParams(scene_ids=registered.scene_ids),
+            params=ProfileSceneJobParams(revisions=registered.revisions),
             context=scene_world.context,
         )
     )
@@ -184,8 +206,9 @@ async def test_profile_pins_revision_and_counts_observations(scene_world):
     per_scene = {
         r.scene_id: r for r in scene_world.scene_runs if r.scene_id is not None
     }
-    for scene_id in registered.scene_ids:
-        record = scene_world.scenes.committed[scene_id]
+    for pin in registered.revisions:
+        record = _revision(scene_world, pin)
+        scene_id = pin.unit_id
         assert per_scene[scene_id].assessed(
             manifest_artifact_id=record.manifest_artifact_id,
             manifest_checksum=record.manifest_checksum,
@@ -196,15 +219,6 @@ async def test_profile_pins_revision_and_counts_observations(scene_world):
         }
 
 
-async def test_profile_requires_scene_ids(scene_world):
-    with pytest.raises(ValueError, match="scene_id"):
-        await ProfileSceneJobHandler().run(
-            JobHandlerRequest(
-                job=_job(), params=ProfileSceneJobParams(), context=scene_world.context
-            )
-        )
-
-
 # ── report artifacts: immutable, content-pinned, convergent ─────────────────
 
 
@@ -212,15 +226,12 @@ def _report_records(world, kind: str):
     return [r for r in world.artifacts.values() if r.kind == kind]
 
 
-async def _validate(world, scene_ids, *, channels):
+async def _validate(world, revisions, *, channels):
     return await ValidateSceneJobHandler().run(
         JobHandlerRequest(
             job=_job(),
             params=ValidateSceneJobParams(
-                dataset_id="ds",
-                dataset_version="v1",
-                scene_ids=scene_ids,
-                require_target_channels=channels,
+                revisions=revisions, require_target_channels=channels
             ),
             context=world.context,
         )
@@ -231,7 +242,7 @@ async def test_every_validation_report_record_pins_the_bytes_at_its_uri(scene_wo
     from sceneops_core.common.checksums import sha256_checksum
 
     registered = await _registered(scene_world, "a")
-    result = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+    result = await _validate(scene_world, registered.revisions, channels=["CAM_FRONT"])
 
     reports = _report_records(scene_world, "dataset_validation_report")
     assert len(reports) == 2  # the per-scene report and the run report
@@ -249,12 +260,12 @@ async def test_re_executing_a_validation_job_converges_on_the_same_reports(
     scene_world,
 ):
     registered = await _registered(scene_world, "a")
-    first = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+    first = await _validate(scene_world, registered.revisions, channels=["CAM_FRONT"])
     ids = {
         r.artifact_id for r in _report_records(scene_world, "dataset_validation_report")
     }
 
-    again = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+    again = await _validate(scene_world, registered.revisions, channels=["CAM_FRONT"])
 
     assert again.report_uri == first.report_uri
     assert {
@@ -266,12 +277,12 @@ async def test_a_changed_validation_result_is_a_new_revision_never_an_overwrite(
     scene_world,
 ):
     registered = await _registered(scene_world, "a")
-    first = await _validate(scene_world, registered.scene_ids, channels=["CAM_FRONT"])
+    first = await _validate(scene_world, registered.revisions, channels=["CAM_FRONT"])
     first_bytes = await scene_world.artifact_store.read_bytes(first.report_uri)
 
     # Same Job and run id, different outcome (a channel the Scene lacks).
     second = await _validate(
-        scene_world, registered.scene_ids, channels=["RADAR_FRONT"]
+        scene_world, registered.revisions, channels=["RADAR_FRONT"]
     )
 
     assert second.report_uri != first.report_uri
@@ -289,11 +300,7 @@ async def test_re_executing_a_profile_job_converges_and_pins_its_bytes(scene_wor
         return await ProfileSceneJobHandler().run(
             JobHandlerRequest(
                 job=_job(),
-                params=ProfileSceneJobParams(
-                    dataset_id="ds",
-                    dataset_version="v1",
-                    scene_ids=registered.scene_ids,
-                ),
+                params=ProfileSceneJobParams(revisions=registered.revisions),
                 context=scene_world.context,
             )
         )
